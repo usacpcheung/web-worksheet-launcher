@@ -49,6 +49,157 @@ function parseHashParams() {
   };
 }
 
+const LAUNCH_STORAGE_PREFIX = "worksheetLaunch:";
+const LAUNCH_STORAGE_TTL_MS = 15 * 60 * 1000;
+
+function readLaunchFromHash() {
+  return parseHashParams();
+}
+
+function validateLaunch(launch) {
+  if (!launch || !launch.w || !launch.rid || !launch.returnOrigin) {
+    return { ok: false, reason: "missing" };
+  }
+
+  let normalizedReturnOrigin = "";
+  try {
+    const parsedReturnOrigin = new URL(launch.returnOrigin);
+    if (parsedReturnOrigin.protocol === "http:" || parsedReturnOrigin.protocol === "https:") {
+      normalizedReturnOrigin = parsedReturnOrigin.origin;
+    }
+  } catch (e) {
+    normalizedReturnOrigin = "";
+  }
+
+  return {
+    ok: true,
+    w: launch.w,
+    rid: launch.rid,
+    returnOrigin: launch.returnOrigin,
+    normalizedReturnOrigin
+  };
+}
+
+function saveLaunchToSession(launch) {
+  try {
+    sessionStorage.setItem(
+      `${LAUNCH_STORAGE_PREFIX}${launch.rid}`,
+      JSON.stringify({
+        w: launch.w,
+        rid: launch.rid,
+        returnOrigin: launch.returnOrigin,
+        savedAt: Date.now()
+      })
+    );
+    sessionStorage.setItem(`${LAUNCH_STORAGE_PREFIX}lastRid`, launch.rid);
+  } catch (e) {
+    // Ignore storage failures (private mode, quota limits, etc.).
+  }
+}
+
+function clearLaunchFromSession(rid) {
+  if (!rid) return;
+  try {
+    const lastRidKey = `${LAUNCH_STORAGE_PREFIX}lastRid`;
+    const lastRid = sessionStorage.getItem(lastRidKey);
+    if (lastRid === rid) {
+      sessionStorage.removeItem(lastRidKey);
+    }
+    sessionStorage.removeItem(`${LAUNCH_STORAGE_PREFIX}${rid}`);
+  } catch (e) {
+    // Ignore storage failures.
+  }
+}
+
+function readLaunchFromSession(rid) {
+  const now = Date.now();
+  try {
+    const keys = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (!key || !key.startsWith(LAUNCH_STORAGE_PREFIX) || key === `${LAUNCH_STORAGE_PREFIX}lastRid`) {
+        continue;
+      }
+      keys.push(key);
+    }
+
+    let mostRecentLaunch = null;
+    for (const key of keys) {
+      const raw = sessionStorage.getItem(key);
+      if (!raw) continue;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        sessionStorage.removeItem(key);
+        continue;
+      }
+
+      if (!parsed || !parsed.rid || !parsed.savedAt || (now - parsed.savedAt) > LAUNCH_STORAGE_TTL_MS) {
+        sessionStorage.removeItem(key);
+        continue;
+      }
+
+      const validated = validateLaunch(parsed);
+      if (!validated.ok || !validated.normalizedReturnOrigin) {
+        sessionStorage.removeItem(key);
+        continue;
+      }
+
+      if (rid && parsed.rid !== rid) {
+        continue;
+      }
+
+      if (!mostRecentLaunch || parsed.savedAt > mostRecentLaunch.savedAt) {
+        mostRecentLaunch = {
+          w: validated.w,
+          rid: validated.rid,
+          returnOrigin: validated.returnOrigin,
+          normalizedReturnOrigin: validated.normalizedReturnOrigin,
+          savedAt: parsed.savedAt
+        };
+      }
+    }
+
+    if (mostRecentLaunch) {
+      return mostRecentLaunch;
+    }
+
+    const lastRid = sessionStorage.getItem(`${LAUNCH_STORAGE_PREFIX}lastRid`);
+    if (!lastRid || (rid && lastRid !== rid)) {
+      return null;
+    }
+
+    const latestRaw = sessionStorage.getItem(`${LAUNCH_STORAGE_PREFIX}${lastRid}`);
+    if (!latestRaw) {
+      return null;
+    }
+
+    const latest = JSON.parse(latestRaw);
+    if (!latest || !latest.savedAt || (now - latest.savedAt) > LAUNCH_STORAGE_TTL_MS) {
+      clearLaunchFromSession(lastRid);
+      return null;
+    }
+
+    const validated = validateLaunch(latest);
+    if (!validated.ok || !validated.normalizedReturnOrigin) {
+      clearLaunchFromSession(lastRid);
+      return null;
+    }
+
+    return {
+      w: validated.w,
+      rid: validated.rid,
+      returnOrigin: validated.returnOrigin,
+      normalizedReturnOrigin: validated.normalizedReturnOrigin,
+      savedAt: latest.savedAt
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 function base64urlDecodeToString(b64url) {
   const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64url.length + 3) % 4);
   const bin = atob(b64);
@@ -62,7 +213,6 @@ function escapeHtml(s) {
   }[c]));
 }
 
-const { w, rid, returnOrigin } = parseHashParams();
 const elTitle = document.getElementById("title");
 const elMeta = document.getElementById("meta");
 const elQuestions = document.getElementById("questions");
@@ -70,14 +220,22 @@ const elStatus = document.getElementById("status");
 const elFlowHint = document.getElementById("flowHint");
 const elSendBackBtn = document.getElementById("sendBackBtn");
 
+let w = "";
+let rid = "";
+let returnOrigin = "";
 let normalizedReturnOrigin = "";
-try {
-  const parsedReturnOrigin = new URL(returnOrigin);
-  if (parsedReturnOrigin.protocol === "http:" || parsedReturnOrigin.protocol === "https:") {
-    normalizedReturnOrigin = parsedReturnOrigin.origin;
+
+const hashLaunch = readLaunchFromHash();
+const validatedHashLaunch = validateLaunch(hashLaunch);
+
+if (validatedHashLaunch.ok) {
+  ({ w, rid, returnOrigin, normalizedReturnOrigin } = validatedHashLaunch);
+  saveLaunchToSession({ w, rid, returnOrigin });
+} else {
+  const restoredLaunch = readLaunchFromSession();
+  if (restoredLaunch) {
+    ({ w, rid, returnOrigin, normalizedReturnOrigin } = restoredLaunch);
   }
-} catch (e) {
-  normalizedReturnOrigin = "";
 }
 
 if (!w || !rid || !returnOrigin) {
@@ -189,6 +347,7 @@ elSendBackBtn.addEventListener("click", () => {
   }
 
   window.opener.postMessage(payload, normalizedReturnOrigin);
+  clearLaunchFromSession(rid);
   elStatus.textContent = "Sent back to parent ✅";
   elStatus.className = "small ok";
 });

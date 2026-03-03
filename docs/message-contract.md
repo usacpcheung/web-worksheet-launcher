@@ -84,3 +84,23 @@ launch context so any subsequent message for that `rid` is rejected and has no e
 
 Phase 1 only defines contracts/scaffolding.
 No new runtime behavior is introduced by this document.
+
+## 7) Redirect recovery (sessionStorage fallback)
+
+To handle redirects that can strip URL hash fragments, renderer startup resolves launch context in this order:
+
+1. Parse launch data from hash (`#w=...&rid=...&returnOrigin=...`) first.
+2. Only when required hash values are missing, attempt session recovery.
+
+Session recovery behavior:
+
+- Renderer stores successful hash launches in `sessionStorage` with key prefix `worksheetLaunch:`.
+- Stored entry shape is `{ w, rid, returnOrigin, savedAt }`.
+- Entries use a TTL of **15 minutes**; expired/stale/invalid entries are ignored and cleaned up.
+- Renderer clears the stored launch entry for a `rid` immediately after a successful send-back (`postMessage`) action.
+
+Compatibility and contract safety:
+
+- Hash launch values remain authoritative whenever present.
+- Recovery does **not** change popup→parent message shape.
+- Recovery does **not** change parent validation requirements (`event.origin`, `event.data.type`, `event.data.rid`, `event.source`).
