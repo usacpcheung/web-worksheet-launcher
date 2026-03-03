@@ -68,11 +68,28 @@ const elMeta = document.getElementById("meta");
 const elQuestions = document.getElementById("questions");
 const elStatus = document.getElementById("status");
 const elFlowHint = document.getElementById("flowHint");
+const elSendBackBtn = document.getElementById("sendBackBtn");
+
+let normalizedReturnOrigin = "";
+try {
+  const parsedReturnOrigin = new URL(returnOrigin);
+  if (parsedReturnOrigin.protocol === "http:" || parsedReturnOrigin.protocol === "https:") {
+    normalizedReturnOrigin = parsedReturnOrigin.origin;
+  }
+} catch (e) {
+  normalizedReturnOrigin = "";
+}
 
 if (!w || !rid || !returnOrigin) {
   elMeta.textContent = "Missing hash params. Expected #w=...&rid=...&returnOrigin=...";
   elMeta.className = "small bad";
   throw new Error("Missing hash params");
+}
+
+if (!normalizedReturnOrigin) {
+  elStatus.textContent = "Invalid returnOrigin. Use an absolute http(s) origin in the launch hash.";
+  elStatus.className = "small bad";
+  elSendBackBtn.disabled = true;
 }
 
 let worksheet;
@@ -150,7 +167,7 @@ renderQuestions().catch((err) => {
 });
 
 // Send back to parent
-document.getElementById("sendBackBtn").addEventListener("click", () => {
+elSendBackBtn.addEventListener("click", () => {
   const payload = {
     type: "worksheetResult",
     rid,
@@ -159,7 +176,11 @@ document.getElementById("sendBackBtn").addEventListener("click", () => {
     meta: { sentAt: new Date().toISOString() }
   };
 
-  const targetOrigin = decodeURIComponent(returnOrigin);
+  if (!normalizedReturnOrigin) {
+    elStatus.textContent = "Cannot send result: returnOrigin is missing or invalid.";
+    elStatus.className = "small bad";
+    return;
+  }
 
   if (!window.opener) {
     elStatus.textContent = "No opener found (opened with noopener?). Cannot send back.";
@@ -167,7 +188,7 @@ document.getElementById("sendBackBtn").addEventListener("click", () => {
     return;
   }
 
-  window.opener.postMessage(payload, targetOrigin);
+  window.opener.postMessage(payload, normalizedReturnOrigin);
   elStatus.textContent = "Sent back to parent ✅";
   elStatus.className = "small ok";
 });
