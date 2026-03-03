@@ -3,18 +3,21 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Worksheet Render (Initial)</title>
+  <title>Worksheet Render</title>
+  <link rel="stylesheet" href="widgets/rewrite-widget.css" />
   <style>
     body { font-family: system-ui, Arial, sans-serif; max-width: 980px; margin: 24px auto; padding: 0 12px; }
     h1 { font-size: 20px; margin: 0 0 6px; }
     .small { font-size: 12px; color: #666; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin: 12px 0; }
-    textarea { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px; border: 1px solid #ccc; min-height: 72px; resize: vertical; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+    .question-text { margin-bottom: 6px; line-height: 1.45; }
+    .question-hint { margin-top: 6px; margin-bottom: 8px; }
+    .rw-host { margin-top: 10px; }
+    .worksheet-light-theme .card { padding: 16px; }
     button { padding: 10px 14px; border-radius: 10px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
     button.primary { border-color: #111; }
     button:disabled { opacity: .5; cursor: not-allowed; }
-    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
-    .rewritten { background: #f7f7f7; border: 1px solid #eee; padding: 10px; border-radius: 10px; white-space: pre-wrap; }
     .ok { color: #0a7; }
     .bad { color: #c33; }
   </style>
@@ -23,9 +26,10 @@
   <h1 id="title">Worksheet</h1>
   <div class="small" id="meta">Loading…</div>
 
-  <div id="questions"></div>
+  <div id="questions" class="worksheet-light-theme"></div>
 
   <div class="card">
+    <div class="small" id="flowHint">Write answers in each question box, use Rewrite if needed, then click Send Back to Parent.</div>
     <div class="row">
       <button id="sendBackBtn" class="primary">Send Back to Parent</button>
       <button id="printBtn">Print</button>
@@ -33,30 +37,8 @@
     <div class="small" id="status"></div>
   </div>
 
+<script src="widgets/rewrite-widget.js"></script>
 <script>
-/**
- * Initial render.html for Idea02
- * - Reads hash params: w, rid, returnOrigin
- * - Decodes worksheet JSON payload
- * - Renders 1..5 questions
- * - For each question: raw textarea + Rewrite button + rewritten output
- * - "Send Back" posts message to parent opener
- *
- * NOTE:
- * - This file should be hosted behind Apache OIDC because rewrite API is protected.
- * - This prototype uses stream=false for rewrite.
- * - Integration rule: treat widgets/rewrite-widget.js as stable.
- *   For prototype-specific behavior, load a versioned file
- *   (for example, widgets/rewrite-widget.v2.js) instead of editing rewrite-widget.js.
- */
-
-// === CONFIG: rewrite bridge endpoints (same-origin recommended) ===
-const API = {
-  REWRITE: "/api/rewrite-bridge/rewrite",
-  READYZ: "/api/rewrite-bridge/readyz"
-};
-
-// ===== Utilities =====
 function parseHashParams() {
   const raw = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
   const sp = new URLSearchParams(raw);
@@ -68,7 +50,6 @@ function parseHashParams() {
 }
 
 function base64urlDecodeToString(b64url) {
-  // pad to multiple of 4
   const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64url.length + 3) % 4);
   const bin = atob(b64);
   const bytes = new Uint8Array([...bin].map(ch => ch.charCodeAt(0)));
@@ -81,37 +62,12 @@ function escapeHtml(s) {
   }[c]));
 }
 
-async function checkReady() {
-  try {
-    const r = await fetch(API.READYZ, { method: "GET", credentials: "include" });
-    return r.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function rewriteText(text) {
-  const r = await fetch(API.REWRITE, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, stream: false })
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    const code = data?.code || ("HTTP_" + r.status);
-    const msg  = data?.message || "Rewrite failed";
-    throw new Error(`${code}: ${msg}`);
-  }
-  return data.rewrittenText ?? "";
-}
-
-// ===== Bootstrap =====
 const { w, rid, returnOrigin } = parseHashParams();
 const elTitle = document.getElementById("title");
 const elMeta = document.getElementById("meta");
 const elQuestions = document.getElementById("questions");
 const elStatus = document.getElementById("status");
+const elFlowHint = document.getElementById("flowHint");
 
 if (!w || !rid || !returnOrigin) {
   elMeta.textContent = "Missing hash params. Expected #w=...&rid=...&returnOrigin=...";
@@ -128,9 +84,8 @@ try {
   throw e;
 }
 
-// Validate minimal schema
-if (!worksheet || worksheet.v !== 1 || !Array.isArray(worksheet.q) || worksheet.q.length < 1 || worksheet.q.length > 5) {
-  elMeta.textContent = "Invalid worksheet schema (v=1, q length 1..5).";
+if (!worksheet || worksheet.v !== 1 || !Array.isArray(worksheet.q) || worksheet.q.length < 1) {
+  elMeta.textContent = "Invalid worksheet schema (v=1, q length 1..N).";
   elMeta.className = "small bad";
   throw new Error("Invalid schema");
 }
@@ -138,68 +93,60 @@ if (!worksheet || worksheet.v !== 1 || !Array.isArray(worksheet.q) || worksheet.
 elTitle.textContent = worksheet.title || "Worksheet";
 elMeta.textContent = `rid=${rid} • questions=${worksheet.q.length}`;
 elMeta.className = "small";
+elFlowHint.textContent = worksheet.q.length === 1
+  ? "Answer the question, optionally click Rewrite, then click Send Back to Parent."
+  : "Answer each question in order, optionally click Rewrite per question, then click Send Back to Parent.";
 
-const answers = worksheet.q.map((q, i) => ({
-  index: i,
-  question: q,
-  raw: "",
-  rewritten: ""
-}));
+const widgetControllers = [];
 
-// Render UI
-worksheet.q.forEach((qText, idx) => {
-  const card = document.createElement("div");
-  card.className = "card";
-  card.innerHTML = `
-    <div><b>Q${idx + 1}.</b> ${escapeHtml(qText)}</div>
-    <div class="row">
-      <textarea id="raw_${idx}" placeholder="Type your answer..."></textarea>
-    </div>
-    <div class="row">
-      <button id="rw_${idx}">Rewrite</button>
-      <span class="small" id="rw_status_${idx}"></span>
-    </div>
-    <div class="row">
-      <div class="rewritten" id="out_${idx}">(rewritten text will appear here)</div>
-    </div>
-  `;
-  elQuestions.appendChild(card);
+async function renderQuestions() {
+  for (const [idx, qText] of worksheet.q.entries()) {
+    const card = document.createElement("div");
+    card.className = "card";
 
-  const ta = card.querySelector(`#raw_${idx}`);
-  const btn = card.querySelector(`#rw_${idx}`);
-  const st = card.querySelector(`#rw_status_${idx}`);
-  const out = card.querySelector(`#out_${idx}`);
+    const hostId = `rw_host_${idx}`;
+    card.innerHTML = `
+      <div class="question-text"><b>Q${idx + 1}.</b> ${escapeHtml(qText)}</div>
+      <div class="small question-hint">Write your response here. Rewrite is optional.</div>
+      <div id="${hostId}" class="rw-host"></div>
+    `;
+    elQuestions.appendChild(card);
 
-  ta.addEventListener("input", () => {
-    answers[idx].raw = ta.value;
+    await RewriteWidget.mount({
+      containerSelector: `#${hostId}`,
+      apiBase: "",
+      title: `Answer ${idx + 1}`,
+      placeholder: "Type your answer, then click Rewrite if you want a polished version.",
+      maxChars: 1200,
+      statusPollIntervalMs: 5000,
+      pollModelStatus: true
+    });
+
+    const textarea = card.querySelector(".rw-textarea");
+    widgetControllers[idx] = {
+      index: idx,
+      question: qText,
+      getAnswerText: () => (textarea ? textarea.value : "")
+    };
+  }
+}
+
+function buildAnswersPayload() {
+  return widgetControllers.map((controller, idx) => {
+    const answerText = controller.getAnswerText().trim();
+    return {
+      index: idx,
+      question: controller.question,
+      answer: answerText,
+      raw: answerText,
+      rewritten: answerText
+    };
   });
+}
 
-  btn.addEventListener("click", async () => {
-    st.textContent = "";
-    const raw = answers[idx].raw.trim();
-    if (!raw) { st.textContent = "No text."; return; }
-
-    btn.disabled = true;
-    st.textContent = "Checking service…";
-    try {
-      const ok = await checkReady();
-      if (!ok) {
-        st.textContent = "Service not ready (warming up). Try again.";
-        return;
-      }
-      st.textContent = "Rewriting…";
-      const rewritten = await rewriteText(raw);
-      answers[idx].rewritten = rewritten;
-      out.textContent = rewritten || "(empty)";
-      st.textContent = "Done.";
-      st.className = "small ok";
-    } catch (e) {
-      st.textContent = String(e.message || e);
-      st.className = "small bad";
-    } finally {
-      btn.disabled = false;
-    }
-  });
+renderQuestions().catch((err) => {
+  elStatus.textContent = String(err?.message || err);
+  elStatus.className = "small bad";
 });
 
 // Send back to parent
@@ -208,7 +155,7 @@ document.getElementById("sendBackBtn").addEventListener("click", () => {
     type: "worksheetResult",
     rid,
     worksheet: { v: worksheet.v, title: worksheet.title, q: worksheet.q },
-    answers,
+    answers: buildAnswersPayload(),
     meta: { sentAt: new Date().toISOString() }
   };
 

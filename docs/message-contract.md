@@ -24,14 +24,14 @@ Example shape:
 ## 2) Worksheet payload schema (`w` decoded)
 
 ```json
-{ "v": 1, "title": "string", "q": ["...1-5"], "rewrite": true }
+{ "v": 1, "title": "string", "q": ["...1-N"], "rewrite": true }
 ```
 
 Validation rules:
 
 - `v` must equal `1`
 - `title` should be a string when present
-- `q` must be an array of strings with length `1..5`
+- `q` must be an array of strings with length `1..N` (`N >= 1`)
 - `rewrite` should be a boolean when present
 
 ## 3) Popup → parent message schema
@@ -41,7 +41,9 @@ Validation rules:
   "type": "worksheetResult",
   "rid": "...",
   "worksheet": { "v": 1, "title": "...", "q": ["..."] },
-  "answers": [{ "index": 0, "question": "...", "raw": "...", "rewritten": "..." }],
+  "answers": [
+    { "index": 0, "question": "...", "answer": "...", "raw": "...", "rewritten": "..." }
+  ],
   "meta": { "sentAt": "ISO-8601" }
 }
 ```
@@ -50,6 +52,8 @@ Notes:
 
 - `type` is fixed to `worksheetResult`
 - `rid` must echo the launch `rid`
+- `answers[index]` and `answers[].index` must both map to the same question order as `worksheet.q`
+- `answer` is the canonical value for each question; `raw` and `rewritten` are echoed for compatibility with existing parent mapping logic
 - `meta.sentAt` is an ISO-8601 timestamp string
 
 ## 4) Parent validation requirements (must enforce)
