@@ -5,111 +5,142 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Web Worksheet Launcher - Parent (Starter)</title>
   <style>
-    body { font-family: system-ui, Arial, sans-serif; max-width: 980px; margin: 24px auto; padding: 0 12px; }
-    h1 { font-size: 20px; margin: 0 0 12px; }
+    body { font-family: system-ui, Arial, sans-serif; max-width: 1040px; margin: 24px auto; padding: 0 12px; }
+    h1 { font-size: 22px; margin: 0 0 12px; }
+    h2 { margin: 0 0 8px; font-size: 18px; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin: 12px 0; }
+    .split { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
     label { font-weight: 600; display: block; margin: 10px 0 6px; }
-    input[type="text"], textarea { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px; border: 1px solid #ccc; }
+    input[type="text"], textarea {
+      width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px; border: 1px solid #ccc;
+      font: inherit;
+    }
     textarea { min-height: 56px; resize: vertical; }
+    textarea[readonly], input[readonly] { background: #f6f6f6; color: #444; }
+    .question-box {
+      border: 1px solid #d8d8d8;
+      background: #fafafa;
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 8px;
+    }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     button { padding: 10px 14px; border-radius: 10px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
-    button.primary { border-color: #111; }
+    button.primary { border-color: #111; font-weight: 600; }
     button:disabled { opacity: .5; cursor: not-allowed; }
-    .hint { color: #666; font-size: 12px; margin-top: 6px; }
+    .hint { color: #666; font-size: 12px; margin-top: 4px; }
     pre { background: #f7f7f7; border: 1px solid #eee; padding: 12px; border-radius: 12px; overflow: auto; }
     .ok { color: #0a7; }
     .bad { color: #c33; }
     .small { font-size: 12px; color: #666; }
+    .section-title { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 8px; }
   </style>
 </head>
 <body>
   <h1>Parent App (Starter) — opens OIDC popup worksheet and receives results</h1>
 
   <div class="card">
-    <div class="row">
-      <div style="flex:1; min-width: 240px;">
+    <div class="split">
+      <div>
         <label for="title">Worksheet Title</label>
         <input id="title" type="text" value="Quick Check" />
-        <div class="hint">This title is shown in the popup.</div>
+        <div class="hint">Shared title for both use cases.</div>
       </div>
-      <div style="min-width: 240px;">
+      <div>
         <label>Popup Status</label>
         <div id="popupStatus" class="small">(not opened)</div>
         <div class="hint">If blocked, allow popups for this site.</div>
       </div>
+      <div>
+        <label>Security</label>
+        <div class="small" id="securityInfo"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="useCase1Section">
+    <div class="section-title">
+      <h2>Use Case 1: One fixed question</h2>
+      <span class="small">Single-question worksheet payload</span>
     </div>
 
-    <label>Questions (1–5)</label>
-    <textarea id="q1">用一句說明今日學到嘅重點。</textarea>
-    <textarea id="q2">用一個例子解釋。</textarea>
-    <textarea id="q3">你仲有咩問題？</textarea>
-    <textarea id="q4" placeholder="(optional)"></textarea>
-    <textarea id="q5" placeholder="(optional)"></textarea>
+    <label>Fixed Question Display</label>
+    <div id="uc1Question" class="question-box" data-question-text="用一句說明今日學到嘅重點。">用一句說明今日學到嘅重點。</div>
+
+    <label for="uc1Answer">Answer Area</label>
+    <textarea id="uc1Answer" data-editable="true" placeholder="Parent-side answer area for this question."></textarea>
+    <div class="hint">Set <code>data-editable="false"</code> in markup to make this answer area read-only.</div>
 
     <div class="row" style="margin-top: 12px;">
-      <button id="openBtn" class="primary">Open Worksheet Popup</button>
+      <button id="openUseCase1Btn" class="primary">Open Popup (Use Case 1)</button>
+    </div>
+  </div>
+
+  <div class="card" id="useCase2Section">
+    <div class="section-title">
+      <h2>Use Case 2: Multiple questions</h2>
+      <span class="small">All active questions in one worksheet payload</span>
+    </div>
+
+    <div class="split">
+      <div>
+        <label for="uc2q1">Question 1</label>
+        <textarea id="uc2q1" data-editable="true">用一個例子解釋今日主題。</textarea>
+        <label for="uc2a1">Answer 1</label>
+        <textarea id="uc2a1" data-editable="true" placeholder="Answer for question 1"></textarea>
+      </div>
+
+      <div>
+        <label for="uc2q2">Question 2</label>
+        <textarea id="uc2q2" data-editable="true">你仲有咩問題？</textarea>
+        <label for="uc2a2">Answer 2</label>
+        <textarea id="uc2a2" data-editable="false" placeholder="Answer for question 2 (read-only by default)"></textarea>
+      </div>
+
+      <div>
+        <label for="uc2q3">Question 3</label>
+        <textarea id="uc2q3" data-editable="false">請用 1-2 句總結重點。</textarea>
+        <label for="uc2a3">Answer 3</label>
+        <textarea id="uc2a3" data-editable="true" placeholder="Answer for question 3"></textarea>
+      </div>
+    </div>
+
+    <div class="hint">For question fields, blank entries are ignored when launching the popup.</div>
+
+    <div class="row" style="margin-top: 12px;">
+      <button id="openUseCase2Btn" class="primary">Open Popup (Use Case 2)</button>
       <button id="clearBtn">Clear Result</button>
-      <span class="small" id="securityInfo"></span>
     </div>
   </div>
 
   <div class="card">
-    <label>Returned Result</label>
-    <pre id="result">(waiting)</pre>
+    <label>Latest Result Summary</label>
+    <div id="resultSummary" class="small">(waiting)</div>
+    <details style="margin-top:10px;">
+      <summary class="small">Debug JSON (optional)</summary>
+      <pre id="result">(waiting)</pre>
+    </details>
   </div>
 
 <script>
-/**
- * =========================
- * CONFIG (EDIT THESE)
- * =========================
- * The popup render page MUST be hosted on your server (OIDC protected),
- * because rewrite API is also protected.
- */
 const CONFIG = {
-  // Example: "https://app.example.edu.hk"
   RENDER_ORIGIN: "https://YOUR_OIDC_HOST",
-
-  // Example: "/worksheet/render.html"
   RENDER_PATH: "/worksheet/render.html",
-
-  // Security: only accept postMessage from this exact origin
   TRUSTED_SENDER_ORIGIN: "https://YOUR_OIDC_HOST"
 };
 
-/**
- * =========================
- * Minimal "Launcher" core
- * =========================
- * Later you can extract this into a reusable JS file:
- *   openWorksheetPopup({title, questions}) => Promise<result>
- */
-
-let currentRid = null;
+let currentLaunchContext = null;
 let popupRef = null;
 
-// UI elements
 const elPopupStatus = document.getElementById("popupStatus");
 const elResult = document.getElementById("result");
+const elResultSummary = document.getElementById("resultSummary");
 const elSecurityInfo = document.getElementById("securityInfo");
 
 elSecurityInfo.textContent = `Trusted sender: ${CONFIG.TRUSTED_SENDER_ORIGIN}`;
 
-// Helpers
 function makeRid() {
-  // good enough for prototype; replace with crypto.randomUUID() if you want
   return "rid_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
-}
-
-function collectQuestions() {
-  const q = [];
-  for (let i = 1; i <= 5; i++) {
-    const v = document.getElementById("q" + i).value.trim();
-    if (v) q.push(v);
-  }
-  if (q.length < 1) throw new Error("Please enter at least 1 question.");
-  if (q.length > 5) throw new Error("Max 5 questions.");
-  return q;
 }
 
 function base64urlEncode(str) {
@@ -122,81 +153,176 @@ function base64urlEncode(str) {
 
 function buildPopupUrl({ worksheet, rid }) {
   const renderUrl = CONFIG.RENDER_ORIGIN + CONFIG.RENDER_PATH;
-
-  // payload in hash
   const w = base64urlEncode(JSON.stringify(worksheet));
   const returnOrigin = encodeURIComponent(window.location.origin);
-
   return `${renderUrl}#w=${w}&rid=${encodeURIComponent(rid)}&returnOrigin=${returnOrigin}`;
 }
 
-function setStatus(text, ok=null) {
+function setStatus(text, ok = null) {
   elPopupStatus.textContent = text;
   elPopupStatus.className = ok === true ? "ok" : ok === false ? "bad" : "small";
 }
 
-// Receive result from popup
+function applyEditableState() {
+  document.querySelectorAll("textarea[data-editable], input[data-editable]").forEach((field) => {
+    const editable = field.dataset.editable !== "false";
+    field.readOnly = !editable;
+  });
+}
+
+function getDisplayAnswer(answer) {
+  if (!answer || typeof answer !== "object") return "";
+  if (typeof answer.rewritten === "string" && answer.rewritten.trim()) return answer.rewritten;
+  if (typeof answer.raw === "string") return answer.raw;
+  return "";
+}
+
+function routeAnswersToUseCase(data, launchContext) {
+  const answers = Array.isArray(data.answers) ? data.answers : [];
+
+  if (launchContext.useCaseId === "use-case-1") {
+    const target = document.getElementById("uc1Answer");
+    if (!target) return;
+    target.value = getDisplayAnswer(answers[0]);
+    return;
+  }
+
+  if (launchContext.useCaseId === "use-case-2") {
+    launchContext.answerTargetIds.forEach((answerId, expectedIndex) => {
+      const target = document.getElementById(answerId);
+      if (!target) return;
+      target.value = getDisplayAnswer(answers[expectedIndex]);
+    });
+  }
+}
+
+function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }) {
+  if (!Array.isArray(questions) || questions.length < 1) {
+    throw new Error("Please provide at least 1 active question.");
+  }
+  if (questions.length > 5) {
+    throw new Error("Max 5 questions.");
+  }
+
+  const worksheet = {
+    v: 1,
+    title: title || "Worksheet",
+    q: questions,
+    rewrite: true
+  };
+
+  const rid = makeRid();
+  const launchContext = {
+    rid,
+    useCaseId,
+    questionCount: questions.length,
+    answerTargetIds: Array.isArray(answerTargetIds) ? answerTargetIds : []
+  };
+
+  const url = buildPopupUrl({ worksheet, rid });
+  popupRef = window.open(url, "worksheetPopup", "width=900,height=720");
+
+  if (!popupRef) {
+    setStatus("Popup blocked. Please allow popups.", false);
+    return;
+  }
+
+  currentLaunchContext = launchContext;
+  setStatus(
+    `Popup opened (${useCaseId}, ${questions.length} question(s)). Waiting for result…`,
+    null
+  );
+
+  const timer = setInterval(() => {
+    if (!popupRef || popupRef.closed) {
+      clearInterval(timer);
+      if (currentLaunchContext && currentLaunchContext.rid === rid) {
+        setStatus(`Popup closed (${useCaseId}, no result).`, false);
+      }
+    }
+  }, 600);
+}
+
 window.addEventListener("message", (event) => {
-  // Security: only accept from trusted sender
   if (event.origin !== CONFIG.TRUSTED_SENDER_ORIGIN) return;
 
   const data = event.data;
   if (!data || data.type !== "worksheetResult") return;
+  if (!currentLaunchContext || data.rid !== currentLaunchContext.rid) return;
 
-  // Ensure the response matches the popup request
-  if (!currentRid || data.rid !== currentRid) return;
-
+  routeAnswersToUseCase(data, currentLaunchContext);
+  elResultSummary.textContent = `Result applied to ${currentLaunchContext.useCaseId} (${currentLaunchContext.questionCount} question(s)).`;
   elResult.textContent = JSON.stringify(data, null, 2);
-  setStatus("Result received ✅", true);
+  setStatus(
+    `Result received ✅ (${currentLaunchContext.useCaseId}, ${currentLaunchContext.questionCount} question(s))`,
+    true
+  );
 
-  // Optional: auto close popup
   try { popupRef && popupRef.close(); } catch (e) {}
 });
 
-// Buttons
-document.getElementById("openBtn").addEventListener("click", () => {
+function getUseCase1LaunchData() {
+  const fixedQuestionText = document.getElementById("uc1Question").dataset.questionText.trim();
+  return {
+    questions: [fixedQuestionText],
+    answerTargetIds: ["uc1Answer"]
+  };
+}
+
+function getUseCase2LaunchData() {
+  const mapping = [
+    { questionId: "uc2q1", answerId: "uc2a1" },
+    { questionId: "uc2q2", answerId: "uc2a2" },
+    { questionId: "uc2q3", answerId: "uc2a3" }
+  ];
+
+  const activePairs = mapping.filter(({ questionId }) => {
+    const text = document.getElementById(questionId).value.trim();
+    return Boolean(text);
+  });
+
+  return {
+    questions: activePairs.map(({ questionId }) => document.getElementById(questionId).value.trim()),
+    answerTargetIds: activePairs.map(({ answerId }) => answerId)
+  };
+}
+
+document.getElementById("openUseCase1Btn").addEventListener("click", () => {
   try {
-    const worksheet = {
-      v: 1,
+    const launchData = getUseCase1LaunchData();
+    openPopupWithQuestions({
       title: document.getElementById("title").value.trim() || "Worksheet",
-      q: collectQuestions(),
-      rewrite: true
-    };
+      questions: launchData.questions,
+      useCaseId: "use-case-1",
+      answerTargetIds: launchData.answerTargetIds
+    });
+  } catch (err) {
+    alert(err.message || String(err));
+  }
+});
 
-    const rid = makeRid();
-    currentRid = rid;
-
-    const url = buildPopupUrl({ worksheet, rid });
-
-    // Open popup (must be from a user click)
-    popupRef = window.open(url, "worksheetPopup", "width=900,height=720");
-
-    if (!popupRef) {
-      setStatus("Popup blocked. Please allow popups.", false);
-      return;
-    }
-
-    setStatus("Popup opened. Waiting for result…", null);
-
-    // Optional: detect popup closed
-    const timer = setInterval(() => {
-      if (!popupRef || popupRef.closed) {
-        clearInterval(timer);
-        // If no result has arrived yet
-        if (currentRid === rid) setStatus("Popup closed (no result).", false);
-      }
-    }, 600);
-
+document.getElementById("openUseCase2Btn").addEventListener("click", () => {
+  try {
+    const launchData = getUseCase2LaunchData();
+    openPopupWithQuestions({
+      title: document.getElementById("title").value.trim() || "Worksheet",
+      questions: launchData.questions,
+      useCaseId: "use-case-2",
+      answerTargetIds: launchData.answerTargetIds
+    });
   } catch (err) {
     alert(err.message || String(err));
   }
 });
 
 document.getElementById("clearBtn").addEventListener("click", () => {
+  elResultSummary.textContent = "(waiting)";
   elResult.textContent = "(waiting)";
   setStatus("(not opened)", null);
-  currentRid = null;
+  currentLaunchContext = null;
 });
+
+applyEditableState();
 </script>
 </body>
 </html>
