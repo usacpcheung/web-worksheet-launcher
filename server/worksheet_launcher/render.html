@@ -45,6 +45,9 @@
  * NOTE:
  * - This file should be hosted behind Apache OIDC because rewrite API is protected.
  * - This prototype uses stream=false for rewrite.
+ * - Integration rule: treat widgets/rewrite-widget.js as stable.
+ *   For prototype-specific behavior, load a versioned file
+ *   (for example, widgets/rewrite-widget.v2.js) instead of editing rewrite-widget.js.
  */
 
 // === CONFIG: rewrite bridge endpoints (same-origin recommended) ===
