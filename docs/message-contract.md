@@ -63,10 +63,17 @@ On `message` events, parent must reject payloads unless **all** pass:
 1. `event.origin` exactly matches the trusted renderer origin
 2. `event.data.type === "worksheetResult"`
 3. `event.data.rid` equals the outstanding request id (`rid`) used to launch popup
+4. `event.source` is the same popup window reference returned by `window.open(...)`
 
 If any check fails, ignore message and do not apply results.
 
-## 5) Phase boundary
+## 5) One-shot / anti-replay expectation
+
+After parent accepts and applies one valid `worksheetResult` for a launch `rid`, that launch
+context must be treated as consumed. Parent should clear (or mark consumed) the outstanding
+launch context so any subsequent message for that `rid` is rejected and has no effect.
+
+## 6) Phase boundary
 
 Phase 1 only defines contracts/scaffolding.
 No new runtime behavior is introduced by this document.

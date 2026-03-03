@@ -277,16 +277,21 @@ window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || data.type !== "worksheetResult") return;
   if (!currentLaunchContext || data.rid !== currentLaunchContext.rid) return;
+  if (event.source !== popupRef) return;
 
-  routeAnswersToUseCase(data, currentLaunchContext);
-  elResultSummary.textContent = `Result applied to ${currentLaunchContext.useCaseId} (${currentLaunchContext.questionCount} question(s)).`;
+  const launchContext = currentLaunchContext;
+
+  routeAnswersToUseCase(data, launchContext);
+  elResultSummary.textContent = `Result applied to ${launchContext.useCaseId} (${launchContext.questionCount} question(s)).`;
   elResult.textContent = JSON.stringify(data, null, 2);
   setStatus(
-    `Result received ✅ (${currentLaunchContext.useCaseId}, ${currentLaunchContext.questionCount} question(s))`,
+    `Result received ✅ (${launchContext.useCaseId}, ${launchContext.questionCount} question(s))`,
     true
   );
+  currentLaunchContext = null;
 
   try { popupRef && popupRef.close(); } catch (e) {}
+  popupRef = null;
 });
 
 function getUseCase1LaunchData() {
