@@ -9,6 +9,7 @@ Phase 1 establishes contracts and file scaffolding only.
 - Parent prototype entry: `parent_prototype/parent.html`
 - Popup renderer entry: `server/worksheet_launcher/render.html`
 - Contract reference: `docs/message-contract.md`
+- External integrator guide: `docs/integrator-quickstart.md`
 - Widget styles placeholder: `server/worksheet_launcher/widgets/rewrite-widget.css`
 
 ## Compatibility Decision (Widget Versioning Rule)
