@@ -19,6 +19,9 @@ const RETURN_ORIGIN_ALLOWLIST = (process.env.RETURN_ORIGIN_ALLOWLIST || 'https:/
 const CREATE_RATE_LIMIT_MAX = Number(process.env.CREATE_RATE_LIMIT_MAX || 60);
 const CONSUME_RATE_LIMIT_MAX = Number(process.env.CONSUME_RATE_LIMIT_MAX || 120);
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60 * 1000);
+const ALERT_WINDOW_MS = Number(process.env.TELEMETRY_ALERT_WINDOW_MS || 5 * 60 * 1000);
+const ALERT_AUTH_FAILURE_THRESHOLD = Number(process.env.TELEMETRY_ALERT_AUTH_FAILURE_THRESHOLD || 10);
+const ALERT_EXPIRY_SURGE_THRESHOLD = Number(process.env.TELEMETRY_ALERT_EXPIRY_SURGE_THRESHOLD || 15);
 
 const WEB_ROOT = __dirname;
 
@@ -358,6 +361,197 @@ const launchStore = new InMemoryLaunchStore();
 const rateLimiter = new InMemoryRateLimiter();
 const integrationStore = new InMemoryIntegrationStore();
 
+class TelemetryStore {
+  constructor() {
+    this.counters = {
+      launch_create_success_total: 0,
+      launch_create_failure_total: 0,
+      launch_consume_success_total: 0,
+      launch_consume_failure_total: 0,
+      launch_expired_total: 0,
+      launch_replay_rejection_total: 0
+    };
+    this.failureByCode = {
+      create: {},
+      consume: {}
+    };
+    this.events = [];
+    this.alerts = [];
+  }
+
+  incrementCounter(name, value = 1) {
+    if (!Object.prototype.hasOwnProperty.call(this.counters, name)) {
+      this.counters[name] = 0;
+    }
+    this.counters[name] += value;
+  }
+
+  incrementFailure(action, code) {
+    const normalizedCode = code || 'unknown_error';
+    if (!this.failureByCode[action]) {
+      this.failureByCode[action] = {};
+    }
+    this.failureByCode[action][normalizedCode] = (this.failureByCode[action][normalizedCode] || 0) + 1;
+  }
+
+  recordEvent(type, details = {}) {
+    const entry = {
+      ts: new Date().toISOString(),
+      type,
+      ...details
+    };
+    this.events.push(entry);
+    if (this.events.length > 500) {
+      this.events.shift();
+    }
+    return entry;
+  }
+
+  recentEvents(type, withinMs) {
+    const cutoff = Date.now() - withinMs;
+    return this.events.filter((event) => event.type === type && Date.parse(event.ts) >= cutoff);
+  }
+
+  recordAlert(alertType, context = {}) {
+    const now = new Date().toISOString();
+    const latest = this.alerts[this.alerts.length - 1];
+    if (latest && latest.alertType === alertType && Date.parse(latest.ts) > Date.now() - ALERT_WINDOW_MS) {
+      return;
+    }
+
+    const alert = { ts: now, alertType, ...context };
+    this.alerts.push(alert);
+    if (this.alerts.length > 200) {
+      this.alerts.shift();
+    }
+    console.error('[alert] launch_broker_threshold_exceeded', alert);
+  }
+
+  evaluateThresholds() {
+    const recentConsumeUnauthorized = this.recentEvents('consume_failure', ALERT_WINDOW_MS)
+      .filter((event) => event.code === 'unauthorized').length;
+    if (recentConsumeUnauthorized >= ALERT_AUTH_FAILURE_THRESHOLD) {
+      this.recordAlert('consume_auth_failure_spike', {
+        threshold: ALERT_AUTH_FAILURE_THRESHOLD,
+        observed: recentConsumeUnauthorized,
+        windowMs: ALERT_WINDOW_MS
+      });
+    }
+
+    const recentExpired = this.recentEvents('consume_failure', ALERT_WINDOW_MS)
+      .filter((event) => event.code === 'expired').length;
+    if (recentExpired >= ALERT_EXPIRY_SURGE_THRESHOLD) {
+      this.recordAlert('consume_expiry_surge', {
+        threshold: ALERT_EXPIRY_SURGE_THRESHOLD,
+        observed: recentExpired,
+        windowMs: ALERT_WINDOW_MS
+      });
+    }
+  }
+
+  snapshot() {
+    return {
+      counters: { ...this.counters },
+      failureByCode: {
+        create: { ...this.failureByCode.create },
+        consume: { ...this.failureByCode.consume }
+      },
+      alerts: [...this.alerts]
+    };
+  }
+}
+
+const telemetryStore = new TelemetryStore();
+
+function truncateId(value, maxLen = 64) {
+  if (typeof value !== 'string') return null;
+  return value.slice(0, maxLen);
+}
+
+function logLaunchEvent(event, details = {}) {
+  const structured = {
+    event,
+    ts: new Date().toISOString(),
+    launchId: truncateId(details.launchId),
+    rid: truncateId(details.rid),
+    clientId: truncateId(details.clientId),
+    tenantId: truncateId(details.tenantId),
+    status: details.status || 'unknown',
+    code: details.code || null
+  };
+  console.info('[launch]', structured);
+}
+
+function recordCreateOutcome({ status, code, launchId, rid, identity }) {
+  if (status === 'success') {
+    telemetryStore.incrementCounter('launch_create_success_total');
+  } else {
+    telemetryStore.incrementCounter('launch_create_failure_total');
+    telemetryStore.incrementFailure('create', code);
+    telemetryStore.recordEvent('create_failure', {
+      code: code || 'unknown_error',
+      launchId,
+      rid,
+      clientId: identity?.clientId || null,
+      tenantId: identity?.tenantId || null,
+      status
+    });
+  }
+
+  logLaunchEvent('create', {
+    launchId,
+    rid,
+    clientId: identity?.clientId,
+    tenantId: identity?.tenantId,
+    status,
+    code
+  });
+
+  telemetryStore.evaluateThresholds();
+}
+
+function recordConsumeOutcome({ status, code, launchId, rid, identity }) {
+  if (status === 'success') {
+    telemetryStore.incrementCounter('launch_consume_success_total');
+    telemetryStore.recordEvent('consume_success', {
+      code: null,
+      launchId,
+      rid,
+      clientId: identity?.clientId || null,
+      tenantId: identity?.tenantId || null,
+      status
+    });
+  } else {
+    telemetryStore.incrementCounter('launch_consume_failure_total');
+    telemetryStore.incrementFailure('consume', code);
+    telemetryStore.recordEvent('consume_failure', {
+      code: code || 'unknown_error',
+      launchId,
+      rid,
+      clientId: identity?.clientId || null,
+      tenantId: identity?.tenantId || null,
+      status
+    });
+    if (code === 'expired') {
+      telemetryStore.incrementCounter('launch_expired_total');
+    }
+    if (code === 'already_consumed') {
+      telemetryStore.incrementCounter('launch_replay_rejection_total');
+    }
+  }
+
+  logLaunchEvent('consume', {
+    launchId,
+    rid,
+    clientId: identity?.clientId,
+    tenantId: identity?.tenantId,
+    status,
+    code
+  });
+
+  telemetryStore.evaluateThresholds();
+}
+
 function sendJson(res, status, body) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -696,6 +890,67 @@ async function handler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const { pathname } = url;
 
+  if (pathname === '/api/telemetry/metrics') {
+    if (req.method !== 'GET') {
+      methodNotAllowed(res, ['GET']);
+      return;
+    }
+
+    const admin = parseAdminAuthn(req);
+    if (!admin) {
+      sendError(res, 401, 'unauthorized', 'Missing or invalid admin authentication');
+      return;
+    }
+
+    sendJson(res, 200, telemetryStore.snapshot());
+    return;
+  }
+
+  if (pathname === '/api/telemetry/dashboard') {
+    if (req.method !== 'GET') {
+      methodNotAllowed(res, ['GET']);
+      return;
+    }
+
+    const admin = parseAdminAuthn(req);
+    if (!admin) {
+      sendError(res, 401, 'unauthorized', 'Missing or invalid admin authentication');
+      return;
+    }
+
+    sendJson(res, 200, {
+      panels: [
+        {
+          id: 'launch_throughput',
+          title: 'Launch Throughput',
+          metrics: ['launch_create_success_total', 'launch_consume_success_total']
+        },
+        {
+          id: 'launch_failures',
+          title: 'Launch Failures by Category',
+          metrics: ['launch_create_failure_total', 'launch_consume_failure_total'],
+          breakdown: ['failureByCode.create', 'failureByCode.consume']
+        },
+        {
+          id: 'launch_integrity',
+          title: 'Expiry / Replay Rejections',
+          metrics: ['launch_expired_total', 'launch_replay_rejection_total']
+        },
+        {
+          id: 'launch_alerts',
+          title: 'Alert Thresholds',
+          thresholds: {
+            authFailureSpike: ALERT_AUTH_FAILURE_THRESHOLD,
+            expirySurge: ALERT_EXPIRY_SURGE_THRESHOLD,
+            windowMs: ALERT_WINDOW_MS
+          }
+        }
+      ],
+      snapshot: telemetryStore.snapshot()
+    });
+    return;
+  }
+
   if (pathname === '/api/integrations/register') {
     if (req.method !== 'POST') {
       methodNotAllowed(res, ['POST']);
@@ -882,11 +1137,13 @@ async function handler(req, res) {
     const identity = parseAuthn(req);
     if (!identity) {
       logSecurityEvent('invalid_auth_create', { clientIp: getClientIp(req) });
+      recordCreateOutcome({ status: 'failure', code: 'unauthorized' });
       sendError(res, 401, 'unauthorized', 'Missing or invalid authentication');
       return;
     }
 
     if (!enforceRateLimit(req, res, identity, 'create')) {
+      recordCreateOutcome({ status: 'failure', code: 'rate_limited', identity });
       return;
     }
 
@@ -894,6 +1151,7 @@ async function handler(req, res) {
     try {
       body = await readJsonBody(req);
     } catch (err) {
+      recordCreateOutcome({ status: 'failure', code: 'invalid_payload', identity });
       sendError(res, 400, 'invalid_payload', err.message);
       return;
     }
@@ -909,6 +1167,12 @@ async function handler(req, res) {
           returnOrigin: body?.returnOrigin
         });
       }
+      recordCreateOutcome({
+        status: 'failure',
+        code: validated.code || 'invalid_payload',
+        rid: body?.rid,
+        identity
+      });
       sendError(res, 400, validated.code || 'invalid_payload', validated.error);
       return;
     }
@@ -916,6 +1180,12 @@ async function handler(req, res) {
     const rendererSession = parseRendererSession(req);
     if (!rendererSession) {
       logSecurityEvent('invalid_renderer_session_create', { clientId: identity.clientId, tenantId: identity.tenantId });
+      recordCreateOutcome({
+        status: 'failure',
+        code: 'unauthorized',
+        rid: validated.value.rid,
+        identity
+      });
       sendError(res, 401, 'unauthorized', 'Missing or invalid renderer session');
       return;
     }
@@ -926,6 +1196,13 @@ async function handler(req, res) {
       clientId: identity.clientId,
       createdBy: identity.createdBy,
       rendererSessionId: rendererSession.rendererSessionId
+    });
+    recordCreateOutcome({
+      status: 'success',
+      code: null,
+      launchId: created.launchId,
+      rid: validated.value.rid,
+      identity
     });
     sendJson(res, 201, created);
     return;
@@ -940,6 +1217,7 @@ async function handler(req, res) {
     const identity = parseAuthn(req);
     if (!identity) {
       logSecurityEvent('invalid_auth_consume', { clientIp: getClientIp(req) });
+      recordConsumeOutcome({ status: 'failure', code: 'unauthorized' });
       sendError(res, 401, 'unauthorized', 'Missing or invalid authentication');
       return;
     }
@@ -947,11 +1225,13 @@ async function handler(req, res) {
     const rendererSession = parseRendererSession(req);
     if (!rendererSession) {
       logSecurityEvent('invalid_renderer_session_consume', { clientId: identity.clientId, tenantId: identity.tenantId });
+      recordConsumeOutcome({ status: 'failure', code: 'unauthorized', identity });
       sendError(res, 401, 'unauthorized', 'Missing or invalid renderer session');
       return;
     }
 
     if (!enforceRateLimit(req, res, identity, 'consume')) {
+      recordConsumeOutcome({ status: 'failure', code: 'rate_limited', identity });
       return;
     }
 
@@ -959,12 +1239,14 @@ async function handler(req, res) {
     try {
       body = await readJsonBody(req);
     } catch (err) {
+      recordConsumeOutcome({ status: 'failure', code: 'invalid_payload', identity });
       sendError(res, 400, 'invalid_payload', err.message);
       return;
     }
 
     const launchId = body.launchId;
     if (!validateLaunchId(launchId)) {
+      recordConsumeOutcome({ status: 'failure', code: 'invalid_payload', launchId, identity });
       sendError(res, 400, 'invalid_payload', 'launchId format is invalid');
       return;
     }
@@ -977,6 +1259,13 @@ async function handler(req, res) {
         clientId: identity.clientId,
         tenantId: identity.tenantId,
         userId: identity.createdBy
+      });
+      recordConsumeOutcome({
+        status: 'failure',
+        code: access.error.code,
+        launchId,
+        rid: record?.rid,
+        identity
       });
       sendError(res, access.error.status, access.error.code, access.error.message);
       return;
@@ -992,10 +1281,24 @@ async function handler(req, res) {
           consumedAt: consumed.error.details?.consumedAt
         });
       }
+      recordConsumeOutcome({
+        status: 'failure',
+        code: consumed.error.code,
+        launchId,
+        rid: record?.rid,
+        identity
+      });
       sendError(res, consumed.error.status, consumed.error.code, consumed.error.message, consumed.error.details);
       return;
     }
 
+    recordConsumeOutcome({
+      status: 'success',
+      code: null,
+      launchId,
+      rid: consumed.record.rid,
+      identity
+    });
     sendJson(res, 200, launchPayload(consumed.record));
     return;
   }
@@ -1010,6 +1313,7 @@ async function handler(req, res) {
     const identity = parseAuthn(req);
     if (!identity) {
       logSecurityEvent('invalid_auth_consume_get', { clientIp: getClientIp(req) });
+      recordConsumeOutcome({ status: 'failure', code: 'unauthorized', launchId: launchIdFromPath });
       sendError(res, 401, 'unauthorized', 'Missing or invalid authentication');
       return;
     }
@@ -1017,15 +1321,18 @@ async function handler(req, res) {
     const rendererSession = parseRendererSession(req);
     if (!rendererSession) {
       logSecurityEvent('invalid_renderer_session_consume_get', { clientId: identity.clientId, tenantId: identity.tenantId });
+      recordConsumeOutcome({ status: 'failure', code: 'unauthorized', launchId: launchIdFromPath, identity });
       sendError(res, 401, 'unauthorized', 'Missing or invalid renderer session');
       return;
     }
 
     if (!enforceRateLimit(req, res, identity, 'consume')) {
+      recordConsumeOutcome({ status: 'failure', code: 'rate_limited', launchId: launchIdFromPath, identity });
       return;
     }
 
     if (!validateLaunchId(launchIdFromPath)) {
+      recordConsumeOutcome({ status: 'failure', code: 'invalid_payload', launchId: launchIdFromPath, identity });
       sendError(res, 400, 'invalid_payload', 'launchId format is invalid');
       return;
     }
@@ -1038,6 +1345,13 @@ async function handler(req, res) {
         clientId: identity.clientId,
         tenantId: identity.tenantId,
         userId: identity.createdBy
+      });
+      recordConsumeOutcome({
+        status: 'failure',
+        code: access.error.code,
+        launchId: launchIdFromPath,
+        rid: record?.rid,
+        identity
       });
       sendError(res, access.error.status, access.error.code, access.error.message);
       return;
@@ -1053,13 +1367,28 @@ async function handler(req, res) {
           consumedAt: consumed.error.details?.consumedAt
         });
       }
+      recordConsumeOutcome({
+        status: 'failure',
+        code: consumed.error.code,
+        launchId: launchIdFromPath,
+        rid: record?.rid,
+        identity
+      });
       sendError(res, consumed.error.status, consumed.error.code, consumed.error.message, consumed.error.details);
       return;
     }
 
+    recordConsumeOutcome({
+      status: 'success',
+      code: null,
+      launchId: launchIdFromPath,
+      rid: consumed.record.rid,
+      identity
+    });
     sendJson(res, 200, launchPayload(consumed.record));
     return;
   }
+
 
   if (req.method !== 'GET') {
     methodNotAllowed(res, ['GET']);

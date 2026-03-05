@@ -40,6 +40,9 @@ LAUNCH_API_TOKEN=dev-launch-token node server/worksheet_launcher/server.js
 - `RATE_LIMIT_WINDOW_MS` controls rate-limit window (default 60 seconds)
 - `CREATE_RATE_LIMIT_MAX` max create requests per window per client/IP (default 60)
 - `CONSUME_RATE_LIMIT_MAX` max consume requests per window per client/IP (default 120)
+- `TELEMETRY_ALERT_WINDOW_MS` rolling window used to detect telemetry spikes (default 5 minutes)
+- `TELEMETRY_ALERT_AUTH_FAILURE_THRESHOLD` alert threshold for consume unauthorized spikes (default 10/window)
+- `TELEMETRY_ALERT_EXPIRY_SURGE_THRESHOLD` alert threshold for consume expiry surges (default 15/window)
 
 
 Integration onboarding endpoints (admin-authenticated with `Authorization: Bearer <LAUNCH_API_TOKEN>`):
@@ -60,3 +63,20 @@ Authn/authz model (prototype):
 - `x-user-id: <user>` (or legacy `x-owner-id`) is required
 - `x-renderer-session-id: <session>` is required for create/consume and is bound to launch ownership
 - Launch records are authorized by matching `tenantId + clientId + createdBy`
+
+
+Telemetry and observability endpoints (admin-authenticated with `Authorization: Bearer <LAUNCH_API_TOKEN>`):
+
+- `GET /api/telemetry/metrics`
+  - counters for create/consume success + failure, expired launches, replay rejections
+  - error category breakdowns for create and consume failures
+  - recent threshold alerts
+- `GET /api/telemetry/dashboard`
+  - panel metadata for launch throughput, error categories, replay/expiry integrity, and alert threshold config
+  - includes current telemetry snapshot to power dashboards quickly
+
+Structured launch broker logs include correlation fields on create/consume outcomes:
+
+- `launchId`, `rid`, `clientId`, `tenantId`, `status`, `code`
+- emitted as `[launch]` log records for both success and failure paths
+- abnormal spikes are emitted as `[alert] launch_broker_threshold_exceeded`
