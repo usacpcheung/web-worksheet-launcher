@@ -155,19 +155,42 @@ function makeRid() {
   return "rid_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
 }
 
-function base64urlEncode(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  const b64 = btoa(bin);
-  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+async function createLaunch({ worksheet, rid }) {
+  const response = await fetch("/api/worksheet-launch/create", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json"
+    },
+    body: JSON.stringify({
+      rid,
+      worksheet,
+      returnOrigin: window.location.origin
+    })
+  });
+
+  let body = null;
+  try {
+    body = await response.json();
+  } catch (e) {
+    body = null;
+  }
+
+  if (!response.ok) {
+    throw new Error(body?.error?.message || body?.message || "Failed to create launch.");
+  }
+
+  const launchId = body?.launchId || body?.launch?.launchId || body?.data?.launchId;
+  if (!launchId) {
+    throw new Error("Launch create response missing launchId.");
+  }
+
+  return launchId;
 }
 
-function buildPopupUrl({ worksheet, rid }) {
+function buildPopupUrl({ launchId }) {
   const renderUrl = CONFIG.RENDER_ORIGIN + CONFIG.RENDER_PATH;
-  const w = base64urlEncode(JSON.stringify(worksheet));
-  const returnOrigin = encodeURIComponent(window.location.origin);
-  return `${renderUrl}#w=${w}&rid=${encodeURIComponent(rid)}&returnOrigin=${returnOrigin}`;
+  return `${renderUrl}?launchId=${encodeURIComponent(launchId)}`;
 }
 
 function setStatus(text, ok = null) {
@@ -224,7 +247,7 @@ function routeAnswersToUseCase(data, launchContext) {
   }
 }
 
-function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }) {
+async function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }) {
   if (!Array.isArray(questions) || questions.length < 1) {
     throw new Error("Please provide at least 1 active question.");
   }
@@ -247,13 +270,25 @@ function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }
     answerTargetIds: Array.isArray(answerTargetIds) ? answerTargetIds : []
   };
 
-  const url = buildPopupUrl({ worksheet, rid });
-  popupRef = window.open(url, "worksheetPopup", "width=900,height=720");
+  popupRef = window.open("about:blank", "worksheetPopup", "width=900,height=720");
 
   if (!popupRef) {
     setStatus("Popup blocked. Please allow popups.", false);
     return;
   }
+
+  let launchId;
+  try {
+    launchId = await createLaunch({ worksheet, rid });
+  } catch (err) {
+    setStatus(`Launch creation failed: ${err.message || String(err)}`, false);
+    try { popupRef.close(); } catch (e) {}
+    popupRef = null;
+    return;
+  }
+
+  const url = buildPopupUrl({ launchId });
+  popupRef.location.href = url;
 
   currentLaunchContext = launchContext;
   setStatus(
@@ -320,10 +355,10 @@ function getUseCase2LaunchData() {
   };
 }
 
-document.getElementById("openUseCase1Btn").addEventListener("click", () => {
+document.getElementById("openUseCase1Btn").addEventListener("click", async () => {
   try {
     const launchData = getUseCase1LaunchData();
-    openPopupWithQuestions({
+    await openPopupWithQuestions({
       title: document.getElementById("title").value.trim() || "Worksheet",
       questions: launchData.questions,
       useCaseId: "use-case-1",
@@ -334,10 +369,10 @@ document.getElementById("openUseCase1Btn").addEventListener("click", () => {
   }
 });
 
-document.getElementById("openUseCase2Btn").addEventListener("click", () => {
+document.getElementById("openUseCase2Btn").addEventListener("click", async () => {
   try {
     const launchData = getUseCase2LaunchData();
-    openPopupWithQuestions({
+    await openPopupWithQuestions({
       title: document.getElementById("title").value.trim() || "Worksheet",
       questions: launchData.questions,
       useCaseId: "use-case-2",

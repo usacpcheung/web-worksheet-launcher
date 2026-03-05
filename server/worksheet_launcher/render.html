@@ -39,22 +39,6 @@
 
 <script src="widgets/rewrite-widget.js"></script>
 <script>
-function parseHashParams() {
-  const raw = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
-  const sp = new URLSearchParams(raw);
-  return {
-    w: sp.get("w"),
-    rid: sp.get("rid"),
-    returnOrigin: sp.get("returnOrigin")
-  };
-}
-
-function base64urlDecodeToString(b64url) {
-  const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64url.length + 3) % 4);
-  const bin = atob(b64);
-  const bytes = new Uint8Array([...bin].map(ch => ch.charCodeAt(0)));
-  return new TextDecoder().decode(bytes);
-}
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
@@ -62,62 +46,26 @@ function escapeHtml(s) {
   }[c]));
 }
 
-const { w, rid, returnOrigin } = parseHashParams();
+const launchId = new URLSearchParams(location.search).get("launchId");
 const elTitle = document.getElementById("title");
 const elMeta = document.getElementById("meta");
 const elQuestions = document.getElementById("questions");
 const elStatus = document.getElementById("status");
 const elFlowHint = document.getElementById("flowHint");
 const elSendBackBtn = document.getElementById("sendBackBtn");
+elSendBackBtn.disabled = true;
 
-let normalizedReturnOrigin = "";
-try {
-  const parsedReturnOrigin = new URL(returnOrigin);
-  if (parsedReturnOrigin.protocol === "http:" || parsedReturnOrigin.protocol === "https:") {
-    normalizedReturnOrigin = parsedReturnOrigin.origin;
-  }
-} catch (e) {
-  normalizedReturnOrigin = "";
-}
-
-if (!w || !rid || !returnOrigin) {
-  elMeta.textContent = "Missing hash params. Expected #w=...&rid=...&returnOrigin=...";
-  elMeta.className = "small bad";
-  throw new Error("Missing hash params");
-}
-
-if (!normalizedReturnOrigin) {
-  elStatus.textContent = "Invalid returnOrigin. Use an absolute http(s) origin in the launch hash.";
-  elStatus.className = "small bad";
-  elSendBackBtn.disabled = true;
-}
-
-let worksheet;
-try {
-  worksheet = JSON.parse(base64urlDecodeToString(w));
-} catch (e) {
-  elMeta.textContent = "Invalid worksheet payload.";
-  elMeta.className = "small bad";
-  throw e;
-}
-
-if (!worksheet || worksheet.v !== 1 || !Array.isArray(worksheet.q) || worksheet.q.length < 1) {
-  elMeta.textContent = "Invalid worksheet schema (v=1, q length 1..N).";
-  elMeta.className = "small bad";
-  throw new Error("Invalid schema");
-}
-
-elTitle.textContent = worksheet.title || "Worksheet";
-elMeta.textContent = `rid=${rid} • questions=${worksheet.q.length}`;
-elMeta.className = "small";
-elFlowHint.textContent = worksheet.q.length === 1
-  ? "Answer the question, optionally click Rewrite, then click Send Back to Parent."
-  : "Answer each question in order, optionally click Rewrite per question, then click Send Back to Parent.";
+const runtimeState = {
+  rid: "",
+  worksheet: null,
+  returnOrigin: "",
+  normalizedReturnOrigin: ""
+};
 
 const widgetControllers = [];
 
 async function renderQuestions() {
-  for (const [idx, qText] of worksheet.q.entries()) {
+  for (const [idx, qText] of runtimeState.worksheet.q.entries()) {
     const card = document.createElement("div");
     card.className = "card";
 
@@ -161,22 +109,145 @@ function buildAnswersPayload() {
   });
 }
 
-renderQuestions().catch((err) => {
-  elStatus.textContent = String(err?.message || err);
-  elStatus.className = "small bad";
-});
+function getLaunchErrorMessage(err) {
+  const status = err?.status;
+  const code = String(err?.code || "").toLowerCase();
+
+  if (code === "missing_launch" || status === 400) {
+    return "Missing launch. Open this popup from the parent app and try again.";
+  }
+  if (code === "expired_launch" || status === 410) {
+    return "This launch link has expired. Reopen the worksheet from the parent app.";
+  }
+  if (code === "launch_already_consumed" || code === "consumed_launch" || status === 409) {
+    return "This launch has already been used. Start a new worksheet launch from the parent app.";
+  }
+  if (code === "unauthorized_launch" || code === "unauthorized" || status === 401 || status === 403) {
+    return "You are not authorized to open this worksheet launch.";
+  }
+  if (status === 404) {
+    return "Launch not found. It may be invalid or already expired.";
+  }
+  return "Unable to start this worksheet launch. Please try again from the parent app.";
+}
+
+function getConsumePayload(body) {
+  if (!body || typeof body !== "object") return null;
+  if (body.launch && typeof body.launch === "object") return body.launch;
+  if (body.data && typeof body.data === "object") return body.data;
+  return body;
+}
+
+function validateAndApplyRuntimeState(payload) {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid launch response payload.");
+  }
+
+  const { rid, worksheet, returnOrigin } = payload;
+  let normalizedReturnOrigin = "";
+  try {
+    const parsedReturnOrigin = new URL(returnOrigin);
+    if (parsedReturnOrigin.protocol === "http:" || parsedReturnOrigin.protocol === "https:") {
+      normalizedReturnOrigin = parsedReturnOrigin.origin;
+    }
+  } catch (e) {
+    normalizedReturnOrigin = "";
+  }
+
+  if (!rid || !returnOrigin || !worksheet || worksheet.v !== 1 || !Array.isArray(worksheet.q) || worksheet.q.length < 1) {
+    throw new Error("Launch payload is missing required worksheet data.");
+  }
+
+  runtimeState.rid = rid;
+  runtimeState.worksheet = worksheet;
+  runtimeState.returnOrigin = returnOrigin;
+  runtimeState.normalizedReturnOrigin = normalizedReturnOrigin;
+
+  elTitle.textContent = worksheet.title || "Worksheet";
+  elMeta.textContent = `rid=${rid} • questions=${worksheet.q.length}`;
+  elMeta.className = "small";
+  elFlowHint.textContent = worksheet.q.length === 1
+    ? "Answer the question, optionally click Rewrite, then click Send Back to Parent."
+    : "Answer each question in order, optionally click Rewrite per question, then click Send Back to Parent.";
+
+  if (!normalizedReturnOrigin) {
+    elStatus.textContent = "Invalid returnOrigin in launch payload. Cannot send result back to parent.";
+    elStatus.className = "small bad";
+    elSendBackBtn.disabled = true;
+  }
+}
+
+async function consumeLaunch() {
+  if (!launchId) {
+    throw { code: "missing_launch", status: 400 };
+  }
+
+  const response = await fetch(`/api/worksheet-launch/consume?launchId=${encodeURIComponent(launchId)}`, {
+    method: "POST",
+    headers: { "Accept": "application/json" }
+  });
+
+  let body = null;
+  try {
+    body = await response.json();
+  } catch (e) {
+    body = null;
+  }
+
+  if (!response.ok) {
+    throw {
+      status: response.status,
+      code: body?.error?.code || body?.code,
+      message: body?.error?.message || body?.message
+    };
+  }
+
+  return getConsumePayload(body);
+}
+
+async function initializeRenderer() {
+  try {
+    const payload = await consumeLaunch();
+    validateAndApplyRuntimeState(payload);
+    await renderQuestions();
+    if (runtimeState.normalizedReturnOrigin) {
+      elSendBackBtn.disabled = false;
+    }
+  } catch (err) {
+    const message = err?.message && typeof err.message === "string"
+      ? err.message
+      : getLaunchErrorMessage(err);
+    elMeta.textContent = message;
+    elMeta.className = "small bad";
+    elStatus.textContent = "Worksheet could not be loaded.";
+    elStatus.className = "small bad";
+    elSendBackBtn.disabled = true;
+  }
+}
+
+initializeRenderer();
 
 // Send back to parent
 elSendBackBtn.addEventListener("click", () => {
+  if (!runtimeState.worksheet) {
+    elStatus.textContent = "Worksheet is not ready yet.";
+    elStatus.className = "small bad";
+    return;
+  }
+
   const payload = {
     type: "worksheetResult",
-    rid,
-    worksheet: { v: worksheet.v, title: worksheet.title, q: worksheet.q },
+    rid: runtimeState.rid,
+    worksheet: {
+      v: runtimeState.worksheet.v,
+      title: runtimeState.worksheet.title,
+      q: runtimeState.worksheet.q
+    },
     answers: buildAnswersPayload(),
     meta: { sentAt: new Date().toISOString() }
   };
 
-  if (!normalizedReturnOrigin) {
+  if (!runtimeState.normalizedReturnOrigin) {
     elStatus.textContent = "Cannot send result: returnOrigin is missing or invalid.";
     elStatus.className = "small bad";
     return;
@@ -188,7 +259,7 @@ elSendBackBtn.addEventListener("click", () => {
     return;
   }
 
-  window.opener.postMessage(payload, normalizedReturnOrigin);
+  window.opener.postMessage(payload, runtimeState.normalizedReturnOrigin);
   elStatus.textContent = "Sent back to parent ✅";
   elStatus.className = "small ok";
 });
