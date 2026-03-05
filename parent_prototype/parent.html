@@ -122,12 +122,12 @@ function base64urlEncode(str) {
 
 function buildPopupUrl({ worksheet, rid }) {
   const renderUrl = CONFIG.RENDER_ORIGIN + CONFIG.RENDER_PATH;
-  const w = base64urlEncode(JSON.stringify(worksheet));
-  const url = new URL(renderUrl);
-  url.searchParams.set("w", w);
-  url.searchParams.set("rid", rid);
-  url.searchParams.set("returnOrigin", window.location.origin);
-  return url.toString();
+  const query = new URLSearchParams({
+    w: base64urlEncode(JSON.stringify(worksheet)),
+    rid,
+    returnOrigin: window.location.origin
+  });
+  return `${renderUrl}?${query.toString()}`;
 }
 
 function setStatus(text, ok = null) {
