@@ -39,9 +39,8 @@
 
 <script src="widgets/rewrite-widget.js"></script>
 <script>
-function parseHashParams() {
-  const raw = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
-  const sp = new URLSearchParams(raw);
+function parseQueryParams() {
+  const sp = new URLSearchParams(window.location.search);
   return {
     w: sp.get("w"),
     rid: sp.get("rid"),
@@ -62,7 +61,7 @@ function escapeHtml(s) {
   }[c]));
 }
 
-const { w, rid, returnOrigin } = parseHashParams();
+const { w, rid, returnOrigin } = parseQueryParams();
 const elTitle = document.getElementById("title");
 const elMeta = document.getElementById("meta");
 const elQuestions = document.getElementById("questions");
@@ -80,39 +79,46 @@ try {
   normalizedReturnOrigin = "";
 }
 
+let worksheet = null;
+let launchError = "";
+
 if (!w || !rid || !returnOrigin) {
-  elMeta.textContent = "Missing hash params. Expected #w=...&rid=...&returnOrigin=...";
-  elMeta.className = "small bad";
-  throw new Error("Missing hash params");
+  launchError = "Missing query params. Expected ?w=...&rid=...&returnOrigin=...";
 }
 
-if (!normalizedReturnOrigin) {
-  elStatus.textContent = "Invalid returnOrigin. Use an absolute http(s) origin in the launch hash.";
+if (!launchError && !normalizedReturnOrigin) {
+  launchError = "Invalid returnOrigin. Use an absolute http(s) origin in the launch query.";
+}
+
+if (!launchError) {
+  try {
+    worksheet = JSON.parse(base64urlDecodeToString(w));
+  } catch (e) {
+    launchError = "Invalid worksheet payload (w).";
+  }
+}
+
+if (!launchError && (!worksheet || worksheet.v !== 1 || !Array.isArray(worksheet.q) || worksheet.q.length < 1)) {
+  launchError = "Invalid worksheet schema (v=1, q length 1..N).";
+}
+
+if (launchError) {
+  elMeta.textContent = launchError;
+  elMeta.className = "small bad";
+  elStatus.textContent = `Launch blocked: ${launchError}`;
   elStatus.className = "small bad";
+  elFlowHint.textContent = "Fix launch query parameters and reopen this popup.";
   elSendBackBtn.disabled = true;
 }
 
-let worksheet;
-try {
-  worksheet = JSON.parse(base64urlDecodeToString(w));
-} catch (e) {
-  elMeta.textContent = "Invalid worksheet payload.";
-  elMeta.className = "small bad";
-  throw e;
+if (!launchError) {
+  elTitle.textContent = worksheet.title || "Worksheet";
+  elMeta.textContent = `rid=${rid} • questions=${worksheet.q.length}`;
+  elMeta.className = "small";
+  elFlowHint.textContent = worksheet.q.length === 1
+    ? "Answer the question, optionally click Rewrite, then click Send Back to Parent."
+    : "Answer each question in order, optionally click Rewrite per question, then click Send Back to Parent.";
 }
-
-if (!worksheet || worksheet.v !== 1 || !Array.isArray(worksheet.q) || worksheet.q.length < 1) {
-  elMeta.textContent = "Invalid worksheet schema (v=1, q length 1..N).";
-  elMeta.className = "small bad";
-  throw new Error("Invalid schema");
-}
-
-elTitle.textContent = worksheet.title || "Worksheet";
-elMeta.textContent = `rid=${rid} • questions=${worksheet.q.length}`;
-elMeta.className = "small";
-elFlowHint.textContent = worksheet.q.length === 1
-  ? "Answer the question, optionally click Rewrite, then click Send Back to Parent."
-  : "Answer each question in order, optionally click Rewrite per question, then click Send Back to Parent.";
 
 const widgetControllers = [];
 
@@ -161,13 +167,22 @@ function buildAnswersPayload() {
   });
 }
 
-renderQuestions().catch((err) => {
-  elStatus.textContent = String(err?.message || err);
-  elStatus.className = "small bad";
-});
+if (!launchError) {
+  renderQuestions().catch((err) => {
+    elStatus.textContent = String(err?.message || err);
+    elStatus.className = "small bad";
+    elSendBackBtn.disabled = true;
+  });
+}
 
 // Send back to parent
 elSendBackBtn.addEventListener("click", () => {
+  if (launchError || !worksheet) {
+    elStatus.textContent = "Cannot send result: launch query is invalid.";
+    elStatus.className = "small bad";
+    return;
+  }
+
   const payload = {
     type: "worksheetResult",
     rid,
