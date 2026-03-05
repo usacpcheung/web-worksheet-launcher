@@ -126,7 +126,13 @@
 const CONFIG = {
   RENDER_ORIGIN: "https://YOUR_OIDC_HOST",
   RENDER_PATH: "/worksheet/render.html",
-  TRUSTED_SENDER_ORIGIN: "https://YOUR_OIDC_HOST"
+  TRUSTED_SENDER_ORIGIN: "https://YOUR_OIDC_HOST",
+  LAUNCH_API_ORIGIN: "https://YOUR_OIDC_HOST",
+  LAUNCH_API_PATH: "/api/launches",
+  AUTH_TOKEN: "dev-launch-token",
+  TENANT_ID: "demo-tenant",
+  CLIENT_ID: "demo-client",
+  USER_ID: "demo-user"
 };
 
 // Configure parent-side answer area editability by field id.
@@ -141,8 +147,8 @@ const ANSWER_AREA_CONFIG = {
   }
 };
 
-let currentLaunchContext = null;
-let popupRef = null;
+const currentLaunchContext = new Map();
+const popupRefsByRid = new Map();
 
 const elPopupStatus = document.getElementById("popupStatus");
 const elResult = document.getElementById("result");
@@ -155,19 +161,58 @@ function makeRid() {
   return "rid_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
 }
 
-function base64urlEncode(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  const b64 = btoa(bin);
-  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+function getRendererSessionId() {
+  const storageKey = "worksheet_renderer_session_id";
+  const cached = window.sessionStorage.getItem(storageKey);
+  if (cached) return cached;
+
+  const sessionId = `sess_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+  window.sessionStorage.setItem(storageKey, sessionId);
+  return sessionId;
 }
 
-function buildPopupUrl({ worksheet, rid }) {
-  const renderUrl = CONFIG.RENDER_ORIGIN + CONFIG.RENDER_PATH;
-  const w = base64urlEncode(JSON.stringify(worksheet));
-  const returnOrigin = encodeURIComponent(window.location.origin);
-  return `${renderUrl}#w=${w}&rid=${encodeURIComponent(rid)}&returnOrigin=${returnOrigin}`;
+async function createLaunch({ rid, worksheet }) {
+  const response = await fetch(`${CONFIG.LAUNCH_API_ORIGIN}${CONFIG.LAUNCH_API_PATH}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${CONFIG.AUTH_TOKEN}`,
+      "x-tenant-id": CONFIG.TENANT_ID,
+      "x-client-id": CONFIG.CLIENT_ID,
+      "x-user-id": CONFIG.USER_ID,
+      "x-renderer-session-id": getRendererSessionId()
+    },
+    body: JSON.stringify({
+      rid,
+      worksheet,
+      returnOrigin: window.location.origin
+    })
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (err) {}
+
+  if (!response.ok) {
+    const errorCode = payload && payload.error ? payload.error.code : "unknown_error";
+    const errorMessage = payload && payload.error ? payload.error.message : `HTTP ${response.status}`;
+    const error = new Error(`${errorCode}: ${errorMessage}`);
+    error.code = errorCode;
+    error.status = response.status;
+    throw error;
+  }
+
+  if (!payload || typeof payload.launchId !== "string" || !payload.launchId.trim()) {
+    throw new Error("invalid_launch_response: Missing launchId");
+  }
+
+  return payload;
+}
+
+function buildPopupUrl({ launchId }) {
+  const renderUrl = `${CONFIG.RENDER_ORIGIN}${CONFIG.RENDER_PATH}`;
+  return `${renderUrl}?launchId=${encodeURIComponent(launchId)}`;
 }
 
 function setStatus(text, ok = null) {
@@ -224,7 +269,7 @@ function routeAnswersToUseCase(data, launchContext) {
   }
 }
 
-function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }) {
+async function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }) {
   if (!Array.isArray(questions) || questions.length < 1) {
     throw new Error("Please provide at least 1 active question.");
   }
@@ -247,15 +292,43 @@ function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }
     answerTargetIds: Array.isArray(answerTargetIds) ? answerTargetIds : []
   };
 
-  const url = buildPopupUrl({ worksheet, rid });
-  popupRef = window.open(url, "worksheetPopup", "width=900,height=720");
+  setStatus(`Creating launch (${useCaseId})…`, null);
+
+  let launch;
+  try {
+    launch = await createLaunch({ rid, worksheet });
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    const isAuthError = err && (err.status === 401 || err.code === "unauthorized");
+    const isValidationError = err && (err.status === 400 || err.code === "invalid_payload" || err.code === "origin_not_allowed");
+
+    if (isAuthError) {
+      setStatus("Create launch failed: authentication/authorization error.", false);
+      alert(`Unable to create launch due to authentication/authorization error.\n${message}`);
+      return;
+    }
+
+    if (isValidationError) {
+      setStatus("Create launch failed: invalid launch request.", false);
+      alert(`Unable to create launch due to validation error.\n${message}`);
+      return;
+    }
+
+    setStatus("Create launch failed: network/server error.", false);
+    alert(`Unable to create launch due to network/server error.\n${message}`);
+    return;
+  }
+
+  const url = buildPopupUrl({ launchId: launch.launchId });
+  const popupRef = window.open(url, `worksheetPopup_${rid}`, "width=900,height=720");
 
   if (!popupRef) {
     setStatus("Popup blocked. Please allow popups.", false);
     return;
   }
 
-  currentLaunchContext = launchContext;
+  currentLaunchContext.set(rid, launchContext);
+  popupRefsByRid.set(rid, popupRef);
   setStatus(
     `Popup opened (${useCaseId}, ${questions.length} question(s)). Waiting for result…`,
     null
@@ -264,8 +337,10 @@ function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }
   const timer = setInterval(() => {
     if (!popupRef || popupRef.closed) {
       clearInterval(timer);
-      if (currentLaunchContext && currentLaunchContext.rid === rid) {
+      if (currentLaunchContext.has(rid)) {
         setStatus(`Popup closed (${useCaseId}, no result).`, false);
+        currentLaunchContext.delete(rid);
+        popupRefsByRid.delete(rid);
       }
     }
   }, 600);
@@ -276,10 +351,12 @@ window.addEventListener("message", (event) => {
 
   const data = event.data;
   if (!data || data.type !== "worksheetResult") return;
-  if (!currentLaunchContext || data.rid !== currentLaunchContext.rid) return;
-  if (event.source !== popupRef) return;
+  if (typeof data.rid !== "string" || !currentLaunchContext.has(data.rid)) return;
 
-  const launchContext = currentLaunchContext;
+  const popupRef = popupRefsByRid.get(data.rid);
+  if (!popupRef || event.source !== popupRef) return;
+
+  const launchContext = currentLaunchContext.get(data.rid);
 
   routeAnswersToUseCase(data, launchContext);
   elResultSummary.textContent = `Result applied to ${launchContext.useCaseId} (${launchContext.questionCount} question(s)).`;
@@ -288,10 +365,10 @@ window.addEventListener("message", (event) => {
     `Result received ✅ (${launchContext.useCaseId}, ${launchContext.questionCount} question(s))`,
     true
   );
-  currentLaunchContext = null;
+  currentLaunchContext.delete(data.rid);
+  popupRefsByRid.delete(data.rid);
 
   try { popupRef && popupRef.close(); } catch (e) {}
-  popupRef = null;
 });
 
 function getUseCase1LaunchData() {
@@ -321,38 +398,43 @@ function getUseCase2LaunchData() {
 }
 
 document.getElementById("openUseCase1Btn").addEventListener("click", () => {
-  try {
+  (async () => {
+    try {
     const launchData = getUseCase1LaunchData();
-    openPopupWithQuestions({
+    await openPopupWithQuestions({
       title: document.getElementById("title").value.trim() || "Worksheet",
       questions: launchData.questions,
       useCaseId: "use-case-1",
       answerTargetIds: launchData.answerTargetIds
     });
-  } catch (err) {
-    alert(err.message || String(err));
-  }
+    } catch (err) {
+      alert(err.message || String(err));
+    }
+  })();
 });
 
 document.getElementById("openUseCase2Btn").addEventListener("click", () => {
-  try {
+  (async () => {
+    try {
     const launchData = getUseCase2LaunchData();
-    openPopupWithQuestions({
+    await openPopupWithQuestions({
       title: document.getElementById("title").value.trim() || "Worksheet",
       questions: launchData.questions,
       useCaseId: "use-case-2",
       answerTargetIds: launchData.answerTargetIds
     });
-  } catch (err) {
-    alert(err.message || String(err));
-  }
+    } catch (err) {
+      alert(err.message || String(err));
+    }
+  })();
 });
 
 document.getElementById("clearBtn").addEventListener("click", () => {
   elResultSummary.textContent = "(waiting)";
   elResult.textContent = "(waiting)";
   setStatus("(not opened)", null);
-  currentLaunchContext = null;
+  currentLaunchContext.clear();
+  popupRefsByRid.clear();
 });
 
 applyEditableState();
