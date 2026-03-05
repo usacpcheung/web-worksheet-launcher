@@ -60,6 +60,7 @@ const elQuestions = document.getElementById("questions");
 const elStatus = document.getElementById("status");
 const elFlowHint = document.getElementById("flowHint");
 const elSendBackBtn = document.getElementById("sendBackBtn");
+elSendBackBtn.disabled = true;
 
 const runtimeState = {
   rid: "",
@@ -76,10 +77,26 @@ function applyErrorState(message) {
   elSendBackBtn.disabled = true;
 }
 
+function readOpenerContext() {
+  if (!window.opener) return null;
+
+  try {
+    return {
+      config: window.opener.CONFIG || null,
+      rendererSessionId: typeof window.opener.getRendererSessionId === "function"
+        ? window.opener.getRendererSessionId()
+        : ""
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
 function getConsumeAuthHeaders() {
   const headers = { "content-type": "application/json" };
+  const openerContext = readOpenerContext();
+  const openerConfig = openerContext && openerContext.config ? openerContext.config : null;
 
-  const openerConfig = window.opener && window.opener.CONFIG ? window.opener.CONFIG : null;
   if (openerConfig && openerConfig.AUTH_TOKEN) {
     headers.authorization = `Bearer ${openerConfig.AUTH_TOKEN}`;
   }
@@ -93,7 +110,9 @@ function getConsumeAuthHeaders() {
     headers["x-user-id"] = openerConfig.USER_ID;
   }
 
-  const rendererSessionId = window.sessionStorage.getItem("worksheet_renderer_session_id");
+  const rendererSessionId = openerContext && openerContext.rendererSessionId
+    ? openerContext.rendererSessionId
+    : "";
   if (rendererSessionId) {
     headers["x-renderer-session-id"] = rendererSessionId;
   }
@@ -125,7 +144,8 @@ async function consumeLaunchContext() {
       not_found: "Launch is missing or invalid. Please start again from the parent app.",
       expired: "This launch has expired. Please start again from the parent app.",
       already_consumed: "This launch has already been used. Please create a new launch.",
-      invalid_payload: "Invalid launch request. Please re-open the popup from parent."
+      invalid_payload: "Invalid launch request. Please re-open the popup from parent.",
+      rate_limited: "Too many attempts. Please wait a moment and try again."
     };
     throw new Error(friendlyErrors[errorCode] || `Unable to load launch (${errorCode}).`);
   }
@@ -168,6 +188,7 @@ function initializeRuntimeState(resolvedLaunch) {
   elFlowHint.textContent = runtimeState.worksheet.q.length === 1
     ? "Answer the question, optionally click Rewrite, then click Send Back to Parent."
     : "Answer each question in order, optionally click Rewrite per question, then click Send Back to Parent.";
+  elSendBackBtn.disabled = false;
 }
 
 const widgetControllers = [];
@@ -228,6 +249,12 @@ consumeLaunchContext()
 
 // Send back to parent
 elSendBackBtn.addEventListener("click", () => {
+  if (!runtimeState.worksheet) {
+    elStatus.textContent = "Cannot send result before launch data is loaded.";
+    elStatus.className = "small bad";
+    return;
+  }
+
   const payload = {
     type: "worksheetResult",
     rid: runtimeState.rid,
