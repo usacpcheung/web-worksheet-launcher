@@ -79,6 +79,8 @@ function buildHostId(index) {
   return hostId;
 }
 
+const MAX_QUESTION_CHARS = 1200;
+
 const { w, rid, returnOrigin } = parseQueryParams();
 const elTitle = document.getElementById("title");
 const elMeta = document.getElementById("meta");
@@ -124,11 +126,20 @@ if (!launchError && (
   !worksheet ||
   worksheet.v !== 1 ||
   !Array.isArray(worksheet.q) ||
-  worksheet.q.length < 1 ||
+  worksheet.q.length !== 1 ||
   !worksheet.q.every((qItem) => typeof qItem === "string") ||
   (worksheet.title !== undefined && typeof worksheet.title !== "string")
 )) {
-  launchError = "Invalid worksheet schema (v=1, q string array length 1..N).";
+  launchError = "Invalid worksheet schema (v=1, q must be exactly one string).";
+}
+
+if (!launchError) {
+  const questionText = worksheet.q[0];
+  if (!questionText.trim()) {
+    launchError = "Invalid worksheet payload: question text must be non-empty.";
+  } else if (questionText.length > MAX_QUESTION_CHARS) {
+    launchError = `Invalid worksheet payload: question text exceeds ${MAX_QUESTION_CHARS} characters.`;
+  }
 }
 
 if (launchError) {

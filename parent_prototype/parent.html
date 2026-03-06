@@ -96,6 +96,8 @@ const CONFIG = {
 // Safeguard: keep launch URL below common proxy/browser limits.
 // If payload grows past this, block launch and ask user to shorten question text.
 const MAX_POPUP_URL_LENGTH = 1800;
+// Keep this cap in sync with renderer-side validation to prevent mismatched launch behavior.
+const MAX_QUESTION_CHARS = 1200;
 
 // Configure parent-side answer area editability by field id.
 const ANSWER_AREA_CONFIG = {
@@ -124,12 +126,12 @@ function base64urlEncode(str) {
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function buildPopupUrl({ worksheet, rid }) {
+function buildPopupUrl({ worksheet, rid, returnOrigin }) {
   const renderUrl = CONFIG.RENDER_ORIGIN + CONFIG.RENDER_PATH;
   const query = new URLSearchParams({
     w: base64urlEncode(JSON.stringify(worksheet)),
     rid,
-    returnOrigin: window.location.origin
+    returnOrigin
   });
   return `${renderUrl}?${query.toString()}`;
 }
@@ -137,6 +139,36 @@ function buildPopupUrl({ worksheet, rid }) {
 function setStatus(text, ok = null) {
   elPopupStatus.textContent = text;
   elPopupStatus.className = ok === true ? "ok" : ok === false ? "bad" : "small";
+}
+
+function getValidatedReturnOrigin() {
+  try {
+    const parsed = new URL(window.location.origin);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.origin;
+    }
+  } catch (e) {
+    return "";
+  }
+
+  return "";
+}
+
+function validateWorksheetForLaunch(worksheet) {
+  if (!worksheet || !Array.isArray(worksheet.q) || worksheet.q.length !== 1) {
+    return "Launch blocked: worksheet must contain exactly one question.";
+  }
+
+  const question = worksheet.q[0];
+  if (typeof question !== "string" || !question.trim()) {
+    return "Launch blocked: question text must be a non-empty string.";
+  }
+
+  if (question.length > MAX_QUESTION_CHARS) {
+    return `Launch blocked: question text exceeds ${MAX_QUESTION_CHARS} characters. Please shorten question text and try again.`;
+  }
+
+  return "";
 }
 
 function showLaunchWarning(message) {
@@ -196,13 +228,25 @@ function openPopupWithQuestion({ title, question, answerTargetId }) {
     rewrite: true
   };
 
-  if (worksheet.q.length !== 1) {
-    const warning = "Launch blocked: worksheet must contain exactly one question.";
+  const worksheetError = validateWorksheetForLaunch(worksheet);
+  if (worksheetError) {
+    showLaunchWarning(worksheetError);
+    throw new Error(worksheetError);
+  }
+
+  const rid = makeRid();
+  if (typeof rid !== "string" || !rid.trim()) {
+    const warning = "Launch blocked: request id (rid) must be a non-empty string.";
     showLaunchWarning(warning);
     throw new Error(warning);
   }
 
-  const rid = makeRid();
+  const returnOrigin = getValidatedReturnOrigin();
+  if (!returnOrigin) {
+    const warning = "Launch blocked: return origin is invalid. Use an absolute http(s) origin.";
+    showLaunchWarning(warning);
+    throw new Error(warning);
+  }
   const launchContext = {
     rid,
     useCaseId: "single-launch",
@@ -210,7 +254,7 @@ function openPopupWithQuestion({ title, question, answerTargetId }) {
     answerTargetIds: [answerTargetId]
   };
 
-  const url = buildPopupUrl({ worksheet, rid });
+  const url = buildPopupUrl({ worksheet, rid, returnOrigin });
   const popupUrlLength = url.length;
   if (popupUrlLength > MAX_POPUP_URL_LENGTH) {
     const warning = `Launch blocked: popup URL is too long (${popupUrlLength} chars). Please shorten question text and try again.`;
