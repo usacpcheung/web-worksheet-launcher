@@ -88,6 +88,7 @@ const elQuestions = document.getElementById("questions");
 const elStatus = document.getElementById("status");
 const elFlowHint = document.getElementById("flowHint");
 const elSendBackBtn = document.getElementById("sendBackBtn");
+elSendBackBtn.disabled = true;
 
 let normalizedReturnOrigin = "";
 try {
@@ -222,7 +223,9 @@ function buildAnswersPayload() {
 }
 
 if (!launchError) {
-  renderQuestions().catch((err) => {
+  renderQuestions().then(() => {
+    elSendBackBtn.disabled = false;
+  }).catch((err) => {
     setSafeText(elStatus, String(err?.message || err));
     elStatus.className = "small bad";
     elSendBackBtn.disabled = true;
@@ -233,6 +236,12 @@ if (!launchError) {
 elSendBackBtn.addEventListener("click", () => {
   if (launchError || !worksheet) {
     setSafeText(elStatus, "Cannot send result: launch query is invalid.");
+    elStatus.className = "small bad";
+    return;
+  }
+
+  if (widgetControllers.length !== worksheet.q.length) {
+    setSafeText(elStatus, "Cannot send result: answer widget initialization is incomplete.");
     elStatus.className = "small bad";
     return;
   }
