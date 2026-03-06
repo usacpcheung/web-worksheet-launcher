@@ -37,19 +37,19 @@ Launch URL length guard (parent-side):
 
 ## 1.1) Data exposure and sensitivity guidance for query launch
 
-Because launch data is carried in the URL query string, it may appear in:
+Because launch data is carried in the URL query string, query payload may appear in:
 
 - browser history
 - reverse-proxy access logs
 - monitoring/observability logs (for example URL/request logging)
 
-This simplified query-launch mode is intended for low-sensitivity worksheet content.
+This simplified query-launch mode is intended only for low-sensitivity worksheet content.
 
 For large or sensitive content, prefer a launchId/server-backed mode where the URL only carries an opaque identifier and payload retrieval happens server-side.
 
 Integrator note:
 
-- Do **not** place secrets, credentials, tokens, or PII in question text (`worksheet.q`) or other query-carried fields.
+- Do **not** place secrets, credentials, tokens, or PII in question text (`worksheet.q`) or any other query-carried fields.
 
 Renderer handling for `returnOrigin`:
 
