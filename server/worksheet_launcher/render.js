@@ -38,7 +38,8 @@ function buildHostId(index) {
   return hostId;
 }
 
-const MAX_QUESTION_CHARS = 1200;
+const MAX_QUESTION_CHARS = 800;
+const MAX_REWRITE_INPUT_CHARS = 200;
 
 const { w, rid, returnOrigin } = parseQueryParams();
 const elTitle = document.getElementById("title");
@@ -98,7 +99,7 @@ if (!launchError) {
   if (!questionText.trim()) {
     launchError = "Invalid worksheet payload: question text must be non-empty.";
   } else if (questionText.length > MAX_QUESTION_CHARS) {
-    launchError = `Invalid worksheet payload: question text exceeds ${MAX_QUESTION_CHARS} characters.`;
+    launchError = `Invalid worksheet payload: question text exceeds ${MAX_QUESTION_CHARS} characters (question body limit).`;
   }
 }
 
@@ -137,7 +138,7 @@ async function renderQuestions() {
 
     const hint = document.createElement("div");
     hint.className = "small question-hint";
-    setSafeText(hint, "Write your response here. Rewrite is optional.");
+    setSafeText(hint, "Write your response here (up to 200 chars for Rewrite). Rewrite is optional.");
 
     const hostId = buildHostId(idx);
     const host = document.createElement("div");
@@ -154,7 +155,7 @@ async function renderQuestions() {
       apiBase: "",
       title: `Answer ${idx + 1}`,
       placeholder: "Type your answer, then click Rewrite if you want a polished version.",
-      maxChars: 1200,
+      maxChars: MAX_REWRITE_INPUT_CHARS,
       statusPollIntervalMs: 5000,
       pollModelStatus: true
     });
