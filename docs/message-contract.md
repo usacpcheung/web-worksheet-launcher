@@ -27,6 +27,12 @@ Redirect-flow note:
 - Query params survive the OIDC redirect flow used by the parent/popup integration.
 - URL fragments (`#...`) are not preserved through that redirect boundary, which is why hash launch is not used.
 
+Launch URL length guard (parent-side):
+
+- Parent should compute final popup URL length before `window.open(...)` and fail closed when it exceeds a conservative threshold (currently `1800` chars in the prototype).
+- Rationale: long query URLs can be truncated or rejected by intermediaries/browsers, so blocking oversize launches is safer than risking malformed payload delivery.
+- User-facing action should be explicit (for example: "shorten question text and try again").
+
 Renderer handling for `returnOrigin`:
 
 - The renderer parses `returnOrigin` once during initialization using `new URL(...)`.

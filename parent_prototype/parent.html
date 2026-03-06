@@ -93,6 +93,10 @@ const CONFIG = {
   TRUSTED_SENDER_ORIGIN: "https://YOUR_OIDC_HOST"
 };
 
+// Safeguard: keep launch URL below common proxy/browser limits.
+// If payload grows past this, block launch and ask user to shorten question text.
+const MAX_POPUP_URL_LENGTH = 1800;
+
 // Configure parent-side answer area editability by field id.
 const ANSWER_AREA_CONFIG = {
   singleAnswer: { editable: true }
@@ -207,6 +211,13 @@ function openPopupWithQuestion({ title, question, answerTargetId }) {
   };
 
   const url = buildPopupUrl({ worksheet, rid });
+  const popupUrlLength = url.length;
+  if (popupUrlLength > MAX_POPUP_URL_LENGTH) {
+    const warning = `Launch blocked: popup URL is too long (${popupUrlLength} chars). Please shorten question text and try again.`;
+    showLaunchWarning(warning);
+    return;
+  }
+
   popupRef = window.open(url, "worksheetPopup", "width=900,height=720");
 
   if (!popupRef) {
