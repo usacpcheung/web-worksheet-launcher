@@ -190,7 +190,7 @@ async function renderQuestions() {
     card.appendChild(host);
     elQuestions.appendChild(card);
 
-    await RewriteWidget.mount({
+    const widget = await RewriteWidget.mount({
       containerSelector: `#${hostId}`,
       apiBase: "",
       title: `Answer ${idx + 1}`,
@@ -201,23 +201,80 @@ async function renderQuestions() {
     });
 
     const textarea = card.querySelector(".rw-textarea");
+    const rewriteButton = card.querySelector(".rw-primary");
+
+    const state = {
+      rawText: "",
+      rewrittenText: "",
+      latestText: "",
+      rewriteInFlight: false
+    };
+
+    const getTrimmedTextarea = () => (textarea ? textarea.value.trim() : "");
+
+    if (textarea) {
+      textarea.addEventListener("input", () => {
+        state.latestText = getTrimmedTextarea();
+        if (!state.rewriteInFlight) {
+          // Manual edits become the latest source text and clear stale rewrite snapshots.
+          state.rawText = state.latestText;
+          state.rewrittenText = "";
+        }
+      });
+    }
+
+    if (rewriteButton && widget && typeof widget.rewrite === "function") {
+      rewriteButton.addEventListener("click", async (event) => {
+        if (rewriteButton.disabled) return;
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        state.rawText = getTrimmedTextarea();
+        state.rewriteInFlight = true;
+
+        try {
+          await widget.rewrite();
+        } finally {
+          state.latestText = getTrimmedTextarea();
+          if (state.latestText && state.latestText !== state.rawText) {
+            state.rewrittenText = state.latestText;
+          }
+          state.rewriteInFlight = false;
+        }
+      }, true);
+    }
+
+    state.latestText = getTrimmedTextarea();
+    if (!state.rawText) {
+      state.rawText = state.latestText;
+    }
+
     widgetControllers[idx] = {
       index: idx,
       question: safeText(qText),
-      getAnswerText: () => (textarea ? textarea.value : "")
+      widget,
+      state,
+      getLatestText: () => getTrimmedTextarea()
     };
   }
 }
 
 function buildAnswersPayload() {
   return widgetControllers.map((controller, idx) => {
-    const answerText = controller.getAnswerText().trim();
+    const latestText = controller.getLatestText();
+    const rawText = controller.state.rawText || latestText;
+    // Deterministic fallback rules:
+    // - Non-rewrite path: rewritten falls back to latest text.
+    // - Rewrite success: rewritten preserves rewritten output when it differs from raw.
+    const rewrittenText = controller.state.rewrittenText || (rawText === latestText ? latestText : "");
+
     return {
       index: idx,
       question: controller.question,
-      answer: answerText,
-      raw: answerText,
-      rewritten: answerText
+      answer: latestText,
+      raw: rawText,
+      rewritten: rewrittenText
     };
   });
 }
