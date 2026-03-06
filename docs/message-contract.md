@@ -35,6 +35,22 @@ Launch URL length guard (parent-side):
 - Rationale: long query URLs can be truncated or rejected by intermediaries/browsers, so blocking oversize launches is safer than risking malformed payload delivery.
 - User-facing action should be explicit (for example: "shorten question text and try again").
 
+## 1.1) Data exposure and sensitivity guidance for query launch
+
+Because launch data is carried in the URL query string, it may appear in:
+
+- browser history
+- reverse-proxy access logs
+- monitoring/observability logs (for example URL/request logging)
+
+This simplified query-launch mode is intended for low-sensitivity worksheet content.
+
+For large or sensitive content, prefer a launchId/server-backed mode where the URL only carries an opaque identifier and payload retrieval happens server-side.
+
+Integrator note:
+
+- Do **not** place secrets, credentials, tokens, or PII in question text (`worksheet.q`) or other query-carried fields.
+
 Renderer handling for `returnOrigin`:
 
 - The renderer parses `returnOrigin` once during initialization using `new URL(...)`.
