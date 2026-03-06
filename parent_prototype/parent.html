@@ -283,12 +283,33 @@ function openPopupWithQuestion({ title, question, answerTargetId }) {
 }
 
 window.addEventListener("message", (event) => {
-  if (event.origin !== CONFIG.TRUSTED_SENDER_ORIGIN) return;
+  const rejectMessage = (reason) => {
+    console.warn(`[worksheet-launcher] Rejected message: ${reason}`, {
+      origin: event.origin,
+      data: event.data
+    });
+  };
+
+  if (event.origin !== CONFIG.TRUSTED_SENDER_ORIGIN) {
+    rejectMessage("untrusted event.origin");
+    return;
+  }
 
   const data = event.data;
-  if (!data || data.type !== "worksheetResult") return;
-  if (!currentLaunchContext || data.rid !== currentLaunchContext.rid) return;
-  if (event.source !== popupRef) return;
+  if (!data || data.type !== "worksheetResult") {
+    rejectMessage("unexpected event.data.type");
+    return;
+  }
+
+  if (!currentLaunchContext || data.rid !== currentLaunchContext.rid) {
+    rejectMessage("event.data.rid mismatch or missing launch context");
+    return;
+  }
+
+  if (event.source !== popupRef) {
+    rejectMessage("event.source does not match popupRef");
+    return;
+  }
 
   const launchContext = currentLaunchContext;
 

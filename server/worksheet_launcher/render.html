@@ -257,7 +257,8 @@ elSendBackBtn.addEventListener("click", () => {
     return;
   }
 
-  window.opener.postMessage(payload, normalizedReturnOrigin);
+  const targetOrigin = normalizedReturnOrigin;
+  window.opener.postMessage(payload, targetOrigin);
   setSafeText(elStatus, "Sent back to parent ✅");
   elStatus.className = "small ok";
 });
