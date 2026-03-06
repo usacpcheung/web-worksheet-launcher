@@ -251,7 +251,8 @@ function openPopupWithQuestion({ title, question, answerTargetId }) {
     rid,
     useCaseId: "single-launch",
     questionCount: worksheet.q.length,
-    answerTargetIds: [answerTargetId]
+    answerTargetIds: [answerTargetId],
+    questions: [...worksheet.q]
   };
 
   const url = buildPopupUrl({ worksheet, rid, returnOrigin });
@@ -280,6 +281,41 @@ function openPopupWithQuestion({ title, question, answerTargetId }) {
       }
     }
   }, 600);
+}
+
+function validateWorksheetResultPayload(data, launchContext) {
+  const answers = Array.isArray(data.answers) ? data.answers : null;
+  if (!answers || answers.length !== 1) {
+    return "answers must be an array of length 1";
+  }
+
+  const firstAnswer = answers[0];
+  if (!firstAnswer || typeof firstAnswer !== "object") {
+    return "answers[0] must be an object";
+  }
+
+  if (firstAnswer.index !== 0) {
+    return "answers[0].index must equal 0";
+  }
+
+  const expectedQuestion = Array.isArray(launchContext.questions) ? launchContext.questions[0] : "";
+  if (typeof firstAnswer.question !== "string" || !firstAnswer.question.trim()) {
+    return "answers[0].question must be a non-empty string";
+  }
+
+  if (expectedQuestion && firstAnswer.question !== expectedQuestion) {
+    return "answers[0].question does not match launched question";
+  }
+
+  if (firstAnswer.raw !== undefined && typeof firstAnswer.raw !== "string") {
+    return "answers[0].raw must be a string when present";
+  }
+
+  if (firstAnswer.rewritten !== undefined && typeof firstAnswer.rewritten !== "string") {
+    return "answers[0].rewritten must be a string when present";
+  }
+
+  return "";
 }
 
 window.addEventListener("message", (event) => {
@@ -312,6 +348,11 @@ window.addEventListener("message", (event) => {
   }
 
   const launchContext = currentLaunchContext;
+  const payloadError = validateWorksheetResultPayload(data, launchContext);
+  if (payloadError) {
+    rejectMessage(payloadError);
+    return;
+  }
 
   routeAnswerToSingleTarget(data);
   elResultSummary.textContent = "Result applied to single-launch (1 question).";
