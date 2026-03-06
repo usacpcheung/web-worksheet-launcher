@@ -55,10 +55,28 @@ function base64urlDecodeToString(b64url) {
   return new TextDecoder().decode(bytes);
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-  }[c]));
+function safeText(value) {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+function setSafeText(element, value) {
+  if (!element) return;
+  element.textContent = safeText(value);
+}
+
+function buildHostId(index) {
+  if (!Number.isInteger(index) || index < 0 || index > 999) {
+    throw new Error("Invalid question index for widget host id.");
+  }
+
+  const hostId = `rw_host_${index}`;
+  if (!/^rw_host_\d{1,3}$/.test(hostId)) {
+    throw new Error("Unsafe widget host id.");
+  }
+
+  return hostId;
 }
 
 const { w, rid, returnOrigin } = parseQueryParams();
@@ -86,6 +104,10 @@ if (!w || !rid || !returnOrigin) {
   launchError = "Missing query params. Expected ?w=...&rid=...&returnOrigin=...";
 }
 
+if (!launchError && (typeof rid !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(rid))) {
+  launchError = "Invalid rid format in launch query.";
+}
+
 if (!launchError && !normalizedReturnOrigin) {
   launchError = "Invalid returnOrigin. Use an absolute http(s) origin in the launch query.";
 }
@@ -98,26 +120,33 @@ if (!launchError) {
   }
 }
 
-if (!launchError && (!worksheet || worksheet.v !== 1 || !Array.isArray(worksheet.q) || worksheet.q.length < 1)) {
-  launchError = "Invalid worksheet schema (v=1, q length 1..N).";
+if (!launchError && (
+  !worksheet ||
+  worksheet.v !== 1 ||
+  !Array.isArray(worksheet.q) ||
+  worksheet.q.length < 1 ||
+  !worksheet.q.every((qItem) => typeof qItem === "string") ||
+  (worksheet.title !== undefined && typeof worksheet.title !== "string")
+)) {
+  launchError = "Invalid worksheet schema (v=1, q string array length 1..N).";
 }
 
 if (launchError) {
-  elMeta.textContent = launchError;
+  setSafeText(elMeta, launchError);
   elMeta.className = "small bad";
-  elStatus.textContent = `Launch blocked: ${launchError}`;
+  setSafeText(elStatus, `Launch blocked: ${launchError}`);
   elStatus.className = "small bad";
-  elFlowHint.textContent = "Fix launch query parameters and reopen this popup.";
+  setSafeText(elFlowHint, "Fix launch query parameters and reopen this popup.");
   elSendBackBtn.disabled = true;
 }
 
 if (!launchError) {
-  elTitle.textContent = worksheet.title || "Worksheet";
-  elMeta.textContent = `rid=${rid} • questions=${worksheet.q.length}`;
+  setSafeText(elTitle, worksheet.title || "Worksheet");
+  setSafeText(elMeta, `rid=${rid} • questions=${worksheet.q.length}`);
   elMeta.className = "small";
-  elFlowHint.textContent = worksheet.q.length === 1
+  setSafeText(elFlowHint, worksheet.q.length === 1
     ? "Answer the question, optionally click Rewrite, then click Send Back to Parent."
-    : "Answer each question in order, optionally click Rewrite per question, then click Send Back to Parent.";
+    : "Answer each question in order, optionally click Rewrite per question, then click Send Back to Parent.");
 }
 
 const widgetControllers = [];
@@ -127,12 +156,26 @@ async function renderQuestions() {
     const card = document.createElement("div");
     card.className = "card";
 
-    const hostId = `rw_host_${idx}`;
-    card.innerHTML = `
-      <div class="question-text"><b>Q${idx + 1}.</b> ${escapeHtml(qText)}</div>
-      <div class="small question-hint">Write your response here. Rewrite is optional.</div>
-      <div id="${hostId}" class="rw-host"></div>
-    `;
+    const questionText = document.createElement("div");
+    questionText.className = "question-text";
+
+    const questionLabel = document.createElement("b");
+    setSafeText(questionLabel, `Q${idx + 1}. `);
+    questionText.appendChild(questionLabel);
+    questionText.appendChild(document.createTextNode(safeText(qText)));
+
+    const hint = document.createElement("div");
+    hint.className = "small question-hint";
+    setSafeText(hint, "Write your response here. Rewrite is optional.");
+
+    const hostId = buildHostId(idx);
+    const host = document.createElement("div");
+    host.id = hostId;
+    host.className = "rw-host";
+
+    card.appendChild(questionText);
+    card.appendChild(hint);
+    card.appendChild(host);
     elQuestions.appendChild(card);
 
     await RewriteWidget.mount({
@@ -148,7 +191,7 @@ async function renderQuestions() {
     const textarea = card.querySelector(".rw-textarea");
     widgetControllers[idx] = {
       index: idx,
-      question: qText,
+      question: safeText(qText),
       getAnswerText: () => (textarea ? textarea.value : "")
     };
   }
@@ -169,7 +212,7 @@ function buildAnswersPayload() {
 
 if (!launchError) {
   renderQuestions().catch((err) => {
-    elStatus.textContent = String(err?.message || err);
+    setSafeText(elStatus, String(err?.message || err));
     elStatus.className = "small bad";
     elSendBackBtn.disabled = true;
   });
@@ -178,7 +221,7 @@ if (!launchError) {
 // Send back to parent
 elSendBackBtn.addEventListener("click", () => {
   if (launchError || !worksheet) {
-    elStatus.textContent = "Cannot send result: launch query is invalid.";
+    setSafeText(elStatus, "Cannot send result: launch query is invalid.");
     elStatus.className = "small bad";
     return;
   }
@@ -192,19 +235,19 @@ elSendBackBtn.addEventListener("click", () => {
   };
 
   if (!normalizedReturnOrigin) {
-    elStatus.textContent = "Cannot send result: returnOrigin is missing or invalid.";
+    setSafeText(elStatus, "Cannot send result: returnOrigin is missing or invalid.");
     elStatus.className = "small bad";
     return;
   }
 
   if (!window.opener) {
-    elStatus.textContent = "No opener found (opened with noopener?). Cannot send back.";
+    setSafeText(elStatus, "No opener found (opened with noopener?). Cannot send back.");
     elStatus.className = "small bad";
     return;
   }
 
   window.opener.postMessage(payload, normalizedReturnOrigin);
-  elStatus.textContent = "Sent back to parent ✅";
+  setSafeText(elStatus, "Sent back to parent ✅");
   elStatus.className = "small ok";
 });
 
