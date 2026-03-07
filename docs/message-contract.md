@@ -73,7 +73,8 @@ Validation rules:
 - `v` must equal `1`
 - `title` should be a string when present
 - `q` must be an array of exactly one non-empty string (single-question launch mode)
-- `q[0]` must not exceed `1200` characters (max per-question cap enforced by parent and renderer)
+- `q[0]` must not exceed `800` characters (max per-question cap enforced by parent and renderer)
+- Rewrite textbox input is capped at `200` characters via `server/worksheet_launcher/render.js` when mounting `rewrite-widget.js` (`maxChars`)
 - `rewrite` should be a boolean when present
 
 ## 3) Popup → parent message schema

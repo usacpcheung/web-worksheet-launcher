@@ -97,7 +97,7 @@ const CONFIG = {
 // If payload grows past this, block launch and ask user to shorten question text.
 const MAX_POPUP_URL_LENGTH = 1800;
 // Keep this cap in sync with renderer-side validation to prevent mismatched launch behavior.
-const MAX_QUESTION_CHARS = 1200;
+const MAX_QUESTION_CHARS = 800;
 
 // Configure parent-side answer area editability by field id.
 const ANSWER_AREA_CONFIG = {
@@ -165,7 +165,7 @@ function validateWorksheetForLaunch(worksheet) {
   }
 
   if (question.length > MAX_QUESTION_CHARS) {
-    return `Launch blocked: question text exceeds ${MAX_QUESTION_CHARS} characters. Please shorten question text and try again.`;
+    return `Launch blocked: question text exceeds ${MAX_QUESTION_CHARS} characters (question body limit). Please shorten question text and try again.`;
   }
 
   return "";

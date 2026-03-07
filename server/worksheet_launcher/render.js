@@ -38,7 +38,8 @@ function buildHostId(index) {
   return hostId;
 }
 
-const MAX_QUESTION_CHARS = 1200;
+const MAX_QUESTION_CHARS = 800;
+const MAX_REWRITE_INPUT_CHARS = 200;
 
 const { w, rid, returnOrigin } = parseQueryParams();
 const elTitle = document.getElementById("title");
@@ -98,7 +99,7 @@ if (!launchError) {
   if (!questionText.trim()) {
     launchError = "Invalid worksheet payload: question text must be non-empty.";
   } else if (questionText.length > MAX_QUESTION_CHARS) {
-    launchError = `Invalid worksheet payload: question text exceeds ${MAX_QUESTION_CHARS} characters.`;
+    launchError = `Invalid worksheet payload: question text exceeds ${MAX_QUESTION_CHARS} characters (question body limit).`;
   }
 }
 
@@ -137,7 +138,7 @@ async function renderQuestions() {
 
     const hint = document.createElement("div");
     hint.className = "small question-hint";
-    setSafeText(hint, "Write your response here. Rewrite is optional.");
+    setSafeText(hint, "Write your response here (up to 200 chars for Rewrite). Rewrite is optional.");
 
     const hostId = buildHostId(idx);
     const host = document.createElement("div");
@@ -154,26 +155,31 @@ async function renderQuestions() {
       apiBase: "",
       title: `Answer ${idx + 1}`,
       placeholder: "Type your answer, then click Rewrite if you want a polished version.",
-      maxChars: 1200,
+      maxChars: MAX_REWRITE_INPUT_CHARS,
       statusPollIntervalMs: 5000,
       pollModelStatus: true
     });
-
-    const textarea = card.querySelector(".rw-textarea");
-    const rewriteButton = card.querySelector(".rw-primary");
 
     const state = {
       rawText: "",
       rewrittenText: "",
       latestText: "",
-      rewriteInFlight: false
+      rewriteInFlight: false,
+      rewriteReady: false
     };
 
-    const getTrimmedTextarea = () => (textarea ? textarea.value.trim() : "");
+    const getTrimmedText = () => {
+      if (!widget || typeof widget.getCurrentText !== "function") return "";
+      return widget.getCurrentText().trim();
+    };
 
-    if (textarea) {
-      textarea.addEventListener("input", () => {
-        state.latestText = getTrimmedTextarea();
+    const updateLatestFromAdapter = () => {
+      state.latestText = getTrimmedText();
+    };
+
+    if (widget && typeof widget.onTextChange === "function") {
+      widget.onTextChange(() => {
+        updateLatestFromAdapter();
         if (!state.rewriteInFlight) {
           // Manual edits become the latest source text and clear stale rewrite snapshots.
           state.rawText = state.latestText;
@@ -182,29 +188,34 @@ async function renderQuestions() {
       });
     }
 
-    if (rewriteButton && widget && typeof widget.rewrite === "function") {
-      rewriteButton.addEventListener("click", async (event) => {
-        if (rewriteButton.disabled) return;
 
-        event.preventDefault();
-        event.stopImmediatePropagation();
-
-        state.rawText = getTrimmedTextarea();
-        state.rewriteInFlight = true;
-
-        try {
-          await widget.rewrite();
-        } finally {
-          state.latestText = getTrimmedTextarea();
-          if (state.latestText && state.latestText !== state.rawText) {
-            state.rewrittenText = state.latestText;
-          }
-          state.rewriteInFlight = false;
-        }
-      }, true);
+    if (widget && typeof widget.onReadinessChange === "function") {
+      widget.onReadinessChange(({ ready }) => {
+        state.rewriteReady = ready === true;
+      });
+    }
+    if (widget && typeof widget.isRewriteReady === "function") {
+      state.rewriteReady = widget.isRewriteReady();
     }
 
-    state.latestText = getTrimmedTextarea();
+    if (widget && typeof widget.onRewriteStart === "function") {
+      widget.onRewriteStart(({ text }) => {
+        state.rawText = safeText(text).trim();
+        state.rewriteInFlight = true;
+      });
+    }
+
+    if (widget && typeof widget.onRewriteComplete === "function") {
+      widget.onRewriteComplete(({ after, changed }) => {
+        state.latestText = safeText(after).trim();
+        if (changed && state.latestText && state.latestText !== state.rawText) {
+          state.rewrittenText = state.latestText;
+        }
+        state.rewriteInFlight = false;
+      });
+    }
+
+    updateLatestFromAdapter();
     if (!state.rawText) {
       state.rawText = state.latestText;
     }
@@ -214,7 +225,7 @@ async function renderQuestions() {
       question: safeText(qText),
       widget,
       state,
-      getLatestText: () => getTrimmedTextarea()
+      getLatestText: () => getTrimmedText()
     };
   }
 }
