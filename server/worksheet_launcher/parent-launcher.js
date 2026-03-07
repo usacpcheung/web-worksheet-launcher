@@ -3,6 +3,8 @@
 
   const DEFAULT_MAX_POPUP_URL_LENGTH = 1800;
   const DEFAULT_MAX_QUESTION_CHARS = 800;
+  const LAUNCH_CONTRACT_VERSION = 1;
+  const SUPPORTED_CONTRACT_VERSIONS = [1];
 
   function makeRid() {
     return "rid_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
@@ -46,6 +48,22 @@
   }
 
   function validateWorksheetResultPayload(data, launchContext) {
+    if (!data || typeof data !== "object") {
+      return "payload must be an object";
+    }
+
+    if (!data.worksheet || typeof data.worksheet !== "object") {
+      return "worksheet must be an object";
+    }
+
+    if (data.worksheet.contractVersion !== launchContext.contractVersion) {
+      return "worksheet.contractVersion mismatch";
+    }
+
+    if (!Array.isArray(data.worksheet.q) || data.worksheet.q.length !== 1) {
+      return "worksheet.q must be an array of length 1";
+    }
+
     const answers = Array.isArray(data.answers) ? data.answers : null;
     if (!answers || answers.length !== 1) {
       return "answers must be an array of length 1";
@@ -236,11 +254,18 @@
       popupClosedWithoutResult: new Set()
     };
 
-    function makeStatusPayload(reasonCode, message, rid, rawEvent) {
+    function makeStatusPayload(reasonCode, message, rid, rawEvent, launchContext) {
       const payload = {
         rid: typeof rid === "string" ? rid : null,
         reasonCode,
-        message
+        message,
+        meta: {
+          contractVersion: launchContext && typeof launchContext.contractVersion === "number"
+            ? launchContext.contractVersion
+            : LAUNCH_CONTRACT_VERSION,
+          supportedContractVersions: SUPPORTED_CONTRACT_VERSIONS.slice(),
+          useCaseId: launchContext && launchContext.useCaseId ? launchContext.useCaseId : "single-launch"
+        }
       };
       if (rawEvent) {
         payload.rawEvent = rawEvent;
@@ -289,7 +314,7 @@
         type: event && event.data && event.data.type,
         rid,
         details: rejection.details || null
-      });
+      }, currentLaunchContext);
       emit("messageRejected", statusPayload);
       onError(new Error(rejection.message), {
         type: "message_rejected",
@@ -353,7 +378,7 @@
       onStatus("Result received ✅ (single-launch, 1 question)", true);
       emit(
         "resultAccepted",
-        makeStatusPayload("result_accepted", "Result message accepted and applied.", acceptedContext.rid)
+        makeStatusPayload("result_accepted", "Result message accepted and applied.", acceptedContext.rid, null, acceptedContext)
       );
       teardownPopup();
     }
@@ -393,15 +418,22 @@
       }
 
       const worksheet = {
+        contractVersion: LAUNCH_CONTRACT_VERSION,
         v: 1,
         title: title || "Worksheet",
         q: questions,
-        rewrite: true
+        rewrite: true,
+        launchOptions: {
+          mode: "single-question",
+          extensions: {
+            multiQuestion: null
+          }
+        }
       };
 
       const worksheetError = validateWorksheetForLaunch(worksheet, maxQuestionChars);
       if (worksheetError) {
-        emit("launchRejected", makeStatusPayload("launch_validation_error", worksheetError, null));
+        emit("launchRejected", makeStatusPayload("launch_validation_error", worksheetError, null, null, currentLaunchContext));
         onStatus(worksheetError, false);
         onError(new Error(worksheetError), { type: "launch_validation_error", worksheet });
         throw new Error(worksheetError);
@@ -410,7 +442,7 @@
       const rid = makeRid();
       if (!rid.trim()) {
         const warning = "Launch blocked: request id (rid) must be a non-empty string.";
-        emit("launchRejected", makeStatusPayload("launch_validation_error", warning, null));
+        emit("launchRejected", makeStatusPayload("launch_validation_error", warning, null, null, currentLaunchContext));
         onStatus(warning, false);
         onError(new Error(warning), { type: "launch_validation_error" });
         throw new Error(warning);
@@ -419,7 +451,7 @@
       const returnOrigin = getValidatedReturnOrigin();
       if (!returnOrigin) {
         const warning = "Launch blocked: return origin is invalid. Use an absolute http(s) origin.";
-        emit("launchRejected", makeStatusPayload("launch_validation_error", warning, rid));
+        emit("launchRejected", makeStatusPayload("launch_validation_error", warning, rid, null, currentLaunchContext));
         onStatus(warning, false);
         onError(new Error(warning), { type: "launch_validation_error" });
         throw new Error(warning);
@@ -427,7 +459,9 @@
 
       const launchContext = {
         rid,
+        contractVersion: worksheet.contractVersion,
         useCaseId: "single-launch",
+        supportedContractVersions: SUPPORTED_CONTRACT_VERSIONS.slice(),
         questionCount: worksheet.q.length,
         questions: worksheet.q.slice()
       };
@@ -435,7 +469,7 @@
       const url = buildPopupUrl(renderOrigin, renderPath, worksheet, rid, returnOrigin);
       if (url.length > maxPopupUrlLength) {
         const warning = `Launch blocked: popup URL is too long (${url.length} chars). Please shorten question text and try again.`;
-        emit("launchRejected", makeStatusPayload("popup_url_too_long", warning, rid));
+        emit("launchRejected", makeStatusPayload("popup_url_too_long", warning, rid, null, launchContext));
         onStatus(warning, false);
         onError(new Error(warning), { type: "launch_validation_error", urlLength: url.length });
         return false;
@@ -444,14 +478,14 @@
       popupRef = global.open(url, popupName, popupFeatures);
       if (!popupRef) {
         const blockedMessage = "Popup blocked. Please allow popups.";
-        emit("blocked", makeStatusPayload("popup_blocked", blockedMessage, rid));
+        emit("blocked", makeStatusPayload("popup_blocked", blockedMessage, rid, null, launchContext));
         onStatus(blockedMessage, false);
         onError(new Error(blockedMessage), { type: "popup_blocked" });
         return false;
       }
 
       currentLaunchContext = launchContext;
-      emit("open", makeStatusPayload("popup_opened", "Popup opened and waiting for result.", rid));
+      emit("open", makeStatusPayload("popup_opened", "Popup opened and waiting for result.", rid, null, launchContext));
       onStatus("Popup opened (single-launch, 1 question). Waiting for result…", null);
 
       clearCloseWatcher();
@@ -461,7 +495,7 @@
           if (currentLaunchContext && currentLaunchContext.rid === rid) {
             emit(
               "popupClosedWithoutResult",
-              makeStatusPayload("popup_closed_without_result", "Popup closed before a valid result was received.", rid)
+              makeStatusPayload("popup_closed_without_result", "Popup closed before a valid result was received.", rid, null, launchContext)
             );
             onStatus("Popup closed (single-launch, no result).", false);
           }
