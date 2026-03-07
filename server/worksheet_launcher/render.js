@@ -132,6 +132,40 @@ if (!launchError) {
 }
 
 const widgetControllers = [];
+let hasCleanedUpWidgets = false;
+
+function destroyController(controller) {
+  if (!controller) return;
+
+  if (typeof controller.destroy === "function") {
+    try {
+      controller.destroy();
+    } catch (err) {
+      console.warn("Widget controller destroy failed:", err);
+    }
+    return;
+  }
+
+  if (controller.widget && typeof controller.widget.destroy === "function") {
+    try {
+      controller.widget.destroy();
+    } catch (err) {
+      console.warn("Widget destroy failed:", err);
+    }
+  }
+}
+
+function cleanupWidgetControllers() {
+  if (hasCleanedUpWidgets) return;
+  hasCleanedUpWidgets = true;
+
+  widgetControllers.forEach((controller) => {
+    destroyController(controller);
+  });
+}
+
+window.addEventListener("beforeunload", cleanupWidgetControllers);
+window.addEventListener("pagehide", cleanupWidgetControllers);
 
 async function renderQuestions() {
   for (const [idx, qText] of worksheet.q.entries()) {
@@ -235,6 +269,11 @@ async function renderQuestions() {
       question: safeText(qText),
       widget,
       state,
+      destroy: () => {
+        if (widget && typeof widget.destroy === "function") {
+          widget.destroy();
+        }
+      },
       getLatestText: () => getTrimmedText()
     };
   }
@@ -263,6 +302,7 @@ if (!launchError) {
   renderQuestions().then(() => {
     elSendBackBtn.disabled = false;
   }).catch((err) => {
+    cleanupWidgetControllers();
     setSafeText(elStatus, String(err?.message || err));
     elStatus.className = "small bad";
     elSendBackBtn.disabled = true;
