@@ -37,19 +37,19 @@ Launch URL length guard (parent-side):
 
 ## 1.1) Data exposure and sensitivity guidance for query launch
 
-Because launch data is carried in the URL query string, it may appear in:
+Because launch data is carried in the URL query string, query payload may appear in:
 
 - browser history
 - reverse-proxy access logs
 - monitoring/observability logs (for example URL/request logging)
 
-This simplified query-launch mode is intended for low-sensitivity worksheet content.
+This simplified query-launch mode is intended only for low-sensitivity worksheet content.
 
 For large or sensitive content, prefer a launchId/server-backed mode where the URL only carries an opaque identifier and payload retrieval happens server-side.
 
 Integrator note:
 
-- Do **not** place secrets, credentials, tokens, or PII in question text (`worksheet.q`) or other query-carried fields.
+- Do **not** place secrets, credentials, tokens, or PII in question text (`worksheet.q`) or any other query-carried fields.
 
 Renderer handling for `returnOrigin`:
 
@@ -73,7 +73,8 @@ Validation rules:
 - `v` must equal `1`
 - `title` should be a string when present
 - `q` must be an array of exactly one non-empty string (single-question launch mode)
-- `q[0]` must not exceed `1200` characters (max per-question cap enforced by parent and renderer)
+- `q[0]` must not exceed `800` characters (max per-question cap enforced by parent and renderer)
+- Rewrite textbox input is capped at `200` characters via `server/worksheet_launcher/render.js` when mounting `rewrite-widget.js` (`maxChars`)
 - `rewrite` should be a boolean when present
 
 ## 3) Popup → parent message schema
