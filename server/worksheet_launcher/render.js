@@ -40,6 +40,7 @@ function buildHostId(index) {
 
 const MAX_QUESTION_CHARS = 800;
 const MAX_REWRITE_INPUT_CHARS = 200;
+const SUPPORTED_CONTRACT_VERSIONS = [1];
 
 const { w, rid, returnOrigin } = parseQueryParams();
 const elTitle = document.getElementById("title");
@@ -95,6 +96,15 @@ if (!launchError && (
 }
 
 if (!launchError) {
+  const contractVersion = Number(worksheet.contractVersion);
+  if (!Number.isInteger(contractVersion)) {
+    launchError = "Invalid worksheet schema: contractVersion must be an integer.";
+  } else if (!SUPPORTED_CONTRACT_VERSIONS.includes(contractVersion)) {
+    launchError = `Unsupported contractVersion (${contractVersion}). Supported versions: ${SUPPORTED_CONTRACT_VERSIONS.join(",")}.`;
+  }
+}
+
+if (!launchError) {
   const questionText = worksheet.q[0];
   if (!questionText.trim()) {
     launchError = "Invalid worksheet payload: question text must be non-empty.";
@@ -114,7 +124,7 @@ if (launchError) {
 
 if (!launchError) {
   setSafeText(elTitle, worksheet.title || "Worksheet");
-  setSafeText(elMeta, `rid=${rid} • questions=${worksheet.q.length}`);
+  setSafeText(elMeta, `rid=${rid} • contractVersion=${worksheet.contractVersion} • questions=${worksheet.q.length}`);
   elMeta.className = "small";
   setSafeText(elFlowHint, worksheet.q.length === 1
     ? "Answer the question, optionally click Rewrite, then click Send Back to Parent."
@@ -276,7 +286,13 @@ elSendBackBtn.addEventListener("click", () => {
   const payload = {
     type: "worksheetResult",
     rid,
-    worksheet: { v: worksheet.v, title: worksheet.title, q: worksheet.q },
+    worksheet: {
+      contractVersion: worksheet.contractVersion,
+      v: worksheet.v,
+      title: worksheet.title,
+      q: worksheet.q,
+      launchOptions: worksheet.launchOptions || null
+    },
     answers: buildAnswersPayload(),
     meta: { sentAt: new Date().toISOString() }
   };

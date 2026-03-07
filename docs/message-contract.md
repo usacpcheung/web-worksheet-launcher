@@ -19,6 +19,12 @@ Required query params:
 
 Both parent and renderer treat query payload as untrusted input and must fail closed when validation fails.
 
+Contract-version behavior (v1):
+
+- Parent SDK always sends `worksheet.contractVersion = 1` in launch payload.
+- Renderer supports only contract version `1` in this phase and fails closed for unsupported versions.
+- Parent SDK event/debug metadata includes the active `contractVersion` and `supportedContractVersions` list.
+
 Intentional scope limitation for this launch mode:
 
 - The launched worksheet is constrained to exactly **one question** and **one answer area**.
@@ -65,17 +71,31 @@ Example shape:
 ## 2) Worksheet payload schema (`w` decoded)
 
 ```json
-{ "v": 1, "title": "string", "q": ["...1-N"], "rewrite": true }
+{
+  "contractVersion": 1,
+  "v": 1,
+  "title": "string",
+  "q": ["...1-N"],
+  "rewrite": true,
+  "launchOptions": {
+    "mode": "single-question",
+    "extensions": {
+      "multiQuestion": null
+    }
+  }
+}
 ```
 
 Validation rules:
 
+- `contractVersion` must equal `1` for this phase
 - `v` must equal `1`
 - `title` should be a string when present
 - `q` must be an array of exactly one non-empty string (single-question launch mode)
 - `q[0]` must not exceed `800` characters (max per-question cap enforced by parent and renderer)
 - Rewrite textbox input is capped at `200` characters via `server/worksheet_launcher/render.js` when mounting `rewrite-widget.js` (`maxChars`)
 - `rewrite` should be a boolean when present
+- `launchOptions` is reserved as a forward-compatible envelope. v1 uses `mode: "single-question"` and reserves `extensions.multiQuestion` for future expansion.
 
 ## 3) Popup → parent message schema
 
@@ -83,7 +103,7 @@ Validation rules:
 {
   "type": "worksheetResult",
   "rid": "...",
-  "worksheet": { "v": 1, "title": "...", "q": ["..."] },
+  "worksheet": { "contractVersion": 1, "v": 1, "title": "...", "q": ["..."], "launchOptions": { "mode": "single-question", "extensions": { "multiQuestion": null } } },
   "answers": [
     { "index": 0, "question": "...", "answer": "...", "raw": "...", "rewritten": "..." }
   ],
@@ -95,10 +115,11 @@ Notes:
 
 - `type` is fixed to `worksheetResult`
 - `rid` must echo the launch `rid`
+- `worksheet.contractVersion` in result must echo the launched contract version
 - `answers[index]` and `answers[].index` must both map to the same question order as `worksheet.q`
 - `answer` is the canonical value for each question; `raw` and `rewritten` are echoed for compatibility with existing parent mapping logic
 - `meta.sentAt` is an ISO-8601 timestamp string
-- This popup result message schema is intentionally unchanged in this phase; any future schema changes must be explicitly versioned.
+- v1 adds `worksheet.contractVersion` in the echoed worksheet object; any additional future schema changes must be explicitly versioned.
 
 ## 4) Parent validation requirements (must enforce)
 
@@ -122,6 +143,14 @@ launch context so any subsequent message for that `rid` is rejected and has no e
 Phase 1 only defines contracts/scaffolding.
 No new runtime behavior is introduced by this document.
 
+## 6.1) Reserved extension points (future multi-question mode)
+
+To avoid breaking v1 integrations, the launch payload reserves:
+
+- `launchOptions.mode` (currently fixed to `"single-question"` in v1)
+- `launchOptions.extensions.multiQuestion` (currently `null` in v1)
+
+Future modes may populate `extensions.multiQuestion` with additional routing/options while preserving the v1 single-question contract and validation rules for existing clients.
 
 ## 7) Parent SDK construction schema (`WorksheetLauncher.create(config)`)
 
@@ -148,6 +177,8 @@ Optional lifecycle hooks:
 - `onStatusChange(status, ok)`
 - `onError(error, context)`
 - `onResult(payload, launchContext)`
+
+SDK event payload metadata now includes contract information: `meta.contractVersion` and `meta.supportedContractVersions`.
 
 Backward compatibility aliases accepted:
 
