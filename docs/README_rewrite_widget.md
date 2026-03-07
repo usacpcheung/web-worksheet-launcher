@@ -278,3 +278,22 @@ RewriteWidget.mount({
   reloadOnLoginRequired: true
 });
 ```
+
+------------------------------------------------------------------------
+
+# Renderer Adapter Contract (`rewrite-widget.v2.js`)
+
+`server/worksheet_launcher/widgets/rewrite-widget.v2.js` wraps the base
+`RewriteWidget.mount` implementation and keeps default widget behavior intact.
+The wrapper extends the returned controller with renderer-facing adapter APIs:
+
+- `getCurrentText()` → returns the current textarea string.
+- `onRewriteStart(callback)` → subscribe to rewrite-start events.
+  Callback payload: `{ text }`.
+- `onRewriteComplete(callback)` → subscribe to rewrite completion.
+  Callback payload: `{ before, after, changed, error }`.
+- `onTextChange(callback)` → subscribe to textarea input changes.
+  Callback payload: `{ text }`.
+
+Renderer integrations should rely on these adapter methods/events instead of
+querying widget internals directly.
