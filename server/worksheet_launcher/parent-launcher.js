@@ -80,6 +80,60 @@
     return "";
   }
 
+  function validateIncomingWorksheetMessageEvent(event, trustedSenderOrigin, popupWindowRef, launchContext) {
+    if (event.origin !== trustedSenderOrigin) {
+      return {
+        ok: false,
+        reasonCode: "reject_untrusted_origin",
+        message: "untrusted event.origin",
+        details: { expectedOrigin: trustedSenderOrigin, actualOrigin: event.origin }
+      };
+    }
+
+    const data = event.data;
+    if (!data || data.type !== "worksheetResult") {
+      return {
+        ok: false,
+        reasonCode: "reject_unexpected_type",
+        message: "unexpected event.data.type",
+        details: { expectedType: "worksheetResult", actualType: data && data.type }
+      };
+    }
+
+    if (!launchContext || data.rid !== launchContext.rid) {
+      return {
+        ok: false,
+        reasonCode: "reject_rid_mismatch",
+        message: "event.data.rid mismatch or missing launch context",
+        details: { expectedRid: launchContext && launchContext.rid, actualRid: data.rid }
+      };
+    }
+
+    if (event.source !== popupWindowRef) {
+      return {
+        ok: false,
+        reasonCode: "reject_untrusted_source",
+        message: "event.source does not match popupRef",
+        details: { sourceMatchesPopup: false }
+      };
+    }
+
+    const payloadError = validateWorksheetResultPayload(data, launchContext);
+    if (payloadError) {
+      return {
+        ok: false,
+        reasonCode: "reject_invalid_payload",
+        message: payloadError,
+        details: { expectedQuestion: launchContext.questions[0] }
+      };
+    }
+
+    return {
+      ok: true,
+      payload: data
+    };
+  }
+
   function buildPopupUrl(renderOrigin, renderPath, worksheet, rid, returnOrigin) {
     const renderUrl = renderOrigin + renderPath;
     const query = new URLSearchParams({
@@ -227,19 +281,27 @@
       }
     }
 
-    function rejectMessage(reason, event) {
+    function rejectMessage(rejection, event) {
       const rid = event && event.data && typeof event.data.rid === "string" ? event.data.rid : null;
-      const statusPayload = makeStatusPayload("message_rejected", reason, rid, {
+      const statusPayload = makeStatusPayload(rejection.reasonCode || "message_rejected", rejection.message, rid, {
         origin: event && event.origin,
         sourceMatchesPopup: event ? event.source === popupRef : false,
         type: event && event.data && event.data.type,
-        rid
+        rid,
+        details: rejection.details || null
       });
       emit("messageRejected", statusPayload);
-      onError(new Error(reason), { type: "message_rejected", event, reason });
-      console.warn(`[worksheet-launcher] Rejected message: ${reason}`, {
+      onError(new Error(rejection.message), {
+        type: "message_rejected",
+        reasonCode: rejection.reasonCode || "message_rejected",
+        event,
+        reason: rejection.message,
+        details: rejection.details || null
+      });
+      console.warn(`[worksheet-launcher] Rejected message [${rejection.reasonCode || "message_rejected"}]: ${rejection.message}`, {
         origin: event && event.origin,
-        data: event && event.data
+        data: event && event.data,
+        details: rejection.details || null
       });
     }
 
@@ -261,33 +323,18 @@
     function handleMessage(event) {
       if (destroyed) return;
 
-      if (event.origin !== trustedSenderOrigin) {
-        rejectMessage("untrusted event.origin", event);
+      const validation = validateIncomingWorksheetMessageEvent(
+        event,
+        trustedSenderOrigin,
+        popupRef,
+        currentLaunchContext
+      );
+      if (!validation.ok) {
+        rejectMessage(validation, event);
         return;
       }
 
-      const data = event.data;
-      if (!data || data.type !== "worksheetResult") {
-        rejectMessage("unexpected event.data.type", event);
-        return;
-      }
-
-      if (!currentLaunchContext || data.rid !== currentLaunchContext.rid) {
-        rejectMessage("event.data.rid mismatch or missing launch context", event);
-        return;
-      }
-
-      if (event.source !== popupRef) {
-        rejectMessage("event.source does not match popupRef", event);
-        return;
-      }
-
-      const payloadError = validateWorksheetResultPayload(data, currentLaunchContext);
-      if (payloadError) {
-        rejectMessage(payloadError, event);
-        return;
-      }
-
+      const data = validation.payload;
       const acceptedContext = currentLaunchContext;
       clear(); // one-shot consume behavior
 
