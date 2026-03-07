@@ -518,12 +518,14 @@
       closeWatcher = global.setInterval(function () {
         if (!popupRef || popupRef.closed) {
           clearCloseWatcher();
+          popupRef = null;
           if (currentLaunchContext && currentLaunchContext.rid === rid) {
             emit(
               "popupClosedWithoutResult",
               makeStatusPayload("popup_closed_without_result", "Popup closed before a valid result was received.", rid, null, launchContext)
             );
             onStatus("Popup closed (single-launch, no result).", false);
+            clear();
           }
         }
       }, 600);
