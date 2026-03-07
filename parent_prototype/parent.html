@@ -138,11 +138,10 @@ const launcher = WorksheetLauncher.create({
   renderPath: CONFIG.RENDER_PATH,
   trustedSenderOrigin: CONFIG.TRUSTED_SENDER_ORIGIN,
   questionSelector: "#singleQuestion",
-  questionExtractor: (el) => el.dataset.questionText || "",
   answerTargetSelector: "#singleAnswer",
   onStatusChange: setStatus,
-  onError: (error) => {
-    console.warn("[parent prototype] launcher error", error);
+  onError: (error, details) => {
+    console.warn("[parent prototype] launcher error", error, details || null);
   },
   onResult: (data) => {
     elResultSummary.textContent = "Result applied to single-launch (1 question).";
@@ -150,7 +149,8 @@ const launcher = WorksheetLauncher.create({
   }
 });
 
-document.getElementById("openSingleLaunchBtn").addEventListener("click", () => {
+const openButton = document.getElementById("openSingleLaunchBtn");
+openButton.addEventListener("click", () => {
   try {
     const opened = launcher.open({
       title: document.getElementById("title").value.trim() || "Worksheet"
