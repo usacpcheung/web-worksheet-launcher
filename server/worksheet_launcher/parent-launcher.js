@@ -173,6 +173,52 @@
     let popupRef = null;
     let closeWatcher = null;
     let destroyed = false;
+    const listeners = {
+      open: new Set(),
+      blocked: new Set(),
+      launchRejected: new Set(),
+      resultAccepted: new Set(),
+      messageRejected: new Set(),
+      popupClosedWithoutResult: new Set()
+    };
+
+    function makeStatusPayload(reasonCode, message, rid, rawEvent) {
+      const payload = {
+        rid: typeof rid === "string" ? rid : null,
+        reasonCode,
+        message
+      };
+      if (rawEvent) {
+        payload.rawEvent = rawEvent;
+      }
+      return payload;
+    }
+
+    function subscribe(eventName, callback) {
+      if (typeof callback !== "function") {
+        throw new Error(`WorksheetLauncher subscription for \"${eventName}\" requires a callback function.`);
+      }
+      const bucket = listeners[eventName];
+      if (!bucket) {
+        throw new Error(`WorksheetLauncher subscription event \"${eventName}\" is not supported.`);
+      }
+      bucket.add(callback);
+      return function unsubscribe() {
+        bucket.delete(callback);
+      };
+    }
+
+    function emit(eventName, payload) {
+      const bucket = listeners[eventName];
+      if (!bucket || bucket.size === 0) return;
+      bucket.forEach(function (callback) {
+        try {
+          callback(payload);
+        } catch (listenerError) {
+          console.warn(`[worksheet-launcher] ${eventName} listener threw`, listenerError);
+        }
+      });
+    }
 
     function clearCloseWatcher() {
       if (closeWatcher) {
@@ -182,6 +228,14 @@
     }
 
     function rejectMessage(reason, event) {
+      const rid = event && event.data && typeof event.data.rid === "string" ? event.data.rid : null;
+      const statusPayload = makeStatusPayload("message_rejected", reason, rid, {
+        origin: event && event.origin,
+        sourceMatchesPopup: event ? event.source === popupRef : false,
+        type: event && event.data && event.data.type,
+        rid
+      });
+      emit("messageRejected", statusPayload);
       onError(new Error(reason), { type: "message_rejected", event, reason });
       console.warn(`[worksheet-launcher] Rejected message: ${reason}`, {
         origin: event && event.origin,
@@ -250,6 +304,10 @@
 
       onResult(data, acceptedContext);
       onStatus("Result received ✅ (single-launch, 1 question)", true);
+      emit(
+        "resultAccepted",
+        makeStatusPayload("result_accepted", "Result message accepted and applied.", acceptedContext.rid)
+      );
       teardownPopup();
     }
 
@@ -296,6 +354,7 @@
 
       const worksheetError = validateWorksheetForLaunch(worksheet, maxQuestionChars);
       if (worksheetError) {
+        emit("launchRejected", makeStatusPayload("launch_validation_error", worksheetError, null));
         onStatus(worksheetError, false);
         onError(new Error(worksheetError), { type: "launch_validation_error", worksheet });
         throw new Error(worksheetError);
@@ -304,6 +363,7 @@
       const rid = makeRid();
       if (!rid.trim()) {
         const warning = "Launch blocked: request id (rid) must be a non-empty string.";
+        emit("launchRejected", makeStatusPayload("launch_validation_error", warning, null));
         onStatus(warning, false);
         onError(new Error(warning), { type: "launch_validation_error" });
         throw new Error(warning);
@@ -312,6 +372,7 @@
       const returnOrigin = getValidatedReturnOrigin();
       if (!returnOrigin) {
         const warning = "Launch blocked: return origin is invalid. Use an absolute http(s) origin.";
+        emit("launchRejected", makeStatusPayload("launch_validation_error", warning, rid));
         onStatus(warning, false);
         onError(new Error(warning), { type: "launch_validation_error" });
         throw new Error(warning);
@@ -327,6 +388,7 @@
       const url = buildPopupUrl(renderOrigin, renderPath, worksheet, rid, returnOrigin);
       if (url.length > maxPopupUrlLength) {
         const warning = `Launch blocked: popup URL is too long (${url.length} chars). Please shorten question text and try again.`;
+        emit("launchRejected", makeStatusPayload("popup_url_too_long", warning, rid));
         onStatus(warning, false);
         onError(new Error(warning), { type: "launch_validation_error", urlLength: url.length });
         return false;
@@ -334,12 +396,15 @@
 
       popupRef = global.open(url, popupName, popupFeatures);
       if (!popupRef) {
-        onStatus("Popup blocked. Please allow popups.", false);
-        onError(new Error("Popup blocked. Please allow popups."), { type: "popup_blocked" });
+        const blockedMessage = "Popup blocked. Please allow popups.";
+        emit("blocked", makeStatusPayload("popup_blocked", blockedMessage, rid));
+        onStatus(blockedMessage, false);
+        onError(new Error(blockedMessage), { type: "popup_blocked" });
         return false;
       }
 
       currentLaunchContext = launchContext;
+      emit("open", makeStatusPayload("popup_opened", "Popup opened and waiting for result.", rid));
       onStatus("Popup opened (single-launch, 1 question). Waiting for result…", null);
 
       clearCloseWatcher();
@@ -347,6 +412,10 @@
         if (!popupRef || popupRef.closed) {
           clearCloseWatcher();
           if (currentLaunchContext && currentLaunchContext.rid === rid) {
+            emit(
+              "popupClosedWithoutResult",
+              makeStatusPayload("popup_closed_without_result", "Popup closed before a valid result was received.", rid)
+            );
             onStatus("Popup closed (single-launch, no result).", false);
           }
         }
@@ -365,6 +434,24 @@
 
     return {
       open,
+      onOpen: function (callback) {
+        return subscribe("open", callback);
+      },
+      onBlocked: function (callback) {
+        return subscribe("blocked", callback);
+      },
+      onLaunchRejected: function (callback) {
+        return subscribe("launchRejected", callback);
+      },
+      onResultAccepted: function (callback) {
+        return subscribe("resultAccepted", callback);
+      },
+      onMessageRejected: function (callback) {
+        return subscribe("messageRejected", callback);
+      },
+      onPopupClosedWithoutResult: function (callback) {
+        return subscribe("popupClosedWithoutResult", callback);
+      },
       clear,
       destroy
     };
