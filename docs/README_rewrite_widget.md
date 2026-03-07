@@ -86,21 +86,22 @@ model-status poller (no duplicated API calls).
 
 # Front-end Status Behavior Notes
 
-The widget polls `GET /api/rewrite-bridge/model-status` and reads both:
+The base widget polls `GET /api/rewrite-bridge/model-status` and reads both:
 
 -   `status` (overall rewrite-model readiness)
 -   `serviceState` (service lifecycle/display state)
 
-Important behavior:
+`rewrite-widget.v2.js` adds a **strict adapter gate** for this prototype:
 
--   **Rewrite button readiness is driven by `status === "ready"`**.
--   `serviceState` is still shown in status text / hints for operator
-    visibility.
--   If `status === "degraded"`, the widget surfaces degraded messaging,
-    even if `serviceState` still reports `"ready"`.
+-   Rewrite is enabled only when `status === "ready"` from adapter polling.
+-   If `status !== "ready"` (including `degraded`, `starting`, `loading`,
+    `unknown`, or poll failures), the adapter blocks rewrite actions.
+-   Renderer integration should use adapter readiness APIs
+    (`isRewriteReady()`, `onReadinessChange`) instead of inferring readiness from
+    UI classes or text.
 
-This separation helps avoid enabling rewrites when the backend reports a
-non-ready model state.
+This keeps renderer behavior aligned to one canonical readiness rule while
+preserving the shared base widget implementation.
 
 ------------------------------------------------------------------------
 
@@ -294,6 +295,9 @@ The wrapper extends the returned controller with renderer-facing adapter APIs:
   Callback payload: `{ before, after, changed, error }`.
 - `onTextChange(callback)` → subscribe to textarea input changes.
   Callback payload: `{ text }`.
+- `isRewriteReady()` → strict readiness boolean (`status === "ready"`).
+- `onReadinessChange(callback)` → subscribe to strict readiness changes.
+  Callback payload: `{ ready, status, lastError }`.
 
 Renderer integrations should rely on these adapter methods/events instead of
 querying widget internals directly.
