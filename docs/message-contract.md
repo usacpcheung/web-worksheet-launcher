@@ -121,3 +121,45 @@ launch context so any subsequent message for that `rid` is rejected and has no e
 
 Phase 1 only defines contracts/scaffolding.
 No new runtime behavior is introduced by this document.
+
+
+## 7) Parent SDK construction schema (`WorksheetLauncher.create(config)`)
+
+Required fields:
+
+- `renderOrigin: string`
+- `renderPath: string`
+- `trustedSenderOrigin: string`
+
+Question source (choose one):
+
+- Selector mode: `questionSelector: string` and optional `questionExtractor(el): string`
+  - Default extractor behavior: use `el.dataset.questionText` first, then `el.value` (when present), then `el.textContent`.
+- Callback mode: `getQuestion(): string`
+
+Answer target (choose one):
+
+- Selector mode: `answerTargetSelector: string`
+  - Default writer behavior: assign to `target.value` when available, otherwise `target.textContent`.
+- Callback mode: `setAnswer(answer, context): void`
+
+Optional lifecycle hooks:
+
+- `onStatusChange(status, ok)`
+- `onError(error, context)`
+- `onResult(payload, launchContext)`
+
+Backward compatibility aliases accepted:
+
+- `onStatus` (alias of `onStatusChange`)
+- `onReject` (alias of `onError`)
+
+Simple construction defaults:
+
+- If only selectors are provided (`questionSelector`, `answerTargetSelector`), the SDK automatically reads the question and writes the resolved answer result.
+- Launch and apply behavior remain constrained to **exactly one question** in v1.
+
+Advanced construction:
+
+- Use `getQuestion()` for dynamic question generation.
+- Use `setAnswer(answer, context)` to fully control result application and routing.

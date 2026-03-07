@@ -16,3 +16,32 @@ Phase 1 establishes contracts and file scaffolding only.
 
 - Do not modify `rewrite-widget.js` directly for prototype-specific behavior.
 - Create a versioned widget file (for example, `rewrite-widget.v2.js`) and import it from `render.html` when needed.
+
+
+## Parent SDK config
+
+`WorksheetLauncher.create(config)` supports simple selector-based setup and advanced callback-based setup.
+
+Required:
+
+- `renderOrigin`
+- `renderPath`
+- `trustedSenderOrigin`
+
+Question source:
+
+- `questionSelector` + optional `questionExtractor(el)`, or
+- `getQuestion()`
+
+Answer target:
+
+- `answerTargetSelector`, or
+- `setAnswer(answer, context)`
+
+Lifecycle hooks (optional):
+
+- `onStatusChange(status)`
+- `onError(error)`
+- `onResult(payload)`
+
+In v1, launcher behavior remains one-question mode only.
