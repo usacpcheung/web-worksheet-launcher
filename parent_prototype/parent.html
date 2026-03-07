@@ -128,50 +128,32 @@ function applyAnswerAreaConfig() {
   });
 }
 
-function getDisplayAnswer(answer) {
-  if (!answer || typeof answer !== "object") return "";
-  if (typeof answer.rewritten === "string" && answer.rewritten.trim()) return answer.rewritten;
-  if (typeof answer.raw === "string") return answer.raw;
-  return "";
-}
-
-function routeAnswerToSingleTarget(data) {
-  const answers = Array.isArray(data.answers) ? data.answers : [];
-  const target = document.getElementById("singleAnswer");
-  if (!target) return;
-  target.value = getDisplayAnswer(answers[0]);
-}
-
 function showLaunchWarning(message) {
   setStatus(message, false);
   alert(message);
-}
-
-function getSingleLaunchData() {
-  const fixedQuestionText = document.getElementById("singleQuestion").dataset.questionText.trim();
-  return {
-    question: fixedQuestionText
-  };
 }
 
 const launcher = WorksheetLauncher.create({
   renderOrigin: CONFIG.RENDER_ORIGIN,
   renderPath: CONFIG.RENDER_PATH,
   trustedSenderOrigin: CONFIG.TRUSTED_SENDER_ORIGIN,
-  onStatus: setStatus,
+  questionSelector: "#singleQuestion",
+  answerTargetSelector: "#singleAnswer",
+  onStatusChange: setStatus,
+  onError: (error, details) => {
+    console.warn("[parent prototype] launcher error", error, details || null);
+  },
   onResult: (data) => {
-    routeAnswerToSingleTarget(data);
     elResultSummary.textContent = "Result applied to single-launch (1 question).";
     elResult.textContent = JSON.stringify(data, null, 2);
   }
 });
 
-document.getElementById("openSingleLaunchBtn").addEventListener("click", () => {
+const openButton = document.getElementById("openSingleLaunchBtn");
+openButton.addEventListener("click", () => {
   try {
-    const launchData = getSingleLaunchData();
     const opened = launcher.open({
-      title: document.getElementById("title").value.trim() || "Worksheet",
-      question: launchData.question
+      title: document.getElementById("title").value.trim() || "Worksheet"
     });
 
     if (!opened) {
