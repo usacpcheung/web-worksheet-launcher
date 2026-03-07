@@ -44,7 +44,7 @@
       <div>
         <label for="title">Worksheet Title</label>
         <input id="title" type="text" value="Quick Check" />
-        <div class="hint">Shared title for both use cases.</div>
+        <div class="hint">Used by the single-question launch scenario.</div>
       </div>
       <div>
         <label>Popup Status</label>
@@ -58,57 +58,21 @@
     </div>
   </div>
 
-  <div class="card" id="useCase1Section">
+  <div class="card" id="singleLaunchSection">
     <div class="section-title">
-      <h2>Use Case 1: One fixed question</h2>
-      <span class="small">Single-question worksheet payload</span>
+      <h2>Single Launch Scenario: One fixed question</h2>
+      <span class="small">One question and one answer target only</span>
     </div>
 
     <label>Fixed Question Display</label>
-    <div id="uc1Question" class="question-box" data-question-text="用一句說明今日學到嘅重點。">用一句說明今日學到嘅重點。</div>
+    <div id="singleQuestion" class="question-box" data-question-text="用一句說明今日學到嘅重點。">用一句說明今日學到嘅重點。</div>
 
-    <label for="uc1Answer">Answer Area</label>
-    <textarea id="uc1Answer" data-editable="true" placeholder="Parent-side answer area for this question."></textarea>
-    <div class="hint">Set <code>data-editable="false"</code> in markup to make this answer area read-only.</div>
-
-    <div class="row" style="margin-top: 12px;">
-      <button id="openUseCase1Btn" class="primary">Open Popup (Use Case 1)</button>
-    </div>
-  </div>
-
-  <div class="card" id="useCase2Section">
-    <div class="section-title">
-      <h2>Use Case 2: Multiple questions</h2>
-      <span class="small">All active questions in one worksheet payload</span>
-    </div>
-
-    <div class="split">
-      <div>
-        <label for="uc2q1">Question 1</label>
-        <textarea id="uc2q1" data-editable="true">用一個例子解釋今日主題。</textarea>
-        <label for="uc2a1">Answer 1</label>
-        <textarea id="uc2a1" data-editable="true" placeholder="Answer for question 1"></textarea>
-      </div>
-
-      <div>
-        <label for="uc2q2">Question 2</label>
-        <textarea id="uc2q2" data-editable="true">你仲有咩問題？</textarea>
-        <label for="uc2a2">Answer 2</label>
-        <textarea id="uc2a2" data-editable="false" placeholder="Answer for question 2 (read-only by default)"></textarea>
-      </div>
-
-      <div>
-        <label for="uc2q3">Question 3</label>
-        <textarea id="uc2q3" data-editable="false">請用 1-2 句總結重點。</textarea>
-        <label for="uc2a3">Answer 3</label>
-        <textarea id="uc2a3" data-editable="true" placeholder="Answer for question 3"></textarea>
-      </div>
-    </div>
-
-    <div class="hint">For question fields, blank entries are ignored when launching the popup.</div>
+    <label for="singleAnswer">Answer Area</label>
+    <textarea id="singleAnswer" placeholder="Parent-side answer area for this question."></textarea>
+    <div class="hint">Answer area editability is controlled by <code>ANSWER_AREA_CONFIG</code> in script.</div>
 
     <div class="row" style="margin-top: 12px;">
-      <button id="openUseCase2Btn" class="primary">Open Popup (Use Case 2)</button>
+      <button id="openSingleLaunchBtn" class="primary">Open Popup</button>
       <button id="clearBtn">Clear Result</button>
     </div>
   </div>
@@ -127,6 +91,17 @@ const CONFIG = {
   RENDER_ORIGIN: "https://YOUR_OIDC_HOST",
   RENDER_PATH: "/worksheet/render.html",
   TRUSTED_SENDER_ORIGIN: "https://YOUR_OIDC_HOST"
+};
+
+// Safeguard: keep launch URL below common proxy/browser limits.
+// If payload grows past this, block launch and ask user to shorten question text.
+const MAX_POPUP_URL_LENGTH = 1800;
+// Keep this cap in sync with renderer-side validation to prevent mismatched launch behavior.
+const MAX_QUESTION_CHARS = 800;
+
+// Configure parent-side answer area editability by field id.
+const ANSWER_AREA_CONFIG = {
+  singleAnswer: { editable: true }
 };
 
 let currentLaunchContext = null;
@@ -151,11 +126,14 @@ function base64urlEncode(str) {
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function buildPopupUrl({ worksheet, rid }) {
+function buildPopupUrl({ worksheet, rid, returnOrigin }) {
   const renderUrl = CONFIG.RENDER_ORIGIN + CONFIG.RENDER_PATH;
-  const w = base64urlEncode(JSON.stringify(worksheet));
-  const returnOrigin = encodeURIComponent(window.location.origin);
-  return `${renderUrl}#w=${w}&rid=${encodeURIComponent(rid)}&returnOrigin=${returnOrigin}`;
+  const query = new URLSearchParams({
+    w: base64urlEncode(JSON.stringify(worksheet)),
+    rid,
+    returnOrigin
+  });
+  return `${renderUrl}?${query.toString()}`;
 }
 
 function setStatus(text, ok = null) {
@@ -163,10 +141,56 @@ function setStatus(text, ok = null) {
   elPopupStatus.className = ok === true ? "ok" : ok === false ? "bad" : "small";
 }
 
+function getValidatedReturnOrigin() {
+  try {
+    const parsed = new URL(window.location.origin);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.origin;
+    }
+  } catch (e) {
+    return "";
+  }
+
+  return "";
+}
+
+function validateWorksheetForLaunch(worksheet) {
+  if (!worksheet || !Array.isArray(worksheet.q) || worksheet.q.length !== 1) {
+    return "Launch blocked: worksheet must contain exactly one question.";
+  }
+
+  const question = worksheet.q[0];
+  if (typeof question !== "string" || !question.trim()) {
+    return "Launch blocked: question text must be a non-empty string.";
+  }
+
+  if (question.length > MAX_QUESTION_CHARS) {
+    return `Launch blocked: question text exceeds ${MAX_QUESTION_CHARS} characters (question body limit). Please shorten question text and try again.`;
+  }
+
+  return "";
+}
+
+function showLaunchWarning(message) {
+  setStatus(message, false);
+  alert(message);
+}
+
 function applyEditableState() {
   document.querySelectorAll("textarea[data-editable], input[data-editable]").forEach((field) => {
     const editable = field.dataset.editable !== "false";
     field.readOnly = !editable;
+  });
+}
+
+function applyAnswerAreaConfig() {
+  Object.entries(ANSWER_AREA_CONFIG).forEach(([fieldId, config]) => {
+    const field = document.getElementById(fieldId);
+    if (!field) return;
+
+    const editable = config.editable !== false;
+    field.readOnly = !editable;
+    field.setAttribute("aria-readonly", String(!editable));
   });
 }
 
@@ -177,31 +201,24 @@ function getDisplayAnswer(answer) {
   return "";
 }
 
-function routeAnswersToUseCase(data, launchContext) {
+function routeAnswerToSingleTarget(data) {
   const answers = Array.isArray(data.answers) ? data.answers : [];
-
-  if (launchContext.useCaseId === "use-case-1") {
-    const target = document.getElementById("uc1Answer");
-    if (!target) return;
-    target.value = getDisplayAnswer(answers[0]);
-    return;
-  }
-
-  if (launchContext.useCaseId === "use-case-2") {
-    launchContext.answerTargetIds.forEach((answerId, expectedIndex) => {
-      const target = document.getElementById(answerId);
-      if (!target) return;
-      target.value = getDisplayAnswer(answers[expectedIndex]);
-    });
-  }
+  const target = document.getElementById("singleAnswer");
+  if (!target) return;
+  target.value = getDisplayAnswer(answers[0]);
 }
 
-function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }) {
-  if (!Array.isArray(questions) || questions.length < 1) {
-    throw new Error("Please provide at least 1 active question.");
+function openPopupWithQuestion({ title, question, answerTargetId }) {
+  const normalizedQuestion = typeof question === "string" ? question.trim() : "";
+  const questions = normalizedQuestion ? [normalizedQuestion] : [];
+
+  if (questions.length < 1) {
+    throw new Error("Please provide exactly 1 question before launch.");
   }
-  if (questions.length > 5) {
-    throw new Error("Max 5 questions.");
+  if (questions.length > 1) {
+    const warning = "This launcher supports only one question. Please keep a single-question worksheet.";
+    showLaunchWarning(warning);
+    throw new Error(warning);
   }
 
   const worksheet = {
@@ -211,15 +228,41 @@ function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }
     rewrite: true
   };
 
+  const worksheetError = validateWorksheetForLaunch(worksheet);
+  if (worksheetError) {
+    showLaunchWarning(worksheetError);
+    throw new Error(worksheetError);
+  }
+
   const rid = makeRid();
+  if (typeof rid !== "string" || !rid.trim()) {
+    const warning = "Launch blocked: request id (rid) must be a non-empty string.";
+    showLaunchWarning(warning);
+    throw new Error(warning);
+  }
+
+  const returnOrigin = getValidatedReturnOrigin();
+  if (!returnOrigin) {
+    const warning = "Launch blocked: return origin is invalid. Use an absolute http(s) origin.";
+    showLaunchWarning(warning);
+    throw new Error(warning);
+  }
   const launchContext = {
     rid,
-    useCaseId,
-    questionCount: questions.length,
-    answerTargetIds: Array.isArray(answerTargetIds) ? answerTargetIds : []
+    useCaseId: "single-launch",
+    questionCount: worksheet.q.length,
+    answerTargetIds: [answerTargetId],
+    questions: [...worksheet.q]
   };
 
-  const url = buildPopupUrl({ worksheet, rid });
+  const url = buildPopupUrl({ worksheet, rid, returnOrigin });
+  const popupUrlLength = url.length;
+  if (popupUrlLength > MAX_POPUP_URL_LENGTH) {
+    const warning = `Launch blocked: popup URL is too long (${popupUrlLength} chars). Please shorten question text and try again.`;
+    showLaunchWarning(warning);
+    return;
+  }
+
   popupRef = window.open(url, "worksheetPopup", "width=900,height=720");
 
   if (!popupRef) {
@@ -228,90 +271,119 @@ function openPopupWithQuestions({ title, questions, useCaseId, answerTargetIds }
   }
 
   currentLaunchContext = launchContext;
-  setStatus(
-    `Popup opened (${useCaseId}, ${questions.length} question(s)). Waiting for result…`,
-    null
-  );
+  setStatus("Popup opened (single-launch, 1 question). Waiting for result…", null);
 
   const timer = setInterval(() => {
     if (!popupRef || popupRef.closed) {
       clearInterval(timer);
       if (currentLaunchContext && currentLaunchContext.rid === rid) {
-        setStatus(`Popup closed (${useCaseId}, no result).`, false);
+        setStatus("Popup closed (single-launch, no result).", false);
       }
     }
   }, 600);
 }
 
+function validateWorksheetResultPayload(data, launchContext) {
+  const answers = Array.isArray(data.answers) ? data.answers : null;
+  if (!answers || answers.length !== 1) {
+    return "answers must be an array of length 1";
+  }
+
+  const firstAnswer = answers[0];
+  if (!firstAnswer || typeof firstAnswer !== "object") {
+    return "answers[0] must be an object";
+  }
+
+  if (firstAnswer.index !== 0) {
+    return "answers[0].index must equal 0";
+  }
+
+  const expectedQuestion = Array.isArray(launchContext.questions) ? launchContext.questions[0] : "";
+  if (typeof firstAnswer.question !== "string" || !firstAnswer.question.trim()) {
+    return "answers[0].question must be a non-empty string";
+  }
+
+  if (expectedQuestion && firstAnswer.question !== expectedQuestion) {
+    return "answers[0].question does not match launched question";
+  }
+
+  if (firstAnswer.raw !== undefined && typeof firstAnswer.raw !== "string") {
+    return "answers[0].raw must be a string when present";
+  }
+
+  if (firstAnswer.rewritten !== undefined && typeof firstAnswer.rewritten !== "string") {
+    return "answers[0].rewritten must be a string when present";
+  }
+
+  return "";
+}
+
 window.addEventListener("message", (event) => {
-  if (event.origin !== CONFIG.TRUSTED_SENDER_ORIGIN) return;
+  const rejectMessage = (reason) => {
+    console.warn(`[worksheet-launcher] Rejected message: ${reason}`, {
+      origin: event.origin,
+      data: event.data
+    });
+  };
+
+  if (event.origin !== CONFIG.TRUSTED_SENDER_ORIGIN) {
+    rejectMessage("untrusted event.origin");
+    return;
+  }
 
   const data = event.data;
-  if (!data || data.type !== "worksheetResult") return;
-  if (!currentLaunchContext || data.rid !== currentLaunchContext.rid) return;
+  if (!data || data.type !== "worksheetResult") {
+    rejectMessage("unexpected event.data.type");
+    return;
+  }
 
-  routeAnswersToUseCase(data, currentLaunchContext);
-  elResultSummary.textContent = `Result applied to ${currentLaunchContext.useCaseId} (${currentLaunchContext.questionCount} question(s)).`;
+  if (!currentLaunchContext || data.rid !== currentLaunchContext.rid) {
+    rejectMessage("event.data.rid mismatch or missing launch context");
+    return;
+  }
+
+  if (event.source !== popupRef) {
+    rejectMessage("event.source does not match popupRef");
+    return;
+  }
+
+  const launchContext = currentLaunchContext;
+  const payloadError = validateWorksheetResultPayload(data, launchContext);
+  if (payloadError) {
+    rejectMessage(payloadError);
+    return;
+  }
+
+  routeAnswerToSingleTarget(data);
+  elResultSummary.textContent = "Result applied to single-launch (1 question).";
   elResult.textContent = JSON.stringify(data, null, 2);
-  setStatus(
-    `Result received ✅ (${currentLaunchContext.useCaseId}, ${currentLaunchContext.questionCount} question(s))`,
-    true
-  );
+  setStatus("Result received ✅ (single-launch, 1 question)", true);
+  currentLaunchContext = null;
 
   try { popupRef && popupRef.close(); } catch (e) {}
+  popupRef = null;
 });
 
-function getUseCase1LaunchData() {
-  const fixedQuestionText = document.getElementById("uc1Question").dataset.questionText.trim();
+function getSingleLaunchData() {
+  const fixedQuestionText = document.getElementById("singleQuestion").dataset.questionText.trim();
   return {
-    questions: [fixedQuestionText],
-    answerTargetIds: ["uc1Answer"]
+    question: fixedQuestionText,
+    answerTargetId: "singleAnswer"
   };
 }
 
-function getUseCase2LaunchData() {
-  const mapping = [
-    { questionId: "uc2q1", answerId: "uc2a1" },
-    { questionId: "uc2q2", answerId: "uc2a2" },
-    { questionId: "uc2q3", answerId: "uc2a3" }
-  ];
-
-  const activePairs = mapping.filter(({ questionId }) => {
-    const text = document.getElementById(questionId).value.trim();
-    return Boolean(text);
-  });
-
-  return {
-    questions: activePairs.map(({ questionId }) => document.getElementById(questionId).value.trim()),
-    answerTargetIds: activePairs.map(({ answerId }) => answerId)
-  };
-}
-
-document.getElementById("openUseCase1Btn").addEventListener("click", () => {
+document.getElementById("openSingleLaunchBtn").addEventListener("click", () => {
   try {
-    const launchData = getUseCase1LaunchData();
-    openPopupWithQuestions({
+    const launchData = getSingleLaunchData();
+    openPopupWithQuestion({
       title: document.getElementById("title").value.trim() || "Worksheet",
-      questions: launchData.questions,
-      useCaseId: "use-case-1",
-      answerTargetIds: launchData.answerTargetIds
+      question: launchData.question,
+      answerTargetId: launchData.answerTargetId
     });
   } catch (err) {
-    alert(err.message || String(err));
-  }
-});
-
-document.getElementById("openUseCase2Btn").addEventListener("click", () => {
-  try {
-    const launchData = getUseCase2LaunchData();
-    openPopupWithQuestions({
-      title: document.getElementById("title").value.trim() || "Worksheet",
-      questions: launchData.questions,
-      useCaseId: "use-case-2",
-      answerTargetIds: launchData.answerTargetIds
-    });
-  } catch (err) {
-    alert(err.message || String(err));
+    if (err && err.message) {
+      console.warn(err.message);
+    }
   }
 });
 
@@ -323,6 +395,7 @@ document.getElementById("clearBtn").addEventListener("click", () => {
 });
 
 applyEditableState();
+applyAnswerAreaConfig();
 </script>
 </body>
 </html>
