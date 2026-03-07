@@ -194,6 +194,9 @@
 
     let strictReady = false;
     let rewriteInFlight = false;
+    let activeRewrite = null;
+    let lastObservedText = getCurrentText();
+    let monitorTimer = null;
 
     const syncStrictGate = () => {
       const rewriteButton = getRewriteButton();
@@ -214,8 +217,75 @@
       }
     };
 
+    const emitTextIfChanged = () => {
+      const nextText = getCurrentText();
+      if (nextText === lastObservedText) return;
+      lastObservedText = nextText;
+      textChange.emit({ text: nextText });
+      if (activeRewrite) {
+        activeRewrite.sawTextChange = true;
+      }
+    };
+
+    const beginRewriteLifecycle = (before, source, options = {}) => {
+      if (activeRewrite) return;
+      const beforeText = String(before ?? getCurrentText());
+      const markInFlight = options.markInFlight !== false;
+      activeRewrite = {
+        before: beforeText,
+        source: source || "unknown",
+        enteredInFlight: markInFlight,
+        sawTextChange: false
+      };
+      rewriteInFlight = markInFlight;
+      if (markInFlight) {
+        syncStrictGate();
+      }
+      rewriteStart.emit({ text: beforeText });
+    };
+
+    const completeRewriteLifecycle = (error = null) => {
+      if (!activeRewrite) return;
+      const before = activeRewrite.before;
+      const after = getCurrentText();
+      activeRewrite = null;
+      rewriteInFlight = false;
+      syncStrictGate();
+      rewriteComplete.emit({ before, after, changed: after !== before, error });
+    };
+
+    const monitorRewriteLifecycle = () => {
+      if (monitorTimer !== null) return;
+      monitorTimer = setInterval(() => {
+        emitTextIfChanged();
+
+        if (!activeRewrite) return;
+        const currentTextarea = getTextarea();
+        if (currentTextarea && currentTextarea.disabled) {
+          if (!activeRewrite.enteredInFlight) {
+            activeRewrite.enteredInFlight = true;
+            rewriteInFlight = true;
+            syncStrictGate();
+          }
+          return;
+        }
+
+        if (!activeRewrite.enteredInFlight && !activeRewrite.sawTextChange) return;
+
+        // Completion fallback: once rewrite flow returns to idle, emit completion
+        // even if text didn't change.
+        completeRewriteLifecycle();
+      }, 100);
+    };
+
+    const stopRewriteLifecycleMonitor = () => {
+      if (monitorTimer === null) return;
+      clearInterval(monitorTimer);
+      monitorTimer = null;
+    };
+
     const onInput = () => {
-      textChange.emit({ text: getCurrentText() });
+      emitTextIfChanged();
       syncStrictGate();
     };
 
@@ -247,9 +317,7 @@
       }
 
       const before = getCurrentText();
-      rewriteInFlight = true;
-      syncStrictGate();
-      rewriteStart.emit({ text: before });
+      beginRewriteLifecycle(before, "programmatic");
 
       let error = null;
       try {
@@ -258,23 +326,27 @@
         error = err;
         throw err;
       } finally {
-        rewriteInFlight = false;
-        syncStrictGate();
-        const after = getCurrentText();
-        rewriteComplete.emit({ before, after, changed: after !== before, error });
+        completeRewriteLifecycle(error);
       }
     }
 
     const rewriteBtn = getRewriteButton();
+    const onRewriteButtonCapture = () => {
+      if (!strictReady) return;
+      beginRewriteLifecycle(getCurrentText(), "button", { markInFlight: false });
+    };
     const blockIfNotReady = (event) => {
       if (strictReady) return;
       event.preventDefault();
       event.stopImmediatePropagation();
     };
     if (rewriteBtn) {
+      rewriteBtn.addEventListener("click", onRewriteButtonCapture, true);
       rewriteBtn.addEventListener("click", blockIfNotReady, true);
       syncStrictGate();
     }
+
+    monitorRewriteLifecycle();
 
     const baseDestroy = typeof controller.destroy === "function"
       ? controller.destroy.bind(controller)
@@ -296,8 +368,10 @@
         }
         const currentRewriteBtn = getRewriteButton();
         if (currentRewriteBtn) {
+          currentRewriteBtn.removeEventListener("click", onRewriteButtonCapture, true);
           currentRewriteBtn.removeEventListener("click", blockIfNotReady, true);
         }
+        stopRewriteLifecycleMonitor();
         unsubscribeStrictPoll();
         rewriteStart.clear();
         rewriteComplete.clear();
