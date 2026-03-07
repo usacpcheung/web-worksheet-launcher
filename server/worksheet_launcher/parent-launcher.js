@@ -30,6 +30,32 @@
     return "";
   }
 
+  function normalizeHttpOriginLike(value, fieldName) {
+    const raw = String(value || "").trim();
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error("invalid protocol");
+      }
+      if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+        throw new Error("origin must not include path, query, or hash");
+      }
+      return parsed.origin;
+    } catch (err) {
+      throw new Error(
+        `WorksheetLauncher.create(config): ${fieldName} must be an absolute http(s) origin without path (example: https://example.com).`
+      );
+    }
+  }
+
+  function normalizeRenderPath(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      throw new Error("WorksheetLauncher.create(config): renderPath is required.");
+    }
+    return raw.startsWith("/") ? raw : `/${raw}`;
+  }
+
   function validateWorksheetForLaunch(worksheet, maxQuestionChars) {
     if (!worksheet || !Array.isArray(worksheet.q) || worksheet.q.length !== 1) {
       return "Launch blocked: worksheet must contain exactly one question.";
@@ -201,12 +227,12 @@
       throw new Error("WorksheetLauncher.create(config): config object is required.");
     }
 
-    const renderOrigin = String(config.renderOrigin || "").trim();
-    const renderPath = String(config.renderPath || "").trim();
-    const trustedSenderOrigin = String(config.trustedSenderOrigin || "").trim();
+    const renderPath = normalizeRenderPath(config.renderPath);
+    const renderOrigin = normalizeHttpOriginLike(config.renderOrigin, "renderOrigin");
+    const trustedSenderOrigin = normalizeHttpOriginLike(config.trustedSenderOrigin, "trustedSenderOrigin");
 
-    if (!renderOrigin || !renderPath || !trustedSenderOrigin) {
-      throw new Error("WorksheetLauncher.create(config): renderOrigin, renderPath, and trustedSenderOrigin are required.");
+    if (!renderOrigin || !trustedSenderOrigin) {
+      throw new Error("WorksheetLauncher.create(config): renderOrigin and trustedSenderOrigin are required.");
     }
 
     const maxPopupUrlLength = Number(config.maxPopupUrlLength) || DEFAULT_MAX_POPUP_URL_LENGTH;
