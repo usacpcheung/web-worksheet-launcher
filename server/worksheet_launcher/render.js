@@ -160,21 +160,26 @@ async function renderQuestions() {
       pollModelStatus: true
     });
 
-    const textarea = card.querySelector(".rw-textarea");
-    const rewriteButton = card.querySelector(".rw-primary");
-
     const state = {
       rawText: "",
       rewrittenText: "",
       latestText: "",
-      rewriteInFlight: false
+      rewriteInFlight: false,
+      rewriteReady: false
     };
 
-    const getTrimmedTextarea = () => (textarea ? textarea.value.trim() : "");
+    const getTrimmedText = () => {
+      if (!widget || typeof widget.getCurrentText !== "function") return "";
+      return widget.getCurrentText().trim();
+    };
 
-    if (textarea) {
-      textarea.addEventListener("input", () => {
-        state.latestText = getTrimmedTextarea();
+    const updateLatestFromAdapter = () => {
+      state.latestText = getTrimmedText();
+    };
+
+    if (widget && typeof widget.onTextChange === "function") {
+      widget.onTextChange(() => {
+        updateLatestFromAdapter();
         if (!state.rewriteInFlight) {
           // Manual edits become the latest source text and clear stale rewrite snapshots.
           state.rawText = state.latestText;
@@ -183,29 +188,34 @@ async function renderQuestions() {
       });
     }
 
-    if (rewriteButton && widget && typeof widget.rewrite === "function") {
-      rewriteButton.addEventListener("click", async (event) => {
-        if (rewriteButton.disabled) return;
 
-        event.preventDefault();
-        event.stopImmediatePropagation();
-
-        state.rawText = getTrimmedTextarea();
-        state.rewriteInFlight = true;
-
-        try {
-          await widget.rewrite();
-        } finally {
-          state.latestText = getTrimmedTextarea();
-          if (state.latestText && state.latestText !== state.rawText) {
-            state.rewrittenText = state.latestText;
-          }
-          state.rewriteInFlight = false;
-        }
-      }, true);
+    if (widget && typeof widget.onReadinessChange === "function") {
+      widget.onReadinessChange(({ ready }) => {
+        state.rewriteReady = ready === true;
+      });
+    }
+    if (widget && typeof widget.isRewriteReady === "function") {
+      state.rewriteReady = widget.isRewriteReady();
     }
 
-    state.latestText = getTrimmedTextarea();
+    if (widget && typeof widget.onRewriteStart === "function") {
+      widget.onRewriteStart(({ text }) => {
+        state.rawText = safeText(text).trim();
+        state.rewriteInFlight = true;
+      });
+    }
+
+    if (widget && typeof widget.onRewriteComplete === "function") {
+      widget.onRewriteComplete(({ after, changed }) => {
+        state.latestText = safeText(after).trim();
+        if (changed && state.latestText && state.latestText !== state.rawText) {
+          state.rewrittenText = state.latestText;
+        }
+        state.rewriteInFlight = false;
+      });
+    }
+
+    updateLatestFromAdapter();
     if (!state.rawText) {
       state.rawText = state.latestText;
     }
@@ -215,7 +225,7 @@ async function renderQuestions() {
       question: safeText(qText),
       widget,
       state,
-      getLatestText: () => getTrimmedTextarea()
+      getLatestText: () => getTrimmedText()
     };
   }
 }
