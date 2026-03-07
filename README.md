@@ -12,11 +12,22 @@ Phase 1 establishes contracts and file scaffolding only.
 - Render route security headers/CSP guidance: `docs/render-security-headers.md`
 - Widget styles placeholder: `server/worksheet_launcher/widgets/rewrite-widget.css`
 
+## 5-line parent integration
+
+```html
+<script src="/worksheet/parent-launcher.js"></script>
+<script>
+const launcher = WorksheetLauncher.create({ renderOrigin, renderPath, trustedSenderOrigin, questionSelector: "#question", answerTargetSelector: "#answer" });
+document.querySelector("#open").addEventListener("click", () => launcher.open({ title: "Quick Check" }));
+</script>
+```
+
+For full setup options (selectors vs callbacks, hooks, and failure handling), see `docs/parent-launcher-sdk.md`.
+
 ## Compatibility Decision (Widget Versioning Rule)
 
 - Do not modify `rewrite-widget.js` directly for prototype-specific behavior.
 - Create a versioned widget file (for example, `rewrite-widget.v2.js`) and import it from `render.html` when needed.
-
 
 ## Parent SDK config
 
