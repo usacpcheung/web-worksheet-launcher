@@ -1,0 +1,281 @@
+(function (global) {
+  "use strict";
+
+  const DEFAULT_MAX_POPUP_URL_LENGTH = 1800;
+  const DEFAULT_MAX_QUESTION_CHARS = 800;
+
+  function makeRid() {
+    return "rid_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+  }
+
+  function base64urlEncode(str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = "";
+    for (const b of bytes) bin += String.fromCharCode(b);
+    const b64 = btoa(bin);
+    return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+
+  function getValidatedReturnOrigin() {
+    try {
+      const parsed = new URL(global.location.origin);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return parsed.origin;
+      }
+    } catch (e) {
+      return "";
+    }
+    return "";
+  }
+
+  function validateWorksheetForLaunch(worksheet, maxQuestionChars) {
+    if (!worksheet || !Array.isArray(worksheet.q) || worksheet.q.length !== 1) {
+      return "Launch blocked: worksheet must contain exactly one question.";
+    }
+
+    const question = worksheet.q[0];
+    if (typeof question !== "string" || !question.trim()) {
+      return "Launch blocked: question text must be a non-empty string.";
+    }
+
+    if (question.length > maxQuestionChars) {
+      return `Launch blocked: question text exceeds ${maxQuestionChars} characters (question body limit). Please shorten question text and try again.`;
+    }
+
+    return "";
+  }
+
+  function validateWorksheetResultPayload(data, launchContext) {
+    const answers = Array.isArray(data.answers) ? data.answers : null;
+    if (!answers || answers.length !== 1) {
+      return "answers must be an array of length 1";
+    }
+
+    const firstAnswer = answers[0];
+    if (!firstAnswer || typeof firstAnswer !== "object") {
+      return "answers[0] must be an object";
+    }
+
+    if (firstAnswer.index !== 0) {
+      return "answers[0].index must equal 0";
+    }
+
+    const expectedQuestion = Array.isArray(launchContext.questions) ? launchContext.questions[0] : "";
+    if (typeof firstAnswer.question !== "string" || !firstAnswer.question.trim()) {
+      return "answers[0].question must be a non-empty string";
+    }
+
+    if (expectedQuestion && firstAnswer.question !== expectedQuestion) {
+      return "answers[0].question does not match launched question";
+    }
+
+    if (firstAnswer.raw !== undefined && typeof firstAnswer.raw !== "string") {
+      return "answers[0].raw must be a string when present";
+    }
+
+    if (firstAnswer.rewritten !== undefined && typeof firstAnswer.rewritten !== "string") {
+      return "answers[0].rewritten must be a string when present";
+    }
+
+    return "";
+  }
+
+  function buildPopupUrl(renderOrigin, renderPath, worksheet, rid, returnOrigin) {
+    const renderUrl = renderOrigin + renderPath;
+    const query = new URLSearchParams({
+      w: base64urlEncode(JSON.stringify(worksheet)),
+      rid,
+      returnOrigin
+    });
+    return `${renderUrl}?${query.toString()}`;
+  }
+
+  function create(config) {
+    if (!config || typeof config !== "object") {
+      throw new Error("WorksheetLauncher.create(config): config object is required.");
+    }
+
+    const renderOrigin = String(config.renderOrigin || "").trim();
+    const renderPath = String(config.renderPath || "").trim();
+    const trustedSenderOrigin = String(config.trustedSenderOrigin || "").trim();
+
+    if (!renderOrigin || !renderPath || !trustedSenderOrigin) {
+      throw new Error("WorksheetLauncher.create(config): renderOrigin, renderPath, and trustedSenderOrigin are required.");
+    }
+
+    const maxPopupUrlLength = Number(config.maxPopupUrlLength) || DEFAULT_MAX_POPUP_URL_LENGTH;
+    const maxQuestionChars = Number(config.maxQuestionChars) || DEFAULT_MAX_QUESTION_CHARS;
+    const popupName = String(config.popupName || "worksheetPopup");
+    const popupFeatures = String(config.popupFeatures || "width=900,height=720");
+
+    const onStatus = typeof config.onStatus === "function" ? config.onStatus : function () {};
+    const onReject = typeof config.onReject === "function" ? config.onReject : function () {};
+    const onResult = typeof config.onResult === "function" ? config.onResult : function () {};
+
+    let currentLaunchContext = null;
+    let popupRef = null;
+    let closeWatcher = null;
+    let destroyed = false;
+
+    function clearCloseWatcher() {
+      if (closeWatcher) {
+        clearInterval(closeWatcher);
+        closeWatcher = null;
+      }
+    }
+
+    function rejectMessage(reason, event) {
+      onReject(reason, event);
+      console.warn(`[worksheet-launcher] Rejected message: ${reason}`, {
+        origin: event && event.origin,
+        data: event && event.data
+      });
+    }
+
+    function clear() {
+      currentLaunchContext = null;
+      clearCloseWatcher();
+    }
+
+    function teardownPopup() {
+      clearCloseWatcher();
+      try {
+        if (popupRef && !popupRef.closed) popupRef.close();
+      } catch (e) {
+        // noop
+      }
+      popupRef = null;
+    }
+
+    function handleMessage(event) {
+      if (destroyed) return;
+
+      if (event.origin !== trustedSenderOrigin) {
+        rejectMessage("untrusted event.origin", event);
+        return;
+      }
+
+      const data = event.data;
+      if (!data || data.type !== "worksheetResult") {
+        rejectMessage("unexpected event.data.type", event);
+        return;
+      }
+
+      if (!currentLaunchContext || data.rid !== currentLaunchContext.rid) {
+        rejectMessage("event.data.rid mismatch or missing launch context", event);
+        return;
+      }
+
+      if (event.source !== popupRef) {
+        rejectMessage("event.source does not match popupRef", event);
+        return;
+      }
+
+      const payloadError = validateWorksheetResultPayload(data, currentLaunchContext);
+      if (payloadError) {
+        rejectMessage(payloadError, event);
+        return;
+      }
+
+      const acceptedContext = currentLaunchContext;
+      clear(); // one-shot consume behavior
+      onResult(data, acceptedContext);
+      onStatus("Result received ✅ (single-launch, 1 question)", true);
+      teardownPopup();
+    }
+
+    global.addEventListener("message", handleMessage);
+
+    function open(input) {
+      if (destroyed) throw new Error("Launcher has been destroyed.");
+
+      const title = input && typeof input.title === "string" ? input.title : "Worksheet";
+      const normalizedQuestion = input && typeof input.question === "string" ? input.question.trim() : "";
+      const questions = normalizedQuestion ? [normalizedQuestion] : [];
+
+      if (questions.length !== 1) {
+        throw new Error("Please provide exactly 1 question before launch.");
+      }
+
+      const worksheet = {
+        v: 1,
+        title: title || "Worksheet",
+        q: questions,
+        rewrite: true
+      };
+
+      const worksheetError = validateWorksheetForLaunch(worksheet, maxQuestionChars);
+      if (worksheetError) {
+        onStatus(worksheetError, false);
+        throw new Error(worksheetError);
+      }
+
+      const rid = makeRid();
+      if (!rid.trim()) {
+        const warning = "Launch blocked: request id (rid) must be a non-empty string.";
+        onStatus(warning, false);
+        throw new Error(warning);
+      }
+
+      const returnOrigin = getValidatedReturnOrigin();
+      if (!returnOrigin) {
+        const warning = "Launch blocked: return origin is invalid. Use an absolute http(s) origin.";
+        onStatus(warning, false);
+        throw new Error(warning);
+      }
+
+      const launchContext = {
+        rid,
+        useCaseId: "single-launch",
+        questionCount: worksheet.q.length,
+        questions: worksheet.q.slice()
+      };
+
+      const url = buildPopupUrl(renderOrigin, renderPath, worksheet, rid, returnOrigin);
+      if (url.length > maxPopupUrlLength) {
+        const warning = `Launch blocked: popup URL is too long (${url.length} chars). Please shorten question text and try again.`;
+        onStatus(warning, false);
+        return false;
+      }
+
+      popupRef = global.open(url, popupName, popupFeatures);
+      if (!popupRef) {
+        onStatus("Popup blocked. Please allow popups.", false);
+        return false;
+      }
+
+      currentLaunchContext = launchContext;
+      onStatus("Popup opened (single-launch, 1 question). Waiting for result…", null);
+
+      clearCloseWatcher();
+      closeWatcher = global.setInterval(function () {
+        if (!popupRef || popupRef.closed) {
+          clearCloseWatcher();
+          if (currentLaunchContext && currentLaunchContext.rid === rid) {
+            onStatus("Popup closed (single-launch, no result).", false);
+          }
+        }
+      }, 600);
+
+      return true;
+    }
+
+    function destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      global.removeEventListener("message", handleMessage);
+      clear();
+      teardownPopup();
+    }
+
+    return {
+      open,
+      clear,
+      destroy
+    };
+  }
+
+  global.WorksheetLauncher = {
+    create
+  };
+})(window);
