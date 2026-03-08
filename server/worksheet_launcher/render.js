@@ -49,7 +49,22 @@ const elQuestions = document.getElementById("questions");
 const elStatus = document.getElementById("status");
 const elFlowHint = document.getElementById("flowHint");
 const elSendBackBtn = document.getElementById("sendBackBtn");
-elSendBackBtn.disabled = true;
+const printBtn = document.getElementById("printBtn");
+
+const missingRequiredControls = [];
+if (!elSendBackBtn) missingRequiredControls.push("sendBackBtn");
+if (!printBtn) missingRequiredControls.push("printBtn");
+
+if (missingRequiredControls.length > 0) {
+  setSafeText(elStatus, `UI configuration error: missing required control(s): ${missingRequiredControls.join(", ")}.`);
+  if (elStatus) {
+    elStatus.className = "small bad";
+  }
+}
+
+if (elSendBackBtn) {
+  elSendBackBtn.disabled = true;
+}
 
 let normalizedReturnOrigin = "";
 try {
@@ -119,7 +134,9 @@ if (launchError) {
   setSafeText(elStatus, `Launch blocked: ${launchError}`);
   elStatus.className = "small bad";
   setSafeText(elFlowHint, "Fix launch query parameters and reopen this popup.");
-  elSendBackBtn.disabled = true;
+  if (elSendBackBtn) {
+    elSendBackBtn.disabled = true;
+  }
 }
 
 if (!launchError) {
@@ -261,58 +278,66 @@ function buildAnswersPayload() {
 
 if (!launchError) {
   renderQuestions().then(() => {
-    elSendBackBtn.disabled = false;
+    if (elSendBackBtn) {
+      elSendBackBtn.disabled = false;
+    }
   }).catch((err) => {
     setSafeText(elStatus, String(err?.message || err));
     elStatus.className = "small bad";
-    elSendBackBtn.disabled = true;
+    if (elSendBackBtn) {
+      elSendBackBtn.disabled = true;
+    }
   });
 }
 
 // Send back to parent
-elSendBackBtn.addEventListener("click", () => {
-  if (launchError || !worksheet) {
-    setSafeText(elStatus, "Cannot send result: launch query is invalid.");
-    elStatus.className = "small bad";
-    return;
-  }
+if (elSendBackBtn) {
+  elSendBackBtn.addEventListener("click", () => {
+    if (launchError || !worksheet) {
+      setSafeText(elStatus, "Cannot send result: launch query is invalid.");
+      elStatus.className = "small bad";
+      return;
+    }
 
-  if (widgetControllers.length !== worksheet.q.length) {
-    setSafeText(elStatus, "Cannot send result: answer widget initialization is incomplete.");
-    elStatus.className = "small bad";
-    return;
-  }
+    if (widgetControllers.length !== worksheet.q.length) {
+      setSafeText(elStatus, "Cannot send result: answer widget initialization is incomplete.");
+      elStatus.className = "small bad";
+      return;
+    }
 
-  const payload = {
-    type: "worksheetResult",
-    rid,
-    worksheet: {
-      contractVersion: worksheet.contractVersion,
-      v: worksheet.v,
-      title: worksheet.title,
-      q: worksheet.q,
-      launchOptions: worksheet.launchOptions || null
-    },
-    answers: buildAnswersPayload(),
-    meta: { sentAt: new Date().toISOString() }
-  };
+    const payload = {
+      type: "worksheetResult",
+      rid,
+      worksheet: {
+        contractVersion: worksheet.contractVersion,
+        v: worksheet.v,
+        title: worksheet.title,
+        q: worksheet.q,
+        launchOptions: worksheet.launchOptions || null
+      },
+      answers: buildAnswersPayload(),
+      meta: { sentAt: new Date().toISOString() }
+    };
 
-  if (!normalizedReturnOrigin) {
-    setSafeText(elStatus, "Cannot send result: returnOrigin is missing or invalid.");
-    elStatus.className = "small bad";
-    return;
-  }
+    if (!normalizedReturnOrigin) {
+      setSafeText(elStatus, "Cannot send result: returnOrigin is missing or invalid.");
+      elStatus.className = "small bad";
+      return;
+    }
 
-  if (!window.opener) {
-    setSafeText(elStatus, "No opener found (opened with noopener?). Cannot send back.");
-    elStatus.className = "small bad";
-    return;
-  }
+    if (!window.opener) {
+      setSafeText(elStatus, "No opener found (opened with noopener?). Cannot send back.");
+      elStatus.className = "small bad";
+      return;
+    }
 
-  const targetOrigin = normalizedReturnOrigin;
-  window.opener.postMessage(payload, targetOrigin);
-  setSafeText(elStatus, "Sent back to parent ✅");
-  elStatus.className = "small ok";
-});
+    const targetOrigin = normalizedReturnOrigin;
+    window.opener.postMessage(payload, targetOrigin);
+    setSafeText(elStatus, "Sent back to parent ✅");
+    elStatus.className = "small ok";
+  });
+}
 
-document.getElementById("printBtn").addEventListener("click", () => window.print());
+if (printBtn) {
+  printBtn.addEventListener("click", () => window.print());
+}
