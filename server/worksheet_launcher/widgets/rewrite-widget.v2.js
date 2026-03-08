@@ -257,6 +257,8 @@
     const monitorRewriteLifecycle = () => {
       if (monitorTimer !== null) return;
       monitorTimer = setInterval(() => {
+        // Poll for text changes once per tick so lifecycle state transitions are
+        // driven by a single, stable source of truth.
         emitTextIfChanged();
 
         if (!activeRewrite) return;
