@@ -191,8 +191,7 @@ async function renderQuestions() {
       rawText: "",
       rewrittenText: "",
       latestText: "",
-      rewriteInFlight: false,
-      rewriteReady: false
+      rewriteInFlight: false
     };
 
     const getTrimmedText = () => {
@@ -213,16 +212,6 @@ async function renderQuestions() {
           state.rewrittenText = "";
         }
       });
-    }
-
-
-    if (widget && typeof widget.onReadinessChange === "function") {
-      widget.onReadinessChange(({ ready }) => {
-        state.rewriteReady = ready === true;
-      });
-    }
-    if (widget && typeof widget.isRewriteReady === "function") {
-      state.rewriteReady = widget.isRewriteReady();
     }
 
     if (widget && typeof widget.onRewriteStart === "function") {
