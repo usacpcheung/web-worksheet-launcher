@@ -498,6 +498,8 @@
               makeStatusPayload("popup_closed_without_result", "Popup closed before a valid result was received.", rid, null, launchContext)
             );
             onStatus("Popup closed (single-launch, no result).", false);
+            clear();
+            popupRef = null;
           }
         }
       }, 600);
