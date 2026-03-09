@@ -3,19 +3,21 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Web Worksheet Launcher - Parent (Starter)</title>
+  <title>Worksheet Launcher Demo Parent</title>
   <style>
-    body { font-family: system-ui, Arial, sans-serif; max-width: 1040px; margin: 24px auto; padding: 0 12px; }
-    h1 { font-size: 22px; margin: 0 0 12px; }
-    h2 { margin: 0 0 8px; font-size: 18px; }
+    body { font-family: system-ui, Arial, sans-serif; max-width: 1100px; margin: 24px auto; padding: 0 12px; }
+    h1 { font-size: 24px; margin: 0 0 10px; }
+    h2 { margin: 0 0 8px; font-size: 19px; }
+    .lead { color: #444; margin-bottom: 14px; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin: 12px 0; }
     .split { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .section-title { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 8px; }
     label { font-weight: 600; display: block; margin: 10px 0 6px; }
     input[type="text"], textarea {
       width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px; border: 1px solid #ccc;
       font: inherit;
     }
-    textarea { min-height: 56px; resize: vertical; }
+    textarea { min-height: 64px; resize: vertical; }
     textarea[readonly], input[readonly] { background: #f6f6f6; color: #444; }
     .question-box {
       border: 1px solid #d8d8d8;
@@ -27,24 +29,22 @@
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     button { padding: 10px 14px; border-radius: 10px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
     button.primary { border-color: #111; font-weight: 600; }
-    button:disabled { opacity: .5; cursor: not-allowed; }
     .hint { color: #666; font-size: 12px; margin-top: 4px; }
-    pre { background: #f7f7f7; border: 1px solid #eee; padding: 12px; border-radius: 12px; overflow: auto; }
+    .small { font-size: 12px; color: #666; }
     .ok { color: #0a7; }
     .bad { color: #c33; }
-    .small { font-size: 12px; color: #666; }
-    .section-title { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+    pre { background: #f7f7f7; border: 1px solid #eee; padding: 12px; border-radius: 12px; overflow: auto; }
   </style>
 </head>
 <body>
-  <h1>Parent App (Starter) — opens OIDC popup worksheet and receives results</h1>
+  <h1>Worksheet Launcher Parent Demo</h1>
+  <p class="lead">This page is intentionally a demo harness (not production starter code). It shows two integration styles for launching the worksheet popup and keeps a JSON debug panel for troubleshooting message flow.</p>
 
   <div class="card">
     <div class="split">
       <div>
         <label for="title">Worksheet Title</label>
         <input id="title" type="text" value="Quick Check" />
-        <div class="hint">Used by the single-question launch scenario.</div>
       </div>
       <div>
         <label>Popup Status</label>
@@ -58,34 +58,51 @@
     </div>
   </div>
 
-  <div class="card" id="singleLaunchSection">
+  <div class="card">
     <div class="section-title">
-      <h2>Single Launch Scenario: One fixed question</h2>
-      <span class="small">One question and one answer target only</span>
+      <h2>Section A — Selector-based setup</h2>
+      <span class="small">Uses <code>questionSelector</code> + <code>answerTargetSelector</code></span>
     </div>
 
     <label>Fixed Question Display</label>
-    <div id="singleQuestion" class="question-box" data-question-text="用一句說明今日學到嘅重點。">用一句說明今日學到嘅重點。</div>
+    <div id="selectorQuestion" class="question-box" data-question-text="用一句說明今日學到嘅重點。">用一句說明今日學到嘅重點。</div>
 
-    <label for="singleAnswer">Answer Area</label>
-    <textarea id="singleAnswer" placeholder="Parent-side answer area for this question."></textarea>
-    <div class="hint">Answer area editability is controlled by <code>ANSWER_AREA_CONFIG</code> in script.</div>
+    <label for="selectorAnswer">Answer Area</label>
+    <textarea id="selectorAnswer" placeholder="Result is written here by selector-based launcher."></textarea>
 
     <div class="row" style="margin-top: 12px;">
-      <button id="openSingleLaunchBtn" class="primary">Open Popup</button>
-      <button id="clearBtn">Clear Result</button>
+      <button id="openSelectorLaunchBtn" class="primary">Open Popup (Section A)</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">
+      <h2>Section B — Callback-based setup</h2>
+      <span class="small">Uses <code>getQuestion()</code> + <code>setAnswer()</code></span>
+    </div>
+
+    <label for="callbackQuestion">Question Source (callback)</label>
+    <textarea id="callbackQuestion" placeholder="Type a single-question prompt for callback mode.">請用一兩句總結今堂最重要嘅概念。</textarea>
+
+    <label for="callbackAnswer">Answer Area</label>
+    <textarea id="callbackAnswer" placeholder="Result is written here by callback-based launcher."></textarea>
+
+    <div class="row" style="margin-top: 12px;">
+      <button id="openCallbackLaunchBtn" class="primary">Open Popup (Section B)</button>
+      <button id="clearBtn">Clear Result + Debug</button>
     </div>
   </div>
 
   <div class="card">
     <label>Latest Result Summary</label>
     <div id="resultSummary" class="small">(waiting)</div>
-    <details style="margin-top:10px;">
-      <summary class="small">Debug JSON (optional)</summary>
+    <details style="margin-top:10px;" open>
+      <summary class="small">Debug JSON (status/events/payload/rid context)</summary>
       <pre id="result">(waiting)</pre>
     </details>
   </div>
 
+<script src="./sdk/parent-launcher.js"></script>
 <script>
 const CONFIG = {
   RENDER_ORIGIN: "https://YOUR_OIDC_HOST",
@@ -93,94 +110,55 @@ const CONFIG = {
   TRUSTED_SENDER_ORIGIN: "https://YOUR_OIDC_HOST"
 };
 
-// Safeguard: keep launch URL below common proxy/browser limits.
-// If payload grows past this, block launch and ask user to shorten question text.
-const MAX_POPUP_URL_LENGTH = 1800;
-// Keep this cap in sync with renderer-side validation to prevent mismatched launch behavior.
-const MAX_QUESTION_CHARS = 800;
-
-// Configure parent-side answer area editability by field id.
 const ANSWER_AREA_CONFIG = {
-  singleAnswer: { editable: true }
+  selectorAnswer: { editable: true },
+  callbackAnswer: { editable: true }
 };
-
-let currentLaunchContext = null;
-let popupRef = null;
 
 const elPopupStatus = document.getElementById("popupStatus");
 const elResult = document.getElementById("result");
 const elResultSummary = document.getElementById("resultSummary");
 const elSecurityInfo = document.getElementById("securityInfo");
 
-elSecurityInfo.textContent = `Trusted sender: ${CONFIG.TRUSTED_SENDER_ORIGIN}`;
+const debugState = {
+  status: "(not opened)",
+  lastEvent: "(none)",
+  rid: null,
+  payload: null,
+  context: null,
+  recentEvents: []
+};
 
-function makeRid() {
-  return "rid_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
-}
-
-function base64urlEncode(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  const b64 = btoa(bin);
-  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-function buildPopupUrl({ worksheet, rid, returnOrigin }) {
-  const renderUrl = CONFIG.RENDER_ORIGIN + CONFIG.RENDER_PATH;
-  const query = new URLSearchParams({
-    w: base64urlEncode(JSON.stringify(worksheet)),
-    rid,
-    returnOrigin
-  });
-  return `${renderUrl}?${query.toString()}`;
+function renderDebug() {
+  elResult.textContent = JSON.stringify(debugState, null, 2);
 }
 
 function setStatus(text, ok = null) {
   elPopupStatus.textContent = text;
   elPopupStatus.className = ok === true ? "ok" : ok === false ? "bad" : "small";
+  debugState.status = text;
+  renderDebug();
 }
 
-function getValidatedReturnOrigin() {
-  try {
-    const parsed = new URL(window.location.origin);
-    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-      return parsed.origin;
-    }
-  } catch (e) {
-    return "";
-  }
+function logDebugEvent(source, eventName, payload) {
+  debugState.lastEvent = `${source}.${eventName}`;
+  if (payload && payload.rid) debugState.rid = payload.rid;
+  if (payload && payload.launchContext) debugState.context = payload.launchContext;
+  if (payload && payload.payload) debugState.payload = payload.payload;
 
-  return "";
-}
-
-function validateWorksheetForLaunch(worksheet) {
-  if (!worksheet || !Array.isArray(worksheet.q) || worksheet.q.length !== 1) {
-    return "Launch blocked: worksheet must contain exactly one question.";
-  }
-
-  const question = worksheet.q[0];
-  if (typeof question !== "string" || !question.trim()) {
-    return "Launch blocked: question text must be a non-empty string.";
-  }
-
-  if (question.length > MAX_QUESTION_CHARS) {
-    return `Launch blocked: question text exceeds ${MAX_QUESTION_CHARS} characters (question body limit). Please shorten question text and try again.`;
-  }
-
-  return "";
-}
-
-function showLaunchWarning(message) {
-  setStatus(message, false);
-  alert(message);
-}
-
-function applyEditableState() {
-  document.querySelectorAll("textarea[data-editable], input[data-editable]").forEach((field) => {
-    const editable = field.dataset.editable !== "false";
-    field.readOnly = !editable;
+  debugState.recentEvents.push({
+    at: new Date().toISOString(),
+    source,
+    eventName,
+    rid: payload && payload.rid ? payload.rid : null,
+    message: payload && payload.message ? payload.message : null
   });
+
+  if (debugState.recentEvents.length > 10) {
+    debugState.recentEvents = debugState.recentEvents.slice(-10);
+  }
+
+  renderDebug();
 }
 
 function applyAnswerAreaConfig() {
@@ -194,208 +172,112 @@ function applyAnswerAreaConfig() {
   });
 }
 
-function getDisplayAnswer(answer) {
-  if (!answer || typeof answer !== "object") return "";
-  if (typeof answer.rewritten === "string" && answer.rewritten.trim()) return answer.rewritten;
-  if (typeof answer.raw === "string") return answer.raw;
-  return "";
+function showLaunchWarning(message) {
+  setStatus(message, false);
+  alert(message);
 }
 
-function routeAnswerToSingleTarget(data) {
-  const answers = Array.isArray(data.answers) ? data.answers : [];
-  const target = document.getElementById("singleAnswer");
-  if (!target) return;
-  target.value = getDisplayAnswer(answers[0]);
+function attachDebugListeners(launcher, sourceName) {
+  launcher.onOpen((payload) => logDebugEvent(sourceName, "open", payload));
+  launcher.onBlocked((payload) => logDebugEvent(sourceName, "blocked", payload));
+  launcher.onLaunchRejected((payload) => logDebugEvent(sourceName, "launchRejected", payload));
+  launcher.onResultAccepted((payload) => logDebugEvent(sourceName, "resultAccepted", payload));
+  launcher.onMessageRejected((payload) => logDebugEvent(sourceName, "messageRejected", payload));
+  launcher.onPopupClosedWithoutResult((payload) => logDebugEvent(sourceName, "popupClosedWithoutResult", payload));
 }
 
-function openPopupWithQuestion({ title, question, answerTargetId }) {
-  const normalizedQuestion = typeof question === "string" ? question.trim() : "";
-  const questions = normalizedQuestion ? [normalizedQuestion] : [];
+elSecurityInfo.textContent = `Trusted sender: ${CONFIG.TRUSTED_SENDER_ORIGIN}`;
 
-  if (questions.length < 1) {
-    throw new Error("Please provide exactly 1 question before launch.");
+const selectorLauncher = WorksheetLauncher.create({
+  renderOrigin: CONFIG.RENDER_ORIGIN,
+  renderPath: CONFIG.RENDER_PATH,
+  trustedSenderOrigin: CONFIG.TRUSTED_SENDER_ORIGIN,
+  popupName: "worksheetPopupSelector",
+  questionSelector: "#selectorQuestion",
+  answerTargetSelector: "#selectorAnswer",
+  onStatusChange: setStatus,
+  onError: (error, details) => {
+    console.warn("[parent demo] selector launcher error", error, details || null);
+    logDebugEvent("sectionA", "error", { message: error && error.message ? error.message : "unknown error" });
+  },
+  onResult: (data, launchContext) => {
+    debugState.payload = data;
+    debugState.context = launchContext;
+    debugState.rid = launchContext && launchContext.rid ? launchContext.rid : debugState.rid;
+    elResultSummary.textContent = "Section A result applied.";
+    renderDebug();
   }
-  if (questions.length > 1) {
-    const warning = "This launcher supports only one question. Please keep a single-question worksheet.";
-    showLaunchWarning(warning);
-    throw new Error(warning);
-  }
-
-  const worksheet = {
-    v: 1,
-    title: title || "Worksheet",
-    q: questions,
-    rewrite: true
-  };
-
-  const worksheetError = validateWorksheetForLaunch(worksheet);
-  if (worksheetError) {
-    showLaunchWarning(worksheetError);
-    throw new Error(worksheetError);
-  }
-
-  const rid = makeRid();
-  if (typeof rid !== "string" || !rid.trim()) {
-    const warning = "Launch blocked: request id (rid) must be a non-empty string.";
-    showLaunchWarning(warning);
-    throw new Error(warning);
-  }
-
-  const returnOrigin = getValidatedReturnOrigin();
-  if (!returnOrigin) {
-    const warning = "Launch blocked: return origin is invalid. Use an absolute http(s) origin.";
-    showLaunchWarning(warning);
-    throw new Error(warning);
-  }
-  const launchContext = {
-    rid,
-    useCaseId: "single-launch",
-    questionCount: worksheet.q.length,
-    answerTargetIds: [answerTargetId],
-    questions: [...worksheet.q]
-  };
-
-  const url = buildPopupUrl({ worksheet, rid, returnOrigin });
-  const popupUrlLength = url.length;
-  if (popupUrlLength > MAX_POPUP_URL_LENGTH) {
-    const warning = `Launch blocked: popup URL is too long (${popupUrlLength} chars). Please shorten question text and try again.`;
-    showLaunchWarning(warning);
-    return;
-  }
-
-  popupRef = window.open(url, "worksheetPopup", "width=900,height=720");
-
-  if (!popupRef) {
-    setStatus("Popup blocked. Please allow popups.", false);
-    return;
-  }
-
-  currentLaunchContext = launchContext;
-  setStatus("Popup opened (single-launch, 1 question). Waiting for result…", null);
-
-  const timer = setInterval(() => {
-    if (!popupRef || popupRef.closed) {
-      clearInterval(timer);
-      if (currentLaunchContext && currentLaunchContext.rid === rid) {
-        setStatus("Popup closed (single-launch, no result).", false);
-      }
-    }
-  }, 600);
-}
-
-function validateWorksheetResultPayload(data, launchContext) {
-  const answers = Array.isArray(data.answers) ? data.answers : null;
-  if (!answers || answers.length !== 1) {
-    return "answers must be an array of length 1";
-  }
-
-  const firstAnswer = answers[0];
-  if (!firstAnswer || typeof firstAnswer !== "object") {
-    return "answers[0] must be an object";
-  }
-
-  if (firstAnswer.index !== 0) {
-    return "answers[0].index must equal 0";
-  }
-
-  const expectedQuestion = Array.isArray(launchContext.questions) ? launchContext.questions[0] : "";
-  if (typeof firstAnswer.question !== "string" || !firstAnswer.question.trim()) {
-    return "answers[0].question must be a non-empty string";
-  }
-
-  if (expectedQuestion && firstAnswer.question !== expectedQuestion) {
-    return "answers[0].question does not match launched question";
-  }
-
-  if (firstAnswer.raw !== undefined && typeof firstAnswer.raw !== "string") {
-    return "answers[0].raw must be a string when present";
-  }
-
-  if (firstAnswer.rewritten !== undefined && typeof firstAnswer.rewritten !== "string") {
-    return "answers[0].rewritten must be a string when present";
-  }
-
-  return "";
-}
-
-window.addEventListener("message", (event) => {
-  const rejectMessage = (reason) => {
-    console.warn(`[worksheet-launcher] Rejected message: ${reason}`, {
-      origin: event.origin,
-      data: event.data
-    });
-  };
-
-  if (event.origin !== CONFIG.TRUSTED_SENDER_ORIGIN) {
-    rejectMessage("untrusted event.origin");
-    return;
-  }
-
-  const data = event.data;
-  if (!data || data.type !== "worksheetResult") {
-    rejectMessage("unexpected event.data.type");
-    return;
-  }
-
-  if (!currentLaunchContext || data.rid !== currentLaunchContext.rid) {
-    rejectMessage("event.data.rid mismatch or missing launch context");
-    return;
-  }
-
-  if (event.source !== popupRef) {
-    rejectMessage("event.source does not match popupRef");
-    return;
-  }
-
-  const launchContext = currentLaunchContext;
-  const payloadError = validateWorksheetResultPayload(data, launchContext);
-  if (payloadError) {
-    rejectMessage(payloadError);
-    return;
-  }
-
-  routeAnswerToSingleTarget(data);
-  elResultSummary.textContent = "Result applied to single-launch (1 question).";
-  elResult.textContent = JSON.stringify(data, null, 2);
-  setStatus("Result received ✅ (single-launch, 1 question)", true);
-  currentLaunchContext = null;
-
-  try { popupRef && popupRef.close(); } catch (e) {}
-  popupRef = null;
 });
 
-function getSingleLaunchData() {
-  const fixedQuestionText = document.getElementById("singleQuestion").dataset.questionText.trim();
-  return {
-    question: fixedQuestionText,
-    answerTargetId: "singleAnswer"
-  };
-}
+const callbackLauncher = WorksheetLauncher.create({
+  renderOrigin: CONFIG.RENDER_ORIGIN,
+  renderPath: CONFIG.RENDER_PATH,
+  trustedSenderOrigin: CONFIG.TRUSTED_SENDER_ORIGIN,
+  popupName: "worksheetPopupCallback",
+  getQuestion: () => document.getElementById("callbackQuestion").value.trim(),
+  setAnswer: (answer) => {
+    document.getElementById("callbackAnswer").value = answer;
+  },
+  onStatusChange: setStatus,
+  onError: (error, details) => {
+    console.warn("[parent demo] callback launcher error", error, details || null);
+    logDebugEvent("sectionB", "error", { message: error && error.message ? error.message : "unknown error" });
+  },
+  onResult: (data, launchContext) => {
+    debugState.payload = data;
+    debugState.context = launchContext;
+    debugState.rid = launchContext && launchContext.rid ? launchContext.rid : debugState.rid;
+    elResultSummary.textContent = "Section B result applied.";
+    renderDebug();
+  }
+});
 
-document.getElementById("openSingleLaunchBtn").addEventListener("click", () => {
+attachDebugListeners(selectorLauncher, "sectionA");
+attachDebugListeners(callbackLauncher, "sectionB");
+
+function openWith(launcher) {
   try {
-    const launchData = getSingleLaunchData();
-    openPopupWithQuestion({
-      title: document.getElementById("title").value.trim() || "Worksheet",
-      question: launchData.question,
-      answerTargetId: launchData.answerTargetId
+    const opened = launcher.open({
+      title: document.getElementById("title").value.trim() || "Worksheet"
     });
+
+    if (!opened) {
+      showLaunchWarning(elPopupStatus.textContent || "Launch blocked.");
+    }
   } catch (err) {
     if (err && err.message) {
-      console.warn(err.message);
+      showLaunchWarning(err.message);
     }
   }
-});
+}
+
+document.getElementById("openSelectorLaunchBtn").addEventListener("click", () => openWith(selectorLauncher));
+document.getElementById("openCallbackLaunchBtn").addEventListener("click", () => openWith(callbackLauncher));
 
 document.getElementById("clearBtn").addEventListener("click", () => {
+  document.getElementById("selectorAnswer").value = "";
+  document.getElementById("callbackAnswer").value = "";
   elResultSummary.textContent = "(waiting)";
-  elResult.textContent = "(waiting)";
+
+  debugState.status = "(not opened)";
+  debugState.lastEvent = "(none)";
+  debugState.rid = null;
+  debugState.payload = null;
+  debugState.context = null;
+  debugState.recentEvents = [];
+
   setStatus("(not opened)", null);
-  currentLaunchContext = null;
+  selectorLauncher.clear();
+  callbackLauncher.clear();
 });
 
-applyEditableState();
+window.addEventListener("beforeunload", () => {
+  selectorLauncher.destroy();
+  callbackLauncher.destroy();
+});
+
 applyAnswerAreaConfig();
+renderDebug();
 </script>
 </body>
 </html>

@@ -86,22 +86,20 @@ model-status poller (no duplicated API calls).
 
 # Front-end Status Behavior Notes
 
-The base widget polls `GET /api/rewrite-bridge/model-status` and reads both:
+The widget polls `GET /api/rewrite-bridge/model-status` and reads both:
 
 -   `status` (overall rewrite-model readiness)
 -   `serviceState` (service lifecycle/display state)
 
-`rewrite-widget.v2.js` adds a **strict adapter gate** for this prototype:
+The widget normalizes model state into a shared `phase` using both fields with
+this precedence:
+1. unreachable/down
+2. degraded
+3. ready
+4. starting/warming/loading
+5. unknown
 
--   Rewrite is enabled only when `status === "ready"` from adapter polling.
--   If `status !== "ready"` (including `degraded`, `starting`, `loading`,
-    `unknown`, or poll failures), the adapter blocks rewrite actions.
--   Renderer integration should use adapter readiness APIs
-    (`isRewriteReady()`, `onReadinessChange`) instead of inferring readiness from
-    UI classes or text.
-
-This keeps renderer behavior aligned to one canonical readiness rule while
-preserving the shared base widget implementation.
+Rewrite button readiness follows normalized `phase === "ready"`.
 
 ------------------------------------------------------------------------
 
@@ -282,22 +280,21 @@ RewriteWidget.mount({
 
 ------------------------------------------------------------------------
 
-# Renderer Adapter Contract (`rewrite-widget.v2.js`)
+# Native Widget Controller APIs
 
-`server/worksheet_launcher/widgets/rewrite-widget.v2.js` wraps the base
-`RewriteWidget.mount` implementation and keeps default widget behavior intact.
-The wrapper extends the returned controller with renderer-facing adapter APIs:
+`RewriteWidget.mount(config)` returns an instance with:
 
-- `getCurrentText()` → returns the current textarea string.
-- `onRewriteStart(callback)` → subscribe to rewrite-start events.
-  Callback payload: `{ text }`.
-- `onRewriteComplete(callback)` → subscribe to rewrite completion.
-  Callback payload: `{ before, after, changed, error }`.
-- `onTextChange(callback)` → subscribe to textarea input changes.
-  Callback payload: `{ text }`.
-- `isRewriteReady()` → strict readiness boolean (`status === "ready"`).
-- `onReadinessChange(callback)` → subscribe to strict readiness changes.
-  Callback payload: `{ ready, status, lastError }`.
+- `rewrite()` – manually trigger rewrite
+- `undo()` – restore last pre-rewrite text
+- `pollStatusOnce()` – force immediate shared status poll
+- `getCurrentText()` – read current textarea content
+- `onRewriteStart(callback)` – subscribe before each rewrite call
+- `onRewriteComplete(callback)` – subscribe after rewrite attempt
+- `onTextChange(callback)` – subscribe on textarea input changes
+- `destroy()` – unsubscribe + remove widget DOM
 
-Renderer integrations should rely on these adapter methods/events instead of
-querying widget internals directly.
+Event payloads:
+
+- `onRewriteStart`: `{ text }`
+- `onRewriteComplete`: `{ before, after, changed, success, errorMessage }`
+- `onTextChange`: `{ text }`
