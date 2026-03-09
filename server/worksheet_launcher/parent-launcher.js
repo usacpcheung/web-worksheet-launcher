@@ -1,3 +1,8 @@
+// COMPATIBILITY ONLY: legacy server path retained for existing references.
+// Canonical source for parent integrations lives at:
+//   parent_prototype/sdk/parent-launcher.js
+// For new integrations, copy/host the canonical SDK file instead of this legacy path.
+
 (function (global) {
   "use strict";
 
