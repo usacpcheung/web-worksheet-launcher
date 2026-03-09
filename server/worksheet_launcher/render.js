@@ -174,8 +174,8 @@ async function renderQuestions() {
 
     card.appendChild(questionText);
     card.appendChild(hint);
-    card.appendChild(host);
     elQuestions.appendChild(card);
+    elQuestions.appendChild(host);
 
     const widget = await RewriteWidget.mount({
       containerSelector: `#${hostId}`,
