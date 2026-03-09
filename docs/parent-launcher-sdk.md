@@ -2,6 +2,9 @@
 
 This document shows the public parent-side API for launching the worksheet popup and receiving one rewritten answer.
 
+> **Source of truth:** `parent_prototype/sdk/parent-launcher.js` is the canonical SDK source in this repo.
+> Legacy path `server/worksheet_launcher/parent-launcher.js` is kept as a **compatibility-only mirror** for existing references and is not recommended for new integrations.
+
 ## 5-line integration (selectors)
 
 ```html
