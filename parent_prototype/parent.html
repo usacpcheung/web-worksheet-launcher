@@ -8,7 +8,16 @@
     body { font-family: system-ui, Arial, sans-serif; max-width: 1100px; margin: 24px auto; padding: 0 12px; }
     h1 { font-size: 24px; margin: 0 0 10px; }
     h2 { margin: 0 0 8px; font-size: 19px; }
+    h3 { margin: 0 0 8px; font-size: 17px; }
     .lead { color: #444; margin-bottom: 14px; }
+    .note {
+      border-left: 4px solid #0a58ca;
+      background: #eef5ff;
+      padding: 10px 12px;
+      border-radius: 8px;
+      margin: 12px 0 16px;
+      color: #123;
+    }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin: 12px 0; }
     .split { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
     .section-title { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 8px; }
@@ -25,6 +34,7 @@
       border-radius: 10px;
       padding: 10px;
       margin-bottom: 8px;
+      white-space: pre-wrap;
     }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     button { padding: 10px 14px; border-radius: 10px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
@@ -34,11 +44,13 @@
     .ok { color: #0a7; }
     .bad { color: #c33; }
     pre { background: #f7f7f7; border: 1px solid #eee; padding: 12px; border-radius: 12px; overflow: auto; }
+    .qid { font-size: 12px; color: #555; }
   </style>
 </head>
 <body>
   <h1>Worksheet Launcher Parent Demo</h1>
-  <p class="lead">This page is intentionally a demo harness (not production starter code). It shows two integration styles for launching the worksheet popup and keeps a JSON debug panel for troubleshooting message flow.</p>
+  <p class="lead">This page is intentionally a demo harness (not production starter code). It now shows isolated one-question launches across multiple blocks and keeps JSON debug metadata for per-block validation.</p>
+  <p class="note"><strong>Launch behavior note:</strong> each popup launch contains exactly one question. Returned messages are accepted only when <code>rid</code> matches the active request, so each block writes to its own answer field with no cross-over.</p>
 
   <div class="card">
     <div class="split">
@@ -60,36 +72,51 @@
 
   <div class="card">
     <div class="section-title">
-      <h2>Section A — Selector-based setup</h2>
-      <span class="small">Uses <code>questionSelector</code> + <code>answerTargetSelector</code></span>
+      <h2>Question Blocks</h2>
+      <span class="small">Each card has its own source, launch button, and answer target.</span>
     </div>
 
-    <label>Fixed Question Display</label>
-    <div id="selectorQuestion" class="question-box" data-question-text="用一句說明今日學到嘅重點。">用一句說明今日學到嘅重點。</div>
-
-    <label for="selectorAnswer">Answer Area</label>
-    <textarea id="selectorAnswer" placeholder="Result is written here by selector-based launcher."></textarea>
-
-    <div class="row" style="margin-top: 12px;">
-      <button id="openSelectorLaunchBtn" class="primary">Open Popup (Section A)</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="section-title">
-      <h2>Section B — Callback-based setup</h2>
-      <span class="small">Uses <code>getQuestion()</code> + <code>setAnswer()</code></span>
+    <div class="card">
+      <div class="section-title">
+        <h3>Block 1</h3>
+        <span class="qid">blockId: block-1 · index: 1</span>
+      </div>
+      <label for="questionBlock1">Question Source</label>
+      <textarea id="questionBlock1">用一句說明今日學到嘅重點。</textarea>
+      <label for="answerBlock1">Answer Target</label>
+      <textarea id="answerBlock1" placeholder="Result is written only to Block 1."></textarea>
+      <div class="row" style="margin-top: 12px;">
+        <button id="openBlock1Btn" class="primary">Rewrite (Block 1)</button>
+      </div>
     </div>
 
-    <label for="callbackQuestion">Question Source (callback)</label>
-    <textarea id="callbackQuestion" placeholder="Type a single-question prompt for callback mode.">請用一兩句總結今堂最重要嘅概念。</textarea>
+    <div class="card">
+      <div class="section-title">
+        <h3>Block 2</h3>
+        <span class="qid">blockId: block-2 · index: 2</span>
+      </div>
+      <label for="questionBlock2">Question Source</label>
+      <textarea id="questionBlock2">請用一兩句總結今堂最重要嘅概念。</textarea>
+      <label for="answerBlock2">Answer Target</label>
+      <textarea id="answerBlock2" placeholder="Result is written only to Block 2."></textarea>
+      <div class="row" style="margin-top: 12px;">
+        <button id="openBlock2Btn" class="primary">Rewrite (Block 2)</button>
+      </div>
+    </div>
 
-    <label for="callbackAnswer">Answer Area</label>
-    <textarea id="callbackAnswer" placeholder="Result is written here by callback-based launcher."></textarea>
-
-    <div class="row" style="margin-top: 12px;">
-      <button id="openCallbackLaunchBtn" class="primary">Open Popup (Section B)</button>
-      <button id="clearBtn">Clear Result + Debug</button>
+    <div class="card">
+      <div class="section-title">
+        <h3>Block 3</h3>
+        <span class="qid">blockId: block-3 · index: 3</span>
+      </div>
+      <label for="questionBlock3">Question Source</label>
+      <textarea id="questionBlock3">試用生活例子解釋呢個概念，最多三句。</textarea>
+      <label for="answerBlock3">Answer Target</label>
+      <textarea id="answerBlock3" placeholder="Result is written only to Block 3."></textarea>
+      <div class="row" style="margin-top: 12px;">
+        <button id="openBlock3Btn" class="primary">Rewrite (Block 3)</button>
+        <button id="clearBtn">Clear Results + Debug</button>
+      </div>
     </div>
   </div>
 
@@ -97,7 +124,7 @@
     <label>Latest Result Summary</label>
     <div id="resultSummary" class="small">(waiting)</div>
     <details style="margin-top:10px;" open>
-      <summary class="small">Debug JSON (status/events/payload/rid context)</summary>
+      <summary class="small">Debug JSON (status/events/payload/rid context + block metadata)</summary>
       <pre id="result">(waiting)</pre>
     </details>
   </div>
@@ -110,10 +137,16 @@ const CONFIG = {
   TRUSTED_SENDER_ORIGIN: "https://YOUR_OIDC_HOST"
 };
 
-const ANSWER_AREA_CONFIG = {
-  selectorAnswer: { editable: true },
-  callbackAnswer: { editable: true }
-};
+const QUESTION_BLOCKS = [
+  { id: "block-1", index: 1, questionFieldId: "questionBlock1", answerFieldId: "answerBlock1", buttonId: "openBlock1Btn", sourceName: "questionBlock1" },
+  { id: "block-2", index: 2, questionFieldId: "questionBlock2", answerFieldId: "answerBlock2", buttonId: "openBlock2Btn", sourceName: "questionBlock2" },
+  { id: "block-3", index: 3, questionFieldId: "questionBlock3", answerFieldId: "answerBlock3", buttonId: "openBlock3Btn", sourceName: "questionBlock3" }
+];
+
+const ANSWER_AREA_CONFIG = QUESTION_BLOCKS.reduce((acc, block) => {
+  acc[block.answerFieldId] = { editable: true };
+  return acc;
+}, {});
 
 const elPopupStatus = document.getElementById("popupStatus");
 const elResult = document.getElementById("result");
@@ -126,8 +159,12 @@ const debugState = {
   rid: null,
   payload: null,
   context: null,
+  activeBlock: null,
+  blockByRid: {},
   recentEvents: []
 };
+
+const launchersByBlockId = new Map();
 
 function renderDebug() {
   elResult.textContent = JSON.stringify(debugState, null, 2);
@@ -140,22 +177,35 @@ function setStatus(text, ok = null) {
   renderDebug();
 }
 
-function logDebugEvent(source, eventName, payload) {
+function logDebugEvent(source, eventName, payload, blockMeta) {
   debugState.lastEvent = `${source}.${eventName}`;
-  if (payload && payload.rid) debugState.rid = payload.rid;
-  if (payload && payload.launchContext) debugState.context = payload.launchContext;
-  if (payload && payload.payload) debugState.payload = payload.payload;
+  if (payload && payload.rid) {
+    debugState.rid = payload.rid;
+    if (blockMeta) {
+      debugState.blockByRid[payload.rid] = blockMeta;
+    }
+  }
+  if (payload && payload.launchContext) {
+    debugState.context = payload.launchContext;
+  }
+  if (payload && payload.payload) {
+    debugState.payload = payload.payload;
+  }
+  if (blockMeta) {
+    debugState.activeBlock = blockMeta;
+  }
 
   debugState.recentEvents.push({
     at: new Date().toISOString(),
     source,
     eventName,
     rid: payload && payload.rid ? payload.rid : null,
+    block: blockMeta || null,
     message: payload && payload.message ? payload.message : null
   });
 
-  if (debugState.recentEvents.length > 10) {
-    debugState.recentEvents = debugState.recentEvents.slice(-10);
+  if (debugState.recentEvents.length > 12) {
+    debugState.recentEvents = debugState.recentEvents.slice(-12);
   }
 
   renderDebug();
@@ -177,68 +227,61 @@ function showLaunchWarning(message) {
   alert(message);
 }
 
-function attachDebugListeners(launcher, sourceName) {
-  launcher.onOpen((payload) => logDebugEvent(sourceName, "open", payload));
-  launcher.onBlocked((payload) => logDebugEvent(sourceName, "blocked", payload));
-  launcher.onLaunchRejected((payload) => logDebugEvent(sourceName, "launchRejected", payload));
-  launcher.onResultAccepted((payload) => logDebugEvent(sourceName, "resultAccepted", payload));
-  launcher.onMessageRejected((payload) => logDebugEvent(sourceName, "messageRejected", payload));
-  launcher.onPopupClosedWithoutResult((payload) => logDebugEvent(sourceName, "popupClosedWithoutResult", payload));
+function attachDebugListeners(launcher, sourceName, blockMeta) {
+  launcher.onOpen((payload) => logDebugEvent(sourceName, "open", payload, blockMeta));
+  launcher.onBlocked((payload) => logDebugEvent(sourceName, "blocked", payload, blockMeta));
+  launcher.onLaunchRejected((payload) => logDebugEvent(sourceName, "launchRejected", payload, blockMeta));
+  launcher.onResultAccepted((payload) => logDebugEvent(sourceName, "resultAccepted", payload, blockMeta));
+  launcher.onMessageRejected((payload) => logDebugEvent(sourceName, "messageRejected", payload, blockMeta));
+  launcher.onPopupClosedWithoutResult((payload) => logDebugEvent(sourceName, "popupClosedWithoutResult", payload, blockMeta));
 }
 
 elSecurityInfo.textContent = `Trusted sender: ${CONFIG.TRUSTED_SENDER_ORIGIN}`;
 
-const selectorLauncher = WorksheetLauncher.create({
-  renderOrigin: CONFIG.RENDER_ORIGIN,
-  renderPath: CONFIG.RENDER_PATH,
-  trustedSenderOrigin: CONFIG.TRUSTED_SENDER_ORIGIN,
-  popupName: "worksheetPopupSelector",
-  questionSelector: "#selectorQuestion",
-  answerTargetSelector: "#selectorAnswer",
-  onStatusChange: setStatus,
-  onError: (error, details) => {
-    console.warn("[parent demo] selector launcher error", error, details || null);
-    logDebugEvent("sectionA", "error", { message: error && error.message ? error.message : "unknown error" });
-  },
-  onResult: (data, launchContext) => {
-    debugState.payload = data;
-    debugState.context = launchContext;
-    debugState.rid = launchContext && launchContext.rid ? launchContext.rid : debugState.rid;
-    elResultSummary.textContent = "Section A result applied.";
-    renderDebug();
-  }
+QUESTION_BLOCKS.forEach((block) => {
+  const blockMeta = { blockId: block.id, blockIndex: block.index };
+
+  const launcher = WorksheetLauncher.create({
+    renderOrigin: CONFIG.RENDER_ORIGIN,
+    renderPath: CONFIG.RENDER_PATH,
+    trustedSenderOrigin: CONFIG.TRUSTED_SENDER_ORIGIN,
+    popupName: `worksheetPopup_${block.id}`,
+    getQuestion: () => document.getElementById(block.questionFieldId).value.trim(),
+    setAnswer: (answer) => {
+      document.getElementById(block.answerFieldId).value = answer;
+    },
+    onStatusChange: setStatus,
+    onError: (error, details) => {
+      console.warn(`[parent demo] launcher error (${block.id})`, error, details || null);
+      logDebugEvent(block.sourceName, "error", { message: error && error.message ? error.message : "unknown error" }, blockMeta);
+    },
+    onResult: (data, launchContext) => {
+      debugState.payload = data;
+      debugState.context = launchContext;
+      debugState.rid = launchContext && launchContext.rid ? launchContext.rid : debugState.rid;
+      debugState.activeBlock = blockMeta;
+      if (launchContext && launchContext.rid) {
+        debugState.blockByRid[launchContext.rid] = blockMeta;
+      }
+      elResultSummary.textContent = `Result applied to ${block.id}.`;
+      renderDebug();
+    }
+  });
+
+  attachDebugListeners(launcher, block.sourceName, blockMeta);
+  launchersByBlockId.set(block.id, launcher);
+
+  const button = document.getElementById(block.buttonId);
+  button.addEventListener("click", () => openForBlock(block));
 });
 
-const callbackLauncher = WorksheetLauncher.create({
-  renderOrigin: CONFIG.RENDER_ORIGIN,
-  renderPath: CONFIG.RENDER_PATH,
-  trustedSenderOrigin: CONFIG.TRUSTED_SENDER_ORIGIN,
-  popupName: "worksheetPopupCallback",
-  getQuestion: () => document.getElementById("callbackQuestion").value.trim(),
-  setAnswer: (answer) => {
-    document.getElementById("callbackAnswer").value = answer;
-  },
-  onStatusChange: setStatus,
-  onError: (error, details) => {
-    console.warn("[parent demo] callback launcher error", error, details || null);
-    logDebugEvent("sectionB", "error", { message: error && error.message ? error.message : "unknown error" });
-  },
-  onResult: (data, launchContext) => {
-    debugState.payload = data;
-    debugState.context = launchContext;
-    debugState.rid = launchContext && launchContext.rid ? launchContext.rid : debugState.rid;
-    elResultSummary.textContent = "Section B result applied.";
-    renderDebug();
-  }
-});
+function openForBlock(block) {
+  const launcher = launchersByBlockId.get(block.id);
+  if (!launcher) return;
 
-attachDebugListeners(selectorLauncher, "sectionA");
-attachDebugListeners(callbackLauncher, "sectionB");
-
-function openWith(launcher) {
   try {
     const opened = launcher.open({
-      title: document.getElementById("title").value.trim() || "Worksheet"
+      title: `${document.getElementById("title").value.trim() || "Worksheet"} — ${block.id}`
     });
 
     if (!opened) {
@@ -251,12 +294,11 @@ function openWith(launcher) {
   }
 }
 
-document.getElementById("openSelectorLaunchBtn").addEventListener("click", () => openWith(selectorLauncher));
-document.getElementById("openCallbackLaunchBtn").addEventListener("click", () => openWith(callbackLauncher));
-
 document.getElementById("clearBtn").addEventListener("click", () => {
-  document.getElementById("selectorAnswer").value = "";
-  document.getElementById("callbackAnswer").value = "";
+  QUESTION_BLOCKS.forEach((block) => {
+    document.getElementById(block.answerFieldId).value = "";
+  });
+
   elResultSummary.textContent = "(waiting)";
 
   debugState.status = "(not opened)";
@@ -264,16 +306,16 @@ document.getElementById("clearBtn").addEventListener("click", () => {
   debugState.rid = null;
   debugState.payload = null;
   debugState.context = null;
+  debugState.activeBlock = null;
+  debugState.blockByRid = {};
   debugState.recentEvents = [];
 
   setStatus("(not opened)", null);
-  selectorLauncher.clear();
-  callbackLauncher.clear();
+  launchersByBlockId.forEach((launcher) => launcher.clear());
 });
 
 window.addEventListener("beforeunload", () => {
-  selectorLauncher.destroy();
-  callbackLauncher.destroy();
+  launchersByBlockId.forEach((launcher) => launcher.destroy());
 });
 
 applyAnswerAreaConfig();
