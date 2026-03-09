@@ -1,15 +1,70 @@
-    body { font-family: system-ui, Arial, sans-serif; max-width: 980px; margin: 24px auto; padding: 0 12px; }
-    h1 { font-size: 20px; margin: 0 0 6px; }
-    .small { font-size: 12px; color: #666; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin: 12px 0; }
-    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
-    .question-text { margin-bottom: 6px; line-height: 1.45; }
-    .question-hint { margin-top: 6px; margin-bottom: 8px; }
-    .rw-host { margin-top: 10px; }
-    .worksheet-light-theme .card { padding: 16px; }
-    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
-    button.primary { border-color: #111; }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    .ok { color: #0a7; }
-    .bad { color: #c33; }
-  
+body {
+  font-family: system-ui, Arial, sans-serif;
+  max-width: 980px;
+  margin: 24px auto;
+  padding: 0 12px 20px;
+  background: #f7f8fb;
+}
+
+h1 { font-size: 20px; margin: 0 0 6px; }
+.small { font-size: 12px; color: #666; }
+
+.card {
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  padding: 14px;
+  margin: 12px 0;
+  background: #fff;
+}
+
+.row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+
+#questions {
+  margin-top: 14px;
+}
+
+.worksheet-light-theme .card {
+  padding: 16px;
+  border-color: #dbe2ef;
+  box-shadow: 0 1px 1px rgba(17, 24, 39, 0.04);
+}
+
+.question-text {
+  margin-bottom: 6px;
+  line-height: 1.45;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+}
+
+.question-hint { margin-top: 6px; margin-bottom: 8px; }
+
+.rw-host {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed #d0d7e2;
+}
+
+.rw-host::before {
+  content: "Rewrite tools";
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #4b5563;
+  text-transform: uppercase;
+}
+
+body > .card {
+  margin-top: 22px;
+  border-color: #c6d1e3;
+  box-shadow: 0 4px 16px rgba(30, 64, 175, 0.08);
+}
+
+button { padding: 10px 14px; border-radius: 10px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
+button.primary { border-color: #111; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.ok { color: #0a7; }
+.bad { color: #c33; }
