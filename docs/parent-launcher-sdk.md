@@ -3,12 +3,23 @@
 This document shows the public parent-side API for launching the worksheet popup and receiving one rewritten answer.
 
 > **Source of truth:** `parent_prototype/sdk/parent-launcher.js` is the canonical SDK source in this repo.
+> For new integrations, copy this file into your parent application and host it locally with your app bundle/static assets.
 > Legacy path `server/worksheet_launcher/parent-launcher.js` is kept as a **compatibility-only mirror** for existing references and is not recommended for new integrations.
+
+## Recommended integration path (local-hosted SDK)
+
+1. Copy `parent_prototype/sdk/parent-launcher.js` into your consumer project (for example `public/vendor/parent-launcher.js` or similar).
+2. Serve that copied SDK file from your parent app.
+3. Include the script from your app-local path.
+
+```html
+<script src="/vendor/parent-launcher.js"></script>
+```
 
 ## 5-line integration (selectors)
 
 ```html
-<script src="/worksheet/parent-launcher.js"></script>
+<script src="/vendor/parent-launcher.js"></script>
 <script>
 const launcher = WorksheetLauncher.create({ renderOrigin: "https://oidc.example.com", renderPath: "/worksheet/render.html", trustedSenderOrigin: "https://oidc.example.com", questionSelector: "#question", answerTargetSelector: "#answer" });
 document.querySelector("#open").addEventListener("click", () => launcher.open({ title: "Quick Check" }));
@@ -22,7 +33,7 @@ That is enough for the common case: question text is read from `#question`, and 
 Use this when your app state is not DOM-first, or when answer writing needs custom logic.
 
 ```html
-<script src="/worksheet/parent-launcher.js"></script>
+<script src="/vendor/parent-launcher.js"></script>
 <script>
 const launcher = WorksheetLauncher.create({
   renderOrigin: "https://oidc.example.com",
@@ -48,9 +59,47 @@ document.querySelector("#open").addEventListener("click", () => {
 
 You must pass these fields to `WorksheetLauncher.create(config)`:
 
-- `renderOrigin`: origin where popup renderer is hosted (for example `https://oidc.example.com`).
-- `renderPath`: route to renderer page (for example `/worksheet/render.html`).
-- `trustedSenderOrigin`: strict origin allowed for `postMessage` results (normally same as `renderOrigin`).
+- `renderOrigin`: origin where the **deployed popup renderer** is hosted (for example `https://oidc.example.com`).
+- `renderPath`: route on that deployed renderer origin (for example `/worksheet/render.html`).
+- `trustedSenderOrigin`: strict origin allowed for `postMessage` results; this must match the deployed popup renderer origin (normally same as `renderOrigin`).
+
+### Deployed renderer configuration examples
+
+```js
+// Parent app hosted at https://teacher.example.edu
+// Popup renderer hosted at https://oidc.example.com
+WorksheetLauncher.create({
+  renderOrigin: "https://oidc.example.com",
+  renderPath: "/worksheet/render.html",
+  trustedSenderOrigin: "https://oidc.example.com",
+  questionSelector: "#question",
+  answerTargetSelector: "#answer"
+});
+```
+
+```js
+// Parent app and popup renderer on same deployed origin
+WorksheetLauncher.create({
+  renderOrigin: "https://app.example.edu",
+  renderPath: "/worksheet/render.html",
+  trustedSenderOrigin: "https://app.example.edu",
+  questionSelector: "#question",
+  answerTargetSelector: "#answer"
+});
+```
+
+Do not point these values at non-renderer endpoints; they must resolve to the deployed popup renderer location that sends `worksheetResult` messages.
+
+## Migration note (`server/worksheet_launcher/parent-launcher.js` users)
+
+If your team currently references `server/worksheet_launcher/parent-launcher.js` directly:
+
+1. Switch your source-of-truth copy to `parent_prototype/sdk/parent-launcher.js`.
+2. Copy that file into your parent application repository and host it locally.
+3. Update `<script src="...">` to your local path (for example `/vendor/parent-launcher.js`).
+4. Keep `renderOrigin`, `renderPath`, and `trustedSenderOrigin` pointed at your deployed popup renderer.
+
+The legacy `server/worksheet_launcher/parent-launcher.js` file remains compatibility-only and may lag behind canonical SDK updates.
 
 You must also provide **one question source** and **one answer target**:
 

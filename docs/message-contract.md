@@ -132,6 +132,11 @@ On `message` events, parent must reject payloads unless **all** pass:
 
 If any check fails, ignore message and do not apply results.
 
+PR review reminder:
+
+- Any change touching launch hash parameters or popup `postMessage` schema must update this document in the same PR.
+- If a PR does not change either contract surface, explicitly include `no contract change` in the PR summary/checklist.
+
 ## 5) One-shot / anti-replay expectation
 
 After parent accepts and applies one valid `worksheetResult` for a launch `rid`, that launch

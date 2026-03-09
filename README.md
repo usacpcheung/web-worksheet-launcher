@@ -6,7 +6,7 @@ Simple web worksheet launcher for interactive lessons with popup rendering, AI r
 
 Phase 1 establishes contracts and file scaffolding only.
 
-- Parent prototype entry: `parent_prototype/parent.html`
+- Parent prototype entry: `parent_prototype/parent.html` (demo/reference implementation)
 - Popup renderer entry: `server/worksheet_launcher/render.html`
 - Contract reference: `docs/message-contract.md`
 - Render route security headers/CSP guidance: `docs/render-security-headers.md`
@@ -16,12 +16,12 @@ Phase 1 establishes contracts and file scaffolding only.
 
 - Canonical SDK source in this repo: `parent_prototype/sdk/parent-launcher.js`
 - Legacy compatibility path (existing references only): `server/worksheet_launcher/parent-launcher.js`
-- For new integrations, copy/host from the canonical SDK source.
+- For new integrations, copy `parent_prototype/sdk/parent-launcher.js` into your consumer app and host/include it locally (for example `/vendor/parent-launcher.js`).
 
-## 5-line parent integration
+## 5-line parent integration (local-hosted SDK in parent app)
 
 ```html
-<script src="/worksheet/parent-launcher.js"></script>
+<script src="/vendor/parent-launcher.js"></script>
 <script>
 const launcher = WorksheetLauncher.create({ renderOrigin, renderPath, trustedSenderOrigin, questionSelector: "#question", answerTargetSelector: "#answer" });
 document.querySelector("#open").addEventListener("click", () => launcher.open({ title: "Quick Check" }));
