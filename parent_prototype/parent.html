@@ -3,19 +3,21 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Web Worksheet Launcher - Parent (Starter)</title>
+  <title>Worksheet Launcher Demo Parent</title>
   <style>
-    body { font-family: system-ui, Arial, sans-serif; max-width: 1040px; margin: 24px auto; padding: 0 12px; }
-    h1 { font-size: 22px; margin: 0 0 12px; }
-    h2 { margin: 0 0 8px; font-size: 18px; }
+    body { font-family: system-ui, Arial, sans-serif; max-width: 1100px; margin: 24px auto; padding: 0 12px; }
+    h1 { font-size: 24px; margin: 0 0 10px; }
+    h2 { margin: 0 0 8px; font-size: 19px; }
+    .lead { color: #444; margin-bottom: 14px; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 14px; margin: 12px 0; }
     .split { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .section-title { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 8px; }
     label { font-weight: 600; display: block; margin: 10px 0 6px; }
     input[type="text"], textarea {
       width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px; border: 1px solid #ccc;
       font: inherit;
     }
-    textarea { min-height: 56px; resize: vertical; }
+    textarea { min-height: 64px; resize: vertical; }
     textarea[readonly], input[readonly] { background: #f6f6f6; color: #444; }
     .question-box {
       border: 1px solid #d8d8d8;
@@ -27,24 +29,22 @@
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     button { padding: 10px 14px; border-radius: 10px; border: 1px solid #bbb; background: #fff; cursor: pointer; }
     button.primary { border-color: #111; font-weight: 600; }
-    button:disabled { opacity: .5; cursor: not-allowed; }
     .hint { color: #666; font-size: 12px; margin-top: 4px; }
-    pre { background: #f7f7f7; border: 1px solid #eee; padding: 12px; border-radius: 12px; overflow: auto; }
+    .small { font-size: 12px; color: #666; }
     .ok { color: #0a7; }
     .bad { color: #c33; }
-    .small { font-size: 12px; color: #666; }
-    .section-title { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+    pre { background: #f7f7f7; border: 1px solid #eee; padding: 12px; border-radius: 12px; overflow: auto; }
   </style>
 </head>
 <body>
-  <h1>Parent App (Starter) — opens OIDC popup worksheet and receives results</h1>
+  <h1>Worksheet Launcher Parent Demo</h1>
+  <p class="lead">This page is intentionally a demo harness (not production starter code). It shows two integration styles for launching the worksheet popup and keeps a JSON debug panel for troubleshooting message flow.</p>
 
   <div class="card">
     <div class="split">
       <div>
         <label for="title">Worksheet Title</label>
         <input id="title" type="text" value="Quick Check" />
-        <div class="hint">Used by the single-question launch scenario.</div>
       </div>
       <div>
         <label>Popup Status</label>
@@ -58,35 +58,51 @@
     </div>
   </div>
 
-  <div class="card" id="singleLaunchSection">
+  <div class="card">
     <div class="section-title">
-      <h2>Single Launch Scenario: One fixed question</h2>
-      <span class="small">One question and one answer target only</span>
+      <h2>Section A — Selector-based setup</h2>
+      <span class="small">Uses <code>questionSelector</code> + <code>answerTargetSelector</code></span>
     </div>
 
     <label>Fixed Question Display</label>
-    <div id="singleQuestion" class="question-box" data-question-text="用一句說明今日學到嘅重點。">用一句說明今日學到嘅重點。</div>
+    <div id="selectorQuestion" class="question-box" data-question-text="用一句說明今日學到嘅重點。">用一句說明今日學到嘅重點。</div>
 
-    <label for="singleAnswer">Answer Area</label>
-    <textarea id="singleAnswer" placeholder="Parent-side answer area for this question."></textarea>
-    <div class="hint">Answer area editability is controlled by <code>ANSWER_AREA_CONFIG</code> in script.</div>
+    <label for="selectorAnswer">Answer Area</label>
+    <textarea id="selectorAnswer" placeholder="Result is written here by selector-based launcher."></textarea>
 
     <div class="row" style="margin-top: 12px;">
-      <button id="openSingleLaunchBtn" class="primary">Open Popup</button>
-      <button id="clearBtn">Clear Result</button>
+      <button id="openSelectorLaunchBtn" class="primary">Open Popup (Section A)</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">
+      <h2>Section B — Callback-based setup</h2>
+      <span class="small">Uses <code>getQuestion()</code> + <code>setAnswer()</code></span>
+    </div>
+
+    <label for="callbackQuestion">Question Source (callback)</label>
+    <textarea id="callbackQuestion" placeholder="Type a single-question prompt for callback mode.">請用一兩句總結今堂最重要嘅概念。</textarea>
+
+    <label for="callbackAnswer">Answer Area</label>
+    <textarea id="callbackAnswer" placeholder="Result is written here by callback-based launcher."></textarea>
+
+    <div class="row" style="margin-top: 12px;">
+      <button id="openCallbackLaunchBtn" class="primary">Open Popup (Section B)</button>
+      <button id="clearBtn">Clear Result + Debug</button>
     </div>
   </div>
 
   <div class="card">
     <label>Latest Result Summary</label>
     <div id="resultSummary" class="small">(waiting)</div>
-    <details style="margin-top:10px;">
-      <summary class="small">Debug JSON (optional)</summary>
+    <details style="margin-top:10px;" open>
+      <summary class="small">Debug JSON (status/events/payload/rid context)</summary>
       <pre id="result">(waiting)</pre>
     </details>
   </div>
 
-<script src="../server/worksheet_launcher/parent-launcher.js"></script>
+<script src="./sdk/parent-launcher.js"></script>
 <script>
 const CONFIG = {
   RENDER_ORIGIN: "https://YOUR_OIDC_HOST",
@@ -95,7 +111,8 @@ const CONFIG = {
 };
 
 const ANSWER_AREA_CONFIG = {
-  singleAnswer: { editable: true }
+  selectorAnswer: { editable: true },
+  callbackAnswer: { editable: true }
 };
 
 const elPopupStatus = document.getElementById("popupStatus");
@@ -103,18 +120,45 @@ const elResult = document.getElementById("result");
 const elResultSummary = document.getElementById("resultSummary");
 const elSecurityInfo = document.getElementById("securityInfo");
 
-elSecurityInfo.textContent = `Trusted sender: ${CONFIG.TRUSTED_SENDER_ORIGIN}`;
+const debugState = {
+  status: "(not opened)",
+  lastEvent: "(none)",
+  rid: null,
+  payload: null,
+  context: null,
+  recentEvents: []
+};
+
+function renderDebug() {
+  elResult.textContent = JSON.stringify(debugState, null, 2);
+}
 
 function setStatus(text, ok = null) {
   elPopupStatus.textContent = text;
   elPopupStatus.className = ok === true ? "ok" : ok === false ? "bad" : "small";
+  debugState.status = text;
+  renderDebug();
 }
 
-function applyEditableState() {
-  document.querySelectorAll("textarea[data-editable], input[data-editable]").forEach((field) => {
-    const editable = field.dataset.editable !== "false";
-    field.readOnly = !editable;
+function logDebugEvent(source, eventName, payload) {
+  debugState.lastEvent = `${source}.${eventName}`;
+  if (payload && payload.rid) debugState.rid = payload.rid;
+  if (payload && payload.launchContext) debugState.context = payload.launchContext;
+  if (payload && payload.payload) debugState.payload = payload.payload;
+
+  debugState.recentEvents.push({
+    at: new Date().toISOString(),
+    source,
+    eventName,
+    rid: payload && payload.rid ? payload.rid : null,
+    message: payload && payload.message ? payload.message : null
   });
+
+  if (debugState.recentEvents.length > 10) {
+    debugState.recentEvents = debugState.recentEvents.slice(-10);
+  }
+
+  renderDebug();
 }
 
 function applyAnswerAreaConfig() {
@@ -133,24 +177,65 @@ function showLaunchWarning(message) {
   alert(message);
 }
 
-const launcher = WorksheetLauncher.create({
+function attachDebugListeners(launcher, sourceName) {
+  launcher.onOpen((payload) => logDebugEvent(sourceName, "open", payload));
+  launcher.onBlocked((payload) => logDebugEvent(sourceName, "blocked", payload));
+  launcher.onLaunchRejected((payload) => logDebugEvent(sourceName, "launchRejected", payload));
+  launcher.onResultAccepted((payload) => logDebugEvent(sourceName, "resultAccepted", payload));
+  launcher.onMessageRejected((payload) => logDebugEvent(sourceName, "messageRejected", payload));
+  launcher.onPopupClosedWithoutResult((payload) => logDebugEvent(sourceName, "popupClosedWithoutResult", payload));
+}
+
+elSecurityInfo.textContent = `Trusted sender: ${CONFIG.TRUSTED_SENDER_ORIGIN}`;
+
+const selectorLauncher = WorksheetLauncher.create({
   renderOrigin: CONFIG.RENDER_ORIGIN,
   renderPath: CONFIG.RENDER_PATH,
   trustedSenderOrigin: CONFIG.TRUSTED_SENDER_ORIGIN,
-  questionSelector: "#singleQuestion",
-  answerTargetSelector: "#singleAnswer",
+  popupName: "worksheetPopupSelector",
+  questionSelector: "#selectorQuestion",
+  answerTargetSelector: "#selectorAnswer",
   onStatusChange: setStatus,
   onError: (error, details) => {
-    console.warn("[parent prototype] launcher error", error, details || null);
+    console.warn("[parent demo] selector launcher error", error, details || null);
+    logDebugEvent("sectionA", "error", { message: error && error.message ? error.message : "unknown error" });
   },
-  onResult: (data) => {
-    elResultSummary.textContent = "Result applied to single-launch (1 question).";
-    elResult.textContent = JSON.stringify(data, null, 2);
+  onResult: (data, launchContext) => {
+    debugState.payload = data;
+    debugState.context = launchContext;
+    debugState.rid = launchContext && launchContext.rid ? launchContext.rid : debugState.rid;
+    elResultSummary.textContent = "Section A result applied.";
+    renderDebug();
   }
 });
 
-const openButton = document.getElementById("openSingleLaunchBtn");
-openButton.addEventListener("click", () => {
+const callbackLauncher = WorksheetLauncher.create({
+  renderOrigin: CONFIG.RENDER_ORIGIN,
+  renderPath: CONFIG.RENDER_PATH,
+  trustedSenderOrigin: CONFIG.TRUSTED_SENDER_ORIGIN,
+  popupName: "worksheetPopupCallback",
+  getQuestion: () => document.getElementById("callbackQuestion").value.trim(),
+  setAnswer: (answer) => {
+    document.getElementById("callbackAnswer").value = answer;
+  },
+  onStatusChange: setStatus,
+  onError: (error, details) => {
+    console.warn("[parent demo] callback launcher error", error, details || null);
+    logDebugEvent("sectionB", "error", { message: error && error.message ? error.message : "unknown error" });
+  },
+  onResult: (data, launchContext) => {
+    debugState.payload = data;
+    debugState.context = launchContext;
+    debugState.rid = launchContext && launchContext.rid ? launchContext.rid : debugState.rid;
+    elResultSummary.textContent = "Section B result applied.";
+    renderDebug();
+  }
+});
+
+attachDebugListeners(selectorLauncher, "sectionA");
+attachDebugListeners(callbackLauncher, "sectionB");
+
+function openWith(launcher) {
   try {
     const opened = launcher.open({
       title: document.getElementById("title").value.trim() || "Worksheet"
@@ -164,21 +249,35 @@ openButton.addEventListener("click", () => {
       showLaunchWarning(err.message);
     }
   }
-});
+}
+
+document.getElementById("openSelectorLaunchBtn").addEventListener("click", () => openWith(selectorLauncher));
+document.getElementById("openCallbackLaunchBtn").addEventListener("click", () => openWith(callbackLauncher));
 
 document.getElementById("clearBtn").addEventListener("click", () => {
+  document.getElementById("selectorAnswer").value = "";
+  document.getElementById("callbackAnswer").value = "";
   elResultSummary.textContent = "(waiting)";
-  elResult.textContent = "(waiting)";
+
+  debugState.status = "(not opened)";
+  debugState.lastEvent = "(none)";
+  debugState.rid = null;
+  debugState.payload = null;
+  debugState.context = null;
+  debugState.recentEvents = [];
+
   setStatus("(not opened)", null);
-  launcher.clear();
+  selectorLauncher.clear();
+  callbackLauncher.clear();
 });
 
 window.addEventListener("beforeunload", () => {
-  launcher.destroy();
+  selectorLauncher.destroy();
+  callbackLauncher.destroy();
 });
 
-applyEditableState();
 applyAnswerAreaConfig();
+renderDebug();
 </script>
 </body>
 </html>
