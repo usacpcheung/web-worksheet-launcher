@@ -25,6 +25,12 @@
   color: #4b5563;
 }
 
+.worksheet-light-theme .rw-root .rw-counter.over-limit,
+.worksheet-light-theme .rw-root .rw-hint.over-limit {
+  color: #b91c1c !important;
+  font-weight: 700;
+}
+
 .worksheet-light-theme .rw-root .rw-textarea {
   background: #f9fafb !important;
   color: #1f2937 !important;
