@@ -35,6 +35,12 @@ For full setup options (selectors vs callbacks, hooks, and failure handling), se
 - Do not modify `rewrite-widget.js` directly for prototype-specific behavior.
 - Create a versioned widget file (for example, `rewrite-widget.v2.js`) and import it from `render.html` when needed.
 
+## Local Reference Workspace
+
+- Use `reference/` for local-only API references, draft script versions, and comparison material that can help AI-assisted changes.
+- `reference/` contents are ignored by Git except for its scaffold files.
+- Keep final source code and contracts in the tracked repo after reviewing changes.
+
 ## Parent SDK config
 
 `WorksheetLauncher.create(config)` supports simple selector-based setup and advanced callback-based setup.
