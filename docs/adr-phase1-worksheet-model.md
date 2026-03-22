@@ -243,9 +243,10 @@ Attempts should reference both `worksheetId` and `snapshotId`, and may also stor
 
 - `worksheetId` identifies the logical worksheet lineage
 - `snapshotId` identifies the exact published artifact the learner saw
-- `snapshotVersion` is a convenience/version label and must agree with the referenced `snapshotId`
+- the pair `worksheetId` + `snapshotId` identifies the exact immutable learner-visible artifact and is the authoritative attempt binding
+- `snapshotVersion` is optional denormalized metadata for convenience/reporting and must agree with the referenced `worksheetId` + `snapshotId` pair
 
-Attempts must never reference a draft-only id in place of the published identifiers.
+Attempts must never reference a draft-only id in place of the published identifiers, and reconciliation/export/replay logic must not key the learner artifact on `snapshotVersion` alone.
 
 #### Editing a draft after a publish already exists
 
@@ -254,7 +255,7 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 #### Required invariants
 
 - Viewer reads only published snapshots or viewer payloads derived from published snapshots.
-- Attempts are always tied to a specific published snapshot version.
+- Attempts are always tied to a specific published snapshot identified by `worksheetId` + `snapshotId`; `snapshotVersion` is optional metadata only.
 - Publishing must not mutate historical snapshots.
 - Local draft save must not be treated as publish.
 - Publish semantics must remain separate from popup-launch transport concerns.
@@ -309,7 +310,7 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 ### Viewer payload rules
 
 - The viewer payload is read-only.
-- It must include snapshot identifiers and version references so learner attempts can point back to the exact published content seen by the learner.
+- It must include `worksheetId` and `snapshotId` so learner attempts can point back to the exact immutable published content seen by the learner; `snapshotVersion` may be included as optional denormalized metadata.
 - It must exclude editor-only state, local validation data, autosave state, publishing audit trails, and other backend/admin metadata that is not required to render the experience.
 
 ---
@@ -320,7 +321,7 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 
 **Characteristics:**
 
-- References the worksheet and snapshot that the learner saw.
+- References the worksheet and exact immutable snapshot that the learner saw.
 - Stores per-question answers plus attempt-level timestamps/status.
 - Separates canonical answer values from UI-only client state.
 
@@ -360,7 +361,7 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 
 - `value` is the canonical learner answer value.
 - `uiState` contains client-only fields used for in-progress interaction and should not be required for grading, reporting, replay, or interoperability.
-- Attempt records must never redefine worksheet prompts or content blocks; they only reference the published worksheet snapshot and carry learner responses.
+- Attempt records must never redefine worksheet prompts or content blocks; they only reference the published worksheet snapshot identified by `worksheetId` + `snapshotId` and carry learner responses.
 
 ---
 
