@@ -258,12 +258,13 @@ ALTER TABLE worksheets
 ADD CONSTRAINT worksheets_current_version_fk
 FOREIGN KEY (id, current_version_id)
 REFERENCES worksheet_versions(worksheet_id, id)
-ON DELETE SET NULL;
+ON DELETE SET NULL (current_version_id);
 ```
 
 Meaning:
 - `current_version_id` can only point to a version row whose `worksheet_id` matches the same `worksheets.id`
-- if the referenced version is removed, `current_version_id` becomes `NULL`
+- if the referenced version is removed, only `current_version_id` becomes `NULL`; `worksheets.id` remains unchanged
+- on PostgreSQL, the column list in `SET NULL (current_version_id)` is required for this composite foreign key so a version delete does not try to null the worksheet primary key
 
 ---
 
@@ -496,7 +497,7 @@ ALTER TABLE worksheets
 ADD CONSTRAINT worksheets_current_version_fk
 FOREIGN KEY (id, current_version_id)
 REFERENCES worksheet_versions(worksheet_id, id)
-ON DELETE SET NULL;
+ON DELETE SET NULL (current_version_id);
 
 CREATE TABLE worksheet_attempts (
     id BIGSERIAL PRIMARY KEY,
