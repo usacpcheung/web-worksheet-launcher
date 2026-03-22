@@ -26,6 +26,25 @@ Implementation landmarks:
 - Shared popup widget implementation that should remain untouched for prototype-specific changes: `server/worksheet_launcher/widgets/rewrite-widget.js`
 - Contract source of truth: `docs/message-contract.md`
 
+## Route/file map
+
+The table below names the intended application surfaces so later phases can add
+new routes without blurring the current popup compatibility boundary.
+
+| Surface | Route/page namespace | Owning file(s) | Purpose | Expected input contract | Access mode | Content orientation | Phase status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Existing popup launcher parent | Local prototype page loaded directly in the parent environment | `parent_prototype/parent.html` | Hosts the prototype launcher controls, prepares the popup launch payload, and validates popup responses before mapping them back into the parent page. | Uses the launch parameters and popup response schema documented in `docs/message-contract.md`; parent-side validation must continue to enforce `event.origin`, `event.data.type`, and `event.data.rid`. | Local-only prototype surface. | Popup-launch-oriented. | Existing Phase 1 surface. |
+| Existing popup renderer | `/worksheet/render.html` | `server/worksheet_launcher/render.html` | Renders the bounded popup worksheet experience for the current launcher flow. | Accepts the popup launch query/hash and `postMessage` exchange defined in `docs/message-contract.md`. | Local-only prototype surface unless explicitly fronted by an authenticated host later. | Popup-launch-oriented. | Existing Phase 1 surface. |
+| Existing parent SDK | Parent-loaded launcher module, not a standalone route | `parent_prototype/sdk/parent-launcher.js` | Encapsulates parent-side popup launch setup so integrators use one launcher entry instead of duplicating transport logic. | Must remain aligned with `docs/message-contract.md` for launch payload construction, trusted origin checks, and response correlation by request id. | Local-only prototype helper for parent integrations. | Popup-launch-oriented. | Existing Phase 1 surface. |
+| Existing contract reference | Documentation surface, not a runtime route | `docs/message-contract.md` | Defines the source-of-truth transport contract for the current popup launcher flow. | Documents the launch URL parameters, popup message schema, aliases, and validation requirements used by the existing parent and popup surfaces. | Local documentation artifact. | Popup-launch-oriented. | Existing Phase 1 surface. |
+| Planned editor app surface | Proposed distinct namespace such as `/editor/` with an entry page like `server/editor/index.html` | No implementation yet; reserve a dedicated editor app entry under `server/editor/` or an equivalently separate namespace. | Owns the future worksheet authoring/editor workflow rather than extending the popup renderer. | Expected to take an editor-specific draft identifier or draft document contract defined in a later-phase spec; it should not inherit the popup launch query or popup `postMessage` schema by default. | Expected to be authenticated when it becomes a real product surface; until then it is Phase 1 scaffolding only. | Draft-oriented. | Phase 1 scaffolding only; no implementation exists yet. |
+| Planned viewer app surface | Proposed distinct namespace such as `/viewer/` with an entry page like `server/viewer/index.html` | No implementation yet; reserve a dedicated viewer app entry under `server/viewer/` or an equivalently separate namespace. | Owns the future learner/product viewer experience for published worksheet snapshots. | Expected to consume a snapshot identifier or snapshot document contract defined in a later-phase spec; it should be snapshot-driven rather than popup-launch-driven. | Expected to be authenticated or otherwise product-gated when implemented; currently only planned scaffolding. | Snapshot-oriented. | Phase 1 scaffolding only; no implementation exists yet. |
+
+Future phases must **not** repurpose `server/worksheet_launcher/render.html`
+into the full worksheet product viewer unless there is an explicit versioning
+change that defines that new role and separates it from the current v1 popup
+launcher contract.
+
 ## Options considered
 
 ### 1. New standalone editor/viewer routes
