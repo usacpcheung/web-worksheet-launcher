@@ -100,9 +100,9 @@ Adopt four distinct JSON shapes with explicit field ownership boundaries.
 
 ### Ownership notes
 
-- **Client-authored fields:** `draftWorksheetId`, `clientRevision`, `title`, `description`, `blocks[*].blockId`, `blocks[*].position`, `blocks[*].prompt`, `blocks[*].content`, `blocks[*].responseConfig`, `draftMeta`, `localValidation`.
-- **Server-assigned fields:** `serverWorksheetId`, `serverAssigned.createdAt`, `serverAssigned.updatedAt`, `serverAssigned.createdByUserId`, `serverAssigned.canonicalRevision`.
-- **Draft-only/transient fields:** `draftMeta`, `localValidation`, `clientRevision`, and any editor session state. These may exist only before publish and must not be copied into immutable publish artifacts.
+- **Client-authored fields:** `draftWorksheetId`, `title`, `description`, `blocks[*].blockId`, `blocks[*].position`, `blocks[*].prompt`, `blocks[*].content`, and `blocks[*].responseConfig`.
+- **Frontend-local/transient fields:** `clientRevision`, `draftMeta`, `localValidation`, and any editor session state. These exist only to coordinate the current frontend editing session and must not be copied into immutable publish artifacts or treated as durable publish provenance.
+- **Server-assigned fields:** `serverWorksheetId`, `serverAssigned.createdAt`, `serverAssigned.updatedAt`, `serverAssigned.createdByUserId`, and `serverAssigned.canonicalRevision`.
 
 ---
 
@@ -129,7 +129,7 @@ Adopt four distinct JSON shapes with explicit field ownership boundaries.
   "snapshotVersion": 3,
   "publishedAt": "2026-03-22T12:05:00Z",
   "publishedByUserId": "usr_123",
-  "sourceDraftRevision": 12,
+  "sourceDraftRevision": "serverAssigned.canonicalRevision:42",
   "title": "Argument writing practice",
   "description": "Students compare two claims and revise a response.",
   "blocks": [
@@ -168,6 +168,7 @@ Adopt four distinct JSON shapes with explicit field ownership boundaries.
 - Snapshot fields are derived from the current draft plus publish metadata.
 - Editor-only fields such as `draftMeta`, `localValidation`, `autosaveState`, and `unsavedChanges` are excluded.
 - `snapshotId`, `snapshotVersion`, `publishedAt`, and `publishedByUserId` are publish-time records and must be treated as immutable after publish.
+- `sourceDraftRevision` records the persisted backend draft revision used by the publish transaction; it is provenance, not a copied frontend counter.
 - Learner-facing viewers must consume snapshot data or payloads derived from snapshot data, never a live mutable draft.
 
 ### Publish snapshot rules
@@ -211,12 +212,12 @@ The backend assigns or computes publish-time fields such as:
 - `snapshotVersion`
 - `publishedAt`
 - `publishedByUserId`
-- `sourceDraftRevision`
+- `sourceDraftRevision` derived from persisted backend draft revision metadata (for example `serverAssigned.canonicalRevision`)
 - `schemaVersion`
 - `integrity.contentHash`
 - additional audit metadata needed to persist or verify the immutable artifact
 
-These fields must be derived from the persisted publish transaction, not trusted from client input.
+These fields must be derived from the persisted publish transaction, not trusted from client input. The publish flow records the backend draft revision that storage actually committed for the transaction, such as `serverAssigned.canonicalRevision`, rather than mirroring a frontend-local counter.
 
 #### Snapshot immutability after publish
 
@@ -224,12 +225,15 @@ Published snapshot content is immutable after publish. If authored content chang
 
 #### Version numbers and revision identifiers
 
-- `clientRevision` is a draft-local, frontend-managed counter used only for authoring workflows and optimistic coordination.
-- `sourceDraftRevision` records which draft revision was used to produce a snapshot.
+- `clientRevision` is a draft-local, frontend-managed counter used only for authoring workflows and optimistic coordination within the active UI; it is not authoritative publish provenance.
+- `sourceDraftRevision` records the persisted backend draft revision used to produce a snapshot, such as `serverAssigned.canonicalRevision` captured during the publish transaction.
 - `snapshotVersion` is the backend-assigned monotonic version number within a single `worksheetId` lineage.
 - `snapshotId` is the opaque durable identifier for a specific immutable published snapshot.
+- Multi-tab / multi-device rationale:
+  - separate browser tabs or devices can each advance their own local `clientRevision` counters without representing the durable saved draft seen by the backend
+  - the publish transaction must therefore record backend persistence metadata, not whichever frontend-local counter happened to be visible when the user clicked publish
 - Comparison rules:
-  - compare draft freshness using `clientRevision` or backend draft persistence metadata, never `snapshotVersion`
+  - compare draft freshness in the UI using `clientRevision` for local coordination and backend persistence metadata for server truth, never `snapshotVersion`
   - compare published worksheet history using `snapshotVersion` within the same `worksheetId`
   - use `snapshotId` for exact identity equality, not ordering
 
@@ -373,9 +377,10 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 | `blocks[*].position` | frontend-owned | Author-defined ordering before publish; snapshot preserves resulting order. |
 | `blocks[*].prompt`, `blocks[*].content`, `blocks[*].responseConfig` | frontend-owned | Content authored in the editor. |
 | `draftMeta`, `localValidation`, `uiState` | frontend-owned | Editor/view UI state only; excluded from canonical snapshot definition. |
-| `clientRevision` | frontend-owned | Local revision counter for authoring workflows. |
-| `serverAssigned.*` | backend-owned | Audit and persistence metadata assigned by backend storage. |
-| `publishedAt`, `publishedByUserId`, `sourceDraftRevision` | immutable-after-publish | Captured at publish time and not mutated afterward. |
+| `clientRevision` | frontend-owned | Frontend-local/transient counter for authoring workflows and optimistic UI coordination only. |
+| `serverAssigned.*` | backend-owned | Audit and persistence metadata assigned by backend storage, including canonical draft revision provenance. |
+| `publishedAt`, `publishedByUserId` | immutable-after-publish | Captured at publish time and not mutated afterward. |
+| `sourceDraftRevision` | immutable-after-publish | Publish provenance copied from persisted backend draft revision metadata, not from a mirrored frontend counter. |
 | `integrity.contentHash` | derived/computed | Computed from published content for integrity or cache validation. |
 | viewer payload as a whole | derived/computed | Produced from snapshot data for learner rendering. |
 | `attemptId` | backend-owned | Canonical identifier for learner attempt storage. |
