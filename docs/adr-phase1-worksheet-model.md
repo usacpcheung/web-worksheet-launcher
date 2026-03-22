@@ -19,6 +19,26 @@ The goal is to keep authoring concerns, publish-time durability, learner renderi
 
 Adopt four distinct JSON shapes with explicit field ownership boundaries.
 
+### Access model
+
+Phase 1 should distinguish the current local popup proof-of-concept from future productized routes so the demo launch path is not mistaken for the long-term serving model. The popup launcher and popup renderer that exist today are local prototype surfaces used to exercise contracts and UI scaffolding only; they are not the access-control design for the eventual product.
+
+| Surface | Access classification | Phase note |
+| --- | --- | --- |
+| `parent_prototype/parent.html` popup launcher demo | local prototype/demo only | Exists now only to launch the popup with the Phase 1 query-string contract (`w`, `rid`, `returnOrigin`) during local contract validation; it is not a future product route. |
+| `server/worksheet_launcher/render.html` popup renderer | local prototype/demo only | Exists now only as the Phase 1 renderer scaffold for the popup proof-of-concept. |
+| Planned editor app route | authenticated user route | Not yet implemented; reserved for a later phase that introduces real product routing and authoring permissions. |
+| Planned viewer app route | public read-only route | Not yet implemented; reserved for a later phase and expected to serve published snapshot-derived payloads only. |
+| Planned draft-save / publish / import / export endpoints | authenticated API | Not yet implemented; reserved for later phases that add backend persistence and authorization. |
+
+### Trust boundary
+
+Future phases must treat all client-originated worksheet payloads as untrusted input, including the current popup launch query parameters, popup `postMessage` payloads, draft JSON bodies submitted from an editor, import payloads, and any client-supplied metadata attached to save/export requests. If a later phase introduces fragment-based routing or client-side route state for product surfaces, those values are also untrusted client input. Client input may describe authored content, but it must not be treated as authoritative for publication state, identity issuance, or audit provenance.
+
+The server must issue and validate durable identifiers and authoritative metadata, including canonical worksheet identifiers, published snapshot identifiers, authenticated user identity, persisted draft revision metadata, publish timestamps, and any integrity or audit fields. A client may echo those values back to the server, but the backend must verify that they were server-issued and still valid for the authenticated caller.
+
+Any action that changes durable backend state requires authenticated backend authority. This includes draft save, draft import, publish, unpublish if introduced later, export of non-public authoring data, and any mutation of worksheet metadata. Publish especially must run as an authenticated backend transaction that derives the immutable snapshot from persisted draft state, assigns server-owned publish metadata, and refuses to trust client-declared `publishedAt`, `publishedByUserId`, `snapshotId`, `snapshotVersion`, or equivalent authority-bearing fields.
+
 ---
 
 ## 1) Editable draft model
