@@ -274,8 +274,11 @@
   display:flex; align-items:center; justify-content:space-between;
   padding:0 12px; pointer-events:none;
 }
-.rw-counter,.rw-hint{ font-size:12px; color:var(--muted); pointer-events:none; }
+.rw-counter,.rw-hint{ font-size:12px; color:var(--muted); pointer-events:none; transition:color .15s ease, font-weight .15s ease; }
+.rw-counter.over-limit,.rw-hint.over-limit{ color:#ffb3c2; font-weight:600; }
 .rw-actions{ margin-top:12px; display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+.rw-stream-toggle{ margin-top:10px; display:flex; align-items:center; gap:8px; color:var(--muted); font-size:13px; user-select:none; }
+.rw-stream-toggle input{ width:16px; height:16px; accent-color:var(--accent); }
 .rw-btn{
   border:1px solid rgba(255,255,255,0.12);
   background: rgba(255,255,255,0.06);
@@ -339,8 +342,7 @@
 
     const ta = document.createElement("textarea");
     ta.className = "rw-textarea";
-    ta.maxLength = opts.maxChars;
-    ta.placeholder = opts.placeholder || `Type up to ${opts.maxChars} characters…`;
+    ta.placeholder = opts.placeholder || `Type up to ${opts.maxChars} characters before rewriting…`;
 
     const footer = document.createElement("div");
     footer.className = "rw-footer";
@@ -375,18 +377,43 @@
     actions.appendChild(undoBtn);
     actions.appendChild(rewriteBtn);
 
+    const streamToggle = document.createElement("label");
+    streamToggle.className = "rw-stream-toggle";
+
+    const streamCheckbox = document.createElement("input");
+    streamCheckbox.type = "checkbox";
+    streamCheckbox.checked = !!opts.streamEnabledByDefault;
+
+    const streamLabel = document.createElement("span");
+    streamLabel.textContent = "Enable streaming";
+
+    streamToggle.appendChild(streamCheckbox);
+    streamToggle.appendChild(streamLabel);
+
     const toast = document.createElement("div");
     toast.className = "rw-toast";
 
     card.appendChild(title);
     card.appendChild(area);
     card.appendChild(actions);
+    card.appendChild(streamToggle);
     card.appendChild(toast);
 
     root.appendChild(card);
     container.appendChild(root);
 
-    return { root, dot, statusText, hint, ta, countSpan: counter.querySelector(".rw-count"), undoBtn, rewriteBtn, toast };
+    return {
+      root,
+      dot,
+      statusText,
+      hint,
+      ta,
+      countSpan: counter.querySelector(".rw-count"),
+      undoBtn,
+      rewriteBtn,
+      streamCheckbox,
+      toast
+    };
   }
 
   function setDot(dotEl, state) {
@@ -416,8 +443,11 @@
     const ui = buildDOM(container, {
       maxChars,
       title: cfg.title,
-      placeholder: cfg.placeholder
+      placeholder: cfg.placeholder,
+      streamEnabledByDefault: cfg.streamEnabledByDefault
     });
+
+    const DRAFT_KEY = `rw_draft_v1:${window.location.pathname}:${cfg.containerSelector}:${apiBase}`;
 
     // Per-widget state
     let inFlight = false;
@@ -457,16 +487,69 @@
       ui.toast.className = "rw-toast" + (type ? " " + type : "");
     }
 
+    function saveDraft() {
+      try { sessionStorage.setItem(DRAFT_KEY, getCurrentText()); } catch { /* ignore storage errors */ }
+    }
+
+    function restoreDraft() {
+      try {
+        const saved = sessionStorage.getItem(DRAFT_KEY);
+        if (typeof saved === "string" && saved.length > 0) {
+          ui.ta.value = saved;
+        }
+      } catch {
+        // Ignore storage errors.
+      }
+    }
+
+    function renderHint() {
+      const currentLength = getCurrentText().length;
+      const trimmedLength = getCurrentText().trim().length;
+      const isOverLimit = currentLength > maxChars;
+
+      ui.countSpan.textContent = String(currentLength);
+      ui.countSpan.parentElement.classList.toggle("over-limit", isOverLimit);
+      ui.hint.classList.toggle("over-limit", isOverLimit);
+
+      if (isOverLimit) {
+        ui.hint.textContent = "Text exceeds limit; shorten before rewriting";
+        return;
+      }
+
+      if (inFlight) {
+        ui.hint.textContent = "Please wait…";
+        return;
+      }
+
+      if (trimmedLength === 0) {
+        ui.hint.textContent = `Enter up to ${maxChars} characters to rewrite`;
+        return;
+      }
+
+      if (sharedPhase === "down") {
+        ui.hint.textContent = "Will retry automatically";
+      } else if (sharedPhase === "degraded") {
+        ui.hint.textContent = "Reduced quality mode (retry if output looks off)";
+      } else if (sharedPhase === "ready") {
+        ui.hint.textContent = "Click Rewrite to convert";
+      } else if (sharedPhase === "starting") {
+        ui.hint.textContent = "Rewrite disabled while loading";
+      } else {
+        ui.hint.textContent = "Waiting for ready…";
+      }
+    }
+
     function syncButtons() {
       const text = (ui.ta.value || "").trim();
       const okLen = text.length > 0 && text.length <= maxChars;
       ui.rewriteBtn.disabled = !(sharedModelReady && okLen && !inFlight);
       ui.undoBtn.disabled = !(lastOriginalText && !inFlight);
+      renderHint();
     }
 
     function updateCount() {
-      ui.countSpan.textContent = String(getCurrentText().length);
       textChange.emit({ text: getCurrentText() });
+      saveDraft();
       syncButtons();
     }
 
@@ -480,28 +563,23 @@
       if (sharedPhase === "down") {
         setDot(ui.dot, "down");
         ui.statusText.textContent = st.statusText || "API unreachable";
-        ui.hint.textContent = "Will retry automatically";
         toast(st.lastError ? `Cannot reach API. ${st.lastError}` : "Cannot reach API.", "error");
       } else if (sharedPhase === "degraded") {
         setDot(ui.dot, "busy");
         ui.statusText.textContent = st.statusText || "Model degraded";
-        ui.hint.textContent = "Reduced quality mode (retry if output looks off)";
         if (!inFlight) toast("Model is degraded. Results may be lower quality.", "error");
       } else if (sharedPhase === "ready") {
         setDot(ui.dot, "ready");
         ui.statusText.textContent = st.statusText || "Model ready";
-        ui.hint.textContent = "Click Rewrite to convert";
         // don't clear toast if we're mid-flight; keep "Working…"
         if (!inFlight) toast("");
       } else if (sharedPhase === "starting") {
         setDot(ui.dot, "busy");
         ui.statusText.textContent = st.statusText || "Model loading…";
-        ui.hint.textContent = "Rewrite disabled while loading";
         if (!inFlight) toast("Please wait for model to be ready.");
       } else {
         setDot(ui.dot, "busy");
         ui.statusText.textContent = st.statusText || "Checking model…";
-        ui.hint.textContent = "Waiting for ready…";
         if (!inFlight) toast("");
       }
 
@@ -518,6 +596,8 @@
       const RELOAD_MAX_ATTEMPTS = 3;
 
       if (cfg.reloadOnLoginRequired !== false) {
+        saveDraft();
+
         let now = Date.now();
         let firstTs = now;
         let count = 0;
@@ -567,6 +647,7 @@
       const before = getCurrentText();
       let success = false;
       let errorMessage = "";
+      let restoreTextOnError = "";
       rewriteStart.emit({ text: before });
 
       inFlight = true;
@@ -575,7 +656,6 @@
 
       setDot(ui.dot, "busy");
       ui.statusText.textContent = "Rewriting…";
-      ui.hint.textContent = "Please wait…";
       toast("Working…");
       syncButtons();
 
@@ -584,12 +664,14 @@
         while (attempts < 6) {
           attempts++;
 
+          const useStream = !!ui.streamCheckbox.checked;
+
           const res = await fetchWithTimeout(
             REWRITE_URL,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ text: original }),
+              body: JSON.stringify({ text: original, stream: useStream }),
               redirect: "follow",
               credentials: "include"
             },
@@ -622,13 +704,42 @@
             throw new Error(t?.error?.message || `Rewrite failed: HTTP ${res.status}`);
           }
 
-          const data = await res.json();
-          if (!data || data.ok !== true || typeof data.result !== "string") {
-            throw new Error("Unexpected API response format.");
+          if (useStream) {
+            restoreTextOnError = before;
+
+            let streamedText = "";
+            let streamStarted = false;
+
+            const streamResult = await consumeNdjsonStream(res, {
+              onChunk: (chunkText) => {
+                if (!streamStarted) {
+                  // Only clear once we actually receive stream content.
+                  ui.ta.value = "";
+                  streamStarted = true;
+                }
+                streamedText += chunkText;
+                ui.ta.value = streamedText;
+                updateCount();
+              }
+            });
+
+            if (streamResult.errorMessage) {
+              throw new Error(streamResult.errorMessage);
+            }
+
+            if (!streamResult.receivedAnyContent) {
+              throw new Error("Rewrite returned no content.");
+            }
+          } else {
+            const data = await res.json();
+            if (!data || data.ok !== true || typeof data.result !== "string") {
+              throw new Error("Unexpected API response format.");
+            }
+
+            ui.ta.value = data.result;
+            updateCount();
           }
 
-          ui.ta.value = data.result;
-          updateCount();
           toast("Done.", "ok");
           success = true;
 
@@ -639,6 +750,11 @@
 
         throw new Error("Model not ready after multiple retries. Please try again.");
       } catch (err) {
+        if (restoreTextOnError) {
+          ui.ta.value = restoreTextOnError;
+          updateCount();
+        }
+
         const msg = (err?.name === "AbortError") ? "Timeout. Please retry." : (err?.message || "Unknown error.");
         errorMessage = msg;
         toast(msg, "error");
@@ -670,6 +786,7 @@
     ui.undoBtn.addEventListener("click", () => undo());
 
     // Init
+    restoreDraft();
     updateCount();
     // Force one shared poll now (subscribe already got a state, but do fresh poll)
     if (cfg.pollModelStatus !== false) await poller.pollOnce();
@@ -690,6 +807,84 @@
         container.innerHTML = "";
       }
     };
+  }
+
+  async function consumeNdjsonStream(res, { onChunk }) {
+    if (!res.body || typeof res.body.getReader !== "function") {
+      throw new Error("Streaming is not supported in this browser.");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let fullText = "";
+    let errorMessage = "";
+    let receivedAnyContent = false;
+    let parseError = "";
+
+    const handlePayload = (payload) => {
+      if (typeof payload.response === "string" && payload.response.length > 0) {
+        receivedAnyContent = true;
+        onChunk(payload.response);
+      }
+
+      if (typeof payload.result === "string" && payload.result.length > 0) {
+        receivedAnyContent = true;
+        onChunk(payload.result);
+      }
+
+      if (payload.error && typeof payload.error.message === "string" && payload.error.message.length > 0) {
+        errorMessage = payload.error.message;
+      }
+    };
+
+    const handleLine = (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+
+      let payload;
+      try {
+        payload = JSON.parse(trimmed);
+      } catch {
+        parseError = "Streaming response was not valid NDJSON.";
+        return;
+      }
+
+      handlePayload(payload);
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      const decoded = decoder.decode(value, { stream: true });
+      fullText += decoded;
+      buffer += decoded;
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        handleLine(line);
+      }
+    }
+
+    const trailing = decoder.decode();
+    fullText += trailing;
+    buffer += trailing;
+
+    if (buffer.trim()) {
+      const trimmedBuffer = buffer.trim();
+      try {
+        handlePayload(JSON.parse(trimmedBuffer));
+      } catch {
+        parseError = "Streaming response was truncated or malformed.";
+      }
+    }
+
+    if (!receivedAnyContent && !errorMessage && !parseError && fullText.trim()) {
+      parseError = "Streaming response contained no rewrite content.";
+    }
+
+    return { errorMessage: errorMessage || parseError, receivedAnyContent };
   }
 
   global.RewriteWidget = { mount };
