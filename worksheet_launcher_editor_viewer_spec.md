@@ -1,0 +1,524 @@
+# Worksheet Launcher Editor + Viewer Technical Specification
+
+## Purpose
+
+This document defines the required functions and technical behavior for the `web-worksheet-launcher` editor and viewer implementation.
+
+It is written for AI coding agents and developers.
+
+The implementation target is a **mainly JavaScript client-side application** with:
+- local-first editing
+- local import/export
+- optional authenticated cloud features
+- optional AI services such as rewrite and T2A
+- future PostgreSQL-backed online save/load/publish
+
+This specification intentionally keeps v1 small and implementation-friendly.
+
+---
+
+## Existing Project Direction
+
+The current repo is described as a simple web worksheet launcher with popup rendering, AI rewrite support, and secure result return. The current prototype establishes contracts and scaffolding rather than a full editor/viewer application.
+
+This specification extends that direction into a fuller worksheet editor + viewer product.
+
+---
+
+## Product Model
+
+## Core Principle
+
+The app must support **two operating modes**:
+
+### 1. Local Mode
+No login required.
+
+Available in local mode:
+- open app
+- create worksheet
+- edit worksheet
+- preview worksheet
+- run viewer locally
+- local autosave
+- import worksheet
+- export worksheet
+
+### 2. Signed-In Cloud Mode
+Requires authenticated session through Apache OIDC protected service endpoints.
+
+Available only after sign-in:
+- rewrite API
+- text-to-audio API
+- online draft save
+- online draft load
+- publish online
+- load published online worksheet
+- server-backed resume later
+- future multi-device continuity
+
+---
+
+## Authentication Architecture
+
+## Required Approach
+
+Do **not** implement custom popup OIDC inside the frontend app.
+
+Use:
+- public frontend app shell
+- one **Sign in** button
+- browser redirect to an Apache OIDC protected endpoint
+- return to app after successful login
+- app restores local state after login
+
+## Required Login UX
+
+### Signed-out state
+- app works in local mode
+- cloud/AI features are visibly disabled or marked as sign-in required
+
+### User clicks Sign in
+Frontend must:
+1. save current draft locally
+2. save lightweight UI restore state locally
+3. redirect browser to a protected auth/login endpoint
+4. after successful login, return to app
+5. app re-checks authenticated session and enables protected features
+
+## Required Restore Behavior
+If user clicks sign in during editing:
+- draft content must not be lost
+- editor state should be restorable
+- at minimum restore:
+  - current draft
+  - current mode
+  - current selected item if possible
+  - route/hash if used
+  - optional scroll position
+
+Recommended local persistence:
+- IndexedDB for worksheet draft
+- localStorage for small resume-after-login flags
+
+---
+
+## Technical Architecture
+
+## Frontend
+- Main implementation should remain browser-first and JavaScript-first
+- No backend requirement for basic local operation
+- Editor and viewer should work without cloud APIs
+
+## Backend
+Protected APIs are optional enhancement services:
+- rewrite service
+- T2A service
+- worksheet storage service
+
+## Storage Modes
+
+### Local Storage Mode
+- default mode
+- store draft in IndexedDB
+- export/import file-based project format
+
+### Cloud Storage Mode
+- optional authenticated mode
+- store draft/published versions/attempts in PostgreSQL-backed APIs
+
+---
+
+## File / Data Format
+
+## Worksheet Internal Model
+Use a structured JSON model for the worksheet.
+
+Minimum expected shape:
+
+```json
+{
+  "title": "Fractions Practice",
+  "description": "Simple worksheet",
+  "sections": [
+    {
+      "id": "q1",
+      "type": "short_text",
+      "prompt": "What is 1/2 + 1/4?"
+    }
+  ],
+  "settings": {
+    "allow_resume": true,
+    "show_result_after_submit": false
+  }
+}
+```
+
+## Important Rule
+The worksheet JSON model is the source of truth.
+
+That means:
+- editor edits JSON
+- viewer renders JSON
+- export serializes JSON
+- publish stores JSON snapshot
+- online draft save stores JSON
+
+---
+
+## Import / Export Requirements
+
+## Required in v1
+The app must support file-based portability like a local-first tool.
+
+### Export
+The user must be able to export the current worksheet into a file format that can later be imported again.
+
+Recommended v1 format:
+- JSON file, or
+- ZIP if media/assets are introduced later
+
+### Import
+The user must be able to import an exported worksheet file and restore it into the local editor.
+
+## Important
+Import/export must work without login.
+
+---
+
+## Editor Mode Requirements
+
+## Functional Requirements
+
+### Create worksheet
+- Create a new worksheet in memory/local storage
+- Apply default empty structure
+
+### Edit worksheet metadata
+- Edit title
+- Edit description
+
+### Manage sections/questions
+- Add new section/question
+- Remove section/question
+- Reorder section/question
+- Edit question prompt
+- Edit question type
+- Edit type-specific settings/options
+
+### Supported minimum question types for v1
+Recommended minimum set:
+- `short_text`
+- `multiple_choice`
+- `textarea`
+- `checkbox_group`
+
+AI agent may implement more only if they do not complicate core flow.
+
+### Autosave locally
+- Changes should autosave to IndexedDB with debounce
+- UI should indicate save state if practical
+
+### Manual export
+- Export current draft to file
+
+### Manual import
+- Import worksheet file into current local draft or as a new local worksheet
+
+### Preview
+- Open current draft in viewer mode using local draft data
+
+---
+
+## Editor Non-Functional Requirements
+
+- Must work without server dependency for basic use
+- Must tolerate page reload by restoring latest local autosave
+- Must avoid destructive loss of draft during sign-in redirect
+- Must be modular enough for future cloud sync
+
+---
+
+## Viewer Mode Requirements
+
+## Functional Requirements
+
+### Load worksheet
+Viewer must be able to load from:
+- local draft/preview mode
+- local imported worksheet
+- future published online worksheet
+
+### Render questions
+Viewer must render each section according to its type
+
+### Capture answers
+Viewer must maintain answer state in a structured JSON object
+
+### Local autosave
+In local mode, answers can be kept in browser state or IndexedDB
+
+### Submit
+Viewer must support final submit action in two modes:
+- local-only completion state
+- future cloud submit to backend
+
+### Resume
+Viewer should be structured so future resume is possible, even if full cloud resume is added later
+
+---
+
+## AI Service Integration Requirements
+
+## Rewrite
+Rewrite is optional and requires sign-in.
+
+Examples:
+- rewrite question prompt drafts
+- rewrite user-entered teacher text
+- rewrite answer text areas if desired later
+
+Behavior:
+- if signed out, feature is disabled and prompts for sign-in
+- if signed in, frontend calls protected rewrite API
+
+## Text-to-Audio (T2A)
+T2A is optional and requires sign-in.
+
+Potential uses:
+- generate spoken reading for question prompts
+- preview generated audio
+
+Behavior:
+- if signed out, feature is disabled and prompts for sign-in
+- if signed in, frontend calls protected T2A API
+
+---
+
+## Cloud Storage Requirements
+
+## Online Draft Save
+Signed-in user can save worksheet draft online.
+
+Expected behavior:
+- create or update `worksheets`
+- store latest JSON in `draft_content`
+
+## Online Draft Load
+Signed-in user can load previously saved worksheets.
+
+Expected behavior:
+- query backend for worksheets owned by user
+- select and load draft JSON into editor
+
+## Publish
+Signed-in user can publish worksheet.
+
+Expected behavior:
+- backend creates `worksheet_versions` row
+- backend updates `worksheets.current_version_id`
+- backend sets status appropriately
+
+## Viewer Online Load
+Future public or protected viewer flow can load a published worksheet by public identifier.
+
+## Attempt Autosave / Submit
+Future signed-in or token-backed viewer flow can save progress in `worksheet_attempts`.
+
+---
+
+## Required Frontend State Model
+
+At minimum, frontend state should clearly separate:
+
+```js
+{
+  auth: {
+    authenticated: false,
+    user: null
+  },
+  mode: "editor" | "viewer",
+  storageMode: "local" | "cloud",
+  worksheet: { ...worksheetJson },
+  viewerAnswers: { ...answersJson },
+  ui: {
+    selectedSectionId: null,
+    isDirty: false,
+    saveState: "idle" | "saving" | "saved" | "error"
+  }
+}
+```
+
+Important:
+- `storageMode` is not identical to auth
+- signed-in user may still choose to work locally first
+
+---
+
+## Required API Boundaries
+
+Frontend should depend on abstractions, not hardcoded storage details.
+
+Recommended service modules:
+- `authService`
+- `localWorksheetStore`
+- `cloudWorksheetStore`
+- `rewriteService`
+- `t2aService`
+
+This keeps the code easier to extend and test.
+
+---
+
+## Suggested Frontend Module Breakdown
+
+Recommended module areas:
+
+- `app/`
+  - app bootstrap
+  - routing or mode switching
+- `state/`
+  - central state store
+- `editor/`
+  - editor UI and actions
+- `viewer/`
+  - viewer UI and answer capture
+- `storage/`
+  - local IndexedDB storage
+  - file import/export
+  - cloud API adapter
+- `services/`
+  - auth session check
+  - rewrite
+  - t2a
+  - worksheet storage API client
+- `utils/`
+  - IDs
+  - validation
+  - JSON normalization
+
+---
+
+## Minimum Required UI Behavior
+
+### Signed-out UI
+- local features usable
+- cloud/AI actions visible but locked or disabled
+- clear sign-in entry point
+
+### Signed-in UI
+- same local features remain available
+- cloud/AI actions become enabled
+- user should not lose in-progress local worksheet when sign-in occurs mid-edit
+
+---
+
+## Validation Requirements
+
+Minimum editor validation should check:
+- worksheet title exists
+- sections/questions have unique `id`
+- required prompts are present
+- multiple choice options are valid
+- unsupported or broken question types are flagged safely
+
+Viewer validation should fail gracefully if JSON is malformed.
+
+---
+
+## Publish Rules
+
+Publish operation should:
+1. validate current draft
+2. block publish if draft is clearly invalid
+3. send snapshot to backend
+4. return published version metadata
+5. keep local draft intact after publish
+
+---
+
+## Error Handling Requirements
+
+Frontend must handle:
+- signed-out calls to protected features
+- network failure
+- local storage failure
+- invalid import file
+- backend publish/save errors
+- stale session or expired auth
+
+Errors should not destroy local draft state.
+
+---
+
+## Nice-to-Have but Not Required for v1
+
+These are optional and should not block initial implementation:
+- drag-and-drop reorder
+- collaborative editing
+- analytics dashboard
+- media attachments
+- full template library
+- version history UI
+- offline service worker
+- background cloud sync
+
+---
+
+## Development Priority Order
+
+Recommended implementation order for AI agent:
+
+1. define worksheet JSON model
+2. build local editor mode
+3. build local viewer mode
+4. add IndexedDB autosave
+5. add import/export
+6. add sign-in button flow with redirect-safe local restore
+7. add session check integration
+8. add rewrite API integration
+9. add cloud draft save/load
+10. add publish flow
+11. add attempt autosave/submit
+
+---
+
+## Explicit Constraints for AI Coding Agent
+
+- Keep v1 mainly client-side
+- Do not require login for local editing/import/export
+- Do not implement custom popup OIDC login
+- Use redirect-based sign-in through protected endpoint
+- Do not couple viewer to live draft DB rows
+- Use published version snapshots for online viewing
+- Keep local-first behavior as a first-class feature
+- Prefer simple, readable modules over early abstraction-heavy frameworks
+
+---
+
+## Deliverables Expected from AI Agent
+
+### Frontend
+- editor mode
+- viewer mode
+- local autosave
+- import/export
+- sign-in aware UI state
+- protected service hooks for rewrite/T2A/cloud storage
+
+### Backend-compatible integration points
+- payloads aligned with worksheet JSON schema
+- cloud save/load/publish functions aligned with DB schema document
+- attempt payloads aligned with `worksheet_attempts.answers`
+
+---
+
+## Final Guidance
+
+This project should be implemented as a **local-first worksheet tool with optional authenticated cloud and AI enhancements**.
+
+The AI agent should preserve that philosophy throughout implementation:
+- local works first
+- sign-in unlocks more
+- draft and published content remain separated
+- viewer behavior stays stable against later edits
