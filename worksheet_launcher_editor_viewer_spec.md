@@ -9,9 +9,9 @@ It is written for AI coding agents and developers.
 The implementation target is a **mainly JavaScript client-side application** with:
 - local-first editing
 - local import/export
-- optional authenticated cloud features
-- optional AI services such as rewrite and T2A
-- future PostgreSQL-backed online save/load/publish
+- public client-side editor and viewer surfaces
+- authentication only for protected backend and AI capabilities
+- future PostgreSQL-backed protected save/load/publish services
 
 This specification intentionally keeps v1 small and implementation-friendly.
 
@@ -23,18 +23,27 @@ The current repo is described as a simple web worksheet launcher with popup rend
 
 This specification extends that direction into a fuller worksheet editor + viewer product.
 
+## Legacy / compatibility popup flow
+
+Treat the existing popup launcher flow as a legacy or compatibility-oriented integration path, not as the main worksheet runtime.
+
+- `server/worksheet_launcher/render.html` remains only the popup compatibility renderer.
+- The real worksheet editor must get its own app entry, such as `server/editor/index.html`.
+- The real worksheet viewer must get its own app entry, such as `server/viewer/index.html`.
+- Popup transport and query contracts do **not** define the editor/viewer product contracts; those contracts must be defined separately for the real editor and viewer apps.
+
+This legacy/compatibility labeling is intentional so future implementation work does not accidentally extend the popup surface into the main runtime.
+
 ---
 
 ## Product Model
 
 ## Core Principle
 
-The app must support **two operating modes**:
+The editor and viewer routes/pages are public client-side app surfaces. Authentication is required only when the app invokes protected backend or API capabilities. Protected capabilities include draft save/load, publish, server-backed worksheet load, attempt sync/save/load, rewrite, and text-to-audio (T2A). Local import/export, local autosave, local preview, and local viewer usage must remain usable without login.
 
-### 1. Local Mode
-No login required.
-
-Available in local mode:
+### Public client-side capabilities
+No login required for:
 - open app
 - create worksheet
 - edit worksheet
@@ -44,18 +53,16 @@ Available in local mode:
 - import worksheet
 - export worksheet
 
-### 2. Signed-In Cloud Mode
-Requires authenticated session through Apache OIDC protected service endpoints.
-
-Available only after sign-in:
+### Protected capabilities
+Require an authenticated session through Apache OIDC protected service endpoints:
 - rewrite API
 - text-to-audio API
 - online draft save
 - online draft load
 - publish online
-- load published online worksheet
-- server-backed resume later
-- future multi-device continuity
+- load protected server-backed worksheet content
+- attempt sync/save/load
+- future multi-device continuity built on protected backend state
 
 ---
 
@@ -66,17 +73,17 @@ Available only after sign-in:
 Do **not** implement custom popup OIDC inside the frontend app.
 
 Use:
-- public frontend app shell
-- one **Sign in** button
-- browser redirect to an Apache OIDC protected endpoint
+- public frontend app shell for editor and viewer routes/pages
+- one **Sign in** button when protected capabilities are available
+- browser redirect to an Apache OIDC protected endpoint only when the user invokes a protected capability
 - return to app after successful login
 - app restores local state after login
 
 ## Required Login UX
 
 ### Signed-out state
-- app works in local mode
-- cloud/AI features are visibly disabled or marked as sign-in required
+- app works for local editor and viewer flows without login
+- protected backend/API features are visibly disabled or marked as sign-in required
 
 ### User clicks Sign in
 Frontend must:
@@ -111,10 +118,12 @@ Recommended local persistence:
 - Editor and viewer should work without cloud APIs
 
 ## Backend
-Protected APIs are optional enhancement services:
+Protected APIs are authenticated enhancement services:
 - rewrite service
 - T2A service
-- worksheet storage service
+- worksheet draft/publish storage service
+- server-backed worksheet load service
+- attempt sync/save/load service
 
 ## Storage Modes
 
@@ -124,8 +133,8 @@ Protected APIs are optional enhancement services:
 - export/import file-based project format
 
 ### Cloud Storage Mode
-- optional authenticated mode
-- store draft/published versions/attempts in PostgreSQL-backed APIs
+- authenticated protected-capability mode
+- store drafts, published versions, server-backed worksheet loads, and attempts in PostgreSQL-backed APIs
 
 ---
 
@@ -544,7 +553,7 @@ Recommended implementation order for AI agent:
 
 ## Final Guidance
 
-This project should be implemented as a **local-first worksheet tool with optional authenticated cloud and AI enhancements**.
+This project should be implemented as a **local-first worksheet tool with public client-side editor/viewer surfaces and authentication only for protected backend and AI capabilities**.
 
 The AI agent should preserve that philosophy throughout implementation:
 - local works first

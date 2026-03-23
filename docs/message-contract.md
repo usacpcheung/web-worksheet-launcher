@@ -1,6 +1,6 @@
-# Message Contract (Phase 1)
+# Message Contract (Phase 1 Popup Compatibility Slice)
 
-This document defines the launch-query contract and postMessage contract between:
+This document defines the bounded popup launch-query contract and postMessage contract between:
 
 - **Parent app** (`parent_prototype/parent.html`)
 - **Popup renderer** (`server/worksheet_launcher/render.html`)
@@ -22,7 +22,7 @@ Both parent and renderer treat query payload as untrusted input and must fail cl
 Contract-version behavior (v1):
 
 - Parent SDK always sends `worksheet.contractVersion = 1` in launch payload.
-- Renderer supports only contract version `1` in this phase and fails closed for unsupported versions.
+- Renderer supports only contract version `1` for this popup compatibility slice and fails closed for unsupported versions.
 - Parent SDK event/debug metadata includes the active `contractVersion` and `supportedContractVersions` list.
 
 Intentional scope limitation for this launch mode:
@@ -88,7 +88,7 @@ Example shape:
 
 Validation rules:
 
-- `contractVersion` must equal `1` for this phase
+- `contractVersion` must equal `1` for this popup compatibility slice
 - `v` must equal `1`
 - `title` should be a string when present
 - `q` must be an array of exactly one non-empty string (single-question launch mode)
@@ -141,8 +141,7 @@ launch context so any subsequent message for that `rid` is rejected and has no e
 
 ## 6) Phase boundary
 
-Phase 1 only defines contracts/scaffolding.
-No new runtime behavior is introduced by this document.
+Phase 1 includes implementation of the local-first editor/viewer runtime plus protected backend/API capabilities defined in `worksheet_launcher_editor_viewer_spec.md`. This document does **not** define that broader runtime. It defines only the bounded popup compatibility slice that Phase 1 must preserve while the editor/viewer implementation proceeds on separate routes and contracts.
 
 ## 6.1) Reserved extension points
 
@@ -151,7 +150,7 @@ To avoid breaking v1 integrations, the launch payload reserves:
 - `launchOptions.mode` (currently fixed to `"single-question"` in v1)
 - `launchOptions.extensions.multiQuestion` (currently `null` in v1)
 
-These fields are compatibility placeholders for the bounded Phase 1 popup transport only. They do not commit the product to a popup-based roadmap, and they should not be read as the default extension path for future editor/viewer experiences. Any future full editor/viewer contract must be defined separately from this popup launch/query + `postMessage` surface.
+These fields are compatibility placeholders for the bounded Phase 1 popup transport only. They do not commit the product to a popup-based roadmap, and they should not be read as the default extension path for the Phase 1 editor/viewer runtime. The full editor/viewer contracts must be defined separately from this popup launch/query + `postMessage` surface.
 
 ## 7) Parent SDK construction schema (`WorksheetLauncher.create(config)`)
 
