@@ -226,6 +226,7 @@ CREATE TABLE worksheet_versions (
     worksheet_id BIGINT NOT NULL REFERENCES worksheets(id) ON DELETE CASCADE,
     version_no INTEGER NOT NULL,
     content JSONB NOT NULL,
+    source_draft_revision TEXT NOT NULL,
     published_by_oidc_sub TEXT NOT NULL,
     published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -270,6 +271,13 @@ CREATE TABLE worksheet_versions (
 - Immutable published worksheet snapshot
 - Usually copied from `worksheets.draft_content` at publish time
 
+### `source_draft_revision`
+- Type: `TEXT`
+- Canonical publish provenance for this snapshot row
+- Stores the persisted backend draft revision used by the publish transaction
+- Must come from authoritative backend draft storage metadata, not from frontend-local counters
+- Example: `canonicalRevision:42`
+
 ### `published_by_oidc_sub`
 - Type: `TEXT`
 - OIDC subject of the user who performed the publish action
@@ -277,6 +285,17 @@ CREATE TABLE worksheet_versions (
 ### `published_at`
 - Type: `TIMESTAMPTZ`
 - Publication timestamp
+
+## Revision and publish provenance terms
+
+These terms are related but non-interchangeable:
+
+- `clientRevision`: frontend-local authoring counter used only for optimistic UI coordination during an active editing session. It is not durable publish provenance.
+- persisted draft revision / canonical server draft revision: the authoritative backend revision metadata for the saved draft state, such as `serverAssigned.canonicalRevision`. This is what the backend compares when deciding which saved draft was actually published.
+- `snapshotVersion`: backend-assigned monotonic publish number within a worksheet lineage. It orders immutable snapshots, not draft saves.
+- `sourceDraftRevision`: the exact persisted backend draft revision captured on the `worksheet_versions.source_draft_revision` column for the publish transaction that created the snapshot.
+
+Publish provenance must come from the persisted backend draft revision used by the publish transaction, never from a frontend-local counter such as `clientRevision`.
 
 ---
 
@@ -460,6 +479,7 @@ CREATE INDEX idx_attempts_anonymous_token
 ## Publish
 - Copy current `worksheets.draft_content` into `worksheet_versions.content`
 - Assign a new `worksheet_versions.public_id` for the immutable public `snapshotId`
+- Persist the canonical backend draft revision used by the publish transaction into `worksheet_versions.source_draft_revision`
 - Increment `version_no` per worksheet
 - Update `worksheets.current_version_id`
 - Ensure `current_version_id` belongs to the same `worksheets.id` row via the composite foreign key
@@ -536,6 +556,7 @@ CREATE TABLE worksheet_versions (
     worksheet_id BIGINT NOT NULL REFERENCES worksheets(id) ON DELETE CASCADE,
     version_no INTEGER NOT NULL,
     content JSONB NOT NULL,
+    source_draft_revision TEXT NOT NULL,
     published_by_oidc_sub TEXT NOT NULL,
     published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

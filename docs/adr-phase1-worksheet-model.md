@@ -200,7 +200,7 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
 - Snapshot fields are derived from the current draft plus publish metadata.
 - Editor-only fields such as `draftMeta`, `localValidation`, `autosaveState`, and `unsavedChanges` are excluded.
 - `snapshotId`, `snapshotVersion`, `publishedAt`, and `publishedByUserId` are publish-time records and must be treated as immutable after publish.
-- `sourceDraftRevision` records the persisted backend draft revision used by the publish transaction; it is provenance, not a copied frontend counter.
+- `sourceDraftRevision` records the persisted backend draft revision used by the publish transaction; in relational storage it should be persisted separately from snapshot content (for example as `worksheet_versions.source_draft_revision`). It is provenance, not a copied frontend counter.
 - Learner-facing viewers must consume snapshot data or payloads derived from snapshot data, never a live mutable draft.
 
 ### Publish snapshot rules
@@ -244,7 +244,7 @@ The backend assigns or computes publish-time fields such as:
 - `snapshotVersion`
 - `publishedAt`
 - `publishedByUserId`
-- `sourceDraftRevision` derived from persisted backend draft revision metadata (for example `serverAssigned.canonicalRevision`)
+- `sourceDraftRevision` derived from persisted backend draft revision metadata (for example `serverAssigned.canonicalRevision`) and, in relational storage, persisted on a dedicated column such as `worksheet_versions.source_draft_revision`
 - `schemaVersion`
 - `integrity.contentHash`
 - additional audit metadata needed to persist or verify the immutable artifact
@@ -258,16 +258,19 @@ Published snapshot content is immutable after publish. If authored content chang
 #### Version numbers and revision identifiers
 
 - `clientRevision` is a draft-local, frontend-managed counter used only for authoring workflows and optimistic coordination within the active UI; it is not authoritative publish provenance.
-- `sourceDraftRevision` records the persisted backend draft revision used to produce a snapshot, such as `serverAssigned.canonicalRevision` captured during the publish transaction.
+- persisted draft revision / canonical server draft revision is the authoritative backend revision metadata for the saved draft state, such as `serverAssigned.canonicalRevision`. This is the revision the backend actually publishes from.
+- `sourceDraftRevision` records that persisted backend draft revision on the immutable published snapshot; in relational storage it should live on a dedicated field such as `worksheet_versions.source_draft_revision`, not be inferred from frontend-local state.
 - `snapshotVersion` is the backend-assigned monotonic version number within a single `worksheetId` lineage.
 - `snapshotId` is the opaque durable identifier for a specific immutable published snapshot.
 - Multi-tab / multi-device rationale:
   - separate browser tabs or devices can each advance their own local `clientRevision` counters without representing the durable saved draft seen by the backend
   - the publish transaction must therefore record backend persistence metadata, not whichever frontend-local counter happened to be visible when the user clicked publish
 - Comparison rules:
-  - compare draft freshness in the UI using `clientRevision` for local coordination and backend persistence metadata for server truth, never `snapshotVersion`
+  - compare draft freshness in the UI using `clientRevision` for local coordination and persisted backend draft revision metadata for server truth, never `snapshotVersion`
   - compare published worksheet history using `snapshotVersion` within the same `worksheetId`
   - use `snapshotId` for exact identity equality, not ordering
+
+Publish provenance must come from the persisted backend draft revision used by the publish transaction, never from a frontend-local counter.
 
 #### Attempt references
 
