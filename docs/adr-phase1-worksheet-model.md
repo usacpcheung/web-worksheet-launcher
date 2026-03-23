@@ -418,7 +418,7 @@ Use this checklist during review for any Phase 1 editor/viewer planning or scaff
 - [ ] `docs/message-contract.md` remains the source of truth for the current popup launcher contract.
 - [ ] Phase 1 editor/viewer work does **not** change popup query params or the popup `postMessage` schema defined in `docs/message-contract.md`.
 - [ ] Any future popup-contract change updates `docs/message-contract.md` in the same change.
-- [ ] Parent-side validation continues to enforce `event.origin`, `event.data.type`, and `event.data.rid` in the existing launcher flow implemented across `parent_prototype/sdk/parent-launcher.js`, `server/worksheet_launcher/render.js`, and `server/worksheet_launcher/render.html`.
+- [ ] Parent-side validation continues to enforce `event.origin`, `event.data.type`, `event.data.rid`, and `event.source === popup window` in the existing launcher flow implemented across `parent_prototype/sdk/parent-launcher.js`, `server/worksheet_launcher/render.js`, and `server/worksheet_launcher/render.html`.
 - [ ] `server/worksheet_launcher/widgets/rewrite-widget.js` remains unchanged for prototype-specific behavior; use versioned files loaded from `server/worksheet_launcher/render.html` when needed.
 
 ## Relationship to the current popup launcher contract
