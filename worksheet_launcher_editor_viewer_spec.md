@@ -208,8 +208,10 @@ Import/export must work without login.
 - Remove block/question
 - Reorder block/question
 - Edit question prompt
-- Edit block kind for question blocks
-- Edit kind-specific settings/options
+- Edit `blocks[*].kind` to change the coarse block category (for example `question` vs `content`)
+- Edit `blocks[*].responseConfig.inputType` to change the question input subtype / answer UI for question blocks
+- Switch question blocks between the required v1 input types: `short_text`, `multiple_choice`, `textarea`, and `checkbox_group`
+- Edit `kind`-specific block settings and `responseConfig.inputType`-specific settings/options without conflating the two
 
 ### Supported minimum response input types for v1
 Recommended minimum set for question blocks:
