@@ -366,18 +366,34 @@ Meaning:
 ### `answers`
 - Type: `JSONB`
 - Stores current answer payload for the attempt
+- Canonical persisted shape is an object keyed by question-block `blockId`
+- Array-shaped answers are non-canonical and should be normalized into the `blockId`-keyed object form before persistence
 
 Expected example:
 
 ```json
 {
-  "q1": "3/4",
-  "q2": "6/8",
-  "q3": {
-    "selected": ["a", "c"]
+  "blk_q1": {
+    "value": {
+      "text": "3/4"
+    },
+    "answeredAt": "2026-03-22T12:14:30Z"
+  },
+  "blk_q2": {
+    "value": {
+      "selected": ["6/8"]
+    }
+  },
+  "blk_q3": {
+    "value": {
+      "selected": ["a", "c"]
+    },
+    "answeredAt": "2026-03-22T12:15:10Z"
   }
 }
 ```
+
+In this envelope, each top-level key must match a `blockId` for a `kind: "question"` block from the published worksheet snapshot; non-question blocks must not appear in `answers`.
 
 ---
 

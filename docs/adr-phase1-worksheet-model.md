@@ -360,29 +360,24 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
   "startedAt": "2026-03-22T12:10:00Z",
   "lastSavedAt": "2026-03-22T12:13:00Z",
   "submittedAt": "2026-03-22T12:15:00Z",
-  "answers": [
-    {
-      "blockId": "blk_q_001",
-      "kind": "question",
+  "answers": {
+    "blk_q_001": {
       "value": {
         "text": "A stronger claim uses evidence from the passage to support the argument."
       },
-      "uiState": {
-        "isFocused": false,
-        "selectionStart": 0,
-        "selectionEnd": 0,
-        "localDraft": "A stronger claim uses evidence from the passage to support the argument."
-      },
       "answeredAt": "2026-03-22T12:14:30Z"
     }
-  ]
+  }
 }
 ```
 
 ### Attempt payload rules
 
-- `value` is the canonical learner answer value.
-- `uiState` contains client-only fields used for in-progress interaction and should not be required for grading, reporting, replay, or interoperability.
+- `answers` is canonically an object map keyed by question `blockId` values from the published snapshot.
+- Non-question blocks must not appear in `answers`.
+- Viewer render order comes from the snapshot `blocks` array and each block's `position`, not from object key order inside `answers`.
+- `answers[*].value` is the canonical learner answer value.
+- `answeredAt` is optional persisted per-answer metadata when the product needs it; omit it rather than storing client-only UI state.
 - Attempt records must never redefine worksheet prompts or content blocks; they only reference the published worksheet snapshot identified by `worksheetId` + `snapshotId` and carry learner responses.
 
 ---
@@ -407,8 +402,8 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 | `integrity.contentHash` | derived/computed | Computed from published content for integrity or cache validation. |
 | viewer payload as a whole | derived/computed | Produced from snapshot data for learner rendering. |
 | `attemptId` | backend-owned | Canonical identifier for learner attempt storage. |
-| `answers[*].value` | frontend-owned | Learner-authored response value, stored canonically in the attempt record. |
-| `answers[*].answeredAt`, `startedAt`, `lastSavedAt`, `submittedAt` | backend-owned | Server-recorded timestamps preferred for consistency and auditability. |
+| `answers.{blockId}.value` | frontend-owned | Learner-authored response value, stored canonically in the attempt record under the question block's `blockId`. |
+| `answers.{blockId}.answeredAt`, `startedAt`, `lastSavedAt`, `submittedAt` | backend-owned | Server-recorded timestamps preferred for consistency and auditability. |
 | snapshot record as a whole | immutable-after-publish | Snapshot is frozen once published and serves as the durable learner-facing definition. |
 
 ## Compatibility guardrails checklist
