@@ -105,8 +105,40 @@ If user clicks sign in during editing:
   - optional scroll position
 
 Recommended local persistence:
-- IndexedDB for worksheet draft
+- IndexedDB for worksheet draft and local viewer state
 - localStorage for small resume-after-login flags
+
+## Required local persistence model
+
+The app must define explicit local storage responsibilities rather than treating local persistence as an implementation detail.
+
+### IndexedDB
+Use IndexedDB for durable local content/state records, including:
+- local worksheet drafts
+- imported worksheets stored for later editing or viewing
+- local viewer attempts and local autosave state
+
+Minimum IndexedDB record groups:
+- `localDrafts`: editable local worksheet draft objects
+- `importedWorksheets`: imported worksheet/source payloads preserved for local reuse
+- `localAttempts`: viewer answer state, submit status, and local resume metadata
+
+IndexedDB is the source of truth for larger local JSON payloads because it is better suited than `localStorage` for draft content, imported documents, and autosaved attempt state.
+
+### localStorage
+Use `localStorage` only for lightweight UI/session restore metadata, including:
+- lightweight session restore flags
+- selected worksheet reference or selected attempt reference for post-login resume
+- pending action intent such as `resumePublishAfterLogin`, `resumeDraftSaveAfterLogin`, or `resumeAttemptSyncAfterLogin`
+
+`localStorage` must not be treated as the canonical store for full worksheet JSON or full attempt payloads.
+
+### Required local record metadata
+Every locally persisted draft or attempt object must include stable local metadata such as:
+- `localId`: durable local identifier generated on the client
+- `origin`: `local_created` | `imported_file` | `server_synced`
+- `updatedAt`: last local write timestamp
+- optional server linkage fields when the record has been synced
 
 ---
 
@@ -129,12 +161,61 @@ Protected APIs are authenticated enhancement services:
 
 ### Local Storage Mode
 - default mode
-- store draft in IndexedDB
+- store local drafts, imported worksheets, and local attempts in IndexedDB
+- keep lightweight restore flags and pending action intent in `localStorage`
 - export/import file-based project format
 
 ### Cloud Storage Mode
 - authenticated protected-capability mode
 - store drafts, published versions, server-backed worksheet loads, and attempts in PostgreSQL-backed APIs
+
+## Local IDs and server ID mapping
+
+Local draft and local attempt objects must have durable local IDs that are distinct from server public IDs.
+
+Required rules:
+- a local draft uses a client-generated `localDraftId` even before any sign-in or backend save exists
+- a local attempt uses a client-generated `localAttemptId` even before any server-backed attempt exists
+- server-backed identifiers such as `worksheetId`, `snapshotId`, and `attemptId` must be stored separately from local IDs and must never overwrite them
+- imported worksheets stored locally should keep a stable local record ID even if they later map to a server-backed worksheet
+
+Recommended local record shape:
+
+```json
+{
+  "localDraftId": "ld_01...",
+  "serverWorksheetId": null,
+  "serverDraftRevisionId": null,
+  "lastSyncState": "local_only"
+}
+```
+
+```json
+{
+  "localAttemptId": "la_01...",
+  "serverAttemptId": null,
+  "worksheetRef": {
+    "localDraftId": "ld_01...",
+    "snapshotId": null
+  },
+  "lastSyncState": "local_only"
+}
+```
+
+### Sync behavior after login
+When a user signs in and chooses a protected capability, sync must map local records to server-backed records without replacing the local identity layer.
+
+Minimum sync rules:
+1. Read the current local draft/attempt from IndexedDB using its local ID.
+2. Create or update the corresponding backend record.
+3. Persist returned server identifiers alongside the existing local IDs.
+4. Update local sync metadata such as `lastSyncState`, `lastSyncedAt`, and any canonical server revision/snapshot/attempt reference.
+5. Keep the local record addressable by its local ID so offline/local workflows and post-login restore continue to work.
+
+Examples:
+- Local draft save after login: `localDraftId` stays stable while the record gains `serverWorksheetId` and server revision metadata.
+- Publish after login: publish resolves from the synced server draft revision; the local draft remains a draft record and stores the returned published snapshot reference separately.
+- Attempt sync after login: `localAttemptId` stays stable while the record gains `serverAttemptId` and any server-backed resume metadata.
 
 ---
 
