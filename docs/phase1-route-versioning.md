@@ -17,7 +17,7 @@ Specifically:
 
 ## Why this decision exists
 
-The current popup renderer is intentionally constrained to **one question** and **one answer area**. That limitation is part of the Phase 1 contract, not an implementation gap, and it should remain a compatibility island while the broader product architecture is still being defined. The parent prototype, popup renderer, and message contract are therefore best treated as a stable v1 launcher slice rather than as the foundation for the eventual full editor/viewer runtime. 
+The current popup renderer is intentionally constrained to **one question** and **one answer area**. That limitation is part of the Phase 1 contract, not an implementation gap, and it should remain a compatibility island while the broader product architecture is still being defined. The parent prototype, popup renderer, and message contract are therefore best treated as a stable v1 launcher slice rather than as the foundation for the eventual full editor/viewer runtime. Reserved popup extension points are compatibility placeholders only; they are not the default strategy for how the broader product contract should evolve. 
 
 Implementation landmarks:
 
@@ -85,7 +85,7 @@ Continue using `server/worksheet_launcher/render.html` as the shell, but add new
 
 Option 1 is preferred because the long-term editor and viewer flows are broader product surfaces, not just richer versions of the current popup. They will likely need their own routing, lifecycle management, persistence boundaries, and UI state models. Preserving the current popup renderer as a constrained v1 compatibility island prevents Phase 1 scaffolding from becoming an accidental architecture commitment. 
 
-Option 2 remains useful as a **secondary tactic** when the popup itself needs carefully scoped expansion later. In those cases, expansion should happen through versioned widget/runtime files loaded from `server/worksheet_launcher/render.html`, not by retrofitting `server/worksheet_launcher/widgets/rewrite-widget.js` with prototype-specific behavior.
+Option 2 remains useful as a **secondary tactic** when the popup itself needs carefully scoped expansion later. In those cases, expansion should happen through versioned widget/runtime files loaded from `server/worksheet_launcher/render.html`, not by retrofitting `server/worksheet_launcher/widgets/rewrite-widget.js` with prototype-specific behavior. Even then, those reserved popup extension points remain compatibility placeholders for the existing launcher flow rather than the default strategy for future editor/viewer contracts.
 
 
 ## Compatibility guardrails checklist
@@ -107,6 +107,7 @@ During Phase 1 and follow-on planning:
 - Plan future editor/viewer work as separate routes/pages.
 - If popup-specific behavior expands later, create versioned runtime assets and wire them in explicitly.
 - Continue using `docs/message-contract.md` as the contract reference for the existing launcher flow until a later-phase route introduces a different interface contract.
+- Treat reserved popup extension points as bounded compatibility placeholders only, not as a signal that future editor/viewer contracts should evolve through popup transport by default.
 
 ## Recommendation summary
 
