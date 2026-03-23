@@ -19,6 +19,28 @@ The goal is to keep authoring concerns, publish-time durability, learner renderi
 
 Adopt four distinct JSON shapes with explicit field ownership boundaries.
 
+### Access model
+
+Phase 1 should distinguish the current local popup proof-of-concept from future productized routes so the demo launch path is not mistaken for the long-term serving model. The popup launcher and popup renderer that exist today are local prototype surfaces used to exercise contracts and UI scaffolding only; they are not the access-control design for the eventual product.
+
+| Surface | Access classification | Phase note |
+| --- | --- | --- |
+| `parent_prototype/parent.html` popup launcher demo | local prototype/demo only | Exists now only to launch the popup with the Phase 1 query-string contract (`w`, `rid`, `returnOrigin`) during local contract validation; it is not a future product route. |
+| `server/worksheet_launcher/render.html` popup renderer | local prototype/demo only | Exists now only as the Phase 1 renderer scaffold for the popup proof-of-concept. |
+| Planned editor app route | local/public route unless auth-backed features are enabled | Not yet implemented; later phases may keep basic local authoring public when it runs entirely in-browser, but any use of server-backed features such as rewrite, T2A, autosave, publish, versioning, or storage must add authentication and backend authorization. |
+| Planned viewer app route | local/public or authenticated route depending on capabilities | Not yet implemented; later phases may allow users to open imported or locally available worksheets without authentication, or load server-backed worksheets when authenticated. The viewer may stay public for local use, but any server-backed worksheet access, stored learner progress, or protected capability must add the required authentication and product gating. |
+| Planned draft-save / publish / import / export endpoints | authenticated API | Not yet implemented; reserved for later phases that add backend persistence and authorization. |
+
+### Trust boundary
+
+Future phases must treat all client-originated worksheet payloads as untrusted input, including the current popup launch query parameters, popup `postMessage` payloads, draft JSON bodies submitted from an editor, import payloads, and any client-supplied metadata attached to save/export requests. If a later phase introduces fragment-based routing or client-side route state for product surfaces, those values are also untrusted client input. Client input may describe authored content, but it must not be treated as authoritative for publication state, identity issuance, or audit provenance.
+
+The server must issue and validate durable identifiers and authoritative metadata, including canonical worksheet identifiers, published snapshot identifiers, authenticated user identity, persisted draft revision metadata, publish timestamps, and any integrity or audit fields. A client may echo those values back to the server, but the backend must verify that they were server-issued and still valid for the authenticated caller.
+
+Any action that changes durable backend state requires authenticated backend authority. This includes draft save, draft import, publish, unpublish if introduced later, export of non-public authoring data, and any mutation of worksheet metadata. Publish especially must run as an authenticated backend transaction that derives the immutable snapshot from persisted draft state, assigns server-owned publish metadata, and refuses to trust client-declared `publishedAt`, `publishedByUserId`, `snapshotId`, `snapshotVersion`, or equivalent authority-bearing fields.
+
+This means later editor/viewer routes are not required to be authenticated merely because they exist. A route that works entirely with local data or imported worksheets and does not call protected capabilities may stay public. Authentication becomes required when the route loads protected server-backed worksheets or uses backend-dependent features such as rewrite services, text-to-audio, autosave, durable storage, publish/versioning flows, or learner-state persistence.
+
 ---
 
 ## 1) Editable draft model
@@ -100,9 +122,9 @@ Adopt four distinct JSON shapes with explicit field ownership boundaries.
 
 ### Ownership notes
 
-- **Client-authored fields:** `draftWorksheetId`, `clientRevision`, `title`, `description`, `blocks[*].blockId`, `blocks[*].position`, `blocks[*].prompt`, `blocks[*].content`, `blocks[*].responseConfig`, `draftMeta`, `localValidation`.
-- **Server-assigned fields:** `serverWorksheetId`, `serverAssigned.createdAt`, `serverAssigned.updatedAt`, `serverAssigned.createdByUserId`, `serverAssigned.canonicalRevision`.
-- **Draft-only/transient fields:** `draftMeta`, `localValidation`, `clientRevision`, and any editor session state. These may exist only before publish and must not be copied into immutable publish artifacts.
+- **Client-authored fields:** `draftWorksheetId`, `title`, `description`, `blocks[*].blockId`, `blocks[*].position`, `blocks[*].prompt`, `blocks[*].content`, and `blocks[*].responseConfig`.
+- **Frontend-local/transient fields:** `clientRevision`, `draftMeta`, `localValidation`, and any editor session state. These exist only to coordinate the current frontend editing session and must not be copied into immutable publish artifacts or treated as durable publish provenance.
+- **Server-assigned fields:** `serverWorksheetId`, `serverAssigned.createdAt`, `serverAssigned.updatedAt`, `serverAssigned.createdByUserId`, and `serverAssigned.canonicalRevision`.
 
 ---
 
@@ -129,7 +151,7 @@ Adopt four distinct JSON shapes with explicit field ownership boundaries.
   "snapshotVersion": 3,
   "publishedAt": "2026-03-22T12:05:00Z",
   "publishedByUserId": "usr_123",
-  "sourceDraftRevision": 12,
+  "sourceDraftRevision": "serverAssigned.canonicalRevision:42",
   "title": "Argument writing practice",
   "description": "Students compare two claims and revise a response.",
   "blocks": [
@@ -168,6 +190,7 @@ Adopt four distinct JSON shapes with explicit field ownership boundaries.
 - Snapshot fields are derived from the current draft plus publish metadata.
 - Editor-only fields such as `draftMeta`, `localValidation`, `autosaveState`, and `unsavedChanges` are excluded.
 - `snapshotId`, `snapshotVersion`, `publishedAt`, and `publishedByUserId` are publish-time records and must be treated as immutable after publish.
+- `sourceDraftRevision` records the persisted backend draft revision used by the publish transaction; it is provenance, not a copied frontend counter.
 - Learner-facing viewers must consume snapshot data or payloads derived from snapshot data, never a live mutable draft.
 
 ### Publish snapshot rules
@@ -211,12 +234,12 @@ The backend assigns or computes publish-time fields such as:
 - `snapshotVersion`
 - `publishedAt`
 - `publishedByUserId`
-- `sourceDraftRevision`
+- `sourceDraftRevision` derived from persisted backend draft revision metadata (for example `serverAssigned.canonicalRevision`)
 - `schemaVersion`
 - `integrity.contentHash`
 - additional audit metadata needed to persist or verify the immutable artifact
 
-These fields must be derived from the persisted publish transaction, not trusted from client input.
+These fields must be derived from the persisted publish transaction, not trusted from client input. The publish flow records the backend draft revision that storage actually committed for the transaction, such as `serverAssigned.canonicalRevision`, rather than mirroring a frontend-local counter.
 
 #### Snapshot immutability after publish
 
@@ -224,12 +247,15 @@ Published snapshot content is immutable after publish. If authored content chang
 
 #### Version numbers and revision identifiers
 
-- `clientRevision` is a draft-local, frontend-managed counter used only for authoring workflows and optimistic coordination.
-- `sourceDraftRevision` records which draft revision was used to produce a snapshot.
+- `clientRevision` is a draft-local, frontend-managed counter used only for authoring workflows and optimistic coordination within the active UI; it is not authoritative publish provenance.
+- `sourceDraftRevision` records the persisted backend draft revision used to produce a snapshot, such as `serverAssigned.canonicalRevision` captured during the publish transaction.
 - `snapshotVersion` is the backend-assigned monotonic version number within a single `worksheetId` lineage.
 - `snapshotId` is the opaque durable identifier for a specific immutable published snapshot.
+- Multi-tab / multi-device rationale:
+  - separate browser tabs or devices can each advance their own local `clientRevision` counters without representing the durable saved draft seen by the backend
+  - the publish transaction must therefore record backend persistence metadata, not whichever frontend-local counter happened to be visible when the user clicked publish
 - Comparison rules:
-  - compare draft freshness using `clientRevision` or backend draft persistence metadata, never `snapshotVersion`
+  - compare draft freshness in the UI using `clientRevision` for local coordination and backend persistence metadata for server truth, never `snapshotVersion`
   - compare published worksheet history using `snapshotVersion` within the same `worksheetId`
   - use `snapshotId` for exact identity equality, not ordering
 
@@ -239,9 +265,10 @@ Attempts should reference both `worksheetId` and `snapshotId`, and may also stor
 
 - `worksheetId` identifies the logical worksheet lineage
 - `snapshotId` identifies the exact published artifact the learner saw
-- `snapshotVersion` is a convenience/version label and must agree with the referenced `snapshotId`
+- the pair `worksheetId` + `snapshotId` identifies the exact immutable learner-visible artifact and is the authoritative attempt binding
+- `snapshotVersion` is optional denormalized metadata for convenience/reporting and must agree with the referenced `worksheetId` + `snapshotId` pair
 
-Attempts must never reference a draft-only id in place of the published identifiers.
+Attempts must never reference a draft-only id in place of the published identifiers, and reconciliation/export/replay logic must not key the learner artifact on `snapshotVersion` alone.
 
 #### Editing a draft after a publish already exists
 
@@ -250,7 +277,7 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 #### Required invariants
 
 - Viewer reads only published snapshots or viewer payloads derived from published snapshots.
-- Attempts are always tied to a specific published snapshot version.
+- Attempts are always tied to a specific published snapshot identified by `worksheetId` + `snapshotId`; `snapshotVersion` is optional metadata only.
 - Publishing must not mutate historical snapshots.
 - Local draft save must not be treated as publish.
 - Publish semantics must remain separate from popup-launch transport concerns.
@@ -305,7 +332,7 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 ### Viewer payload rules
 
 - The viewer payload is read-only.
-- It must include snapshot identifiers and version references so learner attempts can point back to the exact published content seen by the learner.
+- It must include `worksheetId` and `snapshotId` so learner attempts can point back to the exact immutable published content seen by the learner; `snapshotVersion` may be included as optional denormalized metadata.
 - It must exclude editor-only state, local validation data, autosave state, publishing audit trails, and other backend/admin metadata that is not required to render the experience.
 
 ---
@@ -316,7 +343,7 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 
 **Characteristics:**
 
-- References the worksheet and snapshot that the learner saw.
+- References the worksheet and exact immutable snapshot that the learner saw.
 - Stores per-question answers plus attempt-level timestamps/status.
 - Separates canonical answer values from UI-only client state.
 
@@ -356,7 +383,7 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 
 - `value` is the canonical learner answer value.
 - `uiState` contains client-only fields used for in-progress interaction and should not be required for grading, reporting, replay, or interoperability.
-- Attempt records must never redefine worksheet prompts or content blocks; they only reference the published worksheet snapshot and carry learner responses.
+- Attempt records must never redefine worksheet prompts or content blocks; they only reference the published worksheet snapshot identified by `worksheetId` + `snapshotId` and carry learner responses.
 
 ---
 
@@ -373,15 +400,26 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 | `blocks[*].position` | frontend-owned | Author-defined ordering before publish; snapshot preserves resulting order. |
 | `blocks[*].prompt`, `blocks[*].content`, `blocks[*].responseConfig` | frontend-owned | Content authored in the editor. |
 | `draftMeta`, `localValidation`, `uiState` | frontend-owned | Editor/view UI state only; excluded from canonical snapshot definition. |
-| `clientRevision` | frontend-owned | Local revision counter for authoring workflows. |
-| `serverAssigned.*` | backend-owned | Audit and persistence metadata assigned by backend storage. |
-| `publishedAt`, `publishedByUserId`, `sourceDraftRevision` | immutable-after-publish | Captured at publish time and not mutated afterward. |
+| `clientRevision` | frontend-owned | Frontend-local/transient counter for authoring workflows and optimistic UI coordination only. |
+| `serverAssigned.*` | backend-owned | Audit and persistence metadata assigned by backend storage, including canonical draft revision provenance. |
+| `publishedAt`, `publishedByUserId` | immutable-after-publish | Captured at publish time and not mutated afterward. |
+| `sourceDraftRevision` | immutable-after-publish | Publish provenance copied from persisted backend draft revision metadata, not from a mirrored frontend counter. |
 | `integrity.contentHash` | derived/computed | Computed from published content for integrity or cache validation. |
 | viewer payload as a whole | derived/computed | Produced from snapshot data for learner rendering. |
 | `attemptId` | backend-owned | Canonical identifier for learner attempt storage. |
 | `answers[*].value` | frontend-owned | Learner-authored response value, stored canonically in the attempt record. |
 | `answers[*].answeredAt`, `startedAt`, `lastSavedAt`, `submittedAt` | backend-owned | Server-recorded timestamps preferred for consistency and auditability. |
 | snapshot record as a whole | immutable-after-publish | Snapshot is frozen once published and serves as the durable learner-facing definition. |
+
+## Compatibility guardrails checklist
+
+Use this checklist during review for any Phase 1 editor/viewer planning or scaffolding work:
+
+- [ ] `docs/message-contract.md` remains the source of truth for the current popup launcher contract.
+- [ ] Phase 1 editor/viewer work does **not** change popup query params or the popup `postMessage` schema defined in `docs/message-contract.md`.
+- [ ] Any future popup-contract change updates `docs/message-contract.md` in the same change.
+- [ ] Parent-side validation continues to enforce `event.origin`, `event.data.type`, `event.data.rid`, and `event.source === popup window` in the existing launcher flow implemented across `parent_prototype/sdk/parent-launcher.js`, `server/worksheet_launcher/render.js`, and `server/worksheet_launcher/render.html`.
+- [ ] `server/worksheet_launcher/widgets/rewrite-widget.js` remains unchanged for prototype-specific behavior; use versioned files loaded from `server/worksheet_launcher/render.html` when needed.
 
 ## Relationship to the current popup launcher contract
 
