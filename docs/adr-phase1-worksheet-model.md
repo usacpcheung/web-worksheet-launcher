@@ -63,6 +63,7 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
 - Uses stable identifiers for the worksheet and for each question/content block.
 - May include editor-only metadata, local validation state, and unsaved changes.
 - Contains both client-authored fields and placeholders for server-assigned fields.
+- Does not include popup-v1 transport/UI flags such as `rewrite`; those are not part of the canonical worksheet draft/snapshot content model unless a later ADR adds a dedicated content-level capability field.
 
 ### Draft shape
 
@@ -132,7 +133,7 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
 
 ### Ownership notes
 
-- **Client-authored fields:** `draftWorksheetId`, `title`, `description`, `blocks[*].blockId`, `blocks[*].position`, `blocks[*].prompt`, `blocks[*].content`, and `blocks[*].responseConfig`.
+- **Client-authored fields:** `draftWorksheetId`, `title`, `description`, `blocks[*].blockId`, `blocks[*].position`, `blocks[*].prompt`, `blocks[*].content`, and `blocks[*].responseConfig`. Popup-v1 transport flags such as `rewrite` are excluded from the canonical worksheet content model.
 - **Frontend-local/transient fields:** `clientRevision`, `draftMeta`, `localValidation`, and any editor session state. These exist only to coordinate the current frontend editing session and must not be copied into immutable publish artifacts or treated as durable publish provenance.
 - **Server-assigned fields:** `serverWorksheetId`, `serverAssigned.createdAt`, `serverAssigned.updatedAt`, `serverAssigned.createdByUserId`, and `serverAssigned.canonicalRevision`.
 
@@ -202,6 +203,7 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
 - `snapshotId`, `snapshotVersion`, `publishedAt`, and `publishedByUserId` are publish-time records and must be treated as immutable after publish.
 - `sourceDraftRevision` records the persisted backend draft revision used by the publish transaction; in relational storage it should be persisted separately from snapshot content (for example as `worksheet_versions.source_draft_revision`). It is provenance, not a copied frontend counter.
 - Learner-facing viewers must consume snapshot data or payloads derived from snapshot data, never a live mutable draft.
+- Popup-v1 transport/UI flags such as `rewrite` do not become canonical snapshot content merely because they appear in the Phase 1 popup launch contract.
 
 ### Publish snapshot rules
 

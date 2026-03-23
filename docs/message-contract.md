@@ -95,6 +95,7 @@ Validation rules:
 - `q[0]` must not exceed `800` characters (max per-question cap enforced by parent and renderer)
 - Rewrite textbox input is capped at `200` characters via `server/worksheet_launcher/render.js` when mounting `rewrite-widget.js` (`maxChars`)
 - `rewrite` should be a boolean when present
+- `rewrite` in this payload is a popup v1 transport/UI capability flag only. It enables the existing popup rewrite affordance and does **not** define a canonical worksheet-content field for future draft/snapshot/editor/viewer models.
 - `launchOptions` is reserved as a bounded compatibility envelope for the current popup v1 surface. v1 uses `mode: "single-question"` and keeps `extensions.multiQuestion` unset except as a placeholder so existing clients can ignore it safely.
 
 ## 3) Popup → parent message schema

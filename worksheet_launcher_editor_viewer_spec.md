@@ -278,6 +278,8 @@ Viewer should be structured so future resume is possible, even if full cloud res
 ## Rewrite
 Rewrite is optional and requires sign-in.
 
+Rule: rewrite is a service/UI capability, not a canonical worksheet JSON field. Future draft, snapshot, viewer, and persistence models should keep rewrite configuration out of the worksheet content model unless a later ADR defines a dedicated content-level capability field. The existing popup `rewrite` flag is therefore treated as popup-v1-only transport behavior rather than the default editor/viewer schema.
+
 Examples:
 - rewrite question-block prompt drafts
 - rewrite user-entered teacher text
