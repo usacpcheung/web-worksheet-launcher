@@ -34,7 +34,7 @@ It is intentionally minimal for v1.
 
 3. **JSONB is used for content and answers**
    - Worksheet structure can evolve without frequent schema changes
-   - Question/answer payloads remain flexible
+   - Block/answer payloads remain flexible
 
 4. **OIDC identity is stored as stable subject strings**
    - Use OIDC `sub` claim values for ownership and authenticated attempts
@@ -146,17 +146,23 @@ Expected structure example:
 ```json
 {
   "title": "Fractions Practice",
-  "sections": [
+  "blocks": [
     {
-      "id": "q1",
-      "type": "short_text",
-      "prompt": "What is 1/2 + 1/4?"
+      "blockId": "blk_q1",
+      "kind": "question",
+      "prompt": "What is 1/2 + 1/4?",
+      "responseConfig": {
+        "inputType": "short_text"
+      }
     },
     {
-      "id": "q2",
-      "type": "multiple_choice",
+      "blockId": "blk_q2",
+      "kind": "question",
       "prompt": "Which is equivalent to 3/4?",
-      "options": ["6/8", "2/8", "1/2"]
+      "responseConfig": {
+        "inputType": "multiple_choice",
+        "options": ["6/8", "2/8", "1/2"]
+      }
     }
   ],
   "settings": {
@@ -165,6 +171,8 @@ Expected structure example:
   }
 }
 ```
+
+Compatibility note: older examples may have used `sections` with block `type`, but future editor/viewer and persistence contracts must treat `blocks` and `kind` as authoritative.
 
 ### `current_version_id`
 - Type: `BIGINT`

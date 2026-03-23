@@ -140,11 +140,14 @@ Minimum expected shape:
 {
   "title": "Fractions Practice",
   "description": "Simple worksheet",
-  "sections": [
+  "blocks": [
     {
-      "id": "q1",
-      "type": "short_text",
-      "prompt": "What is 1/2 + 1/4?"
+      "blockId": "blk_q1",
+      "kind": "question",
+      "prompt": "What is 1/2 + 1/4?",
+      "responseConfig": {
+        "inputType": "short_text"
+      }
     }
   ],
   "settings": {
@@ -153,6 +156,8 @@ Minimum expected shape:
   }
 }
 ```
+
+Compatibility note: older examples may have used `sections` with block `type`, but future editor/viewer and persistence contracts must treat `blocks` and `kind` as authoritative.
 
 ## Important Rule
 The worksheet JSON model is the source of truth.
@@ -198,16 +203,16 @@ Import/export must work without login.
 - Edit title
 - Edit description
 
-### Manage sections/questions
-- Add new section/question
-- Remove section/question
-- Reorder section/question
+### Manage blocks/questions
+- Add new block/question
+- Remove block/question
+- Reorder block/question
 - Edit question prompt
-- Edit question type
-- Edit type-specific settings/options
+- Edit block kind for question blocks
+- Edit kind-specific settings/options
 
-### Supported minimum question types for v1
-Recommended minimum set:
+### Supported minimum response input types for v1
+Recommended minimum set for question blocks:
 - `short_text`
 - `multiple_choice`
 - `textarea`
@@ -249,8 +254,8 @@ Viewer must be able to load from:
 - local imported worksheet
 - future published online worksheet
 
-### Render questions
-Viewer must render each section according to its type
+### Render blocks/questions
+Viewer must render each block according to its kind while keeping response/input subtype fields distinct.
 
 ### Capture answers
 Viewer must maintain answer state in a structured JSON object
@@ -274,7 +279,7 @@ Viewer should be structured so future resume is possible, even if full cloud res
 Rewrite is optional and requires sign-in.
 
 Examples:
-- rewrite question prompt drafts
+- rewrite question-block prompt drafts
 - rewrite user-entered teacher text
 - rewrite answer text areas if desired later
 
@@ -286,7 +291,7 @@ Behavior:
 T2A is optional and requires sign-in.
 
 Potential uses:
-- generate spoken reading for question prompts
+- generate spoken reading for question-block prompts
 - preview generated audio
 
 Behavior:
@@ -342,7 +347,7 @@ At minimum, frontend state should clearly separate:
   worksheet: { ...worksheetJson },
   viewerAnswers: { ...answersJson },
   ui: {
-    selectedSectionId: null,
+    selectedBlockId: null,
     isDirty: false,
     saveState: "idle" | "saving" | "saved" | "error"
   }
@@ -417,10 +422,10 @@ Recommended module areas:
 
 Minimum editor validation should check:
 - worksheet title exists
-- sections/questions have unique `id`
+- blocks/questions have unique `blockId`
 - required prompts are present
 - multiple choice options are valid
-- unsupported or broken question types are flagged safely
+- unsupported or broken block kinds or response input types are flagged safely
 
 Viewer validation should fail gracefully if JSON is malformed.
 
