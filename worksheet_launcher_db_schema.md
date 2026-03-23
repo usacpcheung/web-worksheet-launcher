@@ -59,6 +59,24 @@ Implementers should keep internal relational keys distinct from public contract 
 
 This document assumes the public-contract mapping `worksheetId -> worksheets.public_id`, `snapshotId -> worksheet_versions.public_id`, and `attemptId -> worksheet_attempts.public_id` unless a later ADR explicitly changes that mapping.
 
+### Local/cloud identity alignment
+
+The browser runtime keeps separate local identifiers that are **not** stored as authoritative relational IDs in PostgreSQL:
+- local worksheet drafts should use a client-generated identifier such as `localDraftId = ld_<ulid>` before backend persistence
+- local attempts should use a client-generated identifier such as `localAttemptId = la_<ulid>` before backend persistence
+- server-backed worksheet identifiers should map to `worksheets.public_id` and use the backend-issued public UUID format
+- server-backed attempt identifiers should map to `worksheet_attempts.public_id` and use the backend-issued public UUID format
+
+A synced local worksheet keeps both identifiers in the client state layer: the local `localDraftId` remains the browser-stable key, while the linked server `worksheetId` / `worksheets.public_id` becomes the authoritative backend reference. A synced local attempt follows the same rule for `localAttemptId` plus server `attemptId` / `worksheet_attempts.public_id`.
+
+The relational schema does not need to persist browser-local IDs as primary business keys. If the backend wants to correlate uploads with a client record for debugging or idempotency, it may accept a client-local identifier in request metadata, but the authoritative persisted identity remains the server public ID columns described above.
+
+### Sync and conflict rules
+
+- Importing a file that already came from a synced worksheet should not overwrite an existing worksheet row automatically. The imported file may reference an existing `worksheets.public_id`, but the backend should treat any resulting save/publish as an explicit user-directed action rather than assuming the import is authoritative.
+- Syncing a local draft after both local and server edits requires backend conflict detection using the authoritative persisted draft revision and/or `worksheets.updated_at`. The backend must reject silent last-writer-wins behavior unless the product explicitly chooses an overwrite path.
+- Promoting a local attempt into a server-backed attempt after login should create a new `worksheet_attempts` row only when there is no linked server `attemptId`. If the backend resumes an existing attempt, the client must link the local record to that existing `worksheet_attempts.public_id` instead of creating a duplicate.
+
 ---
 
 ## Required Extension

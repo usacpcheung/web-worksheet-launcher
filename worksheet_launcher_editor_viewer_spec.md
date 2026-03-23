@@ -178,6 +178,20 @@ Required rules:
 - a local attempt uses a client-generated `localAttemptId` even before any server-backed attempt exists
 - server-backed identifiers such as `worksheetId`, `snapshotId`, and `attemptId` must be stored separately from local IDs and must never overwrite them
 - imported worksheets stored locally should keep a stable local record ID even if they later map to a server-backed worksheet
+- a synced local worksheet keeps both its stable `localDraftId` and its linked server `worksheetId`
+- a synced local attempt keeps both its stable `localAttemptId` and its linked server `attemptId`
+
+### Identifier formats
+Use explicit, mode-specific identifier formats:
+- local worksheet identifier before login: `localDraftId = ld_<ulid>`
+- server worksheet public identifier after sync: `worksheetId = <uuid>` mapped from the backend public worksheet identifier
+- local attempt identifier before server persistence: `localAttemptId = la_<ulid>`
+- server attempt identifier after upload/resume: `attemptId = <uuid>` mapped from the backend public attempt identifier
+
+Format rules:
+- local IDs are client-generated, opaque, and durable within the browser profile
+- server IDs are backend-issued public identifiers and must never be client-generated
+- exported files from a synced worksheet should preserve both the local record ID and the linked server public IDs in metadata when available
 
 Recommended local record shape:
 
@@ -216,6 +230,23 @@ Examples:
 - Local draft save after login: `localDraftId` stays stable while the record gains `serverWorksheetId` and server revision metadata.
 - Publish after login: publish resolves from the synced server draft revision; the local draft remains a draft record and stores the returned published snapshot reference separately.
 - Attempt sync after login: `localAttemptId` stays stable while the record gains `serverAttemptId` and any server-backed resume metadata.
+
+### Conflict rules
+
+#### Importing a file that already came from a synced worksheet
+- Import must always create or preserve a distinct local record with its own `localDraftId`; importing a file must not silently overwrite an existing synced local draft.
+- If the imported file includes a linked `worksheetId` that already exists in local metadata, the app should treat the import as a potential fork/duplicate and require an explicit user choice such as `open as separate local copy` or `replace local copy`.
+- Default safe behavior is `open as separate local copy` while retaining the linked server `worksheetId` only as source metadata until the user explicitly chooses to sync.
+
+#### Syncing a local draft after edits were made both locally and on server
+- The backend revision metadata linked to the local draft is authoritative for conflict detection.
+- If local changes are based on an older server revision than the current backend revision, sync must not silently overwrite the newer server draft.
+- Minimum outcome is an explicit conflict state that lets the user choose to reload server state, keep the local fork as a new local draft, or perform a deliberate overwrite through an explicit product action.
+
+#### Promoting a local viewer attempt into a server-backed attempt after login
+- If the local attempt has no linked `serverAttemptId`, the backend may create a new server-backed attempt and return `attemptId` while the local record keeps its existing `localAttemptId`.
+- If the user resumed an existing backend attempt after login, the local attempt record must link to that returned `attemptId` rather than creating a duplicate server attempt.
+- If both local and server attempt state changed independently, sync must prefer an explicit merge/review flow or server-defined reconciliation policy; it must not silently discard either side's latest answers.
 
 ---
 
