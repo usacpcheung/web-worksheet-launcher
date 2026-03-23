@@ -27,8 +27,8 @@ Phase 1 should distinguish the current local popup proof-of-concept from future 
 | --- | --- | --- |
 | `parent_prototype/parent.html` popup launcher demo | local prototype/demo only | Exists now only to launch the popup with the Phase 1 query-string contract (`w`, `rid`, `returnOrigin`) during local contract validation; it is not a future product route. |
 | `server/worksheet_launcher/render.html` popup renderer | local prototype/demo only | Exists now only as the Phase 1 renderer scaffold for the popup proof-of-concept. |
-| Planned editor app route | authenticated user route | Not yet implemented; reserved for a later phase that introduces real product routing and authoring permissions. |
-| Planned viewer app route | public read-only route | Not yet implemented; reserved for a later phase and expected to serve published snapshot-derived payloads only. |
+| Planned editor app route | local/public route unless auth-backed features are enabled | Not yet implemented; later phases may keep basic local authoring public when it runs entirely in-browser, but any use of server-backed features such as rewrite, T2A, autosave, publish, versioning, or storage must add authentication and backend authorization. |
+| Planned viewer app route | public read-only route unless gated features are enabled | Not yet implemented; later phases may expose published snapshot-derived payloads publicly for local/read-only viewing, but any viewer feature that depends on authenticated services or stored learner state must add the required product gating. |
 | Planned draft-save / publish / import / export endpoints | authenticated API | Not yet implemented; reserved for later phases that add backend persistence and authorization. |
 
 ### Trust boundary
@@ -38,6 +38,8 @@ Future phases must treat all client-originated worksheet payloads as untrusted i
 The server must issue and validate durable identifiers and authoritative metadata, including canonical worksheet identifiers, published snapshot identifiers, authenticated user identity, persisted draft revision metadata, publish timestamps, and any integrity or audit fields. A client may echo those values back to the server, but the backend must verify that they were server-issued and still valid for the authenticated caller.
 
 Any action that changes durable backend state requires authenticated backend authority. This includes draft save, draft import, publish, unpublish if introduced later, export of non-public authoring data, and any mutation of worksheet metadata. Publish especially must run as an authenticated backend transaction that derives the immutable snapshot from persisted draft state, assigns server-owned publish metadata, and refuses to trust client-declared `publishedAt`, `publishedByUserId`, `snapshotId`, `snapshotVersion`, or equivalent authority-bearing fields.
+
+This means later editor/viewer routes are not required to be authenticated merely because they exist. A route that works entirely with local data and does not call protected capabilities may stay public. Authentication becomes required when the route uses backend-dependent features such as rewrite services, text-to-audio, autosave, durable storage, publish/versioning flows, or learner-state persistence.
 
 ---
 
