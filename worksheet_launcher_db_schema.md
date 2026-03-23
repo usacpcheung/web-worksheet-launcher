@@ -168,7 +168,9 @@ Expected structure example:
 
 ### `current_version_id`
 - Type: `BIGINT`
-- Foreign key reference to latest published version
+- Part of a composite foreign key from `(worksheets.id, worksheets.current_version_id)`
+  to `(worksheet_versions.worksheet_id, worksheet_versions.id)`
+- Must reference the latest published version for the same worksheet row
 - Can be `NULL` before first publish
 
 ### `created_at`
@@ -204,7 +206,10 @@ CREATE TABLE worksheet_versions (
     published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     CONSTRAINT worksheet_versions_unique_version
-        UNIQUE (worksheet_id, version_no)
+        UNIQUE (worksheet_id, version_no),
+
+    CONSTRAINT worksheet_versions_unique_worksheet_id_id
+        UNIQUE (worksheet_id, id)
 );
 ```
 
@@ -218,6 +223,8 @@ CREATE TABLE worksheet_versions (
 - Type: `BIGINT`
 - Foreign key to `worksheets.id`
 - Indicates which worksheet this version belongs to
+- Together with `id`, forms a composite unique pair that can be referenced safely
+  by `(worksheets.id, worksheets.current_version_id)`
 
 ### `version_no`
 - Type: `INTEGER`
@@ -249,13 +256,15 @@ Add after `worksheet_versions` exists:
 ```sql
 ALTER TABLE worksheets
 ADD CONSTRAINT worksheets_current_version_fk
-FOREIGN KEY (current_version_id)
-REFERENCES worksheet_versions(id)
-ON DELETE SET NULL;
+FOREIGN KEY (id, current_version_id)
+REFERENCES worksheet_versions(worksheet_id, id)
+ON DELETE SET NULL (current_version_id);
 ```
 
 Meaning:
-- if the referenced version is removed, `current_version_id` becomes `NULL`
+- `current_version_id` can only point to a version row whose `worksheet_id` matches the same `worksheets.id`
+- if the referenced version is removed, only `current_version_id` becomes `NULL`; `worksheets.id` remains unchanged
+- on PostgreSQL, the column list in `SET NULL (current_version_id)` is required for this composite foreign key so a version delete does not try to null the worksheet primary key
 
 ---
 
@@ -401,12 +410,14 @@ CREATE INDEX idx_attempts_anonymous_token
 - Copy current `worksheets.draft_content` into `worksheet_versions.content`
 - Increment `version_no` per worksheet
 - Update `worksheets.current_version_id`
+- Ensure `current_version_id` belongs to the same `worksheets.id` row via the composite foreign key
 - Set `worksheets.status = 'published'`
 - Update `worksheets.updated_at`
 
 ## Viewer Load
 - Load by `worksheets.public_id`
 - Resolve `current_version_id`
+- Treat `current_version_id` as valid only when it belongs to the same `worksheets.id` row
 - Render data from `worksheet_versions.content`
 
 ## Start Attempt
@@ -476,14 +487,17 @@ CREATE TABLE worksheet_versions (
     published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     CONSTRAINT worksheet_versions_unique_version
-        UNIQUE (worksheet_id, version_no)
+        UNIQUE (worksheet_id, version_no),
+
+    CONSTRAINT worksheet_versions_unique_worksheet_id_id
+        UNIQUE (worksheet_id, id)
 );
 
 ALTER TABLE worksheets
 ADD CONSTRAINT worksheets_current_version_fk
-FOREIGN KEY (current_version_id)
-REFERENCES worksheet_versions(id)
-ON DELETE SET NULL;
+FOREIGN KEY (id, current_version_id)
+REFERENCES worksheet_versions(worksheet_id, id)
+ON DELETE SET NULL (current_version_id);
 
 CREATE TABLE worksheet_attempts (
     id BIGSERIAL PRIMARY KEY,
