@@ -27,8 +27,8 @@ Phase 1 should distinguish the current local popup proof-of-concept from future 
 | --- | --- | --- |
 | `parent_prototype/parent.html` popup launcher demo | local prototype/demo only | Exists now only to launch the popup with the Phase 1 query-string contract (`w`, `rid`, `returnOrigin`) during local contract validation; it is not a future product route. |
 | `server/worksheet_launcher/render.html` popup renderer | local prototype/demo only | Exists now only as the Phase 1 renderer scaffold for the popup proof-of-concept. |
-| Planned editor app route | authenticated user route | Not yet implemented; reserved for a later phase that introduces real product routing and authoring permissions. |
-| Planned viewer app route | public read-only route | Not yet implemented; reserved for a later phase and expected to serve published snapshot-derived payloads only. |
+| Planned editor app route | local/public route unless auth-backed features are enabled | Not yet implemented; later phases may keep basic local authoring public when it runs entirely in-browser, but any use of server-backed features such as rewrite, T2A, autosave, publish, versioning, or storage must add authentication and backend authorization. |
+| Planned viewer app route | local/public or authenticated route depending on capabilities | Not yet implemented; later phases may allow users to open imported or locally available worksheets without authentication, or load server-backed worksheets when authenticated. The viewer may stay public for local use, but any server-backed worksheet access, stored learner progress, or protected capability must add the required authentication and product gating. |
 | Planned draft-save / publish / import / export endpoints | authenticated API | Not yet implemented; reserved for later phases that add backend persistence and authorization. |
 
 ### Trust boundary
@@ -38,6 +38,8 @@ Future phases must treat all client-originated worksheet payloads as untrusted i
 The server must issue and validate durable identifiers and authoritative metadata, including canonical worksheet identifiers, published snapshot identifiers, authenticated user identity, persisted draft revision metadata, publish timestamps, and any integrity or audit fields. A client may echo those values back to the server, but the backend must verify that they were server-issued and still valid for the authenticated caller.
 
 Any action that changes durable backend state requires authenticated backend authority. This includes draft save, draft import, publish, unpublish if introduced later, export of non-public authoring data, and any mutation of worksheet metadata. Publish especially must run as an authenticated backend transaction that derives the immutable snapshot from persisted draft state, assigns server-owned publish metadata, and refuses to trust client-declared `publishedAt`, `publishedByUserId`, `snapshotId`, `snapshotVersion`, or equivalent authority-bearing fields.
+
+This means later editor/viewer routes are not required to be authenticated merely because they exist. A route that works entirely with local data or imported worksheets and does not call protected capabilities may stay public. Authentication becomes required when the route loads protected server-backed worksheets or uses backend-dependent features such as rewrite services, text-to-audio, autosave, durable storage, publish/versioning flows, or learner-state persistence.
 
 ---
 
@@ -408,6 +410,16 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 | `answers[*].value` | frontend-owned | Learner-authored response value, stored canonically in the attempt record. |
 | `answers[*].answeredAt`, `startedAt`, `lastSavedAt`, `submittedAt` | backend-owned | Server-recorded timestamps preferred for consistency and auditability. |
 | snapshot record as a whole | immutable-after-publish | Snapshot is frozen once published and serves as the durable learner-facing definition. |
+
+## Compatibility guardrails checklist
+
+Use this checklist during review for any Phase 1 editor/viewer planning or scaffolding work:
+
+- [ ] `docs/message-contract.md` remains the source of truth for the current popup launcher contract.
+- [ ] Phase 1 editor/viewer work does **not** change popup query params or the popup `postMessage` schema defined in `docs/message-contract.md`.
+- [ ] Any future popup-contract change updates `docs/message-contract.md` in the same change.
+- [ ] Parent-side validation continues to enforce `event.origin`, `event.data.type`, `event.data.rid`, and `event.source === popup window` in the existing launcher flow implemented across `parent_prototype/sdk/parent-launcher.js`, `server/worksheet_launcher/render.js`, and `server/worksheet_launcher/render.html`.
+- [ ] `server/worksheet_launcher/widgets/rewrite-widget.js` remains unchanged for prototype-specific behavior; use versioned files loaded from `server/worksheet_launcher/render.html` when needed.
 
 ## Relationship to the current popup launcher contract
 
