@@ -329,6 +329,13 @@ Expected behavior:
 ## Viewer Online Load
 Future public or protected viewer flow can load a published worksheet by public identifier.
 
+Rules:
+- online viewer load must resolve through a published snapshot, never a live draft row
+- if no current published version exists for the requested worksheet, online viewer load must fail with a not-published/not-found outcome rather than falling back to draft content
+- archived worksheets should not be opened for new public viewing by default; a later product decision may allow privileged historical review, but that must still resolve to an immutable published snapshot
+- guest attempts are allowed only for viewer modes explicitly configured to permit guest access; protected or authenticated-only viewer modes must require sign-in before starting or resuming an attempt
+- attempts that started before archival may continue or be resumed only if the product explicitly allows archived-snapshot access for that viewer mode; otherwise the viewer should surface a clear archived/unavailable state
+
 ## Attempt Autosave / Submit
 Future signed-in or token-backed viewer flow can save progress in `worksheet_attempts`.
 
@@ -435,12 +442,25 @@ Viewer validation should fail gracefully if JSON is malformed.
 
 ## Publish Rules
 
+A draft is publishable only when all of the following are true:
+- required worksheet metadata is present (at minimum a valid title)
+- all blocks have stable unique `blockId` values and valid `kind` values
+- every question block has a valid prompt and valid `responseConfig`
+- the backend has persisted the draft and can identify the canonical server draft revision used for publish provenance
+- the worksheet is not in an archived-only state that forbids republish in the current product mode
+
 Publish operation should:
 1. validate current draft
-2. block publish if draft is clearly invalid
+2. block publish if draft is clearly invalid or lacks a persisted backend draft revision
 3. send snapshot to backend
 4. return published version metadata
 5. keep local draft intact after publish
+
+State-transition rules:
+- `draft` -> `published` is allowed when the publishability conditions above pass
+- `published` -> `published` is allowed for a republish that creates a new immutable snapshot version
+- `archived` worksheets should not accept new learner attempts by default; republish from archived state should require an explicit product decision to unarchive or otherwise authorize a new publish path
+- archival should never mutate or delete historical published snapshots; it changes access policy, not snapshot immutability
 
 ---
 
