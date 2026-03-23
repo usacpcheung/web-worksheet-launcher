@@ -46,6 +46,21 @@ It is intentionally minimal for v1.
 
 ---
 
+## Identifier Mapping
+
+Implementers should keep internal relational keys distinct from public contract identifiers.
+
+- `worksheets.id` is the internal relational key only. Use it for joins, foreign keys, and internal backend logic; do not expose it as the canonical `worksheetId` in frontend or API contracts.
+- `worksheets.public_id` is the recommended public, durable worksheet identifier. If the product contract uses `worksheetId`, it should map to `worksheets.public_id`.
+- `worksheet_versions.id` is the internal relational key for joins from `worksheets.current_version_id` and `worksheet_attempts.worksheet_version_id`.
+- If `snapshotId` is intended to be public and durable, `worksheet_versions` should carry its own dedicated public identifier column such as `public_id UUID NOT NULL DEFAULT gen_random_uuid()`. Do not overload the internal numeric `worksheet_versions.id` as the public `snapshotId`.
+- `worksheet_attempts.id` is the internal relational key only.
+- `worksheet_attempts.public_id` is the recommended public attempt identifier for resume links, API payloads, analytics exports, or any contract that needs a durable attempt reference.
+
+This document assumes the public-contract mapping `worksheetId -> worksheets.public_id`, `snapshotId -> worksheet_versions.public_id`, and `attemptId -> worksheet_attempts.public_id` unless a later ADR explicitly changes that mapping.
+
+---
+
 ## Required Extension
 
 The schema uses `gen_random_uuid()`.
@@ -207,6 +222,7 @@ Viewer mode and student attempts must always use this table instead of the live 
 ```sql
 CREATE TABLE worksheet_versions (
     id BIGSERIAL PRIMARY KEY,
+    public_id UUID NOT NULL DEFAULT gen_random_uuid(),
     worksheet_id BIGINT NOT NULL REFERENCES worksheets(id) ON DELETE CASCADE,
     version_no INTEGER NOT NULL,
     content JSONB NOT NULL,
@@ -226,6 +242,13 @@ CREATE TABLE worksheet_versions (
 ### `id`
 - Type: `BIGSERIAL`
 - Internal primary key
+- Internal-only relational key; do not expose as `snapshotId`
+
+### `public_id`
+- Type: `UUID`
+- Recommended public-facing immutable snapshot identifier
+- Safe to expose as the contract-level `snapshotId`
+- Example: `7c6d6c9f-5a2c-4dd3-90ce-7e99af0dba72`
 
 ### `worksheet_id`
 - Type: `BIGINT`
@@ -320,7 +343,8 @@ CREATE TABLE worksheet_attempts (
 
 ### `public_id`
 - Type: `UUID`
-- Public-facing identifier for attempt references if needed
+- Recommended public-facing durable identifier for attempt references
+- Safe to expose as the contract-level `attemptId`
 
 ### `worksheet_version_id`
 - Type: `BIGINT`
@@ -403,6 +427,9 @@ In this envelope, each top-level key must match a `blockId` for a `kind: "questi
 CREATE UNIQUE INDEX idx_worksheets_public_id
     ON worksheets(public_id);
 
+CREATE UNIQUE INDEX idx_versions_public_id
+    ON worksheet_versions(public_id);
+
 CREATE UNIQUE INDEX idx_attempts_public_id
     ON worksheet_attempts(public_id);
 
@@ -432,6 +459,7 @@ CREATE INDEX idx_attempts_anonymous_token
 
 ## Publish
 - Copy current `worksheets.draft_content` into `worksheet_versions.content`
+- Assign a new `worksheet_versions.public_id` for the immutable public `snapshotId`
 - Increment `version_no` per worksheet
 - Update `worksheets.current_version_id`
 - Ensure `current_version_id` belongs to the same `worksheets.id` row via the composite foreign key
@@ -439,8 +467,8 @@ CREATE INDEX idx_attempts_anonymous_token
 - Update `worksheets.updated_at`
 
 ## Viewer Load
-- Load by `worksheets.public_id`
-- Resolve `current_version_id`
+- Load the worksheet lineage by `worksheets.public_id` when resolving a contract-level `worksheetId`
+- Resolve `current_version_id` or a specific `worksheet_versions.public_id` when resolving a contract-level `snapshotId`
 - Treat `current_version_id` as valid only when it belongs to the same `worksheets.id` row
 - Render data from `worksheet_versions.content`
 
@@ -504,6 +532,7 @@ CREATE TABLE worksheets (
 
 CREATE TABLE worksheet_versions (
     id BIGSERIAL PRIMARY KEY,
+    public_id UUID NOT NULL DEFAULT gen_random_uuid(),
     worksheet_id BIGINT NOT NULL REFERENCES worksheets(id) ON DELETE CASCADE,
     version_no INTEGER NOT NULL,
     content JSONB NOT NULL,
@@ -549,6 +578,9 @@ CREATE TABLE worksheet_attempts (
 
 CREATE UNIQUE INDEX idx_worksheets_public_id
     ON worksheets(public_id);
+
+CREATE UNIQUE INDEX idx_versions_public_id
+    ON worksheet_versions(public_id);
 
 CREATE UNIQUE INDEX idx_attempts_public_id
     ON worksheet_attempts(public_id);

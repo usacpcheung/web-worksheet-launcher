@@ -41,6 +41,16 @@ Any action that changes durable backend state requires authenticated backend aut
 
 This means later editor/viewer routes are not required to be authenticated merely because they exist. A route that works entirely with local data or imported worksheets and does not call protected capabilities may stay public. Authentication becomes required when the route loads protected server-backed worksheets or uses backend-dependent features such as rewrite services, text-to-audio, autosave, durable storage, publish/versioning flows, or learner-state persistence.
 
+### Identifier mapping expectations
+
+Implementers must keep internal database join keys distinct from public contract identifiers. This ADR assumes the following recommended mapping when a relational backend is used:
+
+- contract `worksheetId` maps to a durable public worksheet identifier such as `worksheets.public_id`, not the internal numeric `worksheets.id`
+- contract `snapshotId` maps to a durable public snapshot identifier such as `worksheet_versions.public_id`, not the internal numeric `worksheet_versions.id`
+- contract `attemptId` maps to a durable public attempt identifier such as `worksheet_attempts.public_id`, not the internal numeric `worksheet_attempts.id`
+
+If later phases use PostgreSQL tables similar to the schema in `worksheet_launcher_db_schema.md`, `worksheets.id`, `worksheet_versions.id`, and `worksheet_attempts.id` remain relational keys only. Public API payloads and viewer/editor contracts should expose the corresponding durable public identifiers instead.
+
 ---
 
 ## 1) Editable draft model
@@ -229,8 +239,8 @@ A local draft save is not a publish event and must not create or update a publis
 
 The backend assigns or computes publish-time fields such as:
 
-- `worksheetId` when the canonical durable worksheet identity does not yet exist
-- `snapshotId`
+- `worksheetId` when the canonical durable worksheet identity does not yet exist; in a relational implementation this should map to a public identifier such as `worksheets.public_id`
+- `snapshotId`; in a relational implementation this should map to a public immutable identifier such as `worksheet_versions.public_id`
 - `snapshotVersion`
 - `publishedAt`
 - `publishedByUserId`
@@ -263,8 +273,8 @@ Published snapshot content is immutable after publish. If authored content chang
 
 Attempts should reference both `worksheetId` and `snapshotId`, and may also store `snapshotVersion` for easier reporting/debugging. The binding rules are:
 
-- `worksheetId` identifies the logical worksheet lineage
-- `snapshotId` identifies the exact published artifact the learner saw
+- `worksheetId` identifies the logical worksheet lineage and should be a public durable identifier rather than an internal join key
+- `snapshotId` identifies the exact published artifact the learner saw and should be a public durable identifier rather than an internal join key
 - the pair `worksheetId` + `snapshotId` identifies the exact immutable learner-visible artifact and is the authoritative attempt binding
 - `snapshotVersion` is optional denormalized metadata for convenience/reporting and must agree with the referenced `worksheetId` + `snapshotId` pair
 
@@ -387,8 +397,8 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 | Field or group | Ownership label | Notes |
 | --- | --- | --- |
 | `draftWorksheetId` | frontend-owned | Client-generated stable draft identifier for local/editor workflows. |
-| `serverWorksheetId`, `worksheetId` | backend-owned | Canonical durable worksheet identifier assigned by the server. |
-| `snapshotId` | backend-owned | Assigned when a draft is published. |
+| `serverWorksheetId`, `worksheetId` | backend-owned | Canonical durable worksheet identifier assigned by the server; in relational storage this should map to a public identifier such as `worksheets.public_id`. |
+| `snapshotId` | backend-owned | Assigned when a draft is published; in relational storage this should map to a public immutable identifier such as `worksheet_versions.public_id`. |
 | `snapshotVersion`, `schemaVersion` | backend-owned | Publish-time version tracking. |
 | `title`, `description` | frontend-owned | Authored in the editor; copied into snapshot at publish. |
 | `blocks[*].blockId` | frontend-owned | Stable item identifier created in authoring flow and preserved across publish. |
