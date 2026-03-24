@@ -1,9 +1,20 @@
 # Message Contract (Phase 1 Popup Compatibility Slice)
 
+> **Related docs**
+> - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
+> - This document is part of the Phase 1 documentation set.
+
+
+> **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across documentation after conflicting statements were identified. Phase 1 is now consistently documented as **contracts/scaffolding only** so implementation language is deferred to later phases.
+>
+> **Scope authority:** Canonical Phase 1 scope statement lives in this file under **Section 6) Phase boundary** and is referenced by companion docs.
+
 This document defines the bounded popup launch-query contract and postMessage contract between:
 
 - **Parent app** (`parent_prototype/parent.html`)
 - **Popup renderer** (`server/worksheet_launcher/render.html`)
+
+Companion editor/viewer route + auth contract (later-phase runtime surfaces) is defined in `worksheet_launcher_editor_viewer_spec.md` under **Route + Auth Contract (Normative)**.
 
 ## 1) Launch query contract
 
@@ -133,6 +144,15 @@ On `message` events, parent must reject payloads unless **all** pass:
 
 If any check fails, ignore message and do not apply results.
 
+## 4.1) Compatibility invariants (v1 popup slice)
+
+The following invariants are normative for the v1 popup compatibility slice and must remain true unless explicitly versioned otherwise:
+
+- **Single-question input invariant:** `q.length === 1` is required for v1 popup flow.
+- **Single-answer mapping invariant:** popup returns exactly one answer payload entry mapped to the single input question.
+- **Message validation invariant:** parent-side handling must validate all of: `event.origin`, `event.data.type`, `event.data.rid`, and expected `event.source` (popup window reference).
+- **Protected behavior boundary:** no functional behavior changes in `server/worksheet_launcher/render.js` for v1 flow unless compatibility impact is explicitly documented and contract/version update is recorded in this document.
+
 ## 5) One-shot / anti-replay expectation
 
 After parent accepts and applies one valid `worksheetResult` for a launch `rid`, that launch
@@ -141,7 +161,7 @@ launch context so any subsequent message for that `rid` is rejected and has no e
 
 ## 6) Phase boundary
 
-Phase 1 includes implementation of the local-first editor/viewer runtime plus protected backend/API capabilities defined in `worksheet_launcher_editor_viewer_spec.md`. This document does **not** define that broader runtime. It defines only the bounded popup compatibility slice that Phase 1 must preserve while the editor/viewer implementation proceeds on separate routes and contracts.
+Phase 1 is **contracts/scaffolding only**. For this launcher workstream, Phase 1 defines and preserves the bounded popup compatibility contract (`launch query + postMessage`) and associated scaffolding surfaces, but does **not** include runtime implementation of the broader editor/viewer product or protected backend/API capabilities.
 
 ## 6.1) Reserved extension points
 
@@ -150,7 +170,7 @@ To avoid breaking v1 integrations, the launch payload reserves:
 - `launchOptions.mode` (currently fixed to `"single-question"` in v1)
 - `launchOptions.extensions.multiQuestion` (currently `null` in v1)
 
-These fields are compatibility placeholders for the bounded Phase 1 popup transport only. They do not commit the product to a popup-based roadmap, and they should not be read as the default extension path for the Phase 1 editor/viewer runtime. The full editor/viewer contracts must be defined separately from this popup launch/query + `postMessage` surface.
+These fields are compatibility placeholders for the bounded Phase 1 popup transport only. They do not commit the product to a popup-based roadmap, and they should not be read as the default extension path for later-phase editor/viewer runtime contracts. The full editor/viewer contracts must be defined separately from this popup launch/query + `postMessage` surface.
 
 ## 7) Parent SDK construction schema (`WorksheetLauncher.create(config)`)
 

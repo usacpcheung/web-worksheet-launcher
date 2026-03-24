@@ -1,5 +1,10 @@
 # Worksheet Launcher Database Schema Specification
 
+> **Related docs**
+> - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
+> - This document is part of the Phase 1 documentation set.
+
+
 ## Purpose
 
 This document defines the recommended PostgreSQL schema for the `web-worksheet-launcher` project.

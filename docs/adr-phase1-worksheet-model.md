@@ -1,35 +1,44 @@
 # ADR: Phase 1 Worksheet Data Model Boundaries
 
+> **Related docs**
+> - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
+> - This document is part of the Phase 1 documentation set.
+
+
+> **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across docs after conflicting references to runtime delivery. This ADR now treats Phase 1 as **contracts/scaffolding only** and moves runtime implementation language to later phases.
+>
+> **Scope authority:** `docs/message-contract.md` → **Section 6) Phase boundary** is the canonical scope statement for Phase 1.
+
 ## Status
 
 Proposed
 
 ## Context
 
-Phase 1 now includes implementation of the local-first editor/viewer runtime and the protected backend/API capabilities described in `worksheet_launcher_editor_viewer_spec.md`, while still preserving the existing popup flow as a bounded compatibility surface. This ADR defines the durable application data-model boundaries needed for authoring, publishing, viewing, and learner attempts by documenting the recommended separation between:
+Phase 1 is contracts/scaffolding only for the popup compatibility slice and does not deliver the editor/viewer runtime or protected backend/API implementation. This ADR therefore records forward-looking data-model boundaries so later phases can implement authoring, publishing, viewing, and learner attempts without treating the popup compatibility slice as the product-wide runtime model. It documents the recommended separation between:
 
 1. editable draft state used by the frontend editor
 2. immutable published snapshots produced at publish time
 3. minimal read-only viewer payloads consumed by learners
 4. learner attempt answer payloads stored independently from worksheet content definitions
 
-The goal is to keep authoring concerns, publish-time durability, learner rendering, and learner responses clearly separated so that Phase 1 implementation can proceed without treating the popup compatibility slice as the product-wide runtime model, and so later phases can evolve each independently.
+The goal is to keep authoring concerns, publish-time durability, learner rendering, and learner responses clearly separated so Phase 1 scaffolding remains bounded to contracts while later phases can evolve each model independently.
 
 ## Decision
 
-Adopt four distinct JSON shapes with explicit field ownership boundaries.
+Adopt four distinct JSON shapes with explicit field ownership boundaries as a design baseline for later implementation phases; in Phase 1, these remain contract/scaffolding guidance.
 
 ### Access model
 
-Phase 1 should distinguish the current popup compatibility slice from the actual editor/viewer product routes so the bounded popup launch path is not mistaken for the long-term serving model. The popup launcher and popup renderer remain compatibility/prototype surfaces used to preserve the existing query-string and `postMessage` contract, but Phase 1 implementation work should happen in the editor/viewer routes and backend capabilities described by the broader product spec.
+Phase 1 should distinguish the current popup compatibility slice from future editor/viewer product routes so the bounded popup launch path is not mistaken for the long-term serving model. The popup launcher and popup renderer remain compatibility/prototype surfaces used to preserve the existing query-string and `postMessage` contract. Editor/viewer route and backend capability implementation is deferred to later phases.
 
 | Surface | Access classification | Phase note |
 | --- | --- | --- |
 | `parent_prototype/parent.html` popup launcher demo | local prototype/demo only | Preserved during Phase 1 as the launcher for the popup compatibility slice using the existing query-string contract (`w`, `rid`, `returnOrigin`); it is not the main product route. |
 | `server/worksheet_launcher/render.html` popup renderer | local prototype/demo only | Preserved during Phase 1 as the bounded renderer for the popup compatibility slice; it is not the full editor/viewer runtime. |
-| Planned editor app route | public client-side app surface | Phase 1 implementation should add the editor route/page as the primary worksheet authoring surface for local authoring, local autosave, local preview, and import/export, with authentication required only when invoking protected backend or API capabilities such as draft save/load, publish, rewrite, T2A, or server-backed worksheet access. |
-| Planned viewer app route | public client-side app surface | Phase 1 implementation should add the viewer route/page as the primary learner/viewer surface for local preview, local viewer use, imported worksheets, and local autosave, with authentication required only when invoking protected backend or API capabilities such as server-backed worksheet load or attempt sync/save/load. |
-| Planned draft-save / publish / import / export endpoints | mixed: protected APIs plus local client features | Phase 1 implementation should add these capabilities behind the editor/viewer product surfaces: local import/export remain public client-side features, while protected backend capabilities such as draft save/load, publish, server-backed worksheet load, attempt sync/save/load, rewrite, and T2A require authentication and backend authorization. |
+| Planned editor app route | public client-side app surface | Later phases should add the editor route/page as the primary worksheet authoring surface for local authoring, local autosave, local preview, and import/export, with authentication required only when invoking protected backend or API capabilities such as draft save/load, publish, rewrite, T2A, or server-backed worksheet access. |
+| Planned viewer app route | public client-side app surface | Later phases should add the viewer route/page as the primary learner/viewer surface for local preview, local viewer use, imported worksheets, and local autosave, with authentication required only when invoking protected backend or API capabilities such as server-backed worksheet load or attempt sync/save/load. |
+| Planned draft-save / publish / import / export endpoints | mixed: protected APIs plus local client features | Later phases should add these capabilities behind the editor/viewer product surfaces: local import/export remain public client-side features, while protected backend capabilities such as draft save/load, publish, server-backed worksheet load, attempt sync/save/load, rewrite, and T2A require authentication and backend authorization. |
 
 ### Trust boundary
 
@@ -39,7 +48,7 @@ The server must issue and validate durable identifiers and authoritative metadat
 
 Any action that changes durable backend state requires authenticated backend authority. This includes draft save, draft import, publish, unpublish if introduced later, export of non-public authoring data, and any mutation of worksheet metadata. Publish especially must run as an authenticated backend transaction that derives the immutable snapshot from persisted draft state, assigns server-owned publish metadata, and refuses to trust client-declared `publishedAt`, `publishedByUserId`, `snapshotId`, `snapshotVersion`, or equivalent authority-bearing fields.
 
-This means the Phase 1 editor and viewer routes/pages should be treated as public client-side app surfaces. Authentication is required only when the app invokes protected backend or API capabilities. Protected capabilities include draft save/load, publish, server-backed worksheet load, attempt sync/save/load, rewrite, and text-to-audio. Local import/export, local autosave, local preview, and local viewer usage must remain usable without login.
+This means later-phase editor and viewer routes/pages should be treated as public client-side app surfaces. Authentication is required only when the app invokes protected backend or API capabilities. Protected capabilities include draft save/load, publish, server-backed worksheet load, attempt sync/save/load, rewrite, and text-to-audio. Local import/export, local autosave, local preview, and local viewer usage must remain usable without login.
 
 ### Identifier mapping expectations
 
@@ -426,16 +435,16 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
 
 ## Compatibility guardrails checklist
 
-Use this checklist during review for any Phase 1 editor/viewer implementation work:
+Use this checklist during review for Phase 1 scaffolding and any later-phase editor/viewer implementation work:
 
 - [ ] `docs/message-contract.md` remains the source of truth for the current popup launcher contract.
-- [ ] Phase 1 editor/viewer implementation does **not** change popup query params or the popup `postMessage` schema defined in `docs/message-contract.md` unless the popup compatibility contract is explicitly versioned.
+- [ ] Later-phase editor/viewer implementation does **not** change popup query params or the popup `postMessage` schema defined in `docs/message-contract.md` unless the popup compatibility contract is explicitly versioned.
 - [ ] Any future popup-contract change updates `docs/message-contract.md` in the same change.
 - [ ] Parent-side validation continues to enforce `event.origin`, `event.data.type`, `event.data.rid`, and `event.source === popup window` in the existing launcher flow implemented across `parent_prototype/sdk/parent-launcher.js`, `server/worksheet_launcher/render.js`, and `server/worksheet_launcher/render.html`.
 - [ ] `server/worksheet_launcher/widgets/rewrite-widget.js` remains unchanged for prototype-specific behavior; use versioned files loaded from `server/worksheet_launcher/render.html` when needed.
 
 ## Relationship to the current popup launcher contract
 
-`docs/message-contract.md` remains the source of truth for the current popup launcher contract used by the parent launcher and popup renderer. This ADR does **not** replace that contract. Instead, it describes the broader worksheet data-model separation that Phase 1 editor/viewer implementation should use behind or alongside the existing launcher contract.
+`docs/message-contract.md` remains the source of truth for the current popup launcher contract used by the parent launcher and popup renderer. This ADR does **not** replace that contract. Instead, it describes broader worksheet data-model separation that later-phase editor/viewer implementation should use behind or alongside the existing launcher contract.
 
 Implementers should keep publish semantics separate from popup launch transport semantics. Do not merge snapshot publication/versioning rules into the popup query payload or popup `postMessage` schema; continue to treat `docs/message-contract.md` as the legacy/current integration contract for that boundary.
