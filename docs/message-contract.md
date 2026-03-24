@@ -1,5 +1,9 @@
 # Message Contract (Phase 1 Popup Compatibility Slice)
 
+> **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across documentation after conflicting statements were identified. Phase 1 is now consistently documented as **contracts/scaffolding only** so implementation language is deferred to later phases.
+>
+> **Scope authority:** Canonical Phase 1 scope statement lives in this file under **Section 6) Phase boundary** and is referenced by companion docs.
+
 This document defines the bounded popup launch-query contract and postMessage contract between:
 
 - **Parent app** (`parent_prototype/parent.html`)
@@ -141,7 +145,7 @@ launch context so any subsequent message for that `rid` is rejected and has no e
 
 ## 6) Phase boundary
 
-Phase 1 includes implementation of the local-first editor/viewer runtime plus protected backend/API capabilities defined in `worksheet_launcher_editor_viewer_spec.md`. This document does **not** define that broader runtime. It defines only the bounded popup compatibility slice that Phase 1 must preserve while the editor/viewer implementation proceeds on separate routes and contracts.
+Phase 1 is **contracts/scaffolding only**. For this launcher workstream, Phase 1 defines and preserves the bounded popup compatibility contract (`launch query + postMessage`) and associated scaffolding surfaces, but does **not** include runtime implementation of the broader editor/viewer product or protected backend/API capabilities.
 
 ## 6.1) Reserved extension points
 
@@ -150,7 +154,7 @@ To avoid breaking v1 integrations, the launch payload reserves:
 - `launchOptions.mode` (currently fixed to `"single-question"` in v1)
 - `launchOptions.extensions.multiQuestion` (currently `null` in v1)
 
-These fields are compatibility placeholders for the bounded Phase 1 popup transport only. They do not commit the product to a popup-based roadmap, and they should not be read as the default extension path for the Phase 1 editor/viewer runtime. The full editor/viewer contracts must be defined separately from this popup launch/query + `postMessage` surface.
+These fields are compatibility placeholders for the bounded Phase 1 popup transport only. They do not commit the product to a popup-based roadmap, and they should not be read as the default extension path for later-phase editor/viewer runtime contracts. The full editor/viewer contracts must be defined separately from this popup launch/query + `postMessage` surface.
 
 ## 7) Parent SDK construction schema (`WorksheetLauncher.create(config)`)
 

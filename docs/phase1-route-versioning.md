@@ -1,23 +1,27 @@
 # Compatibility Decision Note: Phase 1 Route Versioning
 
+> **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across docs after conflicting references to runtime delivery in Phase 1. This note now aligns to the canonical **contracts/scaffolding only** boundary.
+>
+> **Scope authority:** `docs/message-contract.md` → **Section 6) Phase boundary** is the canonical scope statement for Phase 1.
+
 ## Status
 
-Recommended
+Reconciled (aligned to canonical Phase 1 scope)
 
 ## Decision
 
-Phase 1 should implement the local-first editor/viewer product on separate routes while keeping the current popup launcher flow intact as the bounded **v1 popup compatibility slice**.
+Phase 1 is limited to contracts/scaffolding for the popup compatibility slice. It should preserve the current launcher flow as the bounded **v1 popup compatibility slice** and define route/versioning direction for later implementation phases without delivering the broader editor/viewer runtime in Phase 1.
 
 Specifically:
 
 - Keep the existing parent-to-popup launch flow centered on `parent_prototype/parent.html` and `server/worksheet_launcher/render.html` as the compatibility path preserved by `docs/message-contract.md`.
-- Implement the actual Phase 1 editor and viewer experiences under separate routes/pages rather than folding them into the popup renderer entry point.
+- Treat editor/viewer routes/pages as later-phase implementation targets rather than Phase 1 runtime deliverables.
 - Do **not** overload `server/worksheet_launcher/render.html` with full editor/viewer runtime behavior; it remains the popup compatibility surface only.
 - If popup behavior ever needs expansion later, add versioned widget/runtime files rather than editing `server/worksheet_launcher/widgets/rewrite-widget.js` in place.
 
 ## Why this decision exists
 
-The current popup renderer is intentionally constrained to **one question** and **one answer area**. That limitation is part of the popup compatibility contract, not an implementation gap in the actual Phase 1 product. The parent prototype, popup renderer, and message contract are therefore best treated as a stable v1 launcher slice preserved alongside Phase 1 editor/viewer implementation rather than as the foundation for the full runtime. Reserved popup extension points are compatibility placeholders only; they are not the default strategy for how the broader product contract should evolve. 
+The current popup renderer is intentionally constrained to **one question** and **one answer area**. That limitation is part of the popup compatibility contract. In Phase 1 (contracts/scaffolding only), the parent prototype, popup renderer, and message contract are treated as a stable v1 launcher slice. Reserved popup extension points remain compatibility placeholders only; they are not the default strategy for broader product contracts.
 
 Implementation landmarks:
 
@@ -39,7 +43,7 @@ This legacy/compatibility labeling is intentional so future implementation work 
 
 ## Route/file map
 
-The table below names the intended application surfaces so Phase 1 implementation can add
+The table below names the intended application surfaces so later phases can add
 new routes without blurring the current popup compatibility boundary.
 
 | Surface | Route/page namespace | Owning file(s) | Purpose | Expected input contract | Access mode | Content orientation | Phase status |
@@ -48,19 +52,19 @@ new routes without blurring the current popup compatibility boundary.
 | Existing popup renderer | `/worksheet/render.html` | `server/worksheet_launcher/render.html` | Renders the bounded popup worksheet experience for the current launcher flow. | Accepts the query-string launch contract (`?w=<base64url>&rid=<id>&returnOrigin=<origin>`) and `postMessage` exchange defined in `docs/message-contract.md`; fragments are intentionally not part of the v1 transport because they do not survive the OIDC redirect boundary. | Local-only prototype surface unless explicitly fronted by an authenticated host later. | Popup-launch-oriented. | Preserved Phase 1 compatibility surface. |
 | Existing parent SDK | Parent-loaded launcher module, not a standalone route | `parent_prototype/sdk/parent-launcher.js` | Encapsulates parent-side popup launch setup so integrators use one launcher entry instead of duplicating transport logic. | Must remain aligned with `docs/message-contract.md` for launch payload construction, trusted origin checks, and response correlation by request id. | Local-only prototype helper for parent integrations. | Popup-launch-oriented. | Preserved Phase 1 compatibility surface. |
 | Existing contract reference | Documentation surface, not a runtime route | `docs/message-contract.md` | Defines the source-of-truth transport contract for the current popup launcher flow. | Documents the launch URL parameters, popup message schema, aliases, and validation requirements used by the existing parent and popup surfaces. | Local documentation artifact. | Popup-launch-oriented. | Preserved Phase 1 compatibility surface. |
-| Phase 1 editor app surface | Proposed distinct namespace such as `/editor/` with an entry page like `server/editor/index.html` | No implementation yet; add a dedicated editor app entry under `server/editor/` or an equivalently separate namespace. | Owns the Phase 1 worksheet authoring/editor workflow rather than extending the popup renderer. | Should take an editor-specific draft identifier or draft document contract defined in the editor/viewer implementation, not the popup launch query or popup `postMessage` schema. | Public client-side app surface; authentication is required only when invoking protected backend or API capabilities such as draft save/load, publish, rewrite, T2A, or server-backed worksheet load. Local import/export, local autosave, and local preview must remain usable without login. | Draft-oriented. | Phase 1 implementation surface. |
-| Phase 1 viewer app surface | Proposed distinct namespace such as `/viewer/` with an entry page like `server/viewer/index.html` | No implementation yet; add a dedicated viewer app entry under `server/viewer/` or an equivalently separate namespace. | Owns the Phase 1 learner/product viewer experience for imported, local, or server-backed worksheets, including worksheet completion and continuation flows. | Should consume a snapshot identifier, imported worksheet document, or equivalent viewer contract defined in the editor/viewer implementation; it should be viewer-driven rather than popup-launch-driven. | Public client-side app surface; authentication is required only when invoking protected backend or API capabilities such as server-backed worksheet load, attempt sync/save/load, rewrite, or T2A. Local preview/viewer use, local autosave, and local import/export-backed flows must remain usable without login. | Viewer/attempt-oriented. | Phase 1 implementation surface. |
+| Later-phase editor app surface | Proposed distinct namespace such as `/editor/` with an entry page like `server/editor/index.html` | No implementation yet; add a dedicated editor app entry under `server/editor/` or an equivalently separate namespace in a later phase. | Owns worksheet authoring/editor workflow rather than extending the popup renderer. | Should take an editor-specific draft identifier or draft document contract defined in later-phase editor/viewer implementation, not the popup launch query or popup `postMessage` schema. | Public client-side app surface; authentication is required only when invoking protected backend or API capabilities such as draft save/load, publish, rewrite, T2A, or server-backed worksheet load. Local import/export, local autosave, and local preview must remain usable without login. | Draft-oriented. | Deferred beyond Phase 1. |
+| Later-phase viewer app surface | Proposed distinct namespace such as `/viewer/` with an entry page like `server/viewer/index.html` | No implementation yet; add a dedicated viewer app entry under `server/viewer/` or an equivalently separate namespace in a later phase. | Owns learner/product viewer experience for imported, local, or server-backed worksheets, including worksheet completion and continuation flows. | Should consume a snapshot identifier, imported worksheet document, or equivalent viewer contract defined in later-phase editor/viewer implementation; it should be viewer-driven rather than popup-launch-driven. | Public client-side app surface; authentication is required only when invoking protected backend or API capabilities such as server-backed worksheet load, attempt sync/save/load, rewrite, or T2A. Local preview/viewer use, local autosave, and local import/export-backed flows must remain usable without login. | Viewer/attempt-oriented. | Deferred beyond Phase 1. |
 
-Phase 1 implementation must **not** repurpose `server/worksheet_launcher/render.html`
+Later-phase implementation must **not** repurpose `server/worksheet_launcher/render.html`
 into the full worksheet product viewer unless there is an explicit versioning
 change that defines that new role and separates it from the current v1 popup
 launcher contract.
 
-Access mode for those Phase 1 editor/viewer routes should follow one consistent rule: editor and viewer routes/pages are public client-side app surfaces, and authentication is required only when the app invokes protected backend or API capabilities. Protected capabilities include draft save/load, publish, server-backed worksheet load, attempt sync/save/load, rewrite, and T2A. Local import/export, local autosave, local preview, and local viewer usage must remain usable without login.
+Access mode for those later-phase editor/viewer routes should follow one consistent rule: editor and viewer routes/pages are public client-side app surfaces, and authentication is required only when the app invokes protected backend or API capabilities. Protected capabilities include draft save/load, publish, server-backed worksheet load, attempt sync/save/load, rewrite, and T2A. Local import/export, local autosave, local preview, and local viewer usage must remain usable without login.
 
 ## Options considered
 
-### 1. Separate Phase 1 editor/viewer routes
+### 1. Separate later-phase editor/viewer routes
 
 Create separate routes or pages for the Phase 1 worksheet editor and learner viewer, leaving the popup launcher flow as a bounded compatibility surface.
 
@@ -73,7 +77,7 @@ Create separate routes or pages for the Phase 1 worksheet editor and learner vie
 
 **Cons:**
 
-- Requires additional route/page scaffolding during Phase 1 implementation.
+- Requires additional route/page scaffolding during later-phase implementation.
 - Introduces multiple runtime entry points to maintain.
 
 ### 2. Reusing popup renderer with versioned JS
@@ -94,24 +98,24 @@ Continue using `server/worksheet_launcher/render.html` as the shell, but add new
 
 ### 3. Why option 1 is preferred for the broader product flow
 
-Option 1 is preferred because the editor and viewer flows are the actual Phase 1 product surfaces, not just richer versions of the current popup. They need their own routing, lifecycle management, persistence boundaries, and UI state models. Preserving the current popup renderer as a constrained v1 compatibility island prevents the compatibility slice from becoming an accidental architecture commitment for the implementation work now expected. 
+Option 1 is preferred because the editor and viewer flows are the actual later-phase product surfaces, not just richer versions of the current popup. They need their own routing, lifecycle management, persistence boundaries, and UI state models. Preserving the current popup renderer as a constrained v1 compatibility island prevents the compatibility slice from becoming an accidental architecture commitment for later implementation work.
 
 Option 2 remains useful as a **secondary tactic** when the popup itself needs carefully scoped expansion later. In those cases, expansion should happen through versioned widget/runtime files loaded from `server/worksheet_launcher/render.html`, not by retrofitting `server/worksheet_launcher/widgets/rewrite-widget.js` with prototype-specific behavior. Even then, those reserved popup extension points remain compatibility placeholders for the existing launcher flow rather than the default strategy for future editor/viewer contracts.
 
 
 ## Compatibility guardrails checklist
 
-Use this checklist during review for any Phase 1 editor/viewer implementation work:
+Use this checklist during review for scaffolding and any later-phase editor/viewer implementation work:
 
 - [ ] `docs/message-contract.md` remains the source of truth for the current popup launcher contract.
-- [ ] Phase 1 editor/viewer implementation does **not** change popup query params or the popup `postMessage` schema defined in `docs/message-contract.md` unless the popup compatibility contract is explicitly versioned.
+- [ ] Later-phase editor/viewer implementation does **not** change popup query params or the popup `postMessage` schema defined in `docs/message-contract.md` unless the popup compatibility contract is explicitly versioned.
 - [ ] Any future popup-contract change updates `docs/message-contract.md` in the same change.
 - [ ] Parent-side validation continues to enforce `event.origin`, `event.data.type`, `event.data.rid`, and `event.source === popup window` in the existing launcher flow implemented across `parent_prototype/sdk/parent-launcher.js`, `server/worksheet_launcher/render.js`, and `server/worksheet_launcher/render.html`.
 - [ ] `server/worksheet_launcher/widgets/rewrite-widget.js` remains unchanged for prototype-specific behavior; use versioned files loaded from `server/worksheet_launcher/render.html` when needed.
 
 ## Implementation guidance
 
-During Phase 1 implementation and follow-on planning:
+During Phase 1 scaffolding and follow-on planning:
 
 - Treat the current popup launcher flow as **v1 popup compatibility behavior**.
 - Keep `server/worksheet_launcher/render.html` focused on the bounded popup renderer use case.
@@ -125,6 +129,6 @@ During Phase 1 implementation and follow-on planning:
 The recommended path is:
 
 1. Preserve the current popup launcher flow as the v1 popup compatibility slice.
-2. Build the Phase 1 editor and viewer on separate routes/pages.
+2. Build the editor and viewer on separate routes/pages in later phases.
 3. Avoid putting full editor/viewer runtime behavior into `server/worksheet_launcher/render.html`.
 4. If popup evolution becomes necessary later, use versioned widget/runtime files instead of editing `server/worksheet_launcher/widgets/rewrite-widget.js` directly.

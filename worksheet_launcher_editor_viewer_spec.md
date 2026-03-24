@@ -1,19 +1,23 @@
 # Worksheet Launcher Editor + Viewer Technical Specification
 
+> **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across documentation after conflicting statements. This spec now explicitly treats Phase 1 as **contracts/scaffolding only** and positions editor/viewer runtime delivery as later-phase work.
+>
+> **Scope authority:** `docs/message-contract.md` → **Section 6) Phase boundary** is the canonical scope statement for Phase 1.
+
 ## Purpose
 
-This document defines the required functions and technical behavior for the `web-worksheet-launcher` editor and viewer implementation.
+This document defines the target functions and technical behavior for later-phase `web-worksheet-launcher` editor and viewer implementation.
 
 It is written for AI coding agents and developers.
 
-The implementation target is a **mainly JavaScript client-side application** with:
+The later-phase implementation target is a **mainly JavaScript client-side application** with:
 - local-first editing
 - local import/export
 - public client-side editor and viewer surfaces
 - authentication only for protected backend and AI capabilities
 - future PostgreSQL-backed protected save/load/publish services
 
-This specification intentionally keeps v1 small and implementation-friendly.
+This specification intentionally keeps v1 small and implementation-friendly while clarifying that Phase 1 itself is contracts/scaffolding only.
 
 ---
 
@@ -21,7 +25,7 @@ This specification intentionally keeps v1 small and implementation-friendly.
 
 The current repo is described as a simple web worksheet launcher with popup rendering, AI rewrite support, and secure result return. The current prototype establishes contracts and scaffolding rather than a full editor/viewer application.
 
-This specification extends that direction into a fuller worksheet editor + viewer product.
+This specification extends that direction into a fuller worksheet editor + viewer product for later phases; it is not a statement that Phase 1 delivers runtime implementation.
 
 ## Legacy / compatibility popup flow
 
