@@ -49,7 +49,15 @@ function normalizeRecord(record) {
 function openDatabase() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      let request;
+
+      try {
+        request = indexedDB.open(DB_NAME, DB_VERSION);
+      } catch (error) {
+        dbPromise = undefined;
+        reject(error);
+        return;
+      }
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
@@ -67,7 +75,14 @@ function openDatabase() {
       };
 
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error || new Error('Failed to open IndexedDB.'));
+      request.onerror = () => {
+        dbPromise = undefined;
+        reject(request.error || new Error('Failed to open IndexedDB.'));
+      };
+      request.onblocked = () => {
+        dbPromise = undefined;
+        reject(new Error('IndexedDB open request was blocked.'));
+      };
     });
   }
 

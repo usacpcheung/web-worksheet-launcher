@@ -29,6 +29,15 @@ function setResumeFlag(flagKey, restoreMetadata) {
   if (!flagKey) {
     throw new Error('resume flag key is required');
   }
+  if (!restoreMetadata || typeof restoreMetadata !== 'object') {
+    throw new Error('resume restore metadata is required');
+  }
+  if (!restoreMetadata.localId) {
+    throw new Error('resume restore metadata must include localId');
+  }
+  if (!restoreMetadata.store) {
+    throw new Error('resume restore metadata must include store');
+  }
 
   const currentFlags = readJson(STORAGE_KEYS.resumeFlags) || {};
 
