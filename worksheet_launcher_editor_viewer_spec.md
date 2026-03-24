@@ -9,9 +9,9 @@ It is written for AI coding agents and developers.
 The implementation target is a **mainly JavaScript client-side application** with:
 - local-first editing
 - local import/export
-- optional authenticated cloud features
-- optional AI services such as rewrite and T2A
-- future PostgreSQL-backed online save/load/publish
+- public client-side editor and viewer surfaces
+- authentication only for protected backend and AI capabilities
+- future PostgreSQL-backed protected save/load/publish services
 
 This specification intentionally keeps v1 small and implementation-friendly.
 
@@ -23,18 +23,27 @@ The current repo is described as a simple web worksheet launcher with popup rend
 
 This specification extends that direction into a fuller worksheet editor + viewer product.
 
+## Legacy / compatibility popup flow
+
+Treat the existing popup launcher flow as a legacy or compatibility-oriented integration path, not as the main worksheet runtime.
+
+- `server/worksheet_launcher/render.html` remains only the popup compatibility renderer.
+- The real worksheet editor must get its own app entry, such as `server/editor/index.html`.
+- The real worksheet viewer must get its own app entry, such as `server/viewer/index.html`.
+- Popup transport and query contracts do **not** define the editor/viewer product contracts; those contracts must be defined separately for the real editor and viewer apps.
+
+This legacy/compatibility labeling is intentional so future implementation work does not accidentally extend the popup surface into the main runtime.
+
 ---
 
 ## Product Model
 
 ## Core Principle
 
-The app must support **two operating modes**:
+The editor and viewer routes/pages are public client-side app surfaces. Authentication is required only when the app invokes protected backend or API capabilities. Protected capabilities include draft save/load, publish, server-backed worksheet load, attempt sync/save/load, rewrite, and text-to-audio (T2A). Local import/export, local autosave, local preview, and local viewer usage must remain usable without login.
 
-### 1. Local Mode
-No login required.
-
-Available in local mode:
+### Public client-side capabilities
+No login required for:
 - open app
 - create worksheet
 - edit worksheet
@@ -44,18 +53,16 @@ Available in local mode:
 - import worksheet
 - export worksheet
 
-### 2. Signed-In Cloud Mode
-Requires authenticated session through Apache OIDC protected service endpoints.
-
-Available only after sign-in:
+### Protected capabilities
+Require an authenticated session through Apache OIDC protected service endpoints:
 - rewrite API
 - text-to-audio API
 - online draft save
 - online draft load
 - publish online
-- load published online worksheet
-- server-backed resume later
-- future multi-device continuity
+- load protected server-backed worksheet content
+- attempt sync/save/load
+- future multi-device continuity built on protected backend state
 
 ---
 
@@ -66,17 +73,17 @@ Available only after sign-in:
 Do **not** implement custom popup OIDC inside the frontend app.
 
 Use:
-- public frontend app shell
-- one **Sign in** button
-- browser redirect to an Apache OIDC protected endpoint
+- public frontend app shell for editor and viewer routes/pages
+- one **Sign in** button when protected capabilities are available
+- browser redirect to an Apache OIDC protected endpoint only when the user invokes a protected capability
 - return to app after successful login
 - app restores local state after login
 
 ## Required Login UX
 
 ### Signed-out state
-- app works in local mode
-- cloud/AI features are visibly disabled or marked as sign-in required
+- app works for local editor and viewer flows without login
+- protected backend/API features are visibly disabled or marked as sign-in required
 
 ### User clicks Sign in
 Frontend must:
@@ -98,8 +105,40 @@ If user clicks sign in during editing:
   - optional scroll position
 
 Recommended local persistence:
-- IndexedDB for worksheet draft
+- IndexedDB for worksheet draft and local viewer state
 - localStorage for small resume-after-login flags
+
+## Required local persistence model
+
+The app must define explicit local storage responsibilities rather than treating local persistence as an implementation detail.
+
+### IndexedDB
+Use IndexedDB for durable local content/state records, including:
+- local worksheet drafts
+- imported worksheets stored for later editing or viewing
+- local viewer attempts and local autosave state
+
+Minimum IndexedDB record groups:
+- `localDrafts`: editable local worksheet draft objects
+- `importedWorksheets`: imported worksheet/source payloads preserved for local reuse
+- `localAttempts`: viewer answer state, submit status, and local resume metadata
+
+IndexedDB is the source of truth for larger local JSON payloads because it is better suited than `localStorage` for draft content, imported documents, and autosaved attempt state.
+
+### localStorage
+Use `localStorage` only for lightweight UI/session restore metadata, including:
+- lightweight session restore flags
+- selected worksheet reference or selected attempt reference for post-login resume
+- pending action intent such as `resumePublishAfterLogin`, `resumeDraftSaveAfterLogin`, or `resumeAttemptSyncAfterLogin`
+
+`localStorage` must not be treated as the canonical store for full worksheet JSON or full attempt payloads.
+
+### Required local record metadata
+Every locally persisted draft or attempt object must include stable local metadata such as:
+- `localId`: durable local identifier generated on the client
+- `origin`: `local_created` | `imported_file` | `server_synced`
+- `updatedAt`: last local write timestamp
+- optional server linkage fields when the record has been synced
 
 ---
 
@@ -111,21 +150,103 @@ Recommended local persistence:
 - Editor and viewer should work without cloud APIs
 
 ## Backend
-Protected APIs are optional enhancement services:
+Protected APIs are authenticated enhancement services:
 - rewrite service
 - T2A service
-- worksheet storage service
+- worksheet draft/publish storage service
+- server-backed worksheet load service
+- attempt sync/save/load service
 
 ## Storage Modes
 
 ### Local Storage Mode
 - default mode
-- store draft in IndexedDB
+- store local drafts, imported worksheets, and local attempts in IndexedDB
+- keep lightweight restore flags and pending action intent in `localStorage`
 - export/import file-based project format
 
 ### Cloud Storage Mode
-- optional authenticated mode
-- store draft/published versions/attempts in PostgreSQL-backed APIs
+- authenticated protected-capability mode
+- store drafts, published versions, server-backed worksheet loads, and attempts in PostgreSQL-backed APIs
+
+## Local IDs and server ID mapping
+
+Local draft and local attempt objects must have durable local IDs that are distinct from server public IDs.
+
+Required rules:
+- a local draft uses a client-generated `localDraftId` even before any sign-in or backend save exists
+- a local attempt uses a client-generated `localAttemptId` even before any server-backed attempt exists
+- server-backed identifiers such as `worksheetId`, `snapshotId`, and `attemptId` must be stored separately from local IDs and must never overwrite them
+- imported worksheets stored locally should keep a stable local record ID even if they later map to a server-backed worksheet
+- a synced local worksheet keeps both its stable `localDraftId` and its linked server `worksheetId`
+- a synced local attempt keeps both its stable `localAttemptId` and its linked server `attemptId`
+
+### Identifier formats
+Use explicit, mode-specific identifier formats:
+- local worksheet identifier before login: `localDraftId = ld_<ulid>`
+- server worksheet public identifier after sync: `worksheetId = <uuid>` mapped from the backend public worksheet identifier
+- local attempt identifier before server persistence: `localAttemptId = la_<ulid>`
+- server attempt identifier after upload/resume: `attemptId = <uuid>` mapped from the backend public attempt identifier
+
+Format rules:
+- local IDs are client-generated, opaque, and durable within the browser profile
+- server IDs are backend-issued public identifiers and must never be client-generated
+- exported files from a synced worksheet should preserve both the local record ID and the linked server public IDs in metadata when available
+
+Recommended local record shape:
+
+```json
+{
+  "localDraftId": "ld_01...",
+  "serverWorksheetId": null,
+  "serverDraftRevisionId": null,
+  "lastSyncState": "local_only"
+}
+```
+
+```json
+{
+  "localAttemptId": "la_01...",
+  "serverAttemptId": null,
+  "worksheetRef": {
+    "localDraftId": "ld_01...",
+    "snapshotId": null
+  },
+  "lastSyncState": "local_only"
+}
+```
+
+### Sync behavior after login
+When a user signs in and chooses a protected capability, sync must map local records to server-backed records without replacing the local identity layer.
+
+Minimum sync rules:
+1. Read the current local draft/attempt from IndexedDB using its local ID.
+2. Create or update the corresponding backend record.
+3. Persist returned server identifiers alongside the existing local IDs.
+4. Update local sync metadata such as `lastSyncState`, `lastSyncedAt`, and any canonical server revision/snapshot/attempt reference.
+5. Keep the local record addressable by its local ID so offline/local workflows and post-login restore continue to work.
+
+Examples:
+- Local draft save after login: `localDraftId` stays stable while the record gains `serverWorksheetId` and server revision metadata.
+- Publish after login: publish resolves from the synced server draft revision; the local draft remains a draft record and stores the returned published snapshot reference separately.
+- Attempt sync after login: `localAttemptId` stays stable while the record gains `serverAttemptId` and any server-backed resume metadata.
+
+### Conflict rules
+
+#### Importing a file that already came from a synced worksheet
+- Import must always create or preserve a distinct local record with its own `localDraftId`; importing a file must not silently overwrite an existing synced local draft.
+- If the imported file includes a linked `worksheetId` that already exists in local metadata, the app should treat the import as a potential fork/duplicate and require an explicit user choice such as `open as separate local copy` or `replace local copy`.
+- Default safe behavior is `open as separate local copy` while retaining the linked server `worksheetId` only as source metadata until the user explicitly chooses to sync.
+
+#### Syncing a local draft after edits were made both locally and on server
+- The backend revision metadata linked to the local draft is authoritative for conflict detection.
+- If local changes are based on an older server revision than the current backend revision, sync must not silently overwrite the newer server draft.
+- Minimum outcome is an explicit conflict state that lets the user choose to reload server state, keep the local fork as a new local draft, or perform a deliberate overwrite through an explicit product action.
+
+#### Promoting a local viewer attempt into a server-backed attempt after login
+- If the local attempt has no linked `serverAttemptId`, the backend may create a new server-backed attempt and return `attemptId` while the local record keeps its existing `localAttemptId`.
+- If the user resumed an existing backend attempt after login, the local attempt record must link to that returned `attemptId` rather than creating a duplicate server attempt.
+- If both local and server attempt state changed independently, sync must prefer an explicit merge/review flow or server-defined reconciliation policy; it must not silently discard either side's latest answers.
 
 ---
 
@@ -166,7 +287,7 @@ That means:
 - editor edits JSON
 - viewer renders JSON
 - export serializes JSON
-- publish stores JSON snapshot
+- publish requests a backend publish transaction for the saved worksheet draft; the backend creates and stores the immutable snapshot
 - online draft save stores JSON
 
 ---
@@ -321,12 +442,15 @@ Expected behavior:
 - select and load draft JSON into editor
 
 ## Publish
-Signed-in user can publish worksheet.
+Publish requires a signed-in user and must operate on a server-saved worksheet record plus its authoritative server draft revision.
 
 Expected behavior:
-- backend creates `worksheet_versions` row
-- backend updates `worksheets.current_version_id`
-- backend sets status appropriately
+- frontend sends a publish request for an already saved server worksheet record; it does not authoritatively submit canonical publish metadata
+- backend validates the saved draft and the authoritative persisted draft revision before publish
+- backend creates an immutable `worksheet_versions` snapshot row from the saved draft record
+- backend assigns `snapshotId`, `version_no`, `published_at`, and provenance fields such as the authoritative source draft revision and publishing user identity
+- backend updates `worksheets.current_version_id` and sets status appropriately
+- frontend receives returned publish metadata from the backend and stores it as server-issued state
 
 ## Viewer Online Load
 Future public or protected viewer flow can load a published worksheet by public identifier.
@@ -452,11 +576,12 @@ A draft is publishable only when all of the following are true:
 - the worksheet is not in an archived-only state that forbids republish in the current product mode
 
 Publish operation should:
-1. validate current draft
-2. block publish if draft is clearly invalid or lacks a persisted backend draft revision
-3. send snapshot to backend
-4. return published version metadata
-5. keep local draft intact after publish
+1. require login and ensure the draft has already been saved to the backend
+2. block publish if the saved draft is invalid or lacks a persisted backend draft revision
+3. send a publish intent for the saved worksheet record and authoritative server draft revision, not a client-authored canonical snapshot payload
+4. let the backend validate the saved draft, create the immutable snapshot row, and assign publish metadata
+5. return backend-issued published version metadata
+6. keep local draft intact after publish
 
 State-transition rules:
 - `draft` -> `published` is allowed when the publishability conditions above pass
@@ -544,7 +669,7 @@ Recommended implementation order for AI agent:
 
 ## Final Guidance
 
-This project should be implemented as a **local-first worksheet tool with optional authenticated cloud and AI enhancements**.
+This project should be implemented as a **local-first worksheet tool with public client-side editor/viewer surfaces and authentication only for protected backend and AI capabilities**.
 
 The AI agent should preserve that philosophy throughout implementation:
 - local works first
