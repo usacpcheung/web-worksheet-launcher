@@ -89,7 +89,7 @@ function validateSnapshotSchema(snapshot) {
     return { valid: false, errors: ['snapshot must be a non-null object'] };
   }
 
-  ['worksheetId', 'snapshotId', 'draftWorksheetId', 'title'].forEach((field) => {
+  ['worksheetId', 'snapshotId', 'draftWorksheetId', 'title', 'sourceDraftRevision'].forEach((field) => {
     if (!isNonEmptyString(snapshot[field])) {
       errors.push(`snapshot.${field} must be a non-empty string`);
     }
