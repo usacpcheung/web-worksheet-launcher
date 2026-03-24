@@ -120,8 +120,12 @@ class EditorDraftSession {
     this.inFlightSaveCount = 0;
   }
 
-  async createOrOpenByLocalDraftId(localDraftId) {
+  async createOrOpenByLocalDraftId(localDraftId, options = {}) {
     const draftId = localDraftId || createLocalId('draft');
+    const initialMode = options?.initialMode || DEFAULT_MODE;
+    const initialSelectedBlockId = options?.selectedBlockId;
+    const initialHash = options?.hash;
+    const initialScrollToken = options?.scrollToken;
 
     let existing = null;
     if (localDraftId) {
@@ -142,7 +146,18 @@ class EditorDraftSession {
       this.scheduleAutosave();
     }
 
+    this.state.mode = initialMode;
+    this.state.hash = initialHash ?? this.state.hash;
+    this.state.scrollToken = initialScrollToken ?? this.state.scrollToken;
+
     this.state.selectedBlockId = this.state.draft.blocks[0]?.blockId || null;
+    if (initialSelectedBlockId) {
+      const hasSelectedBlock = this.state.draft.blocks.some((block) => block.blockId === initialSelectedBlockId);
+      if (hasSelectedBlock) {
+        this.state.selectedBlockId = initialSelectedBlockId;
+      }
+    }
+
     this.state.draftRevision = 1;
     this.state.lastSavedRevision = existing ? 1 : 0;
     this.persistRestoreMetadata();
@@ -427,21 +442,17 @@ function renderEditorShell(session) {
 async function bootstrapEditor() {
   const session = new EditorDraftSession(editorStorage);
   const params = new URLSearchParams(window.location.search);
-  const localDraftId = params.get('localDraftId') || session.getRouteUiRestoreMetadata()?.localId || null;
+  const initialRestore = session.getRouteUiRestoreMetadata();
+  const localDraftId = params.get('localDraftId') || initialRestore?.localId || null;
 
-  await session.createOrOpenByLocalDraftId(localDraftId);
-
-  const restored = session.getRouteUiRestoreMetadata();
-  if (restored?.mode) {
-    session.setMode(restored.mode);
-  }
-  if (restored?.selectedBlockId) {
-    session.selectBlock(restored.selectedBlockId);
-  }
-  session.setRouteUiRestoreMetadata({
-    hash: restored?.hash || window.location.hash || '',
-    scrollToken: restored?.scrollToken || null,
+  await session.createOrOpenByLocalDraftId(localDraftId, {
+    initialMode: initialRestore?.mode || DEFAULT_MODE,
+    selectedBlockId: initialRestore?.selectedBlockId || null,
+    hash: initialRestore?.hash || window.location.hash || '',
+    scrollToken: initialRestore?.scrollToken || null,
   });
+
+  session.persistRestoreMetadata();
 
   renderEditorShell(session);
 
