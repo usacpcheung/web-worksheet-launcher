@@ -78,6 +78,14 @@ function createDraftRecord(overrides = {}) {
   };
 }
 
+function cloneDraftForPersistence(draft) {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(draft);
+  }
+
+  return JSON.parse(JSON.stringify(draft));
+}
+
 function downloadJson(payload, filename) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], {
     type: 'application/json;charset=utf-8',
@@ -103,34 +111,40 @@ class EditorDraftSession {
       scrollToken: null,
       autosavePending: false,
       lastSavedAt: null,
+      lastSaveError: null,
+      draftRevision: 0,
+      lastSavedRevision: 0,
     };
 
     this.autosaveTimer = null;
+    this.inFlightSaveCount = 0;
   }
 
   async createOrOpenByLocalDraftId(localDraftId) {
-    if (!localDraftId) {
-      this.state.draft = createDraftRecord();
-      this.state.selectedBlockId = this.state.draft.blocks[0]?.blockId || null;
-      await this.autosave();
-      this.persistRestoreMetadata();
-      return this.state.draft;
+    const draftId = localDraftId || createLocalId('draft');
+
+    let existing = null;
+    if (localDraftId) {
+      try {
+        existing = await this.storage.drafts.get(localDraftId);
+      } catch (error) {
+        console.warn('Unable to read draft from IndexedDB, continuing in-memory only.', error);
+      }
     }
 
-    const existing = await this.storage.drafts.get(localDraftId);
     if (existing) {
       this.state.draft = {
         ...existing,
         blocks: normalizeBlocks(existing.blocks),
       };
-      this.state.selectedBlockId = this.state.draft.blocks[0]?.blockId || null;
-      this.persistRestoreMetadata();
-      return this.state.draft;
+    } else {
+      this.state.draft = createDraftRecord({ localId: draftId });
+      this.scheduleAutosave();
     }
 
-    this.state.draft = createDraftRecord({ localId: localDraftId });
     this.state.selectedBlockId = this.state.draft.blocks[0]?.blockId || null;
-    await this.autosave();
+    this.state.draftRevision = 1;
+    this.state.lastSavedRevision = existing ? 1 : 0;
     this.persistRestoreMetadata();
     return this.state.draft;
   }
@@ -210,22 +224,46 @@ class EditorDraftSession {
   async autosave() {
     if (!this.state.draft) return null;
 
+    const revisionAtSaveStart = this.state.draftRevision;
     const updatedAt = nowIso();
-    this.state.draft = {
+    const snapshotToPersist = cloneDraftForPersistence({
       ...this.state.draft,
       metadata: {
         ...this.state.draft.metadata,
         localId: this.state.draft.localId,
         updatedAt,
       },
-    };
+    });
 
-    const persisted = await this.storage.drafts.put(this.state.draft);
-    this.state.draft = persisted;
-    this.state.lastSavedAt = updatedAt;
-    this.state.autosavePending = false;
-    this.persistRestoreMetadata();
-    return persisted;
+    this.inFlightSaveCount += 1;
+    this.state.autosavePending = true;
+
+    try {
+      const persisted = await this.storage.drafts.put(snapshotToPersist);
+
+      if (this.state.draft?.localId === persisted.localId && this.state.draftRevision === revisionAtSaveStart) {
+        this.state.draft = persisted;
+      }
+
+      if (this.state.lastSavedRevision < revisionAtSaveStart) {
+        this.state.lastSavedRevision = revisionAtSaveStart;
+      }
+
+      if (!this.state.lastSavedAt || this.state.lastSavedAt < updatedAt) {
+        this.state.lastSavedAt = updatedAt;
+      }
+
+      this.state.lastSaveError = null;
+      this.persistRestoreMetadata();
+      return persisted;
+    } catch (error) {
+      this.state.lastSaveError = error?.message || String(error);
+      throw error;
+    } finally {
+      this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
+      this.state.autosavePending =
+        this.inFlightSaveCount > 0 || this.state.lastSavedRevision < this.state.draftRevision;
+    }
   }
 
   async importWorksheetJson(jsonInput, options = {}) {
@@ -255,7 +293,10 @@ class EditorDraftSession {
       });
       this.state.draft = draft;
       this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
-      await this.autosave();
+      this.state.draftRevision += 1;
+      this.autosave().catch((error) => {
+        console.warn('Initial autosave after import failed; draft remains in-memory.', error);
+      });
       this.persistRestoreMetadata();
       return { importedRecord, draftRecord: this.state.draft };
     }
@@ -283,6 +324,7 @@ class EditorDraftSession {
         updatedAt: nowIso(),
       },
     };
+    this.state.draftRevision += 1;
     this.scheduleAutosave();
     this.persistRestoreMetadata();
   }
