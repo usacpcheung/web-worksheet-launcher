@@ -1,5 +1,10 @@
 # Worksheet Launcher Editor + Viewer Technical Specification
 
+> **Related docs**
+> - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
+> - This document is part of the Phase 1 documentation set.
+
+
 > **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across documentation after conflicting statements. This spec now explicitly treats Phase 1 as **contracts/scaffolding only** and positions editor/viewer runtime delivery as later-phase work.
 >
 > **Scope authority:** `docs/message-contract.md` → **Section 6) Phase boundary** is the canonical scope statement for Phase 1.
@@ -37,6 +42,79 @@ Treat the existing popup launcher flow as a legacy or compatibility-oriented int
 - Popup transport and query contracts do **not** define the editor/viewer product contracts; those contracts must be defined separately for the real editor and viewer apps.
 
 This legacy/compatibility labeling is intentional so future implementation work does not accidentally extend the popup surface into the main runtime.
+
+---
+
+## Route + Auth Contract (Normative)
+
+This section is the single normative source for editor/viewer route behavior and auth-trigger behavior in later phases.
+
+Cross-links:
+- Popup-only compatibility contract: `docs/message-contract.md`
+- This section is authoritative for editor/viewer route/auth rules and should be linked by any implementation ADRs or tickets.
+
+### Route contract (normative)
+
+| Route path | Surface | Entry file | Public access | Notes |
+| --- | --- | --- | --- | --- |
+| `/editor/` | Worksheet editor app | `server/editor/index.html` | Yes | Local-first editor route. Must load and run without login for local create/edit/autosave/import/export. |
+| `/viewer/` | Worksheet viewer app | `server/viewer/index.html` | Yes | Local-first viewer route. Must load and run without login for local viewing/attempt flow. |
+| `/worksheet/render.html` | Legacy popup compatibility renderer | `server/worksheet_launcher/render.html` | Launch-controlled | Popup compatibility-only surface bound to `docs/message-contract.md`; not the main editor/viewer runtime. |
+
+Normative route rules:
+1. `/editor/` and `/viewer/` are the primary product surfaces for later-phase runtime.
+2. Entry files above are the canonical startup documents for those surfaces.
+3. Protected capabilities may require auth redirects, but route boot itself must remain publicly reachable.
+4. Popup route contract remains separately versioned and must not be treated as editor/viewer route contract.
+
+### Auth trigger matrix (normative)
+
+| capability | login required? | local fallback behavior | expected user prompt/state restoration |
+| --- | --- | --- | --- |
+| Local autosave/import/export (editor) | No | Continue entirely local (IndexedDB/file APIs). | No login prompt. Preserve draft and UI state as-is. |
+| Rewrite / T2A | On demand | Keep user in local editor state; do not execute service call while signed out. | Prompt: “Sign in to use Rewrite/T2A.” Persist draft + restore intent, redirect to auth, then restore state and replay intent if still valid. |
+| Sync draft to server | On demand | Keep draft local and mark as not-synced. | Prompt: “Sign in to sync this draft.” Persist draft + selected draft ID + pending sync intent, then restore and run sync after login. |
+| Publish (guest/signed-out attempt) | Yes | No publish action while signed out; local draft remains editable/exportable. | Prompt: “Sign in required to publish.” Persist draft + publish intent + route/UI selection, restore after login, then re-validate publishability before submit. |
+| Viewer local attempt | No | Continue local answer capture/autosave only. | No login prompt. Preserve local attempt state and resume locally after reload. |
+| Viewer server-backed autosave / cross-device resume | Yes | Continue local attempt only if user declines login; do not call protected sync APIs. | Prompt: “Sign in to sync progress across devices.” Persist local attempt + resume target + pending sync intent, restore viewer state after login, then attach/sync attempt. |
+
+Normative auth-trigger rules:
+1. “On demand” means auth is initiated only when the user invokes that protected capability.
+2. Protected action buttons may be visible while signed out, but must clearly indicate sign-in requirement.
+3. Any auth redirect must be preceded by local persistence of minimum restore state.
+4. Post-login restore must not drop in-progress local draft/attempt data.
+
+### Flow contract: signed-out editor → protected feature
+
+Numbered flow:
+1. User is on `/editor/` signed out with local draft in progress.
+2. User clicks a protected action (`Rewrite`, `T2A`, `Sync draft`, or `Publish`).
+3. App blocks protected API call pre-auth and records pending intent (`resumeRewriteAfterLogin`, `resumeT2AAfterLogin`, `resumeDraftSyncAfterLogin`, or `resumePublishAfterLogin`).
+4. App persists local restore bundle:
+   - current `localDraftId`
+   - draft payload in IndexedDB
+   - route/UI state in localStorage (mode, selected block, optional scroll/hash)
+5. App redirects browser to protected login endpoint.
+6. After successful auth return, app reloads `/editor/`, checks session, and reloads draft by `localDraftId`.
+7. App restores UI state and re-validates pending intent.
+8. If intent still valid, app executes the protected action; otherwise shows clear recovery message and keeps draft intact.
+
+### Flow contract: signed-out viewer → protected sync/rewrite feature
+
+Numbered flow:
+1. User is on `/viewer/` signed out with a local attempt in progress.
+2. User invokes protected viewer feature (server-backed autosave/cross-device sync or viewer-side rewrite assist, if enabled).
+3. App blocks protected call pre-auth and writes pending intent (`resumeAttemptSyncAfterLogin` or equivalent protected viewer intent).
+4. App persists local viewer restore bundle:
+   - `localAttemptId`
+   - current answer state/autosave snapshot in IndexedDB
+   - lightweight UI/route resume metadata in localStorage
+5. App redirects to protected login endpoint.
+6. After login return to `/viewer/`, app verifies session and restores local attempt state.
+7. App replays protected intent:
+   - for sync: create/link server attempt and keep localAttemptId stable
+   - for rewrite: call protected rewrite service against restored local state
+8. On any protected-call failure, app surfaces error and continues local attempt without data loss.
 
 ---
 

@@ -12,7 +12,7 @@ That means:
 - the widget polls `GET /api/rewrite-bridge/model-status`
 - it does not call `POST /api/rewrite-bridge/t2a`
 
-If you are building an app that needs T2A, use the documented API contracts in `README.md` and `docs/api-reference.md` directly from your own frontend or backend integration layer.
+If you are building an app that needs T2A, use the documented API contracts in `README.md` directly from your own frontend or backend integration layer.
 
 ## What the widget provides
 

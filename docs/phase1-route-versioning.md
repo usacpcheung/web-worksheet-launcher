@@ -1,5 +1,10 @@
 # Compatibility Decision Note: Phase 1 Route Versioning
 
+> **Related docs**
+> - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
+> - This document is part of the Phase 1 documentation set.
+
+
 > **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across docs after conflicting references to runtime delivery in Phase 1. This note now aligns to the canonical **contracts/scaffolding only** boundary.
 >
 > **Scope authority:** `docs/message-contract.md` → **Section 6) Phase boundary** is the canonical scope statement for Phase 1.
@@ -112,6 +117,7 @@ Use this checklist during review for scaffolding and any later-phase editor/view
 - [ ] Any future popup-contract change updates `docs/message-contract.md` in the same change.
 - [ ] Parent-side validation continues to enforce `event.origin`, `event.data.type`, `event.data.rid`, and `event.source === popup window` in the existing launcher flow implemented across `parent_prototype/sdk/parent-launcher.js`, `server/worksheet_launcher/render.js`, and `server/worksheet_launcher/render.html`.
 - [ ] `server/worksheet_launcher/widgets/rewrite-widget.js` remains unchanged for prototype-specific behavior; use versioned files loaded from `server/worksheet_launcher/render.html` when needed.
+- [ ] Any edit to `server/worksheet_launcher/render.js` includes explicit compatibility justification (why the stable parent→popup→rewrite→sendback flow remains safe, or why a break is necessary), a corresponding contract-diff entry in `docs/message-contract.md`, and a versioning note when behavior changes (for example, v2 path or contract bump).
 
 ## Implementation guidance
 
