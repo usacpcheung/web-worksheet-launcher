@@ -1,9 +1,20 @@
-# Message Contract (Phase 1)
+# Message Contract (Phase 1 Popup Compatibility Slice)
 
-This document defines the launch-query contract and postMessage contract between:
+> **Related docs**
+> - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
+> - This document is part of the Phase 1 documentation set.
+
+
+> **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across documentation after conflicting statements were identified. Phase 1 is now consistently documented as **contracts/scaffolding only** so implementation language is deferred to later phases.
+>
+> **Scope authority:** Canonical Phase 1 scope statement lives in this file under **Section 6) Phase boundary** and is referenced by companion docs.
+
+This document defines the bounded popup launch-query contract and postMessage contract between:
 
 - **Parent app** (`parent_prototype/parent.html`)
 - **Popup renderer** (`server/worksheet_launcher/render.html`)
+
+Companion editor/viewer route + auth contract (later-phase runtime surfaces) is defined in `worksheet_launcher_editor_viewer_spec.md` under **Route + Auth Contract (Normative)**.
 
 ## 1) Launch query contract
 
@@ -22,7 +33,7 @@ Both parent and renderer treat query payload as untrusted input and must fail cl
 Contract-version behavior (v1):
 
 - Parent SDK always sends `worksheet.contractVersion = 1` in launch payload.
-- Renderer supports only contract version `1` in this phase and fails closed for unsupported versions.
+- Renderer supports only contract version `1` for this popup compatibility slice and fails closed for unsupported versions.
 - Parent SDK event/debug metadata includes the active `contractVersion` and `supportedContractVersions` list.
 
 Intentional scope limitation for this launch mode:
@@ -88,14 +99,15 @@ Example shape:
 
 Validation rules:
 
-- `contractVersion` must equal `1` for this phase
+- `contractVersion` must equal `1` for this popup compatibility slice
 - `v` must equal `1`
 - `title` should be a string when present
 - `q` must be an array of exactly one non-empty string (single-question launch mode)
 - `q[0]` must not exceed `800` characters (max per-question cap enforced by parent and renderer)
 - Rewrite textbox input is capped at `200` characters via `server/worksheet_launcher/render.js` when mounting `rewrite-widget.js` (`maxChars`)
 - `rewrite` should be a boolean when present
-- `launchOptions` is reserved as a forward-compatible envelope. v1 uses `mode: "single-question"` and reserves `extensions.multiQuestion` for future expansion.
+- `rewrite` in this payload is a popup v1 transport/UI capability flag only. It enables the existing popup rewrite affordance and does **not** define a canonical worksheet-content field for future draft/snapshot/editor/viewer models.
+- `launchOptions` is reserved as a bounded compatibility envelope for the current popup v1 surface. v1 uses `mode: "single-question"` and keeps `extensions.multiQuestion` unset except as a placeholder so existing clients can ignore it safely.
 
 ## 3) Popup → parent message schema
 
@@ -132,6 +144,15 @@ On `message` events, parent must reject payloads unless **all** pass:
 
 If any check fails, ignore message and do not apply results.
 
+## 4.1) Compatibility invariants (v1 popup slice)
+
+The following invariants are normative for the v1 popup compatibility slice and must remain true unless explicitly versioned otherwise:
+
+- **Single-question input invariant:** `q.length === 1` is required for v1 popup flow.
+- **Single-answer mapping invariant:** popup returns exactly one answer payload entry mapped to the single input question.
+- **Message validation invariant:** parent-side handling must validate all of: `event.origin`, `event.data.type`, `event.data.rid`, and expected `event.source` (popup window reference).
+- **Protected behavior boundary:** no functional behavior changes in `server/worksheet_launcher/render.js` for v1 flow unless compatibility impact is explicitly documented and contract/version update is recorded in this document.
+
 ## 5) One-shot / anti-replay expectation
 
 After parent accepts and applies one valid `worksheetResult` for a launch `rid`, that launch
@@ -140,17 +161,16 @@ launch context so any subsequent message for that `rid` is rejected and has no e
 
 ## 6) Phase boundary
 
-Phase 1 only defines contracts/scaffolding.
-No new runtime behavior is introduced by this document.
+Phase 1 is **contracts/scaffolding only**. For this launcher workstream, Phase 1 defines and preserves the bounded popup compatibility contract (`launch query + postMessage`) and associated scaffolding surfaces, but does **not** include runtime implementation of the broader editor/viewer product or protected backend/API capabilities.
 
-## 6.1) Reserved extension points (future multi-question mode)
+## 6.1) Reserved extension points
 
 To avoid breaking v1 integrations, the launch payload reserves:
 
 - `launchOptions.mode` (currently fixed to `"single-question"` in v1)
 - `launchOptions.extensions.multiQuestion` (currently `null` in v1)
 
-Future modes may populate `extensions.multiQuestion` with additional routing/options while preserving the v1 single-question contract and validation rules for existing clients.
+These fields are compatibility placeholders for the bounded Phase 1 popup transport only. They do not commit the product to a popup-based roadmap, and they should not be read as the default extension path for later-phase editor/viewer runtime contracts. The full editor/viewer contracts must be defined separately from this popup launch/query + `postMessage` surface.
 
 ## 7) Parent SDK construction schema (`WorksheetLauncher.create(config)`)
 
