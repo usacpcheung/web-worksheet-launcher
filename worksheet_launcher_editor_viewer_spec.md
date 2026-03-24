@@ -1,5 +1,10 @@
 # Worksheet Launcher Editor + Viewer Technical Specification
 
+> **Related docs**
+> - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
+> - This document is part of the Phase 1 documentation set.
+
+
 > **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across documentation after conflicting statements. This spec now explicitly treats Phase 1 as **contracts/scaffolding only** and positions editor/viewer runtime delivery as later-phase work.
 >
 > **Scope authority:** `docs/message-contract.md` → **Section 6) Phase boundary** is the canonical scope statement for Phase 1.
