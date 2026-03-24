@@ -9,6 +9,8 @@ This document defines the bounded popup launch-query contract and postMessage co
 - **Parent app** (`parent_prototype/parent.html`)
 - **Popup renderer** (`server/worksheet_launcher/render.html`)
 
+Companion editor/viewer route + auth contract (later-phase runtime surfaces) is defined in `worksheet_launcher_editor_viewer_spec.md` under **Route + Auth Contract (Normative)**.
+
 ## 1) Launch query contract
 
 The popup URL query string **must** follow:
