@@ -1,5 +1,10 @@
 # Compatibility Decision Note: Phase 1 Route Versioning
 
+> **Related docs**
+> - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
+> - This document is part of the Phase 1 documentation set.
+
+
 > **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across docs after conflicting references to runtime delivery in Phase 1. This note now aligns to the canonical **contracts/scaffolding only** boundary.
 >
 > **Scope authority:** `docs/message-contract.md` → **Section 6) Phase boundary** is the canonical scope statement for Phase 1.

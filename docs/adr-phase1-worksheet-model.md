@@ -1,5 +1,10 @@
 # ADR: Phase 1 Worksheet Data Model Boundaries
 
+> **Related docs**
+> - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
+> - This document is part of the Phase 1 documentation set.
+
+
 > **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across docs after conflicting references to runtime delivery. This ADR now treats Phase 1 as **contracts/scaffolding only** and moves runtime implementation language to later phases.
 >
 > **Scope authority:** `docs/message-contract.md` → **Section 6) Phase boundary** is the canonical scope statement for Phase 1.
