@@ -137,6 +137,15 @@ On `message` events, parent must reject payloads unless **all** pass:
 
 If any check fails, ignore message and do not apply results.
 
+## 4.1) Compatibility invariants (v1 popup slice)
+
+The following invariants are normative for the v1 popup compatibility slice and must remain true unless explicitly versioned otherwise:
+
+- **Single-question input invariant:** `q.length === 1` is required for v1 popup flow.
+- **Single-answer mapping invariant:** popup returns exactly one answer payload entry mapped to the single input question.
+- **Message validation invariant:** parent-side handling must validate all of: `event.origin`, `event.data.type`, `event.data.rid`, and expected `event.source` (popup window reference).
+- **Protected behavior boundary:** no functional behavior changes in `server/worksheet_launcher/render.js` for v1 flow unless compatibility impact is explicitly documented and contract/version update is recorded in this document.
+
 ## 5) One-shot / anti-replay expectation
 
 After parent accepts and applies one valid `worksheetResult` for a launch `rid`, that launch

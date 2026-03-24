@@ -112,6 +112,7 @@ Use this checklist during review for scaffolding and any later-phase editor/view
 - [ ] Any future popup-contract change updates `docs/message-contract.md` in the same change.
 - [ ] Parent-side validation continues to enforce `event.origin`, `event.data.type`, `event.data.rid`, and `event.source === popup window` in the existing launcher flow implemented across `parent_prototype/sdk/parent-launcher.js`, `server/worksheet_launcher/render.js`, and `server/worksheet_launcher/render.html`.
 - [ ] `server/worksheet_launcher/widgets/rewrite-widget.js` remains unchanged for prototype-specific behavior; use versioned files loaded from `server/worksheet_launcher/render.html` when needed.
+- [ ] Any edit to `server/worksheet_launcher/render.js` includes explicit compatibility justification (why the stable parent→popup→rewrite→sendback flow remains safe, or why a break is necessary), a corresponding contract-diff entry in `docs/message-contract.md`, and a versioning note when behavior changes (for example, v2 path or contract bump).
 
 ## Implementation guidance
 
