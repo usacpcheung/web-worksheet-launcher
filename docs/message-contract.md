@@ -1,5 +1,10 @@
 # Message Contract (Phase 1 Popup Compatibility Slice)
 
+> **Related docs**
+> - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
+> - This document is part of the Phase 1 documentation set.
+
+
 > **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across documentation after conflicting statements were identified. Phase 1 is now consistently documented as **contracts/scaffolding only** so implementation language is deferred to later phases.
 >
 > **Scope authority:** Canonical Phase 1 scope statement lives in this file under **Section 6) Phase boundary** and is referenced by companion docs.
