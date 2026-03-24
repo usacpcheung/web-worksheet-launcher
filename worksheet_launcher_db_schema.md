@@ -287,7 +287,7 @@ CREATE TABLE worksheet_versions (
 ### `content`
 - Type: `JSONB`
 - Immutable published worksheet snapshot
-- Usually copied from `worksheets.draft_content` at publish time
+- Copied by the backend from the validated saved worksheet draft at publish time
 
 ### `source_draft_revision`
 - Type: `TEXT`
@@ -504,11 +504,15 @@ CREATE INDEX idx_attempts_anonymous_token
 - No row should be created in `worksheet_versions` during normal draft saves
 
 ## Publish
-- Allow publish only when the draft passes backend validation and a persisted canonical draft revision is available for provenance
-- Copy current `worksheets.draft_content` into `worksheet_versions.content`
+- Require authenticated backend publish authority
+- Allow publish only when the worksheet already has a saved backend draft record, the saved draft passes backend validation, and a persisted canonical draft revision is available for provenance
+- Treat the client request as publish intent only; do not trust the client to authoritatively submit canonical publish metadata
+- Copy the validated saved `worksheets.draft_content` into `worksheet_versions.content`
+- Create a new immutable `worksheet_versions` row for the publish transaction
 - Assign a new `worksheet_versions.public_id` for the immutable public `snapshotId`
 - Persist the canonical backend draft revision used by the publish transaction into `worksheet_versions.source_draft_revision`
 - Increment `version_no` per worksheet
+- Assign `published_at` and `published_by_oidc_sub` on the backend as authoritative provenance fields
 - Update `worksheets.current_version_id`
 - Ensure `current_version_id` belongs to the same `worksheets.id` row via the composite foreign key
 - Set `worksheets.status = 'published'`

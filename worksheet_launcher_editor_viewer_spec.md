@@ -287,7 +287,7 @@ That means:
 - editor edits JSON
 - viewer renders JSON
 - export serializes JSON
-- publish stores JSON snapshot
+- publish requests a backend publish transaction for the saved worksheet draft; the backend creates and stores the immutable snapshot
 - online draft save stores JSON
 
 ---
@@ -442,12 +442,15 @@ Expected behavior:
 - select and load draft JSON into editor
 
 ## Publish
-Signed-in user can publish worksheet.
+Publish requires a signed-in user and must operate on a server-saved worksheet record plus its authoritative server draft revision.
 
 Expected behavior:
-- backend creates `worksheet_versions` row
-- backend updates `worksheets.current_version_id`
-- backend sets status appropriately
+- frontend sends a publish request for an already saved server worksheet record; it does not authoritatively submit canonical publish metadata
+- backend validates the saved draft and the authoritative persisted draft revision before publish
+- backend creates an immutable `worksheet_versions` snapshot row from the saved draft record
+- backend assigns `snapshotId`, `version_no`, `published_at`, and provenance fields such as the authoritative source draft revision and publishing user identity
+- backend updates `worksheets.current_version_id` and sets status appropriately
+- frontend receives returned publish metadata from the backend and stores it as server-issued state
 
 ## Viewer Online Load
 Future public or protected viewer flow can load a published worksheet by public identifier.
@@ -573,11 +576,12 @@ A draft is publishable only when all of the following are true:
 - the worksheet is not in an archived-only state that forbids republish in the current product mode
 
 Publish operation should:
-1. validate current draft
-2. block publish if draft is clearly invalid or lacks a persisted backend draft revision
-3. send snapshot to backend
-4. return published version metadata
-5. keep local draft intact after publish
+1. require login and ensure the draft has already been saved to the backend
+2. block publish if the saved draft is invalid or lacks a persisted backend draft revision
+3. send a publish intent for the saved worksheet record and authoritative server draft revision, not a client-authored canonical snapshot payload
+4. let the backend validate the saved draft, create the immutable snapshot row, and assign publish metadata
+5. return backend-issued published version metadata
+6. keep local draft intact after publish
 
 State-transition rules:
 - `draft` -> `published` is allowed when the publishability conditions above pass

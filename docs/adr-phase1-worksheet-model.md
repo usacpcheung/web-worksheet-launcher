@@ -141,11 +141,11 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
 
 ## 2) Published snapshot model
 
-**Purpose:** immutable publish-time representation derived from a draft.
+**Purpose:** immutable publish-time representation derived by the backend from a saved draft record.
 
 **Characteristics:**
 
-- Created from the draft at publish time.
+- Created by the backend from a server-saved draft record at publish time.
 - Removes editor-only and transient fields.
 - Carries publish metadata and explicit version fields.
 - Is immutable after publish.
@@ -207,9 +207,12 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
 
 ### Publish snapshot rules
 
+Publish requires an authenticated backend transaction operating on a server-saved worksheet record plus its authoritative persisted draft revision. The client may request publish, but it does not authoritatively submit canonical snapshot metadata or decide snapshot identity/version/provenance fields.
+
+
 #### Draft fields copied verbatim into the published snapshot
 
-The publish step copies these authored fields from the selected draft revision without semantic reinterpretation:
+The backend publish step copies these authored fields from the selected saved draft revision without semantic reinterpretation:
 
 - `title`
 - `description`
@@ -251,7 +254,7 @@ The backend assigns or computes publish-time fields such as:
 - `integrity.contentHash`
 - additional audit metadata needed to persist or verify the immutable artifact
 
-These fields must be derived from the persisted publish transaction, not trusted from client input. The publish flow records the backend draft revision that storage actually committed for the transaction, such as `serverAssigned.canonicalRevision`, rather than mirroring a frontend-local counter.
+These fields must be derived from the persisted publish transaction, not trusted from client input. The publish flow records the backend draft revision that storage actually committed for the transaction, such as `serverAssigned.canonicalRevision`, rather than mirroring a frontend-local counter. The client may provide authored draft content and a publish request, but it must not be treated as the authoritative source of `snapshotId`, `snapshotVersion`, `publishedAt`, `publishedByUserId`, `sourceDraftRevision`, or equivalent publish metadata.
 
 #### Snapshot immutability after publish
 
