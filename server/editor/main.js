@@ -1,5 +1,8 @@
+import { editorStorage } from './storage/index.js';
+
 const app = document.getElementById('app');
 
 if (app) {
-  app.textContent = 'Editor booted';
+  const storageReady = typeof editorStorage?.drafts?.put === 'function';
+  app.textContent = storageReady ? 'Editor booted with storage layer' : 'Editor booted';
 }
