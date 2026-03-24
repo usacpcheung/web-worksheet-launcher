@@ -15,13 +15,12 @@ Phase 1 establishes contracts and file scaffolding only.
 ## Parent launcher SDK source
 
 - Canonical SDK source in this repo: `parent_prototype/sdk/parent-launcher.js`
-- Legacy compatibility path (existing references only): `server/worksheet_launcher/parent-launcher.js`
 - For new integrations, copy/host from the canonical SDK source.
 
 ## 5-line parent integration
 
 ```html
-<script src="/worksheet/parent-launcher.js"></script>
+<script src="./sdk/parent-launcher.js"></script>
 <script>
 const launcher = WorksheetLauncher.create({ renderOrigin, renderPath, trustedSenderOrigin, questionSelector: "#question", answerTargetSelector: "#answer" });
 document.querySelector("#open").addEventListener("click", () => launcher.open({ title: "Quick Check" }));
