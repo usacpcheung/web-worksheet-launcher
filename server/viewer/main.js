@@ -56,24 +56,44 @@ function maybeParseEncodedJson(rawValue) {
   }
 }
 
+function isRecord(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSnapshotLikeWorksheet(value) {
+  return (
+    isRecord(value)
+    && Array.isArray(value.blocks)
+    && typeof value.worksheetId === 'string'
+    && typeof value.snapshotId === 'string'
+    && Number.isInteger(value.schemaVersion)
+    && typeof value.publishedAt === 'string'
+  );
+}
+
 function normalizeViewerBlock(block, index) {
+  const safeBlock = isRecord(block) ? block : {};
+  const normalizedKind = safeBlock.kind === 'question' || safeBlock.kind === 'content'
+    ? safeBlock.kind
+    : 'content';
+
   const base = {
-    blockId: block.blockId || createLocalId('blk'),
-    kind: block.kind || 'content',
-    position: Number.isInteger(block.position) ? block.position : index,
+    blockId: safeBlock.blockId || createLocalId('blk'),
+    kind: normalizedKind,
+    position: Number.isInteger(safeBlock.position) ? safeBlock.position : index,
   };
 
   if (base.kind === 'question') {
     return {
       ...base,
       prompt: {
-        text: String(block?.prompt?.text || ''),
-        format: block?.prompt?.format || 'plain_text',
+        text: String(safeBlock?.prompt?.text || ''),
+        format: safeBlock?.prompt?.format || 'plain_text',
       },
       responseConfig: {
-        inputType: block?.responseConfig?.inputType || 'plain_text',
-        maxLength: Number.isFinite(block?.responseConfig?.maxLength)
-          ? block.responseConfig.maxLength
+        inputType: safeBlock?.responseConfig?.inputType || 'plain_text',
+        maxLength: Number.isFinite(safeBlock?.responseConfig?.maxLength)
+          ? safeBlock.responseConfig.maxLength
           : 1000,
       },
     };
@@ -82,8 +102,8 @@ function normalizeViewerBlock(block, index) {
   return {
     ...base,
     content: {
-      text: String(block?.content?.text || ''),
-      format: block?.content?.format || 'plain_text',
+      text: String(safeBlock?.content?.text || ''),
+      format: safeBlock?.content?.format || 'plain_text',
     },
   };
 }
@@ -98,7 +118,7 @@ function normalizeViewerPayload(payload, fallbackLabel = 'Local worksheet') {
     : [];
 
   if (blocks.length === 0) {
-    throw new Error('Viewer payload must include at least one block.');
+    throw new Error('Viewer payload must include at least one normalized block.');
   }
 
   return {
@@ -133,8 +153,12 @@ function resolveImportedWorksheetPayload(importedRecord) {
     return normalizeViewerPayload(worksheet, 'Imported worksheet');
   }
 
-  if (worksheet.blocks && worksheet.draftWorksheetId) {
-    return normalizeViewerPayload(mapSnapshotToViewerPayload(worksheet), 'Imported worksheet');
+  if (isSnapshotLikeWorksheet(worksheet)) {
+    try {
+      return normalizeViewerPayload(mapSnapshotToViewerPayload(worksheet), 'Imported worksheet');
+    } catch (error) {
+      console.warn('Imported worksheet looked snapshot-like but failed snapshot validation.', error);
+    }
   }
 
   if (worksheet.blocks) {
@@ -372,6 +396,9 @@ class ViewerAttemptSession {
     this.state.completedAt = nowIso();
     this.state.attemptRevision += 1;
     this.persistResumeMetadata();
+
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = null;
 
     return this.autosave();
   }
