@@ -18,6 +18,10 @@ function createLocalId(prefix = 'local') {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
 }
 
+function isRecord(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 function normalizeBlocks(blocks) {
   if (!Array.isArray(blocks) || blocks.length === 0) {
     return [
@@ -34,29 +38,33 @@ function normalizeBlocks(blocks) {
   }
 
   return blocks.map((block, index) => {
+    const source = isRecord(block) ? { ...block } : {};
+    const hasPrompt = isRecord(source.prompt);
     const base = {
-      blockId: block.blockId || createLocalId('blk'),
-      kind: block.kind || 'content',
-      position: Number.isFinite(block.position) ? block.position : index,
+      blockId: source.blockId || createLocalId('blk'),
+      kind: source.kind || (hasPrompt ? 'question' : 'content'),
+      position: Number.isFinite(source.position) ? source.position : index,
     };
+    const normalized = { ...source, ...base };
 
-    if (block.prompt) {
-      return {
-        ...base,
-        prompt: {
-          text: String(block.prompt.text || ''),
-          format: block.prompt.format || 'plain_text',
-        },
+    if (normalized.kind === 'question' || hasPrompt) {
+      normalized.kind = 'question';
+      const promptSource = isRecord(source.prompt) ? source.prompt : {};
+      normalized.prompt = {
+        ...promptSource,
+        text: String(promptSource.text || ''),
+        format: promptSource.format || 'plain_text',
       };
+      return normalized;
     }
 
-    return {
-      ...base,
-      content: {
-        text: String(block?.content?.text || ''),
-        format: block?.content?.format || 'plain_text',
-      },
+    const contentSource = isRecord(source.content) ? source.content : {};
+    normalized.content = {
+      ...contentSource,
+      text: String(contentSource.text || ''),
+      format: contentSource.format || 'plain_text',
     };
+    return normalized;
   });
 }
 
@@ -282,7 +290,15 @@ class EditorDraftSession {
   }
 
   async importWorksheetJson(jsonInput, options = {}) {
-    const parsed = typeof jsonInput === 'string' ? JSON.parse(jsonInput) : jsonInput;
+    let parsed = jsonInput;
+    if (typeof jsonInput === 'string') {
+      try {
+        parsed = JSON.parse(jsonInput);
+      } catch (error) {
+        throw new Error(`Imported worksheet JSON could not be parsed: ${error?.message || String(error)}`);
+      }
+    }
+
     if (!parsed || typeof parsed !== 'object') {
       throw new Error('Imported worksheet JSON must be an object.');
     }
@@ -354,10 +370,10 @@ class EditorDraftSession {
       store: 'localDrafts',
       mode: this.state.mode,
       selectedBlockId: this.state.selectedBlockId,
-      hash: this.state.hash || (typeof window !== 'undefined' ? window.location.hash || '' : ''),
+      hash: this.state.hash ?? (typeof window !== 'undefined' ? window.location.hash ?? '' : ''),
       scrollToken:
-        this.state.scrollToken ||
-        (typeof window !== 'undefined' ? String(window.scrollY || 0) : null),
+        this.state.scrollToken ??
+        (typeof window !== 'undefined' ? String(window.scrollY ?? 0) : null),
       updatedAt: nowIso(),
     });
   }
@@ -389,14 +405,28 @@ function renderEditorShell(session) {
   exportBtn.type = 'button';
   exportBtn.textContent = 'Export draft JSON';
 
-  const updateSummary = () => {
+  const syncFormControls = () => {
     const selectedBlock = session.state.draft?.blocks?.find(
       (block) => block.blockId === session.state.selectedBlockId
     );
+    const selectedText = selectedBlock?.prompt?.text || selectedBlock?.content?.text || '';
+    const activeElement = document.activeElement;
 
-    titleInput.value = session.state.draft?.title || '';
-    blockEditor.value = selectedBlock?.prompt?.text || selectedBlock?.content?.text || '';
-    modeSelect.value = session.state.mode;
+    if (activeElement !== titleInput && titleInput.value !== (session.state.draft?.title || '')) {
+      titleInput.value = session.state.draft?.title || '';
+    }
+
+    if (activeElement !== blockEditor && blockEditor.value !== selectedText) {
+      blockEditor.value = selectedText;
+    }
+
+    if (activeElement !== modeSelect && modeSelect.value !== session.state.mode) {
+      modeSelect.value = session.state.mode;
+    }
+  };
+
+  const updateSummary = () => {
+    syncFormControls();
 
     summary.textContent = JSON.stringify(
       {
@@ -435,8 +465,6 @@ function renderEditorShell(session) {
   app.innerHTML = '';
   app.append(titleInput, modeSelect, blockEditor, exportBtn, summary);
   updateSummary();
-
-  setInterval(updateSummary, 500);
 }
 
 async function bootstrapEditor() {
