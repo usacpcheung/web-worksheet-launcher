@@ -42,6 +42,7 @@ function setResumeFlag(flagKey, restoreMetadata) {
   const currentFlags = readJson(STORAGE_KEYS.resumeFlags) || {};
 
   currentFlags[flagKey] = {
+    ...restoreMetadata,
     localId: restoreMetadata.localId,
     store: restoreMetadata.store,
     updatedAt: restoreMetadata.updatedAt || new Date().toISOString(),

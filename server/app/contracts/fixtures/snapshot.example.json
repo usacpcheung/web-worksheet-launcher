@@ -1,0 +1,30 @@
+{
+  "worksheetId": "ws_01HXYZ",
+  "snapshotId": "wss_01JABC",
+  "draftWorksheetId": "ws_draft_01HXYZ",
+  "schemaVersion": 1,
+  "snapshotVersion": 3,
+  "publishedAt": "2026-03-22T12:05:00Z",
+  "publishedByUserId": "usr_123",
+  "sourceDraftRevision": "serverAssigned.canonicalRevision:42",
+  "title": "Argument writing practice",
+  "description": "Students compare two claims and revise a response.",
+  "blocks": [
+    {
+      "blockId": "blk_q_001",
+      "kind": "question",
+      "position": 0,
+      "prompt": {
+        "text": "Read the claim and write a stronger revision.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "rich_text",
+        "maxLength": 500
+      }
+    }
+  ],
+  "integrity": {
+    "contentHash": "sha256:example"
+  }
+}
