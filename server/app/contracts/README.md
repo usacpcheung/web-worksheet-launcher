@@ -21,3 +21,8 @@ This folder contains Phase 1 contract/scaffolding utilities for the draft → sn
 - Draft → snapshot mapping intentionally strips editor-only/transient fields like `clientRevision`, `draftMeta`, `localValidation`, and `uiState`.
 - Snapshot → viewer payload mapping intentionally keeps the payload minimal and read-only (`worksheetId`, `snapshotId`, `snapshotVersion`, `title`, `blocks`).
 - Viewer payload + responses → attempt mapping only accepts responses keyed by question block IDs from the viewer payload and excludes non-question block responses.
+
+## Snapshot provenance guardrail
+
+- Snapshot validation requires `sourceDraftRevision` to enforce publish provenance traceability.
+- Mapper outputs deep-clone nested block structures so snapshot/viewer mapping does not share mutable references with source models.

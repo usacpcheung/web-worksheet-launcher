@@ -8,6 +8,18 @@ function sortBlocksByPosition(blocks) {
   return [...blocks].sort((a, b) => a.position - b.position);
 }
 
+function cloneValue(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof structuredClone === 'function') {
+    return structuredClone(value);
+  }
+
+  return JSON.parse(JSON.stringify(value));
+}
+
 function sanitizeDraftBlockForSnapshot(block) {
   const base = {
     blockId: block.blockId,
@@ -16,13 +28,13 @@ function sanitizeDraftBlockForSnapshot(block) {
   };
 
   if (block.prompt) {
-    base.prompt = block.prompt;
+    base.prompt = cloneValue(block.prompt);
   }
   if (block.content) {
-    base.content = block.content;
+    base.content = cloneValue(block.content);
   }
   if (block.responseConfig) {
-    base.responseConfig = block.responseConfig;
+    base.responseConfig = cloneValue(block.responseConfig);
   }
 
   return base;
@@ -62,7 +74,7 @@ function mapDraftToSnapshot(draft, publishMetadata) {
     title: draft.title,
     description: draft.description || '',
     blocks: sortBlocksByPosition(draft.blocks).map(sanitizeDraftBlockForSnapshot),
-    integrity: publishMetadata.integrity || null,
+    integrity: cloneValue(publishMetadata.integrity) || null,
   };
 }
 
@@ -74,13 +86,13 @@ function sanitizeSnapshotBlockForViewer(block) {
   };
 
   if (block.prompt) {
-    base.prompt = block.prompt;
+    base.prompt = cloneValue(block.prompt);
   }
   if (block.content) {
-    base.content = block.content;
+    base.content = cloneValue(block.content);
   }
   if (block.responseConfig) {
-    base.responseConfig = block.responseConfig;
+    base.responseConfig = cloneValue(block.responseConfig);
   }
 
   return base;
