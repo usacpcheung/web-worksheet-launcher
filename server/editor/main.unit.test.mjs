@@ -8,12 +8,12 @@ async function loadEditorModule() {
   let source = await fs.readFile(filePath, 'utf8');
 
   source = source.replace(
-    "import { editorStorage } from './storage/index.js';\n",
-    'const editorStorage = {};\n'
+    "import { editorStorage } from './storage/index.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
+    'const editorStorage = {};\nconst SharedAuthGate = class {};\n'
   );
 
   source = source.replace(
-    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{ EditorDraftSession, createDraftRecord \};/,
+    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{ EditorDraftSession, createDraftRecord, normalizeBlocks \};/,
     'export { EditorDraftSession, createDraftRecord, normalizeBlocks };'
   );
 

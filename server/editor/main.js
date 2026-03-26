@@ -1,4 +1,5 @@
 import { editorStorage } from './storage/index.js';
+import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 
 const app = document.getElementById('app');
 
@@ -122,6 +123,8 @@ class EditorDraftSession {
       lastSaveError: null,
       draftRevision: 0,
       lastSavedRevision: 0,
+      recoveryMessage: null,
+      lastProtectedAction: null,
     };
 
     this.autosaveTimer = null;
@@ -360,6 +363,66 @@ class EditorDraftSession {
     this.persistRestoreMetadata();
   }
 
+
+  async flushLocalStateForAuthRedirect() {
+    if (!this.state.draft) return null;
+
+    if (this.state.lastSavedRevision < this.state.draftRevision) {
+      return this.autosave();
+    }
+
+    return this.state.draft;
+  }
+
+  getUiRestoreState() {
+    return {
+      mode: this.state.mode,
+      selectedBlockId: this.state.selectedBlockId,
+      hash: this.state.hash ?? (typeof window !== 'undefined' ? window.location.hash ?? '' : ''),
+      scrollToken:
+        this.state.scrollToken ??
+        (typeof window !== 'undefined' ? String(window.scrollY ?? 0) : null),
+    };
+  }
+
+  async restoreByLocalId(localId) {
+    if (!localId) return false;
+    const restored = await this.createOrOpenByLocalDraftId(localId, this.getUiRestoreState());
+    return Boolean(restored);
+  }
+
+  applyUiRestoreState(ui = {}) {
+    this.setRouteUiRestoreMetadata({
+      mode: ui.mode ?? this.state.mode,
+      selectedBlockId: ui.selectedBlockId ?? this.state.selectedBlockId,
+      hash: ui.hash ?? this.state.hash,
+      scrollToken: ui.scrollToken ?? this.state.scrollToken,
+    });
+  }
+
+  setRecoveryMessage(message) {
+    this.state.recoveryMessage = message || null;
+  }
+
+  async replayProtectedAction(intent) {
+    this.state.lastProtectedAction = intent.actionId;
+    this.setRecoveryMessage(null);
+  }
+
+  async triggerProtectedAction(actionId) {
+    if (!this.authGate) {
+      throw new Error('Auth gate is not configured for editor session.');
+    }
+
+    return this.authGate.runProtectedAction({
+      actionId,
+      recordStore: 'localDrafts',
+      payload: {
+        localDraftId: this.state.draft?.localId || null,
+      },
+    });
+  }
+
   persistRestoreMetadata() {
     if (!this.state.draft?.localId) {
       return;
@@ -405,6 +468,22 @@ function renderEditorShell(session) {
   exportBtn.type = 'button';
   exportBtn.textContent = 'Export draft JSON';
 
+  const rewriteBtn = document.createElement('button');
+  rewriteBtn.type = 'button';
+  rewriteBtn.textContent = 'Rewrite (Sign-in required)';
+
+  const t2aBtn = document.createElement('button');
+  t2aBtn.type = 'button';
+  t2aBtn.textContent = 'T2A (Sign-in required)';
+
+  const syncDraftBtn = document.createElement('button');
+  syncDraftBtn.type = 'button';
+  syncDraftBtn.textContent = 'Sync Draft (Sign-in required)';
+
+  const publishBtn = document.createElement('button');
+  publishBtn.type = 'button';
+  publishBtn.textContent = 'Publish (Sign-in required)';
+
   const syncFormControls = () => {
     const selectedBlock = session.state.draft?.blocks?.find(
       (block) => block.blockId === session.state.selectedBlockId
@@ -436,6 +515,8 @@ function renderEditorShell(session) {
         mode: session.state.mode,
         selectedBlockId: session.state.selectedBlockId,
         restore,
+        recoveryMessage: session.state.recoveryMessage,
+        lastProtectedAction: session.state.lastProtectedAction,
       },
       null,
       2
@@ -462,8 +543,38 @@ function renderEditorShell(session) {
     updateSummary();
   });
 
+  rewriteBtn.addEventListener('click', async () => {
+    await session.triggerProtectedAction('resumeRewriteAfterLogin');
+    updateSummary();
+  });
+
+  t2aBtn.addEventListener('click', async () => {
+    await session.triggerProtectedAction('resumeT2AAfterLogin');
+    updateSummary();
+  });
+
+  syncDraftBtn.addEventListener('click', async () => {
+    await session.triggerProtectedAction('resumeDraftSyncAfterLogin');
+    updateSummary();
+  });
+
+  publishBtn.addEventListener('click', async () => {
+    await session.triggerProtectedAction('resumePublishAfterLogin');
+    updateSummary();
+  });
+
   app.innerHTML = '';
-  app.append(titleInput, modeSelect, blockEditor, exportBtn, summary);
+  app.append(
+    titleInput,
+    modeSelect,
+    blockEditor,
+    exportBtn,
+    rewriteBtn,
+    t2aBtn,
+    syncDraftBtn,
+    publishBtn,
+    summary
+  );
   updateSummary();
 }
 
@@ -480,6 +591,27 @@ async function bootstrapEditor() {
     scrollToken: initialRestore?.scrollToken || null,
   });
 
+  const authGate = new SharedAuthGate({
+    appArea: 'editor',
+    resumeFlagKey: RESUME_FLAG_KEY,
+    storage: session.storage,
+    isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1',
+    getCurrentLocalId: () => session.state.draft?.localId || null,
+    getCurrentUiState: () => session.getUiRestoreState(),
+    persistLocalRecord: () => session.flushLocalStateForAuthRedirect(),
+    restoreByLocalId: (localIdToRestore) => session.restoreByLocalId(localIdToRestore),
+    restoreUiState: (uiState) => session.applyUiRestoreState(uiState),
+    validateIntent: (intent) => Boolean(intent?.actionId && session.state.draft?.localId),
+    replayIntent: (intent) => session.replayProtectedAction(intent),
+    onRecoveryMessage: (message) => session.setRecoveryMessage(message),
+    redirectToAuth: ({ redirectTo }) => {
+      window.location.assign(`${redirectTo}&auth=1`);
+    },
+  });
+
+  session.authGate = authGate;
+  await authGate.restoreAfterAuthReturn();
+
   session.persistRestoreMetadata();
 
   renderEditorShell(session);
@@ -494,4 +626,4 @@ bootstrapEditor().catch((error) => {
   }
 });
 
-export { EditorDraftSession, createDraftRecord };
+export { EditorDraftSession, createDraftRecord, normalizeBlocks };

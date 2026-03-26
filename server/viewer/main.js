@@ -1,5 +1,6 @@
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
+import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 
 const app = document.getElementById('app');
 
@@ -193,6 +194,8 @@ class ViewerAttemptSession {
       source: 'unknown',
       attemptRevision: 0,
       lastSavedRevision: 0,
+      recoveryMessage: null,
+      lastProtectedAction: null,
     };
 
     this.autosaveTimer = null;
@@ -460,6 +463,61 @@ class ViewerAttemptSession {
     }
   }
 
+
+  async flushLocalStateForAuthRedirect() {
+    if (!this.state.localAttemptId || !this.state.viewerPayload) return null;
+
+    if (this.state.lastSavedRevision < this.state.attemptRevision) {
+      return this.autosave();
+    }
+
+    return {
+      localAttemptId: this.state.localAttemptId,
+      viewerPayload: this.state.viewerPayload,
+      answers: this.state.answers,
+    };
+  }
+
+  getUiRestoreState() {
+    return {
+      status: this.state.status,
+      worksheetId: this.state.viewerPayload?.worksheetId || null,
+      snapshotId: this.state.viewerPayload?.snapshotId || null,
+    };
+  }
+
+  async restoreByLocalId(localId) {
+    if (!localId) return false;
+    return this.tryResumeAttempt(localId);
+  }
+
+  applyUiRestoreState(_ui = {}) {
+    this.persistResumeMetadata();
+  }
+
+  setRecoveryMessage(message) {
+    this.state.recoveryMessage = message || null;
+  }
+
+  async replayProtectedAction(intent) {
+    this.state.lastProtectedAction = intent.actionId;
+    this.setRecoveryMessage(null);
+  }
+
+  async triggerProtectedAction(actionId) {
+    if (!this.authGate) {
+      throw new Error('Auth gate is not configured for viewer session.');
+    }
+
+    return this.authGate.runProtectedAction({
+      actionId,
+      recordStore: 'localAttempts',
+      payload: {
+        localAttemptId: this.state.localAttemptId || null,
+      },
+    });
+  }
+
   persistResumeMetadata() {
     if (!this.state.localAttemptId) {
       return;
@@ -520,6 +578,14 @@ function renderViewerShell(session) {
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
   completeBtn.textContent = 'Complete Local Attempt';
+
+  const syncResumeBtn = document.createElement('button');
+  syncResumeBtn.type = 'button';
+  syncResumeBtn.textContent = 'Sync/Resume (Sign-in required)';
+
+  const rewriteAssistBtn = document.createElement('button');
+  rewriteAssistBtn.type = 'button';
+  rewriteAssistBtn.textContent = 'Rewrite Assist (Sign-in required)';
   completeBtn.disabled = session.state.status === 'completed';
   completeBtn.addEventListener('click', async () => {
     await session.completeLocalAttempt();
@@ -545,14 +611,26 @@ function renderViewerShell(session) {
         completedAt: session.state.completedAt,
         answerCount: Object.keys(session.state.answers || {}).length,
         source: session.state.source,
+        recoveryMessage: session.state.recoveryMessage,
+        lastProtectedAction: session.state.lastProtectedAction,
       },
       null,
       2
     );
   };
 
+  syncResumeBtn.addEventListener('click', async () => {
+    await session.triggerProtectedAction('resumeAttemptSyncAfterLogin');
+    updateSummary();
+  });
+
+  rewriteAssistBtn.addEventListener('click', async () => {
+    await session.triggerProtectedAction('resumeViewerRewriteAfterLogin');
+    updateSummary();
+  });
+
   app.innerHTML = '';
-  app.append(heading, form, completeBtn, summary);
+  app.append(heading, form, completeBtn, syncResumeBtn, rewriteAssistBtn, summary);
   updateSummary();
   setInterval(updateSummary, 500);
 }
@@ -560,6 +638,27 @@ function renderViewerShell(session) {
 async function bootstrapViewer() {
   const session = new ViewerAttemptSession(viewerStorage);
   await session.bootstrap();
+
+  const authGate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: RESUME_FLAG_KEY,
+    storage: session.storage,
+    isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1',
+    getCurrentLocalId: () => session.state.localAttemptId || null,
+    getCurrentUiState: () => session.getUiRestoreState(),
+    persistLocalRecord: () => session.flushLocalStateForAuthRedirect(),
+    restoreByLocalId: (localIdToRestore) => session.restoreByLocalId(localIdToRestore),
+    restoreUiState: (uiState) => session.applyUiRestoreState(uiState),
+    validateIntent: (intent) => Boolean(intent?.actionId && session.state.localAttemptId),
+    replayIntent: (intent) => session.replayProtectedAction(intent),
+    onRecoveryMessage: (message) => session.setRecoveryMessage(message),
+    redirectToAuth: ({ redirectTo }) => {
+      window.location.assign(`${redirectTo}&auth=1`);
+    },
+  });
+
+  session.authGate = authGate;
+  await authGate.restoreAfterAuthReturn();
 
   renderViewerShell(session);
   window.viewerSession = session;
@@ -572,4 +671,4 @@ bootstrapViewer().catch((error) => {
   }
 });
 
-export { ViewerAttemptSession, normalizeViewerPayload };
+export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock };

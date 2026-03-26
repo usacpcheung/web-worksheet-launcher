@@ -8,12 +8,12 @@ async function loadViewerModule(overrides = {}) {
   let source = await fs.readFile(filePath, 'utf8');
 
   source = source.replace(
-    "import { viewerStorage } from './storage/index.js';\nimport { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';\n",
-    'const viewerStorage = {};\nconst mapSnapshotToViewerPayload = globalThis.__mapSnapshotToViewerPayload;\n'
+    "import { viewerStorage } from './storage/index.js';\nimport { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
+    'const viewerStorage = {};\nconst mapSnapshotToViewerPayload = globalThis.__mapSnapshotToViewerPayload;\nconst SharedAuthGate = class {};\n'
   );
 
   source = source.replace(
-    /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{ ViewerAttemptSession, normalizeViewerPayload \};/,
+    /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{ ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock \};/,
     'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock };'
   );
 
