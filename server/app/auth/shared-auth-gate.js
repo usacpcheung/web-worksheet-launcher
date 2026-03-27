@@ -11,6 +11,13 @@ function buildReturnUrl(currentUrl, actionId) {
   return url.toString();
 }
 
+function cleanupAuthReturnUrlParams() {
+  const cleanUrl = new URL(window.location.href);
+  cleanUrl.searchParams.delete(AUTH_RETURN_PARAM);
+  cleanUrl.searchParams.delete('intent');
+  window.history.replaceState({}, '', cleanUrl.toString());
+}
+
 class SharedAuthGate {
   constructor(options) {
     this.options = {
@@ -40,6 +47,10 @@ class SharedAuthGate {
   }
 
   async runProtectedAction(intent) {
+    if (!intent || !intent.actionId || !intent.recordStore) {
+      return { status: 'invalid_intent' };
+    }
+
     if (this.options.isAuthenticated()) {
       await this.options.replayIntent(intent);
       return { status: 'executed' };
@@ -94,10 +105,17 @@ class SharedAuthGate {
       return { status: 'no_pending_intent' };
     }
 
+    if (!this.options.isAuthenticated()) {
+      this.options.onRecoveryMessage('You are not signed in yet. Please complete sign-in and try again.');
+      cleanupAuthReturnUrlParams();
+      return { status: 'not_authenticated' };
+    }
+
     const localId = pendingIntent.localId || resumeMetadata?.localId || null;
     if (!localId) {
       this.options.onRecoveryMessage('Sign-in restore metadata was missing a local record reference. Your local data is still available.');
       this.clearPending();
+      cleanupAuthReturnUrlParams();
       return { status: 'missing_local_id' };
     }
 
@@ -105,6 +123,7 @@ class SharedAuthGate {
     if (!restored) {
       this.options.onRecoveryMessage('Unable to reload your local record after sign-in. No data was deleted.');
       this.clearPending();
+      cleanupAuthReturnUrlParams();
       return { status: 'restore_failed' };
     }
 
@@ -120,16 +139,13 @@ class SharedAuthGate {
     if (!stillValid) {
       this.options.onRecoveryMessage('We restored your local data, but the original protected action is no longer valid.');
       this.clearPending();
+      cleanupAuthReturnUrlParams();
       return { status: 'intent_invalid' };
     }
 
     await this.options.replayIntent(intent);
     this.clearPending();
-
-    const cleanUrl = new URL(window.location.href);
-    cleanUrl.searchParams.delete(AUTH_RETURN_PARAM);
-    cleanUrl.searchParams.delete('intent');
-    window.history.replaceState({}, '', cleanUrl.toString());
+    cleanupAuthReturnUrlParams();
 
     return { status: 'replayed' };
   }
