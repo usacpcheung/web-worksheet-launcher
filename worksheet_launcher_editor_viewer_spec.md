@@ -273,11 +273,13 @@ Error envelope:
 ```
 
 Required auth/error status behavior across endpoints:
-- `401 Unauthenticated` + `AUTH_UNAUTHENTICATED`: no valid OIDC session for an endpoint that requires authenticated identity
-- `403 Unauthorized` + `AUTH_FORBIDDEN`: authenticated identity exists but does not have permission for the target worksheet/snapshot/attempt
-- `409 Conflict` + `STATE_CONFLICT`: optimistic concurrency/revision mismatch or duplicate-resume conflict
-- `404 Not Found` + `NOT_FOUND`: resource identifier is unknown or not visible to caller policy
 
+- `401 Unauthenticated` + `AUTH_UNAUTHENTICATED`: no valid OIDC session for an endpoint that requires authenticated identity
+- `403 Unauthorized` + `AUTH_FORBIDDEN`: authenticated identity exists, the target resource is known to the server and is allowed to be *existence-revealing* for this endpoint, but the caller does not have permission to perform the requested action on that worksheet/snapshot/attempt
+- `409 Conflict` + `STATE_CONFLICT`: optimistic concurrency/revision mismatch or duplicate-resume conflict
+- `404 Not Found` + `NOT_FOUND`: the resource identifier is unknown **or** the resource exists but is *not visible to the caller by policy*, and the endpoint intentionally does not acknowledge its existence (i.e., the response is 404 instead of 403 to avoid existence disclosure)
+
+**403 vs 404 rule:** For any endpoint, if a request targets a resource whose existence is safe and intended to be acknowledged (e.g., a user’s own worksheet listed via an index call), implementations MUST return `403` when the caller is authenticated but lacks permission for the requested action. If either (a) the identifier is unknown or (b) the endpoint’s access-control policy requires hiding whether the resource exists for this caller, implementations MUST return `404` and `NOT_FOUND` instead of `403` to avoid existence disclosure. Endpoints MUST apply this rule consistently for the same resource type.
 ### 1) `saveDraft`
 
 Purpose: upsert authenticated draft state for a worksheet owner.
