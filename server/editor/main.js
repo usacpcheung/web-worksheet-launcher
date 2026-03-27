@@ -605,7 +605,9 @@ async function bootstrapEditor() {
     replayIntent: (intent) => session.replayProtectedAction(intent),
     onRecoveryMessage: (message) => session.setRecoveryMessage(message),
     redirectToAuth: ({ redirectTo }) => {
-      window.location.assign(`${redirectTo}&auth=1`);
+      const url = new URL(redirectTo);
+      url.searchParams.set('auth', '1');
+      window.location.assign(url.toString());
     },
   });
 
