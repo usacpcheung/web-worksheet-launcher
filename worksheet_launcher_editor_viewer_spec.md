@@ -276,6 +276,7 @@ Required auth/error status behavior across endpoints:
 
 - `401 Unauthenticated` + `AUTH_UNAUTHENTICATED`: no valid OIDC session for an endpoint that requires authenticated identity
 - `403 Unauthorized` + `AUTH_FORBIDDEN`: authenticated identity exists, the target resource is known to the server and is allowed to be *existence-revealing* for this endpoint, but the caller does not have permission to perform the requested action on that worksheet/snapshot/attempt
+- `400 Invalid Request` + `INVALID_REQUEST`: malformed request shape or invalid create/update usage for contracts that support both create and update semantics
 - `409 Conflict` + `STATE_CONFLICT`: optimistic concurrency/revision mismatch or duplicate-resume conflict
 - `404 Not Found` + `NOT_FOUND`: the resource identifier is unknown **or** the resource exists but is *not visible to the caller by policy*, and the endpoint intentionally does not acknowledge its existence (i.e., the response is 404 instead of 403 to avoid existence disclosure)
 
@@ -331,6 +332,10 @@ Request example:
 }
 ```
 
+Normative no-draft behavior:
+- If `worksheetId` is valid and visible/authorized for the caller but no server draft exists yet, backend MUST return `200` with `{"ok": true, "data": null}`.
+- `404 NOT_FOUND` is reserved for worksheet identifiers that are unknown or not visible to the caller by policy.
+
 Response example:
 
 ```json
@@ -347,6 +352,19 @@ Response example:
   }
 }
 ```
+
+Response example (no server draft yet):
+
+```json
+{
+  "ok": true,
+  "data": null
+}
+```
+
+Frontend handling note:
+- Branch `ok=true && data=null` as a normal “no server draft yet” state and continue local-first draft flow (optionally first-save prompt).
+- Branch `404 NOT_FOUND` as “worksheet missing or not visible” and route to unavailable/not-found UX; do not silently treat this as empty draft state.
 
 ### 3) `publishSnapshot`
 
@@ -422,14 +440,17 @@ Auth / guest rules:
 - Authenticated mode: requires OIDC subject (`sub`) and stores `user_oidc_sub`
 - Guest mode: allowed without OIDC only when request includes `anonymousToken` and target snapshot policy allows guest attempts
 - `anonymousToken` must be treated as a stable pseudonymous resume key, not as proof of ownership across unrelated snapshots
+- `attemptId` is optional:
+  - if omitted, backend MUST treat request as **create attempt** and return backend-issued `attemptId`
+  - if present, backend MUST treat request as **update attempt** for an existing attempt owned/authorized for caller
+- Backend MUST return `400 INVALID_REQUEST` for invalid create/update shape (for example, update path with unknown/invalid `attemptId` format or create/update field combinations that violate endpoint contract)
 
-Request example (authenticated):
+Request example (create attempt: no `attemptId`):
 
 ```json
 {
   "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
-  "attemptId": "e7d36570-8258-48a1-a6b5-0f96f6a3da6c",
-  "baseRevision": "ar_000007",
+  "baseRevision": "ar_000000",
   "answers": {
     "blk_q1": "3/4"
   },
@@ -437,13 +458,13 @@ Request example (authenticated):
 }
 ```
 
-Request example (guest):
+Request example (update attempt: with prior `attemptId`):
 
 ```json
 {
   "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
-  "anonymousToken": "anon_9xK2fV0uEw",
-  "baseRevision": "ar_000000",
+  "attemptId": "e7d36570-8258-48a1-a6b5-0f96f6a3da6c",
+  "baseRevision": "ar_000007",
   "answers": {
     "blk_q1": "3/4"
   },
@@ -464,6 +485,10 @@ Response example:
   }
 }
 ```
+
+Frontend handling note:
+- If client has no server `attemptId`, call create path (omit `attemptId`) and persist returned backend-issued `attemptId` for subsequent saves.
+- If client has an `attemptId`, call update path and handle `400 INVALID_REQUEST` as a request-shape/contract bug and `404/403` as missing/not-visible vs forbidden attempt access per endpoint policy.
 
 ### 6) `resumeAttempt`
 
