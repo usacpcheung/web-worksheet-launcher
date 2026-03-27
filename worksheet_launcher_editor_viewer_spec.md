@@ -239,6 +239,279 @@ Protected APIs are authenticated enhancement services:
 - server-backed worksheet load service
 - attempt sync/save/load service
 
+## Minimum Backend API Contract (Scaffolding-Normative)
+
+This section defines the **minimum** JSON contract for backend draft/snapshot/attempt endpoints so frontend and backend can integrate before full business logic exists.
+
+Identifier mapping in all request/response payloads is fixed to the database schema contract:
+- frontend `worksheetId` ↔ DB `worksheets.public_id`
+- frontend `snapshotId` ↔ DB `worksheet_versions.public_id`
+- frontend `attemptId` ↔ DB `worksheet_attempts.public_id`
+
+### Common response envelope and auth/error semantics
+
+Success envelope:
+
+```json
+{
+  "ok": true,
+  "data": {}
+}
+```
+
+Error envelope:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "string_enum",
+    "message": "human readable",
+    "details": {}
+  }
+}
+```
+
+Required auth/error status behavior across endpoints:
+- `401 Unauthenticated` + `AUTH_UNAUTHENTICATED`: no valid OIDC session for an endpoint that requires authenticated identity
+- `403 Unauthorized` + `AUTH_FORBIDDEN`: authenticated identity exists but does not have permission for the target worksheet/snapshot/attempt
+- `409 Conflict` + `STATE_CONFLICT`: optimistic concurrency/revision mismatch or duplicate-resume conflict
+- `404 Not Found` + `NOT_FOUND`: resource identifier is unknown or not visible to caller policy
+
+### 1) `saveDraft`
+
+Purpose: upsert authenticated draft state for a worksheet owner.
+
+Auth:
+- Requires authenticated OIDC subject (`sub`)
+- Guest/anonymous not allowed
+
+Request example:
+
+```json
+{
+  "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+  "baseRevision": "wr_000041",
+  "draftContent": {
+    "title": "Fractions Practice",
+    "blocks": []
+  },
+  "clientUpdatedAt": "2026-03-27T10:00:00Z"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+    "revision": "wr_000042",
+    "updatedAt": "2026-03-27T10:00:01Z"
+  }
+}
+```
+
+### 2) `loadDraft`
+
+Purpose: load current authenticated owner draft by public worksheet identifier.
+
+Auth:
+- Requires authenticated OIDC subject (`sub`)
+- Guest/anonymous not allowed
+
+Request example:
+
+```json
+{
+  "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+    "revision": "wr_000042",
+    "draftContent": {
+      "title": "Fractions Practice",
+      "blocks": []
+    },
+    "updatedAt": "2026-03-27T10:00:01Z"
+  }
+}
+```
+
+### 3) `publishSnapshot`
+
+Purpose: create immutable published snapshot from current draft.
+
+Auth:
+- Requires authenticated OIDC subject (`sub`)
+- Guest/anonymous not allowed
+
+Request example:
+
+```json
+{
+  "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+  "baseRevision": "wr_000042",
+  "publishNote": "Unit 3 release"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+    "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+    "versionNo": 3,
+    "publishedAt": "2026-03-27T10:05:00Z"
+  }
+}
+```
+
+### 4) `loadPublishedSnapshot`
+
+Purpose: load immutable published worksheet content for viewer/runtime.
+
+Auth:
+- OIDC subject not required for public snapshot access
+- If product policy marks a snapshot restricted, require authenticated OIDC subject and enforce authorization
+
+Request example:
+
+```json
+{
+  "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+    "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+    "versionNo": 3,
+    "content": {
+      "title": "Fractions Practice",
+      "blocks": []
+    },
+    "publishedAt": "2026-03-27T10:05:00Z"
+  }
+}
+```
+
+### 5) `saveAttempt`
+
+Purpose: persist or update in-progress viewer attempt state.
+
+Auth / guest rules:
+- Authenticated mode: requires OIDC subject (`sub`) and stores `user_oidc_sub`
+- Guest mode: allowed without OIDC only when request includes `anonymousToken` and target snapshot policy allows guest attempts
+- `anonymousToken` must be treated as a stable pseudonymous resume key, not as proof of ownership across unrelated snapshots
+
+Request example (authenticated):
+
+```json
+{
+  "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+  "attemptId": "e7d36570-8258-48a1-a6b5-0f96f6a3da6c",
+  "baseRevision": "ar_000007",
+  "answers": {
+    "blk_q1": "3/4"
+  },
+  "status": "in_progress"
+}
+```
+
+Request example (guest):
+
+```json
+{
+  "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+  "anonymousToken": "anon_9xK2fV0uEw",
+  "baseRevision": "ar_000000",
+  "answers": {
+    "blk_q1": "3/4"
+  },
+  "status": "in_progress"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "attemptId": "e7d36570-8258-48a1-a6b5-0f96f6a3da6c",
+    "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+    "revision": "ar_000008",
+    "savedAt": "2026-03-27T10:15:00Z"
+  }
+}
+```
+
+### 6) `resumeAttempt`
+
+Purpose: resume previously saved attempt state.
+
+Auth / guest rules:
+- Authenticated resume by `attemptId` requires matching authorized OIDC subject
+- Guest resume is allowed via `{ snapshotId, anonymousToken }` when guest attempts are enabled
+- If both OIDC and `anonymousToken` are present, backend must prioritize OIDC ownership checks and reject token-only escalation attempts
+
+Request example (authenticated by attempt):
+
+```json
+{
+  "attemptId": "e7d36570-8258-48a1-a6b5-0f96f6a3da6c"
+}
+```
+
+Request example (guest by snapshot/token):
+
+```json
+{
+  "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+  "anonymousToken": "anon_9xK2fV0uEw"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "attemptId": "e7d36570-8258-48a1-a6b5-0f96f6a3da6c",
+    "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+    "revision": "ar_000008",
+    "status": "in_progress",
+    "answers": {
+      "blk_q1": "3/4"
+    },
+    "updatedAt": "2026-03-27T10:15:00Z"
+  }
+}
+```
+
+### Compatibility guardrail with popup Phase 1 transport
+
+- These backend contracts are for later-phase editor/viewer APIs and do **not** alter popup launch-query or popup `postMessage` behavior defined in `docs/message-contract.md`.
+- Do not modify popup transport fields, popup validation invariants, or Phase 1 popup scaffolding unless `docs/message-contract.md` itself is intentionally versioned/updated in the same change.
+
 ## Storage Modes
 
 ### Local Storage Mode
