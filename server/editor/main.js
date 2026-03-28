@@ -370,7 +370,11 @@ class EditorDraftSession {
   updateQuestionMaxLength(blockId, maxLength) {
     if (!this.state.draft || !blockId) return;
     const parsed = Number.parseInt(maxLength, 10);
-    const normalized = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      // Preserve existing maxLength when input is empty, non-numeric, or non-positive.
+      return;
+    }
+    const normalized = parsed;
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') {
         return block;
@@ -826,6 +830,7 @@ function renderEditorShell(session) {
   statusRow.className = 'muted';
 
   const blockKind = document.createElement('select');
+  blockKind.id = 'editor-block-kind';
   blockKind.className = 'control';
   const importInput = document.createElement('textarea');
   importInput.rows = 8;
@@ -835,10 +840,12 @@ function renderEditorShell(session) {
   titleInput.placeholder = 'Worksheet title';
   titleInput.className = 'control';
   const blockEditor = document.createElement('textarea');
+  blockEditor.id = 'editor-block-editor';
   blockEditor.rows = 8;
   blockEditor.className = 'control';
 
   const questionInputType = document.createElement('select');
+  questionInputType.id = 'editor-question-input-type';
   questionInputType.className = 'control';
   ['plain_text', 'short_text', 'number', 'boolean', 'single_choice'].forEach((value) => {
     const option = document.createElement('option');
@@ -847,10 +854,12 @@ function renderEditorShell(session) {
     questionInputType.appendChild(option);
   });
   const questionMaxLength = document.createElement('input');
+  questionMaxLength.id = 'editor-question-max-length';
   questionMaxLength.type = 'number';
   questionMaxLength.min = '1';
   questionMaxLength.className = 'control';
   const questionOptions = document.createElement('textarea');
+  questionOptions.id = 'editor-question-options';
   questionOptions.rows = 6;
   questionOptions.className = 'control';
   questionOptions.placeholder = 'One option per line';
@@ -992,11 +1001,13 @@ function renderEditorShell(session) {
 
     const kindLabel = document.createElement('label');
     kindLabel.textContent = 'Block kind';
+    kindLabel.htmlFor = 'editor-block-kind';
     rightPanel.append(kindLabel, blockKind);
 
     if (selectedBlock.kind === 'content') {
       const contentLabel = document.createElement('label');
       contentLabel.textContent = 'Content text';
+      contentLabel.htmlFor = 'editor-block-editor';
       blockEditor.placeholder = 'Content block text';
       rightPanel.append(contentLabel, blockEditor);
       return;
@@ -1004,23 +1015,27 @@ function renderEditorShell(session) {
 
     const promptLabel = document.createElement('label');
     promptLabel.textContent = 'Question prompt';
+    promptLabel.htmlFor = 'editor-block-editor';
     blockEditor.placeholder = 'Question prompt';
     rightPanel.append(promptLabel, blockEditor);
 
     const inputTypeLabel = document.createElement('label');
     inputTypeLabel.textContent = 'Answer input type';
+    inputTypeLabel.htmlFor = 'editor-question-input-type';
     rightPanel.append(inputTypeLabel, questionInputType);
 
     const activeInputType = selectedBlock.responseConfig?.inputType || 'plain_text';
     if (TEXT_INPUT_TYPES.has(activeInputType)) {
       const maxLengthLabel = document.createElement('label');
       maxLengthLabel.textContent = 'Max length';
+      maxLengthLabel.htmlFor = 'editor-question-max-length';
       rightPanel.append(maxLengthLabel, questionMaxLength);
     }
 
     if (activeInputType === 'single_choice') {
       const optionsLabel = document.createElement('label');
       optionsLabel.textContent = 'Options';
+      optionsLabel.htmlFor = 'editor-question-options';
       rightPanel.append(optionsLabel, questionOptions);
     }
   };

@@ -143,3 +143,27 @@ test('question field updates map inputType, maxLength, and options through draft
   assert.equal(updated.responseConfig.maxLength, 25);
   assert.equal(updated.responseConfig.options, undefined);
 });
+
+test('updateQuestionMaxLength preserves existing maxLength on empty or non-numeric input', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_ml');
+  const block = session.createBlock('question');
+  session.selectBlock(block.blockId);
+
+  session.updateQuestionMaxLength(block.blockId, '200');
+  const afterValid = session.state.draft.blocks.find((b) => b.blockId === block.blockId);
+  assert.equal(afterValid.responseConfig.maxLength, 200);
+
+  session.updateQuestionMaxLength(block.blockId, '');
+  const afterEmpty = session.state.draft.blocks.find((b) => b.blockId === block.blockId);
+  assert.equal(afterEmpty.responseConfig.maxLength, 200, 'maxLength should be preserved on empty input');
+
+  session.updateQuestionMaxLength(block.blockId, 'abc');
+  const afterNan = session.state.draft.blocks.find((b) => b.blockId === block.blockId);
+  assert.equal(afterNan.responseConfig.maxLength, 200, 'maxLength should be preserved on non-numeric input');
+});

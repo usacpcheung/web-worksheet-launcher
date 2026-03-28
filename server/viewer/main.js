@@ -193,9 +193,18 @@ function partitionBlocksForDisplay(blocks = []) {
 
 function computeAnswerSummary(viewerPayload, answers) {
   const questions = (viewerPayload?.blocks || []).filter((block) => block.kind === 'question');
+
+  function isAnsweredValue(value) {
+    if (value === null || value === undefined) return false;
+    if (typeof value === 'string') {
+      return value.trim() !== '';
+    }
+    return true;
+  }
+
   const answered = questions.filter((block) => {
     const value = answers?.[block.blockId]?.value;
-    return value !== '' && value !== null && value !== undefined;
+    return isAnsweredValue(value);
   }).length;
   return { answered, total: questions.length };
 }

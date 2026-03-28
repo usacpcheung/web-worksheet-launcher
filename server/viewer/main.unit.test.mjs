@@ -178,6 +178,25 @@ test('computeAnswerSummary counts only question blocks with non-empty answers', 
   assert.deepEqual(summary, { answered: 1, total: 2 });
 });
 
+test('computeAnswerSummary treats whitespace-only answers as unanswered', async () => {
+  const mod = await loadViewerModule();
+  const summary = mod.computeAnswerSummary(
+    {
+      blocks: [
+        { blockId: 'q1', kind: 'question' },
+        { blockId: 'q2', kind: 'question' },
+        { blockId: 'q3', kind: 'question' },
+      ],
+    },
+    {
+      q1: { value: '   ' },
+      q2: { value: '\t\n' },
+      q3: { value: 'real answer' },
+    }
+  );
+  assert.deepEqual(summary, { answered: 1, total: 3 });
+});
+
 test('getInputHelperText maps input types to guidance', async () => {
   const mod = await loadViewerModule();
   assert.equal(mod.getInputHelperText('number'), 'Numeric answer only.');
