@@ -568,24 +568,27 @@ class EditorDraftSession {
 
     try {
       const persisted = await this.storage.drafts.put(snapshotToPersist);
+      const shouldApplySaveStatus =
+        this.state.draft?.localId === persisted.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
 
       if (this.state.draft?.localId === persisted.localId && this.state.draftRevision === revisionAtSaveStart) {
         this.state.draft = persisted;
       }
 
-      if (this.state.lastSavedRevision < revisionAtSaveStart) {
+      if (shouldApplySaveStatus) {
+        const wasNeverSavedBefore = this.state.lastSavedRevision === 0;
         this.state.lastSavedRevision = revisionAtSaveStart;
-      }
 
-      if (!this.state.lastSavedAt || this.state.lastSavedAt < updatedAt) {
-        this.state.lastSavedAt = updatedAt;
-      }
+        if (!this.state.lastSavedAt || this.state.lastSavedAt < updatedAt) {
+          this.state.lastSavedAt = updatedAt;
+        }
 
-      const shouldSuppressPristineWarning = this.state.isPristineDraft && this.state.lastSavedRevision === 0;
-      this.state.lastSaveError = contractValidation.valid || shouldSuppressPristineWarning
-        ? null
-        : `Draft saved locally with validation errors (${contractValidation.errors.length}).`;
-      this.persistRestoreMetadata();
+        const shouldSuppressPristineWarning = this.state.isPristineDraft && wasNeverSavedBefore;
+        this.state.lastSaveError = contractValidation.valid || shouldSuppressPristineWarning
+          ? null
+          : `Draft saved locally with validation errors (${contractValidation.errors.length}).`;
+        this.persistRestoreMetadata();
+      }
       return persisted;
     } catch (error) {
       this.state.lastSaveError = error?.message || String(error);

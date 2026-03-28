@@ -118,6 +118,12 @@ test('autosave suppresses pristine-draft validation warning on first load', asyn
   assert.equal(source.includes('shouldSuppressPristineWarning'), true);
 });
 
+test('autosave applies save status only for latest relevant revision', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('shouldApplySaveStatus'), true);
+  assert.equal(source.includes('revisionAtSaveStart >= this.state.lastSavedRevision'), true);
+});
+
 test('viewer navigation no longer uses hardcoded /viewer absolute assign path', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);"), false);
