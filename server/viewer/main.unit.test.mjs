@@ -13,8 +13,8 @@ async function loadViewerModule(overrides = {}) {
   );
 
   source = source.replace(
-    /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{ ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock \};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock };'
+    /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{\n  ViewerAttemptSession,\n  normalizeViewerPayload,\n  resolveImportedWorksheetPayload,\n  normalizeViewerBlock,\n  computeAnswerSummary,\n  partitionBlocksForDisplay,\n  getInputHelperText,\n\};/,
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -146,4 +146,166 @@ test('completeLocalAttempt clears pending autosave timer before immediate autosa
   assert.equal(session.autosaveTimer, null);
   assert.equal(autosaveCalls, 1);
   assert.equal(timerFired, false);
+});
+
+test('viewer autosave emits state transitions and clears pending state without extra clicks', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.localAttemptId = 'attempt_emit';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.state.attemptRevision = 1;
+
+  let emissions = 0;
+  session.setOnStateChange(() => {
+    emissions += 1;
+  });
+
+  session.scheduleAutosave();
+  clearTimeout(session.autosaveTimer);
+  await session.autosave();
+
+  assert.equal(session.state.autosavePending, false);
+  assert.ok(emissions >= 3, 'expected pending, success, and final state emissions');
+});
+
+test('viewer autosave keeps newest save status when older save finishes later', async () => {
+  const mod = await loadViewerModule();
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+  const first = deferred();
+  const second = deferred();
+  let call = 0;
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      put: async (value) => {
+        call += 1;
+        if (call === 1) {
+          await first.promise;
+          return { ...value, metadata: { ...(value.metadata || {}), updatedAt: '2026-01-01T00:00:01.000Z' } };
+        }
+        await second.promise;
+        return { ...value, metadata: { ...(value.metadata || {}), updatedAt: '2026-01-01T00:00:02.000Z' } };
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.localAttemptId = 'attempt_race';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.state.attemptRevision = 1;
+  const save1 = session.autosave();
+
+  session.state.attemptRevision = 2;
+  const save2 = session.autosave();
+
+  second.resolve();
+  await save2;
+  first.resolve();
+  await save1;
+
+  assert.equal(session.state.lastSavedRevision, 2);
+  assert.equal(session.state.lastSavedAt, '2026-01-01T00:00:02.000Z');
+});
+
+test('viewer save error clears after subsequent successful save', async () => {
+  const mod = await loadViewerModule();
+  let shouldFail = true;
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      put: async (value) => {
+        if (shouldFail) {
+          throw new Error('db unavailable');
+        }
+        return value;
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.localAttemptId = 'attempt_retry';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.state.attemptRevision = 1;
+
+  await assert.rejects(() => session.autosave(), /db unavailable/);
+  assert.equal(session.state.lastSaveError, 'db unavailable');
+
+  shouldFail = false;
+  await session.autosave();
+  assert.equal(session.state.lastSaveError, null);
+});
+
+test('partitionBlocksForDisplay returns ordered content and question sets', async () => {
+  const mod = await loadViewerModule();
+  const result = mod.partitionBlocksForDisplay([
+    { blockId: 'q2', kind: 'question', position: 2 },
+    { blockId: 'c1', kind: 'content', position: 0 },
+    { blockId: 'q1', kind: 'question', position: 1 },
+  ]);
+
+  assert.deepEqual(result.contentBlocks.map((b) => b.blockId), ['c1']);
+  assert.deepEqual(result.questionBlocks.map((b) => b.blockId), ['q1', 'q2']);
+});
+
+test('computeAnswerSummary counts only question blocks with non-empty answers', async () => {
+  const mod = await loadViewerModule();
+  const summary = mod.computeAnswerSummary(
+    {
+      blocks: [
+        { blockId: 'c1', kind: 'content' },
+        { blockId: 'q1', kind: 'question' },
+        { blockId: 'q2', kind: 'question' },
+      ],
+    },
+    {
+      q1: { value: 'hello' },
+      q2: { value: '' },
+    }
+  );
+  assert.deepEqual(summary, { answered: 1, total: 2 });
+});
+
+test('computeAnswerSummary treats whitespace-only answers as unanswered', async () => {
+  const mod = await loadViewerModule();
+  const summary = mod.computeAnswerSummary(
+    {
+      blocks: [
+        { blockId: 'q1', kind: 'question' },
+        { blockId: 'q2', kind: 'question' },
+        { blockId: 'q3', kind: 'question' },
+      ],
+    },
+    {
+      q1: { value: '   ' },
+      q2: { value: '\t\n' },
+      q3: { value: 'real answer' },
+    }
+  );
+  assert.deepEqual(summary, { answered: 1, total: 3 });
+});
+
+test('getInputHelperText maps input types to guidance', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.getInputHelperText('number'), 'Numeric answer only.');
+  assert.equal(mod.getInputHelperText('single_choice'), 'Choose one option.');
+  assert.equal(mod.getInputHelperText('plain_text'), 'Long-form text response.');
 });

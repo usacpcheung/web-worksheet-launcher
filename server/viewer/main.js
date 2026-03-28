@@ -183,6 +183,40 @@ function mapDraftRecordToViewerPayload(draftRecord) {
   );
 }
 
+function partitionBlocksForDisplay(blocks = []) {
+  const ordered = [...blocks].sort((a, b) => a.position - b.position);
+  return {
+    contentBlocks: ordered.filter((block) => block.kind === 'content'),
+    questionBlocks: ordered.filter((block) => block.kind === 'question'),
+  };
+}
+
+function computeAnswerSummary(viewerPayload, answers) {
+  const questions = (viewerPayload?.blocks || []).filter((block) => block.kind === 'question');
+
+  function isAnsweredValue(value) {
+    if (value === null || value === undefined) return false;
+    if (typeof value === 'string') {
+      return value.trim() !== '';
+    }
+    return true;
+  }
+
+  const answered = questions.filter((block) => {
+    const value = answers?.[block.blockId]?.value;
+    return isAnsweredValue(value);
+  }).length;
+  return { answered, total: questions.length };
+}
+
+function getInputHelperText(inputType) {
+  if (inputType === 'short_text') return 'Short text response.';
+  if (inputType === 'number') return 'Numeric answer only.';
+  if (inputType === 'boolean') return 'Choose True or False.';
+  if (inputType === 'single_choice') return 'Choose one option.';
+  return 'Long-form text response.';
+}
+
 function resolveImportedWorksheetPayload(importedRecord) {
   const worksheet = importedRecord?.worksheet;
   if (!worksheet || typeof worksheet !== 'object') {
@@ -242,6 +276,17 @@ class ViewerAttemptSession {
 
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
+    this.onStateChange = null;
+  }
+
+  setOnStateChange(handler) {
+    this.onStateChange = typeof handler === 'function' ? handler : null;
+  }
+
+  notifyStateChange() {
+    if (typeof this.onStateChange === 'function') {
+      this.onStateChange(this.state);
+    }
   }
 
   async validateViewerPayload(payload) {
@@ -471,6 +516,7 @@ class ViewerAttemptSession {
   scheduleAutosave() {
     clearTimeout(this.autosaveTimer);
     this.state.autosavePending = true;
+    this.notifyStateChange();
     this.autosaveTimer = setTimeout(() => {
       this.autosave().catch((error) => {
         console.error('Viewer autosave failed', error);
@@ -505,23 +551,29 @@ class ViewerAttemptSession {
 
     this.inFlightSaveCount += 1;
     this.state.autosavePending = true;
+    this.notifyStateChange();
 
     try {
       const persisted = await this.storage.attempts.put(attemptRecord);
-      if (this.state.lastSavedRevision < revisionAtSaveStart) {
+      const shouldApplySaveStatus =
+        this.state.localAttemptId === attemptRecord.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
+      if (shouldApplySaveStatus) {
         this.state.lastSavedRevision = revisionAtSaveStart;
+        this.state.lastSavedAt = persisted?.metadata?.updatedAt || updatedAt;
+        this.state.lastSaveError = null;
+        this.persistResumeMetadata();
+        this.notifyStateChange();
       }
-      this.state.lastSavedAt = persisted?.metadata?.updatedAt || updatedAt;
-      this.state.lastSaveError = null;
-      this.persistResumeMetadata();
       return persisted;
     } catch (error) {
       this.state.lastSaveError = error?.message || String(error);
+      this.notifyStateChange();
       throw error;
     } finally {
       this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
       this.state.autosavePending =
         this.inFlightSaveCount > 0 || this.state.lastSavedRevision < this.state.attemptRevision;
+      this.notifyStateChange();
     }
   }
 
@@ -607,37 +659,119 @@ function renderViewerShell(session) {
     return;
   }
 
+  const shell = document.createElement('div');
+  shell.className = 'viewer-shell';
+
+  const header = document.createElement('header');
+  header.className = 'viewer-header';
   const heading = document.createElement('h1');
   heading.textContent = session.state.viewerPayload.title;
+  const metadata = document.createElement('p');
+  metadata.className = 'muted';
 
-  const form = document.createElement('div');
-  form.id = 'viewer-answer-form';
+  const answerSummary = document.createElement('p');
+  answerSummary.className = 'answer-summary';
   const status = document.createElement('p');
-  const validation = document.createElement('pre');
 
-  const blocks = [...session.state.viewerPayload.blocks].sort((a, b) => a.position - b.position);
+  const contentSection = document.createElement('section');
+  contentSection.className = 'viewer-section';
+  const contentHeading = document.createElement('h2');
+  contentHeading.textContent = 'Content';
+  const questionSection = document.createElement('section');
+  questionSection.className = 'viewer-section';
+  const questionHeading = document.createElement('h2');
+  questionHeading.textContent = 'Questions';
 
-  blocks.forEach((block) => {
-    if (block.kind === 'content') {
-      const content = document.createElement('p');
-      content.textContent = block.content?.text || '';
-      form.appendChild(content);
+  const contentList = document.createElement('div');
+  const questionList = document.createElement('div');
+  questionList.id = 'viewer-answer-form';
+  const answerControls = new Map();
+  let contentSignature = null;
+  let questionSignature = null;
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.textContent = 'Save Now';
+  const completeBtn = document.createElement('button');
+  completeBtn.type = 'button';
+  completeBtn.textContent = 'Submit / Finalize';
+
+  const syncResumeBtn = document.createElement('button');
+  syncResumeBtn.type = 'button';
+  syncResumeBtn.textContent = 'Sync/Resume (Sign-in required)';
+
+  const rewriteAssistBtn = document.createElement('button');
+  rewriteAssistBtn.type = 'button';
+  rewriteAssistBtn.textContent = 'Rewrite Assist (Sign-in required)';
+
+  const stickyActions = document.createElement('div');
+  stickyActions.className = 'sticky-action-row';
+  const secondaryActions = document.createElement('div');
+  secondaryActions.className = 'secondary-actions';
+  secondaryActions.append(syncResumeBtn, rewriteAssistBtn);
+
+  completeBtn.disabled = session.state.status === 'completed';
+  completeBtn.addEventListener('click', async () => {
+    await session.completeLocalAttempt();
+    completeBtn.disabled = true;
+    Array.from(questionList.querySelectorAll('textarea, input, select')).forEach((control) => {
+      control.disabled = true;
+    });
+    updateSummary();
+  });
+  stickyActions.append(saveBtn, completeBtn, secondaryActions);
+
+  const renderContentCards = (contentBlocks) => {
+    const nextSignature = JSON.stringify(contentBlocks.map((block) => [block.blockId, block.content?.text || '']));
+    if (nextSignature === contentSignature) {
       return;
     }
+    contentSignature = nextSignature;
+    contentList.innerHTML = '';
 
-    if (block.kind === 'question') {
+    contentBlocks.forEach((block) => {
+      const card = document.createElement('article');
+      card.className = 'content-card';
+      card.textContent = block.content?.text || '';
+      contentList.appendChild(card);
+    });
+  };
+
+  const renderQuestionCards = (questionBlocks) => {
+    const nextSignature = JSON.stringify(questionBlocks.map((block) => ({
+      blockId: block.blockId,
+      prompt: block.prompt?.text || '',
+      inputType: block.responseConfig?.inputType || 'plain_text',
+      maxLength: block.responseConfig?.maxLength || null,
+      options: Array.isArray(block.responseConfig?.options)
+        ? block.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
+        : [],
+    })));
+    if (nextSignature === questionSignature) {
+      return;
+    }
+    questionSignature = nextSignature;
+    answerControls.clear();
+    questionList.innerHTML = '';
+
+    questionBlocks.forEach((block, index) => {
+      const card = document.createElement('article');
+      card.className = 'question-card';
       const label = document.createElement('label');
-      label.textContent = block.prompt?.text || 'Question';
       const inputType = block.responseConfig?.inputType || 'plain_text';
       const controlId = `answer-${block.blockId}`;
+      label.textContent = `${index + 1}. ${block.prompt?.text || 'Question'}`;
       label.htmlFor = controlId;
+
+      const helper = document.createElement('p');
+      helper.className = 'muted';
+      helper.textContent = getInputHelperText(inputType);
 
       let control;
       if (inputType === 'short_text') {
         control = document.createElement('input');
         control.type = 'text';
         control.maxLength = block.responseConfig?.maxLength || 200;
-        control.value = String(session.state.answers?.[block.blockId]?.value || '');
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
@@ -645,8 +779,6 @@ function renderViewerShell(session) {
       } else if (inputType === 'number') {
         control = document.createElement('input');
         control.type = 'number';
-        const priorValue = session.state.answers?.[block.blockId]?.value;
-        control.value = priorValue === '' || priorValue === null || priorValue === undefined ? '' : String(priorValue);
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
@@ -681,7 +813,6 @@ function renderViewerShell(session) {
           option.textContent = String(opt.label ?? opt.value ?? '');
           control.appendChild(option);
         });
-        control.value = String(session.state.answers?.[block.blockId]?.value || '');
         control.addEventListener('change', () => {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
@@ -690,7 +821,6 @@ function renderViewerShell(session) {
         control = document.createElement('textarea');
         control.rows = 5;
         control.maxLength = block.responseConfig?.maxLength || 1000;
-        control.value = String(session.state.answers?.[block.blockId]?.value || '');
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
@@ -698,73 +828,55 @@ function renderViewerShell(session) {
       }
 
       control.id = controlId;
-      control.disabled = session.state.status === 'completed';
-      form.append(label, control);
-    }
-  });
-
-  const saveBtn = document.createElement('button');
-  saveBtn.type = 'button';
-  saveBtn.textContent = 'Save now';
-  const completeBtn = document.createElement('button');
-  completeBtn.type = 'button';
-  completeBtn.textContent = 'Submit / finalize local attempt';
-
-  const syncResumeBtn = document.createElement('button');
-  syncResumeBtn.type = 'button';
-  syncResumeBtn.textContent = 'Sync/Resume (Sign-in required)';
-
-  const rewriteAssistBtn = document.createElement('button');
-  rewriteAssistBtn.type = 'button';
-  rewriteAssistBtn.textContent = 'Rewrite Assist (Sign-in required)';
-  completeBtn.disabled = session.state.status === 'completed';
-  completeBtn.addEventListener('click', async () => {
-    await session.completeLocalAttempt();
-    completeBtn.disabled = true;
-    Array.from(form.querySelectorAll('textarea, input, select')).forEach((control) => {
-      control.disabled = true;
+      answerControls.set(block.blockId, control);
+      card.append(label, helper, control);
+      questionList.appendChild(card);
     });
-    updateSummary();
-  });
+  };
 
-  const summary = document.createElement('pre');
-  summary.id = 'viewer-state-summary';
+  const syncAnswerControlValues = (questionBlocks) => {
+    const activeElement = document.activeElement;
+    questionBlocks.forEach((block) => {
+      const control = answerControls.get(block.blockId);
+      if (!control) {
+        return;
+      }
+      const inputType = block.responseConfig?.inputType || 'plain_text';
+      const storedValue = session.state.answers?.[block.blockId]?.value;
+      const nextValue = inputType === 'number'
+        ? (storedValue === '' || storedValue === null || storedValue === undefined ? '' : String(storedValue))
+        : inputType === 'boolean'
+          ? (storedValue === true ? 'true' : storedValue === false ? 'false' : '')
+          : String(storedValue || '');
+      if (control !== activeElement && control.value !== nextValue) {
+        control.value = nextValue;
+      }
+      control.disabled = session.state.status === 'completed';
+    });
+  };
 
   const updateSummary = () => {
+    const { contentBlocks, questionBlocks } = partitionBlocksForDisplay(session.state.viewerPayload.blocks || []);
+    renderContentCards(contentBlocks);
+    renderQuestionCards(questionBlocks);
+    syncAnswerControlValues(questionBlocks);
+
+    const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
     status.textContent = session.state.lastSaveError
       ? `⚠️ ${session.state.lastSaveError}`
       : session.state.autosavePending
         ? 'Saving…'
         : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
-
-    validation.textContent = JSON.stringify(
-      {
-        payloadErrors: session.state.payloadValidationErrors,
-        attemptErrors: session.state.attemptValidationErrors,
-      },
-      null,
-      2
-    );
-
-    summary.textContent = JSON.stringify(
-      {
-        localAttemptId: session.state.localAttemptId,
-        worksheetId: session.state.viewerPayload?.worksheetId || null,
-        snapshotId: session.state.viewerPayload?.snapshotId || null,
-        status: session.state.status,
-        autosavePending: session.state.autosavePending,
-        lastSavedAt: session.state.lastSavedAt,
-        lastManualSaveAt: session.state.lastManualSaveAt,
-        completedAt: session.state.completedAt,
-        answerCount: Object.keys(session.state.answers || {}).length,
-        source: session.state.source,
-        recoveryMessage: session.state.recoveryMessage,
-        lastProtectedAction: session.state.lastProtectedAction,
-      },
-      null,
-      2
-    );
+    metadata.textContent =
+      `worksheetId: ${session.state.viewerPayload?.worksheetId || 'n/a'} · `
+      + `snapshotId: ${session.state.viewerPayload?.snapshotId || 'n/a'} · `
+      + `source: ${session.state.source} · status: ${session.state.status}`;
+    answerSummary.textContent = `Answered ${summary.answered}/${summary.total} · ${status.textContent}`;
   };
+
+  session.setOnStateChange(() => {
+    updateSummary();
+  });
 
   saveBtn.addEventListener('click', async () => {
     await session.saveNow();
@@ -780,8 +892,12 @@ function renderViewerShell(session) {
     updateSummary();
   });
 
+  header.append(heading, metadata, answerSummary);
+  contentSection.append(contentHeading, contentList);
+  questionSection.append(questionHeading, questionList);
+  shell.append(header, contentSection, questionSection, stickyActions);
   app.innerHTML = '';
-  app.append(heading, status, form, saveBtn, completeBtn, syncResumeBtn, rewriteAssistBtn, validation, summary);
+  app.append(shell);
   updateSummary();
 }
 
@@ -823,4 +939,12 @@ bootstrapViewer().catch((error) => {
   }
 });
 
-export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock };
+export {
+  ViewerAttemptSession,
+  normalizeViewerPayload,
+  resolveImportedWorksheetPayload,
+  normalizeViewerBlock,
+  computeAnswerSummary,
+  partitionBlocksForDisplay,
+  getInputHelperText,
+};

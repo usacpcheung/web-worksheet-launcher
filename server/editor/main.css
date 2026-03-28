@@ -1,0 +1,100 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #f6f7fb;
+  color: #1f2937;
+}
+
+#app {
+  padding: 16px;
+}
+
+.editor-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.editor-topbar,
+.editor-panel,
+.button-row {
+  background: #fff;
+  border: 1px solid #dfe3eb;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.editor-topbar {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.editor-topbar p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.error-text {
+  color: #b42318;
+}
+
+.editor-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 12px;
+}
+
+.editor-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.block-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.block-select {
+  width: 100%;
+  text-align: left;
+}
+
+.block-item.selected .block-select {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.control,
+button {
+  font: inherit;
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+
+textarea.control {
+  resize: vertical;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.muted {
+  color: #667085;
+  margin: 0;
+}
