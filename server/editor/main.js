@@ -907,6 +907,7 @@ function renderEditorShell(session) {
   const publishBtn = document.createElement('button');
   publishBtn.type = 'button';
   publishBtn.textContent = 'Publish (Sign-in required)';
+  let detailSignature = null;
 
   const syncFormControls = () => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
@@ -962,8 +963,24 @@ function renderEditorShell(session) {
     });
   };
 
-  const renderDetailEditor = () => {
+  const computeDetailSignature = (selectedBlock) => {
+    if (!selectedBlock) {
+      return 'none';
+    }
+    return [
+      selectedBlock.blockId,
+      selectedBlock.kind,
+      selectedBlock.responseConfig?.inputType || 'plain_text',
+    ].join(':');
+  };
+
+  const renderDetailEditor = ({ force = false } = {}) => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
+    const nextSignature = computeDetailSignature(selectedBlock);
+    if (!force && nextSignature === detailSignature) {
+      return;
+    }
+    detailSignature = nextSignature;
     rightPanel.innerHTML = '';
     rightPanel.append(rightHeading, statusRow);
     if (!selectedBlock) {
@@ -1060,9 +1077,11 @@ function renderEditorShell(session) {
     session.deleteBlock(session.state.selectedBlockId);
     updateSummary();
   });
-  openViewerBtn.addEventListener('click', () => {
+  openViewerBtn.addEventListener('click', async () => {
     const localDraftId = session.state.draft?.localId;
     if (!localDraftId) return;
+    await session.saveNow();
+    updateSummary();
     window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);
   });
   questionInputType.addEventListener('change', () => {

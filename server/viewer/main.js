@@ -658,6 +658,9 @@ function renderViewerShell(session) {
   const contentList = document.createElement('div');
   const questionList = document.createElement('div');
   questionList.id = 'viewer-answer-form';
+  const answerControls = new Map();
+  let contentSignature = null;
+  let questionSignature = null;
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
@@ -691,10 +694,13 @@ function renderViewerShell(session) {
   });
   stickyActions.append(saveBtn, completeBtn, secondaryActions);
 
-  const updateSummary = () => {
-    const { contentBlocks, questionBlocks } = partitionBlocksForDisplay(session.state.viewerPayload.blocks || []);
+  const renderContentCards = (contentBlocks) => {
+    const nextSignature = JSON.stringify(contentBlocks.map((block) => [block.blockId, block.content?.text || '']));
+    if (nextSignature === contentSignature) {
+      return;
+    }
+    contentSignature = nextSignature;
     contentList.innerHTML = '';
-    questionList.innerHTML = '';
 
     contentBlocks.forEach((block) => {
       const card = document.createElement('article');
@@ -702,6 +708,24 @@ function renderViewerShell(session) {
       card.textContent = block.content?.text || '';
       contentList.appendChild(card);
     });
+  };
+
+  const renderQuestionCards = (questionBlocks) => {
+    const nextSignature = JSON.stringify(questionBlocks.map((block) => ({
+      blockId: block.blockId,
+      prompt: block.prompt?.text || '',
+      inputType: block.responseConfig?.inputType || 'plain_text',
+      maxLength: block.responseConfig?.maxLength || null,
+      options: Array.isArray(block.responseConfig?.options)
+        ? block.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
+        : [],
+    })));
+    if (nextSignature === questionSignature) {
+      return;
+    }
+    questionSignature = nextSignature;
+    answerControls.clear();
+    questionList.innerHTML = '';
 
     questionBlocks.forEach((block, index) => {
       const card = document.createElement('article');
@@ -721,7 +745,6 @@ function renderViewerShell(session) {
         control = document.createElement('input');
         control.type = 'text';
         control.maxLength = block.responseConfig?.maxLength || 200;
-        control.value = String(session.state.answers?.[block.blockId]?.value || '');
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
@@ -729,8 +752,6 @@ function renderViewerShell(session) {
       } else if (inputType === 'number') {
         control = document.createElement('input');
         control.type = 'number';
-        const priorValue = session.state.answers?.[block.blockId]?.value;
-        control.value = priorValue === '' || priorValue === null || priorValue === undefined ? '' : String(priorValue);
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
@@ -765,7 +786,6 @@ function renderViewerShell(session) {
           option.textContent = String(opt.label ?? opt.value ?? '');
           control.appendChild(option);
         });
-        control.value = String(session.state.answers?.[block.blockId]?.value || '');
         control.addEventListener('change', () => {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
@@ -774,7 +794,6 @@ function renderViewerShell(session) {
         control = document.createElement('textarea');
         control.rows = 5;
         control.maxLength = block.responseConfig?.maxLength || 1000;
-        control.value = String(session.state.answers?.[block.blockId]?.value || '');
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
@@ -782,10 +801,38 @@ function renderViewerShell(session) {
       }
 
       control.id = controlId;
-      control.disabled = session.state.status === 'completed';
+      answerControls.set(block.blockId, control);
       card.append(label, helper, control);
       questionList.appendChild(card);
     });
+  };
+
+  const syncAnswerControlValues = (questionBlocks) => {
+    const activeElement = document.activeElement;
+    questionBlocks.forEach((block) => {
+      const control = answerControls.get(block.blockId);
+      if (!control) {
+        return;
+      }
+      const inputType = block.responseConfig?.inputType || 'plain_text';
+      const storedValue = session.state.answers?.[block.blockId]?.value;
+      const nextValue = inputType === 'number'
+        ? (storedValue === '' || storedValue === null || storedValue === undefined ? '' : String(storedValue))
+        : inputType === 'boolean'
+          ? (storedValue === true ? 'true' : storedValue === false ? 'false' : '')
+          : String(storedValue || '');
+      if (control !== activeElement && control.value !== nextValue) {
+        control.value = nextValue;
+      }
+      control.disabled = session.state.status === 'completed';
+    });
+  };
+
+  const updateSummary = () => {
+    const { contentBlocks, questionBlocks } = partitionBlocksForDisplay(session.state.viewerPayload.blocks || []);
+    renderContentCards(contentBlocks);
+    renderQuestionCards(questionBlocks);
+    syncAnswerControlValues(questionBlocks);
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
     status.textContent = session.state.lastSaveError
