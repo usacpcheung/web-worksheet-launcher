@@ -175,6 +175,13 @@ class EditorDraftSession {
 
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
+    this.onStateChange = null;
+  }
+
+  notifyStateChange() {
+    if (typeof this.onStateChange === 'function') {
+      this.onStateChange(this.state);
+    }
   }
 
   normalizeDraftForContracts(draft) {
@@ -591,11 +598,13 @@ class EditorDraftSession {
       return persisted;
     } catch (error) {
       this.state.lastSaveError = error?.message || String(error);
+      this.notifyStateChange();
       throw error;
     } finally {
       this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
       this.state.autosavePending =
         this.inFlightSaveCount > 0 || this.state.lastSavedRevision < this.state.draftRevision;
+      this.notifyStateChange();
     }
   }
 
@@ -721,6 +730,7 @@ class EditorDraftSession {
     this.validateCurrentDraft();
     this.scheduleAutosave();
     this.persistRestoreMetadata();
+    this.notifyStateChange();
   }
 
 
@@ -1027,6 +1037,10 @@ function renderEditorShell(session) {
       null,
       2
     );
+  };
+
+  session.onStateChange = () => {
+    updateSummary();
   };
 
   titleInput.addEventListener('input', () => {
