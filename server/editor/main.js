@@ -166,7 +166,9 @@ class EditorDraftSession {
       scrollToken: null,
       autosavePending: false,
       lastSavedAt: null,
-      lastSaveError: null,
+      lastPersistenceError: null,
+      lastValidationWarning: null,
+      lastContractValidationIssueCount: 0,
       validationErrors: [],
       blockValidation: {},
       lastManualSaveAt: null,
@@ -285,6 +287,13 @@ class EditorDraftSession {
         blocks: normalizeBlocks(existing.blocks),
       };
       this.state.isPristineDraft = false;
+      const existingContractErrors = existing?.contractValidation?.errors;
+      this.state.lastContractValidationIssueCount = Array.isArray(existingContractErrors)
+        ? existingContractErrors.length
+        : 0;
+      this.state.lastValidationWarning = existing?.contractValidation?.valid === false
+        ? `Draft saved locally with validation warnings (${this.state.lastContractValidationIssueCount}).`
+        : null;
     } else {
       this.state.draft = createDraftRecord({ localId: draftId });
       this.state.isPristineDraft = true;
@@ -578,20 +587,22 @@ class EditorDraftSession {
       if (shouldApplySaveStatus) {
         const wasNeverSavedBefore = this.state.lastSavedRevision === 0;
         this.state.lastSavedRevision = revisionAtSaveStart;
+        this.state.lastPersistenceError = null;
+        this.state.lastContractValidationIssueCount = contractValidation.errors.length;
 
         if (!this.state.lastSavedAt || this.state.lastSavedAt < updatedAt) {
           this.state.lastSavedAt = updatedAt;
         }
 
         const shouldSuppressPristineWarning = this.state.isPristineDraft && wasNeverSavedBefore;
-        this.state.lastSaveError = contractValidation.valid || shouldSuppressPristineWarning
+        this.state.lastValidationWarning = contractValidation.valid || shouldSuppressPristineWarning
           ? null
-          : `Draft saved locally with validation errors (${contractValidation.errors.length}).`;
+          : `Draft saved locally with validation warnings (${contractValidation.errors.length}).`;
         this.persistRestoreMetadata();
       }
       return persisted;
     } catch (error) {
-      this.state.lastSaveError = error?.message || String(error);
+      this.state.lastPersistenceError = error?.message || String(error);
       throw error;
     } finally {
       this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
@@ -817,7 +828,9 @@ function renderEditorShell(session) {
   const validationEl = document.createElement('p');
   const localDraftIdEl = document.createElement('p');
   const saveErrorEl = document.createElement('p');
+  const saveWarningEl = document.createElement('p');
   saveErrorEl.className = 'error-text';
+  saveWarningEl.className = 'muted';
 
   const layout = document.createElement('section');
   layout.className = 'editor-layout';
@@ -1061,17 +1074,21 @@ function renderEditorShell(session) {
     renderBlockList();
     renderDetailEditor();
 
-    const saveState = session.state.lastSaveError
+    const saveState = session.state.lastPersistenceError
       ? 'Save error'
       : session.state.autosavePending
         ? 'Saving…'
+        : session.state.lastValidationWarning
+          ? 'Saved (warnings)'
         : 'Saved';
 
     saveStateEl.textContent = `State: ${saveState}`;
     lastSavedEl.textContent = `Last saved: ${session.state.lastSavedAt || 'Not yet saved'}`;
-    validationEl.textContent = `Validation issues: ${draftValidation.errors.length}`;
+    validationEl.textContent =
+      `Validation issues (local: ${draftValidation.errors.length}, contract: ${session.state.lastContractValidationIssueCount})`;
     localDraftIdEl.textContent = `localDraftId: ${session.state.draft?.localId || 'n/a'}`;
-    saveErrorEl.textContent = session.state.lastSaveError ? `Error: ${session.state.lastSaveError}` : '';
+    saveErrorEl.textContent = session.state.lastPersistenceError ? `Error: ${session.state.lastPersistenceError}` : '';
+    saveWarningEl.textContent = session.state.lastValidationWarning ? `Warning: ${session.state.lastValidationWarning}` : '';
     statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'} · Mode: ${session.state.mode}`;
   };
 
@@ -1165,7 +1182,7 @@ function renderEditorShell(session) {
   const protectedRow = document.createElement('div');
   protectedRow.className = 'button-row';
   protectedRow.append(localPublishBtn, rewriteBtn, t2aBtn, syncDraftBtn, publishBtn);
-  topBar.append(saveStateEl, lastSavedEl, validationEl, localDraftIdEl, saveErrorEl);
+  topBar.append(saveStateEl, lastSavedEl, validationEl, localDraftIdEl, saveErrorEl, saveWarningEl);
   shell.append(topBar, layout, protectedRow);
   app.innerHTML = '';
   app.append(shell);

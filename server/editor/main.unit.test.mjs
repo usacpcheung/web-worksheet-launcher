@@ -124,6 +124,14 @@ test('autosave applies save status only for latest relevant revision', async () 
   assert.equal(source.includes('revisionAtSaveStart >= this.state.lastSavedRevision'), true);
 });
 
+test('save status separates persistence errors from validation warnings', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('lastPersistenceError'), true);
+  assert.equal(source.includes('lastValidationWarning'), true);
+  assert.equal(source.includes('Saved (warnings)'), true);
+  assert.equal(source.includes('Validation issues (local:'), true);
+});
+
 test('viewer navigation no longer uses hardcoded /viewer absolute assign path', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);"), false);
