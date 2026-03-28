@@ -93,18 +93,42 @@ function normalizeViewerBlock(block, index) {
   };
 
   if (base.kind === 'question') {
+    const responseConfigSource = isRecord(safeBlock.responseConfig) ? safeBlock.responseConfig : {};
+    const inputType = responseConfigSource.inputType || 'plain_text';
+    const normalizedResponseConfig = {
+      inputType,
+      maxLength: Number.isFinite(responseConfigSource.maxLength)
+        ? responseConfigSource.maxLength
+        : 1000,
+    };
+
+    if (inputType === 'single_choice') {
+      normalizedResponseConfig.options = Array.isArray(responseConfigSource.options)
+        ? responseConfigSource.options
+          .filter((option) => option !== null && option !== undefined)
+          .map((option) => {
+            if (isRecord(option)) {
+              const value = option.value ?? option.label ?? '';
+              const label = option.label ?? option.value ?? '';
+              return {
+                value: String(value),
+                label: String(label),
+              };
+            }
+
+            const normalizedOption = String(option);
+            return { value: normalizedOption, label: normalizedOption };
+          })
+        : [];
+    }
+
     return {
       ...base,
       prompt: {
         text: String(safeBlock?.prompt?.text || ''),
         format: safeBlock?.prompt?.format || 'plain_text',
       },
-      responseConfig: {
-        inputType: safeBlock?.responseConfig?.inputType || 'plain_text',
-        maxLength: Number.isFinite(safeBlock?.responseConfig?.maxLength)
-          ? safeBlock.responseConfig.maxLength
-          : 1000,
-      },
+      responseConfig: normalizedResponseConfig,
     };
   }
 

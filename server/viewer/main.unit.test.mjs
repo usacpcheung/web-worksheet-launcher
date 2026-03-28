@@ -89,6 +89,32 @@ test('normalizeViewerPayload tolerates malformed blocks and coerces unknown kind
   assert.equal(payload.blocks[2].kind, 'content');
 });
 
+test('normalizeViewerBlock preserves and normalizes single_choice options', async () => {
+  const mod = await loadViewerModule();
+  const normalized = mod.normalizeViewerBlock({
+    blockId: 'q1',
+    kind: 'question',
+    position: 0,
+    prompt: { text: 'Choose one' },
+    responseConfig: {
+      inputType: 'single_choice',
+      options: [
+        { value: 'a', label: 'A' },
+        { value: 'b' },
+        'c',
+        null,
+      ],
+    },
+  }, 0);
+
+  assert.equal(normalized.responseConfig.inputType, 'single_choice');
+  assert.deepEqual(normalized.responseConfig.options, [
+    { value: 'a', label: 'A' },
+    { value: 'b', label: 'b' },
+    { value: 'c', label: 'c' },
+  ]);
+});
+
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
