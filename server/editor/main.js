@@ -59,6 +59,13 @@ function mapOptionsTextToResponseOptions(rawText) {
     .map((line) => ({ value: line, label: line }));
 }
 
+
+function buildViewerUrlFromCurrentLocation(currentHref, localDraftId) {
+  const viewerUrl = new URL('../viewer/', currentHref);
+  viewerUrl.searchParams.set('localDraftId', localDraftId);
+  return viewerUrl;
+}
+
 function normalizeBlocks(blocks) {
   if (!Array.isArray(blocks) || blocks.length === 0) {
     return [
@@ -1097,7 +1104,8 @@ function renderEditorShell(session) {
     if (!localDraftId) return;
     await session.saveNow();
     updateSummary();
-    window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);
+    const viewerUrl = buildViewerUrlFromCurrentLocation(window.location.href, localDraftId);
+    window.location.assign(viewerUrl);
   });
   questionInputType.addEventListener('change', () => {
     session.updateQuestionInputType(session.state.selectedBlockId, questionInputType.value);
@@ -1206,4 +1214,4 @@ bootstrapEditor().catch((error) => {
   }
 });
 
-export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions };
+export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation };

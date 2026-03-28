@@ -13,8 +13,8 @@ async function loadEditorModule() {
   );
 
   source = source.replace(
-    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{ EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions \};/,
-    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions };'
+    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{[^}]+\};/,
+    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation };'
   );
 
   globalThis.document = {
@@ -110,6 +110,25 @@ test('importWorksheetJson throws clear parse error for invalid JSON text', async
 test('editor shell no longer relies on 500ms summary interval loop', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('setInterval(updateSummary, 500)'), false);
+});
+
+test('viewer navigation no longer uses hardcoded /viewer absolute assign path', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);"), false);
+  assert.equal(source.includes('buildViewerUrlFromCurrentLocation(window.location.href, localDraftId)'), true);
+  assert.equal(source.includes("new URL('../viewer/', currentHref)"), true);
+});
+
+test('buildViewerUrlFromCurrentLocation resolves sibling viewer route from current page', async () => {
+  const mod = await loadEditorModule();
+  const rootResolved = mod.buildViewerUrlFromCurrentLocation('https://example.test/editor/', 'draft_root');
+  assert.equal(rootResolved.toString(), 'https://example.test/viewer/?localDraftId=draft_root');
+
+  const nestedResolved = mod.buildViewerUrlFromCurrentLocation(
+    'https://example.test/server/editor/index.html?mode=edit#section',
+    'draft_nested'
+  );
+  assert.equal(nestedResolved.toString(), 'https://example.test/server/viewer/?localDraftId=draft_nested');
 });
 
 test('mapOptionsTextToResponseOptions maps trimmed non-empty lines', async () => {
