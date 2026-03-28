@@ -162,7 +162,9 @@ class EditorDraftSession {
       lastSavedAt: null,
       lastSaveError: null,
       validationErrors: [],
+      authoringWarnings: [],
       blockValidation: {},
+      blockAuthoringWarnings: {},
       lastManualSaveAt: null,
       lastExportedAt: null,
       lastImportedAt: null,
@@ -219,13 +221,15 @@ class EditorDraftSession {
     };
   }
 
-  validateCurrentDraft() {
+  validateCurrentDraft(options = {}) {
     if (!this.state.draft) {
-      return { valid: false, errors: ['No active draft.'], blockValidation: {} };
+      return { valid: false, errors: ['No active draft.'], warnings: [], blockValidation: {}, blockAuthoringWarnings: {} };
     }
 
+    const requireAuthoringText = options.requireAuthoringText === true;
     const normalizedDraft = this.normalizeDraftForContracts(this.state.draft);
     const errors = [];
+    const warnings = [];
     if (!normalizedDraft.draftWorksheetId) errors.push('draft.draftWorksheetId must be a non-empty string');
     if (!normalizedDraft.title?.trim()) errors.push('draft.title must be a non-empty string');
     if (!Array.isArray(normalizedDraft.blocks) || normalizedDraft.blocks.length === 0) {
@@ -238,15 +242,22 @@ class EditorDraftSession {
         errors.push(`draft.blocks[${index}].position must be a non-negative integer`);
       }
       if (block.kind === 'question') {
-        if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
+        if (!block?.prompt?.text?.trim()) {
+          const message = `draft.blocks[${index}].prompt.text is required for question blocks`;
+          if (requireAuthoringText) errors.push(message);
+          else warnings.push(message);
+        }
         if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
       } else if (!block?.content?.text?.trim()) {
-        errors.push(`draft.blocks[${index}].content.text is required for content blocks`);
+        const message = `draft.blocks[${index}].content.text is required for content blocks`;
+        if (requireAuthoringText) errors.push(message);
+        else warnings.push(message);
       }
     });
 
     const validation = { valid: errors.length === 0, errors };
     const blockValidation = {};
+    const blockAuthoringWarnings = {};
 
     validation.errors.forEach((message) => {
       const blockMatch = message.match(/draft\.blocks\[(\d+)\]/);
@@ -257,10 +268,21 @@ class EditorDraftSession {
       blockValidation[blockId].push(message);
     });
 
-    this.state.validationErrors = validation.errors;
-    this.state.blockValidation = blockValidation;
+    warnings.forEach((message) => {
+      const blockMatch = message.match(/draft\.blocks\[(\d+)\]/);
+      if (!blockMatch) return;
+      const index = Number.parseInt(blockMatch[1], 10);
+      const blockId = normalizedDraft.blocks[index]?.blockId || `index_${index}`;
+      blockAuthoringWarnings[blockId] = blockAuthoringWarnings[blockId] || [];
+      blockAuthoringWarnings[blockId].push(message);
+    });
 
-    return { ...validation, blockValidation, normalizedDraft };
+    this.state.validationErrors = validation.errors;
+    this.state.authoringWarnings = warnings;
+    this.state.blockValidation = blockValidation;
+    this.state.blockAuthoringWarnings = blockAuthoringWarnings;
+
+    return { ...validation, warnings, blockValidation, blockAuthoringWarnings, normalizedDraft };
   }
 
   async createOrOpenByLocalDraftId(localDraftId, options = {}) {
@@ -591,9 +613,9 @@ class EditorDraftSession {
         this.state.lastSavedAt = updatedAt;
       }
 
-      this.state.lastSaveError = contractValidation.valid
-        ? null
-        : `Draft saved locally with validation errors (${contractValidation.errors.length}).`;
+      this.state.lastSaveError = validation.errors.length > 0
+        ? `Draft saved locally with validation errors (${validation.errors.length}).`
+        : null;
       this.persistRestoreMetadata();
       return persisted;
     } catch (error) {
@@ -667,7 +689,7 @@ class EditorDraftSession {
       throw new Error('No active draft to publish.');
     }
 
-    const validation = this.validateCurrentDraft();
+    const validation = this.validateCurrentDraft({ requireAuthoringText: true });
     if (!validation.valid) {
       throw new Error(`Draft validation failed: ${validation.errors.join('; ')}`);
     }
@@ -708,6 +730,10 @@ class EditorDraftSession {
   exportCurrentDraftToFile() {
     if (!this.state.draft) {
       throw new Error('No active draft to export.');
+    }
+    const validation = this.validateCurrentDraft({ requireAuthoringText: true });
+    if (!validation.valid) {
+      throw new Error(`Draft validation failed: ${validation.errors.join('; ')}`);
     }
 
     const timestampToken = new Date().toISOString().replace(/[:.]/g, '-');
@@ -1010,7 +1036,11 @@ function renderEditorShell(session) {
       : session.state.autosavePending
         ? 'Saving…'
         : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
-    validationText.textContent = `${draftValidation.errors.length} validation issue${draftValidation.errors.length === 1 ? '' : 's'}`;
+    validationText.textContent = draftValidation.errors.length > 0
+      ? `${draftValidation.errors.length} validation issue${draftValidation.errors.length === 1 ? '' : 's'}`
+      : draftValidation.warnings.length > 0
+        ? `Draft incomplete (${draftValidation.warnings.length} warning${draftValidation.warnings.length === 1 ? '' : 's'})`
+        : 'No validation blockers';
     localIdText.textContent = `localDraftId: ${session.state.draft?.localId || 'n/a'}`;
 
     validation.textContent = JSON.stringify(
@@ -1018,6 +1048,8 @@ function renderEditorShell(session) {
         valid: draftValidation.valid,
         errors: draftValidation.errors,
         byBlock: draftValidation.blockValidation,
+        authoringWarnings: draftValidation.warnings,
+        warningByBlock: draftValidation.blockAuthoringWarnings,
       },
       null,
       2

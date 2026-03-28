@@ -168,3 +168,32 @@ test('updateBlockContent writes to content and question prompts for selected dra
   const questionBlock = session.state.draft.blocks.find((b) => b.blockId === questionBlockId);
   assert.equal(questionBlock.prompt.text, 'What is your answer?');
 });
+
+test('validateCurrentDraft treats empty authoring text as warnings by default', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_soft');
+  const validation = session.validateCurrentDraft();
+  assert.equal(validation.valid, true);
+  assert.equal(validation.errors.length, 0);
+  assert.equal(validation.warnings.length > 0, true);
+});
+
+test('validateCurrentDraft can enforce strict authoring requirements', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_strict');
+  const validation = session.validateCurrentDraft({ requireAuthoringText: true });
+  assert.equal(validation.valid, false);
+  assert.equal(validation.errors.length > 0, true);
+});
