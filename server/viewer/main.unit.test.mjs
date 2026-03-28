@@ -13,8 +13,8 @@ async function loadViewerModule(overrides = {}) {
   );
 
   source = source.replace(
-    /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{ ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock \};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock };'
+    /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{\n  ViewerAttemptSession,\n  normalizeViewerPayload,\n  resolveImportedWorksheetPayload,\n  normalizeViewerBlock,\n  computeAnswerSummary,\n  partitionBlocksForDisplay,\n  getInputHelperText,\n\};/,
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -146,4 +146,41 @@ test('completeLocalAttempt clears pending autosave timer before immediate autosa
   assert.equal(session.autosaveTimer, null);
   assert.equal(autosaveCalls, 1);
   assert.equal(timerFired, false);
+});
+
+test('partitionBlocksForDisplay returns ordered content and question sets', async () => {
+  const mod = await loadViewerModule();
+  const result = mod.partitionBlocksForDisplay([
+    { blockId: 'q2', kind: 'question', position: 2 },
+    { blockId: 'c1', kind: 'content', position: 0 },
+    { blockId: 'q1', kind: 'question', position: 1 },
+  ]);
+
+  assert.deepEqual(result.contentBlocks.map((b) => b.blockId), ['c1']);
+  assert.deepEqual(result.questionBlocks.map((b) => b.blockId), ['q1', 'q2']);
+});
+
+test('computeAnswerSummary counts only question blocks with non-empty answers', async () => {
+  const mod = await loadViewerModule();
+  const summary = mod.computeAnswerSummary(
+    {
+      blocks: [
+        { blockId: 'c1', kind: 'content' },
+        { blockId: 'q1', kind: 'question' },
+        { blockId: 'q2', kind: 'question' },
+      ],
+    },
+    {
+      q1: { value: 'hello' },
+      q2: { value: '' },
+    }
+  );
+  assert.deepEqual(summary, { answered: 1, total: 2 });
+});
+
+test('getInputHelperText maps input types to guidance', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.getInputHelperText('number'), 'Numeric answer only.');
+  assert.equal(mod.getInputHelperText('single_choice'), 'Choose one option.');
+  assert.equal(mod.getInputHelperText('plain_text'), 'Long-form text response.');
 });

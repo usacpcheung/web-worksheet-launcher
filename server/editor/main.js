@@ -48,6 +48,17 @@ function createEmptyQuestionBlock(position) {
   };
 }
 
+const TEXT_INPUT_TYPES = new Set(['plain_text', 'short_text']);
+
+function mapOptionsTextToResponseOptions(rawText) {
+  if (!rawText) return [];
+  return String(rawText)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => ({ value: line, label: line }));
+}
+
 function normalizeBlocks(blocks) {
   if (!Array.isArray(blocks) || blocks.length === 0) {
     return [
@@ -322,6 +333,75 @@ class EditorDraftSession {
       };
     });
 
+    this.touchDraft();
+  }
+
+  updateQuestionInputType(blockId, inputType) {
+    if (!this.state.draft || !blockId) return;
+    const normalizedInputType = ['plain_text', 'short_text', 'number', 'boolean', 'single_choice'].includes(inputType)
+      ? inputType
+      : 'plain_text';
+
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') {
+        return block;
+      }
+      const nextResponseConfig = {
+        ...(isRecord(block.responseConfig) ? block.responseConfig : {}),
+        inputType: normalizedInputType,
+      };
+      if (TEXT_INPUT_TYPES.has(normalizedInputType) && !Number.isFinite(nextResponseConfig.maxLength)) {
+        nextResponseConfig.maxLength = 500;
+      }
+      if (normalizedInputType !== 'single_choice') {
+        delete nextResponseConfig.options;
+      } else if (!Array.isArray(nextResponseConfig.options)) {
+        nextResponseConfig.options = [];
+      }
+
+      return {
+        ...block,
+        responseConfig: nextResponseConfig,
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionMaxLength(blockId, maxLength) {
+    if (!this.state.draft || !blockId) return;
+    const parsed = Number.parseInt(maxLength, 10);
+    const normalized = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') {
+        return block;
+      }
+      return {
+        ...block,
+        responseConfig: {
+          ...(isRecord(block.responseConfig) ? block.responseConfig : {}),
+          maxLength: normalized,
+        },
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionOptionsFromText(blockId, rawText) {
+    if (!this.state.draft || !blockId) return;
+    const normalizedOptions = mapOptionsTextToResponseOptions(rawText);
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') {
+        return block;
+      }
+      return {
+        ...block,
+        responseConfig: {
+          ...(isRecord(block.responseConfig) ? block.responseConfig : {}),
+          inputType: 'single_choice',
+          options: normalizedOptions,
+        },
+      };
+    });
     this.touchDraft();
   }
 
@@ -707,21 +787,76 @@ class EditorDraftSession {
 
 function renderEditorShell(session) {
   if (!app) return;
-  const summary = document.createElement('pre');
-  const status = document.createElement('p');
-  const validation = document.createElement('pre');
-  const blockPicker = document.createElement('select');
+
+  const shell = document.createElement('div');
+  shell.className = 'editor-shell';
+
+  const topBar = document.createElement('section');
+  topBar.className = 'editor-topbar';
+  const saveStateEl = document.createElement('p');
+  const lastSavedEl = document.createElement('p');
+  const validationEl = document.createElement('p');
+  const localDraftIdEl = document.createElement('p');
+  const saveErrorEl = document.createElement('p');
+  saveErrorEl.className = 'error-text';
+
+  const layout = document.createElement('section');
+  layout.className = 'editor-layout';
+
+  const leftPanel = document.createElement('aside');
+  leftPanel.className = 'editor-panel left';
+  const rightPanel = document.createElement('section');
+  rightPanel.className = 'editor-panel right';
+
+  const leftHeading = document.createElement('h2');
+  leftHeading.textContent = 'Blocks';
+  const rightHeading = document.createElement('h2');
+  rightHeading.textContent = 'Block details';
+
+  const blockList = document.createElement('ul');
+  blockList.className = 'block-list';
+
+  const controlsRow = document.createElement('div');
+  controlsRow.className = 'button-row';
+
+  const metaRow = document.createElement('div');
+  metaRow.className = 'button-row';
+
+  const statusRow = document.createElement('p');
+  statusRow.className = 'muted';
+
   const blockKind = document.createElement('select');
+  blockKind.className = 'control';
   const importInput = document.createElement('textarea');
   importInput.rows = 8;
   importInput.placeholder = 'Paste draft JSON here to import';
+  importInput.className = 'control';
   const titleInput = document.createElement('input');
   titleInput.placeholder = 'Worksheet title';
+  titleInput.className = 'control';
   const blockEditor = document.createElement('textarea');
   blockEditor.rows = 8;
-  blockEditor.placeholder = 'Selected block text';
+  blockEditor.className = 'control';
+
+  const questionInputType = document.createElement('select');
+  questionInputType.className = 'control';
+  ['plain_text', 'short_text', 'number', 'boolean', 'single_choice'].forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    questionInputType.appendChild(option);
+  });
+  const questionMaxLength = document.createElement('input');
+  questionMaxLength.type = 'number';
+  questionMaxLength.min = '1';
+  questionMaxLength.className = 'control';
+  const questionOptions = document.createElement('textarea');
+  questionOptions.rows = 6;
+  questionOptions.className = 'control';
+  questionOptions.placeholder = 'One option per line';
 
   const modeSelect = document.createElement('select');
+  modeSelect.className = 'control';
   ['edit', 'preview'].forEach((mode) => {
     const option = document.createElement('option');
     option.value = mode;
@@ -738,16 +873,19 @@ function renderEditorShell(session) {
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
-  saveBtn.textContent = 'Save now';
+  saveBtn.textContent = 'Save Now';
   const addContentBtn = document.createElement('button');
   addContentBtn.type = 'button';
-  addContentBtn.textContent = 'Add content block';
+  addContentBtn.textContent = 'Add Content';
   const addQuestionBtn = document.createElement('button');
   addQuestionBtn.type = 'button';
-  addQuestionBtn.textContent = 'Add question block';
+  addQuestionBtn.textContent = 'Add Question';
   const deleteBlockBtn = document.createElement('button');
   deleteBlockBtn.type = 'button';
-  deleteBlockBtn.textContent = 'Delete selected block';
+  deleteBlockBtn.textContent = 'Delete Selected';
+  const openViewerBtn = document.createElement('button');
+  openViewerBtn.type = 'button';
+  openViewerBtn.textContent = 'Open in Viewer (same tab)';
   const importBtn = document.createElement('button');
   importBtn.type = 'button';
   importBtn.textContent = 'Import pasted JSON';
@@ -770,18 +908,6 @@ function renderEditorShell(session) {
   publishBtn.type = 'button';
   publishBtn.textContent = 'Publish (Sign-in required)';
 
-  const refreshBlockPicker = () => {
-    const previous = blockPicker.value;
-    blockPicker.innerHTML = '';
-    (session.state.draft?.blocks || []).forEach((block, index) => {
-      const option = document.createElement('option');
-      option.value = block.blockId;
-      option.textContent = `${index + 1}. ${block.kind} (${block.blockId})`;
-      blockPicker.appendChild(option);
-    });
-    blockPicker.value = session.state.selectedBlockId || previous || blockPicker.value;
-  };
-
   const syncFormControls = () => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
     const selectedText = selectedBlock?.prompt?.text || selectedBlock?.content?.text || '';
@@ -799,48 +925,107 @@ function renderEditorShell(session) {
     if (selectedBlock && activeElement !== blockKind) {
       blockKind.value = selectedBlock.kind;
     }
-    refreshBlockPicker();
+    if (selectedBlock?.kind === 'question') {
+      const responseConfig = selectedBlock.responseConfig || {};
+      if (activeElement !== questionInputType) {
+        questionInputType.value = responseConfig.inputType || 'plain_text';
+      }
+      if (activeElement !== questionMaxLength) {
+        questionMaxLength.value = responseConfig.maxLength || 500;
+      }
+      if (activeElement !== questionOptions) {
+        questionOptions.value = (responseConfig.options || [])
+          .map((option) => String(option?.value ?? option?.label ?? ''))
+          .join('\n');
+      }
+    }
+  };
+
+  const renderBlockList = () => {
+    blockList.innerHTML = '';
+    const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);
+    blocks.forEach((block) => {
+      const item = document.createElement('li');
+      item.className = `block-item ${block.blockId === session.state.selectedBlockId ? 'selected' : ''}`;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'block-select';
+      const previewSource = block.kind === 'question' ? block?.prompt?.text : block?.content?.text;
+      const preview = String(previewSource || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
+      button.textContent = `${block.position + 1}. ${block.kind} — ${preview}`;
+      button.addEventListener('click', () => {
+        session.selectBlock(block.blockId);
+        updateSummary();
+      });
+      item.appendChild(button);
+      blockList.appendChild(item);
+    });
+  };
+
+  const renderDetailEditor = () => {
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
+    rightPanel.innerHTML = '';
+    rightPanel.append(rightHeading, statusRow);
+    if (!selectedBlock) {
+      const empty = document.createElement('p');
+      empty.textContent = 'Select a block to edit.';
+      rightPanel.appendChild(empty);
+      return;
+    }
+
+    const kindLabel = document.createElement('label');
+    kindLabel.textContent = 'Block kind';
+    rightPanel.append(kindLabel, blockKind);
+
+    if (selectedBlock.kind === 'content') {
+      const contentLabel = document.createElement('label');
+      contentLabel.textContent = 'Content text';
+      blockEditor.placeholder = 'Content block text';
+      rightPanel.append(contentLabel, blockEditor);
+      return;
+    }
+
+    const promptLabel = document.createElement('label');
+    promptLabel.textContent = 'Question prompt';
+    blockEditor.placeholder = 'Question prompt';
+    rightPanel.append(promptLabel, blockEditor);
+
+    const inputTypeLabel = document.createElement('label');
+    inputTypeLabel.textContent = 'Answer input type';
+    rightPanel.append(inputTypeLabel, questionInputType);
+
+    const activeInputType = selectedBlock.responseConfig?.inputType || 'plain_text';
+    if (TEXT_INPUT_TYPES.has(activeInputType)) {
+      const maxLengthLabel = document.createElement('label');
+      maxLengthLabel.textContent = 'Max length';
+      rightPanel.append(maxLengthLabel, questionMaxLength);
+    }
+
+    if (activeInputType === 'single_choice') {
+      const optionsLabel = document.createElement('label');
+      optionsLabel.textContent = 'Options';
+      rightPanel.append(optionsLabel, questionOptions);
+    }
   };
 
   const updateSummary = () => {
-    const restore = session.getRouteUiRestoreMetadata();
     const draftValidation = session.validateCurrentDraft();
     syncFormControls();
+    renderBlockList();
+    renderDetailEditor();
 
-    status.textContent = session.state.lastSaveError
-      ? `⚠️ ${session.state.lastSaveError}`
+    const saveState = session.state.lastSaveError
+      ? 'Save error'
       : session.state.autosavePending
         ? 'Saving…'
-        : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+        : 'Saved';
 
-    validation.textContent = JSON.stringify(
-      {
-        valid: draftValidation.valid,
-        errors: draftValidation.errors,
-        byBlock: draftValidation.blockValidation,
-      },
-      null,
-      2
-    );
-
-    summary.textContent = JSON.stringify(
-      {
-        localDraftId: session.state.draft?.localId || null,
-        lastSavedAt: session.state.lastSavedAt,
-        lastManualSaveAt: session.state.lastManualSaveAt,
-        lastImportedAt: session.state.lastImportedAt,
-        lastExportedAt: session.state.lastExportedAt,
-        autosavePending: session.state.autosavePending,
-        mode: session.state.mode,
-        selectedBlockId: session.state.selectedBlockId,
-        restore,
-        publishPreviewSnapshotId: session.state.publishPreview?.snapshotId || null,
-        recoveryMessage: session.state.recoveryMessage,
-        lastProtectedAction: session.state.lastProtectedAction,
-      },
-      null,
-      2
-    );
+    saveStateEl.textContent = `State: ${saveState}`;
+    lastSavedEl.textContent = `Last saved: ${session.state.lastSavedAt || 'Not yet saved'}`;
+    validationEl.textContent = `Validation issues: ${draftValidation.errors.length}`;
+    localDraftIdEl.textContent = `localDraftId: ${session.state.draft?.localId || 'n/a'}`;
+    saveErrorEl.textContent = session.state.lastSaveError ? `Error: ${session.state.lastSaveError}` : '';
+    statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'} · Mode: ${session.state.mode}`;
   };
 
   titleInput.addEventListener('input', () => {
@@ -849,10 +1034,6 @@ function renderEditorShell(session) {
   });
   modeSelect.addEventListener('change', () => {
     session.setMode(modeSelect.value);
-    updateSummary();
-  });
-  blockPicker.addEventListener('change', () => {
-    session.selectBlock(blockPicker.value);
     updateSummary();
   });
   blockKind.addEventListener('change', () => {
@@ -877,6 +1058,23 @@ function renderEditorShell(session) {
   });
   deleteBlockBtn.addEventListener('click', () => {
     session.deleteBlock(session.state.selectedBlockId);
+    updateSummary();
+  });
+  openViewerBtn.addEventListener('click', () => {
+    const localDraftId = session.state.draft?.localId;
+    if (!localDraftId) return;
+    window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);
+  });
+  questionInputType.addEventListener('change', () => {
+    session.updateQuestionInputType(session.state.selectedBlockId, questionInputType.value);
+    updateSummary();
+  });
+  questionMaxLength.addEventListener('input', () => {
+    session.updateQuestionMaxLength(session.state.selectedBlockId, questionMaxLength.value);
+    updateSummary();
+  });
+  questionOptions.addEventListener('input', () => {
+    session.updateQuestionOptionsFromText(session.state.selectedBlockId, questionOptions.value);
     updateSummary();
   });
   importBtn.addEventListener('click', async () => {
@@ -909,29 +1107,18 @@ function renderEditorShell(session) {
     updateSummary();
   });
 
+  controlsRow.append(addContentBtn, addQuestionBtn, deleteBlockBtn, openViewerBtn);
+  metaRow.append(saveBtn, modeSelect, exportBtn, importBtn);
+  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, metaRow, importInput);
+  rightPanel.append(rightHeading, statusRow);
+  layout.append(leftPanel, rightPanel);
+  const protectedRow = document.createElement('div');
+  protectedRow.className = 'button-row';
+  protectedRow.append(localPublishBtn, rewriteBtn, t2aBtn, syncDraftBtn, publishBtn);
+  topBar.append(saveStateEl, lastSavedEl, validationEl, localDraftIdEl, saveErrorEl);
+  shell.append(topBar, layout, protectedRow);
   app.innerHTML = '';
-  app.append(
-    titleInput,
-    modeSelect,
-    status,
-    blockPicker,
-    blockKind,
-    blockEditor,
-    saveBtn,
-    addContentBtn,
-    addQuestionBtn,
-    deleteBlockBtn,
-    exportBtn,
-    importInput,
-    importBtn,
-    localPublishBtn,
-    rewriteBtn,
-    t2aBtn,
-    syncDraftBtn,
-    publishBtn,
-    validation,
-    summary
-  );
+  app.append(shell);
   updateSummary();
 }
 
@@ -985,4 +1172,4 @@ bootstrapEditor().catch((error) => {
   }
 });
 
-export { EditorDraftSession, createDraftRecord, normalizeBlocks };
+export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions };

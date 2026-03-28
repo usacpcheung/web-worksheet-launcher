@@ -13,8 +13,8 @@ async function loadEditorModule() {
   );
 
   source = source.replace(
-    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{ EditorDraftSession, createDraftRecord, normalizeBlocks \};/,
-    'export { EditorDraftSession, createDraftRecord, normalizeBlocks };'
+    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{ EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions \};/,
+    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions };'
   );
 
   globalThis.document = {
@@ -110,4 +110,36 @@ test('importWorksheetJson throws clear parse error for invalid JSON text', async
 test('editor shell no longer relies on 500ms summary interval loop', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('setInterval(updateSummary, 500)'), false);
+});
+
+test('mapOptionsTextToResponseOptions maps trimmed non-empty lines', async () => {
+  const mod = await loadEditorModule();
+  const mapped = mod.mapOptionsTextToResponseOptions('  Alpha\n\nBeta  \n Gamma ');
+  assert.deepEqual(mapped, [
+    { value: 'Alpha', label: 'Alpha' },
+    { value: 'Beta', label: 'Beta' },
+    { value: 'Gamma', label: 'Gamma' },
+  ]);
+});
+
+test('question field updates map inputType, maxLength, and options through draft blocks', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_q');
+  const block = session.createBlock('question');
+  session.selectBlock(block.blockId);
+
+  session.updateQuestionInputType(block.blockId, 'single_choice');
+  session.updateQuestionOptionsFromText(block.blockId, 'One\nTwo');
+  session.updateQuestionInputType(block.blockId, 'short_text');
+  session.updateQuestionMaxLength(block.blockId, '25');
+
+  const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(updated.responseConfig.inputType, 'short_text');
+  assert.equal(updated.responseConfig.maxLength, 25);
+  assert.equal(updated.responseConfig.options, undefined);
 });

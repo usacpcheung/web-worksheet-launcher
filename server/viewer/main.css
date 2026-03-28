@@ -1,0 +1,89 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #f8fafc;
+  color: #111827;
+}
+
+#app {
+  padding: 16px;
+}
+
+.viewer-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.viewer-header,
+.viewer-section,
+.sticky-action-row {
+  background: #fff;
+  border: 1px solid #dbe1ea;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.viewer-header h1,
+.viewer-section h2 {
+  margin: 0 0 8px;
+}
+
+.answer-summary {
+  margin: 6px 0 0;
+  font-weight: 600;
+}
+
+.muted {
+  margin: 4px 0;
+  color: #475467;
+  font-size: 0.93rem;
+}
+
+.content-card,
+.question-card {
+  border: 1px solid #e4e7ec;
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: #fcfcfd;
+}
+
+.question-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.sticky-action-row {
+  position: sticky;
+  bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.secondary-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
