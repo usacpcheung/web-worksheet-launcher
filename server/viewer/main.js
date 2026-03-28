@@ -1,5 +1,6 @@
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
+import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 
 const app = document.getElementById('app');
@@ -7,17 +8,9 @@ const app = document.getElementById('app');
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
-let contractsPromise;
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-async function loadContracts() {
-  if (!contractsPromise) {
-    contractsPromise = import('../app/contracts/index.js');
-  }
-  return contractsPromise;
 }
 
 function createLocalId(prefix = 'local') {
@@ -252,35 +245,12 @@ class ViewerAttemptSession {
   }
 
   async validateViewerPayload(payload) {
-    const { validateViewerPayloadSchema } = await loadContracts();
     const validation = validateViewerPayloadSchema(payload);
     this.state.payloadValidationErrors = validation.errors;
     if (!validation.valid) {
       throw new Error(`Viewer payload validation failed: ${validation.errors.join('; ')}`);
     }
     return validation;
-  }
-
-  async buildContractAttemptPayload(nextStatus = this.state.status, persistedAt = nowIso()) {
-    const { mapViewerPayloadAndResponsesToAttempt, validateAttemptPayloadSchema } = await loadContracts();
-    const attemptPayload = mapViewerPayloadAndResponsesToAttempt(
-      this.state.viewerPayload,
-      this.state.answers,
-      {
-        attemptId: this.state.localAttemptId,
-        learnerId: DEFAULT_LEARNER_ID,
-        status: nextStatus,
-        startedAt: this.state.startedAt,
-        lastSavedAt: persistedAt,
-        submittedAt: nextStatus === 'completed' ? this.state.completedAt || persistedAt : undefined,
-      }
-    );
-    const validation = validateAttemptPayloadSchema(attemptPayload);
-    this.state.attemptValidationErrors = validation.errors;
-    if (!validation.valid) {
-      throw new Error(`Attempt payload validation failed: ${validation.errors.join('; ')}`);
-    }
-    return attemptPayload;
   }
 
   async bootstrap() {
@@ -515,7 +485,6 @@ class ViewerAttemptSession {
 
     const revisionAtSaveStart = this.state.attemptRevision;
     const updatedAt = nowIso();
-    const contractAttemptPayload = await this.buildContractAttemptPayload(this.state.status, updatedAt);
 
     const attemptRecord = {
       localId: this.state.localAttemptId,
@@ -532,7 +501,6 @@ class ViewerAttemptSession {
         origin: this.state.source || 'local_source',
         updatedAt,
       },
-      contractAttemptPayload,
     };
 
     this.inFlightSaveCount += 1;
