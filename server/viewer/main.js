@@ -7,9 +7,17 @@ const app = document.getElementById('app');
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
+let contractsPromise;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+async function loadContracts() {
+  if (!contractsPromise) {
+    contractsPromise = import('../app/contracts/index.js');
+  }
+  return contractsPromise;
 }
 
 function createLocalId(prefix = 'local') {
@@ -131,6 +139,20 @@ function normalizeViewerPayload(payload, fallbackLabel = 'Local worksheet') {
   };
 }
 
+function coerceAnswerValueByInputType(inputType, rawValue) {
+  if (inputType === 'number') {
+    if (rawValue === '' || rawValue === null || rawValue === undefined) return '';
+    const numeric = Number(rawValue);
+    return Number.isFinite(numeric) ? numeric : '';
+  }
+  if (inputType === 'boolean') {
+    if (rawValue === true || rawValue === 'true') return true;
+    if (rawValue === false || rawValue === 'false') return false;
+    return null;
+  }
+  return String(rawValue ?? '');
+}
+
 function mapDraftRecordToViewerPayload(draftRecord) {
   return normalizeViewerPayload(
     {
@@ -191,6 +213,9 @@ class ViewerAttemptSession {
       completedAt: null,
       autosavePending: false,
       lastSaveError: null,
+      payloadValidationErrors: [],
+      attemptValidationErrors: [],
+      lastManualSaveAt: null,
       source: 'unknown',
       attemptRevision: 0,
       lastSavedRevision: 0,
@@ -200,6 +225,38 @@ class ViewerAttemptSession {
 
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
+  }
+
+  async validateViewerPayload(payload) {
+    const { validateViewerPayloadSchema } = await loadContracts();
+    const validation = validateViewerPayloadSchema(payload);
+    this.state.payloadValidationErrors = validation.errors;
+    if (!validation.valid) {
+      throw new Error(`Viewer payload validation failed: ${validation.errors.join('; ')}`);
+    }
+    return validation;
+  }
+
+  async buildContractAttemptPayload(nextStatus = this.state.status, persistedAt = nowIso()) {
+    const { mapViewerPayloadAndResponsesToAttempt, validateAttemptPayloadSchema } = await loadContracts();
+    const attemptPayload = mapViewerPayloadAndResponsesToAttempt(
+      this.state.viewerPayload,
+      this.state.answers,
+      {
+        attemptId: this.state.localAttemptId,
+        learnerId: DEFAULT_LEARNER_ID,
+        status: nextStatus,
+        startedAt: this.state.startedAt,
+        lastSavedAt: persistedAt,
+        submittedAt: nextStatus === 'completed' ? this.state.completedAt || persistedAt : undefined,
+      }
+    );
+    const validation = validateAttemptPayloadSchema(attemptPayload);
+    this.state.attemptValidationErrors = validation.errors;
+    if (!validation.valid) {
+      throw new Error(`Attempt payload validation failed: ${validation.errors.join('; ')}`);
+    }
+    return attemptPayload;
   }
 
   async bootstrap() {
@@ -216,6 +273,7 @@ class ViewerAttemptSession {
     }
 
     const loadedPayload = await this.loadViewerPayloadFromSources(params);
+    await this.validateViewerPayload(loadedPayload.payload);
     const attempt = this.createLocalAttemptState(loadedPayload.payload, loadedPayload.source);
     this.applyAttemptState(attempt, { markDirty: true });
     this.persistResumeMetadata();
@@ -234,6 +292,7 @@ class ViewerAttemptSession {
         attemptRecord.viewerPayload,
         attemptRecord.viewerPayload?.title || 'Resumed worksheet'
       );
+      await this.validateViewerPayload(normalizedPayload);
 
       this.applyAttemptState(
         {
@@ -377,10 +436,19 @@ class ViewerAttemptSession {
       return;
     }
 
+    const questionBlock = this.state.viewerPayload?.blocks?.find(
+      (block) => block.blockId === blockId && block.kind === 'question'
+    );
+    if (!questionBlock) {
+      return;
+    }
+    const inputType = questionBlock.responseConfig?.inputType || 'plain_text';
+    const coercedValue = coerceAnswerValueByInputType(inputType, value);
+
     this.state.answers = {
       ...this.state.answers,
       [blockId]: {
-        value,
+        value: coercedValue,
         answeredAt: nowIso(),
       },
     };
@@ -423,6 +491,7 @@ class ViewerAttemptSession {
 
     const revisionAtSaveStart = this.state.attemptRevision;
     const updatedAt = nowIso();
+    const contractAttemptPayload = await this.buildContractAttemptPayload(this.state.status, updatedAt);
 
     const attemptRecord = {
       localId: this.state.localAttemptId,
@@ -439,6 +508,7 @@ class ViewerAttemptSession {
         origin: this.state.source || 'local_source',
         updatedAt,
       },
+      contractAttemptPayload,
     };
 
     this.inFlightSaveCount += 1;
@@ -461,6 +531,12 @@ class ViewerAttemptSession {
       this.state.autosavePending =
         this.inFlightSaveCount > 0 || this.state.lastSavedRevision < this.state.attemptRevision;
     }
+  }
+
+  async saveNow() {
+    const persisted = await this.autosave();
+    this.state.lastManualSaveAt = nowIso();
+    return persisted;
   }
 
 
@@ -544,6 +620,8 @@ function renderViewerShell(session) {
 
   const form = document.createElement('div');
   form.id = 'viewer-answer-form';
+  const status = document.createElement('p');
+  const validation = document.createElement('pre');
 
   const blocks = [...session.state.viewerPayload.blocks].sort((a, b) => a.position - b.position);
 
@@ -558,26 +636,87 @@ function renderViewerShell(session) {
     if (block.kind === 'question') {
       const label = document.createElement('label');
       label.textContent = block.prompt?.text || 'Question';
-      label.htmlFor = `answer-${block.blockId}`;
+      const inputType = block.responseConfig?.inputType || 'plain_text';
+      const controlId = `answer-${block.blockId}`;
+      label.htmlFor = controlId;
 
-      const textarea = document.createElement('textarea');
-      textarea.id = `answer-${block.blockId}`;
-      textarea.rows = 5;
-      textarea.maxLength = block.responseConfig?.maxLength || 1000;
-      textarea.value = String(session.state.answers?.[block.blockId]?.value || '');
-      textarea.disabled = session.state.status === 'completed';
-      textarea.addEventListener('input', () => {
-        session.setAnswer(block.blockId, textarea.value);
-        updateSummary();
-      });
+      let control;
+      if (inputType === 'short_text') {
+        control = document.createElement('input');
+        control.type = 'text';
+        control.maxLength = block.responseConfig?.maxLength || 200;
+        control.value = String(session.state.answers?.[block.blockId]?.value || '');
+        control.addEventListener('input', () => {
+          session.setAnswer(block.blockId, control.value);
+          updateSummary();
+        });
+      } else if (inputType === 'number') {
+        control = document.createElement('input');
+        control.type = 'number';
+        const priorValue = session.state.answers?.[block.blockId]?.value;
+        control.value = priorValue === '' || priorValue === null || priorValue === undefined ? '' : String(priorValue);
+        control.addEventListener('input', () => {
+          session.setAnswer(block.blockId, control.value);
+          updateSummary();
+        });
+      } else if (inputType === 'boolean') {
+        control = document.createElement('select');
+        [
+          { value: '', label: 'Select…' },
+          { value: 'true', label: 'True' },
+          { value: 'false', label: 'False' },
+        ].forEach((optionConfig) => {
+          const option = document.createElement('option');
+          option.value = optionConfig.value;
+          option.textContent = optionConfig.label;
+          control.appendChild(option);
+        });
+        const priorValue = session.state.answers?.[block.blockId]?.value;
+        control.value = priorValue === true ? 'true' : priorValue === false ? 'false' : '';
+        control.addEventListener('change', () => {
+          session.setAnswer(block.blockId, control.value);
+          updateSummary();
+        });
+      } else if (inputType === 'single_choice' && Array.isArray(block.responseConfig?.options)) {
+        control = document.createElement('select');
+        const blank = document.createElement('option');
+        blank.value = '';
+        blank.textContent = 'Select…';
+        control.appendChild(blank);
+        block.responseConfig.options.forEach((opt) => {
+          const option = document.createElement('option');
+          option.value = String(opt.value ?? opt.label ?? '');
+          option.textContent = String(opt.label ?? opt.value ?? '');
+          control.appendChild(option);
+        });
+        control.value = String(session.state.answers?.[block.blockId]?.value || '');
+        control.addEventListener('change', () => {
+          session.setAnswer(block.blockId, control.value);
+          updateSummary();
+        });
+      } else {
+        control = document.createElement('textarea');
+        control.rows = 5;
+        control.maxLength = block.responseConfig?.maxLength || 1000;
+        control.value = String(session.state.answers?.[block.blockId]?.value || '');
+        control.addEventListener('input', () => {
+          session.setAnswer(block.blockId, control.value);
+          updateSummary();
+        });
+      }
 
-      form.append(label, textarea);
+      control.id = controlId;
+      control.disabled = session.state.status === 'completed';
+      form.append(label, control);
     }
   });
 
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.textContent = 'Save now';
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
-  completeBtn.textContent = 'Complete Local Attempt';
+  completeBtn.textContent = 'Submit / finalize local attempt';
 
   const syncResumeBtn = document.createElement('button');
   syncResumeBtn.type = 'button';
@@ -590,8 +729,8 @@ function renderViewerShell(session) {
   completeBtn.addEventListener('click', async () => {
     await session.completeLocalAttempt();
     completeBtn.disabled = true;
-    Array.from(form.querySelectorAll('textarea')).forEach((textarea) => {
-      textarea.disabled = true;
+    Array.from(form.querySelectorAll('textarea, input, select')).forEach((control) => {
+      control.disabled = true;
     });
     updateSummary();
   });
@@ -600,6 +739,21 @@ function renderViewerShell(session) {
   summary.id = 'viewer-state-summary';
 
   const updateSummary = () => {
+    status.textContent = session.state.lastSaveError
+      ? `⚠️ ${session.state.lastSaveError}`
+      : session.state.autosavePending
+        ? 'Saving…'
+        : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+
+    validation.textContent = JSON.stringify(
+      {
+        payloadErrors: session.state.payloadValidationErrors,
+        attemptErrors: session.state.attemptValidationErrors,
+      },
+      null,
+      2
+    );
+
     summary.textContent = JSON.stringify(
       {
         localAttemptId: session.state.localAttemptId,
@@ -608,6 +762,7 @@ function renderViewerShell(session) {
         status: session.state.status,
         autosavePending: session.state.autosavePending,
         lastSavedAt: session.state.lastSavedAt,
+        lastManualSaveAt: session.state.lastManualSaveAt,
         completedAt: session.state.completedAt,
         answerCount: Object.keys(session.state.answers || {}).length,
         source: session.state.source,
@@ -619,6 +774,10 @@ function renderViewerShell(session) {
     );
   };
 
+  saveBtn.addEventListener('click', async () => {
+    await session.saveNow();
+    updateSummary();
+  });
   syncResumeBtn.addEventListener('click', async () => {
     await session.triggerProtectedAction('resumeAttemptSyncAfterLogin');
     updateSummary();
@@ -630,9 +789,8 @@ function renderViewerShell(session) {
   });
 
   app.innerHTML = '';
-  app.append(heading, form, completeBtn, syncResumeBtn, rewriteAssistBtn, summary);
+  app.append(heading, status, form, saveBtn, completeBtn, syncResumeBtn, rewriteAssistBtn, validation, summary);
   updateSummary();
-  setInterval(updateSummary, 500);
 }
 
 async function bootstrapViewer() {

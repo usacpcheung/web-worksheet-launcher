@@ -6,6 +6,8 @@ const app = document.getElementById('app');
 const AUTOSAVE_MS = 1000;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
+const DEFAULT_PUBLISHER_ID = 'local_editor';
+let contractsPromise;
 
 function nowIso() {
   return new Date().toISOString();
@@ -21,6 +23,29 @@ function createLocalId(prefix = 'local') {
 
 function isRecord(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function loadContracts() {
+  if (!contractsPromise) {
+    contractsPromise = import('../app/contracts/index.js');
+  }
+  return contractsPromise;
+}
+
+function createEmptyQuestionBlock(position) {
+  return {
+    blockId: createLocalId('q'),
+    kind: 'question',
+    position,
+    prompt: {
+      text: '',
+      format: 'plain_text',
+    },
+    responseConfig: {
+      inputType: 'plain_text',
+      maxLength: 500,
+    },
+  };
 }
 
 function normalizeBlocks(blocks) {
@@ -56,6 +81,9 @@ function normalizeBlocks(blocks) {
         text: String(promptSource.text || ''),
         format: promptSource.format || 'plain_text',
       };
+      normalized.responseConfig = isRecord(source.responseConfig)
+        ? { ...source.responseConfig }
+        : { inputType: 'plain_text', maxLength: 500 };
       return normalized;
     }
 
@@ -121,6 +149,12 @@ class EditorDraftSession {
       autosavePending: false,
       lastSavedAt: null,
       lastSaveError: null,
+      validationErrors: [],
+      blockValidation: {},
+      lastManualSaveAt: null,
+      lastExportedAt: null,
+      lastImportedAt: null,
+      publishPreview: null,
       draftRevision: 0,
       lastSavedRevision: 0,
       recoveryMessage: null,
@@ -129,6 +163,85 @@ class EditorDraftSession {
 
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
+  }
+
+  normalizeDraftForContracts(draft) {
+    return {
+      draftWorksheetId: draft.localId,
+      title: String(draft.title || '').trim() || 'Untitled worksheet',
+      blocks: normalizeBlocks(draft.blocks).map((block, index) => {
+        const base = {
+          blockId: block.blockId || createLocalId('blk'),
+          kind: block.kind === 'question' ? 'question' : 'content',
+          position: Number.isInteger(block.position) ? block.position : index,
+        };
+
+        if (base.kind === 'question') {
+          return {
+            ...base,
+            prompt: {
+              text: String(block?.prompt?.text || ''),
+              format: block?.prompt?.format || 'plain_text',
+            },
+            responseConfig: isRecord(block.responseConfig)
+              ? { ...block.responseConfig }
+              : { inputType: 'plain_text', maxLength: 500 },
+          };
+        }
+
+        return {
+          ...base,
+          content: {
+            text: String(block?.content?.text || ''),
+            format: block?.content?.format || 'plain_text',
+          },
+        };
+      }),
+    };
+  }
+
+  validateCurrentDraft() {
+    if (!this.state.draft) {
+      return { valid: false, errors: ['No active draft.'], blockValidation: {} };
+    }
+
+    const normalizedDraft = this.normalizeDraftForContracts(this.state.draft);
+    const errors = [];
+    if (!normalizedDraft.draftWorksheetId) errors.push('draft.draftWorksheetId must be a non-empty string');
+    if (!normalizedDraft.title?.trim()) errors.push('draft.title must be a non-empty string');
+    if (!Array.isArray(normalizedDraft.blocks) || normalizedDraft.blocks.length === 0) {
+      errors.push('draft.blocks must be a non-empty array');
+    }
+
+    normalizedDraft.blocks.forEach((block, index) => {
+      if (!block.blockId) errors.push(`draft.blocks[${index}].blockId must be a non-empty string`);
+      if (!Number.isInteger(block.position) || block.position < 0) {
+        errors.push(`draft.blocks[${index}].position must be a non-negative integer`);
+      }
+      if (block.kind === 'question') {
+        if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
+        if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
+      } else if (!block?.content?.text?.trim()) {
+        errors.push(`draft.blocks[${index}].content.text is required for content blocks`);
+      }
+    });
+
+    const validation = { valid: errors.length === 0, errors };
+    const blockValidation = {};
+
+    validation.errors.forEach((message) => {
+      const blockMatch = message.match(/draft\.blocks\[(\d+)\]/);
+      if (!blockMatch) return;
+      const index = Number.parseInt(blockMatch[1], 10);
+      const blockId = normalizedDraft.blocks[index]?.blockId || `index_${index}`;
+      blockValidation[blockId] = blockValidation[blockId] || [];
+      blockValidation[blockId].push(message);
+    });
+
+    this.state.validationErrors = validation.errors;
+    this.state.blockValidation = blockValidation;
+
+    return { ...validation, blockValidation, normalizedDraft };
   }
 
   async createOrOpenByLocalDraftId(localDraftId, options = {}) {
@@ -171,6 +284,7 @@ class EditorDraftSession {
 
     this.state.draftRevision = 1;
     this.state.lastSavedRevision = existing ? 1 : 0;
+    this.validateCurrentDraft();
     this.persistRestoreMetadata();
     return this.state.draft;
   }
@@ -205,6 +319,89 @@ class EditorDraftSession {
           ...(block.content || {}),
           text: String(nextText || ''),
         },
+      };
+    });
+
+    this.touchDraft();
+  }
+
+  createBlock(kind = 'content') {
+    if (!this.state.draft) return null;
+
+    const position = this.state.draft.blocks.length;
+    const block =
+      kind === 'question'
+        ? createEmptyQuestionBlock(position)
+        : {
+            blockId: createLocalId('blk'),
+            kind: 'content',
+            position,
+            content: {
+              text: '',
+              format: 'plain_text',
+            },
+          };
+
+    this.state.draft.blocks = [...this.state.draft.blocks, block];
+    this.state.selectedBlockId = block.blockId;
+    this.touchDraft();
+    return block;
+  }
+
+  deleteBlock(blockId) {
+    if (!this.state.draft || !blockId) return;
+    const nextBlocks = this.state.draft.blocks
+      .filter((block) => block.blockId !== blockId)
+      .map((block, index) => ({ ...block, position: index }));
+
+    if (nextBlocks.length === 0) {
+      nextBlocks.push({
+        blockId: createLocalId('blk'),
+        kind: 'content',
+        position: 0,
+        content: { text: '', format: 'plain_text' },
+      });
+    }
+
+    this.state.draft.blocks = nextBlocks;
+    if (!nextBlocks.some((block) => block.blockId === this.state.selectedBlockId)) {
+      this.state.selectedBlockId = nextBlocks[0].blockId;
+    }
+    this.touchDraft();
+  }
+
+  setSelectedBlockKind(kind) {
+    if (!this.state.draft || !this.state.selectedBlockId) return;
+
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== this.state.selectedBlockId) {
+        return block;
+      }
+
+      if (kind === 'question') {
+        return {
+          ...block,
+          kind: 'question',
+          prompt: {
+            text: String(block?.prompt?.text || block?.content?.text || ''),
+            format: block?.prompt?.format || 'plain_text',
+          },
+          responseConfig: isRecord(block.responseConfig)
+            ? { ...block.responseConfig }
+            : { inputType: 'plain_text', maxLength: 500 },
+          content: undefined,
+        };
+      }
+
+      return {
+        ...block,
+        kind: 'content',
+        content: {
+          text: String(block?.content?.text || block?.prompt?.text || ''),
+          format: block?.content?.format || 'plain_text',
+        },
+        prompt: undefined,
+        responseConfig: undefined,
       };
     });
 
@@ -252,13 +449,37 @@ class EditorDraftSession {
 
     const revisionAtSaveStart = this.state.draftRevision;
     const updatedAt = nowIso();
+    const validation = this.validateCurrentDraft();
+    const normalizedDraft = validation.normalizedDraft;
+    const { validateDraftSchema, mapDraftToSnapshot } = await loadContracts();
+    const contractValidation = validateDraftSchema(normalizedDraft);
+    const publishSimulation = contractValidation.valid
+      ? mapDraftToSnapshot(normalizedDraft, {
+          worksheetId: `ws_${this.state.draft.localId}`,
+          snapshotId: `snapshot_${this.state.draft.localId}_${revisionAtSaveStart}`,
+          schemaVersion: 1,
+          snapshotVersion: revisionAtSaveStart,
+          publishedAt: updatedAt,
+          publishedByUserId: DEFAULT_PUBLISHER_ID,
+          sourceDraftRevision: String(revisionAtSaveStart),
+          integrity: { source: 'local_autosave' },
+        })
+      : null;
+
     const snapshotToPersist = cloneDraftForPersistence({
       ...this.state.draft,
       metadata: {
         ...this.state.draft.metadata,
         localId: this.state.draft.localId,
+        origin: this.state.draft.metadata?.origin || 'local_created',
         updatedAt,
       },
+      contractDraft: normalizedDraft,
+      contractValidation: {
+        valid: contractValidation.valid,
+        errors: contractValidation.errors,
+      },
+      publishSimulation,
     });
 
     this.inFlightSaveCount += 1;
@@ -279,7 +500,9 @@ class EditorDraftSession {
         this.state.lastSavedAt = updatedAt;
       }
 
-      this.state.lastSaveError = null;
+      this.state.lastSaveError = contractValidation.valid
+        ? null
+        : `Draft saved locally with validation errors (${contractValidation.errors.length}).`;
       this.persistRestoreMetadata();
       return persisted;
     } catch (error) {
@@ -328,6 +551,8 @@ class EditorDraftSession {
       this.state.draft = draft;
       this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
       this.state.draftRevision += 1;
+      this.state.lastImportedAt = nowIso();
+      this.validateCurrentDraft();
       this.autosave().catch((error) => {
         console.warn('Initial autosave after import failed; draft remains in-memory.', error);
       });
@@ -338,6 +563,48 @@ class EditorDraftSession {
     return { importedRecord, draftRecord: null };
   }
 
+  async saveNow() {
+    const persisted = await this.autosave();
+    this.state.lastManualSaveAt = nowIso();
+    return persisted;
+  }
+
+  async simulateLocalPublish() {
+    if (!this.state.draft) {
+      throw new Error('No active draft to publish.');
+    }
+
+    const validation = this.validateCurrentDraft();
+    if (!validation.valid) {
+      throw new Error(`Draft validation failed: ${validation.errors.join('; ')}`);
+    }
+
+    const { mapDraftToSnapshot, validateSnapshotSchema, validateDraftSchema } = await loadContracts();
+    const contractValidation = validateDraftSchema(validation.normalizedDraft);
+    if (!contractValidation.valid) {
+      throw new Error(`Draft validation failed: ${contractValidation.errors.join('; ')}`);
+    }
+
+    const snapshot = mapDraftToSnapshot(validation.normalizedDraft, {
+      worksheetId: `ws_${this.state.draft.localId}`,
+      snapshotId: `snapshot_${createLocalId('pub')}`,
+      schemaVersion: 1,
+      snapshotVersion: Math.max(this.state.draftRevision, 1),
+      publishedAt: nowIso(),
+      publishedByUserId: DEFAULT_PUBLISHER_ID,
+      sourceDraftRevision: String(this.state.draftRevision),
+      integrity: { source: 'local_publish_simulation' },
+    });
+
+    const snapshotValidation = validateSnapshotSchema(snapshot);
+    if (!snapshotValidation.valid) {
+      throw new Error(`Snapshot validation failed: ${snapshotValidation.errors.join('; ')}`);
+    }
+
+    this.state.publishPreview = snapshot;
+    return snapshot;
+  }
+
   exportCurrentDraftToFile() {
     if (!this.state.draft) {
       throw new Error('No active draft to export.');
@@ -346,6 +613,7 @@ class EditorDraftSession {
     const timestampToken = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `worksheet-draft-${this.state.draft.localId}-${timestampToken}.json`;
     downloadJson(this.state.draft, filename);
+    this.state.lastExportedAt = nowIso();
     return filename;
   }
 
@@ -359,6 +627,7 @@ class EditorDraftSession {
       },
     };
     this.state.draftRevision += 1;
+    this.validateCurrentDraft();
     this.scheduleAutosave();
     this.persistRestoreMetadata();
   }
@@ -444,14 +713,16 @@ class EditorDraftSession {
 
 function renderEditorShell(session) {
   if (!app) return;
-
-  const restore = session.getRouteUiRestoreMetadata();
   const summary = document.createElement('pre');
-  summary.id = 'editor-state-summary';
-
+  const status = document.createElement('p');
+  const validation = document.createElement('pre');
+  const blockPicker = document.createElement('select');
+  const blockKind = document.createElement('select');
+  const importInput = document.createElement('textarea');
+  importInput.rows = 8;
+  importInput.placeholder = 'Paste draft JSON here to import';
   const titleInput = document.createElement('input');
   titleInput.placeholder = 'Worksheet title';
-
   const blockEditor = document.createElement('textarea');
   blockEditor.rows = 8;
   blockEditor.placeholder = 'Selected block text';
@@ -464,57 +735,112 @@ function renderEditorShell(session) {
     modeSelect.appendChild(option);
   });
 
+  ['content', 'question'].forEach((kind) => {
+    const option = document.createElement('option');
+    option.value = kind;
+    option.textContent = kind;
+    blockKind.appendChild(option);
+  });
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.textContent = 'Save now';
+  const addContentBtn = document.createElement('button');
+  addContentBtn.type = 'button';
+  addContentBtn.textContent = 'Add content block';
+  const addQuestionBtn = document.createElement('button');
+  addQuestionBtn.type = 'button';
+  addQuestionBtn.textContent = 'Add question block';
+  const deleteBlockBtn = document.createElement('button');
+  deleteBlockBtn.type = 'button';
+  deleteBlockBtn.textContent = 'Delete selected block';
+  const importBtn = document.createElement('button');
+  importBtn.type = 'button';
+  importBtn.textContent = 'Import pasted JSON';
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
   exportBtn.textContent = 'Export draft JSON';
-
+  const localPublishBtn = document.createElement('button');
+  localPublishBtn.type = 'button';
+  localPublishBtn.textContent = 'Simulate local publish';
   const rewriteBtn = document.createElement('button');
   rewriteBtn.type = 'button';
   rewriteBtn.textContent = 'Rewrite (Sign-in required)';
-
   const t2aBtn = document.createElement('button');
   t2aBtn.type = 'button';
   t2aBtn.textContent = 'T2A (Sign-in required)';
-
   const syncDraftBtn = document.createElement('button');
   syncDraftBtn.type = 'button';
   syncDraftBtn.textContent = 'Sync Draft (Sign-in required)';
-
   const publishBtn = document.createElement('button');
   publishBtn.type = 'button';
   publishBtn.textContent = 'Publish (Sign-in required)';
 
+  const refreshBlockPicker = () => {
+    const previous = blockPicker.value;
+    blockPicker.innerHTML = '';
+    (session.state.draft?.blocks || []).forEach((block, index) => {
+      const option = document.createElement('option');
+      option.value = block.blockId;
+      option.textContent = `${index + 1}. ${block.kind} (${block.blockId})`;
+      blockPicker.appendChild(option);
+    });
+    blockPicker.value = session.state.selectedBlockId || previous || blockPicker.value;
+  };
+
   const syncFormControls = () => {
-    const selectedBlock = session.state.draft?.blocks?.find(
-      (block) => block.blockId === session.state.selectedBlockId
-    );
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
     const selectedText = selectedBlock?.prompt?.text || selectedBlock?.content?.text || '';
     const activeElement = document.activeElement;
 
-    if (activeElement !== titleInput && titleInput.value !== (session.state.draft?.title || '')) {
+    if (activeElement !== titleInput) {
       titleInput.value = session.state.draft?.title || '';
     }
-
-    if (activeElement !== blockEditor && blockEditor.value !== selectedText) {
+    if (activeElement !== blockEditor) {
       blockEditor.value = selectedText;
     }
-
-    if (activeElement !== modeSelect && modeSelect.value !== session.state.mode) {
+    if (activeElement !== modeSelect) {
       modeSelect.value = session.state.mode;
     }
+    if (selectedBlock && activeElement !== blockKind) {
+      blockKind.value = selectedBlock.kind;
+    }
+    refreshBlockPicker();
   };
 
   const updateSummary = () => {
+    const restore = session.getRouteUiRestoreMetadata();
+    const draftValidation = session.validateCurrentDraft();
     syncFormControls();
+
+    status.textContent = session.state.lastSaveError
+      ? `⚠️ ${session.state.lastSaveError}`
+      : session.state.autosavePending
+        ? 'Saving…'
+        : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+
+    validation.textContent = JSON.stringify(
+      {
+        valid: draftValidation.valid,
+        errors: draftValidation.errors,
+        byBlock: draftValidation.blockValidation,
+      },
+      null,
+      2
+    );
 
     summary.textContent = JSON.stringify(
       {
         localDraftId: session.state.draft?.localId || null,
         lastSavedAt: session.state.lastSavedAt,
+        lastManualSaveAt: session.state.lastManualSaveAt,
+        lastImportedAt: session.state.lastImportedAt,
+        lastExportedAt: session.state.lastExportedAt,
         autosavePending: session.state.autosavePending,
         mode: session.state.mode,
         selectedBlockId: session.state.selectedBlockId,
         restore,
+        publishPreviewSnapshotId: session.state.publishPreview?.snapshotId || null,
         recoveryMessage: session.state.recoveryMessage,
         lastProtectedAction: session.state.lastProtectedAction,
       },
@@ -527,37 +853,63 @@ function renderEditorShell(session) {
     session.updateTitle(titleInput.value);
     updateSummary();
   });
-
-  blockEditor.addEventListener('input', () => {
-    session.updateBlockContent(session.state.selectedBlockId, blockEditor.value);
-    updateSummary();
-  });
-
   modeSelect.addEventListener('change', () => {
     session.setMode(modeSelect.value);
     updateSummary();
   });
-
+  blockPicker.addEventListener('change', () => {
+    session.selectBlock(blockPicker.value);
+    updateSummary();
+  });
+  blockKind.addEventListener('change', () => {
+    session.setSelectedBlockKind(blockKind.value);
+    updateSummary();
+  });
+  blockEditor.addEventListener('input', () => {
+    session.updateBlockContent(session.state.selectedBlockId, blockEditor.value);
+    updateSummary();
+  });
+  saveBtn.addEventListener('click', async () => {
+    await session.saveNow();
+    updateSummary();
+  });
+  addContentBtn.addEventListener('click', () => {
+    session.createBlock('content');
+    updateSummary();
+  });
+  addQuestionBtn.addEventListener('click', () => {
+    session.createBlock('question');
+    updateSummary();
+  });
+  deleteBlockBtn.addEventListener('click', () => {
+    session.deleteBlock(session.state.selectedBlockId);
+    updateSummary();
+  });
+  importBtn.addEventListener('click', async () => {
+    await session.importWorksheetJson(importInput.value, { convertToEditableDraft: true });
+    importInput.value = '';
+    updateSummary();
+  });
   exportBtn.addEventListener('click', () => {
     session.exportCurrentDraftToFile();
     updateSummary();
   });
-
+  localPublishBtn.addEventListener('click', async () => {
+    await session.simulateLocalPublish();
+    updateSummary();
+  });
   rewriteBtn.addEventListener('click', async () => {
     await session.triggerProtectedAction('resumeRewriteAfterLogin');
     updateSummary();
   });
-
   t2aBtn.addEventListener('click', async () => {
     await session.triggerProtectedAction('resumeT2AAfterLogin');
     updateSummary();
   });
-
   syncDraftBtn.addEventListener('click', async () => {
     await session.triggerProtectedAction('resumeDraftSyncAfterLogin');
     updateSummary();
   });
-
   publishBtn.addEventListener('click', async () => {
     await session.triggerProtectedAction('resumePublishAfterLogin');
     updateSummary();
@@ -567,12 +919,23 @@ function renderEditorShell(session) {
   app.append(
     titleInput,
     modeSelect,
+    status,
+    blockPicker,
+    blockKind,
     blockEditor,
+    saveBtn,
+    addContentBtn,
+    addQuestionBtn,
+    deleteBlockBtn,
     exportBtn,
+    importInput,
+    importBtn,
+    localPublishBtn,
     rewriteBtn,
     t2aBtn,
     syncDraftBtn,
     publishBtn,
+    validation,
     summary
   );
   updateSummary();
