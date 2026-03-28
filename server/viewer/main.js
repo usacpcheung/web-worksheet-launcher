@@ -276,6 +276,17 @@ class ViewerAttemptSession {
 
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
+    this.onStateChange = null;
+  }
+
+  setOnStateChange(handler) {
+    this.onStateChange = typeof handler === 'function' ? handler : null;
+  }
+
+  notifyStateChange() {
+    if (typeof this.onStateChange === 'function') {
+      this.onStateChange(this.state);
+    }
   }
 
   async validateViewerPayload(payload) {
@@ -505,6 +516,7 @@ class ViewerAttemptSession {
   scheduleAutosave() {
     clearTimeout(this.autosaveTimer);
     this.state.autosavePending = true;
+    this.notifyStateChange();
     this.autosaveTimer = setTimeout(() => {
       this.autosave().catch((error) => {
         console.error('Viewer autosave failed', error);
@@ -539,23 +551,29 @@ class ViewerAttemptSession {
 
     this.inFlightSaveCount += 1;
     this.state.autosavePending = true;
+    this.notifyStateChange();
 
     try {
       const persisted = await this.storage.attempts.put(attemptRecord);
-      if (this.state.lastSavedRevision < revisionAtSaveStart) {
+      const shouldApplySaveStatus =
+        this.state.localAttemptId === attemptRecord.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
+      if (shouldApplySaveStatus) {
         this.state.lastSavedRevision = revisionAtSaveStart;
+        this.state.lastSavedAt = persisted?.metadata?.updatedAt || updatedAt;
+        this.state.lastSaveError = null;
+        this.persistResumeMetadata();
+        this.notifyStateChange();
       }
-      this.state.lastSavedAt = persisted?.metadata?.updatedAt || updatedAt;
-      this.state.lastSaveError = null;
-      this.persistResumeMetadata();
       return persisted;
     } catch (error) {
       this.state.lastSaveError = error?.message || String(error);
+      this.notifyStateChange();
       throw error;
     } finally {
       this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
       this.state.autosavePending =
         this.inFlightSaveCount > 0 || this.state.lastSavedRevision < this.state.attemptRevision;
+      this.notifyStateChange();
     }
   }
 
@@ -855,6 +873,10 @@ function renderViewerShell(session) {
       + `source: ${session.state.source} · status: ${session.state.status}`;
     answerSummary.textContent = `Answered ${summary.answered}/${summary.total} · ${status.textContent}`;
   };
+
+  session.setOnStateChange(() => {
+    updateSummary();
+  });
 
   saveBtn.addEventListener('click', async () => {
     await session.saveNow();

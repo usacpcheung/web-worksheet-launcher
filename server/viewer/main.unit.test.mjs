@@ -148,6 +148,112 @@ test('completeLocalAttempt clears pending autosave timer before immediate autosa
   assert.equal(timerFired, false);
 });
 
+test('viewer autosave emits state transitions and clears pending state without extra clicks', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.localAttemptId = 'attempt_emit';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.state.attemptRevision = 1;
+
+  let emissions = 0;
+  session.setOnStateChange(() => {
+    emissions += 1;
+  });
+
+  session.scheduleAutosave();
+  clearTimeout(session.autosaveTimer);
+  await session.autosave();
+
+  assert.equal(session.state.autosavePending, false);
+  assert.ok(emissions >= 3, 'expected pending, success, and final state emissions');
+});
+
+test('viewer autosave keeps newest save status when older save finishes later', async () => {
+  const mod = await loadViewerModule();
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+  const first = deferred();
+  const second = deferred();
+  let call = 0;
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      put: async (value) => {
+        call += 1;
+        if (call === 1) {
+          await first.promise;
+          return { ...value, metadata: { ...(value.metadata || {}), updatedAt: '2026-01-01T00:00:01.000Z' } };
+        }
+        await second.promise;
+        return { ...value, metadata: { ...(value.metadata || {}), updatedAt: '2026-01-01T00:00:02.000Z' } };
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.localAttemptId = 'attempt_race';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.state.attemptRevision = 1;
+  const save1 = session.autosave();
+
+  session.state.attemptRevision = 2;
+  const save2 = session.autosave();
+
+  second.resolve();
+  await save2;
+  first.resolve();
+  await save1;
+
+  assert.equal(session.state.lastSavedRevision, 2);
+  assert.equal(session.state.lastSavedAt, '2026-01-01T00:00:02.000Z');
+});
+
+test('viewer save error clears after subsequent successful save', async () => {
+  const mod = await loadViewerModule();
+  let shouldFail = true;
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      put: async (value) => {
+        if (shouldFail) {
+          throw new Error('db unavailable');
+        }
+        return value;
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.localAttemptId = 'attempt_retry';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.state.attemptRevision = 1;
+
+  await assert.rejects(() => session.autosave(), /db unavailable/);
+  assert.equal(session.state.lastSaveError, 'db unavailable');
+
+  shouldFail = false;
+  await session.autosave();
+  assert.equal(session.state.lastSaveError, null);
+});
+
 test('partitionBlocksForDisplay returns ordered content and question sets', async () => {
   const mod = await loadViewerModule();
   const result = mod.partitionBlocksForDisplay([
