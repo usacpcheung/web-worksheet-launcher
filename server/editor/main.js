@@ -168,6 +168,7 @@ class EditorDraftSession {
       lastSavedAt: null,
       lastPersistenceError: null,
       lastValidationWarning: null,
+      lastSavedLocalValidationIssueCount: 0,
       lastContractValidationIssueCount: 0,
       validationErrors: [],
       blockValidation: {},
@@ -184,6 +185,18 @@ class EditorDraftSession {
 
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
+    this.onStateChange = null;
+    this.transientQuestionBlockIds = new Set();
+  }
+
+  setOnStateChange(handler) {
+    this.onStateChange = typeof handler === 'function' ? handler : null;
+  }
+
+  notifyStateChange() {
+    if (typeof this.onStateChange === 'function') {
+      this.onStateChange(this.state);
+    }
   }
 
   normalizeDraftForContracts(draft) {
@@ -291,9 +304,11 @@ class EditorDraftSession {
       this.state.lastContractValidationIssueCount = Array.isArray(existingContractErrors)
         ? existingContractErrors.length
         : 0;
+      this.state.lastSavedLocalValidationIssueCount = this.validateCurrentDraft().errors.length;
       this.state.lastValidationWarning = existing?.contractValidation?.valid === false
         ? `Draft saved locally with validation warnings (${this.state.lastContractValidationIssueCount}).`
         : null;
+      this.transientQuestionBlockIds.clear();
     } else {
       this.state.draft = createDraftRecord({ localId: draftId });
       this.state.isPristineDraft = true;
@@ -334,6 +349,9 @@ class EditorDraftSession {
       }
 
       if (block.prompt) {
+        if (String(nextText || '').trim()) {
+          this.transientQuestionBlockIds.delete(blockId);
+        }
         return {
           ...block,
           prompt: {
@@ -445,6 +463,9 @@ class EditorDraftSession {
             },
           };
 
+    if (kind === 'question') {
+      this.transientQuestionBlockIds.add(block.blockId);
+    }
     this.state.draft.blocks = [...this.state.draft.blocks, block];
     this.state.selectedBlockId = block.blockId;
     this.touchDraft();
@@ -453,6 +474,7 @@ class EditorDraftSession {
 
   deleteBlock(blockId) {
     if (!this.state.draft || !blockId) return;
+    this.transientQuestionBlockIds.delete(blockId);
     const nextBlocks = this.state.draft.blocks
       .filter((block) => block.blockId !== blockId)
       .map((block, index) => ({ ...block, position: index }));
@@ -482,6 +504,7 @@ class EditorDraftSession {
       }
 
       if (kind === 'question') {
+        this.transientQuestionBlockIds.add(block.blockId);
         return {
           ...block,
           kind: 'question',
@@ -507,6 +530,10 @@ class EditorDraftSession {
         responseConfig: undefined,
       };
     });
+
+    if (kind !== 'question') {
+      this.transientQuestionBlockIds.delete(this.state.selectedBlockId);
+    }
 
     this.touchDraft();
   }
@@ -540,11 +567,23 @@ class EditorDraftSession {
   scheduleAutosave() {
     clearTimeout(this.autosaveTimer);
     this.state.autosavePending = true;
+    this.notifyStateChange();
     this.autosaveTimer = setTimeout(() => {
       this.autosave().catch((error) => {
         console.error('Autosave failed', error);
       });
     }, AUTOSAVE_MS);
+  }
+
+  shouldSuppressTransientQuestionWarning(contractErrors, normalizedDraft) {
+    if (!Array.isArray(contractErrors) || contractErrors.length === 0) return false;
+    return contractErrors.every((errorMessage) => {
+      const match = errorMessage.match(/^draft\.blocks\[(\d+)\]\.prompt\.text is required for question blocks$/);
+      if (!match) return false;
+      const index = Number.parseInt(match[1], 10);
+      const blockId = normalizedDraft?.blocks?.[index]?.blockId;
+      return !!blockId && this.transientQuestionBlockIds.has(blockId);
+    });
   }
 
   async autosave() {
@@ -588,6 +627,7 @@ class EditorDraftSession {
         const wasNeverSavedBefore = this.state.lastSavedRevision === 0;
         this.state.lastSavedRevision = revisionAtSaveStart;
         this.state.lastPersistenceError = null;
+        this.state.lastSavedLocalValidationIssueCount = validation.errors.length;
         this.state.lastContractValidationIssueCount = contractValidation.errors.length;
 
         if (!this.state.lastSavedAt || this.state.lastSavedAt < updatedAt) {
@@ -595,19 +635,25 @@ class EditorDraftSession {
         }
 
         const shouldSuppressPristineWarning = this.state.isPristineDraft && wasNeverSavedBefore;
-        this.state.lastValidationWarning = contractValidation.valid || shouldSuppressPristineWarning
+        const shouldSuppressTransientQuestionWarning =
+          this.shouldSuppressTransientQuestionWarning(contractValidation.errors, normalizedDraft);
+        this.state.lastValidationWarning =
+          contractValidation.valid || shouldSuppressPristineWarning || shouldSuppressTransientQuestionWarning
           ? null
           : `Draft saved locally with validation warnings (${contractValidation.errors.length}).`;
         this.persistRestoreMetadata();
+        this.notifyStateChange();
       }
       return persisted;
     } catch (error) {
       this.state.lastPersistenceError = error?.message || String(error);
+      this.notifyStateChange();
       throw error;
     } finally {
       this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
       this.state.autosavePending =
         this.inFlightSaveCount > 0 || this.state.lastSavedRevision < this.state.draftRevision;
+      this.notifyStateChange();
     }
   }
 
@@ -1069,7 +1115,7 @@ function renderEditorShell(session) {
   };
 
   const updateSummary = () => {
-    const draftValidation = session.validateCurrentDraft();
+    session.validateCurrentDraft();
     syncFormControls();
     renderBlockList();
     renderDetailEditor();
@@ -1085,12 +1131,17 @@ function renderEditorShell(session) {
     saveStateEl.textContent = `State: ${saveState}`;
     lastSavedEl.textContent = `Last saved: ${session.state.lastSavedAt || 'Not yet saved'}`;
     validationEl.textContent =
-      `Validation issues (local: ${draftValidation.errors.length}, contract: ${session.state.lastContractValidationIssueCount})`;
+      `Validation issues (last saved local: ${session.state.lastSavedLocalValidationIssueCount}, `
+      + `last saved contract: ${session.state.lastContractValidationIssueCount})`;
     localDraftIdEl.textContent = `localDraftId: ${session.state.draft?.localId || 'n/a'}`;
     saveErrorEl.textContent = session.state.lastPersistenceError ? `Error: ${session.state.lastPersistenceError}` : '';
     saveWarningEl.textContent = session.state.lastValidationWarning ? `Warning: ${session.state.lastValidationWarning}` : '';
     statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'} · Mode: ${session.state.mode}`;
   };
+
+  session.setOnStateChange(() => {
+    updateSummary();
+  });
 
   titleInput.addEventListener('input', () => {
     session.updateTitle(titleInput.value);
