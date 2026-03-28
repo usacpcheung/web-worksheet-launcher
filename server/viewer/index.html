@@ -5,6 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- Primary product surface: canonical viewer route (not popup compatibility). -->
     <title>Worksheet Viewer</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #f8fafc; color: #0f172a; }
+      #app { padding: 16px; }
+      .viewer-shell { display: grid; gap: 12px; max-width: 960px; margin: 0 auto; }
+      .viewer-meta { margin: 0; color: #475569; font-size: 14px; }
+      .viewer-section { display: grid; gap: 10px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; }
+      .viewer-content-card, .viewer-question-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; display: grid; gap: 8px; background: #fff; }
+      .viewer-block-label { margin: 0; font-weight: 600; }
+      .viewer-helper, .viewer-answer-state { margin: 0; font-size: 12px; color: #475569; }
+      .viewer-answer-state[data-answered="true"] { color: #166534; }
+      .viewer-answer-state[data-answered="false"] { color: #991b1b; }
+      input, select, textarea, button { font: inherit; }
+      input, select, textarea { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
+      .viewer-actions { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; }
+      button { padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; cursor: pointer; }
+      pre { margin: 0; white-space: pre-wrap; background: #0f172a; color: #e2e8f0; border-radius: 6px; padding: 10px; }
+    </style>
   </head>
   <body>
     <div id="app"></div>

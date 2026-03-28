@@ -97,6 +97,18 @@ function normalizeBlocks(blocks) {
   });
 }
 
+
+function getQuestionInputTypeHelpText(inputType) {
+  const mapping = {
+    plain_text: 'Long-form text response.',
+    short_text: 'Short single-line text response.',
+    number: 'Numeric response (stored as number when possible).',
+    boolean: 'True/False response.',
+    single_choice: 'Select exactly one option.',
+  };
+  return mapping[inputType] || '';
+}
+
 function createDraftRecord(overrides = {}) {
   const localId = overrides.localId || createLocalId('draft');
   const updatedAt = nowIso();
@@ -318,6 +330,91 @@ class EditorDraftSession {
         content: {
           ...(block.content || {}),
           text: String(nextText || ''),
+        },
+      };
+    });
+
+
+    this.touchDraft();
+  }
+
+  updateSelectedQuestionInputType(nextInputType) {
+    if (!this.state.draft || !this.state.selectedBlockId) return;
+
+    const allowedInputTypes = new Set(['plain_text', 'short_text', 'number', 'boolean', 'single_choice']);
+    const inputType = allowedInputTypes.has(nextInputType) ? nextInputType : 'plain_text';
+
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== this.state.selectedBlockId || block.kind !== 'question') {
+        return block;
+      }
+
+      const responseConfig = isRecord(block.responseConfig) ? { ...block.responseConfig } : {};
+      responseConfig.inputType = inputType;
+
+      if (inputType === 'plain_text' || inputType === 'short_text') {
+        const parsedMaxLength = Number.parseInt(responseConfig.maxLength, 10);
+        responseConfig.maxLength = Number.isFinite(parsedMaxLength) && parsedMaxLength > 0 ? parsedMaxLength : 500;
+      } else {
+        delete responseConfig.maxLength;
+      }
+
+      if (inputType === 'single_choice') {
+        responseConfig.options = Array.isArray(responseConfig.options) ? [...responseConfig.options] : [];
+      } else {
+        delete responseConfig.options;
+      }
+
+      return {
+        ...block,
+        responseConfig,
+      };
+    });
+
+    this.touchDraft();
+  }
+
+  updateSelectedQuestionMaxLength(nextMaxLength) {
+    if (!this.state.draft || !this.state.selectedBlockId) return;
+
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== this.state.selectedBlockId || block.kind !== 'question') {
+        return block;
+      }
+
+      const responseConfig = isRecord(block.responseConfig) ? { ...block.responseConfig } : { inputType: 'plain_text' };
+      const parsed = Number.parseInt(nextMaxLength, 10);
+      responseConfig.maxLength = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+
+      return {
+        ...block,
+        responseConfig,
+      };
+    });
+
+    this.touchDraft();
+  }
+
+  updateSelectedQuestionOptions(optionsText) {
+    if (!this.state.draft || !this.state.selectedBlockId) return;
+
+    const options = String(optionsText || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => ({ value: line, label: line }));
+
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== this.state.selectedBlockId || block.kind !== 'question') {
+        return block;
+      }
+
+      return {
+        ...block,
+        responseConfig: {
+          ...(isRecord(block.responseConfig) ? block.responseConfig : {}),
+          inputType: 'single_choice',
+          options,
         },
       };
     });
@@ -705,22 +802,31 @@ class EditorDraftSession {
   }
 }
 
+
 function renderEditorShell(session) {
   if (!app) return;
-  const summary = document.createElement('pre');
-  const status = document.createElement('p');
-  const validation = document.createElement('pre');
-  const blockPicker = document.createElement('select');
-  const blockKind = document.createElement('select');
-  const importInput = document.createElement('textarea');
-  importInput.rows = 8;
-  importInput.placeholder = 'Paste draft JSON here to import';
+
+  const shell = document.createElement('div');
+  shell.className = 'editor-shell';
+
+  const statusBar = document.createElement('div');
+  statusBar.className = 'editor-status-bar';
+  const statusText = document.createElement('span');
+  const validationText = document.createElement('span');
+  const localIdText = document.createElement('span');
+
+  const layout = document.createElement('div');
+  layout.className = 'editor-layout';
+  const leftPanel = document.createElement('section');
+  leftPanel.className = 'editor-panel';
+  const rightPanel = document.createElement('section');
+  rightPanel.className = 'editor-panel';
+
+  const blockList = document.createElement('div');
+  blockList.className = 'editor-block-list';
+
   const titleInput = document.createElement('input');
   titleInput.placeholder = 'Worksheet title';
-  const blockEditor = document.createElement('textarea');
-  blockEditor.rows = 8;
-  blockEditor.placeholder = 'Selected block text';
-
   const modeSelect = document.createElement('select');
   ['edit', 'preview'].forEach((mode) => {
     const option = document.createElement('option');
@@ -729,6 +835,7 @@ function renderEditorShell(session) {
     modeSelect.appendChild(option);
   });
 
+  const blockKind = document.createElement('select');
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
@@ -736,18 +843,47 @@ function renderEditorShell(session) {
     blockKind.appendChild(option);
   });
 
+  const blockTextEditor = document.createElement('textarea');
+  blockTextEditor.rows = 8;
+
+  const questionInputType = document.createElement('select');
+  ['plain_text', 'short_text', 'number', 'boolean', 'single_choice'].forEach((inputType) => {
+    const option = document.createElement('option');
+    option.value = inputType;
+    option.textContent = inputType;
+    questionInputType.appendChild(option);
+  });
+
+  const questionInputTypeHelp = document.createElement('p');
+  questionInputTypeHelp.className = 'editor-help-text';
+
+  const maxLengthInput = document.createElement('input');
+  maxLengthInput.type = 'number';
+  maxLengthInput.min = '1';
+
+  const optionsEditor = document.createElement('textarea');
+  optionsEditor.rows = 6;
+  optionsEditor.placeholder = 'One option per line';
+
+  const importInput = document.createElement('textarea');
+  importInput.rows = 8;
+  importInput.placeholder = 'Paste draft JSON here to import';
+
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.textContent = 'Save now';
+  const openViewerBtn = document.createElement('button');
+  openViewerBtn.type = 'button';
+  openViewerBtn.textContent = 'Open in Viewer';
   const addContentBtn = document.createElement('button');
   addContentBtn.type = 'button';
-  addContentBtn.textContent = 'Add content block';
+  addContentBtn.textContent = 'Add Content';
   const addQuestionBtn = document.createElement('button');
   addQuestionBtn.type = 'button';
-  addQuestionBtn.textContent = 'Add question block';
+  addQuestionBtn.textContent = 'Add Question';
   const deleteBlockBtn = document.createElement('button');
   deleteBlockBtn.type = 'button';
-  deleteBlockBtn.textContent = 'Delete selected block';
+  deleteBlockBtn.textContent = 'Delete';
   const importBtn = document.createElement('button');
   importBtn.type = 'button';
   importBtn.textContent = 'Import pasted JSON';
@@ -770,36 +906,88 @@ function renderEditorShell(session) {
   publishBtn.type = 'button';
   publishBtn.textContent = 'Publish (Sign-in required)';
 
-  const refreshBlockPicker = () => {
-    const previous = blockPicker.value;
-    blockPicker.innerHTML = '';
-    (session.state.draft?.blocks || []).forEach((block, index) => {
-      const option = document.createElement('option');
-      option.value = block.blockId;
-      option.textContent = `${index + 1}. ${block.kind} (${block.blockId})`;
-      blockPicker.appendChild(option);
-    });
-    blockPicker.value = session.state.selectedBlockId || previous || blockPicker.value;
+  const validation = document.createElement('pre');
+  const summary = document.createElement('pre');
+
+  const blockTypeLabel = document.createElement('label');
+  blockTypeLabel.textContent = 'Block kind';
+  const blockTextLabel = document.createElement('label');
+  const questionTypeLabel = document.createElement('label');
+  questionTypeLabel.textContent = 'Input type';
+  const maxLengthLabel = document.createElement('label');
+  maxLengthLabel.textContent = 'Max length';
+  const optionsLabel = document.createElement('label');
+  optionsLabel.textContent = 'Options';
+
+  const refreshBlockList = () => {
+    blockList.innerHTML = '';
+    (session.state.draft?.blocks || [])
+      .sort((a, b) => a.position - b.position)
+      .forEach((block) => {
+        const itemButton = document.createElement('button');
+        itemButton.type = 'button';
+        itemButton.className = `editor-block-item${block.blockId === session.state.selectedBlockId ? ' is-selected' : ''}`;
+        const preview = String((block.kind === 'question' ? block.prompt?.text : block.content?.text) || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 60) || '(empty)';
+        itemButton.textContent = `${block.position}. ${block.kind} — ${preview}`;
+        itemButton.addEventListener('click', () => {
+          session.selectBlock(block.blockId);
+          updateSummary();
+        });
+        blockList.appendChild(itemButton);
+      });
   };
 
   const syncFormControls = () => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
-    const selectedText = selectedBlock?.prompt?.text || selectedBlock?.content?.text || '';
     const activeElement = document.activeElement;
 
-    if (activeElement !== titleInput) {
-      titleInput.value = session.state.draft?.title || '';
+    if (activeElement !== titleInput) titleInput.value = session.state.draft?.title || '';
+    if (activeElement !== modeSelect) modeSelect.value = session.state.mode;
+    if (selectedBlock && activeElement !== blockKind) blockKind.value = selectedBlock.kind;
+
+    const selectedText = selectedBlock?.kind === 'question' ? selectedBlock?.prompt?.text : selectedBlock?.content?.text;
+    if (activeElement !== blockTextEditor) blockTextEditor.value = selectedText || '';
+
+    blockTextLabel.textContent = selectedBlock?.kind === 'question' ? 'Prompt text' : 'Content text';
+
+    const questionVisible = selectedBlock?.kind === 'question';
+    questionTypeLabel.style.display = questionVisible ? '' : 'none';
+    questionInputType.style.display = questionVisible ? '' : 'none';
+    questionInputTypeHelp.style.display = questionVisible ? '' : 'none';
+
+    if (questionVisible) {
+      const inputType = selectedBlock.responseConfig?.inputType || 'plain_text';
+      if (activeElement !== questionInputType) questionInputType.value = inputType;
+      questionInputTypeHelp.textContent = getQuestionInputTypeHelpText(inputType);
+
+      const textType = inputType === 'plain_text' || inputType === 'short_text';
+      maxLengthLabel.style.display = textType ? '' : 'none';
+      maxLengthInput.style.display = textType ? '' : 'none';
+      if (textType && activeElement !== maxLengthInput) {
+        const maxLength = selectedBlock.responseConfig?.maxLength;
+        maxLengthInput.value = maxLength === undefined || maxLength === null ? '' : String(maxLength);
+      }
+
+      const showOptions = inputType === 'single_choice';
+      optionsLabel.style.display = showOptions ? '' : 'none';
+      optionsEditor.style.display = showOptions ? '' : 'none';
+      if (showOptions && activeElement !== optionsEditor) {
+        const optionLines = Array.isArray(selectedBlock.responseConfig?.options)
+          ? selectedBlock.responseConfig.options.map((option) => String(option?.label ?? option?.value ?? option)).join('\n')
+          : '';
+        optionsEditor.value = optionLines;
+      }
+    } else {
+      maxLengthLabel.style.display = 'none';
+      maxLengthInput.style.display = 'none';
+      optionsLabel.style.display = 'none';
+      optionsEditor.style.display = 'none';
     }
-    if (activeElement !== blockEditor) {
-      blockEditor.value = selectedText;
-    }
-    if (activeElement !== modeSelect) {
-      modeSelect.value = session.state.mode;
-    }
-    if (selectedBlock && activeElement !== blockKind) {
-      blockKind.value = selectedBlock.kind;
-    }
-    refreshBlockPicker();
+
+    refreshBlockList();
   };
 
   const updateSummary = () => {
@@ -807,11 +995,13 @@ function renderEditorShell(session) {
     const draftValidation = session.validateCurrentDraft();
     syncFormControls();
 
-    status.textContent = session.state.lastSaveError
+    statusText.textContent = session.state.lastSaveError
       ? `⚠️ ${session.state.lastSaveError}`
       : session.state.autosavePending
         ? 'Saving…'
         : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+    validationText.textContent = `${draftValidation.errors.length} validation issue${draftValidation.errors.length === 1 ? '' : 's'}`;
+    localIdText.textContent = `localDraftId: ${session.state.draft?.localId || 'n/a'}`;
 
     validation.textContent = JSON.stringify(
       {
@@ -828,15 +1018,11 @@ function renderEditorShell(session) {
         localDraftId: session.state.draft?.localId || null,
         lastSavedAt: session.state.lastSavedAt,
         lastManualSaveAt: session.state.lastManualSaveAt,
-        lastImportedAt: session.state.lastImportedAt,
-        lastExportedAt: session.state.lastExportedAt,
         autosavePending: session.state.autosavePending,
         mode: session.state.mode,
         selectedBlockId: session.state.selectedBlockId,
         restore,
-        publishPreviewSnapshotId: session.state.publishPreview?.snapshotId || null,
-        recoveryMessage: session.state.recoveryMessage,
-        lastProtectedAction: session.state.lastProtectedAction,
+        source: session.state.draft?.metadata?.origin || null,
       },
       null,
       2
@@ -851,21 +1037,35 @@ function renderEditorShell(session) {
     session.setMode(modeSelect.value);
     updateSummary();
   });
-  blockPicker.addEventListener('change', () => {
-    session.selectBlock(blockPicker.value);
-    updateSummary();
-  });
   blockKind.addEventListener('change', () => {
     session.setSelectedBlockKind(blockKind.value);
     updateSummary();
   });
-  blockEditor.addEventListener('input', () => {
-    session.updateBlockContent(session.state.selectedBlockId, blockEditor.value);
+  blockTextEditor.addEventListener('input', () => {
+    session.updateBlockContent(session.state.selectedBlockId, blockTextEditor.value);
     updateSummary();
   });
+  questionInputType.addEventListener('change', () => {
+    session.updateSelectedQuestionInputType(questionInputType.value);
+    updateSummary();
+  });
+  maxLengthInput.addEventListener('input', () => {
+    session.updateSelectedQuestionMaxLength(maxLengthInput.value);
+    updateSummary();
+  });
+  optionsEditor.addEventListener('input', () => {
+    session.updateSelectedQuestionOptions(optionsEditor.value);
+    updateSummary();
+  });
+
   saveBtn.addEventListener('click', async () => {
     await session.saveNow();
     updateSummary();
+  });
+  openViewerBtn.addEventListener('click', () => {
+    if (!session.state.draft?.localId) return;
+    const viewerUrl = `/viewer/?localDraftId=${encodeURIComponent(session.state.draft.localId)}`;
+    window.open(viewerUrl, '_blank', 'noopener');
   });
   addContentBtn.addEventListener('click', () => {
     session.createBlock('content');
@@ -909,22 +1109,39 @@ function renderEditorShell(session) {
     updateSummary();
   });
 
-  app.innerHTML = '';
-  app.append(
+  const blockActions = document.createElement('div');
+  blockActions.className = 'editor-actions';
+  blockActions.append(addContentBtn, addQuestionBtn, deleteBlockBtn);
+
+  const detailActions = document.createElement('div');
+  detailActions.className = 'editor-actions';
+  detailActions.append(saveBtn, openViewerBtn, exportBtn, localPublishBtn);
+
+  blockTypeLabel.append(blockKind);
+  blockTextLabel.append(blockTextEditor);
+  questionTypeLabel.append(questionInputType);
+  maxLengthLabel.append(maxLengthInput);
+  optionsLabel.append(optionsEditor);
+
+  const leftHeading = document.createElement('h2');
+  leftHeading.textContent = 'Blocks';
+  const rightHeading = document.createElement('h2');
+  rightHeading.textContent = 'Block Detail';
+
+  leftPanel.append(leftHeading, blockList, blockActions);
+  rightPanel.append(
     titleInput,
     modeSelect,
-    status,
-    blockPicker,
-    blockKind,
-    blockEditor,
-    saveBtn,
-    addContentBtn,
-    addQuestionBtn,
-    deleteBlockBtn,
-    exportBtn,
+    rightHeading,
+    blockTypeLabel,
+    blockTextLabel,
+    questionTypeLabel,
+    questionInputTypeHelp,
+    maxLengthLabel,
+    optionsLabel,
+    detailActions,
     importInput,
     importBtn,
-    localPublishBtn,
     rewriteBtn,
     t2aBtn,
     syncDraftBtn,
@@ -932,6 +1149,13 @@ function renderEditorShell(session) {
     validation,
     summary
   );
+
+  statusBar.append(statusText, validationText, localIdText);
+  layout.append(leftPanel, rightPanel);
+  shell.append(statusBar, layout);
+
+  app.innerHTML = '';
+  app.append(shell);
   updateSummary();
 }
 

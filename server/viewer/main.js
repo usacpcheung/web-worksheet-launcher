@@ -170,6 +170,12 @@ function coerceAnswerValueByInputType(inputType, rawValue) {
   return String(rawValue ?? '');
 }
 
+
+function isQuestionAnswered(answerEntry) {
+  const value = answerEntry?.value;
+  return !(value === '' || value === null || value === undefined);
+}
+
 function mapDraftRecordToViewerPayload(draftRecord) {
   return normalizeViewerPayload(
     {
@@ -602,140 +608,195 @@ class ViewerAttemptSession {
   }
 }
 
+
 function renderViewerShell(session) {
   if (!app) {
     return;
   }
 
+  const shell = document.createElement('div');
+  shell.className = 'viewer-shell';
+
   const heading = document.createElement('h1');
   heading.textContent = session.state.viewerPayload.title;
 
-  const form = document.createElement('div');
-  form.id = 'viewer-answer-form';
+  const meta = document.createElement('p');
+  meta.className = 'viewer-meta';
+
   const status = document.createElement('p');
-  const validation = document.createElement('pre');
+  const answerSummary = document.createElement('p');
+
+  const contentSection = document.createElement('section');
+  contentSection.className = 'viewer-section';
+  const contentHeading = document.createElement('h2');
+  contentHeading.textContent = 'Content';
+  contentSection.appendChild(contentHeading);
+
+  const questionSection = document.createElement('section');
+  questionSection.className = 'viewer-section';
+  const questionHeading = document.createElement('h2');
+  questionHeading.textContent = 'Questions';
+  questionSection.appendChild(questionHeading);
 
   const blocks = [...session.state.viewerPayload.blocks].sort((a, b) => a.position - b.position);
 
-  blocks.forEach((block) => {
+  blocks.forEach((block, index) => {
     if (block.kind === 'content') {
-      const content = document.createElement('p');
-      content.textContent = block.content?.text || '';
-      form.appendChild(content);
+      const contentCard = document.createElement('article');
+      contentCard.className = 'viewer-content-card';
+      const label = document.createElement('p');
+      label.className = 'viewer-block-label';
+      label.textContent = `Content ${index + 1}`;
+      const text = document.createElement('p');
+      text.textContent = block.content?.text || '';
+      contentCard.append(label, text);
+      contentSection.appendChild(contentCard);
       return;
     }
 
-    if (block.kind === 'question') {
-      const label = document.createElement('label');
-      label.textContent = block.prompt?.text || 'Question';
-      const inputType = block.responseConfig?.inputType || 'plain_text';
-      const controlId = `answer-${block.blockId}`;
-      label.htmlFor = controlId;
+    const card = document.createElement('article');
+    card.className = 'viewer-question-card';
 
-      let control;
-      if (inputType === 'short_text') {
-        control = document.createElement('input');
-        control.type = 'text';
-        control.maxLength = block.responseConfig?.maxLength || 200;
-        control.value = String(session.state.answers?.[block.blockId]?.value || '');
-        control.addEventListener('input', () => {
-          session.setAnswer(block.blockId, control.value);
-          updateSummary();
-        });
-      } else if (inputType === 'number') {
-        control = document.createElement('input');
-        control.type = 'number';
-        const priorValue = session.state.answers?.[block.blockId]?.value;
-        control.value = priorValue === '' || priorValue === null || priorValue === undefined ? '' : String(priorValue);
-        control.addEventListener('input', () => {
-          session.setAnswer(block.blockId, control.value);
-          updateSummary();
-        });
-      } else if (inputType === 'boolean') {
-        control = document.createElement('select');
-        [
-          { value: '', label: 'Select…' },
-          { value: 'true', label: 'True' },
-          { value: 'false', label: 'False' },
-        ].forEach((optionConfig) => {
-          const option = document.createElement('option');
-          option.value = optionConfig.value;
-          option.textContent = optionConfig.label;
-          control.appendChild(option);
-        });
-        const priorValue = session.state.answers?.[block.blockId]?.value;
-        control.value = priorValue === true ? 'true' : priorValue === false ? 'false' : '';
-        control.addEventListener('change', () => {
-          session.setAnswer(block.blockId, control.value);
-          updateSummary();
-        });
-      } else if (inputType === 'single_choice' && Array.isArray(block.responseConfig?.options)) {
-        control = document.createElement('select');
-        const blank = document.createElement('option');
-        blank.value = '';
-        blank.textContent = 'Select…';
-        control.appendChild(blank);
-        block.responseConfig.options.forEach((opt) => {
-          const option = document.createElement('option');
-          option.value = String(opt.value ?? opt.label ?? '');
-          option.textContent = String(opt.label ?? opt.value ?? '');
-          control.appendChild(option);
-        });
-        control.value = String(session.state.answers?.[block.blockId]?.value || '');
-        control.addEventListener('change', () => {
-          session.setAnswer(block.blockId, control.value);
-          updateSummary();
-        });
-      } else {
-        control = document.createElement('textarea');
-        control.rows = 5;
-        control.maxLength = block.responseConfig?.maxLength || 1000;
-        control.value = String(session.state.answers?.[block.blockId]?.value || '');
-        control.addEventListener('input', () => {
-          session.setAnswer(block.blockId, control.value);
-          updateSummary();
-        });
-      }
+    const label = document.createElement('label');
+    label.className = 'viewer-block-label';
+    label.textContent = block.prompt?.text || 'Question';
 
-      control.id = controlId;
-      control.disabled = session.state.status === 'completed';
-      form.append(label, control);
+    const inputType = block.responseConfig?.inputType || 'plain_text';
+    const helper = document.createElement('p');
+    helper.className = 'viewer-helper';
+    helper.textContent = `Input type: ${inputType}`;
+
+    const answeredIndicator = document.createElement('p');
+    answeredIndicator.className = 'viewer-answer-state';
+
+    const controlId = `answer-${block.blockId}`;
+    label.htmlFor = controlId;
+
+    let control;
+    if (inputType === 'short_text') {
+      control = document.createElement('input');
+      control.type = 'text';
+      control.maxLength = block.responseConfig?.maxLength || 200;
+      control.value = String(session.state.answers?.[block.blockId]?.value || '');
+      control.addEventListener('input', () => {
+        session.setAnswer(block.blockId, control.value);
+        updateSummary();
+      });
+    } else if (inputType === 'number') {
+      control = document.createElement('input');
+      control.type = 'number';
+      const priorValue = session.state.answers?.[block.blockId]?.value;
+      control.value = priorValue === '' || priorValue === null || priorValue === undefined ? '' : String(priorValue);
+      control.addEventListener('input', () => {
+        session.setAnswer(block.blockId, control.value);
+        updateSummary();
+      });
+    } else if (inputType === 'boolean') {
+      control = document.createElement('select');
+      [
+        { value: '', label: 'Select…' },
+        { value: 'true', label: 'True' },
+        { value: 'false', label: 'False' },
+      ].forEach((optionConfig) => {
+        const option = document.createElement('option');
+        option.value = optionConfig.value;
+        option.textContent = optionConfig.label;
+        control.appendChild(option);
+      });
+      const priorValue = session.state.answers?.[block.blockId]?.value;
+      control.value = priorValue === true ? 'true' : priorValue === false ? 'false' : '';
+      control.addEventListener('change', () => {
+        session.setAnswer(block.blockId, control.value);
+        updateSummary();
+      });
+    } else if (inputType === 'single_choice' && Array.isArray(block.responseConfig?.options)) {
+      control = document.createElement('select');
+      const blank = document.createElement('option');
+      blank.value = '';
+      blank.textContent = 'Select…';
+      control.appendChild(blank);
+      block.responseConfig.options.forEach((opt) => {
+        const option = document.createElement('option');
+        option.value = String(opt.value ?? opt.label ?? '');
+        option.textContent = String(opt.label ?? opt.value ?? '');
+        control.appendChild(option);
+      });
+      control.value = String(session.state.answers?.[block.blockId]?.value || '');
+      control.addEventListener('change', () => {
+        session.setAnswer(block.blockId, control.value);
+        updateSummary();
+      });
+    } else {
+      control = document.createElement('textarea');
+      control.rows = 5;
+      control.maxLength = block.responseConfig?.maxLength || 1000;
+      control.value = String(session.state.answers?.[block.blockId]?.value || '');
+      control.addEventListener('input', () => {
+        session.setAnswer(block.blockId, control.value);
+        updateSummary();
+      });
     }
+
+    control.id = controlId;
+    control.disabled = session.state.status === 'completed';
+
+    const refreshAnsweredIndicator = () => {
+      const answer = session.state.answers?.[block.blockId];
+      const answered = isQuestionAnswered(answer);
+      answeredIndicator.textContent = answered ? 'Answered' : 'Unanswered';
+      answeredIndicator.dataset.answered = answered ? 'true' : 'false';
+    };
+
+    refreshAnsweredIndicator();
+    card.append(label, helper, answeredIndicator, control);
+    questionSection.appendChild(card);
   });
+
+  const actions = document.createElement('div');
+  actions.className = 'viewer-actions';
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.textContent = 'Save now';
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
-  completeBtn.textContent = 'Submit / finalize local attempt';
-
+  completeBtn.textContent = 'Submit / finalize';
   const syncResumeBtn = document.createElement('button');
   syncResumeBtn.type = 'button';
   syncResumeBtn.textContent = 'Sync/Resume (Sign-in required)';
-
   const rewriteAssistBtn = document.createElement('button');
   rewriteAssistBtn.type = 'button';
   rewriteAssistBtn.textContent = 'Rewrite Assist (Sign-in required)';
+
   completeBtn.disabled = session.state.status === 'completed';
   completeBtn.addEventListener('click', async () => {
     await session.completeLocalAttempt();
     completeBtn.disabled = true;
-    Array.from(form.querySelectorAll('textarea, input, select')).forEach((control) => {
+    Array.from(questionSection.querySelectorAll('textarea, input, select')).forEach((control) => {
       control.disabled = true;
     });
     updateSummary();
   });
 
+  const validation = document.createElement('pre');
   const summary = document.createElement('pre');
-  summary.id = 'viewer-state-summary';
 
   const updateSummary = () => {
+    const totalQuestions = blocks.filter((block) => block.kind === 'question').length;
+    const answeredCount = blocks
+      .filter((block) => block.kind === 'question')
+      .filter((block) => isQuestionAnswered(session.state.answers?.[block.blockId]))
+      .length;
+
     status.textContent = session.state.lastSaveError
       ? `⚠️ ${session.state.lastSaveError}`
       : session.state.autosavePending
         ? 'Saving…'
         : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+
+    answerSummary.textContent = `Answered ${answeredCount} of ${totalQuestions} questions`;
+
+    meta.textContent = `worksheetId=${session.state.viewerPayload?.worksheetId || 'n/a'} · snapshotId=${session.state.viewerPayload?.snapshotId || 'n/a'} · source=${session.state.source} · status=${session.state.status}`;
 
     validation.textContent = JSON.stringify(
       {
@@ -764,6 +825,17 @@ function renderViewerShell(session) {
       null,
       2
     );
+
+    Array.from(questionSection.querySelectorAll('.viewer-question-card')).forEach((card, index) => {
+      const questionBlock = blocks.filter((block) => block.kind === 'question')[index];
+      if (!questionBlock) return;
+      const answered = isQuestionAnswered(session.state.answers?.[questionBlock.blockId]);
+      const stateEl = card.querySelector('.viewer-answer-state');
+      if (stateEl) {
+        stateEl.textContent = answered ? 'Answered' : 'Unanswered';
+        stateEl.dataset.answered = answered ? 'true' : 'false';
+      }
+    });
   };
 
   saveBtn.addEventListener('click', async () => {
@@ -774,14 +846,17 @@ function renderViewerShell(session) {
     await session.triggerProtectedAction('resumeAttemptSyncAfterLogin');
     updateSummary();
   });
-
   rewriteAssistBtn.addEventListener('click', async () => {
     await session.triggerProtectedAction('resumeViewerRewriteAfterLogin');
     updateSummary();
   });
 
+  actions.append(saveBtn, completeBtn, syncResumeBtn, rewriteAssistBtn);
+
+  shell.append(heading, meta, status, answerSummary, contentSection, questionSection, actions, validation, summary);
+
   app.innerHTML = '';
-  app.append(heading, status, form, saveBtn, completeBtn, syncResumeBtn, rewriteAssistBtn, validation, summary);
+  app.append(shell);
   updateSummary();
 }
 

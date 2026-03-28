@@ -5,6 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- Primary product surface: canonical editor route (not popup compatibility). -->
     <title>Worksheet Editor</title>
+    <style>
+      :root { color-scheme: light; }
+      body { margin: 0; font-family: Arial, sans-serif; background: #f6f7fb; color: #111827; }
+      #app { padding: 16px; }
+      .editor-shell { display: grid; gap: 12px; }
+      .editor-status-bar { position: sticky; top: 0; z-index: 10; display: flex; gap: 16px; flex-wrap: wrap; padding: 10px 12px; background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; }
+      .editor-layout { display: grid; grid-template-columns: minmax(220px, 320px) 1fr; gap: 12px; }
+      .editor-panel { background: #fff; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; display: grid; gap: 10px; align-content: start; }
+      .editor-block-list { display: grid; gap: 6px; max-height: 55vh; overflow: auto; }
+      .editor-block-item { text-align: left; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; padding: 8px; }
+      .editor-block-item.is-selected { border-color: #2563eb; background: #eff6ff; }
+      .editor-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      label { display: grid; gap: 6px; font-size: 14px; }
+      input, select, textarea, button { font: inherit; }
+      input, select, textarea { padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
+      button { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; cursor: pointer; }
+      button:hover { background: #eef2ff; }
+      pre { margin: 0; white-space: pre-wrap; background: #0f172a; color: #e2e8f0; border-radius: 6px; padding: 10px; }
+      .editor-help-text { margin: 0; font-size: 12px; color: #475569; }
+    </style>
   </head>
   <body>
     <div id="app"></div>

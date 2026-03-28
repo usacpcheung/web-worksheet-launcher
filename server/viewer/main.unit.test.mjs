@@ -147,3 +147,49 @@ test('completeLocalAttempt clears pending autosave timer before immediate autosa
   assert.equal(autosaveCalls, 1);
   assert.equal(timerFired, false);
 });
+
+test('setAnswer keeps input-type coercion behavior for number and boolean questions', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [
+      { blockId: 'q_num', kind: 'question', position: 0, prompt: { text: 'How many?' }, responseConfig: { inputType: 'number' } },
+      { blockId: 'q_bool', kind: 'question', position: 1, prompt: { text: 'True?' }, responseConfig: { inputType: 'boolean' } },
+    ],
+  };
+
+  session.setAnswer('q_num', '42');
+  session.setAnswer('q_bool', 'false');
+
+  assert.equal(session.state.answers.q_num.value, 42);
+  assert.equal(session.state.answers.q_bool.value, false);
+});
+
+test('normalizeViewerBlock keeps text maxLength defaults for plain/short text question types', async () => {
+  const mod = await loadViewerModule();
+  const plain = mod.normalizeViewerBlock({
+    blockId: 'q_plain',
+    kind: 'question',
+    position: 0,
+    prompt: { text: 'Describe' },
+    responseConfig: { inputType: 'plain_text' },
+  }, 0);
+  const short = mod.normalizeViewerBlock({
+    blockId: 'q_short',
+    kind: 'question',
+    position: 1,
+    prompt: { text: 'Name' },
+    responseConfig: { inputType: 'short_text', maxLength: 32 },
+  }, 1);
+
+  assert.equal(plain.responseConfig.inputType, 'plain_text');
+  assert.equal(plain.responseConfig.maxLength, 1000);
+  assert.equal(short.responseConfig.inputType, 'short_text');
+  assert.equal(short.responseConfig.maxLength, 32);
+});
