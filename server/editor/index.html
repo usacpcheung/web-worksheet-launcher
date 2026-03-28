@@ -3,12 +3,54 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Primary product surface: canonical editor route (not popup compatibility). -->
     <title>Worksheet Editor</title>
     <link rel="stylesheet" href="./main.css" />
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <main class="editor-runtime" aria-label="Worksheet editor">
+        <section class="workspace">
+          <header class="workspace-header">
+            <h1>Worksheet Editor</h1>
+            <p class="workspace-subtitle">Single-question authoring (v1)</p>
+          </header>
+
+          <label class="field-row">
+            <span class="field-label">Worksheet title</span>
+            <input id="title-input" class="control" type="text" placeholder="Untitled worksheet" />
+          </label>
+
+          <section class="question-block" aria-label="Question block editor">
+            <div class="question-row">
+              <h2>Question block</h2>
+              <span class="chip">v1 single question</span>
+            </div>
+            <label class="field-row">
+              <span class="field-label">Question</span>
+              <textarea id="question-input" class="control" rows="4" maxlength="800" placeholder="Type the question prompt"></textarea>
+            </label>
+            <p id="question-meta" class="muted">0 / 800 characters</p>
+            <p id="question-validation" class="error-text" role="status" aria-live="polite"></p>
+          </section>
+
+          <section class="answer-preview" aria-label="Answer area preview">
+            <h2>Answer area preview</h2>
+            <label class="field-row">
+              <span class="field-label">Answer text</span>
+              <textarea id="answer-input" class="control" rows="4" placeholder="Learner answer preview"></textarea>
+            </label>
+            <div class="preview-box" id="answer-preview-output" aria-live="polite">Answer preview will appear here.</div>
+          </section>
+
+          <section class="protected-actions" aria-label="Protected actions">
+            <button type="button" class="control" disabled>Rewrite — Sign in required</button>
+            <button type="button" class="control" disabled>T2A — Sign in required</button>
+          </section>
+
+          <p id="save-status" class="status-line" role="status" aria-live="polite">Saving...</p>
+        </section>
+      </main>
+    </div>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

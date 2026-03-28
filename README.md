@@ -73,3 +73,14 @@ Lifecycle hooks (optional):
 - `onResult(payload)`
 
 In v1, launcher behavior remains one-question mode only.
+
+
+## Editor capabilities (Phase 2 runtime slice)
+
+Phase 2 editor runtime slice is now delivered under `server/editor/` with local-only behavior:
+
+- Center workspace for worksheet title, single-question prompt editing (v1), answer preview, and save-state status.
+- Restore-on-load from IndexedDB (`latest` local draft) with blank draft bootstrap when no draft exists.
+- Debounced autosave and dirty tracking for title/question/answer changes.
+- Local validation guard for question prompt (`required`, max `800` chars per v1 launch contract).
+- Protected rewrite/T2A actions remain disabled with “Sign in required” labels (no backend/auth calls in this slice).

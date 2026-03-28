@@ -3,316 +3,185 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+function createElement() {
+  return {
+    value: '',
+    textContent: '',
+    listeners: {},
+    addEventListener(type, handler) {
+      this.listeners[type] = handler;
+    },
+    dispatchInput(value) {
+      this.value = value;
+      const handler = this.listeners.input;
+      if (handler) {
+        handler({ target: { value } });
+      }
+    },
+  };
+}
+
+function createDomHarness() {
+  const titleInput = createElement();
+  const questionInput = createElement();
+  const questionMeta = createElement();
+  const questionValidation = createElement();
+  const answerInput = createElement();
+  const answerPreview = createElement();
+  const saveStatus = createElement();
+
+  const elements = {
+    '#title-input': titleInput,
+    '#question-input': questionInput,
+    '#question-meta': questionMeta,
+    '#question-validation': questionValidation,
+    '#answer-input': answerInput,
+    '#answer-preview-output': answerPreview,
+    '#save-status': saveStatus,
+  };
+
+  const app = {
+    querySelector(selector) {
+      return elements[selector] || null;
+    },
+    innerHTML: '',
+  };
+
+  return { app, elements };
+}
+
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   let source = await fs.readFile(filePath, 'utf8');
 
   source = source.replace(
-    "import { editorStorage } from './storage/index.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
-    'const editorStorage = {};\nconst SharedAuthGate = class {};\n'
+    "import { editorStorage } from './storage/index.js';\n",
+    'const editorStorage = {};\n'
   );
 
   source = source.replace(
-    /async function loadContracts\(\) \{[\s\S]*?\n\}\n\nfunction createEmptyQuestionBlock/,
-    `async function loadContracts() {
-  return {
-    validateDraftSchema(draft) {
-      const errors = [];
-      if (!draft || typeof draft !== 'object') {
-        return { valid: false, errors: ['draft must be object'] };
-      }
-      if (!Array.isArray(draft.blocks) || draft.blocks.length === 0) {
-        errors.push('draft.blocks must be a non-empty array');
-      } else {
-        draft.blocks.forEach((block, index) => {
-          if (block.kind === 'question' && !String(block?.prompt?.text || '').trim()) {
-            errors.push(\`draft.blocks[\${index}].prompt.text is required for question blocks\`);
-          }
-          if (block.kind === 'content' && !String(block?.content?.text || '').trim()) {
-            errors.push(\`draft.blocks[\${index}].content.text is required for content blocks\`);
-          }
-        });
-      }
-      return { valid: errors.length === 0, errors };
-    },
-  };
-}
-
-function createEmptyQuestionBlock`
+    /bootstrapEditor\(\)\.catch\([\s\S]*?\}\);\n\nexport \{/,
+    'export {'
   );
 
-  source = source.replace(
-    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{[^}]+\};/,
-    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation };'
-  );
-
-  globalThis.document = {
-    getElementById: () => null,
-    activeElement: null,
-  };
-  globalThis.window = {
-    location: { hash: '#fallback' },
-    scrollY: 150,
-  };
-
-  const dataUrl = `data:text/javascript,${encodeURIComponent(source)}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(source)}#${Date.now()}_${Math.random()}`;
   return import(dataUrl);
 }
 
-test('normalizeBlocks preserves question responseConfig and extra fields', async () => {
-  const mod = await loadEditorModule();
-  const blocks = mod.normalizeBlocks([
-    {
-      blockId: 'q1',
-      kind: 'question',
-      position: 0,
-      prompt: { text: 'Question?', format: 'markdown' },
-      responseConfig: { inputType: 'plain_text', maxLength: 42 },
-      extraField: 'keep-me',
-    },
-  ]);
+test('autosave writes updated draft after field edits', async () => {
+  const { app, elements } = createDomHarness();
+  globalThis.document = { getElementById: () => app };
 
-  assert.equal(blocks.length, 1);
-  assert.equal(blocks[0].kind, 'question');
-  assert.deepEqual(blocks[0].responseConfig, { inputType: 'plain_text', maxLength: 42 });
-  assert.equal(blocks[0].extraField, 'keep-me');
-});
-
-test('normalizeBlocks preserves non-prompt extra fields while normalizing content', async () => {
-  const mod = await loadEditorModule();
-  const blocks = mod.normalizeBlocks([
-    {
-      blockId: 'c1',
-      kind: 'content',
-      position: 2,
-      content: { text: 99, format: '' },
-      customMeta: { foo: 'bar' },
-    },
-  ]);
-
-  assert.equal(blocks[0].kind, 'content');
-  assert.equal(blocks[0].content.text, '99');
-  assert.equal(blocks[0].content.format, 'plain_text');
-  assert.deepEqual(blocks[0].customMeta, { foo: 'bar' });
-});
-
-test('persistRestoreMetadata preserves explicit empty hash and zero-like scroll token', async () => {
-  const mod = await loadEditorModule();
-  let saved = null;
-
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: {
-      get: () => null,
-      set: (_key, value) => {
-        saved = value;
-      },
-    },
-  });
-
-  session.state.draft = { localId: 'draft_1', blocks: [] };
-  session.state.hash = '';
-  session.state.scrollToken = 0;
-
-  session.persistRestoreMetadata();
-
-  assert.equal(saved.hash, '');
-  assert.equal(saved.scrollToken, 0);
-});
-
-test('importWorksheetJson throws clear parse error for invalid JSON text', async () => {
   const mod = await loadEditorModule();
 
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-
-  await assert.rejects(
-    () => session.importWorksheetJson('{not-valid-json', {}),
-    /Imported worksheet JSON could not be parsed/
-  );
-});
-
-test('editor shell no longer relies on 500ms summary interval loop', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes('setInterval(updateSummary, 500)'), false);
-});
-
-test('autosave completion emits state updates and clears pending state without extra UI events', async () => {
-  const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-  let emissions = 0;
-  session.setOnStateChange(() => {
-    emissions += 1;
-  });
-
-  await session.createOrOpenByLocalDraftId('draft_status');
-  clearTimeout(session.autosaveTimer);
-  await session.autosave();
-
-  assert.equal(session.state.autosavePending, false);
-  assert.ok(emissions >= 2, 'expected state emissions for pending + completion transitions');
-});
-
-test('new question transient prompt validation is suppressed during first autosave', async () => {
-  const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-
-  await session.createOrOpenByLocalDraftId('draft_transient');
-  clearTimeout(session.autosaveTimer);
-  const firstBlock = session.state.draft.blocks[0];
-  session.updateBlockContent(firstBlock.blockId, 'intro text');
-  clearTimeout(session.autosaveTimer);
-
-  const question = session.createBlock('question');
-  clearTimeout(session.autosaveTimer);
-  session.state.isPristineDraft = false;
-  await session.autosave();
-
-  assert.equal(session.state.lastSavedLocalValidationIssueCount > 0, true);
-  assert.equal(session.state.lastContractValidationIssueCount > 0, true);
-  assert.equal(session.state.lastValidationWarning, null, 'transient empty prompt warning should be suppressed');
-
-  session.updateBlockContent(question.blockId, 'typed prompt');
-  clearTimeout(session.autosaveTimer);
-  await session.autosave();
-  assert.equal(session.state.lastValidationWarning, null);
-});
-
-test('older autosave completion cannot override newer save status', async () => {
-  const mod = await loadEditorModule();
-  const deferred = () => {
-    let resolve;
-    const promise = new Promise((r) => { resolve = r; });
-    return { promise, resolve };
-  };
-  const first = deferred();
-  const second = deferred();
-  let putCall = 0;
-  const session = new mod.EditorDraftSession({
+  const writeCalls = [];
+  const storage = {
     drafts: {
-      get: async () => null,
-      put: async (value) => {
-        putCall += 1;
-        if (putCall === 1) {
-          await first.promise;
-          return value;
-        }
-        await second.promise;
-        return value;
+      getLatest: async () => ({
+        localId: 'draft_1',
+        title: 'Before',
+        question: 'Before Q',
+        answer: 'Before A',
+        metadata: { localId: 'draft_1', origin: 'server/editor', updatedAt: '2026-01-01T00:00:00.000Z' },
+      }),
+      create: async (record) => record,
+      update: async (record) => {
+        writeCalls.push(record);
+        return record;
       },
     },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
+  };
+
+  const controller = new mod.EditorRuntimeController(storage, { autosaveMs: 10 });
+  await controller.init();
+
+  elements['#title-input'].dispatchInput('After');
+  elements['#question-input'].dispatchInput('After question');
+
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(writeCalls.length, 1);
+  assert.equal(writeCalls[0].title, 'After');
+  assert.equal(writeCalls[0].question, 'After question');
+  assert.equal(controller.state.saveStatus, 'Saved');
+});
+
+test('init restores latest draft into UI fields', async () => {
+  const { app, elements } = createDomHarness();
+  globalThis.document = { getElementById: () => app };
+
+  const mod = await loadEditorModule();
+
+  const latest = {
+    localId: 'draft_latest',
+    title: 'Recovered title',
+    question: 'Recovered question',
+    answer: 'Recovered answer',
+    metadata: { localId: 'draft_latest', origin: 'server/editor', updatedAt: '2026-01-01T00:00:00.000Z' },
+  };
+
+  const controller = new mod.EditorRuntimeController({
+    drafts: {
+      getLatest: async () => latest,
+      create: async (record) => record,
+      update: async (record) => record,
+    },
   });
 
-  await session.createOrOpenByLocalDraftId('draft_race');
-  clearTimeout(session.autosaveTimer);
-  session.updateBlockContent(session.state.draft.blocks[0].blockId, 'intro text');
-  clearTimeout(session.autosaveTimer);
-  const q = session.createBlock('question');
-  clearTimeout(session.autosaveTimer);
-  session.state.isPristineDraft = false;
+  await controller.init();
 
-  const save1 = session.autosave(); // invalid (empty question)
-  session.updateBlockContent(q.blockId, 'now valid');
-  clearTimeout(session.autosaveTimer);
-  const newerRevision = session.state.draftRevision;
-  const save2 = session.autosave(); // valid
-
-  second.resolve();
-  await save2;
-  first.resolve();
-  await save1;
-
-  assert.equal(session.state.lastSavedRevision, newerRevision);
-  assert.equal(session.state.lastValidationWarning, null);
-  assert.equal(session.state.lastSavedLocalValidationIssueCount, 0);
-  assert.equal(session.state.lastContractValidationIssueCount, 0);
+  assert.equal(elements['#title-input'].value, 'Recovered title');
+  assert.equal(elements['#question-input'].value, 'Recovered question');
+  assert.equal(elements['#answer-input'].value, 'Recovered answer');
+  assert.equal(controller.state.draft.localId, 'draft_latest');
 });
 
-test('viewer navigation no longer uses hardcoded /viewer absolute assign path', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);"), false);
-  assert.equal(source.includes('buildViewerUrlFromCurrentLocation(window.location.href, localDraftId)'), true);
-  assert.equal(source.includes("new URL('../viewer/', currentHref)"), true);
-});
+test('blank draft model includes required metadata fields', async () => {
+  const { app } = createDomHarness();
+  globalThis.document = { getElementById: () => app };
 
-test('buildViewerUrlFromCurrentLocation resolves sibling viewer route from current page', async () => {
   const mod = await loadEditorModule();
-  const rootResolved = mod.buildViewerUrlFromCurrentLocation('https://example.test/editor/', 'draft_root');
-  assert.equal(rootResolved.toString(), 'https://example.test/viewer/?localDraftId=draft_root');
+  const blank = mod.buildBlankDraft();
 
-  const nestedResolved = mod.buildViewerUrlFromCurrentLocation(
-    'https://example.test/server/editor/index.html?mode=edit#section',
-    'draft_nested'
+  assert.ok(blank.localId);
+  assert.equal(blank.metadata.localId, blank.localId);
+  assert.ok(blank.metadata.origin);
+  assert.ok(blank.metadata.updatedAt);
+});
+
+test('validation returns message for empty question and clears for valid text', async () => {
+  const { app, elements } = createDomHarness();
+  globalThis.document = { getElementById: () => app };
+
+  const mod = await loadEditorModule();
+
+  assert.equal(mod.validateQuestion(''), 'Question is required.');
+  assert.equal(mod.validateQuestion('Valid question'), '');
+
+  const controller = new mod.EditorRuntimeController({
+    drafts: {
+      getLatest: async () => null,
+      create: async (record) => record,
+      update: async (record) => record,
+    },
+  });
+
+  await controller.init();
+  elements['#question-input'].dispatchInput('');
+
+  assert.equal(controller.state.validationMessage, 'Question is required.');
+  assert.equal(elements['#question-validation'].textContent, 'Question is required.');
+});
+
+test('validation reports too-long question', async () => {
+  const { app } = createDomHarness();
+  globalThis.document = { getElementById: () => app };
+
+  const mod = await loadEditorModule();
+  const tooLong = 'x'.repeat(mod.QUESTION_MAX_LENGTH + 1);
+
+  assert.equal(
+    mod.validateQuestion(tooLong),
+    `Question must be ${mod.QUESTION_MAX_LENGTH} characters or fewer.`
   );
-  assert.equal(nestedResolved.toString(), 'https://example.test/server/viewer/?localDraftId=draft_nested');
-});
-
-test('mapOptionsTextToResponseOptions maps trimmed non-empty lines', async () => {
-  const mod = await loadEditorModule();
-  const mapped = mod.mapOptionsTextToResponseOptions('  Alpha\n\nBeta  \n Gamma ');
-  assert.deepEqual(mapped, [
-    { value: 'Alpha', label: 'Alpha' },
-    { value: 'Beta', label: 'Beta' },
-    { value: 'Gamma', label: 'Gamma' },
-  ]);
-});
-
-test('question field updates map inputType, maxLength, and options through draft blocks', async () => {
-  const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-  await session.createOrOpenByLocalDraftId('draft_q');
-  const block = session.createBlock('question');
-  session.selectBlock(block.blockId);
-
-  session.updateQuestionInputType(block.blockId, 'single_choice');
-  session.updateQuestionOptionsFromText(block.blockId, 'One\nTwo');
-  session.updateQuestionInputType(block.blockId, 'short_text');
-  session.updateQuestionMaxLength(block.blockId, '25');
-
-  const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
-  assert.equal(updated.responseConfig.inputType, 'short_text');
-  assert.equal(updated.responseConfig.maxLength, 25);
-  assert.equal(updated.responseConfig.options, undefined);
-});
-
-test('updateQuestionMaxLength preserves existing maxLength on empty or non-numeric input', async () => {
-  const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-  await session.createOrOpenByLocalDraftId('draft_ml');
-  const block = session.createBlock('question');
-  session.selectBlock(block.blockId);
-
-  session.updateQuestionMaxLength(block.blockId, '200');
-  const afterValid = session.state.draft.blocks.find((b) => b.blockId === block.blockId);
-  assert.equal(afterValid.responseConfig.maxLength, 200);
-
-  session.updateQuestionMaxLength(block.blockId, '');
-  const afterEmpty = session.state.draft.blocks.find((b) => b.blockId === block.blockId);
-  assert.equal(afterEmpty.responseConfig.maxLength, 200, 'maxLength should be preserved on empty input');
-
-  session.updateQuestionMaxLength(block.blockId, 'abc');
-  const afterNan = session.state.draft.blocks.find((b) => b.blockId === block.blockId);
-  assert.equal(afterNan.responseConfig.maxLength, 200, 'maxLength should be preserved on non-numeric input');
 });
