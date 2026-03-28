@@ -177,6 +177,7 @@ class EditorDraftSession {
       lastSavedRevision: 0,
       recoveryMessage: null,
       lastProtectedAction: null,
+      isPristineDraft: false,
     };
 
     this.autosaveTimer = null;
@@ -283,8 +284,10 @@ class EditorDraftSession {
         ...existing,
         blocks: normalizeBlocks(existing.blocks),
       };
+      this.state.isPristineDraft = false;
     } else {
       this.state.draft = createDraftRecord({ localId: draftId });
+      this.state.isPristineDraft = true;
       this.scheduleAutosave();
     }
 
@@ -578,7 +581,8 @@ class EditorDraftSession {
         this.state.lastSavedAt = updatedAt;
       }
 
-      this.state.lastSaveError = contractValidation.valid
+      const shouldSuppressPristineWarning = this.state.isPristineDraft && this.state.lastSavedRevision === 0;
+      this.state.lastSaveError = contractValidation.valid || shouldSuppressPristineWarning
         ? null
         : `Draft saved locally with validation errors (${contractValidation.errors.length}).`;
       this.persistRestoreMetadata();
@@ -704,6 +708,7 @@ class EditorDraftSession {
 
   touchDraft() {
     if (!this.state.draft) return;
+    this.state.isPristineDraft = false;
     this.state.draft = {
       ...this.state.draft,
       metadata: {

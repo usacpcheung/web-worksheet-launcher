@@ -112,6 +112,12 @@ test('editor shell no longer relies on 500ms summary interval loop', async () =>
   assert.equal(source.includes('setInterval(updateSummary, 500)'), false);
 });
 
+test('autosave suppresses pristine-draft validation warning on first load', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('isPristineDraft'), true);
+  assert.equal(source.includes('shouldSuppressPristineWarning'), true);
+});
+
 test('viewer navigation no longer uses hardcoded /viewer absolute assign path', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);"), false);
