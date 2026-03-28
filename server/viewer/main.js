@@ -566,8 +566,12 @@ class ViewerAttemptSession {
       }
       return persisted;
     } catch (error) {
-      this.state.lastSaveError = error?.message || String(error);
-      this.notifyStateChange();
+      const shouldApplyErrorStatus =
+        this.state.localAttemptId === attemptRecord.localId && revisionAtSaveStart > this.state.lastSavedRevision;
+      if (shouldApplyErrorStatus) {
+        this.state.lastSaveError = error?.message || String(error);
+        this.notifyStateChange();
+      }
       throw error;
     } finally {
       this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);

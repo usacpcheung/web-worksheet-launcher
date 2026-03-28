@@ -646,8 +646,13 @@ class EditorDraftSession {
       }
       return persisted;
     } catch (error) {
-      this.state.lastPersistenceError = error?.message || String(error);
-      this.notifyStateChange();
+      const shouldApplyErrorStatus =
+        this.state.draft?.localId === snapshotToPersist.metadata?.localId &&
+        revisionAtSaveStart > this.state.lastSavedRevision;
+      if (shouldApplyErrorStatus) {
+        this.state.lastPersistenceError = error?.message || String(error);
+        this.notifyStateChange();
+      }
       throw error;
     } finally {
       this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
