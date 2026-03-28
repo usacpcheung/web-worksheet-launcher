@@ -875,9 +875,13 @@ function renderEditorShell(session) {
   const topBar = document.createElement('section');
   topBar.className = 'editor-topbar';
   const saveStateEl = document.createElement('p');
+  saveStateEl.className = 'editor-topbar-item';
   const lastSavedEl = document.createElement('p');
+  lastSavedEl.className = 'editor-topbar-item';
   const validationEl = document.createElement('p');
+  validationEl.className = 'editor-topbar-item';
   const localDraftIdEl = document.createElement('p');
+  localDraftIdEl.className = 'editor-topbar-item';
   const saveErrorEl = document.createElement('p');
   const saveWarningEl = document.createElement('p');
   saveErrorEl.className = 'error-text';
@@ -894,7 +898,7 @@ function renderEditorShell(session) {
   const leftHeading = document.createElement('h2');
   leftHeading.textContent = 'Blocks';
   const rightHeading = document.createElement('h2');
-  rightHeading.textContent = 'Block details';
+  rightHeading.textContent = 'Block Details';
 
   const blockList = document.createElement('ul');
   blockList.className = 'block-list';
@@ -907,6 +911,11 @@ function renderEditorShell(session) {
 
   const statusRow = document.createElement('p');
   statusRow.className = 'muted';
+  const moreActions = document.createElement('details');
+  moreActions.className = 'editor-more-actions';
+  const moreActionsSummary = document.createElement('summary');
+  moreActionsSummary.textContent = 'More Actions';
+  moreActions.appendChild(moreActionsSummary);
 
   const blockKind = document.createElement('select');
   blockKind.id = 'editor-block-kind';
@@ -1133,12 +1142,12 @@ function renderEditorShell(session) {
           ? 'Saved (warnings)'
         : 'Saved';
 
-    saveStateEl.textContent = `State: ${saveState}`;
+    const isSynced = saveState === 'Saved';
+    saveStateEl.innerHTML = `<span class="editor-label">State:</span> <span class="editor-pill ${isSynced ? 'editor-pill--ok' : 'editor-pill--warn'}"><span class="editor-dot"></span>${isSynced ? 'Synced' : saveState}</span>`;
     lastSavedEl.textContent = `Last saved: ${session.state.lastSavedAt || 'Not yet saved'}`;
-    validationEl.textContent =
-      `Validation issues (last saved local: ${session.state.lastSavedLocalValidationIssueCount}, `
-      + `last saved contract: ${session.state.lastContractValidationIssueCount})`;
-    localDraftIdEl.textContent = `localDraftId: ${session.state.draft?.localId || 'n/a'}`;
+    const validationIssues = session.state.lastSavedLocalValidationIssueCount + session.state.lastContractValidationIssueCount;
+    validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">Validation: ${validationIssues} issue${validationIssues === 1 ? '' : 's'}</span>`;
+    localDraftIdEl.innerHTML = `<span class="editor-label">localDraftId:</span> <span class="editor-id-value">${session.state.draft?.localId || 'n/a'}</span>`;
     saveErrorEl.textContent = session.state.lastPersistenceError ? `Error: ${session.state.lastPersistenceError}` : '';
     saveWarningEl.textContent = session.state.lastValidationWarning ? `Warning: ${session.state.lastValidationWarning}` : '';
     statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'} · Mode: ${session.state.mode}`;
@@ -1230,16 +1239,16 @@ function renderEditorShell(session) {
     updateSummary();
   });
 
-  controlsRow.append(addContentBtn, addQuestionBtn, deleteBlockBtn, openViewerBtn);
+  addContentBtn.textContent = '+ Add Content';
+  addQuestionBtn.textContent = '+ Add Question';
+  controlsRow.append(addContentBtn, addQuestionBtn);
   metaRow.append(saveBtn, modeSelect, exportBtn, importBtn);
-  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, metaRow, importInput);
+  moreActions.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn, localPublishBtn, deleteBlockBtn);
+  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importInput, openViewerBtn);
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
-  const protectedRow = document.createElement('div');
-  protectedRow.className = 'button-row';
-  protectedRow.append(localPublishBtn, rewriteBtn, t2aBtn, syncDraftBtn, publishBtn);
-  topBar.append(saveStateEl, lastSavedEl, validationEl, localDraftIdEl, saveErrorEl, saveWarningEl);
-  shell.append(topBar, layout, protectedRow);
+  topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);
+  shell.append(topBar, saveErrorEl, saveWarningEl, layout);
   app.innerHTML = '';
   app.append(shell);
   updateSummary();
