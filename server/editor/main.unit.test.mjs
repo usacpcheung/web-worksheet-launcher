@@ -13,306 +13,171 @@ async function loadEditorModule() {
   );
 
   source = source.replace(
-    /async function loadContracts\(\) \{[\s\S]*?\n\}\n\nfunction createEmptyQuestionBlock/,
+    /async function loadContracts\(\) \{[\s\S]*?\n\}\n\nfunction createDefaultBlock/,
     `async function loadContracts() {
   return {
-    validateDraftSchema(draft) {
-      const errors = [];
-      if (!draft || typeof draft !== 'object') {
-        return { valid: false, errors: ['draft must be object'] };
-      }
-      if (!Array.isArray(draft.blocks) || draft.blocks.length === 0) {
-        errors.push('draft.blocks must be a non-empty array');
-      } else {
-        draft.blocks.forEach((block, index) => {
-          if (block.kind === 'question' && !String(block?.prompt?.text || '').trim()) {
-            errors.push(\`draft.blocks[\${index}].prompt.text is required for question blocks\`);
-          }
-          if (block.kind === 'content' && !String(block?.content?.text || '').trim()) {
-            errors.push(\`draft.blocks[\${index}].content.text is required for content blocks\`);
-          }
-        });
-      }
-      return { valid: errors.length === 0, errors };
+    validateDraftSchema() {
+      return { valid: true, errors: [] };
     },
   };
 }
 
-function createEmptyQuestionBlock`
+function createDefaultBlock`
   );
 
   source = source.replace(
-    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{[^}]+\};/,
-    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation };'
+    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
+    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, validateWorksheet, createDefaultBlock, buildViewerUrlFromCurrentLocation };'
   );
 
-  globalThis.document = {
-    getElementById: () => null,
-    activeElement: null,
-  };
-  globalThis.window = {
-    location: { hash: '#fallback' },
-    scrollY: 150,
-  };
+  globalThis.document = { getElementById: () => null, activeElement: null };
+  globalThis.window = { location: { hash: '#fallback' }, scrollY: 200 };
 
   const dataUrl = `data:text/javascript,${encodeURIComponent(source)}`;
   return import(dataUrl);
 }
 
-test('normalizeBlocks preserves question responseConfig and extra fields', async () => {
-  const mod = await loadEditorModule();
-  const blocks = mod.normalizeBlocks([
-    {
-      blockId: 'q1',
-      kind: 'question',
-      position: 0,
-      prompt: { text: 'Question?', format: 'markdown' },
-      responseConfig: { inputType: 'plain_text', maxLength: 42 },
-      extraField: 'keep-me',
-    },
-  ]);
-
-  assert.equal(blocks.length, 1);
-  assert.equal(blocks[0].kind, 'question');
-  assert.deepEqual(blocks[0].responseConfig, { inputType: 'plain_text', maxLength: 42 });
-  assert.equal(blocks[0].extraField, 'keep-me');
-});
-
-test('normalizeBlocks preserves non-prompt extra fields while normalizing content', async () => {
-  const mod = await loadEditorModule();
-  const blocks = mod.normalizeBlocks([
-    {
-      blockId: 'c1',
-      kind: 'content',
-      position: 2,
-      content: { text: 99, format: '' },
-      customMeta: { foo: 'bar' },
-    },
-  ]);
-
-  assert.equal(blocks[0].kind, 'content');
-  assert.equal(blocks[0].content.text, '99');
-  assert.equal(blocks[0].content.format, 'plain_text');
-  assert.deepEqual(blocks[0].customMeta, { foo: 'bar' });
-});
-
-test('persistRestoreMetadata preserves explicit empty hash and zero-like scroll token', async () => {
-  const mod = await loadEditorModule();
-  let saved = null;
-
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: {
-      get: () => null,
-      set: (_key, value) => {
-        saved = value;
-      },
-    },
-  });
-
-  session.state.draft = { localId: 'draft_1', blocks: [] };
-  session.state.hash = '';
-  session.state.scrollToken = 0;
-
-  session.persistRestoreMetadata();
-
-  assert.equal(saved.hash, '');
-  assert.equal(saved.scrollToken, 0);
-});
-
-test('importWorksheetJson throws clear parse error for invalid JSON text', async () => {
-  const mod = await loadEditorModule();
-
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-
-  await assert.rejects(
-    () => session.importWorksheetJson('{not-valid-json', {}),
-    /Imported worksheet JSON could not be parsed/
-  );
-});
-
-test('editor shell no longer relies on 500ms summary interval loop', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes('setInterval(updateSummary, 500)'), false);
-});
-
-test('autosave completion emits state updates and clears pending state without extra UI events', async () => {
-  const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-  let emissions = 0;
-  session.setOnStateChange(() => {
-    emissions += 1;
-  });
-
-  await session.createOrOpenByLocalDraftId('draft_status');
-  clearTimeout(session.autosaveTimer);
-  await session.autosave();
-
-  assert.equal(session.state.autosavePending, false);
-  assert.ok(emissions >= 2, 'expected state emissions for pending + completion transitions');
-});
-
-test('new question transient prompt validation is suppressed during first autosave', async () => {
-  const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-
-  await session.createOrOpenByLocalDraftId('draft_transient');
-  clearTimeout(session.autosaveTimer);
-  const firstBlock = session.state.draft.blocks[0];
-  session.updateBlockContent(firstBlock.blockId, 'intro text');
-  clearTimeout(session.autosaveTimer);
-
-  const question = session.createBlock('question');
-  clearTimeout(session.autosaveTimer);
-  session.state.isPristineDraft = false;
-  await session.autosave();
-
-  assert.equal(session.state.lastSavedLocalValidationIssueCount > 0, true);
-  assert.equal(session.state.lastContractValidationIssueCount > 0, true);
-  assert.equal(session.state.lastValidationWarning, null, 'transient empty prompt warning should be suppressed');
-
-  session.updateBlockContent(question.blockId, 'typed prompt');
-  clearTimeout(session.autosaveTimer);
-  await session.autosave();
-  assert.equal(session.state.lastValidationWarning, null);
-});
-
-test('older autosave completion cannot override newer save status', async () => {
-  const mod = await loadEditorModule();
-  const deferred = () => {
-    let resolve;
-    const promise = new Promise((r) => { resolve = r; });
-    return { promise, resolve };
-  };
-  const first = deferred();
-  const second = deferred();
-  let putCall = 0;
-  const session = new mod.EditorDraftSession({
+function createStorageStub() {
+  return {
     drafts: {
       get: async () => null,
-      put: async (value) => {
-        putCall += 1;
-        if (putCall === 1) {
-          await first.promise;
-          return value;
-        }
-        await second.promise;
-        return value;
-      },
+      put: async (value) => value,
     },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
+    importedWorksheets: {
+      put: async () => {},
+    },
+    resumeFlags: {
+      get: () => null,
+      set: () => {},
+    },
+  };
+}
 
-  await session.createOrOpenByLocalDraftId('draft_race');
-  clearTimeout(session.autosaveTimer);
-  session.updateBlockContent(session.state.draft.blocks[0].blockId, 'intro text');
-  clearTimeout(session.autosaveTimer);
-  const q = session.createBlock('question');
-  clearTimeout(session.autosaveTimer);
-  session.state.isPristineDraft = false;
-
-  const save1 = session.autosave(); // invalid (empty question)
-  session.updateBlockContent(q.blockId, 'now valid');
-  clearTimeout(session.autosaveTimer);
-  const newerRevision = session.state.draftRevision;
-  const save2 = session.autosave(); // valid
-
-  second.resolve();
-  await save2;
-  first.resolve();
-  await save1;
-
-  assert.equal(session.state.lastSavedRevision, newerRevision);
-  assert.equal(session.state.lastValidationWarning, null);
-  assert.equal(session.state.lastSavedLocalValidationIssueCount, 0);
-  assert.equal(session.state.lastContractValidationIssueCount, 0);
-});
-
-test('viewer navigation no longer uses hardcoded /viewer absolute assign path', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);"), false);
-  assert.equal(source.includes('buildViewerUrlFromCurrentLocation(window.location.href, localDraftId)'), true);
-  assert.equal(source.includes("new URL('../viewer/', currentHref)"), true);
-});
-
-test('buildViewerUrlFromCurrentLocation resolves sibling viewer route from current page', async () => {
+test('add/remove/reorder blocks works for multi-block worksheet', async () => {
   const mod = await loadEditorModule();
-  const rootResolved = mod.buildViewerUrlFromCurrentLocation('https://example.test/editor/', 'draft_root');
-  assert.equal(rootResolved.toString(), 'https://example.test/viewer/?localDraftId=draft_root');
+  const session = new mod.EditorDraftSession(createStorageStub());
+  await session.createOrOpenByLocalDraftId('draft_blocks');
+  clearTimeout(session.autosaveTimer);
 
-  const nestedResolved = mod.buildViewerUrlFromCurrentLocation(
-    'https://example.test/server/editor/index.html?mode=edit#section',
-    'draft_nested'
-  );
-  assert.equal(nestedResolved.toString(), 'https://example.test/server/viewer/?localDraftId=draft_nested');
+  const a = session.addBlock('text_input');
+  const b = session.addBlock('numeric');
+  clearTimeout(session.autosaveTimer);
+  assert.equal(session.state.draft.worksheet.blocks.length, 3);
+
+  session.reorderBlock(b.id, 'up');
+  clearTimeout(session.autosaveTimer);
+  const order = session.state.draft.worksheet.blocks.map((block) => block.id);
+  assert.equal(order[1], b.id);
+
+  session.removeBlock(a.id);
+  clearTimeout(session.autosaveTimer);
+  assert.equal(session.state.draft.worksheet.blocks.some((block) => block.id === a.id), false);
 });
 
-test('mapOptionsTextToResponseOptions maps trimmed non-empty lines', async () => {
+test('per-type settings persist for text, multiple choice, and numeric', async () => {
   const mod = await loadEditorModule();
-  const mapped = mod.mapOptionsTextToResponseOptions('  Alpha\n\nBeta  \n Gamma ');
-  assert.deepEqual(mapped, [
-    { value: 'Alpha', label: 'Alpha' },
-    { value: 'Beta', label: 'Beta' },
-    { value: 'Gamma', label: 'Gamma' },
-  ]);
+  const session = new mod.EditorDraftSession(createStorageStub());
+  await session.createOrOpenByLocalDraftId('draft_types');
+  clearTimeout(session.autosaveTimer);
+
+  session.updateSelectedBlockType('text_input');
+  session.updateSelectedConfig({ placeholder: 'Type answer', maxLength: 120, multiline: true });
+  clearTimeout(session.autosaveTimer);
+
+  const mc = session.addBlock('multiple_choice');
+  session.selectBlock(mc.id);
+  session.updateChoiceOption(0, 'A');
+  session.updateChoiceOption(1, 'B');
+  session.updateSelectedConfig({ allowMultiple: true, shuffle: true });
+  clearTimeout(session.autosaveTimer);
+
+  const numeric = session.addBlock('numeric');
+  session.selectBlock(numeric.id);
+  session.updateSelectedConfig({ min: 0, max: 10, step: 2, integerOnly: true, unitLabel: 'kg' });
+  clearTimeout(session.autosaveTimer);
+
+  const blocks = session.state.draft.worksheet.blocks;
+  assert.deepEqual(blocks[0].config, { placeholder: 'Type answer', maxLength: 120, multiline: true });
+  assert.deepEqual(blocks[1].config, { options: ['A', 'B'], allowMultiple: true, shuffle: true });
+  assert.deepEqual(blocks[2].config, { min: 0, max: 10, step: 2, integerOnly: true, unitLabel: 'kg' });
 });
 
-test('question field updates map inputType, maxLength, and options through draft blocks', async () => {
+test('import/export schema handling supports legacy mapping and roundtrip shape', async () => {
   const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-  await session.createOrOpenByLocalDraftId('draft_q');
-  const block = session.createBlock('question');
-  session.selectBlock(block.blockId);
+  const session = new mod.EditorDraftSession(createStorageStub());
+  await session.createOrOpenByLocalDraftId('draft_import');
+  clearTimeout(session.autosaveTimer);
 
-  session.updateQuestionInputType(block.blockId, 'single_choice');
-  session.updateQuestionOptionsFromText(block.blockId, 'One\nTwo');
-  session.updateQuestionInputType(block.blockId, 'short_text');
-  session.updateQuestionMaxLength(block.blockId, '25');
+  const legacyPayload = {
+    title: 'Legacy',
+    blocks: [
+      { blockId: 'q1', kind: 'question', prompt: { text: 'Pick one' }, responseConfig: { inputType: 'single_choice', options: [{ value: 'X' }, { value: 'Y' }] } },
+      { blockId: 'q2', kind: 'question', prompt: { text: 'Amount' }, responseConfig: { inputType: 'number' } },
+    ],
+  };
 
-  const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
-  assert.equal(updated.responseConfig.inputType, 'short_text');
-  assert.equal(updated.responseConfig.maxLength, 25);
-  assert.equal(updated.responseConfig.options, undefined);
+  await session.importWorksheetJson(JSON.stringify(legacyPayload), { convertToEditableDraft: true });
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(session.state.draft.schemaVersion, 2);
+  assert.equal(session.state.draft.worksheet.blocks[0].type, 'multiple_choice');
+  assert.equal(session.state.draft.worksheet.blocks[1].type, 'numeric');
+
+  const exported = {
+    schemaVersion: 2,
+    worksheet: session.state.draft.worksheet,
+  };
+  const restored = session.parseImportedWorksheet(exported);
+  assert.equal(restored.schemaVersion, 2);
+  assert.equal(restored.worksheet.blocks.length, 2);
 });
 
-test('updateQuestionMaxLength preserves existing maxLength on empty or non-numeric input', async () => {
+test('autosave/restore supports multiple blocks and status transitions', async () => {
+  const persisted = new Map();
+  const storage = createStorageStub();
+  storage.drafts.put = async (value) => {
+    persisted.set(value.localId, structuredClone(value));
+    return value;
+  };
+  storage.drafts.get = async (id) => persisted.get(id) || null;
+
   const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-  await session.createOrOpenByLocalDraftId('draft_ml');
-  const block = session.createBlock('question');
-  session.selectBlock(block.blockId);
+  const session = new mod.EditorDraftSession(storage);
+  await session.createOrOpenByLocalDraftId('draft_restore');
+  clearTimeout(session.autosaveTimer);
 
-  session.updateQuestionMaxLength(block.blockId, '200');
-  const afterValid = session.state.draft.blocks.find((b) => b.blockId === block.blockId);
-  assert.equal(afterValid.responseConfig.maxLength, 200);
+  session.addBlock('numeric');
+  session.updateSelectedPrompt('How many?');
+  clearTimeout(session.autosaveTimer);
+  await session.autosave();
 
-  session.updateQuestionMaxLength(block.blockId, '');
-  const afterEmpty = session.state.draft.blocks.find((b) => b.blockId === block.blockId);
-  assert.equal(afterEmpty.responseConfig.maxLength, 200, 'maxLength should be preserved on empty input');
+  assert.equal(session.state.lastAutosaveStatus === 'saved' || session.state.lastAutosaveStatus === 'saved_with_warnings', true);
 
-  session.updateQuestionMaxLength(block.blockId, 'abc');
-  const afterNan = session.state.draft.blocks.find((b) => b.blockId === block.blockId);
-  assert.equal(afterNan.responseConfig.maxLength, 200, 'maxLength should be preserved on non-numeric input');
+  const restoreSession = new mod.EditorDraftSession(storage);
+  await restoreSession.createOrOpenByLocalDraftId('draft_restore');
+  clearTimeout(restoreSession.autosaveTimer);
+  assert.equal(restoreSession.state.draft.worksheet.blocks.length >= 2, true);
+});
+
+test('validation gates export and reports actionable reasons', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createStorageStub());
+  await session.createOrOpenByLocalDraftId('draft_validate');
+  clearTimeout(session.autosaveTimer);
+
+  session.updateSelectedBlockType('multiple_choice');
+  session.updateSelectedPrompt('Choose');
+  session.updateChoiceOption(0, '');
+  session.updateChoiceOption(1, '');
+  clearTimeout(session.autosaveTimer);
+
+  const validation = session.validateCurrentDraft();
+  assert.equal(validation.valid, false);
+  assert.throws(() => session.exportCurrentDraftToFile(), /Export blocked:/);
+});
+
+test('buildViewerUrlFromCurrentLocation uses sibling viewer path', async () => {
+  const mod = await loadEditorModule();
+  const resolved = mod.buildViewerUrlFromCurrentLocation('https://example.test/server/editor/index.html', 'draft_x');
+  assert.equal(resolved.toString(), 'https://example.test/server/viewer/?localDraftId=draft_x');
 });

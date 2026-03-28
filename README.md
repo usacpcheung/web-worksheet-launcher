@@ -16,7 +16,23 @@ Phase 1 establishes contracts and file scaffolding only.
 
 - Canonical product-style routes are `/editor/` and `/viewer/`.
 - Static or nested deployments may instead serve those entries from file paths such as `server/editor/index.html` and `server/viewer/index.html`.
-- Editor-to-viewer navigation should therefore resolve relative to the current page location (for example, sibling `../viewer/`) rather than hardcoding an absolute `/viewer/` URL.
+- Editor-to-viewer navigation resolves relative to the current page location (for example, sibling `../viewer/`) rather than hardcoding an absolute `/viewer/` URL.
+
+## Editor runtime (Phase 2)
+
+- `/editor/` now uses a two-panel runtime:
+  - Left panel: block library, worksheet outline, add/remove/reorder controls, import/export controls.
+  - Right panel: active block editor, type-aware settings, info/validation panel, protected-action placeholders.
+- Local-first behavior remains enabled:
+  - autosave + restore via existing IndexedDB/localStorage modules
+  - saved/saving/unsaved/error status surface
+  - local JSON import/export.
+- Supported editor block types:
+  - text input (`placeholder`, `maxLength`, `multiline`)
+  - multiple choice (`options`, single vs multi-select, `shuffle`)
+  - numeric (`min`, `max`, `step`, `integerOnly`, `unitLabel`)
+- Exported JSON includes `schemaVersion: 2` and import maps legacy/simple payloads into the new block model where possible.
+- See `docs/phase2-editor-runtime.md` for implementation boundaries and popup non-impact notes.
 
 ## Parent launcher SDK source
 

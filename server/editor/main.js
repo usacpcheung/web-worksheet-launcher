@@ -6,7 +6,7 @@ const app = document.getElementById('app');
 const AUTOSAVE_MS = 1000;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
-const DEFAULT_PUBLISHER_ID = 'local_editor';
+const EXPORT_SCHEMA_VERSION = 2;
 let contractsPromise;
 
 function nowIso() {
@@ -17,7 +17,6 @@ function createLocalId(prefix = 'local') {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}_${crypto.randomUUID()}`;
   }
-
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
 }
 
@@ -32,119 +31,140 @@ async function loadContracts() {
   return contractsPromise;
 }
 
-function createEmptyQuestionBlock(position) {
+function createDefaultBlock(type = 'text_input', overrides = {}) {
+  const safeType = ['text_input', 'multiple_choice', 'numeric'].includes(type) ? type : 'text_input';
+  const base = {
+    id: overrides.id || createLocalId('blk'),
+    type: safeType,
+    prompt: String(overrides.prompt || ''),
+    config: {},
+  };
+
+  if (safeType === 'multiple_choice') {
+    return {
+      ...base,
+      config: {
+        options: Array.isArray(overrides?.config?.options)
+          ? overrides.config.options.map((opt) => String(opt || ''))
+          : ['', ''],
+        allowMultiple: Boolean(overrides?.config?.allowMultiple),
+        shuffle: Boolean(overrides?.config?.shuffle),
+      },
+    };
+  }
+
+  if (safeType === 'numeric') {
+    const cfg = overrides?.config || {};
+    return {
+      ...base,
+      config: {
+        min: Number.isFinite(cfg.min) ? cfg.min : null,
+        max: Number.isFinite(cfg.max) ? cfg.max : null,
+        step: Number.isFinite(cfg.step) ? cfg.step : 1,
+        integerOnly: Boolean(cfg.integerOnly),
+        unitLabel: String(cfg.unitLabel || ''),
+      },
+    };
+  }
+
+  const cfg = overrides?.config || {};
   return {
-    blockId: createLocalId('q'),
-    kind: 'question',
-    position,
-    prompt: {
-      text: '',
-      format: 'plain_text',
-    },
-    responseConfig: {
-      inputType: 'plain_text',
-      maxLength: 500,
+    ...base,
+    config: {
+      placeholder: String(cfg.placeholder || ''),
+      maxLength: Number.isFinite(cfg.maxLength) ? cfg.maxLength : 500,
+      multiline: Boolean(cfg.multiline),
     },
   };
 }
 
-const TEXT_INPUT_TYPES = new Set(['plain_text', 'short_text']);
-
-function mapOptionsTextToResponseOptions(rawText) {
-  if (!rawText) return [];
-  return String(rawText)
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => ({ value: line, label: line }));
-}
-
-
-function buildViewerUrlFromCurrentLocation(currentHref, localDraftId) {
-  const viewerUrl = new URL('../viewer/', currentHref);
-  viewerUrl.searchParams.set('localDraftId', localDraftId);
-  return viewerUrl;
-}
-
 function normalizeBlocks(blocks) {
   if (!Array.isArray(blocks) || blocks.length === 0) {
-    return [
-      {
-        blockId: createLocalId('blk'),
-        kind: 'content',
-        position: 0,
-        content: {
-          text: '',
-          format: 'plain_text',
-        },
-      },
-    ];
+    return [createDefaultBlock('text_input')];
   }
 
-  return blocks.map((block, index) => {
-    const source = isRecord(block) ? { ...block } : {};
-    const hasPrompt = isRecord(source.prompt);
-    const base = {
-      blockId: source.blockId || createLocalId('blk'),
-      kind: source.kind || (hasPrompt ? 'question' : 'content'),
-      position: Number.isFinite(source.position) ? source.position : index,
-    };
-    const normalized = { ...source, ...base };
+  return blocks.map((raw) => {
+    if (!isRecord(raw)) return createDefaultBlock('text_input');
 
-    if (normalized.kind === 'question' || hasPrompt) {
-      normalized.kind = 'question';
-      const promptSource = isRecord(source.prompt) ? source.prompt : {};
-      normalized.prompt = {
-        ...promptSource,
-        text: String(promptSource.text || ''),
-        format: promptSource.format || 'plain_text',
-      };
-      normalized.responseConfig = isRecord(source.responseConfig)
-        ? { ...source.responseConfig }
-        : { inputType: 'plain_text', maxLength: 500 };
-      return normalized;
+    if (raw.id && raw.type) {
+      return createDefaultBlock(raw.type, raw);
     }
 
-    const contentSource = isRecord(source.content) ? source.content : {};
-    normalized.content = {
-      ...contentSource,
-      text: String(contentSource.text || ''),
-      format: contentSource.format || 'plain_text',
-    };
-    return normalized;
+    const legacyKind = raw.kind;
+    const promptText = String(raw?.prompt?.text || raw?.content?.text || raw.prompt || '');
+    const inputType = raw?.responseConfig?.inputType;
+
+    if (legacyKind === 'content') {
+      return createDefaultBlock('text_input', {
+        id: raw.blockId || raw.id,
+        prompt: promptText,
+        config: {
+          placeholder: '',
+          maxLength: 500,
+          multiline: true,
+        },
+      });
+    }
+
+    if (inputType === 'single_choice') {
+      return createDefaultBlock('multiple_choice', {
+        id: raw.blockId || raw.id,
+        prompt: promptText,
+        config: {
+          options: Array.isArray(raw?.responseConfig?.options)
+            ? raw.responseConfig.options.map((opt) => String(opt?.label || opt?.value || ''))
+            : ['', ''],
+          allowMultiple: false,
+          shuffle: false,
+        },
+      });
+    }
+
+    if (inputType === 'number') {
+      return createDefaultBlock('numeric', {
+        id: raw.blockId || raw.id,
+        prompt: promptText,
+      });
+    }
+
+    return createDefaultBlock('text_input', {
+      id: raw.blockId || raw.id,
+      prompt: promptText,
+      config: {
+        placeholder: '',
+        maxLength: Number.isFinite(raw?.responseConfig?.maxLength) ? raw.responseConfig.maxLength : 500,
+        multiline: false,
+      },
+    });
   });
 }
 
 function createDraftRecord(overrides = {}) {
   const localId = overrides.localId || createLocalId('draft');
   const updatedAt = nowIso();
-
   return {
     localId,
-    title: overrides.title || 'Untitled worksheet',
-    blocks: normalizeBlocks(overrides.blocks),
+    schemaVersion: EXPORT_SCHEMA_VERSION,
+    worksheet: {
+      title: String(overrides?.worksheet?.title || overrides.title || 'Untitled worksheet'),
+      blocks: normalizeBlocks(overrides?.worksheet?.blocks || overrides.blocks),
+    },
     metadata: {
       localId,
       origin: overrides.origin || 'local_created',
+      createdAt: overrides?.metadata?.createdAt || updatedAt,
       updatedAt,
-      createdAt: overrides.metadata?.createdAt || updatedAt,
-      serverLink: overrides.metadata?.serverLink || null,
     },
   };
 }
 
-function cloneDraftForPersistence(draft) {
-  if (typeof structuredClone === 'function') {
-    return structuredClone(draft);
-  }
-
-  return JSON.parse(JSON.stringify(draft));
+function cloneValue(value) {
+  if (typeof structuredClone === 'function') return structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
 }
 
 function downloadJson(payload, filename) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: 'application/json;charset=utf-8',
-  });
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = objectUrl;
@@ -153,6 +173,70 @@ function downloadJson(payload, filename) {
   link.click();
   link.remove();
   URL.revokeObjectURL(objectUrl);
+}
+
+function buildViewerUrlFromCurrentLocation(currentHref, localDraftId) {
+  const viewerUrl = new URL('../viewer/', currentHref);
+  viewerUrl.searchParams.set('localDraftId', localDraftId);
+  return viewerUrl;
+}
+
+function validateWorksheet(worksheet) {
+  const blockErrors = {};
+  const worksheetErrors = [];
+  const worksheetWarnings = [];
+
+  if (!worksheet?.title?.trim()) {
+    worksheetWarnings.push('Worksheet title is empty; export will still include "Untitled worksheet" if unchanged.');
+  }
+
+  if (!Array.isArray(worksheet?.blocks) || worksheet.blocks.length === 0) {
+    worksheetErrors.push('Worksheet must contain at least one block.');
+    return { valid: false, blockErrors, worksheetErrors, worksheetWarnings };
+  }
+
+  worksheet.blocks.forEach((block, index) => {
+    const errors = [];
+    if (!block.id) errors.push('Block id is missing.');
+    if (!block.prompt?.trim()) errors.push('Prompt is required.');
+
+    if (block.type === 'text_input') {
+      const maxLength = block?.config?.maxLength;
+      if (!Number.isFinite(maxLength) || maxLength <= 0) {
+        errors.push('Text input max length must be greater than 0.');
+      }
+    } else if (block.type === 'multiple_choice') {
+      const options = Array.isArray(block?.config?.options) ? block.config.options : [];
+      const nonEmpty = options.map((opt) => String(opt || '').trim()).filter(Boolean);
+      if (nonEmpty.length < 2) {
+        errors.push('Multiple choice requires at least 2 non-empty options.');
+      }
+    } else if (block.type === 'numeric') {
+      const min = block?.config?.min;
+      const max = block?.config?.max;
+      const step = block?.config?.step;
+      if (Number.isFinite(min) && Number.isFinite(max) && min > max) {
+        errors.push('Numeric min must be less than or equal to max.');
+      }
+      if (!Number.isFinite(step) || step <= 0) {
+        errors.push('Numeric step must be a positive number.');
+      }
+    } else {
+      errors.push(`Unsupported block type: ${block.type}`);
+    }
+
+    if (errors.length) {
+      blockErrors[block.id || `index_${index}`] = errors;
+    }
+  });
+
+  const allBlockErrors = Object.values(blockErrors).flat();
+  return {
+    valid: worksheetErrors.length === 0 && allBlockErrors.length === 0,
+    blockErrors,
+    worksheetErrors,
+    worksheetWarnings,
+  };
 }
 
 class EditorDraftSession {
@@ -166,27 +250,20 @@ class EditorDraftSession {
       scrollToken: null,
       autosavePending: false,
       lastSavedAt: null,
-      lastPersistenceError: null,
-      lastValidationWarning: null,
-      lastSavedLocalValidationIssueCount: 0,
-      lastContractValidationIssueCount: 0,
-      validationErrors: [],
-      blockValidation: {},
-      lastManualSaveAt: null,
+      lastAutosaveStatus: 'idle',
+      lastAutosaveError: null,
+      validation: { valid: false, blockErrors: {}, worksheetErrors: [], worksheetWarnings: [] },
       lastExportedAt: null,
       lastImportedAt: null,
-      publishPreview: null,
       draftRevision: 0,
       lastSavedRevision: 0,
-      recoveryMessage: null,
+      lastManualSaveAt: null,
       lastProtectedAction: null,
-      isPristineDraft: false,
+      recoveryMessage: null,
     };
-
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
     this.onStateChange = null;
-    this.transientQuestionBlockIds = new Set();
   }
 
   setOnStateChange(handler) {
@@ -194,379 +271,170 @@ class EditorDraftSession {
   }
 
   notifyStateChange() {
-    if (typeof this.onStateChange === 'function') {
-      this.onStateChange(this.state);
-    }
-  }
-
-  normalizeDraftForContracts(draft) {
-    return {
-      draftWorksheetId: draft.localId,
-      title: String(draft.title || '').trim() || 'Untitled worksheet',
-      blocks: normalizeBlocks(draft.blocks).map((block, index) => {
-        const base = {
-          blockId: block.blockId || createLocalId('blk'),
-          kind: block.kind === 'question' ? 'question' : 'content',
-          position: Number.isInteger(block.position) ? block.position : index,
-        };
-
-        if (base.kind === 'question') {
-          return {
-            ...base,
-            prompt: {
-              text: String(block?.prompt?.text || ''),
-              format: block?.prompt?.format || 'plain_text',
-            },
-            responseConfig: isRecord(block.responseConfig)
-              ? { ...block.responseConfig }
-              : { inputType: 'plain_text', maxLength: 500 },
-          };
-        }
-
-        return {
-          ...base,
-          content: {
-            text: String(block?.content?.text || ''),
-            format: block?.content?.format || 'plain_text',
-          },
-        };
-      }),
-    };
+    if (this.onStateChange) this.onStateChange(this.state);
   }
 
   validateCurrentDraft() {
-    if (!this.state.draft) {
-      return { valid: false, errors: ['No active draft.'], blockValidation: {} };
+    if (!this.state.draft?.worksheet) {
+      this.state.validation = { valid: false, blockErrors: {}, worksheetErrors: ['No active draft.'], worksheetWarnings: [] };
+      return this.state.validation;
     }
-
-    const normalizedDraft = this.normalizeDraftForContracts(this.state.draft);
-    const errors = [];
-    if (!normalizedDraft.draftWorksheetId) errors.push('draft.draftWorksheetId must be a non-empty string');
-    if (!normalizedDraft.title?.trim()) errors.push('draft.title must be a non-empty string');
-    if (!Array.isArray(normalizedDraft.blocks) || normalizedDraft.blocks.length === 0) {
-      errors.push('draft.blocks must be a non-empty array');
-    }
-
-    normalizedDraft.blocks.forEach((block, index) => {
-      if (!block.blockId) errors.push(`draft.blocks[${index}].blockId must be a non-empty string`);
-      if (!Number.isInteger(block.position) || block.position < 0) {
-        errors.push(`draft.blocks[${index}].position must be a non-negative integer`);
-      }
-      if (block.kind === 'question') {
-        if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
-        if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
-      } else if (!block?.content?.text?.trim()) {
-        errors.push(`draft.blocks[${index}].content.text is required for content blocks`);
-      }
-    });
-
-    const validation = { valid: errors.length === 0, errors };
-    const blockValidation = {};
-
-    validation.errors.forEach((message) => {
-      const blockMatch = message.match(/draft\.blocks\[(\d+)\]/);
-      if (!blockMatch) return;
-      const index = Number.parseInt(blockMatch[1], 10);
-      const blockId = normalizedDraft.blocks[index]?.blockId || `index_${index}`;
-      blockValidation[blockId] = blockValidation[blockId] || [];
-      blockValidation[blockId].push(message);
-    });
-
-    this.state.validationErrors = validation.errors;
-    this.state.blockValidation = blockValidation;
-
-    return { ...validation, blockValidation, normalizedDraft };
+    this.state.validation = validateWorksheet(this.state.draft.worksheet);
+    return this.state.validation;
   }
 
   async createOrOpenByLocalDraftId(localDraftId, options = {}) {
     const draftId = localDraftId || createLocalId('draft');
-    const initialMode = options?.initialMode || DEFAULT_MODE;
-    const initialSelectedBlockId = options?.selectedBlockId;
-    const initialHash = options?.hash;
-    const initialScrollToken = options?.scrollToken;
-
     let existing = null;
     if (localDraftId) {
       try {
         existing = await this.storage.drafts.get(localDraftId);
       } catch (error) {
-        console.warn('Unable to read draft from IndexedDB, continuing in-memory only.', error);
+        console.warn('Unable to read draft from IndexedDB.', error);
       }
     }
 
-    if (existing) {
-      this.state.draft = {
-        ...existing,
-        blocks: normalizeBlocks(existing.blocks),
-      };
-      this.state.isPristineDraft = false;
-      const existingContractErrors = existing?.contractValidation?.errors;
-      this.state.lastContractValidationIssueCount = Array.isArray(existingContractErrors)
-        ? existingContractErrors.length
-        : 0;
-      this.state.lastSavedLocalValidationIssueCount = this.validateCurrentDraft().errors.length;
-      this.state.lastValidationWarning = existing?.contractValidation?.valid === false
-        ? `Draft saved locally with validation warnings (${this.state.lastContractValidationIssueCount}).`
-        : null;
-      this.transientQuestionBlockIds.clear();
-    } else {
-      this.state.draft = createDraftRecord({ localId: draftId });
-      this.state.isPristineDraft = true;
-      this.scheduleAutosave();
-    }
+    this.state.draft = existing
+      ? {
+          ...existing,
+          schemaVersion: EXPORT_SCHEMA_VERSION,
+          worksheet: {
+            title: String(existing?.worksheet?.title || existing?.title || 'Untitled worksheet'),
+            blocks: normalizeBlocks(existing?.worksheet?.blocks || existing?.blocks),
+          },
+        }
+      : createDraftRecord({ localId: draftId });
 
-    this.state.mode = initialMode;
-    this.state.hash = initialHash ?? this.state.hash;
-    this.state.scrollToken = initialScrollToken ?? this.state.scrollToken;
-
-    this.state.selectedBlockId = this.state.draft.blocks[0]?.blockId || null;
-    if (initialSelectedBlockId) {
-      const hasSelectedBlock = this.state.draft.blocks.some((block) => block.blockId === initialSelectedBlockId);
-      if (hasSelectedBlock) {
-        this.state.selectedBlockId = initialSelectedBlockId;
-      }
-    }
-
+    this.state.selectedBlockId = options.selectedBlockId || this.state.draft.worksheet.blocks[0]?.id || null;
+    this.state.mode = options.initialMode || DEFAULT_MODE;
+    this.state.hash = options.hash || this.state.hash;
+    this.state.scrollToken = options.scrollToken || this.state.scrollToken;
     this.state.draftRevision = 1;
     this.state.lastSavedRevision = existing ? 1 : 0;
     this.validateCurrentDraft();
     this.persistRestoreMetadata();
+    if (!existing) this.scheduleAutosave();
     return this.state.draft;
   }
 
-  updateTitle(nextTitle) {
+  get selectedBlock() {
+    return this.state.draft?.worksheet?.blocks?.find((block) => block.id === this.state.selectedBlockId) || null;
+  }
+
+  touchDraft() {
     if (!this.state.draft) return;
-    this.state.draft.title = String(nextTitle || '');
-    this.touchDraft();
+    this.state.draftRevision += 1;
+    this.state.draft.metadata = {
+      ...this.state.draft.metadata,
+      updatedAt: nowIso(),
+    };
+    this.validateCurrentDraft();
+    this.scheduleAutosave();
+    this.persistRestoreMetadata();
   }
 
-  updateBlockContent(blockId, nextText) {
-    if (!this.state.draft || !blockId) return;
-
-    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
-      if (block.blockId !== blockId) {
-        return block;
-      }
-
-      if (block.prompt) {
-        if (String(nextText || '').trim()) {
-          this.transientQuestionBlockIds.delete(blockId);
-        }
-        return {
-          ...block,
-          prompt: {
-            ...block.prompt,
-            text: String(nextText || ''),
-          },
-        };
-      }
-
-      return {
-        ...block,
-        content: {
-          ...(block.content || {}),
-          text: String(nextText || ''),
-        },
-      };
-    });
-
-    this.touchDraft();
-  }
-
-  updateQuestionInputType(blockId, inputType) {
-    if (!this.state.draft || !blockId) return;
-    const normalizedInputType = ['plain_text', 'short_text', 'number', 'boolean', 'single_choice'].includes(inputType)
-      ? inputType
-      : 'plain_text';
-
-    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
-      if (block.blockId !== blockId || block.kind !== 'question') {
-        return block;
-      }
-      const nextResponseConfig = {
-        ...(isRecord(block.responseConfig) ? block.responseConfig : {}),
-        inputType: normalizedInputType,
-      };
-      if (TEXT_INPUT_TYPES.has(normalizedInputType) && !Number.isFinite(nextResponseConfig.maxLength)) {
-        nextResponseConfig.maxLength = 500;
-      }
-      if (normalizedInputType !== 'single_choice') {
-        delete nextResponseConfig.options;
-      } else if (!Array.isArray(nextResponseConfig.options)) {
-        nextResponseConfig.options = [];
-      }
-
-      return {
-        ...block,
-        responseConfig: nextResponseConfig,
-      };
-    });
-    this.touchDraft();
-  }
-
-  updateQuestionMaxLength(blockId, maxLength) {
-    if (!this.state.draft || !blockId) return;
-    const parsed = Number.parseInt(maxLength, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      // Preserve existing maxLength when input is empty, non-numeric, or non-positive.
-      return;
-    }
-    const normalized = parsed;
-    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
-      if (block.blockId !== blockId || block.kind !== 'question') {
-        return block;
-      }
-      return {
-        ...block,
-        responseConfig: {
-          ...(isRecord(block.responseConfig) ? block.responseConfig : {}),
-          maxLength: normalized,
-        },
-      };
-    });
-    this.touchDraft();
-  }
-
-  updateQuestionOptionsFromText(blockId, rawText) {
-    if (!this.state.draft || !blockId) return;
-    const normalizedOptions = mapOptionsTextToResponseOptions(rawText);
-    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
-      if (block.blockId !== blockId || block.kind !== 'question') {
-        return block;
-      }
-      return {
-        ...block,
-        responseConfig: {
-          ...(isRecord(block.responseConfig) ? block.responseConfig : {}),
-          inputType: 'single_choice',
-          options: normalizedOptions,
-        },
-      };
-    });
-    this.touchDraft();
-  }
-
-  createBlock(kind = 'content') {
-    if (!this.state.draft) return null;
-
-    const position = this.state.draft.blocks.length;
-    const block =
-      kind === 'question'
-        ? createEmptyQuestionBlock(position)
-        : {
-            blockId: createLocalId('blk'),
-            kind: 'content',
-            position,
-            content: {
-              text: '',
-              format: 'plain_text',
-            },
-          };
-
-    if (kind === 'question') {
-      this.transientQuestionBlockIds.add(block.blockId);
-    }
-    this.state.draft.blocks = [...this.state.draft.blocks, block];
-    this.state.selectedBlockId = block.blockId;
-    this.touchDraft();
-    return block;
-  }
-
-  deleteBlock(blockId) {
-    if (!this.state.draft || !blockId) return;
-    this.transientQuestionBlockIds.delete(blockId);
-    const nextBlocks = this.state.draft.blocks
-      .filter((block) => block.blockId !== blockId)
-      .map((block, index) => ({ ...block, position: index }));
-
-    if (nextBlocks.length === 0) {
-      nextBlocks.push({
-        blockId: createLocalId('blk'),
-        kind: 'content',
-        position: 0,
-        content: { text: '', format: 'plain_text' },
-      });
-    }
-
-    this.state.draft.blocks = nextBlocks;
-    if (!nextBlocks.some((block) => block.blockId === this.state.selectedBlockId)) {
-      this.state.selectedBlockId = nextBlocks[0].blockId;
-    }
-    this.touchDraft();
-  }
-
-  setSelectedBlockKind(kind) {
-    if (!this.state.draft || !this.state.selectedBlockId) return;
-
-    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
-      if (block.blockId !== this.state.selectedBlockId) {
-        return block;
-      }
-
-      if (kind === 'question') {
-        this.transientQuestionBlockIds.add(block.blockId);
-        return {
-          ...block,
-          kind: 'question',
-          prompt: {
-            text: String(block?.prompt?.text || block?.content?.text || ''),
-            format: block?.prompt?.format || 'plain_text',
-          },
-          responseConfig: isRecord(block.responseConfig)
-            ? { ...block.responseConfig }
-            : { inputType: 'plain_text', maxLength: 500 },
-          content: undefined,
-        };
-      }
-
-      return {
-        ...block,
-        kind: 'content',
-        content: {
-          text: String(block?.content?.text || block?.prompt?.text || ''),
-          format: block?.content?.format || 'plain_text',
-        },
-        prompt: undefined,
-        responseConfig: undefined,
-      };
-    });
-
-    if (kind !== 'question') {
-      this.transientQuestionBlockIds.delete(this.state.selectedBlockId);
-    }
-
+  setWorksheetTitle(title) {
+    if (!this.state.draft) return;
+    this.state.draft.worksheet.title = String(title || '');
     this.touchDraft();
   }
 
   selectBlock(blockId) {
     this.state.selectedBlockId = blockId || null;
     this.persistRestoreMetadata();
+    this.notifyStateChange();
   }
 
-  setMode(mode) {
-    this.state.mode = mode || DEFAULT_MODE;
-    this.persistRestoreMetadata();
+  addBlock(type) {
+    if (!this.state.draft) return null;
+    const block = createDefaultBlock(type);
+    this.state.draft.worksheet.blocks = [...this.state.draft.worksheet.blocks, block];
+    this.state.selectedBlockId = block.id;
+    this.touchDraft();
+    return block;
   }
 
-  setRouteUiRestoreMetadata(partial = {}) {
-    this.state.hash = partial.hash ?? this.state.hash;
-    this.state.scrollToken = partial.scrollToken ?? this.state.scrollToken;
-    if (partial.selectedBlockId !== undefined) {
-      this.state.selectedBlockId = partial.selectedBlockId;
+  removeBlock(blockId) {
+    if (!this.state.draft || !blockId) return;
+    const next = this.state.draft.worksheet.blocks.filter((block) => block.id !== blockId);
+    this.state.draft.worksheet.blocks = next.length ? next : [createDefaultBlock('text_input')];
+    if (!this.state.draft.worksheet.blocks.some((block) => block.id === this.state.selectedBlockId)) {
+      this.state.selectedBlockId = this.state.draft.worksheet.blocks[0].id;
     }
-    if (partial.mode) {
-      this.state.mode = partial.mode;
-    }
-    this.persistRestoreMetadata();
+    this.touchDraft();
   }
 
-  getRouteUiRestoreMetadata() {
-    return this.storage.resumeFlags.get(RESUME_FLAG_KEY);
+  reorderBlock(blockId, direction) {
+    if (!this.state.draft || !blockId) return;
+    const idx = this.state.draft.worksheet.blocks.findIndex((block) => block.id === blockId);
+    if (idx < 0) return;
+    const nextIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (nextIdx < 0 || nextIdx >= this.state.draft.worksheet.blocks.length) return;
+    const blocks = [...this.state.draft.worksheet.blocks];
+    const [moved] = blocks.splice(idx, 1);
+    blocks.splice(nextIdx, 0, moved);
+    this.state.draft.worksheet.blocks = blocks;
+    this.touchDraft();
+  }
+
+  updateSelectedBlockType(type) {
+    if (!this.selectedBlock) return;
+    const converted = createDefaultBlock(type, {
+      id: this.selectedBlock.id,
+      prompt: this.selectedBlock.prompt,
+    });
+    this.state.draft.worksheet.blocks = this.state.draft.worksheet.blocks.map((block) =>
+      block.id === this.selectedBlock.id ? converted : block
+    );
+    this.touchDraft();
+  }
+
+  updateSelectedPrompt(prompt) {
+    if (!this.selectedBlock) return;
+    this.state.draft.worksheet.blocks = this.state.draft.worksheet.blocks.map((block) =>
+      block.id === this.selectedBlock.id ? { ...block, prompt: String(prompt || '') } : block
+    );
+    this.touchDraft();
+  }
+
+  updateSelectedConfig(patch) {
+    if (!this.selectedBlock || !isRecord(patch)) return;
+    this.state.draft.worksheet.blocks = this.state.draft.worksheet.blocks.map((block) =>
+      block.id === this.selectedBlock.id
+        ? {
+            ...block,
+            config: {
+              ...block.config,
+              ...patch,
+            },
+          }
+        : block
+    );
+    this.touchDraft();
+  }
+
+  updateChoiceOption(index, value) {
+    if (!this.selectedBlock || this.selectedBlock.type !== 'multiple_choice') return;
+    const options = [...this.selectedBlock.config.options];
+    options[index] = String(value || '');
+    this.updateSelectedConfig({ options });
+  }
+
+  addChoiceOption() {
+    if (!this.selectedBlock || this.selectedBlock.type !== 'multiple_choice') return;
+    this.updateSelectedConfig({ options: [...this.selectedBlock.config.options, ''] });
+  }
+
+  removeChoiceOption(index) {
+    if (!this.selectedBlock || this.selectedBlock.type !== 'multiple_choice') return;
+    const options = this.selectedBlock.config.options.filter((_, idx) => idx !== index);
+    this.updateSelectedConfig({ options: options.length ? options : [''] });
   }
 
   scheduleAutosave() {
     clearTimeout(this.autosaveTimer);
     this.state.autosavePending = true;
+    this.state.lastAutosaveStatus = 'saving';
     this.notifyStateChange();
     this.autosaveTimer = setTimeout(() => {
       this.autosave().catch((error) => {
@@ -575,91 +443,88 @@ class EditorDraftSession {
     }, AUTOSAVE_MS);
   }
 
-  shouldSuppressTransientQuestionWarning(contractErrors, normalizedDraft) {
-    if (!Array.isArray(contractErrors) || contractErrors.length === 0) return false;
-    return contractErrors.every((errorMessage) => {
-      const match = errorMessage.match(/^draft\.blocks\[(\d+)\]\.prompt\.text is required for question blocks$/);
-      if (!match) return false;
-      const index = Number.parseInt(match[1], 10);
-      const blockId = normalizedDraft?.blocks?.[index]?.blockId;
-      return !!blockId && this.transientQuestionBlockIds.has(blockId);
-    });
-  }
-
   async autosave() {
     if (!this.state.draft) return null;
-
-    const revisionAtSaveStart = this.state.draftRevision;
-    const updatedAt = nowIso();
-    const validation = this.validateCurrentDraft();
-    const normalizedDraft = validation.normalizedDraft;
-    const { validateDraftSchema } = await loadContracts();
-    const contractValidation = validateDraftSchema(normalizedDraft);
-
-    const snapshotToPersist = cloneDraftForPersistence({
+    const revisionAtStart = this.state.draftRevision;
+    const snapshot = cloneValue({
       ...this.state.draft,
+      schemaVersion: EXPORT_SCHEMA_VERSION,
       metadata: {
         ...this.state.draft.metadata,
-        localId: this.state.draft.localId,
-        origin: this.state.draft.metadata?.origin || 'local_created',
-        updatedAt,
-      },
-      contractDraft: normalizedDraft,
-      contractValidation: {
-        valid: contractValidation.valid,
-        errors: contractValidation.errors,
+        updatedAt: nowIso(),
       },
     });
 
+    const { validateDraftSchema } = await loadContracts();
+    const contractValidation = validateDraftSchema({
+      draftWorksheetId: snapshot.localId,
+      title: snapshot.worksheet.title || 'Untitled worksheet',
+      blocks: snapshot.worksheet.blocks.map((block, index) => ({
+        blockId: block.id,
+        kind: 'question',
+        position: index,
+        prompt: { text: block.prompt, format: 'plain_text' },
+        responseConfig: { inputType: block.type },
+      })),
+    });
+    snapshot.contractValidation = contractValidation;
+
     this.inFlightSaveCount += 1;
-    this.state.autosavePending = true;
-
     try {
-      const persisted = await this.storage.drafts.put(snapshotToPersist);
-      const shouldApplySaveStatus =
-        this.state.draft?.localId === persisted.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
-
-      if (this.state.draft?.localId === persisted.localId && this.state.draftRevision === revisionAtSaveStart) {
-        this.state.draft = persisted;
+      const persisted = await this.storage.drafts.put(snapshot);
+      if (revisionAtStart >= this.state.lastSavedRevision) {
+        this.state.lastSavedRevision = revisionAtStart;
+        this.state.lastSavedAt = nowIso();
+        this.state.lastAutosaveStatus = contractValidation.valid ? 'saved' : 'saved_with_warnings';
+        this.state.lastAutosaveError = null;
       }
-
-      if (shouldApplySaveStatus) {
-        const wasNeverSavedBefore = this.state.lastSavedRevision === 0;
-        this.state.lastSavedRevision = revisionAtSaveStart;
-        this.state.lastPersistenceError = null;
-        this.state.lastSavedLocalValidationIssueCount = validation.errors.length;
-        this.state.lastContractValidationIssueCount = contractValidation.errors.length;
-
-        if (!this.state.lastSavedAt || this.state.lastSavedAt < updatedAt) {
-          this.state.lastSavedAt = updatedAt;
-        }
-
-        const shouldSuppressPristineWarning = this.state.isPristineDraft && wasNeverSavedBefore;
-        const shouldSuppressTransientQuestionWarning =
-          this.shouldSuppressTransientQuestionWarning(contractValidation.errors, normalizedDraft);
-        this.state.lastValidationWarning =
-          contractValidation.valid || shouldSuppressPristineWarning || shouldSuppressTransientQuestionWarning
-          ? null
-          : `Draft saved locally with validation warnings (${contractValidation.errors.length}).`;
-        this.persistRestoreMetadata();
-        this.notifyStateChange();
+      if (this.state.draftRevision === revisionAtStart) {
+        this.state.draft = persisted;
       }
       return persisted;
     } catch (error) {
-      const shouldApplyErrorStatus =
-        this.state.draft?.localId === snapshotToPersist.metadata?.localId &&
-        revisionAtSaveStart > this.state.lastSavedRevision;
-      if (shouldApplyErrorStatus) {
-        this.state.lastPersistenceError = error?.message || String(error);
-        this.notifyStateChange();
+      if (revisionAtStart >= this.state.lastSavedRevision) {
+        this.state.lastAutosaveStatus = 'error';
+        this.state.lastAutosaveError = error?.message || String(error);
       }
       throw error;
     } finally {
       this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
-      this.state.autosavePending =
-        this.inFlightSaveCount > 0 || this.state.lastSavedRevision < this.state.draftRevision;
+      this.state.autosavePending = this.inFlightSaveCount > 0 || this.state.lastSavedRevision < this.state.draftRevision;
       this.notifyStateChange();
     }
+  }
+
+  async saveNow() {
+    const persisted = await this.autosave();
+    this.state.lastManualSaveAt = nowIso();
+    return persisted;
+  }
+
+  parseImportedWorksheet(parsed) {
+    if (!isRecord(parsed)) {
+      throw new Error('Imported worksheet JSON must be an object.');
+    }
+
+    if (parsed.schemaVersion === EXPORT_SCHEMA_VERSION && isRecord(parsed.worksheet)) {
+      return createDraftRecord({
+        worksheet: {
+          title: parsed.worksheet.title,
+          blocks: parsed.worksheet.blocks,
+        },
+        origin: 'imported_file',
+      });
+    }
+
+    if (Array.isArray(parsed.blocks) || Array.isArray(parsed?.worksheet?.blocks)) {
+      return createDraftRecord({
+        title: parsed.title || parsed?.worksheet?.title || 'Imported worksheet',
+        blocks: parsed.blocks || parsed.worksheet.blocks,
+        origin: 'imported_file',
+      });
+    }
+
+    throw new Error('Unsupported worksheet structure. Expected schemaVersion+worksheet or blocks array.');
   }
 
   async importWorksheetJson(jsonInput, options = {}) {
@@ -672,130 +537,58 @@ class EditorDraftSession {
       }
     }
 
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Imported worksheet JSON must be an object.');
-    }
-
     const importedLocalId = createLocalId('imported');
-    const importedRecord = {
+    await this.storage.importedWorksheets.put({
       localId: importedLocalId,
       worksheet: parsed,
-      metadata: {
-        localId: importedLocalId,
-        origin: 'imported_file',
-        updatedAt: nowIso(),
-      },
-    };
-
-    await this.storage.importedWorksheets.put(importedRecord);
-
-    if (options.convertToEditableDraft) {
-      const draft = createDraftRecord({
-        title: parsed.title || 'Imported worksheet',
-        blocks: Array.isArray(parsed.blocks) ? parsed.blocks : [],
-        origin: 'imported_file',
-      });
-      this.state.draft = draft;
-      this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
-      this.state.draftRevision += 1;
-      this.state.lastImportedAt = nowIso();
-      this.validateCurrentDraft();
-      this.autosave().catch((error) => {
-        console.warn('Initial autosave after import failed; draft remains in-memory.', error);
-      });
-      this.persistRestoreMetadata();
-      return { importedRecord, draftRecord: this.state.draft };
-    }
-
-    return { importedRecord, draftRecord: null };
-  }
-
-  async saveNow() {
-    const persisted = await this.autosave();
-    this.state.lastManualSaveAt = nowIso();
-    return persisted;
-  }
-
-  async simulateLocalPublish() {
-    if (!this.state.draft) {
-      throw new Error('No active draft to publish.');
-    }
-
-    const validation = this.validateCurrentDraft();
-    if (!validation.valid) {
-      throw new Error(`Draft validation failed: ${validation.errors.join('; ')}`);
-    }
-
-    const { mapDraftToSnapshot, validateDraftSchema } = await loadContracts();
-    const contractValidation = validateDraftSchema(validation.normalizedDraft);
-    if (!contractValidation.valid) {
-      throw new Error(`Draft validation failed: ${contractValidation.errors.join('; ')}`);
-    }
-
-    const localWorksheetId = `ws_${this.state.draft.localId}`;
-    const localSnapshotId = `snapshot_${createLocalId('pub')}`;
-
-    const snapshot = mapDraftToSnapshot(validation.normalizedDraft, {
-      // Do not assign client-generated IDs to server-owned identity fields.
-      worksheetId: null,
-      snapshotId: null,
-      schemaVersion: 1,
-      snapshotVersion: Math.max(this.state.draftRevision, 1),
-      publishedAt: nowIso(),
-      publishedByUserId: DEFAULT_PUBLISHER_ID,
-      sourceDraftRevision: String(this.state.draftRevision),
-      integrity: {
-        source: 'local_publish_simulation',
-        // Local-only identifiers for simulation purposes; replaced by server-issued UUIDs on real publish.
-        localWorksheetId,
-        localSnapshotId,
-      },
+      metadata: { localId: importedLocalId, origin: 'imported_file', updatedAt: nowIso() },
     });
 
-    // Note: validateSnapshotSchema is intentionally skipped here because worksheetId/snapshotId
-    // are null pending server sync. The snapshot structure is otherwise valid.
+    if (options.convertToEditableDraft) {
+      this.state.draft = this.parseImportedWorksheet(parsed);
+      this.state.selectedBlockId = this.state.draft.worksheet.blocks[0]?.id || null;
+      this.state.lastImportedAt = nowIso();
+      this.state.draftRevision += 1;
+      this.validateCurrentDraft();
+      this.persistRestoreMetadata();
+      this.scheduleAutosave();
+      return { importedRecord: importedLocalId, draftRecord: this.state.draft };
+    }
 
-    this.state.publishPreview = snapshot;
-    return snapshot;
+    return { importedRecord: importedLocalId, draftRecord: null };
   }
 
   exportCurrentDraftToFile() {
-    if (!this.state.draft) {
-      throw new Error('No active draft to export.');
+    if (!this.state.draft) throw new Error('No active draft to export.');
+    const validation = this.validateCurrentDraft();
+    if (!validation.valid) {
+      const reasons = [...validation.worksheetErrors, ...Object.values(validation.blockErrors).flat()];
+      throw new Error(`Export blocked: ${reasons.join('; ')}`);
     }
 
-    const timestampToken = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `worksheet-draft-${this.state.draft.localId}-${timestampToken}.json`;
-    downloadJson(this.state.draft, filename);
+    const payload = {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      exportedAt: nowIso(),
+      worksheet: this.state.draft.worksheet,
+      metadata: {
+        localId: this.state.draft.localId,
+      },
+    };
+
+    const filename = `worksheet-v${EXPORT_SCHEMA_VERSION}-${this.state.draft.localId}.json`;
+    downloadJson(payload, filename);
     this.state.lastExportedAt = nowIso();
     return filename;
   }
 
-  touchDraft() {
-    if (!this.state.draft) return;
-    this.state.isPristineDraft = false;
-    this.state.draft = {
-      ...this.state.draft,
-      metadata: {
-        ...this.state.draft.metadata,
-        updatedAt: nowIso(),
-      },
-    };
-    this.state.draftRevision += 1;
-    this.validateCurrentDraft();
-    this.scheduleAutosave();
+  setMode(mode) {
+    this.state.mode = mode || DEFAULT_MODE;
     this.persistRestoreMetadata();
+    this.notifyStateChange();
   }
 
-
-  async flushLocalStateForAuthRedirect() {
-    if (!this.state.draft) return null;
-
-    if (this.state.lastSavedRevision < this.state.draftRevision) {
-      return this.autosave();
-    }
-
-    return this.state.draft;
+  getRouteUiRestoreMetadata() {
+    return this.storage.resumeFlags.get(RESUME_FLAG_KEY);
   }
 
   getUiRestoreState() {
@@ -803,25 +596,29 @@ class EditorDraftSession {
       mode: this.state.mode,
       selectedBlockId: this.state.selectedBlockId,
       hash: this.state.hash ?? (typeof window !== 'undefined' ? window.location.hash ?? '' : ''),
-      scrollToken:
-        this.state.scrollToken ??
-        (typeof window !== 'undefined' ? String(window.scrollY ?? 0) : null),
+      scrollToken: this.state.scrollToken ?? (typeof window !== 'undefined' ? String(window.scrollY ?? 0) : null),
     };
   }
 
   async restoreByLocalId(localId) {
     if (!localId) return false;
-    const restored = await this.createOrOpenByLocalDraftId(localId, this.getUiRestoreState());
-    return Boolean(restored);
+    await this.createOrOpenByLocalDraftId(localId, this.getUiRestoreState());
+    return true;
   }
 
   applyUiRestoreState(ui = {}) {
-    this.setRouteUiRestoreMetadata({
-      mode: ui.mode ?? this.state.mode,
-      selectedBlockId: ui.selectedBlockId ?? this.state.selectedBlockId,
-      hash: ui.hash ?? this.state.hash,
-      scrollToken: ui.scrollToken ?? this.state.scrollToken,
-    });
+    this.state.mode = ui.mode ?? this.state.mode;
+    this.state.selectedBlockId = ui.selectedBlockId ?? this.state.selectedBlockId;
+    this.state.hash = ui.hash ?? this.state.hash;
+    this.state.scrollToken = ui.scrollToken ?? this.state.scrollToken;
+    this.persistRestoreMetadata();
+  }
+
+  async flushLocalStateForAuthRedirect() {
+    if (this.state.lastSavedRevision < this.state.draftRevision) {
+      return this.autosave();
+    }
+    return this.state.draft;
   }
 
   setRecoveryMessage(message) {
@@ -834,33 +631,23 @@ class EditorDraftSession {
   }
 
   async triggerProtectedAction(actionId) {
-    if (!this.authGate) {
-      throw new Error('Auth gate is not configured for editor session.');
-    }
-
+    if (!this.authGate) throw new Error('Auth gate is not configured for editor session.');
     return this.authGate.runProtectedAction({
       actionId,
       recordStore: 'localDrafts',
-      payload: {
-        localDraftId: this.state.draft?.localId || null,
-      },
+      payload: { localDraftId: this.state.draft?.localId || null },
     });
   }
 
   persistRestoreMetadata() {
-    if (!this.state.draft?.localId) {
-      return;
-    }
-
+    if (!this.state.draft?.localId) return;
     this.storage.resumeFlags.set(RESUME_FLAG_KEY, {
       localId: this.state.draft.localId,
       store: 'localDrafts',
       mode: this.state.mode,
       selectedBlockId: this.state.selectedBlockId,
       hash: this.state.hash ?? (typeof window !== 'undefined' ? window.location.hash ?? '' : ''),
-      scrollToken:
-        this.state.scrollToken ??
-        (typeof window !== 'undefined' ? String(window.scrollY ?? 0) : null),
+      scrollToken: this.state.scrollToken ?? (typeof window !== 'undefined' ? String(window.scrollY ?? 0) : null),
       updatedAt: nowIso(),
     });
   }
@@ -869,380 +656,256 @@ class EditorDraftSession {
 function renderEditorShell(session) {
   if (!app) return;
 
-  const shell = document.createElement('div');
-  shell.className = 'editor-shell';
+  app.innerHTML = `
+    <div class="editor-shell">
+      <header class="top-status" id="top-status"></header>
+      <main class="editor-layout">
+        <aside class="left-panel">
+          <section class="panel-card">
+            <h2>Block Library</h2>
+            <div class="button-row">
+              <button type="button" data-add="text_input">Add Text Input</button>
+              <button type="button" data-add="multiple_choice">Add Multiple Choice</button>
+              <button type="button" data-add="numeric">Add Numeric</button>
+            </div>
+          </section>
+          <section class="panel-card">
+            <h2>Worksheet Outline</h2>
+            <ul class="block-list" id="block-list"></ul>
+          </section>
+          <section class="panel-card">
+            <h2>Import / Export</h2>
+            <textarea id="import-json" class="control" rows="7" placeholder="Paste worksheet JSON"></textarea>
+            <div class="button-row">
+              <button type="button" id="import-btn">Import JSON</button>
+              <button type="button" id="export-btn">Export JSON</button>
+            </div>
+          </section>
+        </aside>
 
-  const topBar = document.createElement('section');
-  topBar.className = 'editor-topbar';
-  const saveStateEl = document.createElement('p');
-  const lastSavedEl = document.createElement('p');
-  const validationEl = document.createElement('p');
-  const localDraftIdEl = document.createElement('p');
-  const saveErrorEl = document.createElement('p');
-  const saveWarningEl = document.createElement('p');
-  saveErrorEl.className = 'error-text';
-  saveWarningEl.className = 'muted';
+        <section class="right-panel">
+          <section class="panel-card">
+            <h2>Active Block Editor</h2>
+            <label>Worksheet title<input id="worksheet-title" class="control" /></label>
+            <label>Block type
+              <select id="block-type" class="control">
+                <option value="text_input">text input</option>
+                <option value="multiple_choice">multiple choice</option>
+                <option value="numeric">numeric</option>
+              </select>
+            </label>
+            <label>Prompt<textarea id="block-prompt" class="control" rows="4"></textarea></label>
+            <div id="type-settings"></div>
+            <div class="button-row">
+              <button type="button" id="move-up">Move Up</button>
+              <button type="button" id="move-down">Move Down</button>
+              <button type="button" id="remove-block">Remove Block</button>
+              <button type="button" id="save-now">Save Now</button>
+              <button type="button" id="open-viewer">Open Viewer</button>
+            </div>
+          </section>
 
-  const layout = document.createElement('section');
-  layout.className = 'editor-layout';
+          <section class="panel-card" id="info-panel"></section>
+          <section class="panel-card">
+            <h2>Protected Actions (sign-in required)</h2>
+            <div class="button-row">
+              <button type="button" data-protected="resumeRewriteAfterLogin">Rewrite (Sign-in required)</button>
+              <button type="button" data-protected="resumeT2AAfterLogin">T2A (Sign-in required)</button>
+            </div>
+          </section>
+          <section class="panel-card">
+            <h2>Validation / Errors</h2>
+            <pre id="validation-panel" class="validation-box"></pre>
+          </section>
+        </section>
+      </main>
+    </div>
+  `;
 
-  const leftPanel = document.createElement('aside');
-  leftPanel.className = 'editor-panel left';
-  const rightPanel = document.createElement('section');
-  rightPanel.className = 'editor-panel right';
-
-  const leftHeading = document.createElement('h2');
-  leftHeading.textContent = 'Blocks';
-  const rightHeading = document.createElement('h2');
-  rightHeading.textContent = 'Block details';
-
-  const blockList = document.createElement('ul');
-  blockList.className = 'block-list';
-
-  const controlsRow = document.createElement('div');
-  controlsRow.className = 'button-row';
-
-  const metaRow = document.createElement('div');
-  metaRow.className = 'button-row';
-
-  const statusRow = document.createElement('p');
-  statusRow.className = 'muted';
-
-  const blockKind = document.createElement('select');
-  blockKind.id = 'editor-block-kind';
-  blockKind.className = 'control';
-  const importInput = document.createElement('textarea');
-  importInput.rows = 8;
-  importInput.placeholder = 'Paste draft JSON here to import';
-  importInput.className = 'control';
-  const titleInput = document.createElement('input');
-  titleInput.placeholder = 'Worksheet title';
-  titleInput.className = 'control';
-  const blockEditor = document.createElement('textarea');
-  blockEditor.id = 'editor-block-editor';
-  blockEditor.rows = 8;
-  blockEditor.className = 'control';
-
-  const questionInputType = document.createElement('select');
-  questionInputType.id = 'editor-question-input-type';
-  questionInputType.className = 'control';
-  ['plain_text', 'short_text', 'number', 'boolean', 'single_choice'].forEach((value) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = value;
-    questionInputType.appendChild(option);
-  });
-  const questionMaxLength = document.createElement('input');
-  questionMaxLength.id = 'editor-question-max-length';
-  questionMaxLength.type = 'number';
-  questionMaxLength.min = '1';
-  questionMaxLength.className = 'control';
-  const questionOptions = document.createElement('textarea');
-  questionOptions.id = 'editor-question-options';
-  questionOptions.rows = 6;
-  questionOptions.className = 'control';
-  questionOptions.placeholder = 'One option per line';
-
-  const modeSelect = document.createElement('select');
-  modeSelect.className = 'control';
-  ['edit', 'preview'].forEach((mode) => {
-    const option = document.createElement('option');
-    option.value = mode;
-    option.textContent = mode;
-    modeSelect.appendChild(option);
-  });
-
-  ['content', 'question'].forEach((kind) => {
-    const option = document.createElement('option');
-    option.value = kind;
-    option.textContent = kind;
-    blockKind.appendChild(option);
-  });
-
-  const saveBtn = document.createElement('button');
-  saveBtn.type = 'button';
-  saveBtn.textContent = 'Save Now';
-  const addContentBtn = document.createElement('button');
-  addContentBtn.type = 'button';
-  addContentBtn.textContent = 'Add Content';
-  const addQuestionBtn = document.createElement('button');
-  addQuestionBtn.type = 'button';
-  addQuestionBtn.textContent = 'Add Question';
-  const deleteBlockBtn = document.createElement('button');
-  deleteBlockBtn.type = 'button';
-  deleteBlockBtn.textContent = 'Delete Selected';
-  const openViewerBtn = document.createElement('button');
-  openViewerBtn.type = 'button';
-  openViewerBtn.textContent = 'Open in Viewer (same tab)';
-  const importBtn = document.createElement('button');
-  importBtn.type = 'button';
-  importBtn.textContent = 'Import pasted JSON';
-  const exportBtn = document.createElement('button');
-  exportBtn.type = 'button';
-  exportBtn.textContent = 'Export draft JSON';
-  const localPublishBtn = document.createElement('button');
-  localPublishBtn.type = 'button';
-  localPublishBtn.textContent = 'Simulate local publish';
-  const rewriteBtn = document.createElement('button');
-  rewriteBtn.type = 'button';
-  rewriteBtn.textContent = 'Rewrite (Sign-in required)';
-  const t2aBtn = document.createElement('button');
-  t2aBtn.type = 'button';
-  t2aBtn.textContent = 'T2A (Sign-in required)';
-  const syncDraftBtn = document.createElement('button');
-  syncDraftBtn.type = 'button';
-  syncDraftBtn.textContent = 'Sync Draft (Sign-in required)';
-  const publishBtn = document.createElement('button');
-  publishBtn.type = 'button';
-  publishBtn.textContent = 'Publish (Sign-in required)';
-  let detailSignature = null;
-
-  const syncFormControls = () => {
-    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
-    const selectedText = selectedBlock?.prompt?.text || selectedBlock?.content?.text || '';
-    const activeElement = document.activeElement;
-
-    if (activeElement !== titleInput) {
-      titleInput.value = session.state.draft?.title || '';
-    }
-    if (activeElement !== blockEditor) {
-      blockEditor.value = selectedText;
-    }
-    if (activeElement !== modeSelect) {
-      modeSelect.value = session.state.mode;
-    }
-    if (selectedBlock && activeElement !== blockKind) {
-      blockKind.value = selectedBlock.kind;
-    }
-    if (selectedBlock?.kind === 'question') {
-      const responseConfig = selectedBlock.responseConfig || {};
-      if (activeElement !== questionInputType) {
-        questionInputType.value = responseConfig.inputType || 'plain_text';
-      }
-      if (activeElement !== questionMaxLength) {
-        questionMaxLength.value = responseConfig.maxLength || 500;
-      }
-      if (activeElement !== questionOptions) {
-        questionOptions.value = (responseConfig.options || [])
-          .map((option) => String(option?.value ?? option?.label ?? ''))
-          .join('\n');
-      }
-    }
+  const el = {
+    status: app.querySelector('#top-status'),
+    blockList: app.querySelector('#block-list'),
+    title: app.querySelector('#worksheet-title'),
+    blockType: app.querySelector('#block-type'),
+    prompt: app.querySelector('#block-prompt'),
+    typeSettings: app.querySelector('#type-settings'),
+    infoPanel: app.querySelector('#info-panel'),
+    validationPanel: app.querySelector('#validation-panel'),
+    importJson: app.querySelector('#import-json'),
+    importBtn: app.querySelector('#import-btn'),
+    exportBtn: app.querySelector('#export-btn'),
+    moveUp: app.querySelector('#move-up'),
+    moveDown: app.querySelector('#move-down'),
+    removeBlock: app.querySelector('#remove-block'),
+    saveNow: app.querySelector('#save-now'),
+    openViewer: app.querySelector('#open-viewer'),
   };
 
-  const renderBlockList = () => {
-    blockList.innerHTML = '';
-    const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);
-    blocks.forEach((block) => {
-      const item = document.createElement('li');
-      item.className = `block-item ${block.blockId === session.state.selectedBlockId ? 'selected' : ''}`;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'block-select';
-      const previewSource = block.kind === 'question' ? block?.prompt?.text : block?.content?.text;
-      const preview = String(previewSource || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
-      button.textContent = `${block.position + 1}. ${block.kind} — ${preview}`;
-      button.addEventListener('click', () => {
-        session.selectBlock(block.blockId);
-        updateSummary();
+  const renderTypeSettings = () => {
+    const selected = session.selectedBlock;
+    if (!selected) {
+      el.typeSettings.innerHTML = '<p class="muted">Select a block to edit settings.</p>';
+      return;
+    }
+
+    if (selected.type === 'text_input') {
+      el.typeSettings.innerHTML = `
+        <h3>Text Input Settings</h3>
+        <label>Placeholder<input id="cfg-placeholder" class="control" value="${selected.config.placeholder || ''}" /></label>
+        <label>Max length<input id="cfg-max-length" type="number" min="1" class="control" value="${selected.config.maxLength || 500}" /></label>
+        <label><input id="cfg-multiline" type="checkbox" ${selected.config.multiline ? 'checked' : ''}/> Multiline</label>
+      `;
+      el.typeSettings.querySelector('#cfg-placeholder').addEventListener('input', (e) => session.updateSelectedConfig({ placeholder: e.target.value }));
+      el.typeSettings.querySelector('#cfg-max-length').addEventListener('input', (e) => {
+        const parsed = Number.parseInt(e.target.value, 10);
+        if (Number.isFinite(parsed)) session.updateSelectedConfig({ maxLength: parsed });
       });
-      item.appendChild(button);
-      blockList.appendChild(item);
-    });
-  };
-
-  const computeDetailSignature = (selectedBlock) => {
-    if (!selectedBlock) {
-      return 'none';
-    }
-    return [
-      selectedBlock.blockId,
-      selectedBlock.kind,
-      selectedBlock.responseConfig?.inputType || 'plain_text',
-    ].join(':');
-  };
-
-  const renderDetailEditor = ({ force = false } = {}) => {
-    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
-    const nextSignature = computeDetailSignature(selectedBlock);
-    if (!force && nextSignature === detailSignature) {
-      return;
-    }
-    detailSignature = nextSignature;
-    rightPanel.innerHTML = '';
-    rightPanel.append(rightHeading, statusRow);
-    if (!selectedBlock) {
-      const empty = document.createElement('p');
-      empty.textContent = 'Select a block to edit.';
-      rightPanel.appendChild(empty);
+      el.typeSettings.querySelector('#cfg-multiline').addEventListener('change', (e) => session.updateSelectedConfig({ multiline: e.target.checked }));
       return;
     }
 
-    const kindLabel = document.createElement('label');
-    kindLabel.textContent = 'Block kind';
-    kindLabel.htmlFor = 'editor-block-kind';
-    rightPanel.append(kindLabel, blockKind);
-
-    if (selectedBlock.kind === 'content') {
-      const contentLabel = document.createElement('label');
-      contentLabel.textContent = 'Content text';
-      contentLabel.htmlFor = 'editor-block-editor';
-      blockEditor.placeholder = 'Content block text';
-      rightPanel.append(contentLabel, blockEditor);
+    if (selected.type === 'multiple_choice') {
+      const optionRows = selected.config.options
+        .map((opt, idx) => `<div class="option-row"><input data-opt="${idx}" class="control mc-option" value="${String(opt || '')}"/><button type="button" data-rm-opt="${idx}">Remove</button></div>`)
+        .join('');
+      el.typeSettings.innerHTML = `
+        <h3>Multiple Choice Settings</h3>
+        <div class="mc-options">${optionRows}</div>
+        <div class="button-row"><button type="button" id="add-opt">Add Option</button></div>
+        <label><input id="cfg-allow-multi" type="checkbox" ${selected.config.allowMultiple ? 'checked' : ''}/> Allow multi-select</label>
+        <label><input id="cfg-shuffle" type="checkbox" ${selected.config.shuffle ? 'checked' : ''}/> Shuffle options</label>
+      `;
+      el.typeSettings.querySelectorAll('.mc-option').forEach((input) => {
+        input.addEventListener('input', (event) => {
+          const idx = Number.parseInt(event.target.getAttribute('data-opt'), 10);
+          session.updateChoiceOption(idx, event.target.value);
+        });
+      });
+      el.typeSettings.querySelectorAll('[data-rm-opt]').forEach((btn) => {
+        btn.addEventListener('click', (event) => {
+          const idx = Number.parseInt(event.target.getAttribute('data-rm-opt'), 10);
+          session.removeChoiceOption(idx);
+        });
+      });
+      el.typeSettings.querySelector('#add-opt').addEventListener('click', () => session.addChoiceOption());
+      el.typeSettings.querySelector('#cfg-allow-multi').addEventListener('change', (event) => session.updateSelectedConfig({ allowMultiple: event.target.checked }));
+      el.typeSettings.querySelector('#cfg-shuffle').addEventListener('change', (event) => session.updateSelectedConfig({ shuffle: event.target.checked }));
       return;
     }
 
-    const promptLabel = document.createElement('label');
-    promptLabel.textContent = 'Question prompt';
-    promptLabel.htmlFor = 'editor-block-editor';
-    blockEditor.placeholder = 'Question prompt';
-    rightPanel.append(promptLabel, blockEditor);
-
-    const inputTypeLabel = document.createElement('label');
-    inputTypeLabel.textContent = 'Answer input type';
-    inputTypeLabel.htmlFor = 'editor-question-input-type';
-    rightPanel.append(inputTypeLabel, questionInputType);
-
-    const activeInputType = selectedBlock.responseConfig?.inputType || 'plain_text';
-    if (TEXT_INPUT_TYPES.has(activeInputType)) {
-      const maxLengthLabel = document.createElement('label');
-      maxLengthLabel.textContent = 'Max length';
-      maxLengthLabel.htmlFor = 'editor-question-max-length';
-      rightPanel.append(maxLengthLabel, questionMaxLength);
-    }
-
-    if (activeInputType === 'single_choice') {
-      const optionsLabel = document.createElement('label');
-      optionsLabel.textContent = 'Options';
-      optionsLabel.htmlFor = 'editor-question-options';
-      rightPanel.append(optionsLabel, questionOptions);
-    }
+    el.typeSettings.innerHTML = `
+      <h3>Numeric Settings</h3>
+      <label>Min<input id="cfg-min" type="number" class="control" value="${selected.config.min ?? ''}" /></label>
+      <label>Max<input id="cfg-max" type="number" class="control" value="${selected.config.max ?? ''}" /></label>
+      <label>Step<input id="cfg-step" type="number" min="0.0001" step="any" class="control" value="${selected.config.step ?? 1}" /></label>
+      <label>Unit label<input id="cfg-unit" class="control" value="${selected.config.unitLabel || ''}" /></label>
+      <label><input id="cfg-int" type="checkbox" ${selected.config.integerOnly ? 'checked' : ''}/> Integer only</label>
+    `;
+    el.typeSettings.querySelector('#cfg-min').addEventListener('input', (e) => session.updateSelectedConfig({ min: e.target.value === '' ? null : Number(e.target.value) }));
+    el.typeSettings.querySelector('#cfg-max').addEventListener('input', (e) => session.updateSelectedConfig({ max: e.target.value === '' ? null : Number(e.target.value) }));
+    el.typeSettings.querySelector('#cfg-step').addEventListener('input', (e) => session.updateSelectedConfig({ step: Number(e.target.value) }));
+    el.typeSettings.querySelector('#cfg-unit').addEventListener('input', (e) => session.updateSelectedConfig({ unitLabel: e.target.value }));
+    el.typeSettings.querySelector('#cfg-int').addEventListener('change', (e) => session.updateSelectedConfig({ integerOnly: e.target.checked }));
   };
 
-  const updateSummary = () => {
-    session.validateCurrentDraft();
-    syncFormControls();
-    renderBlockList();
-    renderDetailEditor();
+  const render = () => {
+    const validation = session.validateCurrentDraft();
+    const selected = session.selectedBlock;
 
-    const saveState = session.state.lastPersistenceError
-      ? 'Save error'
+    const saveState = session.state.lastAutosaveStatus === 'error'
+      ? 'error'
       : session.state.autosavePending
-        ? 'Saving…'
-        : session.state.lastValidationWarning
-          ? 'Saved (warnings)'
-        : 'Saved';
+        ? 'saving'
+        : session.state.lastSavedRevision < session.state.draftRevision
+          ? 'unsaved'
+          : 'saved';
 
-    saveStateEl.textContent = `State: ${saveState}`;
-    lastSavedEl.textContent = `Last saved: ${session.state.lastSavedAt || 'Not yet saved'}`;
-    validationEl.textContent =
-      `Validation issues (last saved local: ${session.state.lastSavedLocalValidationIssueCount}, `
-      + `last saved contract: ${session.state.lastContractValidationIssueCount})`;
-    localDraftIdEl.textContent = `localDraftId: ${session.state.draft?.localId || 'n/a'}`;
-    saveErrorEl.textContent = session.state.lastPersistenceError ? `Error: ${session.state.lastPersistenceError}` : '';
-    saveWarningEl.textContent = session.state.lastValidationWarning ? `Warning: ${session.state.lastValidationWarning}` : '';
-    statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'} · Mode: ${session.state.mode}`;
+    el.status.innerHTML = `
+      <div><strong>Status:</strong> ${saveState}</div>
+      <div><strong>Last saved:</strong> ${session.state.lastSavedAt || 'Not yet saved'}</div>
+      <div><strong>Autosave:</strong> ${session.state.lastAutosaveStatus}</div>
+      <div><strong>Draft:</strong> ${session.state.draft?.localId || 'n/a'}</div>
+      <div><strong>Error:</strong> ${session.state.lastAutosaveError || 'none'}</div>
+    `;
+
+    el.title.value = session.state.draft?.worksheet?.title || '';
+    el.blockList.innerHTML = '';
+    (session.state.draft?.worksheet?.blocks || []).forEach((block, idx) => {
+      const li = document.createElement('li');
+      li.className = `block-item ${block.id === session.state.selectedBlockId ? 'selected' : ''}`;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'block-select';
+      btn.textContent = `${idx + 1}. ${block.type} — ${(block.prompt || '—').slice(0, 40)}`;
+      btn.addEventListener('click', () => session.selectBlock(block.id));
+      li.appendChild(btn);
+      el.blockList.appendChild(li);
+    });
+
+    if (selected) {
+      el.blockType.value = selected.type;
+      el.prompt.value = selected.prompt;
+    } else {
+      el.prompt.value = '';
+    }
+
+    renderTypeSettings();
+
+    const selectedErrors = selected ? (validation.blockErrors[selected.id] || []) : [];
+    const worksheetIssues = [...validation.worksheetErrors, ...validation.worksheetWarnings];
+    el.infoPanel.innerHTML = `
+      <h2>Info & Validation Summary</h2>
+      <p><strong>Selected type:</strong> ${selected?.type || 'none'}</p>
+      <p><strong>Selected validity:</strong> ${selectedErrors.length ? 'invalid' : 'valid'}</p>
+      <p><strong>Worksheet validity:</strong> ${validation.valid ? 'valid' : 'invalid'}</p>
+      <p><strong>Worksheet issues:</strong> ${worksheetIssues.length}</p>
+      <p><strong>Last autosave:</strong> ${session.state.lastSavedAt || 'Not yet saved'}</p>
+    `;
+
+    const actionable = [
+      ...validation.worksheetErrors,
+      ...Object.entries(validation.blockErrors).flatMap(([id, errs]) => errs.map((err) => `${id}: ${err}`)),
+    ];
+    el.validationPanel.textContent = actionable.length ? actionable.join('\n') : 'No blocking validation errors.';
+    el.exportBtn.disabled = !validation.valid;
   };
 
-  session.setOnStateChange(() => {
-    updateSummary();
+  session.setOnStateChange(render);
+
+  app.querySelectorAll('[data-add]').forEach((btn) => {
+    btn.addEventListener('click', () => session.addBlock(btn.getAttribute('data-add')));
+  });
+  app.querySelectorAll('[data-protected]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await session.triggerProtectedAction(btn.getAttribute('data-protected'));
+    });
   });
 
-  titleInput.addEventListener('input', () => {
-    session.updateTitle(titleInput.value);
-    updateSummary();
+  el.title.addEventListener('input', () => session.setWorksheetTitle(el.title.value));
+  el.blockType.addEventListener('change', () => session.updateSelectedBlockType(el.blockType.value));
+  el.prompt.addEventListener('input', () => session.updateSelectedPrompt(el.prompt.value));
+  el.moveUp.addEventListener('click', () => session.reorderBlock(session.state.selectedBlockId, 'up'));
+  el.moveDown.addEventListener('click', () => session.reorderBlock(session.state.selectedBlockId, 'down'));
+  el.removeBlock.addEventListener('click', () => session.removeBlock(session.state.selectedBlockId));
+  el.saveNow.addEventListener('click', async () => { await session.saveNow(); render(); });
+  el.importBtn.addEventListener('click', async () => {
+    await session.importWorksheetJson(el.importJson.value, { convertToEditableDraft: true });
+    el.importJson.value = '';
+    render();
   });
-  modeSelect.addEventListener('change', () => {
-    session.setMode(modeSelect.value);
-    updateSummary();
+  el.exportBtn.addEventListener('click', () => {
+    session.exportCurrentDraftToFile();
+    render();
   });
-  blockKind.addEventListener('change', () => {
-    session.setSelectedBlockKind(blockKind.value);
-    updateSummary();
-  });
-  blockEditor.addEventListener('input', () => {
-    session.updateBlockContent(session.state.selectedBlockId, blockEditor.value);
-    updateSummary();
-  });
-  saveBtn.addEventListener('click', async () => {
-    await session.saveNow();
-    updateSummary();
-  });
-  addContentBtn.addEventListener('click', () => {
-    session.createBlock('content');
-    updateSummary();
-  });
-  addQuestionBtn.addEventListener('click', () => {
-    session.createBlock('question');
-    updateSummary();
-  });
-  deleteBlockBtn.addEventListener('click', () => {
-    session.deleteBlock(session.state.selectedBlockId);
-    updateSummary();
-  });
-  openViewerBtn.addEventListener('click', async () => {
+  el.openViewer.addEventListener('click', async () => {
     const localDraftId = session.state.draft?.localId;
     if (!localDraftId) return;
     await session.saveNow();
-    updateSummary();
     const viewerUrl = buildViewerUrlFromCurrentLocation(window.location.href, localDraftId);
     window.location.assign(viewerUrl);
   });
-  questionInputType.addEventListener('change', () => {
-    session.updateQuestionInputType(session.state.selectedBlockId, questionInputType.value);
-    updateSummary();
-  });
-  questionMaxLength.addEventListener('input', () => {
-    session.updateQuestionMaxLength(session.state.selectedBlockId, questionMaxLength.value);
-    updateSummary();
-  });
-  questionOptions.addEventListener('input', () => {
-    session.updateQuestionOptionsFromText(session.state.selectedBlockId, questionOptions.value);
-    updateSummary();
-  });
-  importBtn.addEventListener('click', async () => {
-    await session.importWorksheetJson(importInput.value, { convertToEditableDraft: true });
-    importInput.value = '';
-    updateSummary();
-  });
-  exportBtn.addEventListener('click', () => {
-    session.exportCurrentDraftToFile();
-    updateSummary();
-  });
-  localPublishBtn.addEventListener('click', async () => {
-    await session.simulateLocalPublish();
-    updateSummary();
-  });
-  rewriteBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeRewriteAfterLogin');
-    updateSummary();
-  });
-  t2aBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeT2AAfterLogin');
-    updateSummary();
-  });
-  syncDraftBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeDraftSyncAfterLogin');
-    updateSummary();
-  });
-  publishBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumePublishAfterLogin');
-    updateSummary();
-  });
 
-  controlsRow.append(addContentBtn, addQuestionBtn, deleteBlockBtn, openViewerBtn);
-  metaRow.append(saveBtn, modeSelect, exportBtn, importBtn);
-  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, metaRow, importInput);
-  rightPanel.append(rightHeading, statusRow);
-  layout.append(leftPanel, rightPanel);
-  const protectedRow = document.createElement('div');
-  protectedRow.className = 'button-row';
-  protectedRow.append(localPublishBtn, rewriteBtn, t2aBtn, syncDraftBtn, publishBtn);
-  topBar.append(saveStateEl, lastSavedEl, validationEl, localDraftIdEl, saveErrorEl, saveWarningEl);
-  shell.append(topBar, layout, protectedRow);
-  app.innerHTML = '';
-  app.append(shell);
-  updateSummary();
+  render();
 }
 
 async function bootstrapEditor() {
@@ -1282,17 +945,20 @@ async function bootstrapEditor() {
   await authGate.restoreAfterAuthReturn();
 
   session.persistRestoreMetadata();
-
   renderEditorShell(session);
-
   window.editorSession = session;
 }
 
 bootstrapEditor().catch((error) => {
   console.error('Failed to bootstrap editor', error);
-  if (app) {
-    app.textContent = `Editor failed to boot: ${error.message}`;
-  }
+  if (app) app.textContent = `Editor failed to boot: ${error.message}`;
 });
 
-export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation };
+export {
+  EditorDraftSession,
+  createDraftRecord,
+  normalizeBlocks,
+  validateWorksheet,
+  createDefaultBlock,
+  buildViewerUrlFromCurrentLocation,
+};

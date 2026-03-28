@@ -19,56 +19,78 @@ body {
   gap: 12px;
 }
 
-.editor-topbar,
-.editor-panel,
-.button-row {
+.top-status,
+.panel-card {
   background: #fff;
   border: 1px solid #dfe3eb;
   border-radius: 10px;
-  padding: 10px;
+  padding: 12px;
 }
 
-.editor-topbar {
+.top-status {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
-}
-
-.editor-topbar p {
-  margin: 0;
   font-size: 0.9rem;
-}
-
-.error-text {
-  color: #b42318;
 }
 
 .editor-layout {
   display: grid;
-  grid-template-columns: 1fr 1.2fr;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(420px, 2fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.left-panel,
+.right-panel {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
-.editor-panel {
+.control,
+button,
+select,
+textarea,
+input {
+  font: inherit;
+}
+
+.control,
+button,
+select,
+textarea,
+input[type='text'],
+input[type='number'] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+
+label {
   display: flex;
   flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
 }
 
 .block-list {
   list-style: none;
-  padding: 0;
   margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 420px;
+  max-height: 320px;
   overflow: auto;
-}
-
-.block-select {
-  width: 100%;
-  text-align: left;
 }
 
 .block-item.selected .block-select {
@@ -76,25 +98,24 @@ body {
   background: #eff6ff;
 }
 
-.control,
-button {
-  font: inherit;
-  padding: 8px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-}
-
-textarea.control {
-  resize: vertical;
-}
-
-.button-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.block-select {
+  text-align: left;
 }
 
 .muted {
   color: #667085;
+}
+
+.validation-box {
+  white-space: pre-wrap;
   margin: 0;
+  color: #b42318;
+  min-height: 48px;
+}
+
+.option-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-bottom: 6px;
 }
