@@ -920,10 +920,10 @@ function renderEditorShell(session) {
   const blockKind = document.createElement('select');
   blockKind.id = 'editor-block-kind';
   blockKind.className = 'control';
-  const importInput = document.createElement('textarea');
-  importInput.rows = 8;
-  importInput.placeholder = 'Paste draft JSON here to import';
-  importInput.className = 'control';
+  const importFileInput = document.createElement('input');
+  importFileInput.type = 'file';
+  importFileInput.accept = 'application/json,.json';
+  importFileInput.style.display = 'none';
   const titleInput = document.createElement('input');
   titleInput.placeholder = 'Worksheet title';
   titleInput.className = 'control';
@@ -985,7 +985,7 @@ function renderEditorShell(session) {
   openViewerBtn.textContent = 'Open in Viewer (same tab)';
   const importBtn = document.createElement('button');
   importBtn.type = 'button';
-  importBtn.textContent = 'Import pasted JSON';
+  importBtn.textContent = 'Import draft JSON file';
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
   exportBtn.textContent = 'Export draft JSON';
@@ -1142,8 +1142,8 @@ function renderEditorShell(session) {
           ? 'Saved (warnings)'
         : 'Saved';
 
-    const isSynced = saveState === 'Saved';
-    saveStateEl.innerHTML = `<span class="editor-label">State:</span> <span class="editor-pill ${isSynced ? 'editor-pill--ok' : 'editor-pill--warn'}"><span class="editor-dot"></span>${isSynced ? 'Synced' : saveState}</span>`;
+    const isSaved = saveState === 'Saved';
+    saveStateEl.innerHTML = `<span class="editor-label">State:</span> <span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}"><span class="editor-dot"></span>${isSaved ? 'Saved' : saveState}</span>`;
     lastSavedEl.textContent = `Last saved: ${session.state.lastSavedAt || 'Not yet saved'}`;
     const validationIssues = session.state.lastSavedLocalValidationIssueCount + session.state.lastContractValidationIssueCount;
     validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">Validation: ${validationIssues} issue${validationIssues === 1 ? '' : 's'}</span>`;
@@ -1209,9 +1209,15 @@ function renderEditorShell(session) {
     session.updateQuestionOptionsFromText(session.state.selectedBlockId, questionOptions.value);
     updateSummary();
   });
-  importBtn.addEventListener('click', async () => {
-    await session.importWorksheetJson(importInput.value, { convertToEditableDraft: true });
-    importInput.value = '';
+  importBtn.addEventListener('click', () => {
+    importFileInput.click();
+  });
+  importFileInput.addEventListener('change', async () => {
+    const [file] = importFileInput.files || [];
+    if (!file) return;
+    const fileText = await file.text();
+    await session.importWorksheetJson(fileText, { convertToEditableDraft: true });
+    importFileInput.value = '';
     updateSummary();
   });
   exportBtn.addEventListener('click', () => {
@@ -1244,7 +1250,7 @@ function renderEditorShell(session) {
   controlsRow.append(addContentBtn, addQuestionBtn);
   metaRow.append(saveBtn, modeSelect, exportBtn, importBtn);
   moreActions.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn, localPublishBtn, deleteBlockBtn);
-  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importInput, openViewerBtn);
+  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput, openViewerBtn);
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);
