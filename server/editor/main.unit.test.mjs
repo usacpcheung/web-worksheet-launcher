@@ -13,8 +13,37 @@ async function loadEditorModule() {
   );
 
   source = source.replace(
-    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{ EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions \};/,
-    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions };'
+    /async function loadContracts\(\) \{[\s\S]*?\n\}\n\nfunction createEmptyQuestionBlock/,
+    `async function loadContracts() {
+  return {
+    validateDraftSchema(draft) {
+      const errors = [];
+      if (!draft || typeof draft !== 'object') {
+        return { valid: false, errors: ['draft must be object'] };
+      }
+      if (!Array.isArray(draft.blocks) || draft.blocks.length === 0) {
+        errors.push('draft.blocks must be a non-empty array');
+      } else {
+        draft.blocks.forEach((block, index) => {
+          if (block.kind === 'question' && !String(block?.prompt?.text || '').trim()) {
+            errors.push(\`draft.blocks[\${index}].prompt.text is required for question blocks\`);
+          }
+          if (block.kind === 'content' && !String(block?.content?.text || '').trim()) {
+            errors.push(\`draft.blocks[\${index}].content.text is required for content blocks\`);
+          }
+        });
+      }
+      return { valid: errors.length === 0, errors };
+    },
+  };
+}
+
+function createEmptyQuestionBlock`
+  );
+
+  source = source.replace(
+    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{[^}]+\};/,
+    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation };'
   );
 
   globalThis.document = {
@@ -110,6 +139,126 @@ test('importWorksheetJson throws clear parse error for invalid JSON text', async
 test('editor shell no longer relies on 500ms summary interval loop', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('setInterval(updateSummary, 500)'), false);
+});
+
+test('autosave completion emits state updates and clears pending state without extra UI events', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  let emissions = 0;
+  session.setOnStateChange(() => {
+    emissions += 1;
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_status');
+  clearTimeout(session.autosaveTimer);
+  await session.autosave();
+
+  assert.equal(session.state.autosavePending, false);
+  assert.ok(emissions >= 2, 'expected state emissions for pending + completion transitions');
+});
+
+test('new question transient prompt validation is suppressed during first autosave', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_transient');
+  clearTimeout(session.autosaveTimer);
+  const firstBlock = session.state.draft.blocks[0];
+  session.updateBlockContent(firstBlock.blockId, 'intro text');
+  clearTimeout(session.autosaveTimer);
+
+  const question = session.createBlock('question');
+  clearTimeout(session.autosaveTimer);
+  session.state.isPristineDraft = false;
+  await session.autosave();
+
+  assert.equal(session.state.lastSavedLocalValidationIssueCount > 0, true);
+  assert.equal(session.state.lastContractValidationIssueCount > 0, true);
+  assert.equal(session.state.lastValidationWarning, null, 'transient empty prompt warning should be suppressed');
+
+  session.updateBlockContent(question.blockId, 'typed prompt');
+  clearTimeout(session.autosaveTimer);
+  await session.autosave();
+  assert.equal(session.state.lastValidationWarning, null);
+});
+
+test('older autosave completion cannot override newer save status', async () => {
+  const mod = await loadEditorModule();
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+  const first = deferred();
+  const second = deferred();
+  let putCall = 0;
+  const session = new mod.EditorDraftSession({
+    drafts: {
+      get: async () => null,
+      put: async (value) => {
+        putCall += 1;
+        if (putCall === 1) {
+          await first.promise;
+          return value;
+        }
+        await second.promise;
+        return value;
+      },
+    },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_race');
+  clearTimeout(session.autosaveTimer);
+  session.updateBlockContent(session.state.draft.blocks[0].blockId, 'intro text');
+  clearTimeout(session.autosaveTimer);
+  const q = session.createBlock('question');
+  clearTimeout(session.autosaveTimer);
+  session.state.isPristineDraft = false;
+
+  const save1 = session.autosave(); // invalid (empty question)
+  session.updateBlockContent(q.blockId, 'now valid');
+  clearTimeout(session.autosaveTimer);
+  const newerRevision = session.state.draftRevision;
+  const save2 = session.autosave(); // valid
+
+  second.resolve();
+  await save2;
+  first.resolve();
+  await save1;
+
+  assert.equal(session.state.lastSavedRevision, newerRevision);
+  assert.equal(session.state.lastValidationWarning, null);
+  assert.equal(session.state.lastSavedLocalValidationIssueCount, 0);
+  assert.equal(session.state.lastContractValidationIssueCount, 0);
+});
+
+test('viewer navigation no longer uses hardcoded /viewer absolute assign path', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);"), false);
+  assert.equal(source.includes('buildViewerUrlFromCurrentLocation(window.location.href, localDraftId)'), true);
+  assert.equal(source.includes("new URL('../viewer/', currentHref)"), true);
+});
+
+test('buildViewerUrlFromCurrentLocation resolves sibling viewer route from current page', async () => {
+  const mod = await loadEditorModule();
+  const rootResolved = mod.buildViewerUrlFromCurrentLocation('https://example.test/editor/', 'draft_root');
+  assert.equal(rootResolved.toString(), 'https://example.test/viewer/?localDraftId=draft_root');
+
+  const nestedResolved = mod.buildViewerUrlFromCurrentLocation(
+    'https://example.test/server/editor/index.html?mode=edit#section',
+    'draft_nested'
+  );
+  assert.equal(nestedResolved.toString(), 'https://example.test/server/viewer/?localDraftId=draft_nested');
 });
 
 test('mapOptionsTextToResponseOptions maps trimmed non-empty lines', async () => {
