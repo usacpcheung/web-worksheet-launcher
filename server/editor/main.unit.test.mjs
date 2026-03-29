@@ -553,6 +553,29 @@ test('question number config and multiple choice settings update through helpers
   assert.deepEqual(updated.responseConfig.options, [{ value: 'A', label: 'A' }, { value: 'B', label: 'B' }]);
 });
 
+test('number rules authoring persists and prunes conflicting correctAnswer', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_number_rules');
+  const block = session.createBlock('question');
+
+  session.updateQuestionInputType(block.blockId, 'number');
+  session.updateQuestionCorrectAnswerNumber(block.blockId, '-1.25');
+  session.updateQuestionNumberConfig(block.blockId, 'min', '-10');
+  session.updateQuestionNumberConfig(block.blockId, 'max', '10');
+  session.updateQuestionNumberRulesAllowSigned(block.blockId, false);
+  session.updateQuestionNumberRulesDecimalPlacesAllowed(block.blockId, '1');
+
+  const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(updated.responseConfig.numberRules.allowSigned, false);
+  assert.equal(updated.responseConfig.numberRules.decimalPlacesAllowed, 1);
+  assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
+});
+
 test('question correctAnswer helpers update typed answer keys', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({

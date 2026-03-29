@@ -47,6 +47,13 @@ body {
   font-size: 0.93rem;
 }
 
+.input-error {
+  margin: 2px 0 0;
+  color: #b42318;
+  font-size: 0.9rem;
+  min-height: 1.2em;
+}
+
 .content-card,
 .question-card {
   border: 1px solid #d8dde8;

@@ -51,16 +51,26 @@ The editor + viewer runtime now uses these canonical `responseConfig` input type
 }
 ```
 
-`number`:
+`number` (input-format validation only; not correctness/equivalence grading):
 
 ```json
 {
   "inputType": "number",
+  "numberRules": {
+    "allowedKinds": ["integer", "decimal"],
+    "allowSigned": true,
+    "decimalPlacesAllowed": null
+  },
   "min": 0,
-  "max": 100,
-  "step": 1
+  "max": 100
 }
 ```
+
+`numberRules` constraints in this phase:
+
+- Only integer/decimal syntax is in scope.
+- Fraction syntax (for example `2/3`) is out of scope and must be rejected.
+- `decimalPlacesAllowed: null` means unlimited decimal places.
 
 `boolean` (labeling guidance):
 

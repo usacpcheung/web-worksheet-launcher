@@ -43,6 +43,36 @@ function collectAllowedOptionValues(options) {
 }
 
 function validateQuestionResponseConfig(responseConfig, path, errors) {
+  if (responseConfig.numberRules !== undefined && responseConfig.inputType !== 'number') {
+    errors.push(`${path}.numberRules is only supported for number inputType`);
+  }
+
+  if (responseConfig.inputType === 'number' && responseConfig.numberRules !== undefined) {
+    if (!isObject(responseConfig.numberRules)) {
+      errors.push(`${path}.numberRules must be an object when provided`);
+    } else {
+      const rules = normalizeNumberRules(responseConfig.numberRules);
+      const providedAllowedKinds = responseConfig.numberRules.allowedKinds;
+      if (providedAllowedKinds !== undefined) {
+        if (!Array.isArray(providedAllowedKinds) || providedAllowedKinds.length === 0) {
+          errors.push(`${path}.numberRules.allowedKinds must be a non-empty array when provided`);
+        } else if (providedAllowedKinds.some((kind) => kind !== 'integer' && kind !== 'decimal')) {
+          errors.push(`${path}.numberRules.allowedKinds contains unsupported values`);
+        }
+      }
+      if (
+        responseConfig.numberRules.decimalPlacesAllowed !== undefined
+        && responseConfig.numberRules.decimalPlacesAllowed !== null
+        && (!Number.isInteger(responseConfig.numberRules.decimalPlacesAllowed) || responseConfig.numberRules.decimalPlacesAllowed < 0)
+      ) {
+        errors.push(`${path}.numberRules.decimalPlacesAllowed must be an integer >= 0 or null`);
+      }
+      if (!Array.isArray(rules.allowedKinds) || rules.allowedKinds.length === 0) {
+        errors.push(`${path}.numberRules.allowedKinds must contain at least one supported kind`);
+      }
+    }
+  }
+
   if (!isObject(responseConfig) || !Object.prototype.hasOwnProperty.call(responseConfig, 'correctAnswer')) {
     return;
   }
@@ -288,3 +318,4 @@ export {
   validateViewerPayloadSchema,
   validateAttemptPayloadSchema,
 };
+import { normalizeNumberRules } from './number-input-validator.js';

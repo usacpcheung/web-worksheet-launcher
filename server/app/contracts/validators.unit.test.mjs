@@ -80,3 +80,47 @@ test('validateDraftSchema does not allow synthetic option_${index} membership fo
     true
   );
 });
+
+test('validateDraftSchema validates numberRules shape for number inputType', () => {
+  const valid = validateDraftSchema(createDraftWithQuestionResponseConfig({
+    inputType: 'number',
+    numberRules: {
+      allowedKinds: ['integer', 'decimal'],
+      allowSigned: false,
+      decimalPlacesAllowed: 2,
+    },
+  }));
+  assert.equal(valid.valid, true);
+
+  const invalidAllowedKinds = validateDraftSchema(createDraftWithQuestionResponseConfig({
+    inputType: 'number',
+    numberRules: { allowedKinds: ['fraction'] },
+  }));
+  assert.equal(invalidAllowedKinds.valid, false);
+  assert.equal(
+    invalidAllowedKinds.errors.includes('draft.blocks[0].responseConfig.numberRules.allowedKinds contains unsupported values'),
+    true
+  );
+
+  const invalidDecimalPlaces = validateDraftSchema(createDraftWithQuestionResponseConfig({
+    inputType: 'number',
+    numberRules: { decimalPlacesAllowed: -1 },
+  }));
+  assert.equal(invalidDecimalPlaces.valid, false);
+  assert.equal(
+    invalidDecimalPlaces.errors.includes('draft.blocks[0].responseConfig.numberRules.decimalPlacesAllowed must be an integer >= 0 or null'),
+    true
+  );
+});
+
+test('validateDraftSchema rejects numberRules on non-number inputs', () => {
+  const result = validateDraftSchema(createDraftWithQuestionResponseConfig({
+    inputType: 'text',
+    numberRules: { allowSigned: false },
+  }));
+  assert.equal(result.valid, false);
+  assert.equal(
+    result.errors.includes('draft.blocks[0].responseConfig.numberRules is only supported for number inputType'),
+    true
+  );
+});

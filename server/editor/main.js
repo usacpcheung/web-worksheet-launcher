@@ -86,6 +86,47 @@ function getOptionValueForAnswerKey(option) {
   return null;
 }
 
+function normalizeNumberRulesConfig(numberRules) {
+  const source = isRecord(numberRules) ? numberRules : {};
+  const allowedKinds = Array.isArray(source.allowedKinds)
+    ? source.allowedKinds.filter((kind) => kind === 'integer' || kind === 'decimal')
+    : ['integer', 'decimal'];
+  return {
+    allowedKinds: allowedKinds.length > 0 ? Array.from(new Set(allowedKinds)) : ['integer', 'decimal'],
+    allowSigned: source.allowSigned !== false,
+    decimalPlacesAllowed:
+      Number.isInteger(source.decimalPlacesAllowed) && source.decimalPlacesAllowed >= 0
+        ? source.decimalPlacesAllowed
+        : null,
+  };
+}
+
+function countDecimalPlaces(value) {
+  const text = String(value);
+  if (text.includes('e') || text.includes('E')) {
+    const normalized = value.toLocaleString('fullwide', { useGrouping: false, maximumSignificantDigits: 21 });
+    const part = normalized.split('.')[1];
+    return part ? part.length : 0;
+  }
+  const part = text.split('.')[1];
+  return part ? part.length : 0;
+}
+
+function isValidNumberCorrectAnswerForConfig(value, config) {
+  if (!Number.isFinite(value)) return false;
+  const rules = normalizeNumberRulesConfig(config?.numberRules);
+  if (!rules.allowSigned && value < 0) return false;
+  const isInteger = Number.isInteger(value);
+  const kind = isInteger ? 'integer' : 'decimal';
+  if (!rules.allowedKinds.includes(kind)) return false;
+  if (!isInteger && rules.decimalPlacesAllowed !== null && countDecimalPlaces(value) > rules.decimalPlacesAllowed) {
+    return false;
+  }
+  if (Number.isFinite(config?.min) && value < Number(config.min)) return false;
+  if (Number.isFinite(config?.max) && value > Number(config.max)) return false;
+  return true;
+}
+
 
 function buildViewerUrlFromCurrentLocation(currentHref, localDraftId) {
   const viewerUrl = new URL('../viewer/', currentHref);
@@ -506,6 +547,52 @@ class EditorDraftSession {
       return {
         ...block,
         responseConfig: normalizeQuestionResponseConfig(updated),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionNumberRulesAllowSigned(blockId, allowSigned) {
+    if (!this.state.draft || !blockId) return;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'number') return block;
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...nextResponseConfig,
+          numberRules: {
+            ...(isRecord(nextResponseConfig.numberRules) ? nextResponseConfig.numberRules : {}),
+            allowSigned: Boolean(allowSigned),
+          },
+        }),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionNumberRulesDecimalPlacesAllowed(blockId, rawValue) {
+    if (!this.state.draft || !blockId) return;
+    const parsed = Number.parseInt(rawValue, 10);
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'number') return block;
+      const nextRules = {
+        ...(isRecord(nextResponseConfig.numberRules) ? nextResponseConfig.numberRules : {}),
+      };
+      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isInteger(parsed) || parsed < 0) {
+        nextRules.decimalPlacesAllowed = null;
+      } else {
+        nextRules.decimalPlacesAllowed = parsed;
+      }
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...nextResponseConfig,
+          numberRules: nextRules,
+        }),
       };
     });
     this.touchDraft();
@@ -1316,6 +1403,16 @@ function renderEditorShell(session) {
   questionStep.min = '0.0000001';
   questionStep.step = 'any';
   questionStep.className = 'control';
+  const questionNumberAllowSigned = document.createElement('input');
+  questionNumberAllowSigned.id = 'editor-question-number-allow-signed';
+  questionNumberAllowSigned.type = 'checkbox';
+  questionNumberAllowSigned.className = 'control';
+  const questionNumberDecimalPlacesAllowed = document.createElement('input');
+  questionNumberDecimalPlacesAllowed.id = 'editor-question-number-decimal-places-allowed';
+  questionNumberDecimalPlacesAllowed.type = 'number';
+  questionNumberDecimalPlacesAllowed.min = '0';
+  questionNumberDecimalPlacesAllowed.step = '1';
+  questionNumberDecimalPlacesAllowed.className = 'control';
   const questionCorrectAnswerBoolean = document.createElement('select');
   questionCorrectAnswerBoolean.id = 'editor-question-correct-answer-boolean';
   questionCorrectAnswerBoolean.className = 'control';
@@ -1426,6 +1523,14 @@ function renderEditorShell(session) {
       if (activeElement !== questionMin) questionMin.value = responseConfig.min ?? '';
       if (activeElement !== questionMax) questionMax.value = responseConfig.max ?? '';
       if (activeElement !== questionStep) questionStep.value = responseConfig.step ?? '';
+      if (activeElement !== questionNumberAllowSigned) {
+        questionNumberAllowSigned.checked = responseConfig.numberRules?.allowSigned !== false;
+      }
+      if (activeElement !== questionNumberDecimalPlacesAllowed) {
+        questionNumberDecimalPlacesAllowed.value = Number.isInteger(responseConfig.numberRules?.decimalPlacesAllowed)
+          ? String(responseConfig.numberRules.decimalPlacesAllowed)
+          : '';
+      }
       if (activeElement !== questionCorrectAnswerBoolean) {
         if (typeof responseConfig.correctAnswer === 'boolean') {
           questionCorrectAnswerBoolean.value = responseConfig.correctAnswer ? 'true' : 'false';
@@ -1571,10 +1676,20 @@ function renderEditorShell(session) {
       const maxLabel = document.createElement('label');
       maxLabel.textContent = 'Max';
       maxLabel.htmlFor = 'editor-question-max';
-      const stepLabel = document.createElement('label');
-      stepLabel.textContent = 'Step';
-      stepLabel.htmlFor = 'editor-question-step';
-      rightPanel.append(minLabel, questionMin, maxLabel, questionMax, stepLabel, questionStep);
+      rightPanel.append(minLabel, questionMin, maxLabel, questionMax);
+
+      const signedRow = document.createElement('label');
+      signedRow.className = 'inline-toggle';
+      signedRow.htmlFor = 'editor-question-number-allow-signed';
+      const signedText = document.createElement('span');
+      signedText.textContent = 'Allow signed values (+/-)';
+      signedRow.append(signedText, questionNumberAllowSigned);
+      rightPanel.append(signedRow);
+
+      const decimalPlacesLabel = document.createElement('label');
+      decimalPlacesLabel.textContent = 'Decimal places allowed (blank = unlimited)';
+      decimalPlacesLabel.htmlFor = 'editor-question-number-decimal-places-allowed';
+      rightPanel.append(decimalPlacesLabel, questionNumberDecimalPlacesAllowed);
 
       const correctAnswerLabel = document.createElement('label');
       correctAnswerLabel.textContent = 'Correct answer';
@@ -1794,6 +1909,17 @@ function renderEditorShell(session) {
     session.updateQuestionCorrectAnswerNumber(session.state.selectedBlockId, questionCorrectAnswerNumber.value);
     updateSummary();
   });
+  questionNumberAllowSigned.addEventListener('change', () => {
+    session.updateQuestionNumberRulesAllowSigned(session.state.selectedBlockId, questionNumberAllowSigned.checked);
+    updateSummary();
+  });
+  questionNumberDecimalPlacesAllowed.addEventListener('input', () => {
+    session.updateQuestionNumberRulesDecimalPlacesAllowed(
+      session.state.selectedBlockId,
+      questionNumberDecimalPlacesAllowed.value
+    );
+    updateSummary();
+  });
   questionSelectionMode.addEventListener('change', () => {
     session.updateQuestionSelectionMode(session.state.selectedBlockId, questionSelectionMode.value);
     updateSummary();
@@ -1943,6 +2069,7 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.min;
     delete normalized.max;
     delete normalized.step;
+    delete normalized.numberRules;
     delete normalized.correctAnswer;
   } else if (inputType === 'boolean') {
     delete normalized.options;
@@ -1951,6 +2078,7 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.min;
     delete normalized.max;
     delete normalized.step;
+    delete normalized.numberRules;
     delete normalized.maxLength;
     delete normalized.displayMode;
     if (typeof source.correctAnswer === 'boolean') {
@@ -1965,9 +2093,14 @@ function normalizeQuestionResponseConfig(responseConfig) {
     if (Number.isFinite(source.min)) normalized.min = Number(source.min); else delete normalized.min;
     if (Number.isFinite(source.max)) normalized.max = Number(source.max); else delete normalized.max;
     if (Number.isFinite(source.step) && Number(source.step) > 0) normalized.step = Number(source.step); else delete normalized.step;
+    normalized.numberRules = normalizeNumberRulesConfig(source.numberRules);
     delete normalized.maxLength;
     delete normalized.displayMode;
-    if (typeof source.correctAnswer === 'number' && Number.isFinite(source.correctAnswer)) {
+    if (
+      typeof source.correctAnswer === 'number'
+      && Number.isFinite(source.correctAnswer)
+      && isValidNumberCorrectAnswerForConfig(source.correctAnswer, normalized)
+    ) {
       normalized.correctAnswer = Number(source.correctAnswer);
     } else {
       delete normalized.correctAnswer;
@@ -2006,6 +2139,7 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.min;
     delete normalized.max;
     delete normalized.step;
+    delete normalized.numberRules;
   } else {
     delete normalized.maxLength;
     delete normalized.displayMode;
@@ -2015,6 +2149,7 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.min;
     delete normalized.max;
     delete normalized.step;
+    delete normalized.numberRules;
     delete normalized.correctAnswer;
   }
 

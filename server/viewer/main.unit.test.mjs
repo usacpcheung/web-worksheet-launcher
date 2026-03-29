@@ -8,8 +8,8 @@ async function loadViewerModule(overrides = {}) {
   let source = await fs.readFile(filePath, 'utf8');
 
   source = source.replace(
-    "import { viewerStorage } from './storage/index.js';\nimport { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';\nimport { validateViewerPayloadSchema } from '../app/contracts/validators.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
-    'const viewerStorage = {};\nconst mapSnapshotToViewerPayload = globalThis.__mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = (p) => ({ valid: true, errors: [] });\nconst SharedAuthGate = class {};\n'
+    "import { viewerStorage } from './storage/index.js';\nimport { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';\nimport { validateViewerPayloadSchema } from '../app/contracts/validators.js';\nimport { normalizeNumberRules, validateNumberInputFormat } from '../app/contracts/number-input-validator.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
+    'const viewerStorage = {};\nconst mapSnapshotToViewerPayload = globalThis.__mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = (p) => ({ valid: true, errors: [] });\nconst normalizeNumberRules = globalThis.__normalizeNumberRules;\nconst validateNumberInputFormat = globalThis.__validateNumberInputFormat;\nconst SharedAuthGate = class {};\n'
   );
 
   source = source.replace(
@@ -18,6 +18,32 @@ async function loadViewerModule(overrides = {}) {
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
+  globalThis.__normalizeNumberRules = (rules) => ({
+    allowedKinds: Array.isArray(rules?.allowedKinds) ? rules.allowedKinds : ['integer', 'decimal'],
+    allowSigned: rules?.allowSigned !== false,
+    decimalPlacesAllowed: Number.isInteger(rules?.decimalPlacesAllowed) ? rules.decimalPlacesAllowed : null,
+  });
+  globalThis.__validateNumberInputFormat = overrides.validateNumberInputFormat || ((value, rulesArg) => {
+    const text = String(value ?? '').trim();
+    if (!text) return { ok: false, errorCode: 'empty' };
+    if (text.includes('/')) return { ok: false, errorCode: 'fraction_not_allowed' };
+    const activeRules = globalThis.__normalizeNumberRules(rulesArg);
+    if (!activeRules.allowSigned && (text.startsWith('+') || text.startsWith('-'))) {
+      return { ok: false, errorCode: 'sign_not_allowed' };
+    }
+    if (!/^[+-]?\d+(\.\d+)?$/.test(text)) return { ok: false, errorCode: 'invalid_syntax' };
+    const kind = text.includes('.') ? 'decimal' : 'integer';
+    if (Array.isArray(activeRules.allowedKinds) && !activeRules.allowedKinds.includes(kind)) {
+      return { ok: false, errorCode: 'kind_not_allowed' };
+    }
+    if (kind === 'decimal' && Number.isInteger(activeRules.decimalPlacesAllowed)) {
+      const [, decimalPart = ''] = text.split('.');
+      if (decimalPart.length > activeRules.decimalPlacesAllowed) {
+        return { ok: false, errorCode: 'decimal_places_exceeded' };
+      }
+    }
+    return { ok: true, normalizedValue: Number(text), kind };
+  });
   globalThis.document = { getElementById: () => null };
   globalThis.window = {};
 
@@ -172,6 +198,25 @@ test('coerceAnswerValueForQuestion enforces numeric min/max/step', async () => {
   assert.equal(mod.coerceAnswerValueForQuestion(question, '12.3'), 10);
   assert.equal(mod.coerceAnswerValueForQuestion(question, '-3'), 0);
   assert.equal(mod.coerceAnswerValueForQuestion(question, '3.24'), 3);
+});
+
+test('coerceAnswerValueForQuestion validates number format rules (integer/decimal only)', async () => {
+  const mod = await loadViewerModule();
+  const question = {
+    responseConfig: {
+      inputType: 'number',
+      numberRules: {
+        allowedKinds: ['integer', 'decimal'],
+        allowSigned: true,
+        decimalPlacesAllowed: 1,
+      },
+    },
+  };
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '3'), 3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '3.0'), 3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '+3'), 3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '2/3'), '');
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '1.23'), '');
 });
 
 test('coerceAnswerValueForQuestion supports multiple_choice single and multi answers', async () => {
@@ -420,7 +465,7 @@ test('computeAnswerSummary treats empty multi-select arrays as unanswered', asyn
 
 test('getInputHelperText maps input types to guidance', async () => {
   const mod = await loadViewerModule();
-  assert.equal(mod.getInputHelperText('number'), 'Numeric answer only.');
+  assert.equal(mod.getInputHelperText('number'), 'Enter integer/decimal only (fractions like 2/3 are not supported).');
   assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one or more options.');
   assert.equal(mod.getInputHelperText('boolean'), 'Choose True / False.');
   assert.equal(mod.getInputHelperText('text'), 'Text response.');
