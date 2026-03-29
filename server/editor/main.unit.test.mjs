@@ -148,6 +148,15 @@ test('detail signature excludes per-keystroke numeric fields to avoid focus loss
   assert.equal(source.includes('selectedBlock.responseConfig?.correctAnswer ?? null'), false);
 });
 
+test('detail signature includes normalized multiple_choice correctAnswer to prevent stale clear button state', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('const normalizedCorrectAnswer = (() => {'), true);
+  assert.equal(source.includes("normalizedInputType !== 'multiple_choice'"), true);
+  assert.equal(source.includes("normalizedSelectionMode === 'single'"), true);
+  assert.equal(source.includes("normalizedSelectionMode === 'multi'"), true);
+  assert.equal(source.includes('normalizedCorrectAnswer,'), true);
+});
+
 test('localDraftId render path avoids innerHTML interpolation for untrusted ids', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('localDraftIdEl.innerHTML'), false);

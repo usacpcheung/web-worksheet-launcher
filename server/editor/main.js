@@ -1715,17 +1715,40 @@ function renderEditorShell(session) {
     if (!selectedBlock) {
       return 'none';
     }
+    const normalizedResponseConfig = selectedBlock.kind === 'question'
+      ? normalizeQuestionResponseConfig(selectedBlock.responseConfig)
+      : null;
+    const normalizedInputType = normalizedResponseConfig?.inputType || 'text';
+    const normalizedSelectionMode = normalizedResponseConfig?.selectionMode || '';
+    const normalizedCorrectAnswer = (() => {
+      if (!normalizedResponseConfig || normalizedInputType !== 'multiple_choice') {
+        return '';
+      }
+      if (normalizedSelectionMode === 'single') {
+        return typeof normalizedResponseConfig.correctAnswer === 'string'
+          ? normalizedResponseConfig.correctAnswer
+          : '';
+      }
+      if (normalizedSelectionMode === 'multi') {
+        const values = Array.isArray(normalizedResponseConfig.correctAnswer)
+          ? normalizedResponseConfig.correctAnswer.filter((value) => typeof value === 'string').slice().sort()
+          : [];
+        return JSON.stringify(values);
+      }
+      return '';
+    })();
     return [
       selectedBlock.blockId,
       selectedBlock.kind,
-      selectedBlock.responseConfig?.inputType || 'text',
-      selectedBlock.responseConfig?.displayMode || '',
-      selectedBlock.responseConfig?.selectionMode || '',
-      selectedBlock.responseConfig?.shuffleOptions ? '1' : '0',
-      JSON.stringify((selectedBlock.responseConfig?.options || []).map((opt) => [
+      normalizedInputType,
+      normalizedResponseConfig?.displayMode || '',
+      normalizedSelectionMode,
+      normalizedResponseConfig?.shuffleOptions ? '1' : '0',
+      JSON.stringify((normalizedResponseConfig?.options || []).map((opt) => [
         String(opt?.value ?? ''),
         String(opt?.label ?? ''),
       ])),
+      normalizedCorrectAnswer,
     ].join(':');
   };
 
