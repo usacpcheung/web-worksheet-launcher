@@ -396,6 +396,9 @@ class EditorDraftSession {
         ...normalizeQuestionResponseConfig(block.responseConfig),
         inputType: normalizedInputType,
       };
+      if (normalizedInputType !== normalizeQuestionResponseConfig(block.responseConfig).inputType) {
+        delete nextResponseConfig.correctAnswer;
+      }
       if (TEXT_INPUT_TYPES.has(normalizedInputType) && !Number.isFinite(nextResponseConfig.maxLength)) {
         nextResponseConfig.maxLength = 200;
       }
@@ -588,12 +591,44 @@ class EditorDraftSession {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
       const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
       if (nextResponseConfig.inputType !== 'multiple_choice') return block;
+      const optionValues = new Set(
+        (Array.isArray(nextResponseConfig.options) ? nextResponseConfig.options : [])
+          .map((option, index) => normalizeResponseOption(option, `option_${index}`).value)
+          .map((value) => String(value))
+      );
+      const updated = {
+        ...nextResponseConfig,
+        selectionMode: normalizedSelectionMode,
+      };
+      if (
+        nextResponseConfig.selectionMode === 'single'
+        && normalizedSelectionMode === 'multi'
+      ) {
+        if (
+          typeof nextResponseConfig.correctAnswer === 'string'
+          && optionValues.has(nextResponseConfig.correctAnswer)
+        ) {
+          updated.correctAnswer = [nextResponseConfig.correctAnswer];
+        } else {
+          delete updated.correctAnswer;
+        }
+      }
+      if (
+        nextResponseConfig.selectionMode === 'multi'
+        && normalizedSelectionMode === 'single'
+      ) {
+        const firstValid = Array.isArray(nextResponseConfig.correctAnswer)
+          ? nextResponseConfig.correctAnswer.find((value) => typeof value === 'string' && optionValues.has(value))
+          : null;
+        if (typeof firstValid === 'string') {
+          updated.correctAnswer = firstValid;
+        } else {
+          delete updated.correctAnswer;
+        }
+      }
       return {
         ...block,
-        responseConfig: normalizeQuestionResponseConfig({
-          ...nextResponseConfig,
-          selectionMode: normalizedSelectionMode,
-        }),
+        responseConfig: normalizeQuestionResponseConfig(updated),
       };
     });
     this.touchDraft();

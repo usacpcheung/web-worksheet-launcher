@@ -381,7 +381,7 @@ test('normalizeBlocks keeps only type-compatible correctAnswer values', async ()
   assert.deepEqual(blocks[2].responseConfig.correctAnswer, ['a', 'b']);
 });
 
-test('changing inputType or selectionMode re-normalizes incompatible correctAnswer', async () => {
+test('changing inputType or selectionMode re-normalizes/coerces correctAnswer', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({
     drafts: { get: async () => null, put: async (v) => v },
@@ -407,7 +407,7 @@ test('changing inputType or selectionMode re-normalizes incompatible correctAnsw
 
   session.updateQuestionSelectionMode(block.blockId, 'multi');
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
-  assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
+  assert.deepEqual(updated.responseConfig.correctAnswer, ['a']);
 
   session.state.draft.blocks = session.state.draft.blocks.map((entry) => (
     entry.blockId === block.blockId
@@ -424,6 +424,87 @@ test('changing inputType or selectionMode re-normalizes incompatible correctAnsw
   ));
 
   session.updateQuestionInputType(block.blockId, 'text');
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
+});
+
+test('selectionMode coercion keeps first valid value when switching multi to single', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_selection_coerce');
+  const block = session.createBlock('question');
+
+  session.state.draft.blocks = session.state.draft.blocks.map((entry) => (
+    entry.blockId === block.blockId
+      ? {
+        ...entry,
+        responseConfig: {
+          inputType: 'multiple_choice',
+          selectionMode: 'multi',
+          options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }],
+          correctAnswer: ['x', 'b', 'a'],
+        },
+      }
+      : entry
+  ));
+
+  session.updateQuestionSelectionMode(block.blockId, 'single');
+  const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(updated.responseConfig.correctAnswer, 'b');
+});
+
+test('option mutations prune correctAnswer values not present in options', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_option_prune');
+  const block = session.createBlock('question');
+
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionSelectionMode(block.blockId, 'multi');
+  session.updateQuestionOptionsFromText(block.blockId, 'A\nB\nC');
+  session.updateQuestionCorrectAnswerChoices(block.blockId, ['A', 'C']);
+  session.updateQuestionOptionAtIndex(block.blockId, 2, 'D');
+  let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.deepEqual(updated.responseConfig.correctAnswer, ['A']);
+
+  session.updateQuestionCorrectAnswerChoices(block.blockId, ['A', 'B']);
+  session.removeQuestionOption(block.blockId, 0);
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.deepEqual(updated.responseConfig.correctAnswer, ['B']);
+
+  session.updateQuestionSelectionMode(block.blockId, 'single');
+  session.updateQuestionCorrectAnswerChoice(block.blockId, 'B');
+  session.updateQuestionOptionsFromText(block.blockId, 'X\nY');
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
+});
+
+test('input type transitions clear incompatible correctAnswer values', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_type_transition');
+  const block = session.createBlock('question');
+
+  session.updateQuestionInputType(block.blockId, 'boolean');
+  session.updateQuestionCorrectAnswerBoolean(block.blockId, 'true');
+  session.updateQuestionInputType(block.blockId, 'number');
+  let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
+
+  session.updateQuestionCorrectAnswerNumber(block.blockId, '2');
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
 });
