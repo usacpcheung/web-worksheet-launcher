@@ -141,6 +141,13 @@ test('editor shell no longer relies on 500ms summary interval loop', async () =>
   assert.equal(source.includes('setInterval(updateSummary, 500)'), false);
 });
 
+test('localDraftId render path avoids innerHTML interpolation for untrusted ids', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('localDraftIdEl.innerHTML'), false);
+  assert.equal(source.includes("localDraftIdLabel.textContent = 'localDraftId:';"), true);
+  assert.equal(source.includes("localDraftIdValue.textContent = session.state.draft?.localId || 'n/a';"), true);
+});
+
 test('autosave completion emits state updates and clears pending state without extra UI events', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({

@@ -883,6 +883,12 @@ function renderEditorShell(session) {
   validationEl.className = 'editor-topbar-item';
   const localDraftIdEl = document.createElement('p');
   localDraftIdEl.className = 'editor-topbar-item';
+  const localDraftIdLabel = document.createElement('span');
+  localDraftIdLabel.className = 'editor-label';
+  localDraftIdLabel.textContent = 'localDraftId:';
+  const localDraftIdValue = document.createElement('span');
+  localDraftIdValue.className = 'editor-id-value';
+  localDraftIdEl.append(localDraftIdLabel, localDraftIdValue);
 
   const layout = document.createElement('section');
   layout.className = 'editor-layout';
@@ -1158,7 +1164,7 @@ function renderEditorShell(session) {
       validationTooltip.push(...session.state.validationErrors);
     }
     validationEl.title = validationIssues > 0 ? validationTooltip.join('\n') : '';
-    localDraftIdEl.innerHTML = `<span class="editor-label">localDraftId:</span> <span class="editor-id-value">${session.state.draft?.localId || 'n/a'}</span>`;
+    localDraftIdValue.textContent = session.state.draft?.localId || 'n/a';
     statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'}`;
   };
 
