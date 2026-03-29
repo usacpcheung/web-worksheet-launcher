@@ -70,6 +70,22 @@ function normalizeResponseOption(option, fallback = '') {
   return { value: normalized, label: normalized };
 }
 
+function getOptionValueForAnswerKey(option) {
+  if (isRecord(option)) {
+    if (option.value !== undefined && option.value !== null) {
+      return String(option.value);
+    }
+    if (option.label !== undefined && option.label !== null) {
+      return String(option.label);
+    }
+    return null;
+  }
+  if (typeof option === 'string' || typeof option === 'number' || typeof option === 'boolean') {
+    return String(option);
+  }
+  return null;
+}
+
 
 function buildViewerUrlFromCurrentLocation(currentHref, localDraftId) {
   const viewerUrl = new URL('../viewer/', currentHref);
@@ -392,11 +408,12 @@ class EditorDraftSession {
       if (block.blockId !== blockId || block.kind !== 'question') {
         return block;
       }
+      const normalizedCurrentResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
       const nextResponseConfig = {
-        ...normalizeQuestionResponseConfig(block.responseConfig),
+        ...normalizedCurrentResponseConfig,
         inputType: normalizedInputType,
       };
-      if (normalizedInputType !== normalizeQuestionResponseConfig(block.responseConfig).inputType) {
+      if (normalizedInputType !== normalizedCurrentResponseConfig.inputType) {
         delete nextResponseConfig.correctAnswer;
       }
       if (TEXT_INPUT_TYPES.has(normalizedInputType) && !Number.isFinite(nextResponseConfig.maxLength)) {
@@ -1959,8 +1976,8 @@ function normalizeQuestionResponseConfig(responseConfig) {
     normalized.options = Array.isArray(source.options) ? source.options : [];
     const optionValueSet = new Set(
       normalized.options
-        .map((option, index) => normalizeResponseOption(option, `option_${index}`).value)
-        .map((value) => String(value))
+        .map((option) => getOptionValueForAnswerKey(option))
+        .filter((value) => typeof value === 'string')
     );
     if (normalized.selectionMode === 'single') {
       if (typeof source.correctAnswer === 'string' && optionValueSet.has(source.correctAnswer)) {

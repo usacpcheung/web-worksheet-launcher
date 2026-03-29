@@ -106,9 +106,9 @@ When `shuffleOptions` is enabled, viewer rendering should use a deterministic or
 ### Answer value shape rules
 
 - `text` → `string`
-- `number` → `number` (or empty when unanswered)
+- `number` → finite `number` (or empty when unanswered)
 - `boolean` → `boolean` (or null/empty when unanswered)
-- `multiple_choice` with `selectionMode: "single"` → `string`
+- `multiple_choice` with `selectionMode: "single"` → `string` matching an existing `options[*].value`
 - `multiple_choice` with `selectionMode: "multi"` → `string[]`
 
 ### Answer-key shape rules (`responseConfig.correctAnswer`, optional)
@@ -118,9 +118,9 @@ When `shuffleOptions` is enabled, viewer rendering should use a deterministic or
 When present on question blocks, `correctAnswer` must match the response input shape:
 
 - `boolean` → `boolean`
-- `number` → `number`
-- `multiple_choice` with `selectionMode: "single"` → `string`
-- `multiple_choice` with `selectionMode: "multi"` → `string[]` containing unique option `value` entries
+- `number` → finite `number`
+- `multiple_choice` with `selectionMode: "single"` → `string` matching an existing `options[*].value`
+- `multiple_choice` with `selectionMode: "multi"` → `string[]` containing unique entries, where each entry matches an existing `options[*].value`
 
 ## 1) Launch query contract
 

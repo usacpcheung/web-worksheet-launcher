@@ -15,19 +15,31 @@ function isIsoTimestamp(value) {
   return Number.isFinite(timestamp);
 }
 
-function normalizeOptionValue(option, fallback = '') {
+function normalizeOptionValue(option) {
   if (isObject(option)) {
-    const resolved = option.value ?? option.label ?? fallback;
-    return String(resolved);
+    if (option.value !== undefined && option.value !== null) {
+      return String(option.value);
+    }
+    if (option.label !== undefined && option.label !== null) {
+      return String(option.label);
+    }
+    return null;
   }
-  return String(option ?? fallback);
+  if (typeof option === 'string' || typeof option === 'number' || typeof option === 'boolean') {
+    return String(option);
+  }
+  return null;
 }
 
 function collectAllowedOptionValues(options) {
   if (!Array.isArray(options)) {
     return new Set();
   }
-  return new Set(options.map((option, index) => normalizeOptionValue(option, `option_${index}`)));
+  return new Set(
+    options
+      .map((option) => normalizeOptionValue(option))
+      .filter((value) => typeof value === 'string')
+  );
 }
 
 function validateQuestionResponseConfig(responseConfig, path, errors) {

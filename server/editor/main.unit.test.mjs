@@ -374,11 +374,24 @@ test('normalizeBlocks keeps only type-compatible correctAnswer values', async ()
         correctAnswer: ['a', 'b', 'a', 'x', 5],
       },
     },
+    {
+      blockId: 'q_malformed',
+      kind: 'question',
+      position: 3,
+      prompt: { text: 'Broken options' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        selectionMode: 'single',
+        options: [null],
+        correctAnswer: 'option_0',
+      },
+    },
   ]);
 
   assert.equal(blocks[0].responseConfig.correctAnswer, true);
   assert.equal(Object.hasOwn(blocks[1].responseConfig, 'correctAnswer'), false);
   assert.deepEqual(blocks[2].responseConfig.correctAnswer, ['a', 'b']);
+  assert.equal(Object.hasOwn(blocks[3].responseConfig, 'correctAnswer'), false);
 });
 
 test('changing inputType or selectionMode re-normalizes/coerces correctAnswer', async () => {

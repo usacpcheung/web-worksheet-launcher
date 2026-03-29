@@ -66,3 +66,17 @@ test('validateDraftSchema enforces multiple_choice answer membership and uniquen
     true
   );
 });
+
+test('validateDraftSchema does not allow synthetic option_${index} membership for malformed options', () => {
+  const single = validateDraftSchema(createDraftWithQuestionResponseConfig({
+    inputType: 'multiple_choice',
+    selectionMode: 'single',
+    options: [null],
+    correctAnswer: 'option_0',
+  }));
+  assert.equal(single.valid, false);
+  assert.equal(
+    single.errors.includes('draft.blocks[0].responseConfig.correctAnswer must match an existing options[*].value for multiple_choice single mode'),
+    true
+  );
+});
