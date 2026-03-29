@@ -102,14 +102,30 @@ function normalizeNumberRulesConfig(numberRules) {
 }
 
 function countDecimalPlaces(value) {
-  const text = String(value);
-  if (text.includes('e') || text.includes('E')) {
-    const normalized = value.toLocaleString('fullwide', { useGrouping: false, maximumSignificantDigits: 21 });
-    const part = normalized.split('.')[1];
+  if (!Number.isFinite(value)) return 0;
+  const text = value.toString();
+
+  // Simple case: no scientific notation.
+  if (!text.includes('e') && !text.includes('E')) {
+    const part = text.split('.')[1];
     return part ? part.length : 0;
   }
-  const part = text.split('.')[1];
-  return part ? part.length : 0;
+
+  // Scientific notation: use mantissa and exponent to determine decimal digits.
+  const [mantissa, exponentPart] = text.toLowerCase().split('e');
+  const exponent = Number(exponentPart);
+  if (!Number.isFinite(exponent)) return 0;
+
+  const decimalIndex = mantissa.indexOf('.');
+  const decimalDigitsInMantissa = decimalIndex === -1 ? 0 : mantissa.length - decimalIndex - 1;
+
+  if (exponent >= 0) {
+    // Positive exponent moves the decimal point to the right.
+    return Math.max(decimalDigitsInMantissa - exponent, 0);
+  }
+
+  // Negative exponent moves the decimal point to the left.
+  return decimalDigitsInMantissa + (-exponent);
 }
 
 function isValidNumberCorrectAnswerForConfig(value, config) {
@@ -651,7 +667,8 @@ class EditorDraftSession {
 
   updateQuestionNumberRulesDecimalPlacesAllowed(blockId, rawValue) {
     if (!this.state.draft || !blockId) return;
-    const parsed = Number.parseInt(rawValue, 10);
+    const isNonNegativeIntegerString = typeof rawValue === 'string' && /^\d+$/.test(rawValue.trim());
+    const parsed = isNonNegativeIntegerString ? Number.parseInt(rawValue.trim(), 10) : NaN;
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
       const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
@@ -659,7 +676,7 @@ class EditorDraftSession {
       const nextRules = {
         ...(isRecord(nextResponseConfig.numberRules) ? nextResponseConfig.numberRules : {}),
       };
-      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isInteger(parsed) || parsed < 0) {
+      if (!isNonNegativeIntegerString || !Number.isInteger(parsed) || parsed < 0) {
         nextRules.decimalPlacesAllowed = null;
       } else {
         nextRules.decimalPlacesAllowed = parsed;

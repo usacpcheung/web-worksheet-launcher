@@ -903,6 +903,7 @@ function renderViewerShell(session) {
               invalid_syntax: 'Enter a valid integer or decimal number.',
             };
             numberInputErrors.set(block.blockId, messageByCode[validation.errorCode] || 'Invalid number format.');
+            session.setAnswer(block.blockId, '');
             updateSummary();
             return;
           }
