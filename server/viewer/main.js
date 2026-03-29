@@ -95,12 +95,12 @@ function normalizeViewerBlock(block, index) {
         : legacyInputType;
     const normalizedResponseConfig = {
       inputType,
-      maxLength: Number.isFinite(responseConfigSource.maxLength)
-        ? responseConfigSource.maxLength
-        : 200,
     };
 
     if (inputType === 'text') {
+      normalizedResponseConfig.maxLength = Number.isFinite(responseConfigSource.maxLength)
+        ? responseConfigSource.maxLength
+        : 200;
       normalizedResponseConfig.displayMode = responseConfigSource.displayMode === 'single_line'
         ? 'single_line'
         : 'multi_line';
@@ -119,7 +119,11 @@ function normalizeViewerBlock(block, index) {
     }
 
     if (inputType === 'multiple_choice') {
-      normalizedResponseConfig.selectionMode = responseConfigSource.selectionMode === 'multi' ? 'multi' : 'single';
+      normalizedResponseConfig.selectionMode = legacyInputType === 'single_choice'
+        ? 'single'
+        : responseConfigSource.selectionMode === 'multi'
+          ? 'multi'
+          : 'single';
       normalizedResponseConfig.shuffleOptions = Boolean(responseConfigSource.shuffleOptions);
       normalizedResponseConfig.options = Array.isArray(responseConfigSource.options)
         ? responseConfigSource.options
@@ -270,6 +274,9 @@ function computeAnswerSummary(viewerPayload, answers) {
     if (typeof value === 'string') {
       return value.trim() !== '';
     }
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
     return true;
   }
 
@@ -290,9 +297,10 @@ function getInputHelperText(inputType) {
 
 function deterministicShuffle(items, seedText) {
   const list = [...items];
+  const seedSource = String(seedText ?? '');
   let seed = 0;
-  for (let i = 0; i < seedText.length; i += 1) {
-    seed = (seed * 31 + seedText.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < seedSource.length; i += 1) {
+    seed = (seed * 31 + seedSource.charCodeAt(i)) >>> 0;
   }
   for (let i = list.length - 1; i > 0; i -= 1) {
     seed = (seed * 1664525 + 1013904223) >>> 0;

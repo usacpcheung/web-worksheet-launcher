@@ -1684,6 +1684,9 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.options;
     delete normalized.selectionMode;
     delete normalized.shuffleOptions;
+    delete normalized.min;
+    delete normalized.max;
+    delete normalized.step;
   } else if (inputType === 'number') {
     delete normalized.options;
     delete normalized.selectionMode;

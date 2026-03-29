@@ -300,6 +300,32 @@ test('question field updates map inputType, maxLength, and options through draft
   assert.equal(updated.responseConfig.options, undefined);
 });
 
+test('text response normalization removes stale numeric constraints', async () => {
+  const mod = await loadEditorModule();
+  const blocks = mod.normalizeBlocks([
+    {
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Explain' },
+      responseConfig: {
+        inputType: 'text',
+        maxLength: 120,
+        displayMode: 'single_line',
+        min: 1,
+        max: 10,
+        step: 2,
+      },
+    },
+  ]);
+
+  assert.deepEqual(blocks[0].responseConfig, {
+    inputType: 'text',
+    maxLength: 120,
+    displayMode: 'single_line',
+  });
+});
+
 test('normalizeBlocks migrates single_choice to multiple_choice and preserves options', async () => {
   const mod = await loadEditorModule();
   const blocks = mod.normalizeBlocks([

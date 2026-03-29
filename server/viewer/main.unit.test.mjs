@@ -98,6 +98,7 @@ test('normalizeViewerBlock migrates legacy single_choice to multiple_choice', as
     prompt: { text: 'Choose one' },
     responseConfig: {
       inputType: 'single_choice',
+      selectionMode: 'multi',
       options: [
         { value: 'a', label: 'A' },
         { value: 'b' },
@@ -114,6 +115,32 @@ test('normalizeViewerBlock migrates legacy single_choice to multiple_choice', as
     { value: 'b', label: 'b' },
     { value: 'c', label: 'c' },
   ]);
+});
+
+test('normalizeViewerBlock does not emit text-only responseConfig fields for non-text input types', async () => {
+  const mod = await loadViewerModule();
+  const number = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'How many?' },
+    responseConfig: { inputType: 'number', min: 1, max: 5, step: 1, maxLength: 20, displayMode: 'single_line' },
+  }, 0);
+  const bool = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'True/False?' },
+    responseConfig: { inputType: 'boolean', maxLength: 20, displayMode: 'single_line' },
+  }, 1);
+  const multi = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick' },
+    responseConfig: { inputType: 'multiple_choice', options: ['a'], maxLength: 20, displayMode: 'single_line' },
+  }, 2);
+
+  assert.equal(Object.hasOwn(number.responseConfig, 'maxLength'), false);
+  assert.equal(Object.hasOwn(number.responseConfig, 'displayMode'), false);
+  assert.equal(Object.hasOwn(bool.responseConfig, 'maxLength'), false);
+  assert.equal(Object.hasOwn(bool.responseConfig, 'displayMode'), false);
+  assert.equal(Object.hasOwn(multi.responseConfig, 'maxLength'), false);
+  assert.equal(Object.hasOwn(multi.responseConfig, 'displayMode'), false);
 });
 
 test('normalizeViewerBlock migrates plain_text/short_text to text with defaults', async () => {
@@ -175,6 +202,15 @@ test('deterministicShuffle remains stable per seed', async () => {
     mod.deterministicShuffle(items, 'seed-1').map((item) => item.value),
     mod.deterministicShuffle(items, 'seed-1').map((item) => item.value)
   );
+});
+
+test('deterministicShuffle handles nullish seed values safely', async () => {
+  const mod = await loadViewerModule();
+  const items = ['a', 'b', 'c', 'd'];
+  assert.doesNotThrow(() => mod.deterministicShuffle(items, null));
+  assert.doesNotThrow(() => mod.deterministicShuffle(items, undefined));
+  assert.deepEqual(mod.deterministicShuffle(items, null), mod.deterministicShuffle(items, ''));
+  assert.deepEqual(mod.deterministicShuffle(items, undefined), mod.deterministicShuffle(items, ''));
 });
 
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
@@ -363,6 +399,23 @@ test('computeAnswerSummary treats whitespace-only answers as unanswered', async 
     }
   );
   assert.deepEqual(summary, { answered: 1, total: 3 });
+});
+
+test('computeAnswerSummary treats empty multi-select arrays as unanswered', async () => {
+  const mod = await loadViewerModule();
+  const summary = mod.computeAnswerSummary(
+    {
+      blocks: [
+        { blockId: 'q1', kind: 'question' },
+        { blockId: 'q2', kind: 'question' },
+      ],
+    },
+    {
+      q1: { value: [] },
+      q2: { value: ['a'] },
+    }
+  );
+  assert.deepEqual(summary, { answered: 1, total: 2 });
 });
 
 test('getInputHelperText maps input types to guidance', async () => {
