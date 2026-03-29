@@ -617,3 +617,61 @@ test('updateQuestionMaxLength preserves existing maxLength on empty or non-numer
   const afterNan = session.state.draft.blocks.find((b) => b.blockId === block.blockId);
   assert.equal(afterNan.responseConfig.maxLength, 200, 'maxLength should be preserved on non-numeric input');
 });
+
+test('autosave persists normalized contractDraft with typed correctAnswer', async () => {
+  const mod = await loadEditorModule();
+  let lastPersisted = null;
+  const session = new mod.EditorDraftSession({
+    drafts: {
+      get: async () => null,
+      put: async (value) => {
+        lastPersisted = value;
+        return value;
+      },
+    },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_autosave_answer_key');
+  const block = session.createBlock('question');
+
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionSelectionMode(block.blockId, 'multi');
+  session.updateQuestionOptionsFromText(block.blockId, 'A\nB');
+  session.updateQuestionCorrectAnswerChoices(block.blockId, ['A', 'B', 'X']);
+  clearTimeout(session.autosaveTimer);
+  await session.autosave();
+
+  const savedQuestion = lastPersisted.contractDraft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.deepEqual(savedQuestion.responseConfig.correctAnswer, ['A', 'B']);
+});
+
+test('importWorksheetJson convert flow preserves normalized correctAnswer values', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.importWorksheetJson({
+    title: 'Imported',
+    blocks: [
+      {
+        blockId: 'q_import',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Pick', format: 'plain_text' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          selectionMode: 'single',
+          options: [{ value: 'A', label: 'A' }, { value: 'B', label: 'B' }],
+          correctAnswer: 'A',
+        },
+      },
+    ],
+  }, { convertToEditableDraft: true });
+
+  const importedQuestion = session.state.draft.blocks.find((entry) => entry.blockId === 'q_import');
+  assert.equal(importedQuestion.responseConfig.correctAnswer, 'A');
+});
