@@ -43,7 +43,7 @@ function createEmptyQuestionBlock`
 
   source = source.replace(
     /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{[^}]+\};/,
-    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation };'
+    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors };'
   );
 
   globalThis.document = {
@@ -741,4 +741,79 @@ test('importWorksheetJson convert flow preserves normalized correctAnswer values
 
   const importedQuestion = session.state.draft.blocks.find((entry) => entry.blockId === 'q_import');
   assert.equal(importedQuestion.responseConfig.correctAnswer, 'A');
+});
+
+test('number validation helper reports min > max error', async () => {
+  const mod = await loadEditorModule();
+  const errors = mod.getNumberQuestionValidationErrors({
+    inputType: 'number',
+    min: 10,
+    max: 5,
+    numberRules: { allowSigned: true, decimalPlacesAllowed: null },
+  });
+
+  assert.equal(errors.min, 'Max must be greater than or equal to Min');
+  assert.equal(errors.max, 'Max must be greater than or equal to Min');
+});
+
+test('number validation helper reports decimal-place violation', async () => {
+  const mod = await loadEditorModule();
+  const errors = mod.getNumberQuestionValidationErrors(
+    {
+      inputType: 'number',
+      numberRules: { allowSigned: true, decimalPlacesAllowed: 1 },
+    },
+    { correctAnswer: '1.23', decimalPlacesAllowed: '1' }
+  );
+
+  assert.equal(errors.correctAnswer, 'Correct answer has more decimal places than allowed');
+});
+
+test('number validation helper reports out-of-range correct answer', async () => {
+  const mod = await loadEditorModule();
+  const errors = mod.getNumberQuestionValidationErrors(
+    {
+      inputType: 'number',
+      min: 2,
+      max: 8,
+      numberRules: { allowSigned: true, decimalPlacesAllowed: null },
+    },
+    { correctAnswer: '9' }
+  );
+
+  assert.equal(errors.correctAnswer, 'Correct answer must be less than or equal to Max');
+});
+
+test('number validation helper reports signed-rule violation', async () => {
+  const mod = await loadEditorModule();
+  const errors = mod.getNumberQuestionValidationErrors(
+    {
+      inputType: 'number',
+      numberRules: { allowSigned: false, decimalPlacesAllowed: null },
+    },
+    { correctAnswer: '-3' }
+  );
+
+  assert.equal(errors.correctAnswer, 'Correct answer must be positive when signed values are disabled');
+});
+
+test('number validation helper returns no errors for valid constraints', async () => {
+  const mod = await loadEditorModule();
+  const errors = mod.getNumberQuestionValidationErrors(
+    {
+      inputType: 'number',
+      min: -5,
+      max: 5,
+      correctAnswer: 2.5,
+      numberRules: { allowSigned: true, decimalPlacesAllowed: 1 },
+    },
+    { decimalPlacesAllowed: '1', correctAnswer: '2.5' }
+  );
+
+  assert.deepEqual(errors, {
+    min: null,
+    max: null,
+    decimalPlacesAllowed: null,
+    correctAnswer: null,
+  });
 });

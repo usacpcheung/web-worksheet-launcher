@@ -127,6 +127,83 @@ function isValidNumberCorrectAnswerForConfig(value, config) {
   return true;
 }
 
+function getNumberQuestionValidationErrors(config, rawValues = {}) {
+  const normalizedConfig = normalizeQuestionResponseConfig({
+    ...(isRecord(config) ? config : {}),
+    inputType: 'number',
+  });
+  const errors = {
+    min: null,
+    max: null,
+    decimalPlacesAllowed: null,
+    correctAnswer: null,
+  };
+
+  const minValue = Number.isFinite(normalizedConfig.min) ? Number(normalizedConfig.min) : null;
+  const maxValue = Number.isFinite(normalizedConfig.max) ? Number(normalizedConfig.max) : null;
+  if (minValue !== null && maxValue !== null && maxValue < minValue) {
+    const rangeMessage = 'Max must be greater than or equal to Min';
+    errors.min = rangeMessage;
+    errors.max = rangeMessage;
+  }
+
+  const decimalPlacesRaw = rawValues.decimalPlacesAllowed;
+  let decimalPlacesAllowed = normalizedConfig.numberRules?.decimalPlacesAllowed ?? null;
+  if (decimalPlacesRaw !== undefined) {
+    const text = String(decimalPlacesRaw).trim();
+    if (text === '') {
+      decimalPlacesAllowed = null;
+    } else if (!/^\d+$/.test(text)) {
+      errors.decimalPlacesAllowed = 'Decimal places allowed must be a non-negative integer';
+    } else {
+      const parsed = Number.parseInt(text, 10);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        errors.decimalPlacesAllowed = 'Decimal places allowed must be a non-negative integer';
+      } else {
+        decimalPlacesAllowed = parsed;
+      }
+    }
+  }
+
+  const rawCorrectAnswer = rawValues.correctAnswer;
+  const hasRawCorrectAnswer = rawCorrectAnswer !== undefined;
+  const hasStoredCorrectAnswer = typeof normalizedConfig.correctAnswer === 'number'
+    && Number.isFinite(normalizedConfig.correctAnswer);
+  const shouldValidateCorrectAnswer = hasRawCorrectAnswer
+    ? String(rawCorrectAnswer).trim() !== ''
+    : hasStoredCorrectAnswer;
+
+  if (shouldValidateCorrectAnswer) {
+    const correctAnswer = hasRawCorrectAnswer ? Number(rawCorrectAnswer) : Number(normalizedConfig.correctAnswer);
+    if (!Number.isFinite(correctAnswer)) {
+      errors.correctAnswer = 'Correct answer must be a valid number';
+      return errors;
+    }
+
+    if (!normalizedConfig.numberRules?.allowSigned && correctAnswer < 0) {
+      errors.correctAnswer = 'Correct answer must be positive when signed values are disabled';
+      return errors;
+    }
+    if (minValue !== null && correctAnswer < minValue) {
+      errors.correctAnswer = 'Correct answer must be greater than or equal to Min';
+      return errors;
+    }
+    if (maxValue !== null && correctAnswer > maxValue) {
+      errors.correctAnswer = 'Correct answer must be less than or equal to Max';
+      return errors;
+    }
+    if (
+      decimalPlacesAllowed !== null
+      && Number.isInteger(decimalPlacesAllowed)
+      && countDecimalPlaces(correctAnswer) > decimalPlacesAllowed
+    ) {
+      errors.correctAnswer = 'Correct answer has more decimal places than allowed';
+    }
+  }
+
+  return errors;
+}
+
 
 function buildViewerUrlFromCurrentLocation(currentHref, localDraftId) {
   const viewerUrl = new URL('../viewer/', currentHref);
@@ -1431,6 +1508,14 @@ function renderEditorShell(session) {
   questionCorrectAnswerNumber.type = 'number';
   questionCorrectAnswerNumber.step = 'any';
   questionCorrectAnswerNumber.className = 'control';
+  const questionMinError = document.createElement('p');
+  questionMinError.className = 'control-error';
+  const questionMaxError = document.createElement('p');
+  questionMaxError.className = 'control-error';
+  const questionNumberDecimalPlacesAllowedError = document.createElement('p');
+  questionNumberDecimalPlacesAllowedError.className = 'control-error';
+  const questionCorrectAnswerNumberError = document.createElement('p');
+  questionCorrectAnswerNumberError.className = 'control-error';
   const questionCorrectAnswerChoice = document.createElement('select');
   questionCorrectAnswerChoice.id = 'editor-question-correct-answer-choice';
   questionCorrectAnswerChoice.className = 'control';
@@ -1483,6 +1568,39 @@ function renderEditorShell(session) {
   const protectedActionsColumn = document.createElement('div');
   protectedActionsColumn.className = 'action-column';
   let detailSignature = null;
+
+  const updateNumberValidationFeedback = (selectedBlock) => {
+    const clearFieldError = (input, errorNode) => {
+      input.classList.remove('control-invalid');
+      errorNode.textContent = '';
+    };
+    clearFieldError(questionMin, questionMinError);
+    clearFieldError(questionMax, questionMaxError);
+    clearFieldError(questionNumberDecimalPlacesAllowed, questionNumberDecimalPlacesAllowedError);
+    clearFieldError(questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
+
+    if (!selectedBlock || selectedBlock.kind !== 'question') return;
+    const responseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
+    if (responseConfig.inputType !== 'number') return;
+
+    const errors = getNumberQuestionValidationErrors(responseConfig, {
+      decimalPlacesAllowed: questionNumberDecimalPlacesAllowed.value,
+      correctAnswer: questionCorrectAnswerNumber.value,
+    });
+    const setFieldError = (input, errorNode, message) => {
+      if (!message) return;
+      input.classList.add('control-invalid');
+      errorNode.textContent = message;
+    };
+    setFieldError(questionMin, questionMinError, errors.min);
+    setFieldError(questionMax, questionMaxError, errors.max);
+    setFieldError(
+      questionNumberDecimalPlacesAllowed,
+      questionNumberDecimalPlacesAllowedError,
+      errors.decimalPlacesAllowed
+    );
+    setFieldError(questionCorrectAnswerNumber, questionCorrectAnswerNumberError, errors.correctAnswer);
+  };
 
   const syncFormControls = () => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
@@ -1544,6 +1662,7 @@ function renderEditorShell(session) {
           : '';
       }
     }
+    updateNumberValidationFeedback(selectedBlock);
   };
 
   const renderBlockList = () => {
@@ -1672,7 +1791,7 @@ function renderEditorShell(session) {
       const maxLabel = document.createElement('label');
       maxLabel.textContent = 'Max';
       maxLabel.htmlFor = 'editor-question-max';
-      rightPanel.append(minLabel, questionMin, maxLabel, questionMax);
+      rightPanel.append(minLabel, questionMin, questionMinError, maxLabel, questionMax, questionMaxError);
 
       const signedRow = document.createElement('label');
       signedRow.className = 'inline-toggle';
@@ -1685,12 +1804,12 @@ function renderEditorShell(session) {
       const decimalPlacesLabel = document.createElement('label');
       decimalPlacesLabel.textContent = 'Decimal places allowed (blank = unlimited)';
       decimalPlacesLabel.htmlFor = 'editor-question-number-decimal-places-allowed';
-      rightPanel.append(decimalPlacesLabel, questionNumberDecimalPlacesAllowed);
+      rightPanel.append(decimalPlacesLabel, questionNumberDecimalPlacesAllowed, questionNumberDecimalPlacesAllowedError);
 
       const correctAnswerLabel = document.createElement('label');
       correctAnswerLabel.textContent = 'Correct answer';
       correctAnswerLabel.htmlFor = 'editor-question-correct-answer-number';
-      rightPanel.append(correctAnswerLabel, questionCorrectAnswerNumber);
+      rightPanel.append(correctAnswerLabel, questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
     }
 
     if (activeInputType === 'boolean') {
@@ -2041,7 +2160,14 @@ bootstrapEditor().catch((error) => {
   }
 });
 
-export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation };
+export {
+  EditorDraftSession,
+  createDraftRecord,
+  normalizeBlocks,
+  mapOptionsTextToResponseOptions,
+  buildViewerUrlFromCurrentLocation,
+  getNumberQuestionValidationErrors,
+};
 function normalizeQuestionResponseConfig(responseConfig) {
   const source = isRecord(responseConfig) ? { ...responseConfig } : {};
   const legacyInputType = source.inputType || 'text';
