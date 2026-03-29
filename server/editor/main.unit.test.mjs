@@ -350,6 +350,27 @@ test('question number config and multiple choice settings update through helpers
   assert.deepEqual(updated.responseConfig.options, [{ value: 'A', label: 'A' }, { value: 'B', label: 'B' }]);
 });
 
+test('multiple choice option helpers add, update, and remove options', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_option_helpers');
+  const block = session.createBlock('question');
+
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.addQuestionOption(block.blockId);
+  session.addQuestionOption(block.blockId);
+  session.updateQuestionOptionAtIndex(block.blockId, 0, 'First');
+  session.updateQuestionOptionAtIndex(block.blockId, 1, 'Second');
+  session.removeQuestionOption(block.blockId, 0);
+
+  const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.deepEqual(updated.responseConfig.options, [{ value: 'Second', label: 'Second' }]);
+});
+
 test('updateQuestionMaxLength preserves existing maxLength on empty or non-numeric input', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({

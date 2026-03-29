@@ -60,6 +60,16 @@ function mapOptionsTextToResponseOptions(rawText) {
     .map((line) => ({ value: line, label: line }));
 }
 
+function normalizeResponseOption(option, fallback = '') {
+  if (isRecord(option)) {
+    const value = String(option.value ?? option.label ?? fallback);
+    const label = String(option.label ?? option.value ?? fallback);
+    return { value, label };
+  }
+  const normalized = String(option ?? fallback);
+  return { value: normalized, label: normalized };
+}
+
 
 function buildViewerUrlFromCurrentLocation(currentHref, localDraftId) {
   const viewerUrl = new URL('../viewer/', currentHref);
@@ -532,6 +542,71 @@ class EditorDraftSession {
           shuffleOptions: Boolean(block.responseConfig?.shuffleOptions),
           options: normalizedOptions,
         },
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionOptionAtIndex(blockId, index, nextLabel) {
+    if (!this.state.draft || !blockId || !Number.isInteger(index) || index < 0) return;
+    const normalizedLabel = String(nextLabel ?? '');
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (responseConfig.inputType !== 'multiple_choice') return block;
+      const options = Array.isArray(responseConfig.options)
+        ? responseConfig.options.map((option) => normalizeResponseOption(option))
+        : [];
+      if (!options[index]) return block;
+      options[index] = { value: normalizedLabel, label: normalizedLabel };
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...responseConfig,
+          options,
+        }),
+      };
+    });
+    this.touchDraft();
+  }
+
+  addQuestionOption(blockId) {
+    if (!this.state.draft || !blockId) return;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (responseConfig.inputType !== 'multiple_choice') return block;
+      const options = Array.isArray(responseConfig.options)
+        ? responseConfig.options.map((option) => normalizeResponseOption(option))
+        : [];
+      options.push({ value: '', label: '' });
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...responseConfig,
+          options,
+        }),
+      };
+    });
+    this.touchDraft();
+  }
+
+  removeQuestionOption(blockId, index) {
+    if (!this.state.draft || !blockId || !Number.isInteger(index) || index < 0) return;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (responseConfig.inputType !== 'multiple_choice') return block;
+      const options = Array.isArray(responseConfig.options)
+        ? responseConfig.options.map((option) => normalizeResponseOption(option))
+        : [];
+      options.splice(index, 1);
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...responseConfig,
+          options,
+        }),
       };
     });
     this.touchDraft();
@@ -1060,9 +1135,13 @@ function renderEditorShell(session) {
   questionMaxLength.className = 'control';
   const questionOptions = document.createElement('textarea');
   questionOptions.id = 'editor-question-options';
-  questionOptions.rows = 6;
-  questionOptions.className = 'control';
-  questionOptions.placeholder = 'One option per line';
+  questionOptions.style.display = 'none';
+  const questionOptionsList = document.createElement('div');
+  questionOptionsList.className = 'question-options-list';
+  const addOptionBtn = document.createElement('button');
+  addOptionBtn.type = 'button';
+  addOptionBtn.className = 'option-add-btn';
+  addOptionBtn.textContent = '+ Add option';
   const questionSelectionMode = document.createElement('select');
   questionSelectionMode.id = 'editor-question-selection-mode';
   questionSelectionMode.className = 'control';
@@ -1226,6 +1305,16 @@ function renderEditorShell(session) {
       selectedBlock.blockId,
       selectedBlock.kind,
       selectedBlock.responseConfig?.inputType || 'text',
+      selectedBlock.responseConfig?.displayMode || '',
+      selectedBlock.responseConfig?.min ?? '',
+      selectedBlock.responseConfig?.max ?? '',
+      selectedBlock.responseConfig?.step ?? '',
+      selectedBlock.responseConfig?.selectionMode || '',
+      selectedBlock.responseConfig?.shuffleOptions ? '1' : '0',
+      JSON.stringify((selectedBlock.responseConfig?.options || []).map((opt) => [
+        String(opt?.value ?? ''),
+        String(opt?.label ?? ''),
+      ])),
     ].join(':');
   };
 
@@ -1302,15 +1391,50 @@ function renderEditorShell(session) {
       selectionModeLabel.htmlFor = 'editor-question-selection-mode';
       rightPanel.append(selectionModeLabel, questionSelectionMode);
 
-      const shuffleLabel = document.createElement('label');
-      shuffleLabel.textContent = 'Shuffle options';
-      shuffleLabel.htmlFor = 'editor-question-shuffle-options';
-      rightPanel.append(shuffleLabel, questionShuffleOptions);
+      const shuffleRow = document.createElement('label');
+      shuffleRow.className = 'inline-toggle';
+      shuffleRow.htmlFor = 'editor-question-shuffle-options';
+      const shuffleText = document.createElement('span');
+      shuffleText.textContent = 'Shuffle options';
+      shuffleRow.append(shuffleText, questionShuffleOptions);
+      rightPanel.append(shuffleRow);
 
       const optionsLabel = document.createElement('label');
       optionsLabel.textContent = 'Options';
       optionsLabel.htmlFor = 'editor-question-options';
-      rightPanel.append(optionsLabel, questionOptions);
+      rightPanel.append(optionsLabel);
+
+      questionOptionsList.innerHTML = '';
+      const optionList = Array.isArray(selectedBlock.responseConfig?.options) && selectedBlock.responseConfig.options.length > 0
+        ? selectedBlock.responseConfig.options
+        : [{ value: '', label: '' }];
+      optionList.forEach((option, optionIndex) => {
+        const row = document.createElement('div');
+        row.className = 'option-row';
+        const optionInput = document.createElement('input');
+        optionInput.type = 'text';
+        optionInput.className = 'control';
+        optionInput.placeholder = `Option ${optionIndex + 1}`;
+        optionInput.value = String(option?.label ?? option?.value ?? '');
+        optionInput.addEventListener('input', () => {
+          session.updateQuestionOptionAtIndex(selectedBlock.blockId, optionIndex, optionInput.value);
+          updateSummary();
+        });
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'icon-btn';
+        removeBtn.title = `Remove option ${optionIndex + 1}`;
+        removeBtn.setAttribute('aria-label', `Remove option ${optionIndex + 1}`);
+        removeBtn.textContent = '−';
+        removeBtn.addEventListener('click', () => {
+          session.removeQuestionOption(selectedBlock.blockId, optionIndex);
+          updateSummary();
+        });
+        row.append(optionInput, removeBtn);
+        questionOptionsList.appendChild(row);
+      });
+
+      rightPanel.append(questionOptionsList, addOptionBtn, questionOptions);
     }
   };
 
@@ -1416,6 +1540,10 @@ function renderEditorShell(session) {
   });
   questionOptions.addEventListener('input', () => {
     session.updateQuestionOptionsFromText(session.state.selectedBlockId, questionOptions.value);
+    updateSummary();
+  });
+  addOptionBtn.addEventListener('click', () => {
+    session.addQuestionOption(session.state.selectedBlockId);
     updateSummary();
   });
   importBtn.addEventListener('click', () => {
