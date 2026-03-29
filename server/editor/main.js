@@ -868,6 +868,7 @@ class EditorDraftSession {
 
 function renderEditorShell(session) {
   if (!app) return;
+  const isDebugMode = new URLSearchParams(window.location.search).get('debug') === '1';
 
   const shell = document.createElement('div');
   shell.className = 'editor-shell';
@@ -882,10 +883,12 @@ function renderEditorShell(session) {
   validationEl.className = 'editor-topbar-item';
   const localDraftIdEl = document.createElement('p');
   localDraftIdEl.className = 'editor-topbar-item';
-  const saveErrorEl = document.createElement('p');
-  const saveWarningEl = document.createElement('p');
-  saveErrorEl.className = 'error-text';
-  saveWarningEl.className = 'muted';
+  const localDraftIdLabel = document.createElement('span');
+  localDraftIdLabel.className = 'editor-label';
+  localDraftIdLabel.textContent = 'localDraftId:';
+  const localDraftIdValue = document.createElement('span');
+  localDraftIdValue.className = 'editor-id-value';
+  localDraftIdEl.append(localDraftIdLabel, localDraftIdValue);
 
   const layout = document.createElement('section');
   layout.className = 'editor-layout';
@@ -908,6 +911,7 @@ function renderEditorShell(session) {
 
   const metaRow = document.createElement('div');
   metaRow.className = 'button-row';
+  metaRow.classList.add('stacked-actions');
 
   const statusRow = document.createElement('p');
   statusRow.className = 'muted';
@@ -952,15 +956,6 @@ function renderEditorShell(session) {
   questionOptions.className = 'control';
   questionOptions.placeholder = 'One option per line';
 
-  const modeSelect = document.createElement('select');
-  modeSelect.className = 'control';
-  ['edit', 'preview'].forEach((mode) => {
-    const option = document.createElement('option');
-    option.value = mode;
-    option.textContent = mode;
-    modeSelect.appendChild(option);
-  });
-
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
@@ -977,9 +972,6 @@ function renderEditorShell(session) {
   const addQuestionBtn = document.createElement('button');
   addQuestionBtn.type = 'button';
   addQuestionBtn.textContent = 'Add Question';
-  const deleteBlockBtn = document.createElement('button');
-  deleteBlockBtn.type = 'button';
-  deleteBlockBtn.textContent = 'Delete Selected';
   const openViewerBtn = document.createElement('button');
   openViewerBtn.type = 'button';
   openViewerBtn.textContent = 'Open in Viewer (same tab)';
@@ -991,7 +983,10 @@ function renderEditorShell(session) {
   exportBtn.textContent = 'Export draft JSON';
   const localPublishBtn = document.createElement('button');
   localPublishBtn.type = 'button';
-  localPublishBtn.textContent = 'Simulate local publish';
+  localPublishBtn.textContent = 'Generate publish payload (debug)';
+  const localPublishHint = document.createElement('p');
+  localPublishHint.className = 'muted';
+  localPublishHint.textContent = 'Debug only: generates a local snapshot preview and does not call server publish APIs.';
   const rewriteBtn = document.createElement('button');
   rewriteBtn.type = 'button';
   rewriteBtn.textContent = 'Rewrite (Sign-in required)';
@@ -1004,6 +999,8 @@ function renderEditorShell(session) {
   const publishBtn = document.createElement('button');
   publishBtn.type = 'button';
   publishBtn.textContent = 'Publish (Sign-in required)';
+  const protectedActionsColumn = document.createElement('div');
+  protectedActionsColumn.className = 'action-column';
   let detailSignature = null;
 
   const syncFormControls = () => {
@@ -1016,9 +1013,6 @@ function renderEditorShell(session) {
     }
     if (activeElement !== blockEditor) {
       blockEditor.value = selectedText;
-    }
-    if (activeElement !== modeSelect) {
-      modeSelect.value = session.state.mode;
     }
     if (selectedBlock && activeElement !== blockKind) {
       blockKind.value = selectedBlock.kind;
@@ -1045,6 +1039,8 @@ function renderEditorShell(session) {
     blocks.forEach((block) => {
       const item = document.createElement('li');
       item.className = `block-item ${block.blockId === session.state.selectedBlockId ? 'selected' : ''}`;
+      const row = document.createElement('div');
+      row.className = 'block-item-row';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'block-select';
@@ -1055,7 +1051,19 @@ function renderEditorShell(session) {
         session.selectBlock(block.blockId);
         updateSummary();
       });
-      item.appendChild(button);
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'icon-btn danger';
+      deleteBtn.title = 'Delete this block';
+      deleteBtn.setAttribute('aria-label', `Delete block ${block.position + 1}`);
+      deleteBtn.textContent = '🗑';
+      deleteBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        session.deleteBlock(block.blockId);
+        updateSummary();
+      });
+      row.append(button, deleteBtn);
+      item.appendChild(row);
       blockList.appendChild(item);
     });
   };
@@ -1144,13 +1152,20 @@ function renderEditorShell(session) {
 
     const isSaved = saveState === 'Saved';
     saveStateEl.innerHTML = `<span class="editor-label">State:</span> <span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}"><span class="editor-dot"></span>${isSaved ? 'Saved' : saveState}</span>`;
+    saveStateEl.title = session.state.lastPersistenceError || session.state.lastValidationWarning || '';
     lastSavedEl.textContent = `Last saved: ${session.state.lastSavedAt || 'Not yet saved'}`;
     const validationIssues = session.state.lastSavedLocalValidationIssueCount + session.state.lastContractValidationIssueCount;
     validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">Validation: ${validationIssues} issue${validationIssues === 1 ? '' : 's'}</span>`;
-    localDraftIdEl.innerHTML = `<span class="editor-label">localDraftId:</span> <span class="editor-id-value">${session.state.draft?.localId || 'n/a'}</span>`;
-    saveErrorEl.textContent = session.state.lastPersistenceError ? `Error: ${session.state.lastPersistenceError}` : '';
-    saveWarningEl.textContent = session.state.lastValidationWarning ? `Warning: ${session.state.lastValidationWarning}` : '';
-    statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'} · Mode: ${session.state.mode}`;
+    const validationTooltip = [];
+    if (session.state.lastValidationWarning) {
+      validationTooltip.push(session.state.lastValidationWarning);
+    }
+    if (session.state.validationErrors.length > 0) {
+      validationTooltip.push(...session.state.validationErrors);
+    }
+    validationEl.title = validationIssues > 0 ? validationTooltip.join('\n') : '';
+    localDraftIdValue.textContent = session.state.draft?.localId || 'n/a';
+    statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'}`;
   };
 
   session.setOnStateChange(() => {
@@ -1159,10 +1174,6 @@ function renderEditorShell(session) {
 
   titleInput.addEventListener('input', () => {
     session.updateTitle(titleInput.value);
-    updateSummary();
-  });
-  modeSelect.addEventListener('change', () => {
-    session.setMode(modeSelect.value);
     updateSummary();
   });
   blockKind.addEventListener('change', () => {
@@ -1183,10 +1194,6 @@ function renderEditorShell(session) {
   });
   addQuestionBtn.addEventListener('click', () => {
     session.createBlock('question');
-    updateSummary();
-  });
-  deleteBlockBtn.addEventListener('click', () => {
-    session.deleteBlock(session.state.selectedBlockId);
     updateSummary();
   });
   openViewerBtn.addEventListener('click', async () => {
@@ -1248,13 +1255,17 @@ function renderEditorShell(session) {
   addContentBtn.textContent = '+ Add Content';
   addQuestionBtn.textContent = '+ Add Question';
   controlsRow.append(addContentBtn, addQuestionBtn);
-  metaRow.append(saveBtn, modeSelect, exportBtn, importBtn);
-  moreActions.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn, localPublishBtn, deleteBlockBtn);
-  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput, openViewerBtn);
+  metaRow.append(saveBtn, exportBtn, importBtn, openViewerBtn);
+  if (isDebugMode) {
+    moreActions.append(localPublishHint, localPublishBtn);
+  }
+  protectedActionsColumn.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn);
+  moreActions.append(protectedActionsColumn);
+  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput);
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);
-  shell.append(topBar, saveErrorEl, saveWarningEl, layout);
+  shell.append(topBar, layout);
   app.innerHTML = '';
   app.append(shell);
   updateSummary();
@@ -1267,7 +1278,7 @@ async function bootstrapEditor() {
   const localDraftId = params.get('localDraftId') || initialRestore?.localId || null;
 
   await session.createOrOpenByLocalDraftId(localDraftId, {
-    initialMode: initialRestore?.mode || DEFAULT_MODE,
+    initialMode: DEFAULT_MODE,
     selectedBlockId: initialRestore?.selectedBlockId || null,
     hash: initialRestore?.hash || window.location.hash || '',
     scrollToken: initialRestore?.scrollToken || null,
