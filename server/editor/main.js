@@ -1904,35 +1904,46 @@ function renderEditorShell(session) {
         const row = document.createElement('div');
         row.className = 'option-row';
 
-        const correctToggle = document.createElement('label');
-        correctToggle.className = 'option-correct-toggle';
-        correctToggle.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
-        const answerTick = document.createElement('input');
-        answerTick.type = isMultiSelect ? 'checkbox' : 'radio';
-        answerTick.checked = isMultiSelect
+        const isSelected = isMultiSelect
           ? selectedValues.has(optionValue)
           : hasSelectedSingleValue && selectedSingleValue === optionValue;
-        answerTick.setAttribute('aria-label', `Mark option ${optionIndex + 1} as correct`);
-        answerTick.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
-        if (!isMultiSelect) {
-          answerTick.name = `editor-question-correct-answer-${selectedBlock.blockId}`;
-        }
-        answerTick.addEventListener('change', () => {
+        const correctToggle = document.createElement('button');
+        correctToggle.type = 'button';
+        correctToggle.className = 'option-correct-toggle';
+        correctToggle.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
+        correctToggle.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        correctToggle.setAttribute(
+          'aria-label',
+          isMultiSelect
+            ? `Toggle option ${optionIndex + 1} correct answer`
+            : `Toggle option ${optionIndex + 1} as the correct answer`
+        );
+        correctToggle.addEventListener('click', () => {
           if (!isMultiSelect) {
             session.updateQuestionCorrectAnswerChoice(
               selectedBlock.blockId,
-              answerTick.checked ? optionValue : ''
+              isSelected ? '' : optionValue
             );
             updateSummary();
             return;
           }
-          const nextValues = Array.from(questionOptionsList.querySelectorAll('input[type="checkbox"]:checked'))
-            .map((input) => String(input.value));
+          const nextValues = Array.from(selectedValues);
+          if (selectedValues.has(optionValue)) {
+            const removeIndex = nextValues.indexOf(optionValue);
+            if (removeIndex >= 0) {
+              nextValues.splice(removeIndex, 1);
+            }
+          } else {
+            nextValues.push(optionValue);
+          }
           session.updateQuestionCorrectAnswerChoices(selectedBlock.blockId, nextValues);
           updateSummary();
         });
-        answerTick.value = optionValue;
-        correctToggle.appendChild(answerTick);
+        const tickIcon = document.createElement('span');
+        tickIcon.className = 'option-correct-toggle__tick';
+        tickIcon.setAttribute('aria-hidden', 'true');
+        tickIcon.textContent = '✓';
+        correctToggle.appendChild(tickIcon);
 
         const optionInput = document.createElement('input');
         optionInput.type = 'text';
