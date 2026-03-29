@@ -909,6 +909,7 @@ function renderEditorShell(session) {
 
   const metaRow = document.createElement('div');
   metaRow.className = 'button-row';
+  metaRow.classList.add('stacked-actions');
 
   const statusRow = document.createElement('p');
   statusRow.className = 'muted';
@@ -969,9 +970,6 @@ function renderEditorShell(session) {
   const addQuestionBtn = document.createElement('button');
   addQuestionBtn.type = 'button';
   addQuestionBtn.textContent = 'Add Question';
-  const deleteBlockBtn = document.createElement('button');
-  deleteBlockBtn.type = 'button';
-  deleteBlockBtn.textContent = 'Delete Selected';
   const openViewerBtn = document.createElement('button');
   openViewerBtn.type = 'button';
   openViewerBtn.textContent = 'Open in Viewer (same tab)';
@@ -1191,10 +1189,6 @@ function renderEditorShell(session) {
     session.createBlock('question');
     updateSummary();
   });
-  deleteBlockBtn.addEventListener('click', () => {
-    session.deleteBlock(session.state.selectedBlockId);
-    updateSummary();
-  });
   openViewerBtn.addEventListener('click', async () => {
     const localDraftId = session.state.draft?.localId;
     if (!localDraftId) return;
@@ -1254,13 +1248,13 @@ function renderEditorShell(session) {
   addContentBtn.textContent = '+ Add Content';
   addQuestionBtn.textContent = '+ Add Question';
   controlsRow.append(addContentBtn, addQuestionBtn);
-  metaRow.append(saveBtn, exportBtn, importBtn);
+  metaRow.append(saveBtn, exportBtn, importBtn, openViewerBtn);
   if (isDebugMode) {
     moreActions.append(localPublishHint, localPublishBtn);
   }
   protectedActionsColumn.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn);
-  moreActions.append(protectedActionsColumn, deleteBlockBtn);
-  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput, openViewerBtn);
+  moreActions.append(protectedActionsColumn);
+  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput);
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);
