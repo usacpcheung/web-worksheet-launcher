@@ -1859,9 +1859,21 @@ function renderEditorShell(session) {
       const selectedValues = new Set(Array.isArray(normalizedResponseConfig.correctAnswer)
         ? normalizedResponseConfig.correctAnswer.map((value) => String(value))
         : []);
-      const selectedSingleValue = typeof normalizedResponseConfig.correctAnswer === 'string'
+      const hasSelectedSingleValue = typeof normalizedResponseConfig.correctAnswer === 'string'
+        && normalizedResponseConfig.correctAnswer.length > 0;
+      const selectedSingleValue = hasSelectedSingleValue
         ? normalizedResponseConfig.correctAnswer
         : '';
+      const clearCorrectAnswerBtn = document.createElement('button');
+      clearCorrectAnswerBtn.type = 'button';
+      clearCorrectAnswerBtn.textContent = 'Clear correct answer';
+      clearCorrectAnswerBtn.title = 'Unset the correct answer';
+      clearCorrectAnswerBtn.className = 'option-add-btn';
+      clearCorrectAnswerBtn.disabled = !hasSelectedSingleValue;
+      clearCorrectAnswerBtn.addEventListener('click', () => {
+        session.updateQuestionCorrectAnswerChoice(selectedBlock.blockId, '');
+        updateSummary();
+      });
 
       questionOptionsList.innerHTML = '';
       optionList.forEach((option, optionIndex) => {
@@ -1876,7 +1888,7 @@ function renderEditorShell(session) {
         answerTick.type = isMultiSelect ? 'checkbox' : 'radio';
         answerTick.checked = isMultiSelect
           ? selectedValues.has(optionValue)
-          : selectedSingleValue === optionValue;
+          : hasSelectedSingleValue && selectedSingleValue === optionValue;
         answerTick.setAttribute('aria-label', `Mark option ${optionIndex + 1} as correct`);
         answerTick.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
         if (!isMultiSelect) {
@@ -1921,7 +1933,11 @@ function renderEditorShell(session) {
         row.append(correctToggle, optionInput, removeBtn);
         questionOptionsList.appendChild(row);
       });
-      rightPanel.append(questionOptionsList, addOptionBtn, questionOptions);
+      if (isMultiSelect) {
+        rightPanel.append(questionOptionsList, addOptionBtn, questionOptions);
+      } else {
+        rightPanel.append(questionOptionsList, addOptionBtn, clearCorrectAnswerBtn, questionOptions);
+      }
     }
   };
 
