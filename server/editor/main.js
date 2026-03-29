@@ -868,6 +868,7 @@ class EditorDraftSession {
 
 function renderEditorShell(session) {
   if (!app) return;
+  const isDebugMode = new URLSearchParams(window.location.search).get('debug') === '1';
 
   const shell = document.createElement('div');
   shell.className = 'editor-shell';
@@ -952,15 +953,6 @@ function renderEditorShell(session) {
   questionOptions.className = 'control';
   questionOptions.placeholder = 'One option per line';
 
-  const modeSelect = document.createElement('select');
-  modeSelect.className = 'control';
-  ['edit', 'preview'].forEach((mode) => {
-    const option = document.createElement('option');
-    option.value = mode;
-    option.textContent = mode;
-    modeSelect.appendChild(option);
-  });
-
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
@@ -991,7 +983,10 @@ function renderEditorShell(session) {
   exportBtn.textContent = 'Export draft JSON';
   const localPublishBtn = document.createElement('button');
   localPublishBtn.type = 'button';
-  localPublishBtn.textContent = 'Simulate local publish';
+  localPublishBtn.textContent = 'Generate publish payload (debug)';
+  const localPublishHint = document.createElement('p');
+  localPublishHint.className = 'muted';
+  localPublishHint.textContent = 'Debug only: generates a local snapshot preview and does not call server publish APIs.';
   const rewriteBtn = document.createElement('button');
   rewriteBtn.type = 'button';
   rewriteBtn.textContent = 'Rewrite (Sign-in required)';
@@ -1016,9 +1011,6 @@ function renderEditorShell(session) {
     }
     if (activeElement !== blockEditor) {
       blockEditor.value = selectedText;
-    }
-    if (activeElement !== modeSelect) {
-      modeSelect.value = session.state.mode;
     }
     if (selectedBlock && activeElement !== blockKind) {
       blockKind.value = selectedBlock.kind;
@@ -1150,7 +1142,7 @@ function renderEditorShell(session) {
     localDraftIdEl.innerHTML = `<span class="editor-label">localDraftId:</span> <span class="editor-id-value">${session.state.draft?.localId || 'n/a'}</span>`;
     saveErrorEl.textContent = session.state.lastPersistenceError ? `Error: ${session.state.lastPersistenceError}` : '';
     saveWarningEl.textContent = session.state.lastValidationWarning ? `Warning: ${session.state.lastValidationWarning}` : '';
-    statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'} · Mode: ${session.state.mode}`;
+    statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'}`;
   };
 
   session.setOnStateChange(() => {
@@ -1159,10 +1151,6 @@ function renderEditorShell(session) {
 
   titleInput.addEventListener('input', () => {
     session.updateTitle(titleInput.value);
-    updateSummary();
-  });
-  modeSelect.addEventListener('change', () => {
-    session.setMode(modeSelect.value);
     updateSummary();
   });
   blockKind.addEventListener('change', () => {
@@ -1248,8 +1236,11 @@ function renderEditorShell(session) {
   addContentBtn.textContent = '+ Add Content';
   addQuestionBtn.textContent = '+ Add Question';
   controlsRow.append(addContentBtn, addQuestionBtn);
-  metaRow.append(saveBtn, modeSelect, exportBtn, importBtn);
-  moreActions.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn, localPublishBtn, deleteBlockBtn);
+  metaRow.append(saveBtn, exportBtn, importBtn);
+  if (isDebugMode) {
+    moreActions.append(localPublishHint, localPublishBtn);
+  }
+  moreActions.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn, deleteBlockBtn);
   leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput, openViewerBtn);
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
@@ -1267,7 +1258,7 @@ async function bootstrapEditor() {
   const localDraftId = params.get('localDraftId') || initialRestore?.localId || null;
 
   await session.createOrOpenByLocalDraftId(localDraftId, {
-    initialMode: initialRestore?.mode || DEFAULT_MODE,
+    initialMode: DEFAULT_MODE,
     selectedBlockId: initialRestore?.selectedBlockId || null,
     hash: initialRestore?.hash || window.location.hash || '',
     scrollToken: initialRestore?.scrollToken || null,
