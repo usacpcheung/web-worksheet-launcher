@@ -699,7 +699,9 @@ class EditorDraftSession {
       const options = Array.isArray(responseConfig.options)
         ? responseConfig.options.map((option) => normalizeResponseOption(option))
         : [];
-      if (!options[index]) return block;
+      while (options.length <= index) {
+        options.push({ value: '', label: '' });
+      }
       options[index] = { value: normalizedLabel, label: normalizedLabel };
       return {
         ...block,

@@ -607,6 +607,30 @@ test('multiple choice option helpers add, update, and remove options', async () 
   assert.deepEqual(updated.responseConfig.options, [{ value: 'Second', label: 'Second' }]);
 });
 
+test('typing first visible option persists when options array starts empty', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_first_option');
+  const block = session.createBlock('question');
+
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionOptionAtIndex(block.blockId, 0, 'First typed option');
+
+  let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.deepEqual(updated.responseConfig.options, [{ value: 'First typed option', label: 'First typed option' }]);
+
+  session.addQuestionOption(block.blockId);
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.deepEqual(updated.responseConfig.options, [
+    { value: 'First typed option', label: 'First typed option' },
+    { value: '', label: '' },
+  ]);
+});
+
 test('updateQuestionMaxLength preserves existing maxLength on empty or non-numeric input', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({
