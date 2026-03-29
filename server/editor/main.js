@@ -883,10 +883,6 @@ function renderEditorShell(session) {
   validationEl.className = 'editor-topbar-item';
   const localDraftIdEl = document.createElement('p');
   localDraftIdEl.className = 'editor-topbar-item';
-  const saveErrorEl = document.createElement('p');
-  const saveWarningEl = document.createElement('p');
-  saveErrorEl.className = 'error-text';
-  saveWarningEl.className = 'muted';
 
   const layout = document.createElement('section');
   layout.className = 'editor-layout';
@@ -1150,14 +1146,19 @@ function renderEditorShell(session) {
 
     const isSaved = saveState === 'Saved';
     saveStateEl.innerHTML = `<span class="editor-label">State:</span> <span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}"><span class="editor-dot"></span>${isSaved ? 'Saved' : saveState}</span>`;
+    saveStateEl.title = session.state.lastPersistenceError || session.state.lastValidationWarning || '';
     lastSavedEl.textContent = `Last saved: ${session.state.lastSavedAt || 'Not yet saved'}`;
     const validationIssues = session.state.lastSavedLocalValidationIssueCount + session.state.lastContractValidationIssueCount;
     validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">Validation: ${validationIssues} issue${validationIssues === 1 ? '' : 's'}</span>`;
+    const validationTooltip = [];
+    if (session.state.lastValidationWarning) {
+      validationTooltip.push(session.state.lastValidationWarning);
+    }
+    if (session.state.validationErrors.length > 0) {
+      validationTooltip.push(...session.state.validationErrors);
+    }
+    validationEl.title = validationIssues > 0 ? validationTooltip.join('\n') : '';
     localDraftIdEl.innerHTML = `<span class="editor-label">localDraftId:</span> <span class="editor-id-value">${session.state.draft?.localId || 'n/a'}</span>`;
-    saveErrorEl.textContent = session.state.lastPersistenceError ? `Error: ${session.state.lastPersistenceError}` : '';
-    saveWarningEl.textContent = session.state.lastValidationWarning ? `Warning: ${session.state.lastValidationWarning}` : '';
-    saveErrorEl.hidden = !saveErrorEl.textContent;
-    saveWarningEl.hidden = !saveWarningEl.textContent;
     statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'}`;
   };
 
@@ -1258,7 +1259,7 @@ function renderEditorShell(session) {
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);
-  shell.append(topBar, saveErrorEl, saveWarningEl, layout);
+  shell.append(topBar, layout);
   app.innerHTML = '';
   app.append(shell);
   updateSummary();
