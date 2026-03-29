@@ -141,6 +141,13 @@ test('editor shell no longer relies on 500ms summary interval loop', async () =>
   assert.equal(source.includes('setInterval(updateSummary, 500)'), false);
 });
 
+test('detail signature excludes per-keystroke numeric fields to avoid focus loss during typing', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('selectedBlock.responseConfig?.min ?? \'\''), false);
+  assert.equal(source.includes('selectedBlock.responseConfig?.max ?? \'\''), false);
+  assert.equal(source.includes('selectedBlock.responseConfig?.correctAnswer ?? null'), false);
+});
+
 test('localDraftId render path avoids innerHTML interpolation for untrusted ids', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('localDraftIdEl.innerHTML'), false);

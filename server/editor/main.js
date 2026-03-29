@@ -1590,12 +1590,8 @@ function renderEditorShell(session) {
       selectedBlock.kind,
       selectedBlock.responseConfig?.inputType || 'text',
       selectedBlock.responseConfig?.displayMode || '',
-      selectedBlock.responseConfig?.min ?? '',
-      selectedBlock.responseConfig?.max ?? '',
-      selectedBlock.responseConfig?.step ?? '',
       selectedBlock.responseConfig?.selectionMode || '',
       selectedBlock.responseConfig?.shuffleOptions ? '1' : '0',
-      JSON.stringify(selectedBlock.responseConfig?.correctAnswer ?? null),
       JSON.stringify((selectedBlock.responseConfig?.options || []).map((opt) => [
         String(opt?.value ?? ''),
         String(opt?.label ?? ''),
