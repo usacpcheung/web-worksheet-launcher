@@ -111,6 +111,17 @@ When `shuffleOptions` is enabled, viewer rendering should use a deterministic or
 - `multiple_choice` with `selectionMode: "single"` → `string`
 - `multiple_choice` with `selectionMode: "multi"` → `string[]`
 
+### Answer-key shape rules (`responseConfig.correctAnswer`, optional)
+
+`responseConfig.correctAnswer` is optional editor/viewer worksheet model data used for answer-key authoring and rendering. It is **not** part of the popup launch query or popup `postMessage` transport schema defined later in this document.
+
+When present on question blocks, `correctAnswer` must match the response input shape:
+
+- `boolean` → `boolean`
+- `number` → `number`
+- `multiple_choice` with `selectionMode: "single"` → `string`
+- `multiple_choice` with `selectionMode: "multi"` → `string[]` containing unique option `value` entries
+
 ## 1) Launch query contract
 
 The popup URL query string **must** follow:

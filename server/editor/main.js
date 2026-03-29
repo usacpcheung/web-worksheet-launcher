@@ -535,13 +535,13 @@ class EditorDraftSession {
       }
       return {
         ...block,
-        responseConfig: {
+        responseConfig: normalizeQuestionResponseConfig({
           ...normalizeQuestionResponseConfig(block.responseConfig),
           inputType: 'multiple_choice',
           selectionMode: block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single',
           shuffleOptions: Boolean(block.responseConfig?.shuffleOptions),
           options: normalizedOptions,
-        },
+        }),
       };
     });
     this.touchDraft();
@@ -1687,6 +1687,21 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.min;
     delete normalized.max;
     delete normalized.step;
+    delete normalized.correctAnswer;
+  } else if (inputType === 'boolean') {
+    delete normalized.options;
+    delete normalized.selectionMode;
+    delete normalized.shuffleOptions;
+    delete normalized.min;
+    delete normalized.max;
+    delete normalized.step;
+    delete normalized.maxLength;
+    delete normalized.displayMode;
+    if (typeof source.correctAnswer === 'boolean') {
+      normalized.correctAnswer = source.correctAnswer;
+    } else {
+      delete normalized.correctAnswer;
+    }
   } else if (inputType === 'number') {
     delete normalized.options;
     delete normalized.selectionMode;
@@ -1696,10 +1711,40 @@ function normalizeQuestionResponseConfig(responseConfig) {
     if (Number.isFinite(source.step) && Number(source.step) > 0) normalized.step = Number(source.step); else delete normalized.step;
     delete normalized.maxLength;
     delete normalized.displayMode;
+    if (typeof source.correctAnswer === 'number' && Number.isFinite(source.correctAnswer)) {
+      normalized.correctAnswer = Number(source.correctAnswer);
+    } else {
+      delete normalized.correctAnswer;
+    }
   } else if (inputType === 'multiple_choice') {
     normalized.selectionMode = source.selectionMode === 'multi' ? 'multi' : 'single';
     normalized.shuffleOptions = Boolean(source.shuffleOptions);
     normalized.options = Array.isArray(source.options) ? source.options : [];
+    const optionValueSet = new Set(
+      normalized.options
+        .map((option, index) => normalizeResponseOption(option, `option_${index}`).value)
+        .map((value) => String(value))
+    );
+    if (normalized.selectionMode === 'single') {
+      if (typeof source.correctAnswer === 'string' && optionValueSet.has(source.correctAnswer)) {
+        normalized.correctAnswer = source.correctAnswer;
+      } else {
+        delete normalized.correctAnswer;
+      }
+    } else if (Array.isArray(source.correctAnswer)) {
+      const uniqueValues = [];
+      const seen = new Set();
+      source.correctAnswer.forEach((value) => {
+        if (typeof value !== 'string' || !optionValueSet.has(value) || seen.has(value)) {
+          return;
+        }
+        seen.add(value);
+        uniqueValues.push(value);
+      });
+      normalized.correctAnswer = uniqueValues;
+    } else {
+      delete normalized.correctAnswer;
+    }
     delete normalized.maxLength;
     delete normalized.displayMode;
     delete normalized.min;
@@ -1714,6 +1759,7 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.min;
     delete normalized.max;
     delete normalized.step;
+    delete normalized.correctAnswer;
   }
 
   return normalized;

@@ -22,7 +22,48 @@
       },
       "localValidation": {
         "level": "warning",
-        "messages": ["Prompt should mention success criteria."]
+        "messages": [
+          "Prompt should mention success criteria."
+        ]
+      }
+    },
+    {
+      "blockId": "blk_q_002",
+      "kind": "question",
+      "position": 1,
+      "prompt": {
+        "text": "Select all claims supported by evidence.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "multiple_choice",
+        "selectionMode": "multi",
+        "shuffleOptions": false,
+        "options": [
+          {
+            "value": "claim_a",
+            "label": "Claim A"
+          },
+          {
+            "value": "claim_b",
+            "label": "Claim B"
+          },
+          {
+            "value": "claim_c",
+            "label": "Claim C"
+          }
+        ],
+        "correctAnswer": [
+          "claim_a",
+          "claim_c"
+        ]
+      },
+      "draftMeta": {
+        "isDirty": false
+      },
+      "localValidation": {
+        "level": "ok",
+        "messages": []
       }
     }
   ],

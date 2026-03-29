@@ -345,6 +345,89 @@ test('normalizeBlocks migrates single_choice to multiple_choice and preserves op
   assert.deepEqual(blocks[0].responseConfig.options, [{ value: 'a', label: 'A' }]);
 });
 
+test('normalizeBlocks keeps only type-compatible correctAnswer values', async () => {
+  const mod = await loadEditorModule();
+  const blocks = mod.normalizeBlocks([
+    {
+      blockId: 'q_bool',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'True?' },
+      responseConfig: { inputType: 'boolean', correctAnswer: true },
+    },
+    {
+      blockId: 'q_number',
+      kind: 'question',
+      position: 1,
+      prompt: { text: 'How many?' },
+      responseConfig: { inputType: 'number', correctAnswer: Number.NaN },
+    },
+    {
+      blockId: 'q_multi',
+      kind: 'question',
+      position: 2,
+      prompt: { text: 'Pick many' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        selectionMode: 'multi',
+        options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }],
+        correctAnswer: ['a', 'b', 'a', 'x', 5],
+      },
+    },
+  ]);
+
+  assert.equal(blocks[0].responseConfig.correctAnswer, true);
+  assert.equal(Object.hasOwn(blocks[1].responseConfig, 'correctAnswer'), false);
+  assert.deepEqual(blocks[2].responseConfig.correctAnswer, ['a', 'b']);
+});
+
+test('changing inputType or selectionMode re-normalizes incompatible correctAnswer', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_answer_key');
+  const block = session.createBlock('question');
+
+  session.state.draft.blocks = session.state.draft.blocks.map((entry) => (
+    entry.blockId === block.blockId
+      ? {
+        ...entry,
+        responseConfig: {
+          inputType: 'multiple_choice',
+          selectionMode: 'single',
+          options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }],
+          correctAnswer: 'a',
+        },
+      }
+      : entry
+  ));
+
+  session.updateQuestionSelectionMode(block.blockId, 'multi');
+  let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
+
+  session.state.draft.blocks = session.state.draft.blocks.map((entry) => (
+    entry.blockId === block.blockId
+      ? {
+        ...entry,
+        responseConfig: {
+          inputType: 'multiple_choice',
+          selectionMode: 'multi',
+          options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }],
+          correctAnswer: ['a', 'b'],
+        },
+      }
+      : entry
+  ));
+
+  session.updateQuestionInputType(block.blockId, 'text');
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
+});
+
 test('question number config and multiple choice settings update through helpers', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({

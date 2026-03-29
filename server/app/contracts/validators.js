@@ -15,6 +15,78 @@ function isIsoTimestamp(value) {
   return Number.isFinite(timestamp);
 }
 
+function normalizeOptionValue(option, fallback = '') {
+  if (isObject(option)) {
+    const resolved = option.value ?? option.label ?? fallback;
+    return String(resolved);
+  }
+  return String(option ?? fallback);
+}
+
+function collectAllowedOptionValues(options) {
+  if (!Array.isArray(options)) {
+    return new Set();
+  }
+  return new Set(options.map((option, index) => normalizeOptionValue(option, `option_${index}`)));
+}
+
+function validateQuestionResponseConfig(responseConfig, path, errors) {
+  if (!isObject(responseConfig) || !Object.prototype.hasOwnProperty.call(responseConfig, 'correctAnswer')) {
+    return;
+  }
+
+  const { correctAnswer, inputType } = responseConfig;
+  if (inputType === 'boolean') {
+    if (typeof correctAnswer !== 'boolean') {
+      errors.push(`${path}.correctAnswer must be a boolean for boolean inputType`);
+    }
+    return;
+  }
+
+  if (inputType === 'number') {
+    if (typeof correctAnswer !== 'number' || !Number.isFinite(correctAnswer)) {
+      errors.push(`${path}.correctAnswer must be a finite number for number inputType`);
+    }
+    return;
+  }
+
+  if (inputType === 'multiple_choice') {
+    const selectionMode = responseConfig.selectionMode === 'multi' ? 'multi' : 'single';
+    const optionValues = collectAllowedOptionValues(responseConfig.options);
+    if (selectionMode === 'single') {
+      if (typeof correctAnswer !== 'string') {
+        errors.push(`${path}.correctAnswer must be a string for multiple_choice single mode`);
+      } else if (!optionValues.has(correctAnswer)) {
+        errors.push(`${path}.correctAnswer must match an existing options[*].value for multiple_choice single mode`);
+      }
+      return;
+    }
+
+    if (!Array.isArray(correctAnswer)) {
+      errors.push(`${path}.correctAnswer must be an array for multiple_choice multi mode`);
+      return;
+    }
+    const seen = new Set();
+    correctAnswer.forEach((value, index) => {
+      if (typeof value !== 'string') {
+        errors.push(`${path}.correctAnswer[${index}] must be a string for multiple_choice multi mode`);
+        return;
+      }
+      if (seen.has(value)) {
+        errors.push(`${path}.correctAnswer[${index}] must be unique for multiple_choice multi mode`);
+        return;
+      }
+      seen.add(value);
+      if (!optionValues.has(value)) {
+        errors.push(`${path}.correctAnswer[${index}] must match an existing options[*].value for multiple_choice multi mode`);
+      }
+    });
+    return;
+  }
+
+  errors.push(`${path}.correctAnswer is only supported for boolean, number, or multiple_choice input types`);
+}
+
 function validateBlocks(blocks, path, errors) {
   if (!Array.isArray(blocks) || blocks.length === 0) {
     errors.push(`${path} must be a non-empty array`);
@@ -44,6 +116,8 @@ function validateBlocks(blocks, path, errors) {
       }
       if (!isObject(block.responseConfig)) {
         errors.push(`${blockPath}.responseConfig is required for question blocks`);
+      } else {
+        validateQuestionResponseConfig(block.responseConfig, `${blockPath}.responseConfig`, errors);
       }
     }
 
