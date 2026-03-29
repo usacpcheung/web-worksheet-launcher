@@ -516,6 +516,47 @@ test('option mutations prune correctAnswer values not present in options', async
   assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
 });
 
+test('duplicate multiple-choice option values are flagged during draft validation', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_duplicate_option_validation');
+  const block = session.createBlock('question');
+
+  session.updateBlockContent(block.blockId, 'Choose one');
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionSelectionMode(block.blockId, 'single');
+  session.updateQuestionOptionsFromText(block.blockId, 'A\nA\nB');
+
+  const validation = session.validateCurrentDraft();
+  assert.equal(
+    validation.errors.some((message) => message.includes('contains duplicate values: A')),
+    true
+  );
+});
+
+test('duplicate selection values normalize deterministically in multi mode', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_duplicate_value_normalize');
+  const block = session.createBlock('question');
+
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionSelectionMode(block.blockId, 'multi');
+  session.updateQuestionOptionsFromText(block.blockId, 'A\nA\nB');
+  session.updateQuestionCorrectAnswerChoices(block.blockId, ['A', 'A', 'B']);
+
+  const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.deepEqual(updated.responseConfig.correctAnswer, ['A', 'B']);
+});
+
 test('input type transitions clear incompatible correctAnswer values', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({

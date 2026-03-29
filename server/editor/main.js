@@ -86,6 +86,22 @@ function getOptionValueForAnswerKey(option) {
   return null;
 }
 
+function getDuplicateOptionValues(options) {
+  const seen = new Set();
+  const duplicates = new Set();
+  (Array.isArray(options) ? options : []).forEach((option, index) => {
+    const normalized = normalizeResponseOption(option, `option_${index}`);
+    const value = String(normalized.value ?? '').trim();
+    if (!value) return;
+    if (seen.has(value)) {
+      duplicates.add(value);
+      return;
+    }
+    seen.add(value);
+  });
+  return Array.from(duplicates);
+}
+
 function normalizeNumberRulesConfig(numberRules) {
   const source = isRecord(numberRules) ? numberRules : {};
   const allowedKinds = Array.isArray(source.allowedKinds)
@@ -414,6 +430,14 @@ class EditorDraftSession {
       if (block.kind === 'question') {
         if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
         if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
+        if (block.responseConfig?.inputType === 'multiple_choice') {
+          const duplicateOptionValues = getDuplicateOptionValues(block.responseConfig.options);
+          if (duplicateOptionValues.length > 0) {
+            errors.push(
+              `draft.blocks[${index}].responseConfig.options contains duplicate values: ${duplicateOptionValues.join(', ')}`
+            );
+          }
+        }
       } else if (!block?.content?.text?.trim()) {
         errors.push(`draft.blocks[${index}].content.text is required for content blocks`);
       }
@@ -1463,6 +1487,9 @@ function renderEditorShell(session) {
   questionOptions.style.display = 'none';
   const questionOptionsList = document.createElement('div');
   questionOptionsList.className = 'question-options-list';
+  const questionOptionWarning = document.createElement('p');
+  questionOptionWarning.className = 'control-error option-warning';
+  questionOptionWarning.hidden = true;
   const addOptionBtn = document.createElement('button');
   addOptionBtn.type = 'button';
   addOptionBtn.className = 'option-add-btn';
@@ -1887,16 +1914,14 @@ function renderEditorShell(session) {
       const selectedSingleValue = hasSelectedSingleValue
         ? normalizedResponseConfig.correctAnswer
         : '';
-      const clearCorrectAnswerBtn = document.createElement('button');
-      clearCorrectAnswerBtn.type = 'button';
-      clearCorrectAnswerBtn.textContent = 'Clear correct answer';
-      clearCorrectAnswerBtn.title = 'Unset the correct answer';
-      clearCorrectAnswerBtn.className = 'option-add-btn';
-      clearCorrectAnswerBtn.disabled = !hasSelectedSingleValue;
-      clearCorrectAnswerBtn.addEventListener('click', () => {
-        session.updateQuestionCorrectAnswerChoice(selectedBlock.blockId, '');
-        updateSummary();
-      });
+      const duplicateOptionValues = getDuplicateOptionValues(normalizedOptions);
+      if (duplicateOptionValues.length > 0) {
+        questionOptionWarning.hidden = false;
+        questionOptionWarning.textContent = `Option values must be unique. Duplicate values: ${duplicateOptionValues.join(', ')}.`;
+      } else {
+        questionOptionWarning.hidden = true;
+        questionOptionWarning.textContent = '';
+      }
 
       questionOptionsList.innerHTML = '';
       optionList.forEach((option, optionIndex) => {
@@ -1967,11 +1992,7 @@ function renderEditorShell(session) {
         row.append(correctToggle, optionInput, removeBtn);
         questionOptionsList.appendChild(row);
       });
-      if (isMultiSelect) {
-        rightPanel.append(questionOptionsList, addOptionBtn, questionOptions);
-      } else {
-        rightPanel.append(questionOptionsList, addOptionBtn, clearCorrectAnswerBtn, questionOptions);
-      }
+      rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
     }
   };
 
