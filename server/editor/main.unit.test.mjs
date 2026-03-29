@@ -67,14 +67,14 @@ test('normalizeBlocks preserves question responseConfig and extra fields', async
       kind: 'question',
       position: 0,
       prompt: { text: 'Question?', format: 'markdown' },
-      responseConfig: { inputType: 'plain_text', maxLength: 42 },
+      responseConfig: { inputType: 'plain_text', maxLength: 42, displayMode: 'single_line' },
       extraField: 'keep-me',
     },
   ]);
 
   assert.equal(blocks.length, 1);
   assert.equal(blocks[0].kind, 'question');
-  assert.deepEqual(blocks[0].responseConfig, { inputType: 'plain_text', maxLength: 42 });
+  assert.deepEqual(blocks[0].responseConfig, { inputType: 'text', maxLength: 42, displayMode: 'single_line' });
   assert.equal(blocks[0].extraField, 'keep-me');
 });
 
@@ -289,15 +289,65 @@ test('question field updates map inputType, maxLength, and options through draft
   const block = session.createBlock('question');
   session.selectBlock(block.blockId);
 
-  session.updateQuestionInputType(block.blockId, 'single_choice');
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
   session.updateQuestionOptionsFromText(block.blockId, 'One\nTwo');
-  session.updateQuestionInputType(block.blockId, 'short_text');
+  session.updateQuestionInputType(block.blockId, 'text');
   session.updateQuestionMaxLength(block.blockId, '25');
 
   const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
-  assert.equal(updated.responseConfig.inputType, 'short_text');
+  assert.equal(updated.responseConfig.inputType, 'text');
   assert.equal(updated.responseConfig.maxLength, 25);
   assert.equal(updated.responseConfig.options, undefined);
+});
+
+test('normalizeBlocks migrates single_choice to multiple_choice and preserves options', async () => {
+  const mod = await loadEditorModule();
+  const blocks = mod.normalizeBlocks([
+    {
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Choose?' },
+      responseConfig: {
+        inputType: 'single_choice',
+        options: [{ value: 'a', label: 'A' }],
+      },
+    },
+  ]);
+  assert.equal(blocks[0].responseConfig.inputType, 'multiple_choice');
+  assert.equal(blocks[0].responseConfig.selectionMode, 'single');
+  assert.deepEqual(blocks[0].responseConfig.options, [{ value: 'a', label: 'A' }]);
+});
+
+test('question number config and multiple choice settings update through helpers', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_number_config');
+  const block = session.createBlock('question');
+
+  session.updateQuestionInputType(block.blockId, 'number');
+  session.updateQuestionNumberConfig(block.blockId, 'min', '1');
+  session.updateQuestionNumberConfig(block.blockId, 'max', '10');
+  session.updateQuestionNumberConfig(block.blockId, 'step', '0.5');
+  let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.deepEqual(
+    { min: updated.responseConfig.min, max: updated.responseConfig.max, step: updated.responseConfig.step },
+    { min: 1, max: 10, step: 0.5 }
+  );
+
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionSelectionMode(block.blockId, 'multi');
+  session.updateQuestionShuffleOptions(block.blockId, true);
+  session.updateQuestionOptionsFromText(block.blockId, 'A\nB');
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(updated.responseConfig.inputType, 'multiple_choice');
+  assert.equal(updated.responseConfig.selectionMode, 'multi');
+  assert.equal(updated.responseConfig.shuffleOptions, true);
+  assert.deepEqual(updated.responseConfig.options, [{ value: 'A', label: 'A' }, { value: 'B', label: 'B' }]);
 });
 
 test('updateQuestionMaxLength preserves existing maxLength on empty or non-numeric input', async () => {

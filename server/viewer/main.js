@@ -87,15 +87,40 @@ function normalizeViewerBlock(block, index) {
 
   if (base.kind === 'question') {
     const responseConfigSource = isRecord(safeBlock.responseConfig) ? safeBlock.responseConfig : {};
-    const inputType = responseConfigSource.inputType || 'plain_text';
+    const legacyInputType = responseConfigSource.inputType || 'text';
+    const inputType = legacyInputType === 'plain_text' || legacyInputType === 'short_text'
+      ? 'text'
+      : legacyInputType === 'single_choice'
+        ? 'multiple_choice'
+        : legacyInputType;
     const normalizedResponseConfig = {
       inputType,
       maxLength: Number.isFinite(responseConfigSource.maxLength)
         ? responseConfigSource.maxLength
-        : 1000,
+        : 200,
     };
 
-    if (inputType === 'single_choice') {
+    if (inputType === 'text') {
+      normalizedResponseConfig.displayMode = responseConfigSource.displayMode === 'single_line'
+        ? 'single_line'
+        : 'multi_line';
+    }
+
+    if (inputType === 'number') {
+      if (Number.isFinite(responseConfigSource.min)) {
+        normalizedResponseConfig.min = Number(responseConfigSource.min);
+      }
+      if (Number.isFinite(responseConfigSource.max)) {
+        normalizedResponseConfig.max = Number(responseConfigSource.max);
+      }
+      if (Number.isFinite(responseConfigSource.step) && Number(responseConfigSource.step) > 0) {
+        normalizedResponseConfig.step = Number(responseConfigSource.step);
+      }
+    }
+
+    if (inputType === 'multiple_choice') {
+      normalizedResponseConfig.selectionMode = responseConfigSource.selectionMode === 'multi' ? 'multi' : 'single';
+      normalizedResponseConfig.shuffleOptions = Boolean(responseConfigSource.shuffleOptions);
       normalizedResponseConfig.options = Array.isArray(responseConfigSource.options)
         ? responseConfigSource.options
           .filter((option) => option !== null && option !== undefined)
@@ -170,6 +195,52 @@ function coerceAnswerValueByInputType(inputType, rawValue) {
   return String(rawValue ?? '');
 }
 
+function clampToNumberConfig(value, responseConfig = {}) {
+  if (!Number.isFinite(value)) return '';
+  let nextValue = value;
+  const min = Number.isFinite(responseConfig.min) ? Number(responseConfig.min) : null;
+  const max = Number.isFinite(responseConfig.max) ? Number(responseConfig.max) : null;
+  const step = Number.isFinite(responseConfig.step) && Number(responseConfig.step) > 0
+    ? Number(responseConfig.step)
+    : null;
+
+  if (min !== null) nextValue = Math.max(min, nextValue);
+  if (max !== null) nextValue = Math.min(max, nextValue);
+  if (step !== null) {
+    const base = min !== null ? min : 0;
+    nextValue = Math.round((nextValue - base) / step) * step + base;
+    if (min !== null) nextValue = Math.max(min, nextValue);
+    if (max !== null) nextValue = Math.min(max, nextValue);
+    const decimals = String(step).includes('.') ? String(step).split('.')[1].length : 0;
+    if (decimals > 0) {
+      nextValue = Number(nextValue.toFixed(decimals));
+    }
+  }
+  return nextValue;
+}
+
+function coerceAnswerValueForQuestion(questionBlock, rawValue) {
+  const inputType = questionBlock?.responseConfig?.inputType || 'text';
+  const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
+  if (inputType === 'number') {
+    const coerced = coerceAnswerValueByInputType('number', rawValue);
+    if (coerced === '') return '';
+    return clampToNumberConfig(coerced, responseConfig);
+  }
+  if (inputType === 'multiple_choice') {
+    const options = Array.isArray(responseConfig.options)
+      ? responseConfig.options.map((opt) => String(opt?.value ?? opt?.label ?? ''))
+      : [];
+    if (responseConfig.selectionMode === 'multi') {
+      const values = Array.isArray(rawValue) ? rawValue.map((v) => String(v)) : [];
+      return values.filter((value, idx) => options.includes(value) && values.indexOf(value) === idx);
+    }
+    const single = String(rawValue ?? '');
+    return options.includes(single) ? single : '';
+  }
+  return coerceAnswerValueByInputType(inputType, rawValue);
+}
+
 function mapDraftRecordToViewerPayload(draftRecord) {
   return normalizeViewerPayload(
     {
@@ -210,11 +281,25 @@ function computeAnswerSummary(viewerPayload, answers) {
 }
 
 function getInputHelperText(inputType) {
-  if (inputType === 'short_text') return 'Short text response.';
+  if (inputType === 'text') return 'Text response.';
   if (inputType === 'number') return 'Numeric answer only.';
-  if (inputType === 'boolean') return 'Choose True or False.';
-  if (inputType === 'single_choice') return 'Choose one option.';
-  return 'Long-form text response.';
+  if (inputType === 'boolean') return 'Choose True / False.';
+  if (inputType === 'multiple_choice') return 'Choose one or more options.';
+  return 'Text response.';
+}
+
+function deterministicShuffle(items, seedText) {
+  const list = [...items];
+  let seed = 0;
+  for (let i = 0; i < seedText.length; i += 1) {
+    seed = (seed * 31 + seedText.charCodeAt(i)) >>> 0;
+  }
+  for (let i = list.length - 1; i > 0; i -= 1) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    const j = seed % (i + 1);
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+  return list;
 }
 
 function resolveImportedWorksheetPayload(importedRecord) {
@@ -416,8 +501,9 @@ class ViewerAttemptSession {
                 format: 'plain_text',
               },
               responseConfig: {
-                inputType: 'plain_text',
-                maxLength: 500,
+                inputType: 'text',
+                maxLength: 200,
+                displayMode: 'multi_line',
               },
             },
           ],
@@ -481,8 +567,7 @@ class ViewerAttemptSession {
     if (!questionBlock) {
       return;
     }
-    const inputType = questionBlock.responseConfig?.inputType || 'plain_text';
-    const coercedValue = coerceAnswerValueByInputType(inputType, value);
+    const coercedValue = coerceAnswerValueForQuestion(questionBlock, value);
 
     this.state.answers = {
       ...this.state.answers,
@@ -745,7 +830,7 @@ function renderViewerShell(session) {
     const nextSignature = JSON.stringify(questionBlocks.map((block) => ({
       blockId: block.blockId,
       prompt: block.prompt?.text || '',
-      inputType: block.responseConfig?.inputType || 'plain_text',
+      inputType: block.responseConfig?.inputType || 'text',
       maxLength: block.responseConfig?.maxLength || null,
       options: Array.isArray(block.responseConfig?.options)
         ? block.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
@@ -762,7 +847,7 @@ function renderViewerShell(session) {
       const card = document.createElement('article');
       card.className = 'question-card';
       const label = document.createElement('label');
-      const inputType = block.responseConfig?.inputType || 'plain_text';
+      const inputType = block.responseConfig?.inputType || 'text';
       const controlId = `answer-${block.blockId}`;
       label.textContent = `${index + 1}. ${block.prompt?.text || 'Question'}`;
       label.htmlFor = controlId;
@@ -772,7 +857,7 @@ function renderViewerShell(session) {
       helper.textContent = getInputHelperText(inputType);
 
       let control;
-      if (inputType === 'short_text') {
+      if (inputType === 'text' && block.responseConfig?.displayMode === 'single_line') {
         control = document.createElement('input');
         control.type = 'text';
         control.maxLength = block.responseConfig?.maxLength || 200;
@@ -783,6 +868,11 @@ function renderViewerShell(session) {
       } else if (inputType === 'number') {
         control = document.createElement('input');
         control.type = 'number';
+        if (Number.isFinite(block.responseConfig?.min)) control.min = String(block.responseConfig.min);
+        if (Number.isFinite(block.responseConfig?.max)) control.max = String(block.responseConfig.max);
+        if (Number.isFinite(block.responseConfig?.step) && Number(block.responseConfig.step) > 0) {
+          control.step = String(block.responseConfig.step);
+        }
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
@@ -805,33 +895,65 @@ function renderViewerShell(session) {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
         });
-      } else if (inputType === 'single_choice' && Array.isArray(block.responseConfig?.options)) {
-        control = document.createElement('select');
-        const blank = document.createElement('option');
-        blank.value = '';
-        blank.textContent = 'Select…';
-        control.appendChild(blank);
-        block.responseConfig.options.forEach((opt) => {
-          const option = document.createElement('option');
-          option.value = String(opt.value ?? opt.label ?? '');
-          option.textContent = String(opt.label ?? opt.value ?? '');
-          control.appendChild(option);
-        });
-        control.addEventListener('change', () => {
-          session.setAnswer(block.blockId, control.value);
-          updateSummary();
-        });
+      } else if (inputType === 'multiple_choice' && Array.isArray(block.responseConfig?.options)) {
+        const optionSource = block.responseConfig.shuffleOptions
+          ? deterministicShuffle(
+            block.responseConfig.options,
+            `${session.state.localAttemptId || 'attempt'}:${block.blockId}`
+          )
+          : block.responseConfig.options;
+
+        if (block.responseConfig.selectionMode === 'multi') {
+          const container = document.createElement('div');
+          container.className = 'choice-list';
+          optionSource.forEach((opt, optionIndex) => {
+            const wrapper = document.createElement('label');
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.dataset.choiceValue = String(opt.value ?? opt.label ?? '');
+            checkbox.id = `${controlId}-${optionIndex}`;
+            checkbox.addEventListener('change', () => {
+              const checkedValues = Array.from(container.querySelectorAll('input[type="checkbox"]:checked'))
+                .map((input) => input.dataset.choiceValue || '');
+              session.setAnswer(block.blockId, checkedValues);
+              updateSummary();
+            });
+            const text = document.createElement('span');
+            text.textContent = String(opt.label ?? opt.value ?? '');
+            wrapper.append(checkbox, text);
+            container.appendChild(wrapper);
+          });
+          control = container;
+        } else {
+          control = document.createElement('select');
+          const blank = document.createElement('option');
+          blank.value = '';
+          blank.textContent = 'Select…';
+          control.appendChild(blank);
+          optionSource.forEach((opt) => {
+            const option = document.createElement('option');
+            option.value = String(opt.value ?? opt.label ?? '');
+            option.textContent = String(opt.label ?? opt.value ?? '');
+            control.appendChild(option);
+          });
+          control.addEventListener('change', () => {
+            session.setAnswer(block.blockId, control.value);
+            updateSummary();
+          });
+        }
       } else {
         control = document.createElement('textarea');
         control.rows = 5;
-        control.maxLength = block.responseConfig?.maxLength || 1000;
+        control.maxLength = block.responseConfig?.maxLength || 200;
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
           updateSummary();
         });
       }
 
-      control.id = controlId;
+      if (typeof HTMLElement !== 'undefined' && control instanceof HTMLElement) {
+        control.id = controlId;
+      }
       answerControls.set(block.blockId, control);
       card.append(label, helper, control);
       questionList.appendChild(card);
@@ -845,17 +967,25 @@ function renderViewerShell(session) {
       if (!control) {
         return;
       }
-      const inputType = block.responseConfig?.inputType || 'plain_text';
+      const inputType = block.responseConfig?.inputType || 'text';
       const storedValue = session.state.answers?.[block.blockId]?.value;
       const nextValue = inputType === 'number'
         ? (storedValue === '' || storedValue === null || storedValue === undefined ? '' : String(storedValue))
         : inputType === 'boolean'
           ? (storedValue === true ? 'true' : storedValue === false ? 'false' : '')
           : String(storedValue || '');
-      if (control !== activeElement && control.value !== nextValue) {
+      if (inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi') {
+        const selectedSet = new Set(Array.isArray(storedValue) ? storedValue.map((v) => String(v)) : []);
+        Array.from(control.querySelectorAll('input[type="checkbox"]')).forEach((checkbox) => {
+          checkbox.checked = selectedSet.has(checkbox.dataset.choiceValue || '');
+          checkbox.disabled = session.state.status === 'completed';
+        });
+      } else if (control !== activeElement && control.value !== nextValue) {
         control.value = nextValue;
       }
-      control.disabled = session.state.status === 'completed';
+      if (!(inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi')) {
+        control.disabled = session.state.status === 'completed';
+      }
     });
   };
 
@@ -951,4 +1081,6 @@ export {
   computeAnswerSummary,
   partitionBlocksForDisplay,
   getInputHelperText,
+  coerceAnswerValueForQuestion,
+  deterministicShuffle,
 };

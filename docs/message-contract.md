@@ -16,6 +16,101 @@ This document defines the bounded popup launch-query contract and postMessage co
 
 Companion editor/viewer route + auth contract (later-phase runtime surfaces) is defined in `worksheet_launcher_editor_viewer_spec.md` under **Route + Auth Contract (Normative)**.
 
+## Editor/Viewer response schema normalization (local draft/snapshot/viewer payloads)
+
+The editor + viewer runtime now uses these canonical `responseConfig` input types for question blocks:
+
+- `text`
+- `number`
+- `boolean`
+- `multiple_choice`
+
+### Backward compatibility rules (required on load/normalize)
+
+- `plain_text` and `short_text` must normalize to `text`.
+- `single_choice` must normalize to `multiple_choice` with `selectionMode: "single"`.
+- Existing `options: [{ value, label }]` payloads must be preserved.
+
+### Canonical responseConfig examples
+
+`text` (single-line or multi-line mode):
+
+```json
+{
+  "inputType": "text",
+  "maxLength": 200,
+  "displayMode": "multi_line"
+}
+```
+
+```json
+{
+  "inputType": "text",
+  "maxLength": 120,
+  "displayMode": "single_line"
+}
+```
+
+`number`:
+
+```json
+{
+  "inputType": "number",
+  "min": 0,
+  "max": 100,
+  "step": 1
+}
+```
+
+`boolean` (labeling guidance):
+
+```json
+{
+  "inputType": "boolean"
+}
+```
+
+UI copy for boolean prompts should use **“True / False”** helper/labels.
+
+`multiple_choice` single-select:
+
+```json
+{
+  "inputType": "multiple_choice",
+  "selectionMode": "single",
+  "shuffleOptions": false,
+  "options": [
+    { "value": "a", "label": "Option A" },
+    { "value": "b", "label": "Option B" }
+  ]
+}
+```
+
+`multiple_choice` multi-select with deterministic shuffle:
+
+```json
+{
+  "inputType": "multiple_choice",
+  "selectionMode": "multi",
+  "shuffleOptions": true,
+  "options": [
+    { "value": "x", "label": "Choice X" },
+    { "value": "y", "label": "Choice Y" },
+    { "value": "z", "label": "Choice Z" }
+  ]
+}
+```
+
+When `shuffleOptions` is enabled, viewer rendering should use a deterministic order for the active session (stable during that session).
+
+### Answer value shape rules
+
+- `text` → `string`
+- `number` → `number` (or empty when unanswered)
+- `boolean` → `boolean` (or null/empty when unanswered)
+- `multiple_choice` with `selectionMode: "single"` → `string`
+- `multiple_choice` with `selectionMode: "multi"` → `string[]`
+
 ## 1) Launch query contract
 
 The popup URL query string **must** follow:

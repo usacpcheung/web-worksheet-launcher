@@ -42,13 +42,14 @@ function createEmptyQuestionBlock(position) {
       format: 'plain_text',
     },
     responseConfig: {
-      inputType: 'plain_text',
-      maxLength: 500,
+      inputType: 'text',
+      maxLength: 200,
+      displayMode: 'multi_line',
     },
   };
 }
 
-const TEXT_INPUT_TYPES = new Set(['plain_text', 'short_text']);
+const TEXT_INPUT_TYPES = new Set(['text']);
 
 function mapOptionsTextToResponseOptions(rawText) {
   if (!rawText) return [];
@@ -99,9 +100,7 @@ function normalizeBlocks(blocks) {
         text: String(promptSource.text || ''),
         format: promptSource.format || 'plain_text',
       };
-      normalized.responseConfig = isRecord(source.responseConfig)
-        ? { ...source.responseConfig }
-        : { inputType: 'plain_text', maxLength: 500 };
+      normalized.responseConfig = normalizeQuestionResponseConfig(source.responseConfig);
       return normalized;
     }
 
@@ -218,8 +217,8 @@ class EditorDraftSession {
               format: block?.prompt?.format || 'plain_text',
             },
             responseConfig: isRecord(block.responseConfig)
-              ? { ...block.responseConfig }
-              : { inputType: 'plain_text', maxLength: 500 },
+              ? normalizeQuestionResponseConfig(block.responseConfig)
+              : { inputType: 'text', maxLength: 200, displayMode: 'multi_line' },
           };
         }
 
@@ -375,30 +374,38 @@ class EditorDraftSession {
 
   updateQuestionInputType(blockId, inputType) {
     if (!this.state.draft || !blockId) return;
-    const normalizedInputType = ['plain_text', 'short_text', 'number', 'boolean', 'single_choice'].includes(inputType)
+    const normalizedInputType = ['text', 'number', 'boolean', 'multiple_choice'].includes(inputType)
       ? inputType
-      : 'plain_text';
+      : 'text';
 
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') {
         return block;
       }
       const nextResponseConfig = {
-        ...(isRecord(block.responseConfig) ? block.responseConfig : {}),
+        ...normalizeQuestionResponseConfig(block.responseConfig),
         inputType: normalizedInputType,
       };
       if (TEXT_INPUT_TYPES.has(normalizedInputType) && !Number.isFinite(nextResponseConfig.maxLength)) {
-        nextResponseConfig.maxLength = 500;
+        nextResponseConfig.maxLength = 200;
       }
-      if (normalizedInputType !== 'single_choice') {
+      if (normalizedInputType !== 'multiple_choice') {
         delete nextResponseConfig.options;
+        delete nextResponseConfig.selectionMode;
+        delete nextResponseConfig.shuffleOptions;
       } else if (!Array.isArray(nextResponseConfig.options)) {
         nextResponseConfig.options = [];
       }
 
+      if (normalizedInputType !== 'number') {
+        delete nextResponseConfig.min;
+        delete nextResponseConfig.max;
+        delete nextResponseConfig.step;
+      }
+
       return {
         ...block,
-        responseConfig: nextResponseConfig,
+        responseConfig: normalizeQuestionResponseConfig(nextResponseConfig),
       };
     });
     this.touchDraft();
@@ -427,6 +434,88 @@ class EditorDraftSession {
     this.touchDraft();
   }
 
+  updateQuestionTextDisplayMode(blockId, displayMode) {
+    if (!this.state.draft || !blockId) return;
+    const normalizedDisplayMode = displayMode === 'single_line' ? 'single_line' : 'multi_line';
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') {
+        return block;
+      }
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...nextResponseConfig,
+          inputType: 'text',
+          displayMode: normalizedDisplayMode,
+        }),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionNumberConfig(blockId, key, rawValue) {
+    if (!this.state.draft || !blockId || !['min', 'max', 'step'].includes(key)) return;
+    const parsed = Number(rawValue);
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') {
+        return block;
+      }
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'number') {
+        return block;
+      }
+
+      const updated = { ...nextResponseConfig };
+      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isFinite(parsed) || (key === 'step' && parsed <= 0)) {
+        delete updated[key];
+      } else {
+        updated[key] = parsed;
+      }
+
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig(updated),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionSelectionMode(blockId, selectionMode) {
+    if (!this.state.draft || !blockId) return;
+    const normalizedSelectionMode = selectionMode === 'multi' ? 'multi' : 'single';
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'multiple_choice') return block;
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...nextResponseConfig,
+          selectionMode: normalizedSelectionMode,
+        }),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionShuffleOptions(blockId, enabled) {
+    if (!this.state.draft || !blockId) return;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'multiple_choice') return block;
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...nextResponseConfig,
+          shuffleOptions: Boolean(enabled),
+        }),
+      };
+    });
+    this.touchDraft();
+  }
+
   updateQuestionOptionsFromText(blockId, rawText) {
     if (!this.state.draft || !blockId) return;
     const normalizedOptions = mapOptionsTextToResponseOptions(rawText);
@@ -437,8 +526,10 @@ class EditorDraftSession {
       return {
         ...block,
         responseConfig: {
-          ...(isRecord(block.responseConfig) ? block.responseConfig : {}),
-          inputType: 'single_choice',
+          ...normalizeQuestionResponseConfig(block.responseConfig),
+          inputType: 'multiple_choice',
+          selectionMode: block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single',
+          shuffleOptions: Boolean(block.responseConfig?.shuffleOptions),
           options: normalizedOptions,
         },
       };
@@ -513,8 +604,8 @@ class EditorDraftSession {
             format: block?.prompt?.format || 'plain_text',
           },
           responseConfig: isRecord(block.responseConfig)
-            ? { ...block.responseConfig }
-            : { inputType: 'plain_text', maxLength: 500 },
+            ? normalizeQuestionResponseConfig(block.responseConfig)
+            : { inputType: 'text', maxLength: 200, displayMode: 'multi_line' },
           content: undefined,
         };
       }
@@ -939,11 +1030,28 @@ function renderEditorShell(session) {
   const questionInputType = document.createElement('select');
   questionInputType.id = 'editor-question-input-type';
   questionInputType.className = 'control';
-  ['plain_text', 'short_text', 'number', 'boolean', 'single_choice'].forEach((value) => {
+  [
+    { value: 'text', label: 'text' },
+    { value: 'number', label: 'number' },
+    { value: 'boolean', label: 'True / False' },
+    { value: 'multiple_choice', label: 'multiple_choice' },
+  ].forEach(({ value, label }) => {
     const option = document.createElement('option');
     option.value = value;
-    option.textContent = value;
+    option.textContent = label;
     questionInputType.appendChild(option);
+  });
+  const questionTextDisplayMode = document.createElement('select');
+  questionTextDisplayMode.id = 'editor-question-text-display-mode';
+  questionTextDisplayMode.className = 'control';
+  [
+    { value: 'single_line', label: 'single_line' },
+    { value: 'multi_line', label: 'multi_line' },
+  ].forEach(({ value, label }) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    questionTextDisplayMode.appendChild(option);
   });
   const questionMaxLength = document.createElement('input');
   questionMaxLength.id = 'editor-question-max-length';
@@ -955,6 +1063,36 @@ function renderEditorShell(session) {
   questionOptions.rows = 6;
   questionOptions.className = 'control';
   questionOptions.placeholder = 'One option per line';
+  const questionSelectionMode = document.createElement('select');
+  questionSelectionMode.id = 'editor-question-selection-mode';
+  questionSelectionMode.className = 'control';
+  [
+    { value: 'single', label: 'single' },
+    { value: 'multi', label: 'multi' },
+  ].forEach(({ value, label }) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    questionSelectionMode.appendChild(option);
+  });
+  const questionShuffleOptions = document.createElement('input');
+  questionShuffleOptions.id = 'editor-question-shuffle-options';
+  questionShuffleOptions.type = 'checkbox';
+  questionShuffleOptions.className = 'control';
+  const questionMin = document.createElement('input');
+  questionMin.id = 'editor-question-min';
+  questionMin.type = 'number';
+  questionMin.className = 'control';
+  const questionMax = document.createElement('input');
+  questionMax.id = 'editor-question-max';
+  questionMax.type = 'number';
+  questionMax.className = 'control';
+  const questionStep = document.createElement('input');
+  questionStep.id = 'editor-question-step';
+  questionStep.type = 'number';
+  questionStep.min = '0.0000001';
+  questionStep.step = 'any';
+  questionStep.className = 'control';
 
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
@@ -1018,18 +1156,30 @@ function renderEditorShell(session) {
       blockKind.value = selectedBlock.kind;
     }
     if (selectedBlock?.kind === 'question') {
-      const responseConfig = selectedBlock.responseConfig || {};
+      const responseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
       if (activeElement !== questionInputType) {
-        questionInputType.value = responseConfig.inputType || 'plain_text';
+        questionInputType.value = responseConfig.inputType || 'text';
       }
       if (activeElement !== questionMaxLength) {
-        questionMaxLength.value = responseConfig.maxLength || 500;
+        questionMaxLength.value = responseConfig.maxLength || 200;
+      }
+      if (activeElement !== questionTextDisplayMode) {
+        questionTextDisplayMode.value = responseConfig.displayMode || 'multi_line';
       }
       if (activeElement !== questionOptions) {
         questionOptions.value = (responseConfig.options || [])
           .map((option) => String(option?.value ?? option?.label ?? ''))
           .join('\n');
       }
+      if (activeElement !== questionSelectionMode) {
+        questionSelectionMode.value = responseConfig.selectionMode || 'single';
+      }
+      if (activeElement !== questionShuffleOptions) {
+        questionShuffleOptions.checked = Boolean(responseConfig.shuffleOptions);
+      }
+      if (activeElement !== questionMin) questionMin.value = responseConfig.min ?? '';
+      if (activeElement !== questionMax) questionMax.value = responseConfig.max ?? '';
+      if (activeElement !== questionStep) questionStep.value = responseConfig.step ?? '';
     }
   };
 
@@ -1075,7 +1225,7 @@ function renderEditorShell(session) {
     return [
       selectedBlock.blockId,
       selectedBlock.kind,
-      selectedBlock.responseConfig?.inputType || 'plain_text',
+      selectedBlock.responseConfig?.inputType || 'text',
     ].join(':');
   };
 
@@ -1120,15 +1270,43 @@ function renderEditorShell(session) {
     inputTypeLabel.htmlFor = 'editor-question-input-type';
     rightPanel.append(inputTypeLabel, questionInputType);
 
-    const activeInputType = selectedBlock.responseConfig?.inputType || 'plain_text';
+    const activeInputType = selectedBlock.responseConfig?.inputType || 'text';
     if (TEXT_INPUT_TYPES.has(activeInputType)) {
       const maxLengthLabel = document.createElement('label');
       maxLengthLabel.textContent = 'Max length';
       maxLengthLabel.htmlFor = 'editor-question-max-length';
       rightPanel.append(maxLengthLabel, questionMaxLength);
+
+      const displayModeLabel = document.createElement('label');
+      displayModeLabel.textContent = 'Text display mode';
+      displayModeLabel.htmlFor = 'editor-question-text-display-mode';
+      rightPanel.append(displayModeLabel, questionTextDisplayMode);
     }
 
-    if (activeInputType === 'single_choice') {
+    if (activeInputType === 'number') {
+      const minLabel = document.createElement('label');
+      minLabel.textContent = 'Min';
+      minLabel.htmlFor = 'editor-question-min';
+      const maxLabel = document.createElement('label');
+      maxLabel.textContent = 'Max';
+      maxLabel.htmlFor = 'editor-question-max';
+      const stepLabel = document.createElement('label');
+      stepLabel.textContent = 'Step';
+      stepLabel.htmlFor = 'editor-question-step';
+      rightPanel.append(minLabel, questionMin, maxLabel, questionMax, stepLabel, questionStep);
+    }
+
+    if (activeInputType === 'multiple_choice') {
+      const selectionModeLabel = document.createElement('label');
+      selectionModeLabel.textContent = 'Selection mode';
+      selectionModeLabel.htmlFor = 'editor-question-selection-mode';
+      rightPanel.append(selectionModeLabel, questionSelectionMode);
+
+      const shuffleLabel = document.createElement('label');
+      shuffleLabel.textContent = 'Shuffle options';
+      shuffleLabel.htmlFor = 'editor-question-shuffle-options';
+      rightPanel.append(shuffleLabel, questionShuffleOptions);
+
       const optionsLabel = document.createElement('label');
       optionsLabel.textContent = 'Options';
       optionsLabel.htmlFor = 'editor-question-options';
@@ -1210,6 +1388,30 @@ function renderEditorShell(session) {
   });
   questionMaxLength.addEventListener('input', () => {
     session.updateQuestionMaxLength(session.state.selectedBlockId, questionMaxLength.value);
+    updateSummary();
+  });
+  questionTextDisplayMode.addEventListener('change', () => {
+    session.updateQuestionTextDisplayMode(session.state.selectedBlockId, questionTextDisplayMode.value);
+    updateSummary();
+  });
+  questionMin.addEventListener('input', () => {
+    session.updateQuestionNumberConfig(session.state.selectedBlockId, 'min', questionMin.value);
+    updateSummary();
+  });
+  questionMax.addEventListener('input', () => {
+    session.updateQuestionNumberConfig(session.state.selectedBlockId, 'max', questionMax.value);
+    updateSummary();
+  });
+  questionStep.addEventListener('input', () => {
+    session.updateQuestionNumberConfig(session.state.selectedBlockId, 'step', questionStep.value);
+    updateSummary();
+  });
+  questionSelectionMode.addEventListener('change', () => {
+    session.updateQuestionSelectionMode(session.state.selectedBlockId, questionSelectionMode.value);
+    updateSummary();
+  });
+  questionShuffleOptions.addEventListener('change', () => {
+    session.updateQuestionShuffleOptions(session.state.selectedBlockId, questionShuffleOptions.checked);
     updateSummary();
   });
   questionOptions.addEventListener('input', () => {
@@ -1322,3 +1524,54 @@ bootstrapEditor().catch((error) => {
 });
 
 export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation };
+function normalizeQuestionResponseConfig(responseConfig) {
+  const source = isRecord(responseConfig) ? { ...responseConfig } : {};
+  const legacyInputType = source.inputType || 'text';
+  const inputType = legacyInputType === 'plain_text' || legacyInputType === 'short_text'
+    ? 'text'
+    : legacyInputType === 'single_choice'
+      ? 'multiple_choice'
+      : legacyInputType;
+
+  const normalized = {
+    ...source,
+    inputType,
+  };
+
+  if (inputType === 'text') {
+    normalized.maxLength = Number.isFinite(source.maxLength) ? Number(source.maxLength) : 200;
+    normalized.displayMode = source.displayMode === 'single_line' ? 'single_line' : 'multi_line';
+    delete normalized.options;
+    delete normalized.selectionMode;
+    delete normalized.shuffleOptions;
+  } else if (inputType === 'number') {
+    delete normalized.options;
+    delete normalized.selectionMode;
+    delete normalized.shuffleOptions;
+    if (Number.isFinite(source.min)) normalized.min = Number(source.min); else delete normalized.min;
+    if (Number.isFinite(source.max)) normalized.max = Number(source.max); else delete normalized.max;
+    if (Number.isFinite(source.step) && Number(source.step) > 0) normalized.step = Number(source.step); else delete normalized.step;
+    delete normalized.maxLength;
+    delete normalized.displayMode;
+  } else if (inputType === 'multiple_choice') {
+    normalized.selectionMode = source.selectionMode === 'multi' ? 'multi' : 'single';
+    normalized.shuffleOptions = Boolean(source.shuffleOptions);
+    normalized.options = Array.isArray(source.options) ? source.options : [];
+    delete normalized.maxLength;
+    delete normalized.displayMode;
+    delete normalized.min;
+    delete normalized.max;
+    delete normalized.step;
+  } else {
+    delete normalized.maxLength;
+    delete normalized.displayMode;
+    delete normalized.options;
+    delete normalized.selectionMode;
+    delete normalized.shuffleOptions;
+    delete normalized.min;
+    delete normalized.max;
+    delete normalized.step;
+  }
+
+  return normalized;
+}

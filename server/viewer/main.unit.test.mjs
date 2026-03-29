@@ -13,8 +13,8 @@ async function loadViewerModule(overrides = {}) {
   );
 
   source = source.replace(
-    /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{\n  ViewerAttemptSession,\n  normalizeViewerPayload,\n  resolveImportedWorksheetPayload,\n  normalizeViewerBlock,\n  computeAnswerSummary,\n  partitionBlocksForDisplay,\n  getInputHelperText,\n\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText };'
+    /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, coerceAnswerValueForQuestion, deterministicShuffle };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -89,7 +89,7 @@ test('normalizeViewerPayload tolerates malformed blocks and coerces unknown kind
   assert.equal(payload.blocks[2].kind, 'content');
 });
 
-test('normalizeViewerBlock preserves and normalizes single_choice options', async () => {
+test('normalizeViewerBlock migrates legacy single_choice to multiple_choice', async () => {
   const mod = await loadViewerModule();
   const normalized = mod.normalizeViewerBlock({
     blockId: 'q1',
@@ -107,12 +107,74 @@ test('normalizeViewerBlock preserves and normalizes single_choice options', asyn
     },
   }, 0);
 
-  assert.equal(normalized.responseConfig.inputType, 'single_choice');
+  assert.equal(normalized.responseConfig.inputType, 'multiple_choice');
+  assert.equal(normalized.responseConfig.selectionMode, 'single');
   assert.deepEqual(normalized.responseConfig.options, [
     { value: 'a', label: 'A' },
     { value: 'b', label: 'b' },
     { value: 'c', label: 'c' },
   ]);
+});
+
+test('normalizeViewerBlock migrates plain_text/short_text to text with defaults', async () => {
+  const mod = await loadViewerModule();
+  const plain = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Q1' },
+    responseConfig: { inputType: 'plain_text' },
+  }, 0);
+  const short = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Q2' },
+    responseConfig: { inputType: 'short_text', maxLength: 80, displayMode: 'single_line' },
+  }, 1);
+
+  assert.equal(plain.responseConfig.inputType, 'text');
+  assert.equal(plain.responseConfig.maxLength, 200);
+  assert.equal(plain.responseConfig.displayMode, 'multi_line');
+  assert.equal(short.responseConfig.inputType, 'text');
+  assert.equal(short.responseConfig.maxLength, 80);
+  assert.equal(short.responseConfig.displayMode, 'single_line');
+});
+
+test('coerceAnswerValueForQuestion enforces numeric min/max/step', async () => {
+  const mod = await loadViewerModule();
+  const question = {
+    responseConfig: { inputType: 'number', min: 0, max: 10, step: 0.5 },
+  };
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '12.3'), 10);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '-3'), 0);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '3.24'), 3);
+});
+
+test('coerceAnswerValueForQuestion supports multiple_choice single and multi answers', async () => {
+  const mod = await loadViewerModule();
+  const single = {
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'single',
+      options: [{ value: 'a' }, { value: 'b' }],
+    },
+  };
+  const multi = {
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: [{ value: 'a' }, { value: 'b' }],
+    },
+  };
+  assert.equal(mod.coerceAnswerValueForQuestion(single, 'a'), 'a');
+  assert.equal(mod.coerceAnswerValueForQuestion(single, 'z'), '');
+  assert.deepEqual(mod.coerceAnswerValueForQuestion(multi, ['b', 'a', 'b', 'x']), ['b', 'a']);
+});
+
+test('deterministicShuffle remains stable per seed', async () => {
+  const mod = await loadViewerModule();
+  const items = [{ value: '1' }, { value: '2' }, { value: '3' }];
+  assert.deepEqual(
+    mod.deterministicShuffle(items, 'seed-1').map((item) => item.value),
+    mod.deterministicShuffle(items, 'seed-1').map((item) => item.value)
+  );
 });
 
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
@@ -306,6 +368,7 @@ test('computeAnswerSummary treats whitespace-only answers as unanswered', async 
 test('getInputHelperText maps input types to guidance', async () => {
   const mod = await loadViewerModule();
   assert.equal(mod.getInputHelperText('number'), 'Numeric answer only.');
-  assert.equal(mod.getInputHelperText('single_choice'), 'Choose one option.');
-  assert.equal(mod.getInputHelperText('plain_text'), 'Long-form text response.');
+  assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one or more options.');
+  assert.equal(mod.getInputHelperText('boolean'), 'Choose True / False.');
+  assert.equal(mod.getInputHelperText('text'), 'Text response.');
 });
