@@ -1533,12 +1533,6 @@ function renderEditorShell(session) {
   questionNumberDecimalPlacesAllowedError.className = 'control-error';
   const questionCorrectAnswerNumberError = document.createElement('p');
   questionCorrectAnswerNumberError.className = 'control-error';
-  const questionCorrectAnswerChoice = document.createElement('select');
-  questionCorrectAnswerChoice.id = 'editor-question-correct-answer-choice';
-  questionCorrectAnswerChoice.className = 'control';
-  const questionCorrectAnswerChoices = document.createElement('div');
-  questionCorrectAnswerChoices.className = 'correct-answer-checkbox-list';
-
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
@@ -1855,13 +1849,56 @@ function renderEditorShell(session) {
       optionsLabel.htmlFor = 'editor-question-options';
       rightPanel.append(optionsLabel);
 
-      questionOptionsList.innerHTML = '';
-      const optionList = Array.isArray(selectedBlock.responseConfig?.options) && selectedBlock.responseConfig.options.length > 0
-        ? selectedBlock.responseConfig.options
+      const normalizedResponseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
+      const normalizedOptions = (normalizedResponseConfig.options || []).map((option, index) =>
+        normalizeResponseOption(option, `option_${index}`));
+      const optionList = normalizedOptions.length > 0
+        ? normalizedOptions
         : [{ value: '', label: '' }];
+      const isMultiSelect = normalizedResponseConfig.selectionMode === 'multi';
+      const selectedValues = new Set(Array.isArray(normalizedResponseConfig.correctAnswer)
+        ? normalizedResponseConfig.correctAnswer.map((value) => String(value))
+        : []);
+      const selectedSingleValue = typeof normalizedResponseConfig.correctAnswer === 'string'
+        ? normalizedResponseConfig.correctAnswer
+        : '';
+
+      questionOptionsList.innerHTML = '';
       optionList.forEach((option, optionIndex) => {
+        const optionValue = String(option?.value ?? '');
         const row = document.createElement('div');
         row.className = 'option-row';
+
+        const correctToggle = document.createElement('label');
+        correctToggle.className = 'option-correct-toggle';
+        correctToggle.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
+        const answerTick = document.createElement('input');
+        answerTick.type = isMultiSelect ? 'checkbox' : 'radio';
+        answerTick.checked = isMultiSelect
+          ? selectedValues.has(optionValue)
+          : selectedSingleValue === optionValue;
+        answerTick.setAttribute('aria-label', `Mark option ${optionIndex + 1} as correct`);
+        answerTick.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
+        if (!isMultiSelect) {
+          answerTick.name = `editor-question-correct-answer-${selectedBlock.blockId}`;
+        }
+        answerTick.addEventListener('change', () => {
+          if (!isMultiSelect) {
+            session.updateQuestionCorrectAnswerChoice(
+              selectedBlock.blockId,
+              answerTick.checked ? optionValue : ''
+            );
+            updateSummary();
+            return;
+          }
+          const nextValues = Array.from(questionOptionsList.querySelectorAll('input[type="checkbox"]:checked'))
+            .map((input) => String(input.value));
+          session.updateQuestionCorrectAnswerChoices(selectedBlock.blockId, nextValues);
+          updateSummary();
+        });
+        answerTick.value = optionValue;
+        correctToggle.appendChild(answerTick);
+
         const optionInput = document.createElement('input');
         optionInput.type = 'text';
         optionInput.dataset.optionInput = '1';
@@ -1873,71 +1910,18 @@ function renderEditorShell(session) {
         });
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
-        removeBtn.className = 'icon-btn';
-        removeBtn.title = `Remove option ${optionIndex + 1}`;
-        removeBtn.setAttribute('aria-label', `Remove option ${optionIndex + 1}`);
-        removeBtn.textContent = '−';
+        removeBtn.className = 'icon-btn danger';
+        removeBtn.title = 'Delete this option';
+        removeBtn.setAttribute('aria-label', `Delete option ${optionIndex + 1}`);
+        removeBtn.textContent = '🗑';
         removeBtn.addEventListener('click', () => {
           session.removeQuestionOption(selectedBlock.blockId, optionIndex);
           updateSummary();
         });
-        row.append(optionInput, removeBtn);
+        row.append(correctToggle, optionInput, removeBtn);
         questionOptionsList.appendChild(row);
       });
-
-      const normalizedResponseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
-      const normalizedOptions = (normalizedResponseConfig.options || []).map((option, index) =>
-        normalizeResponseOption(option, `option_${index}`));
-      const correctAnswerLabel = document.createElement('label');
-      correctAnswerLabel.textContent = 'Correct answer';
-      if (normalizedResponseConfig.selectionMode === 'single') {
-        correctAnswerLabel.htmlFor = 'editor-question-correct-answer-choice';
-        questionCorrectAnswerChoice.innerHTML = '';
-        const unsetOption = document.createElement('option');
-        unsetOption.value = '';
-        unsetOption.textContent = '— Unset —';
-        questionCorrectAnswerChoice.appendChild(unsetOption);
-        normalizedOptions.forEach((option) => {
-          const choiceOption = document.createElement('option');
-          choiceOption.value = String(option.value);
-          choiceOption.textContent = String(option.label ?? option.value);
-          questionCorrectAnswerChoice.appendChild(choiceOption);
-        });
-        questionCorrectAnswerChoice.value = typeof normalizedResponseConfig.correctAnswer === 'string'
-          ? normalizedResponseConfig.correctAnswer
-          : '';
-        rightPanel.append(questionOptionsList, addOptionBtn, correctAnswerLabel, questionCorrectAnswerChoice, questionOptions);
-      } else {
-        questionCorrectAnswerChoices.innerHTML = '';
-        const selectedValues = new Set(Array.isArray(normalizedResponseConfig.correctAnswer)
-          ? normalizedResponseConfig.correctAnswer
-          : []);
-        normalizedOptions.forEach((option) => {
-          const row = document.createElement('label');
-          row.className = 'correct-answer-checkbox-row';
-          const checkbox = document.createElement('input');
-          checkbox.type = 'checkbox';
-          checkbox.value = String(option.value);
-          checkbox.checked = selectedValues.has(String(option.value));
-          checkbox.addEventListener('change', () => {
-            const nextValues = Array.from(questionCorrectAnswerChoices.querySelectorAll('input[type="checkbox"]:checked'))
-              .map((input) => input.value);
-            session.updateQuestionCorrectAnswerChoices(selectedBlock.blockId, nextValues);
-            updateSummary();
-          });
-          const text = document.createElement('span');
-          text.textContent = String(option.label ?? option.value);
-          row.append(checkbox, text);
-          questionCorrectAnswerChoices.appendChild(row);
-        });
-        if (normalizedOptions.length === 0) {
-          const emptyHint = document.createElement('p');
-          emptyHint.className = 'muted';
-          emptyHint.textContent = 'Add options to define multi-select correct answers.';
-          questionCorrectAnswerChoices.appendChild(emptyHint);
-        }
-        rightPanel.append(questionOptionsList, addOptionBtn, correctAnswerLabel, questionCorrectAnswerChoices, questionOptions);
-      }
+      rightPanel.append(questionOptionsList, addOptionBtn, questionOptions);
     }
   };
 
@@ -2054,10 +2038,6 @@ function renderEditorShell(session) {
   });
   questionSelectionMode.addEventListener('change', () => {
     session.updateQuestionSelectionMode(session.state.selectedBlockId, questionSelectionMode.value);
-    updateSummary();
-  });
-  questionCorrectAnswerChoice.addEventListener('change', () => {
-    session.updateQuestionCorrectAnswerChoice(session.state.selectedBlockId, questionCorrectAnswerChoice.value);
     updateSummary();
   });
   questionShuffleOptions.addEventListener('change', () => {
