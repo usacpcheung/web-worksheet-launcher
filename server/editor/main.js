@@ -491,6 +491,96 @@ class EditorDraftSession {
     this.touchDraft();
   }
 
+  updateQuestionCorrectAnswerBoolean(blockId, rawValue) {
+    if (!this.state.draft || !blockId) return;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'boolean') {
+        return block;
+      }
+      const updated = { ...nextResponseConfig };
+      if (rawValue === 'true' || rawValue === true) {
+        updated.correctAnswer = true;
+      } else if (rawValue === 'false' || rawValue === false) {
+        updated.correctAnswer = false;
+      } else {
+        delete updated.correctAnswer;
+      }
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig(updated),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionCorrectAnswerNumber(blockId, rawValue) {
+    if (!this.state.draft || !blockId) return;
+    const parsed = Number(rawValue);
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'number') {
+        return block;
+      }
+      const updated = { ...nextResponseConfig };
+      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isFinite(parsed)) {
+        delete updated.correctAnswer;
+      } else {
+        updated.correctAnswer = parsed;
+      }
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig(updated),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionCorrectAnswerChoice(blockId, value) {
+    if (!this.state.draft || !blockId) return;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'multiple_choice' || nextResponseConfig.selectionMode !== 'single') {
+        return block;
+      }
+      const updated = { ...nextResponseConfig };
+      if (typeof value === 'string' && value.length > 0) {
+        updated.correctAnswer = value;
+      } else {
+        delete updated.correctAnswer;
+      }
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig(updated),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionCorrectAnswerChoices(blockId, values) {
+    if (!this.state.draft || !blockId) return;
+    const nextValues = Array.isArray(values) ? values.filter((value) => typeof value === 'string') : [];
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'multiple_choice' || nextResponseConfig.selectionMode !== 'multi') {
+        return block;
+      }
+      const updated = {
+        ...nextResponseConfig,
+        correctAnswer: nextValues,
+      };
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig(updated),
+      };
+    });
+    this.touchDraft();
+  }
+
   updateQuestionSelectionMode(blockId, selectionMode) {
     if (!this.state.draft || !blockId) return;
     const normalizedSelectionMode = selectionMode === 'multi' ? 'multi' : 'single';
@@ -1172,6 +1262,29 @@ function renderEditorShell(session) {
   questionStep.min = '0.0000001';
   questionStep.step = 'any';
   questionStep.className = 'control';
+  const questionCorrectAnswerBoolean = document.createElement('select');
+  questionCorrectAnswerBoolean.id = 'editor-question-correct-answer-boolean';
+  questionCorrectAnswerBoolean.className = 'control';
+  [
+    { value: '', label: '— Unset —' },
+    { value: 'true', label: 'True' },
+    { value: 'false', label: 'False' },
+  ].forEach(({ value, label }) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    questionCorrectAnswerBoolean.appendChild(option);
+  });
+  const questionCorrectAnswerNumber = document.createElement('input');
+  questionCorrectAnswerNumber.id = 'editor-question-correct-answer-number';
+  questionCorrectAnswerNumber.type = 'number';
+  questionCorrectAnswerNumber.step = 'any';
+  questionCorrectAnswerNumber.className = 'control';
+  const questionCorrectAnswerChoice = document.createElement('select');
+  questionCorrectAnswerChoice.id = 'editor-question-correct-answer-choice';
+  questionCorrectAnswerChoice.className = 'control';
+  const questionCorrectAnswerChoices = document.createElement('div');
+  questionCorrectAnswerChoices.className = 'correct-answer-checkbox-list';
 
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
@@ -1259,6 +1372,18 @@ function renderEditorShell(session) {
       if (activeElement !== questionMin) questionMin.value = responseConfig.min ?? '';
       if (activeElement !== questionMax) questionMax.value = responseConfig.max ?? '';
       if (activeElement !== questionStep) questionStep.value = responseConfig.step ?? '';
+      if (activeElement !== questionCorrectAnswerBoolean) {
+        if (typeof responseConfig.correctAnswer === 'boolean') {
+          questionCorrectAnswerBoolean.value = responseConfig.correctAnswer ? 'true' : 'false';
+        } else {
+          questionCorrectAnswerBoolean.value = '';
+        }
+      }
+      if (activeElement !== questionCorrectAnswerNumber) {
+        questionCorrectAnswerNumber.value = typeof responseConfig.correctAnswer === 'number'
+          ? String(responseConfig.correctAnswer)
+          : '';
+      }
     }
   };
 
@@ -1311,6 +1436,7 @@ function renderEditorShell(session) {
       selectedBlock.responseConfig?.step ?? '',
       selectedBlock.responseConfig?.selectionMode || '',
       selectedBlock.responseConfig?.shuffleOptions ? '1' : '0',
+      JSON.stringify(selectedBlock.responseConfig?.correctAnswer ?? null),
       JSON.stringify((selectedBlock.responseConfig?.options || []).map((opt) => [
         String(opt?.value ?? ''),
         String(opt?.label ?? ''),
@@ -1395,6 +1521,18 @@ function renderEditorShell(session) {
       stepLabel.textContent = 'Step';
       stepLabel.htmlFor = 'editor-question-step';
       rightPanel.append(minLabel, questionMin, maxLabel, questionMax, stepLabel, questionStep);
+
+      const correctAnswerLabel = document.createElement('label');
+      correctAnswerLabel.textContent = 'Correct answer';
+      correctAnswerLabel.htmlFor = 'editor-question-correct-answer-number';
+      rightPanel.append(correctAnswerLabel, questionCorrectAnswerNumber);
+    }
+
+    if (activeInputType === 'boolean') {
+      const correctAnswerLabel = document.createElement('label');
+      correctAnswerLabel.textContent = 'Correct answer';
+      correctAnswerLabel.htmlFor = 'editor-question-correct-answer-boolean';
+      rightPanel.append(correctAnswerLabel, questionCorrectAnswerBoolean);
     }
 
     if (activeInputType === 'multiple_choice') {
@@ -1446,7 +1584,59 @@ function renderEditorShell(session) {
         questionOptionsList.appendChild(row);
       });
 
-      rightPanel.append(questionOptionsList, addOptionBtn, questionOptions);
+      const normalizedResponseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
+      const normalizedOptions = (normalizedResponseConfig.options || []).map((option, index) =>
+        normalizeResponseOption(option, `option_${index}`));
+      const correctAnswerLabel = document.createElement('label');
+      correctAnswerLabel.textContent = 'Correct answer';
+      if (normalizedResponseConfig.selectionMode === 'single') {
+        correctAnswerLabel.htmlFor = 'editor-question-correct-answer-choice';
+        questionCorrectAnswerChoice.innerHTML = '';
+        const unsetOption = document.createElement('option');
+        unsetOption.value = '';
+        unsetOption.textContent = '— Unset —';
+        questionCorrectAnswerChoice.appendChild(unsetOption);
+        normalizedOptions.forEach((option) => {
+          const choiceOption = document.createElement('option');
+          choiceOption.value = String(option.value);
+          choiceOption.textContent = String(option.label ?? option.value);
+          questionCorrectAnswerChoice.appendChild(choiceOption);
+        });
+        questionCorrectAnswerChoice.value = typeof normalizedResponseConfig.correctAnswer === 'string'
+          ? normalizedResponseConfig.correctAnswer
+          : '';
+        rightPanel.append(questionOptionsList, addOptionBtn, correctAnswerLabel, questionCorrectAnswerChoice, questionOptions);
+      } else {
+        questionCorrectAnswerChoices.innerHTML = '';
+        const selectedValues = new Set(Array.isArray(normalizedResponseConfig.correctAnswer)
+          ? normalizedResponseConfig.correctAnswer
+          : []);
+        normalizedOptions.forEach((option) => {
+          const row = document.createElement('label');
+          row.className = 'correct-answer-checkbox-row';
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.value = String(option.value);
+          checkbox.checked = selectedValues.has(String(option.value));
+          checkbox.addEventListener('change', () => {
+            const nextValues = Array.from(questionCorrectAnswerChoices.querySelectorAll('input[type="checkbox"]:checked'))
+              .map((input) => input.value);
+            session.updateQuestionCorrectAnswerChoices(selectedBlock.blockId, nextValues);
+            updateSummary();
+          });
+          const text = document.createElement('span');
+          text.textContent = String(option.label ?? option.value);
+          row.append(checkbox, text);
+          questionCorrectAnswerChoices.appendChild(row);
+        });
+        if (normalizedOptions.length === 0) {
+          const emptyHint = document.createElement('p');
+          emptyHint.className = 'muted';
+          emptyHint.textContent = 'Add options to define multi-select correct answers.';
+          questionCorrectAnswerChoices.appendChild(emptyHint);
+        }
+        rightPanel.append(questionOptionsList, addOptionBtn, correctAnswerLabel, questionCorrectAnswerChoices, questionOptions);
+      }
     }
   };
 
@@ -1542,8 +1732,20 @@ function renderEditorShell(session) {
     session.updateQuestionNumberConfig(session.state.selectedBlockId, 'step', questionStep.value);
     updateSummary();
   });
+  questionCorrectAnswerBoolean.addEventListener('change', () => {
+    session.updateQuestionCorrectAnswerBoolean(session.state.selectedBlockId, questionCorrectAnswerBoolean.value);
+    updateSummary();
+  });
+  questionCorrectAnswerNumber.addEventListener('input', () => {
+    session.updateQuestionCorrectAnswerNumber(session.state.selectedBlockId, questionCorrectAnswerNumber.value);
+    updateSummary();
+  });
   questionSelectionMode.addEventListener('change', () => {
     session.updateQuestionSelectionMode(session.state.selectedBlockId, questionSelectionMode.value);
+    updateSummary();
+  });
+  questionCorrectAnswerChoice.addEventListener('change', () => {
+    session.updateQuestionCorrectAnswerChoice(session.state.selectedBlockId, questionCorrectAnswerChoice.value);
     updateSummary();
   });
   questionShuffleOptions.addEventListener('change', () => {

@@ -459,6 +459,39 @@ test('question number config and multiple choice settings update through helpers
   assert.deepEqual(updated.responseConfig.options, [{ value: 'A', label: 'A' }, { value: 'B', label: 'B' }]);
 });
 
+test('question correctAnswer helpers update typed answer keys', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_correct_answer_controls');
+  const block = session.createBlock('question');
+
+  session.updateQuestionInputType(block.blockId, 'boolean');
+  session.updateQuestionCorrectAnswerBoolean(block.blockId, 'true');
+  let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(updated.responseConfig.correctAnswer, true);
+
+  session.updateQuestionInputType(block.blockId, 'number');
+  session.updateQuestionCorrectAnswerNumber(block.blockId, '4.5');
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(updated.responseConfig.correctAnswer, 4.5);
+
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionSelectionMode(block.blockId, 'single');
+  session.updateQuestionOptionsFromText(block.blockId, 'A\nB');
+  session.updateQuestionCorrectAnswerChoice(block.blockId, 'B');
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(updated.responseConfig.correctAnswer, 'B');
+
+  session.updateQuestionSelectionMode(block.blockId, 'multi');
+  session.updateQuestionCorrectAnswerChoices(block.blockId, ['A', 'B']);
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.deepEqual(updated.responseConfig.correctAnswer, ['A', 'B']);
+});
+
 test('multiple choice option helpers add, update, and remove options', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({
