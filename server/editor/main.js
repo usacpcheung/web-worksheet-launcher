@@ -1320,6 +1320,18 @@ function renderEditorShell(session) {
 
   const renderDetailEditor = ({ force = false } = {}) => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
+    const isOptionInputActive =
+      typeof HTMLInputElement !== 'undefined' &&
+      document.activeElement instanceof HTMLInputElement &&
+      document.activeElement.dataset.optionInput === '1';
+    if (
+      !force &&
+      isOptionInputActive &&
+      selectedBlock?.responseConfig?.inputType === 'multiple_choice' &&
+      questionOptionsList.contains(document.activeElement)
+    ) {
+      return;
+    }
     const nextSignature = computeDetailSignature(selectedBlock);
     if (!force && nextSignature === detailSignature) {
       return;
@@ -1413,12 +1425,12 @@ function renderEditorShell(session) {
         row.className = 'option-row';
         const optionInput = document.createElement('input');
         optionInput.type = 'text';
+        optionInput.dataset.optionInput = '1';
         optionInput.className = 'control';
         optionInput.placeholder = `Option ${optionIndex + 1}`;
         optionInput.value = String(option?.label ?? option?.value ?? '');
         optionInput.addEventListener('input', () => {
           session.updateQuestionOptionAtIndex(selectedBlock.blockId, optionIndex, optionInput.value);
-          updateSummary();
         });
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
