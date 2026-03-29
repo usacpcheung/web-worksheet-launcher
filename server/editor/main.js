@@ -999,6 +999,8 @@ function renderEditorShell(session) {
   const publishBtn = document.createElement('button');
   publishBtn.type = 'button';
   publishBtn.textContent = 'Publish (Sign-in required)';
+  const protectedActionsColumn = document.createElement('div');
+  protectedActionsColumn.className = 'action-column';
   let detailSignature = null;
 
   const syncFormControls = () => {
@@ -1037,6 +1039,8 @@ function renderEditorShell(session) {
     blocks.forEach((block) => {
       const item = document.createElement('li');
       item.className = `block-item ${block.blockId === session.state.selectedBlockId ? 'selected' : ''}`;
+      const row = document.createElement('div');
+      row.className = 'block-item-row';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'block-select';
@@ -1047,7 +1051,19 @@ function renderEditorShell(session) {
         session.selectBlock(block.blockId);
         updateSummary();
       });
-      item.appendChild(button);
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'icon-btn danger';
+      deleteBtn.title = 'Delete this block';
+      deleteBtn.setAttribute('aria-label', `Delete block ${block.position + 1}`);
+      deleteBtn.textContent = '🗑';
+      deleteBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        session.deleteBlock(block.blockId);
+        updateSummary();
+      });
+      row.append(button, deleteBtn);
+      item.appendChild(row);
       blockList.appendChild(item);
     });
   };
@@ -1142,6 +1158,8 @@ function renderEditorShell(session) {
     localDraftIdEl.innerHTML = `<span class="editor-label">localDraftId:</span> <span class="editor-id-value">${session.state.draft?.localId || 'n/a'}</span>`;
     saveErrorEl.textContent = session.state.lastPersistenceError ? `Error: ${session.state.lastPersistenceError}` : '';
     saveWarningEl.textContent = session.state.lastValidationWarning ? `Warning: ${session.state.lastValidationWarning}` : '';
+    saveErrorEl.hidden = !saveErrorEl.textContent;
+    saveWarningEl.hidden = !saveWarningEl.textContent;
     statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'}`;
   };
 
@@ -1240,7 +1258,8 @@ function renderEditorShell(session) {
   if (isDebugMode) {
     moreActions.append(localPublishHint, localPublishBtn);
   }
-  moreActions.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn, deleteBlockBtn);
+  protectedActionsColumn.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn);
+  moreActions.append(protectedActionsColumn, deleteBlockBtn);
   leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput, openViewerBtn);
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
