@@ -204,13 +204,14 @@ function coerceAnswerValueByInputType(inputType, rawValue) {
 
 function clampTextAnswer(rawValue, maxLength) {
   const value = String(rawValue ?? '');
-  if (!Number.isInteger(maxLength) || maxLength <= 0) return value;
-  return value.slice(0, maxLength);
+  const max = Number.isFinite(maxLength) && maxLength > 0 ? Math.trunc(maxLength) : 0;
+  if (max <= 0) return value;
+  return value.slice(0, max);
 }
 
 function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = TEXT_WARNING_THRESHOLD_RATIO) {
   const current = String(rawValue ?? '').length;
-  const max = Number.isInteger(maxLength) && maxLength > 0 ? maxLength : 0;
+  const max = Number.isFinite(maxLength) && maxLength > 0 ? Math.trunc(maxLength) : 0;
   const remaining = max - current;
   const warningThreshold = Math.ceil(max * warningThresholdRatio);
   if (max === 0) {
@@ -224,12 +225,13 @@ function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = 
     };
   }
   if (remaining < 0) {
+    const absOver = Math.abs(remaining);
     return {
       current,
       max,
       remaining,
       state: 'over',
-      statusText: `Over by ${Math.abs(remaining)} characters. On save, text will be truncated to ${max}.`,
+      statusText: `Over by ${absOver} ${absOver === 1 ? 'character' : 'characters'}. On save, text will be truncated to ${max}.`,
       counterText: `${current}/${max}`,
     };
   }
@@ -239,7 +241,7 @@ function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = 
       max,
       remaining,
       state: 'warning',
-      statusText: `${remaining} characters remaining.`,
+      statusText: `${remaining} ${remaining === 1 ? 'character' : 'characters'} remaining.`,
       counterText: `${current}/${max}`,
     };
   }
@@ -971,14 +973,18 @@ function renderViewerShell(session) {
       helper.textContent = getInputHelperText(inputType);
       helper.id = `${controlId}-helper`;
       const inputError = createInputErrorNode(`${controlId}-error`);
-      const textCounter = document.createElement('p');
-      textCounter.className = 'text-counter';
-      textCounter.id = `${controlId}-counter`;
-      const textStatus = document.createElement('p');
-      textStatus.className = 'text-counter-status';
-      textStatus.id = `${controlId}-status`;
-      textStatus.setAttribute('aria-live', 'polite');
-      textStatus.setAttribute('role', 'status');
+      let textCounter = null;
+      let textStatus = null;
+      if (inputType === 'text') {
+        textCounter = document.createElement('p');
+        textCounter.className = 'text-counter';
+        textCounter.id = `${controlId}-counter`;
+        textStatus = document.createElement('p');
+        textStatus.className = 'text-counter-status';
+        textStatus.id = `${controlId}-status`;
+        textStatus.setAttribute('aria-live', 'polite');
+        textStatus.setAttribute('role', 'status');
+      }
 
       let control;
       if (inputType === 'text' && block.responseConfig?.displayMode === 'single_line') {

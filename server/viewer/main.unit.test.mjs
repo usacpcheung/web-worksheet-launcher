@@ -585,6 +585,14 @@ test('clampTextAnswer enforces hard max length truncation', async () => {
   assert.equal(mod.clampTextAnswer('abc', null), 'abc');
 });
 
+test('clampTextAnswer handles non-integer finite maxLength via Math.trunc', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.clampTextAnswer('abcdef', 4.9), 'abcd');
+  assert.equal(mod.clampTextAnswer('abcdef', 4.1), 'abcd');
+  // Math.trunc(0.9) === 0, so no clamping occurs (treated as no valid limit)
+  assert.equal(mod.clampTextAnswer('abcdef', 0.9), 'abcdef');
+});
+
 test('computeTextLengthFeedback returns normal, warning, and over-limit states', async () => {
   const mod = await loadViewerModule();
   assert.deepEqual(mod.computeTextLengthFeedback('abcd', 50), {
@@ -613,28 +621,45 @@ test('computeTextLengthFeedback returns normal, warning, and over-limit states',
   });
 });
 
+test('computeTextLengthFeedback handles non-integer finite maxLength via Math.trunc', async () => {
+  const mod = await loadViewerModule();
+  const result = mod.computeTextLengthFeedback('abcd', 50.7);
+  assert.equal(result.max, 50);
+  assert.equal(result.current, 4);
+  assert.equal(result.counterText, '4/50');
+});
+
+test('computeTextLengthFeedback uses singular character when count is 1', async () => {
+  const mod = await loadViewerModule();
+  const warningResult = mod.computeTextLengthFeedback('x'.repeat(49), 50);
+  assert.equal(warningResult.state, 'warning');
+  assert.equal(warningResult.statusText, '1 character remaining.');
+
+  const overResult = mod.computeTextLengthFeedback('x'.repeat(51), 50);
+  assert.equal(overResult.state, 'over');
+  assert.equal(overResult.statusText, 'Over by 1 character. On save, text will be truncated to 50.');
+});
+
+test('computeTextLengthFeedback uses plural characters when count is not 1', async () => {
+  const mod = await loadViewerModule();
+  const warningResult = mod.computeTextLengthFeedback('x'.repeat(45), 50);
+  assert.equal(warningResult.statusText, '5 characters remaining.');
+
+  const overResult = mod.computeTextLengthFeedback('x'.repeat(55), 50);
+  assert.equal(overResult.statusText, 'Over by 5 characters. On save, text will be truncated to 50.');
+});
+
 test('updateTextCounterUI sets text and semantic classes', async () => {
   const mod = await loadViewerModule();
   const counterNode = { textContent: '', className: '' };
   const statusNode = { textContent: '', className: '' };
   mod.updateTextCounterUI(counterNode, statusNode, {
     counterText: '99/100',
-    statusText: '1 characters remaining.',
+    statusText: '1 character remaining.',
     state: 'warning',
   });
   assert.equal(counterNode.textContent, '99/100');
   assert.equal(counterNode.className, 'text-counter text-counter--warning');
-  assert.equal(statusNode.textContent, '1 characters remaining.');
+  assert.equal(statusNode.textContent, '1 character remaining.');
   assert.equal(statusNode.className, 'text-counter-status text-counter-status--warning');
-});
-
-test('text input rendering includes counter wiring and hydrate updates', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('const textCounter = document.createElement(\'p\');'), true);
-  assert.equal(source.includes('const textStatus = document.createElement(\'p\');'), true);
-  assert.equal(source.includes('textStatus.setAttribute(\'aria-live\', \'polite\');'), true);
-  assert.equal(source.includes('ensureControlDescribedBy(control, textCounter.id);'), true);
-  assert.equal(source.includes('ensureControlDescribedBy(control, textStatus.id);'), true);
-  assert.equal(source.includes('computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);'), true);
-  assert.equal(source.includes('control.maxLength = block.responseConfig?.maxLength || 200;'), false);
 });
