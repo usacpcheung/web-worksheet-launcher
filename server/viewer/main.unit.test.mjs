@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -255,6 +255,67 @@ test('coerceAnswerValueForQuestion supports multiple_choice single and multi ans
   assert.equal(mod.coerceAnswerValueForQuestion(single, 'a'), 'a');
   assert.equal(mod.coerceAnswerValueForQuestion(single, 'z'), '');
   assert.deepEqual(mod.coerceAnswerValueForQuestion(multi, ['b', 'a', 'b', 'x']), ['b', 'a']);
+});
+
+test('getBooleanSelectionState maps stored values to selected button state', async () => {
+  const mod = await loadViewerModule();
+  assert.deepEqual(mod.getBooleanSelectionState(true), {
+    selectedValue: true,
+    truePressed: true,
+    falsePressed: false,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState(false), {
+    selectedValue: false,
+    truePressed: false,
+    falsePressed: true,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState(null), {
+    selectedValue: null,
+    truePressed: false,
+    falsePressed: false,
+  });
+});
+
+test('applyBooleanGroupState hydrates selected and disabled button state', async () => {
+  const mod = await loadViewerModule();
+  function createButton(booleanValue) {
+    const button = {
+      dataset: { booleanValue },
+      disabled: false,
+      attributes: {},
+      selectedClass: false,
+      setAttribute(name, value) {
+        this.attributes[name] = value;
+      },
+    };
+    button.classList = {
+      toggle: (_className, flag) => {
+        button.selectedClass = Boolean(flag);
+      },
+    };
+    return button;
+  }
+  const trueButton = createButton('true');
+  const falseButton = createButton('false');
+  const group = {
+    querySelectorAll: () => [trueButton, falseButton],
+  };
+
+  mod.applyBooleanGroupState(group, true, true);
+  assert.equal(trueButton.selectedClass, true);
+  assert.equal(falseButton.selectedClass, false);
+  assert.equal(trueButton.attributes['aria-pressed'], 'true');
+  assert.equal(falseButton.attributes['aria-pressed'], 'false');
+  assert.equal(trueButton.disabled, true);
+  assert.equal(falseButton.disabled, true);
+
+  mod.applyBooleanGroupState(group, null, false);
+  assert.equal(trueButton.selectedClass, false);
+  assert.equal(falseButton.selectedClass, false);
+  assert.equal(trueButton.attributes['aria-pressed'], 'false');
+  assert.equal(falseButton.attributes['aria-pressed'], 'false');
+  assert.equal(trueButton.disabled, false);
+  assert.equal(falseButton.disabled, false);
 });
 
 test('deterministicShuffle remains stable per seed', async () => {

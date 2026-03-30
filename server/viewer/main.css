@@ -107,6 +107,50 @@ button {
   border-radius: 8px;
 }
 
+.boolean-segmented-control {
+  display: inline-flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.boolean-segmented-control__button {
+  min-width: 84px;
+  border: 0;
+  border-right: 1px solid #cbd5e1;
+  border-radius: 0;
+  background: #fff;
+  color: #111827;
+}
+
+.boolean-segmented-control__button:last-child {
+  border-right: 0;
+}
+
+.boolean-segmented-control__button:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.boolean-segmented-control__button:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: -2px;
+  position: relative;
+  z-index: 1;
+}
+
+.boolean-segmented-control__button.is-selected {
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-weight: 600;
+}
+
+.boolean-segmented-control__button:disabled {
+  background: #f1f5f9;
+  color: #667085;
+  cursor: not-allowed;
+}
+
 textarea {
   resize: vertical;
 }

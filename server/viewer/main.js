@@ -262,6 +262,27 @@ function updateTextCounterUI(counterNode, statusNode, feedback) {
   }
 }
 
+function getBooleanSelectionState(rawValue) {
+  const normalized = coerceAnswerValueByInputType('boolean', rawValue);
+  return {
+    selectedValue: normalized,
+    truePressed: normalized === true,
+    falsePressed: normalized === false,
+  };
+}
+
+function applyBooleanGroupState(groupNode, rawValue, isDisabled = false) {
+  if (!groupNode) return;
+  const state = getBooleanSelectionState(rawValue);
+  Array.from(groupNode.querySelectorAll('button[data-boolean-value]')).forEach((button) => {
+    const buttonValue = button.dataset.booleanValue;
+    const isPressed = (buttonValue === 'true' && state.truePressed) || (buttonValue === 'false' && state.falsePressed);
+    button.classList.toggle('is-selected', isPressed);
+    button.setAttribute('aria-pressed', String(isPressed));
+    button.disabled = isDisabled;
+  });
+}
+
 function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
@@ -1100,22 +1121,27 @@ function renderViewerShell(session) {
           updateSummary();
         });
       } else if (inputType === 'boolean') {
-        control = document.createElement('select');
+        control = document.createElement('div');
+        control.className = 'boolean-segmented-control';
+        control.setAttribute('role', 'group');
+        control.setAttribute('aria-label', 'Choose True or False');
         [
-          { value: '', label: 'Select…' },
-          { value: 'true', label: 'True' },
-          { value: 'false', label: 'False' },
+          { value: true, datasetValue: 'true', label: 'True' },
+          { value: false, datasetValue: 'false', label: 'False' },
         ].forEach((optionConfig) => {
-          const option = document.createElement('option');
-          option.value = optionConfig.value;
-          option.textContent = optionConfig.label;
-          control.appendChild(option);
-        });
-        const priorValue = session.state.answers?.[block.blockId]?.value;
-        control.value = priorValue === true ? 'true' : priorValue === false ? 'false' : '';
-        control.addEventListener('change', () => {
-          session.setAnswer(block.blockId, control.value);
-          updateSummary();
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'boolean-segmented-control__button';
+          button.dataset.booleanValue = optionConfig.datasetValue;
+          button.textContent = optionConfig.label;
+          button.setAttribute('aria-pressed', 'false');
+          button.addEventListener('click', () => {
+            const currentValue = session.state.answers?.[block.blockId]?.value;
+            const nextValue = currentValue === optionConfig.value ? null : optionConfig.value;
+            session.setAnswer(block.blockId, nextValue);
+            updateSummary();
+          });
+          control.appendChild(button);
         });
       } else if (inputType === 'multiple_choice' && Array.isArray(block.responseConfig?.options)) {
         const optionSource = block.responseConfig.shuffleOptions
@@ -1217,6 +1243,8 @@ function renderViewerShell(session) {
           checkbox.checked = selectedSet.has(checkbox.dataset.choiceValue || '');
           checkbox.disabled = session.state.status === 'completed';
         });
+      } else if (inputType === 'boolean') {
+        applyBooleanGroupState(control, storedValue, session.state.status === 'completed');
       } else if (control !== activeElement && control.value !== nextValue) {
         control.value = nextValue;
       }
@@ -1225,7 +1253,7 @@ function renderViewerShell(session) {
         const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
         updateTextCounterUI(feedbackNodes?.counter, feedbackNodes?.status, feedback);
       }
-      if (!(inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi')) {
+      if (!(inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi') && inputType !== 'boolean') {
         control.disabled = session.state.status === 'completed';
       }
       const card = control.closest('.question-card');
@@ -1333,6 +1361,8 @@ export {
   clampTextAnswer,
   computeTextLengthFeedback,
   updateTextCounterUI,
+  getBooleanSelectionState,
+  applyBooleanGroupState,
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
