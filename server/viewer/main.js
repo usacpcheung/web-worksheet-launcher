@@ -263,28 +263,53 @@ function updateTextCounterUI(counterNode, statusNode, feedback) {
   }
 }
 
-function clampToNumberConfig(value, responseConfig = {}) {
-  if (!Number.isFinite(value)) return '';
-  let nextValue = value;
+function validateNumberAnswerForQuestion(rawValue, responseConfig = {}) {
+  const formatValidation = validateNumberInputFormat(rawValue, {
+    allowSigned: true,
+    allowedKinds: ['integer', 'decimal'],
+    decimalPlacesAllowed: null,
+  });
+  if (!formatValidation.ok) {
+    return formatValidation;
+  }
+  const normalizedValue = formatValidation.normalizedValue;
   const min = Number.isFinite(responseConfig.min) ? Number(responseConfig.min) : null;
   const max = Number.isFinite(responseConfig.max) ? Number(responseConfig.max) : null;
-  const step = Number.isFinite(responseConfig.step) && Number(responseConfig.step) > 0
-    ? Number(responseConfig.step)
-    : null;
+  if (min !== null && normalizedValue < min) {
+    return { ok: false, errorCode: 'below_min', normalizedValue };
+  }
+  if (max !== null && normalizedValue > max) {
+    return { ok: false, errorCode: 'above_max', normalizedValue };
+  }
 
-  if (min !== null) nextValue = Math.max(min, nextValue);
-  if (max !== null) nextValue = Math.min(max, nextValue);
-  if (step !== null) {
-    const base = min !== null ? min : 0;
-    nextValue = Math.round((nextValue - base) / step) * step + base;
-    if (min !== null) nextValue = Math.max(min, nextValue);
-    if (max !== null) nextValue = Math.min(max, nextValue);
-    const decimals = String(step).includes('.') ? String(step).split('.')[1].length : 0;
-    if (decimals > 0) {
-      nextValue = Number(nextValue.toFixed(decimals));
+  const numberRules = normalizeNumberRules(responseConfig.numberRules);
+  if (!numberRules.allowSigned && normalizedValue < 0) {
+    return { ok: false, errorCode: 'sign_not_allowed', normalizedValue };
+  }
+  const kind = Number.isInteger(normalizedValue) ? 'integer' : 'decimal';
+  if (!numberRules.allowedKinds.includes(kind)) {
+    return { ok: false, errorCode: 'kind_not_allowed', normalizedValue };
+  }
+  if (kind === 'decimal' && Number.isInteger(numberRules.decimalPlacesAllowed)) {
+    const decimalPart = String(rawValue ?? '').trim().split('.')[1] || '';
+    if (decimalPart.length > numberRules.decimalPlacesAllowed) {
+      return { ok: false, errorCode: 'decimal_places_exceeded', normalizedValue };
     }
   }
-  return nextValue;
+  return { ok: true, normalizedValue, kind };
+}
+
+function getNumberInputErrorMessage(errorCode) {
+  const messageByCode = {
+    below_min: 'Value is below minimum.',
+    above_max: 'Value is above maximum.',
+    fraction_not_allowed: 'Fractions are not supported (for example, 2/3).',
+    sign_not_allowed: 'Signed values are not allowed for this question.',
+    kind_not_allowed: 'Only the configured number format is allowed.',
+    decimal_places_exceeded: 'Too many decimal places for this question.',
+    invalid_syntax: 'Enter a valid integer or decimal number.',
+  };
+  return messageByCode[errorCode] || 'Invalid number format.';
 }
 
 function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
@@ -292,9 +317,9 @@ function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
   const phase = options.phase || 'save';
   if (inputType === 'number') {
-    const validation = validateNumberInputFormat(rawValue, responseConfig.numberRules);
+    const validation = validateNumberAnswerForQuestion(rawValue, responseConfig);
     if (!validation.ok) return '';
-    return clampToNumberConfig(validation.normalizedValue, responseConfig);
+    return validation.normalizedValue;
   }
   if (inputType === 'multiple_choice') {
     const options = Array.isArray(responseConfig.options)
@@ -358,9 +383,15 @@ function computeAnswerSummary(viewerPayload, answers) {
   return { answered, total: questions.length };
 }
 
-function getInputHelperText(inputType) {
+function getInputHelperText(inputType, responseConfig = {}) {
   if (inputType === 'text') return 'Text response.';
-  if (inputType === 'number') return 'Enter integer/decimal only (fractions like 2/3 are not supported).';
+  if (inputType === 'number') {
+    const range = [];
+    if (Number.isFinite(responseConfig.min)) range.push(`minimum ${Number(responseConfig.min)}`);
+    if (Number.isFinite(responseConfig.max)) range.push(`maximum ${Number(responseConfig.max)}`);
+    const rangeHint = range.length > 0 ? ` Range: ${range.join(', ')}.` : '';
+    return `Enter integer/decimal only (fractions like 2/3 are not supported).${rangeHint}`;
+  }
   if (inputType === 'boolean') return 'Choose True / False.';
   if (inputType === 'multiple_choice') return 'Choose one or more options.';
   return 'Text response.';
@@ -968,7 +999,7 @@ function renderViewerShell(session) {
 
       const helper = document.createElement('p');
       helper.className = 'muted';
-      helper.textContent = getInputHelperText(inputType);
+      helper.textContent = getInputHelperText(inputType, block.responseConfig);
       helper.id = `${controlId}-helper`;
       const inputError = createInputErrorNode(`${controlId}-error`);
       const textCounter = document.createElement('p');
@@ -1047,22 +1078,15 @@ function renderViewerShell(session) {
             updateSummary();
             return;
           }
-          const validation = validateNumberInputFormat(trimmed, block.responseConfig?.numberRules);
+          const validation = validateNumberAnswerForQuestion(trimmed, block.responseConfig);
           if (!validation.ok) {
-            const messageByCode = {
-              fraction_not_allowed: 'Fractions are not supported (for example, 2/3).',
-              sign_not_allowed: 'Signed values are not allowed for this question.',
-              kind_not_allowed: 'Only the configured number format is allowed.',
-              decimal_places_exceeded: 'Too many decimal places for this question.',
-              invalid_syntax: 'Enter a valid integer or decimal number.',
-            };
-            numberInputErrors.set(block.blockId, messageByCode[validation.errorCode] || 'Invalid number format.');
+            numberInputErrors.set(block.blockId, getNumberInputErrorMessage(validation.errorCode));
             session.setAnswer(block.blockId, '');
             updateSummary();
             return;
           }
           numberInputErrors.set(block.blockId, '');
-          session.setAnswer(block.blockId, control.value);
+          session.setAnswer(block.blockId, validation.normalizedValue);
           updateSummary();
         });
       } else if (inputType === 'boolean') {
@@ -1294,6 +1318,8 @@ export {
   computeAnswerSummary,
   partitionBlocksForDisplay,
   getInputHelperText,
+  validateNumberAnswerForQuestion,
+  getNumberInputErrorMessage,
   coerceAnswerValueForQuestion,
   clampTextAnswer,
   computeTextLengthFeedback,

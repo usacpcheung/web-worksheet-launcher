@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, validateNumberAnswerForQuestion, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -190,14 +190,14 @@ test('normalizeViewerBlock migrates plain_text/short_text to text with defaults'
   assert.equal(short.responseConfig.displayMode, 'single_line');
 });
 
-test('coerceAnswerValueForQuestion enforces numeric min/max/step', async () => {
+test('coerceAnswerValueForQuestion does not silently clamp out-of-range numbers', async () => {
   const mod = await loadViewerModule();
   const question = {
     responseConfig: { inputType: 'number', min: 0, max: 10, step: 0.5 },
   };
-  assert.equal(mod.coerceAnswerValueForQuestion(question, '12.3'), 10);
-  assert.equal(mod.coerceAnswerValueForQuestion(question, '-3'), 0);
-  assert.equal(mod.coerceAnswerValueForQuestion(question, '3.24'), 3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '12.3'), '');
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '-3'), '');
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '3.24'), 3.24);
 });
 
 test('coerceAnswerValueForQuestion validates number format rules (integer/decimal only)', async () => {
@@ -217,6 +217,29 @@ test('coerceAnswerValueForQuestion validates number format rules (integer/decima
   assert.equal(mod.coerceAnswerValueForQuestion(question, '+3'), 3);
   assert.equal(mod.coerceAnswerValueForQuestion(question, '2/3'), '');
   assert.equal(mod.coerceAnswerValueForQuestion(question, '1.23'), '');
+});
+
+test('validateNumberAnswerForQuestion validates min/max before sign/decimal constraints', async () => {
+  const mod = await loadViewerModule();
+  const config = {
+    min: 0,
+    max: 10,
+    numberRules: {
+      allowSigned: false,
+      allowedKinds: ['integer', 'decimal'],
+      decimalPlacesAllowed: 1,
+    },
+  };
+  assert.equal(mod.validateNumberAnswerForQuestion('-1.23', config).errorCode, 'below_min');
+  assert.equal(mod.validateNumberAnswerForQuestion('11.23', config).errorCode, 'above_max');
+  assert.equal(mod.validateNumberAnswerForQuestion('-0.5', { numberRules: config.numberRules }).errorCode, 'sign_not_allowed');
+  assert.equal(mod.validateNumberAnswerForQuestion('1.23', { numberRules: config.numberRules }).errorCode, 'decimal_places_exceeded');
+});
+
+test('getNumberInputErrorMessage includes range-specific messages', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.getNumberInputErrorMessage('below_min'), 'Value is below minimum.');
+  assert.equal(mod.getNumberInputErrorMessage('above_max'), 'Value is above maximum.');
 });
 
 test('coerceAnswerValueForQuestion keeps over-limit text during edit and truncates on save', async () => {
@@ -516,6 +539,10 @@ test('computeAnswerSummary treats empty multi-select arrays as unanswered', asyn
 test('getInputHelperText maps input types to guidance', async () => {
   const mod = await loadViewerModule();
   assert.equal(mod.getInputHelperText('number'), 'Enter integer/decimal only (fractions like 2/3 are not supported).');
+  assert.equal(
+    mod.getInputHelperText('number', { min: 1, max: 10 }),
+    'Enter integer/decimal only (fractions like 2/3 are not supported). Range: minimum 1, maximum 10.'
+  );
   assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one or more options.');
   assert.equal(mod.getInputHelperText('boolean'), 'Choose True / False.');
   assert.equal(mod.getInputHelperText('text'), 'Text response.');
