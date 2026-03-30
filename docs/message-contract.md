@@ -71,6 +71,21 @@ The editor + viewer runtime now uses these canonical `responseConfig` input type
 - Only integer/decimal syntax is in scope.
 - Fraction syntax (for example `2/3`) is out of scope and must be rejected.
 - `decimalPlacesAllowed: null` means unlimited decimal places.
+- `allowedKinds` accepts only `integer` and/or `decimal`; invalid/empty sets normalize to `["integer", "decimal"]`.
+- `allowSigned: false` rejects signed negatives during input validation.
+- `min`/`max`/`step` are numeric clamps/coercion controls in viewer answer handling:
+  - values are clamped to `min` and/or `max` when present
+  - `step` applies rounding using `base = min` when `min` is set, otherwise `base = 0`
+  - `step` is used only when finite and `> 0`
+  - when `step` has decimals, the coerced value is rounded to the step precision
+
+`number` answer-key (`correctAnswer`) validity constraints:
+
+- must be a finite `number`
+- must satisfy `allowSigned` (no negative value when `allowSigned` is `false`)
+- must satisfy `min` and `max` when those bounds are present
+- for decimal values, must not exceed `decimalPlacesAllowed` when `decimalPlacesAllowed` is an integer
+- canonical normalization prunes invalid `correctAnswer` values from persisted `responseConfig`
 
 `boolean` (labeling guidance):
 
@@ -113,6 +128,13 @@ UI copy for boolean prompts should use **“True / False”** helper/labels.
 
 When `shuffleOptions` is enabled, viewer rendering should use a deterministic order for the active session (stable during that session).
 
+Deterministic shuffle seed behavior (viewer):
+
+- seed input is the string: ``${localAttemptId || "attempt"}:${blockId}``
+- options for a given question stay stable for one attempt/session
+- a different attempt id produces a different deterministic order
+- when `shuffleOptions` is `false`, original option order is preserved
+
 ### Answer value shape rules
 
 - `text` → `string`
@@ -131,6 +153,15 @@ When present on question blocks, `correctAnswer` must match the response input s
 - `number` → finite `number`
 - `multiple_choice` with `selectionMode: "single"` → `string` matching an existing `options[*].value`
 - `multiple_choice` with `selectionMode: "multi"` → `string[]` containing unique entries, where each entry matches an existing `options[*].value`
+
+`multiple_choice` mode-switch + pruning/coercion behavior (editor/runtime normalization):
+
+- canonical `selectionMode` is `single` unless explicitly set to `multi`
+- canonical `shuffleOptions` is a boolean
+- if `selectionMode` is `single`, non-string/invalid `correctAnswer` values are removed
+- if `selectionMode` is `multi`, `correctAnswer` is coerced to unique valid `string[]` values (invalid/non-string/duplicate values are pruned)
+- switching `single → multi` converts a valid single `correctAnswer` string to a one-element array
+- switching `multi → single` keeps only the first valid array entry as the single `correctAnswer`; if none are valid, `correctAnswer` is removed
 
 ## 1) Launch query contract
 
