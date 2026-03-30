@@ -25,6 +25,10 @@ function isRecord(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 async function loadContracts() {
   if (!contractsPromise) {
     contractsPromise = import('../app/contracts/index.js');
@@ -57,17 +61,191 @@ function mapOptionsTextToResponseOptions(rawText) {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => ({ value: line, label: line }));
+    .map((line) => ({ id: createLocalId('opt'), value: line, label: line }));
 }
 
 function normalizeResponseOption(option, fallback = '') {
   if (isRecord(option)) {
+    const id = isNonEmptyString(option.id) ? String(option.id) : createLocalId('opt');
     const value = String(option.value ?? option.label ?? fallback);
     const label = String(option.label ?? option.value ?? fallback);
-    return { value, label };
+    return { id, value, label };
   }
   const normalized = String(option ?? fallback);
-  return { value: normalized, label: normalized };
+  return { id: createLocalId('opt'), value: normalized, label: normalized };
+}
+
+function getOptionValueForAnswerKey(option) {
+  if (isRecord(option)) {
+    if (option.value !== undefined && option.value !== null) {
+      return String(option.value);
+    }
+    if (option.label !== undefined && option.label !== null) {
+      return String(option.label);
+    }
+    return null;
+  }
+  if (typeof option === 'string' || typeof option === 'number' || typeof option === 'boolean') {
+    return String(option);
+  }
+  return null;
+}
+
+function getOptionIdForAnswerKey(option) {
+  if (isRecord(option) && isNonEmptyString(option.id)) {
+    return String(option.id);
+  }
+  return null;
+}
+
+function getDuplicateOptionValues(options) {
+  const seen = new Set();
+  const duplicates = new Set();
+  (Array.isArray(options) ? options : []).forEach((option, index) => {
+    const normalized = normalizeResponseOption(option, `option_${index}`);
+    const value = String(normalized.value ?? '').trim();
+    if (!value) return;
+    if (seen.has(value)) {
+      duplicates.add(value);
+      return;
+    }
+    seen.add(value);
+  });
+  return Array.from(duplicates);
+}
+
+function normalizeNumberRulesConfig(numberRules) {
+  const source = isRecord(numberRules) ? numberRules : {};
+  const allowedKinds = Array.isArray(source.allowedKinds)
+    ? source.allowedKinds.filter((kind) => kind === 'integer' || kind === 'decimal')
+    : ['integer', 'decimal'];
+  return {
+    allowedKinds: allowedKinds.length > 0 ? Array.from(new Set(allowedKinds)) : ['integer', 'decimal'],
+    allowSigned: source.allowSigned !== false,
+    decimalPlacesAllowed:
+      Number.isInteger(source.decimalPlacesAllowed) && source.decimalPlacesAllowed >= 0
+        ? source.decimalPlacesAllowed
+        : null,
+  };
+}
+
+function countDecimalPlaces(value) {
+  if (!Number.isFinite(value)) return 0;
+  const text = value.toString();
+
+  // Simple case: no scientific notation.
+  if (!text.includes('e') && !text.includes('E')) {
+    const part = text.split('.')[1];
+    return part ? part.length : 0;
+  }
+
+  // Scientific notation: use mantissa and exponent to determine decimal digits.
+  const [mantissa, exponentPart] = text.toLowerCase().split('e');
+  const exponent = Number(exponentPart);
+  if (!Number.isFinite(exponent)) return 0;
+
+  const decimalIndex = mantissa.indexOf('.');
+  const decimalDigitsInMantissa = decimalIndex === -1 ? 0 : mantissa.length - decimalIndex - 1;
+
+  if (exponent >= 0) {
+    // Positive exponent moves the decimal point to the right.
+    return Math.max(decimalDigitsInMantissa - exponent, 0);
+  }
+
+  // Negative exponent moves the decimal point to the left.
+  return decimalDigitsInMantissa + (-exponent);
+}
+
+function isValidNumberCorrectAnswerForConfig(value, config) {
+  if (!Number.isFinite(value)) return false;
+  const rules = normalizeNumberRulesConfig(config?.numberRules);
+  if (!rules.allowSigned && value < 0) return false;
+  const isInteger = Number.isInteger(value);
+  const kind = isInteger ? 'integer' : 'decimal';
+  if (!rules.allowedKinds.includes(kind)) return false;
+  if (!isInteger && rules.decimalPlacesAllowed !== null && countDecimalPlaces(value) > rules.decimalPlacesAllowed) {
+    return false;
+  }
+  if (Number.isFinite(config?.min) && value < Number(config.min)) return false;
+  if (Number.isFinite(config?.max) && value > Number(config.max)) return false;
+  return true;
+}
+
+function getNumberQuestionValidationErrors(config, rawValues = {}) {
+  const normalizedConfig = normalizeQuestionResponseConfig({
+    ...(isRecord(config) ? config : {}),
+    inputType: 'number',
+  });
+  const errors = {
+    min: null,
+    max: null,
+    decimalPlacesAllowed: null,
+    correctAnswer: null,
+  };
+
+  const minValue = Number.isFinite(normalizedConfig.min) ? Number(normalizedConfig.min) : null;
+  const maxValue = Number.isFinite(normalizedConfig.max) ? Number(normalizedConfig.max) : null;
+  if (minValue !== null && maxValue !== null && maxValue < minValue) {
+    const rangeMessage = 'Max must be greater than or equal to Min';
+    errors.min = rangeMessage;
+    errors.max = rangeMessage;
+  }
+
+  const decimalPlacesRaw = rawValues.decimalPlacesAllowed;
+  let decimalPlacesAllowed = normalizedConfig.numberRules?.decimalPlacesAllowed ?? null;
+  if (decimalPlacesRaw !== undefined) {
+    const text = String(decimalPlacesRaw).trim();
+    if (text === '') {
+      decimalPlacesAllowed = null;
+    } else if (!/^\d+$/.test(text)) {
+      errors.decimalPlacesAllowed = 'Decimal places allowed must be a non-negative integer';
+    } else {
+      const parsed = Number.parseInt(text, 10);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        errors.decimalPlacesAllowed = 'Decimal places allowed must be a non-negative integer';
+      } else {
+        decimalPlacesAllowed = parsed;
+      }
+    }
+  }
+
+  const rawCorrectAnswer = rawValues.correctAnswer;
+  const hasRawCorrectAnswer = rawCorrectAnswer !== undefined;
+  const hasStoredCorrectAnswer = typeof normalizedConfig.correctAnswer === 'number'
+    && Number.isFinite(normalizedConfig.correctAnswer);
+  const shouldValidateCorrectAnswer = hasRawCorrectAnswer
+    ? String(rawCorrectAnswer).trim() !== ''
+    : hasStoredCorrectAnswer;
+
+  if (shouldValidateCorrectAnswer) {
+    const correctAnswer = hasRawCorrectAnswer ? Number(rawCorrectAnswer) : Number(normalizedConfig.correctAnswer);
+    if (!Number.isFinite(correctAnswer)) {
+      errors.correctAnswer = 'Correct answer must be a valid number';
+      return errors;
+    }
+
+    if (!normalizedConfig.numberRules?.allowSigned && correctAnswer < 0) {
+      errors.correctAnswer = 'Correct answer must be positive when signed values are disabled';
+      return errors;
+    }
+    if (minValue !== null && correctAnswer < minValue) {
+      errors.correctAnswer = 'Correct answer must be greater than or equal to Min';
+      return errors;
+    }
+    if (maxValue !== null && correctAnswer > maxValue) {
+      errors.correctAnswer = 'Correct answer must be less than or equal to Max';
+      return errors;
+    }
+    if (
+      decimalPlacesAllowed !== null
+      && Number.isInteger(decimalPlacesAllowed)
+      && countDecimalPlaces(correctAnswer) > decimalPlacesAllowed
+    ) {
+      errors.correctAnswer = 'Correct answer has more decimal places than allowed';
+    }
+  }
+
+  return errors;
 }
 
 
@@ -227,7 +405,7 @@ class EditorDraftSession {
               format: block?.prompt?.format || 'plain_text',
             },
             responseConfig: isRecord(block.responseConfig)
-              ? normalizeQuestionResponseConfig(block.responseConfig)
+              ? normalizeQuestionResponseConfig(block.responseConfig, { forContract: true })
               : { inputType: 'text', maxLength: 200, displayMode: 'multi_line' },
           };
         }
@@ -264,6 +442,14 @@ class EditorDraftSession {
       if (block.kind === 'question') {
         if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
         if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
+        if (block.responseConfig?.inputType === 'multiple_choice') {
+          const duplicateOptionValues = getDuplicateOptionValues(block.responseConfig.options);
+          if (duplicateOptionValues.length > 0) {
+            errors.push(
+              `draft.blocks[${index}].responseConfig.options contains duplicate values: ${duplicateOptionValues.join(', ')}`
+            );
+          }
+        }
       } else if (!block?.content?.text?.trim()) {
         errors.push(`draft.blocks[${index}].content.text is required for content blocks`);
       }
@@ -392,10 +578,14 @@ class EditorDraftSession {
       if (block.blockId !== blockId || block.kind !== 'question') {
         return block;
       }
+      const normalizedCurrentResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
       const nextResponseConfig = {
-        ...normalizeQuestionResponseConfig(block.responseConfig),
+        ...normalizedCurrentResponseConfig,
         inputType: normalizedInputType,
       };
+      if (normalizedInputType !== normalizedCurrentResponseConfig.inputType) {
+        delete nextResponseConfig.correctAnswer;
+      }
       if (TEXT_INPUT_TYPES.has(normalizedInputType) && !Number.isFinite(nextResponseConfig.maxLength)) {
         nextResponseConfig.maxLength = 200;
       }
@@ -410,7 +600,6 @@ class EditorDraftSession {
       if (normalizedInputType !== 'number') {
         delete nextResponseConfig.min;
         delete nextResponseConfig.max;
-        delete nextResponseConfig.step;
       }
 
       return {
@@ -465,7 +654,7 @@ class EditorDraftSession {
   }
 
   updateQuestionNumberConfig(blockId, key, rawValue) {
-    if (!this.state.draft || !blockId || !['min', 'max', 'step'].includes(key)) return;
+    if (!this.state.draft || !blockId || !['min', 'max'].includes(key)) return;
     const parsed = Number(rawValue);
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') {
@@ -477,12 +666,154 @@ class EditorDraftSession {
       }
 
       const updated = { ...nextResponseConfig };
-      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isFinite(parsed) || (key === 'step' && parsed <= 0)) {
+      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isFinite(parsed)) {
         delete updated[key];
       } else {
         updated[key] = parsed;
       }
 
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig(updated),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionNumberRulesAllowSigned(blockId, allowSigned) {
+    if (!this.state.draft || !blockId) return;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'number') return block;
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...nextResponseConfig,
+          numberRules: {
+            ...(isRecord(nextResponseConfig.numberRules) ? nextResponseConfig.numberRules : {}),
+            allowSigned: Boolean(allowSigned),
+          },
+        }),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionNumberRulesDecimalPlacesAllowed(blockId, rawValue) {
+    if (!this.state.draft || !blockId) return;
+    const isNonNegativeIntegerString = typeof rawValue === 'string' && /^\d+$/.test(rawValue.trim());
+    const parsed = isNonNegativeIntegerString ? Number.parseInt(rawValue.trim(), 10) : NaN;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'number') return block;
+      const nextRules = {
+        ...(isRecord(nextResponseConfig.numberRules) ? nextResponseConfig.numberRules : {}),
+      };
+      if (!isNonNegativeIntegerString || !Number.isInteger(parsed) || parsed < 0) {
+        nextRules.decimalPlacesAllowed = null;
+      } else {
+        nextRules.decimalPlacesAllowed = parsed;
+      }
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...nextResponseConfig,
+          numberRules: nextRules,
+        }),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionCorrectAnswerBoolean(blockId, rawValue) {
+    if (!this.state.draft || !blockId) return;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'boolean') {
+        return block;
+      }
+      const updated = { ...nextResponseConfig };
+      if (rawValue === 'true' || rawValue === true) {
+        updated.correctAnswer = true;
+      } else if (rawValue === 'false' || rawValue === false) {
+        updated.correctAnswer = false;
+      } else {
+        delete updated.correctAnswer;
+      }
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig(updated),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionCorrectAnswerNumber(blockId, rawValue) {
+    if (!this.state.draft || !blockId) return;
+    const parsed = Number(rawValue);
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'number') {
+        return block;
+      }
+      const updated = { ...nextResponseConfig };
+      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isFinite(parsed)) {
+        delete updated.correctAnswer;
+      } else {
+        updated.correctAnswer = parsed;
+      }
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig(updated),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionCorrectAnswerChoice(blockId, optionId) {
+    if (!this.state.draft || !blockId) return;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'multiple_choice' || nextResponseConfig.selectionMode !== 'single') {
+        return block;
+      }
+      const updated = { ...nextResponseConfig };
+      if (typeof optionId === 'string' && optionId.length > 0) {
+        updated.correctAnswerOptionId = optionId;
+        delete updated.correctAnswerOptionIds;
+        delete updated.correctAnswer;
+      } else {
+        delete updated.correctAnswerOptionId;
+        delete updated.correctAnswer;
+      }
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig(updated),
+      };
+    });
+    this.touchDraft();
+  }
+
+  updateQuestionCorrectAnswerChoices(blockId, optionIds) {
+    if (!this.state.draft || !blockId) return;
+    const nextOptionIds = Array.isArray(optionIds) ? optionIds.filter((optionId) => typeof optionId === 'string') : [];
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (nextResponseConfig.inputType !== 'multiple_choice' || nextResponseConfig.selectionMode !== 'multi') {
+        return block;
+      }
+      const updated = {
+        ...nextResponseConfig,
+        correctAnswerOptionIds: nextOptionIds,
+      };
+      delete updated.correctAnswerOptionId;
+      delete updated.correctAnswer;
       return {
         ...block,
         responseConfig: normalizeQuestionResponseConfig(updated),
@@ -498,12 +829,44 @@ class EditorDraftSession {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
       const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
       if (nextResponseConfig.inputType !== 'multiple_choice') return block;
+      const optionIds = new Set(
+        (Array.isArray(nextResponseConfig.options) ? nextResponseConfig.options : [])
+          .map((option, index) => normalizeResponseOption(option, `option_${index}`).id)
+          .map((optionId) => String(optionId))
+      );
+      const updated = {
+        ...nextResponseConfig,
+        selectionMode: normalizedSelectionMode,
+      };
+      if (
+        nextResponseConfig.selectionMode === 'single'
+        && normalizedSelectionMode === 'multi'
+      ) {
+        if (
+          typeof nextResponseConfig.correctAnswerOptionId === 'string'
+          && optionIds.has(nextResponseConfig.correctAnswerOptionId)
+        ) {
+          updated.correctAnswerOptionIds = [nextResponseConfig.correctAnswerOptionId];
+        } else {
+          delete updated.correctAnswerOptionIds;
+        }
+      }
+      if (
+        nextResponseConfig.selectionMode === 'multi'
+        && normalizedSelectionMode === 'single'
+      ) {
+        const firstValid = Array.isArray(nextResponseConfig.correctAnswerOptionIds)
+          ? nextResponseConfig.correctAnswerOptionIds.find((optionId) => typeof optionId === 'string' && optionIds.has(optionId))
+          : null;
+        if (typeof firstValid === 'string') {
+          updated.correctAnswerOptionId = firstValid;
+        } else {
+          delete updated.correctAnswerOptionId;
+        }
+      }
       return {
         ...block,
-        responseConfig: normalizeQuestionResponseConfig({
-          ...nextResponseConfig,
-          selectionMode: normalizedSelectionMode,
-        }),
+        responseConfig: normalizeQuestionResponseConfig(updated),
       };
     });
     this.touchDraft();
@@ -535,13 +898,13 @@ class EditorDraftSession {
       }
       return {
         ...block,
-        responseConfig: {
+        responseConfig: normalizeQuestionResponseConfig({
           ...normalizeQuestionResponseConfig(block.responseConfig),
           inputType: 'multiple_choice',
           selectionMode: block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single',
           shuffleOptions: Boolean(block.responseConfig?.shuffleOptions),
           options: normalizedOptions,
-        },
+        }),
       };
     });
     this.touchDraft();
@@ -557,8 +920,10 @@ class EditorDraftSession {
       const options = Array.isArray(responseConfig.options)
         ? responseConfig.options.map((option) => normalizeResponseOption(option))
         : [];
-      if (!options[index]) return block;
-      options[index] = { value: normalizedLabel, label: normalizedLabel };
+      while (options.length <= index) {
+        options.push({ id: createLocalId('opt'), value: '', label: '' });
+      }
+      options[index] = { ...options[index], value: normalizedLabel, label: normalizedLabel };
       return {
         ...block,
         responseConfig: normalizeQuestionResponseConfig({
@@ -579,7 +944,7 @@ class EditorDraftSession {
       const options = Array.isArray(responseConfig.options)
         ? responseConfig.options.map((option) => normalizeResponseOption(option))
         : [];
-      options.push({ value: '', label: '' });
+      options.push({ id: createLocalId('opt'), value: '', label: '' });
       return {
         ...block,
         responseConfig: normalizeQuestionResponseConfig({
@@ -1138,6 +1503,9 @@ function renderEditorShell(session) {
   questionOptions.style.display = 'none';
   const questionOptionsList = document.createElement('div');
   questionOptionsList.className = 'question-options-list';
+  const questionOptionWarning = document.createElement('p');
+  questionOptionWarning.className = 'control-error option-warning';
+  questionOptionWarning.hidden = true;
   const addOptionBtn = document.createElement('button');
   addOptionBtn.type = 'button';
   addOptionBtn.className = 'option-add-btn';
@@ -1166,13 +1534,42 @@ function renderEditorShell(session) {
   questionMax.id = 'editor-question-max';
   questionMax.type = 'number';
   questionMax.className = 'control';
-  const questionStep = document.createElement('input');
-  questionStep.id = 'editor-question-step';
-  questionStep.type = 'number';
-  questionStep.min = '0.0000001';
-  questionStep.step = 'any';
-  questionStep.className = 'control';
-
+  const questionNumberAllowSigned = document.createElement('input');
+  questionNumberAllowSigned.id = 'editor-question-number-allow-signed';
+  questionNumberAllowSigned.type = 'checkbox';
+  questionNumberAllowSigned.className = 'control';
+  const questionNumberDecimalPlacesAllowed = document.createElement('input');
+  questionNumberDecimalPlacesAllowed.id = 'editor-question-number-decimal-places-allowed';
+  questionNumberDecimalPlacesAllowed.type = 'number';
+  questionNumberDecimalPlacesAllowed.min = '0';
+  questionNumberDecimalPlacesAllowed.step = '1';
+  questionNumberDecimalPlacesAllowed.className = 'control';
+  const questionCorrectAnswerBoolean = document.createElement('select');
+  questionCorrectAnswerBoolean.id = 'editor-question-correct-answer-boolean';
+  questionCorrectAnswerBoolean.className = 'control';
+  [
+    { value: '', label: '— Unset —' },
+    { value: 'true', label: 'True' },
+    { value: 'false', label: 'False' },
+  ].forEach(({ value, label }) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    questionCorrectAnswerBoolean.appendChild(option);
+  });
+  const questionCorrectAnswerNumber = document.createElement('input');
+  questionCorrectAnswerNumber.id = 'editor-question-correct-answer-number';
+  questionCorrectAnswerNumber.type = 'number';
+  questionCorrectAnswerNumber.step = 'any';
+  questionCorrectAnswerNumber.className = 'control';
+  const questionMinError = document.createElement('p');
+  questionMinError.className = 'control-error';
+  const questionMaxError = document.createElement('p');
+  questionMaxError.className = 'control-error';
+  const questionNumberDecimalPlacesAllowedError = document.createElement('p');
+  questionNumberDecimalPlacesAllowedError.className = 'control-error';
+  const questionCorrectAnswerNumberError = document.createElement('p');
+  questionCorrectAnswerNumberError.className = 'control-error';
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
@@ -1220,6 +1617,39 @@ function renderEditorShell(session) {
   protectedActionsColumn.className = 'action-column';
   let detailSignature = null;
 
+  const updateNumberValidationFeedback = (selectedBlock) => {
+    const clearFieldError = (input, errorNode) => {
+      input.classList.remove('control-invalid');
+      errorNode.textContent = '';
+    };
+    clearFieldError(questionMin, questionMinError);
+    clearFieldError(questionMax, questionMaxError);
+    clearFieldError(questionNumberDecimalPlacesAllowed, questionNumberDecimalPlacesAllowedError);
+    clearFieldError(questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
+
+    if (!selectedBlock || selectedBlock.kind !== 'question') return;
+    const responseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
+    if (responseConfig.inputType !== 'number') return;
+
+    const errors = getNumberQuestionValidationErrors(responseConfig, {
+      decimalPlacesAllowed: questionNumberDecimalPlacesAllowed.value,
+      correctAnswer: questionCorrectAnswerNumber.value,
+    });
+    const setFieldError = (input, errorNode, message) => {
+      if (!message) return;
+      input.classList.add('control-invalid');
+      errorNode.textContent = message;
+    };
+    setFieldError(questionMin, questionMinError, errors.min);
+    setFieldError(questionMax, questionMaxError, errors.max);
+    setFieldError(
+      questionNumberDecimalPlacesAllowed,
+      questionNumberDecimalPlacesAllowedError,
+      errors.decimalPlacesAllowed
+    );
+    setFieldError(questionCorrectAnswerNumber, questionCorrectAnswerNumberError, errors.correctAnswer);
+  };
+
   const syncFormControls = () => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
     const selectedText = selectedBlock?.prompt?.text || selectedBlock?.content?.text || '';
@@ -1258,8 +1688,28 @@ function renderEditorShell(session) {
       }
       if (activeElement !== questionMin) questionMin.value = responseConfig.min ?? '';
       if (activeElement !== questionMax) questionMax.value = responseConfig.max ?? '';
-      if (activeElement !== questionStep) questionStep.value = responseConfig.step ?? '';
+      if (activeElement !== questionNumberAllowSigned) {
+        questionNumberAllowSigned.checked = responseConfig.numberRules?.allowSigned !== false;
+      }
+      if (activeElement !== questionNumberDecimalPlacesAllowed) {
+        questionNumberDecimalPlacesAllowed.value = Number.isInteger(responseConfig.numberRules?.decimalPlacesAllowed)
+          ? String(responseConfig.numberRules.decimalPlacesAllowed)
+          : '';
+      }
+      if (activeElement !== questionCorrectAnswerBoolean) {
+        if (typeof responseConfig.correctAnswer === 'boolean') {
+          questionCorrectAnswerBoolean.value = responseConfig.correctAnswer ? 'true' : 'false';
+        } else {
+          questionCorrectAnswerBoolean.value = '';
+        }
+      }
+      if (activeElement !== questionCorrectAnswerNumber) {
+        questionCorrectAnswerNumber.value = typeof responseConfig.correctAnswer === 'number'
+          ? String(responseConfig.correctAnswer)
+          : '';
+      }
     }
+    updateNumberValidationFeedback(selectedBlock);
   };
 
   const renderBlockList = () => {
@@ -1301,20 +1751,40 @@ function renderEditorShell(session) {
     if (!selectedBlock) {
       return 'none';
     }
+    const normalizedResponseConfig = selectedBlock.kind === 'question'
+      ? normalizeQuestionResponseConfig(selectedBlock.responseConfig)
+      : null;
+    const normalizedInputType = normalizedResponseConfig?.inputType || 'text';
+    const normalizedSelectionMode = normalizedResponseConfig?.selectionMode || '';
+    const normalizedCorrectAnswer = (() => {
+      if (!normalizedResponseConfig || normalizedInputType !== 'multiple_choice') {
+        return '';
+      }
+      if (normalizedSelectionMode === 'single') {
+        return typeof normalizedResponseConfig.correctAnswer === 'string'
+          ? normalizedResponseConfig.correctAnswer
+          : '';
+      }
+      if (normalizedSelectionMode === 'multi') {
+        const values = Array.isArray(normalizedResponseConfig.correctAnswer)
+          ? normalizedResponseConfig.correctAnswer.filter((value) => typeof value === 'string').slice().sort()
+          : [];
+        return JSON.stringify(values);
+      }
+      return '';
+    })();
     return [
       selectedBlock.blockId,
       selectedBlock.kind,
-      selectedBlock.responseConfig?.inputType || 'text',
-      selectedBlock.responseConfig?.displayMode || '',
-      selectedBlock.responseConfig?.min ?? '',
-      selectedBlock.responseConfig?.max ?? '',
-      selectedBlock.responseConfig?.step ?? '',
-      selectedBlock.responseConfig?.selectionMode || '',
-      selectedBlock.responseConfig?.shuffleOptions ? '1' : '0',
-      JSON.stringify((selectedBlock.responseConfig?.options || []).map((opt) => [
+      normalizedInputType,
+      normalizedResponseConfig?.displayMode || '',
+      normalizedSelectionMode,
+      normalizedResponseConfig?.shuffleOptions ? '1' : '0',
+      JSON.stringify((normalizedResponseConfig?.options || []).map((opt) => [
         String(opt?.value ?? ''),
         String(opt?.label ?? ''),
       ])),
+      normalizedCorrectAnswer,
     ].join(':');
   };
 
@@ -1391,10 +1861,32 @@ function renderEditorShell(session) {
       const maxLabel = document.createElement('label');
       maxLabel.textContent = 'Max';
       maxLabel.htmlFor = 'editor-question-max';
-      const stepLabel = document.createElement('label');
-      stepLabel.textContent = 'Step';
-      stepLabel.htmlFor = 'editor-question-step';
-      rightPanel.append(minLabel, questionMin, maxLabel, questionMax, stepLabel, questionStep);
+      rightPanel.append(minLabel, questionMin, questionMinError, maxLabel, questionMax, questionMaxError);
+
+      const signedRow = document.createElement('label');
+      signedRow.className = 'inline-toggle';
+      signedRow.htmlFor = 'editor-question-number-allow-signed';
+      const signedText = document.createElement('span');
+      signedText.textContent = 'Allow signed values (+/-)';
+      signedRow.append(signedText, questionNumberAllowSigned);
+      rightPanel.append(signedRow);
+
+      const decimalPlacesLabel = document.createElement('label');
+      decimalPlacesLabel.textContent = 'Decimal places allowed (blank = unlimited)';
+      decimalPlacesLabel.htmlFor = 'editor-question-number-decimal-places-allowed';
+      rightPanel.append(decimalPlacesLabel, questionNumberDecimalPlacesAllowed, questionNumberDecimalPlacesAllowedError);
+
+      const correctAnswerLabel = document.createElement('label');
+      correctAnswerLabel.textContent = 'Correct answer';
+      correctAnswerLabel.htmlFor = 'editor-question-correct-answer-number';
+      rightPanel.append(correctAnswerLabel, questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
+    }
+
+    if (activeInputType === 'boolean') {
+      const correctAnswerLabel = document.createElement('label');
+      correctAnswerLabel.textContent = 'Correct answer';
+      correctAnswerLabel.htmlFor = 'editor-question-correct-answer-boolean';
+      rightPanel.append(correctAnswerLabel, questionCorrectAnswerBoolean);
     }
 
     if (activeInputType === 'multiple_choice') {
@@ -1416,13 +1908,81 @@ function renderEditorShell(session) {
       optionsLabel.htmlFor = 'editor-question-options';
       rightPanel.append(optionsLabel);
 
+      const normalizedResponseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
+      const normalizedOptions = (normalizedResponseConfig.options || []).map((option, index) =>
+        normalizeResponseOption(option, `option_${index}`));
+      const optionList = normalizedOptions.length > 0
+        ? normalizedOptions
+        : [{ id: createLocalId('opt'), value: '', label: '' }];
+      const isMultiSelect = normalizedResponseConfig.selectionMode === 'multi';
+      const selectedOptionIds = new Set(Array.isArray(normalizedResponseConfig.correctAnswerOptionIds)
+        ? normalizedResponseConfig.correctAnswerOptionIds.map((optionId) => String(optionId))
+        : []);
+      const hasSelectedSingleOptionId = typeof normalizedResponseConfig.correctAnswerOptionId === 'string'
+        && normalizedResponseConfig.correctAnswerOptionId.length > 0;
+      const selectedSingleOptionId = hasSelectedSingleOptionId
+        ? normalizedResponseConfig.correctAnswerOptionId
+        : '';
+      const duplicateOptionValues = getDuplicateOptionValues(normalizedOptions);
+      if (duplicateOptionValues.length > 0) {
+        questionOptionWarning.hidden = false;
+        questionOptionWarning.textContent = `Option values must be unique. Duplicate values: ${duplicateOptionValues.join(', ')}.`;
+      } else if (isNonEmptyString(normalizedResponseConfig.correctAnswerMappingWarning)) {
+        questionOptionWarning.hidden = false;
+        questionOptionWarning.textContent = normalizedResponseConfig.correctAnswerMappingWarning;
+      } else {
+        questionOptionWarning.hidden = true;
+        questionOptionWarning.textContent = '';
+      }
+
       questionOptionsList.innerHTML = '';
-      const optionList = Array.isArray(selectedBlock.responseConfig?.options) && selectedBlock.responseConfig.options.length > 0
-        ? selectedBlock.responseConfig.options
-        : [{ value: '', label: '' }];
       optionList.forEach((option, optionIndex) => {
+        const optionId = String(option?.id || '');
+        const optionValue = String(option?.value ?? '');
         const row = document.createElement('div');
         row.className = 'option-row';
+
+        const isSelected = isMultiSelect
+          ? selectedOptionIds.has(optionId)
+          : hasSelectedSingleOptionId && selectedSingleOptionId === optionId;
+        const correctToggle = document.createElement('button');
+        correctToggle.type = 'button';
+        correctToggle.className = 'option-correct-toggle';
+        correctToggle.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
+        correctToggle.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        correctToggle.setAttribute(
+          'aria-label',
+          isMultiSelect
+            ? `Toggle option ${optionIndex + 1} correct answer`
+            : `Toggle option ${optionIndex + 1} as the correct answer`
+        );
+        correctToggle.addEventListener('click', () => {
+          if (!isMultiSelect) {
+            session.updateQuestionCorrectAnswerChoice(
+              selectedBlock.blockId,
+              isSelected ? '' : optionId
+            );
+            updateSummary();
+            return;
+          }
+          const nextOptionIds = Array.from(selectedOptionIds);
+          if (selectedOptionIds.has(optionId)) {
+            const removeIndex = nextOptionIds.indexOf(optionId);
+            if (removeIndex >= 0) {
+              nextOptionIds.splice(removeIndex, 1);
+            }
+          } else {
+            nextOptionIds.push(optionId);
+          }
+          session.updateQuestionCorrectAnswerChoices(selectedBlock.blockId, nextOptionIds);
+          updateSummary();
+        });
+        const tickIcon = document.createElement('span');
+        tickIcon.className = 'option-correct-toggle__tick';
+        tickIcon.setAttribute('aria-hidden', 'true');
+        tickIcon.textContent = '✓';
+        correctToggle.appendChild(tickIcon);
+
         const optionInput = document.createElement('input');
         optionInput.type = 'text';
         optionInput.dataset.optionInput = '1';
@@ -1434,19 +1994,18 @@ function renderEditorShell(session) {
         });
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
-        removeBtn.className = 'icon-btn';
-        removeBtn.title = `Remove option ${optionIndex + 1}`;
-        removeBtn.setAttribute('aria-label', `Remove option ${optionIndex + 1}`);
-        removeBtn.textContent = '−';
+        removeBtn.className = 'icon-btn danger';
+        removeBtn.title = 'Delete this option';
+        removeBtn.setAttribute('aria-label', `Delete option ${optionIndex + 1}`);
+        removeBtn.textContent = '🗑';
         removeBtn.addEventListener('click', () => {
           session.removeQuestionOption(selectedBlock.blockId, optionIndex);
           updateSummary();
         });
-        row.append(optionInput, removeBtn);
+        row.append(correctToggle, optionInput, removeBtn);
         questionOptionsList.appendChild(row);
       });
-
-      rightPanel.append(questionOptionsList, addOptionBtn, questionOptions);
+      rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
     }
   };
 
@@ -1538,8 +2097,23 @@ function renderEditorShell(session) {
     session.updateQuestionNumberConfig(session.state.selectedBlockId, 'max', questionMax.value);
     updateSummary();
   });
-  questionStep.addEventListener('input', () => {
-    session.updateQuestionNumberConfig(session.state.selectedBlockId, 'step', questionStep.value);
+  questionCorrectAnswerBoolean.addEventListener('change', () => {
+    session.updateQuestionCorrectAnswerBoolean(session.state.selectedBlockId, questionCorrectAnswerBoolean.value);
+    updateSummary();
+  });
+  questionCorrectAnswerNumber.addEventListener('input', () => {
+    session.updateQuestionCorrectAnswerNumber(session.state.selectedBlockId, questionCorrectAnswerNumber.value);
+    updateSummary();
+  });
+  questionNumberAllowSigned.addEventListener('change', () => {
+    session.updateQuestionNumberRulesAllowSigned(session.state.selectedBlockId, questionNumberAllowSigned.checked);
+    updateSummary();
+  });
+  questionNumberDecimalPlacesAllowed.addEventListener('input', () => {
+    session.updateQuestionNumberRulesDecimalPlacesAllowed(
+      session.state.selectedBlockId,
+      questionNumberDecimalPlacesAllowed.value
+    );
     updateSummary();
   });
   questionSelectionMode.addEventListener('change', () => {
@@ -1663,8 +2237,16 @@ bootstrapEditor().catch((error) => {
   }
 });
 
-export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation };
-function normalizeQuestionResponseConfig(responseConfig) {
+export {
+  EditorDraftSession,
+  createDraftRecord,
+  normalizeBlocks,
+  mapOptionsTextToResponseOptions,
+  buildViewerUrlFromCurrentLocation,
+  getNumberQuestionValidationErrors,
+};
+function normalizeQuestionResponseConfig(responseConfig, options = {}) {
+  const forContract = options.forContract === true;
   const source = isRecord(responseConfig) ? { ...responseConfig } : {};
   const legacyInputType = source.inputType || 'text';
   const inputType = legacyInputType === 'plain_text' || legacyInputType === 'short_text'
@@ -1677,6 +2259,7 @@ function normalizeQuestionResponseConfig(responseConfig) {
     ...source,
     inputType,
   };
+  delete normalized.step;
 
   if (inputType === 'text') {
     normalized.maxLength = Number.isFinite(source.maxLength) ? Number(source.maxLength) : 200;
@@ -1686,26 +2269,148 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.shuffleOptions;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
+    delete normalized.numberRules;
+    delete normalized.correctAnswer;
+  } else if (inputType === 'boolean') {
+    delete normalized.options;
+    delete normalized.selectionMode;
+    delete normalized.shuffleOptions;
+    delete normalized.min;
+    delete normalized.max;
+    delete normalized.numberRules;
+    delete normalized.maxLength;
+    delete normalized.displayMode;
+    if (typeof source.correctAnswer === 'boolean') {
+      normalized.correctAnswer = source.correctAnswer;
+    } else {
+      delete normalized.correctAnswer;
+    }
   } else if (inputType === 'number') {
     delete normalized.options;
     delete normalized.selectionMode;
     delete normalized.shuffleOptions;
     if (Number.isFinite(source.min)) normalized.min = Number(source.min); else delete normalized.min;
     if (Number.isFinite(source.max)) normalized.max = Number(source.max); else delete normalized.max;
-    if (Number.isFinite(source.step) && Number(source.step) > 0) normalized.step = Number(source.step); else delete normalized.step;
+    normalized.numberRules = normalizeNumberRulesConfig(source.numberRules);
     delete normalized.maxLength;
     delete normalized.displayMode;
+    if (
+      typeof source.correctAnswer === 'number'
+      && Number.isFinite(source.correctAnswer)
+      && isValidNumberCorrectAnswerForConfig(source.correctAnswer, normalized)
+    ) {
+      normalized.correctAnswer = Number(source.correctAnswer);
+    } else {
+      delete normalized.correctAnswer;
+    }
   } else if (inputType === 'multiple_choice') {
     normalized.selectionMode = source.selectionMode === 'multi' ? 'multi' : 'single';
     normalized.shuffleOptions = Boolean(source.shuffleOptions);
-    normalized.options = Array.isArray(source.options) ? source.options : [];
+    const sourceOptions = Array.isArray(source.options) ? source.options : [];
+    const normalizedOptions = sourceOptions
+      ? sourceOptions.map((option, index) => normalizeResponseOption(option, `option_${index}`))
+      : [];
+    const optionById = new Map();
+    const optionIdByValue = new Map();
+    normalizedOptions.forEach((option, index) => {
+      const optionId = getOptionIdForAnswerKey(option);
+      const optionValue = getOptionValueForAnswerKey(sourceOptions[index]);
+      if (!optionId || optionValue === null) return;
+      optionById.set(optionId, optionValue);
+      if (!optionIdByValue.has(optionValue)) {
+        optionIdByValue.set(optionValue, []);
+      }
+      optionIdByValue.get(optionValue).push(optionId);
+    });
+    const consumeOptionIdByValue = (optionValue, consumedIds) => {
+      const candidates = optionIdByValue.get(optionValue) || [];
+      const available = candidates.find((candidateId) => !consumedIds.has(candidateId));
+      if (available) {
+        consumedIds.add(available);
+        return available;
+      }
+      return null;
+    };
+
+    const ambiguousFromValueMigration = new Set();
+    const consumedIds = new Set();
+    let selectedSingleOptionId = null;
+    let selectedMultiOptionIds = [];
+
+    if (typeof source.correctAnswerOptionId === 'string' && optionById.has(source.correctAnswerOptionId)) {
+      selectedSingleOptionId = source.correctAnswerOptionId;
+    } else if (typeof source.correctAnswer === 'string') {
+      const candidates = optionIdByValue.get(source.correctAnswer) || [];
+      if (candidates.length > 1) {
+        ambiguousFromValueMigration.add(source.correctAnswer);
+      }
+      selectedSingleOptionId = consumeOptionIdByValue(source.correctAnswer, consumedIds);
+    }
+
+    if (Array.isArray(source.correctAnswerOptionIds)) {
+      const dedupedIds = [];
+      const seenIds = new Set();
+      source.correctAnswerOptionIds.forEach((optionId) => {
+        if (typeof optionId !== 'string' || seenIds.has(optionId) || !optionById.has(optionId)) return;
+        seenIds.add(optionId);
+        dedupedIds.push(optionId);
+      });
+      selectedMultiOptionIds = dedupedIds;
+    } else if (Array.isArray(source.correctAnswer)) {
+      const dedupedIds = [];
+      const seenIds = new Set();
+      source.correctAnswer.forEach((optionValue) => {
+        if (typeof optionValue !== 'string') return;
+        const candidates = optionIdByValue.get(optionValue) || [];
+        if (candidates.length > 1) {
+          ambiguousFromValueMigration.add(optionValue);
+        }
+        const mappedId = consumeOptionIdByValue(optionValue, consumedIds);
+        if (!mappedId || seenIds.has(mappedId)) return;
+        seenIds.add(mappedId);
+        dedupedIds.push(mappedId);
+      });
+      selectedMultiOptionIds = dedupedIds;
+    }
+
+    normalized.options = forContract
+      ? normalizedOptions.map((option) => ({ value: option.value, label: option.label }))
+      : normalizedOptions;
+
+    if (normalized.selectionMode === 'single') {
+      if (selectedSingleOptionId && optionById.has(selectedSingleOptionId)) {
+        normalized.correctAnswerOptionId = selectedSingleOptionId;
+        normalized.correctAnswer = optionById.get(selectedSingleOptionId);
+      } else {
+        delete normalized.correctAnswerOptionId;
+        delete normalized.correctAnswer;
+      }
+      delete normalized.correctAnswerOptionIds;
+    } else {
+      const validOptionIds = selectedMultiOptionIds.filter((optionId) => optionById.has(optionId));
+      normalized.correctAnswerOptionIds = validOptionIds;
+      normalized.correctAnswer = validOptionIds.map((optionId) => optionById.get(optionId));
+      delete normalized.correctAnswerOptionId;
+    }
+    if (!forContract && ambiguousFromValueMigration.size > 0) {
+      normalized.correctAnswerMappingWarning = `Ambiguous value-to-option mapping for duplicate values: ${Array.from(ambiguousFromValueMigration).join(', ')}.`;
+    } else {
+      delete normalized.correctAnswerMappingWarning;
+    }
     delete normalized.maxLength;
     delete normalized.displayMode;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
+    delete normalized.numberRules;
+    if (forContract) {
+      delete normalized.correctAnswerOptionId;
+      delete normalized.correctAnswerOptionIds;
+      delete normalized.correctAnswerMappingWarning;
+    }
   } else {
+    delete normalized.correctAnswerOptionId;
+    delete normalized.correctAnswerOptionIds;
+    delete normalized.correctAnswerMappingWarning;
     delete normalized.maxLength;
     delete normalized.displayMode;
     delete normalized.options;
@@ -1713,7 +2418,8 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.shuffleOptions;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
+    delete normalized.numberRules;
+    delete normalized.correctAnswer;
   }
 
   return normalized;

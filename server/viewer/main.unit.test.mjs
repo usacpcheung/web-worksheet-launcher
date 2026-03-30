@@ -8,18 +8,44 @@ async function loadViewerModule(overrides = {}) {
   let source = await fs.readFile(filePath, 'utf8');
 
   source = source.replace(
-    "import { viewerStorage } from './storage/index.js';\nimport { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';\nimport { validateViewerPayloadSchema } from '../app/contracts/validators.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
-    'const viewerStorage = {};\nconst mapSnapshotToViewerPayload = globalThis.__mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = (p) => ({ valid: true, errors: [] });\nconst SharedAuthGate = class {};\n'
+    "import { viewerStorage } from './storage/index.js';\nimport { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';\nimport { validateViewerPayloadSchema } from '../app/contracts/validators.js';\nimport { normalizeNumberRules, validateNumberInputFormat } from '../app/contracts/number-input-validator.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
+    'const viewerStorage = {};\nconst mapSnapshotToViewerPayload = globalThis.__mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = (p) => ({ valid: true, errors: [] });\nconst normalizeNumberRules = globalThis.__normalizeNumberRules;\nconst validateNumberInputFormat = globalThis.__validateNumberInputFormat;\nconst SharedAuthGate = class {};\n'
   );
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, coerceAnswerValueForQuestion, deterministicShuffle };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
-  globalThis.document = { getElementById: () => null };
-  globalThis.window = {};
+  globalThis.__normalizeNumberRules = (rules) => ({
+    allowedKinds: Array.isArray(rules?.allowedKinds) ? rules.allowedKinds : ['integer', 'decimal'],
+    allowSigned: rules?.allowSigned !== false,
+    decimalPlacesAllowed: Number.isInteger(rules?.decimalPlacesAllowed) ? rules.decimalPlacesAllowed : null,
+  });
+  globalThis.__validateNumberInputFormat = overrides.validateNumberInputFormat || ((value, rulesArg) => {
+    const text = String(value ?? '').trim();
+    if (!text) return { ok: false, errorCode: 'empty' };
+    if (text.includes('/')) return { ok: false, errorCode: 'fraction_not_allowed' };
+    const activeRules = globalThis.__normalizeNumberRules(rulesArg);
+    if (!activeRules.allowSigned && (text.startsWith('+') || text.startsWith('-'))) {
+      return { ok: false, errorCode: 'sign_not_allowed' };
+    }
+    if (!/^[+-]?\d+(\.\d+)?$/.test(text)) return { ok: false, errorCode: 'invalid_syntax' };
+    const kind = text.includes('.') ? 'decimal' : 'integer';
+    if (Array.isArray(activeRules.allowedKinds) && !activeRules.allowedKinds.includes(kind)) {
+      return { ok: false, errorCode: 'kind_not_allowed' };
+    }
+    if (kind === 'decimal' && Number.isInteger(activeRules.decimalPlacesAllowed)) {
+      const [, decimalPart = ''] = text.split('.');
+      if (decimalPart.length > activeRules.decimalPlacesAllowed) {
+        return { ok: false, errorCode: 'decimal_places_exceeded' };
+      }
+    }
+    return { ok: true, normalizedValue: Number(text), kind };
+  });
+  globalThis.document = overrides.document || { getElementById: () => null };
+  globalThis.window = overrides.window || {};
 
   const dataUrl = `data:text/javascript,${encodeURIComponent(source)}`;
   return import(dataUrl);
@@ -122,7 +148,7 @@ test('normalizeViewerBlock does not emit text-only responseConfig fields for non
   const number = mod.normalizeViewerBlock({
     kind: 'question',
     prompt: { text: 'How many?' },
-    responseConfig: { inputType: 'number', min: 1, max: 5, step: 1, maxLength: 20, displayMode: 'single_line' },
+    responseConfig: { inputType: 'number', min: 1, max: 5, maxLength: 20, displayMode: 'single_line' },
   }, 0);
   const bool = mod.normalizeViewerBlock({
     kind: 'question',
@@ -164,14 +190,50 @@ test('normalizeViewerBlock migrates plain_text/short_text to text with defaults'
   assert.equal(short.responseConfig.displayMode, 'single_line');
 });
 
-test('coerceAnswerValueForQuestion enforces numeric min/max/step', async () => {
+test('coerceAnswerValueForQuestion does not silently clamp out-of-range numbers', async () => {
   const mod = await loadViewerModule();
   const question = {
-    responseConfig: { inputType: 'number', min: 0, max: 10, step: 0.5 },
+    responseConfig: { inputType: 'number', min: 0, max: 10 },
   };
-  assert.equal(mod.coerceAnswerValueForQuestion(question, '12.3'), 10);
-  assert.equal(mod.coerceAnswerValueForQuestion(question, '-3'), 0);
-  assert.equal(mod.coerceAnswerValueForQuestion(question, '3.24'), 3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '12.3'), 12.3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '-3'), -3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '3.24'), 3.24);
+});
+
+test('coerceAnswerValueForQuestion preserves already-normalized finite numbers including scientific notation', async () => {
+  const mod = await loadViewerModule();
+  const question = { responseConfig: { inputType: 'number' } };
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 1e-7), 1e-7);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 0.0000001), 1e-7);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 42), 42);
+});
+
+test('coerceAnswerValueForQuestion validates number format rules (integer/decimal only)', async () => {
+  const mod = await loadViewerModule();
+  const question = {
+    responseConfig: {
+      inputType: 'number',
+      numberRules: {
+        allowedKinds: ['integer', 'decimal'],
+        allowSigned: true,
+        decimalPlacesAllowed: 1,
+      },
+    },
+  };
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '3'), 3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '3.0'), 3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '+3'), 3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '2/3'), '');
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '1.23'), '');
+});
+
+test('coerceAnswerValueForQuestion keeps over-limit text during edit and truncates on save', async () => {
+  const mod = await loadViewerModule();
+  const question = {
+    responseConfig: { inputType: 'text', maxLength: 5 },
+  };
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 'abcdefghij', { phase: 'edit' }), 'abcdefghij');
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 'abcdefghij', { phase: 'save' }), 'abcde');
 });
 
 test('coerceAnswerValueForQuestion supports multiple_choice single and multi answers', async () => {
@@ -272,6 +334,47 @@ test('viewer autosave emits state transitions and clears pending state without e
 
   assert.equal(session.state.autosavePending, false);
   assert.ok(emissions >= 3, 'expected pending, success, and final state emissions');
+});
+
+test('viewer stores raw over-limit text in edit state and truncates in autosave/manual/finalize persistence', async () => {
+  const mod = await loadViewerModule();
+  const savedPayloads = [];
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      put: async (value) => {
+        savedPayloads.push(value);
+        return value;
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.localAttemptId = 'attempt_text_save';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q' },
+      responseConfig: { inputType: 'text', maxLength: 5 },
+    }],
+  };
+  session.state.attemptRevision = 1;
+
+  session.setAnswer('q1', 'abcdefghij');
+  assert.equal(session.state.answers.q1.value, 'abcdefghij');
+
+  clearTimeout(session.autosaveTimer);
+  await session.autosave();
+  assert.equal(savedPayloads[0].answers.q1.value, 'abcde');
+
+  await session.saveNow();
+  assert.equal(savedPayloads[1].answers.q1.value, 'abcde');
+
+  await session.completeLocalAttempt();
+  assert.equal(savedPayloads[2].answers.q1.value, 'abcde');
 });
 
 test('viewer autosave keeps newest save status when older save finishes later', async () => {
@@ -420,8 +523,202 @@ test('computeAnswerSummary treats empty multi-select arrays as unanswered', asyn
 
 test('getInputHelperText maps input types to guidance', async () => {
   const mod = await loadViewerModule();
-  assert.equal(mod.getInputHelperText('number'), 'Numeric answer only.');
+  assert.equal(
+    mod.getInputHelperText('number', { min: 1, max: 5 }),
+    'Enter integer/decimal only (fractions like 2/3 are not supported). Range: minimum 1, maximum 5.'
+  );
   assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one or more options.');
   assert.equal(mod.getInputHelperText('boolean'), 'Choose True / False.');
   assert.equal(mod.getInputHelperText('text'), 'Text response.');
+});
+
+test('getNumberInputErrorMessage reports range and rule errors without coercion', async () => {
+  const mod = await loadViewerModule();
+  const responseConfig = {
+    min: 1,
+    max: 5,
+    numberRules: {
+      allowedKinds: ['integer', 'decimal'],
+      allowSigned: false,
+      decimalPlacesAllowed: 1,
+    },
+  };
+
+  assert.deepEqual(mod.getNumberInputErrorMessage('0', responseConfig), {
+    message: 'Value is below minimum (1).',
+    normalizedValue: '',
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('6', responseConfig), {
+    message: 'Value is above maximum (5).',
+    normalizedValue: '',
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('+2', responseConfig), {
+    message: 'Signed values are not allowed for this question.',
+    normalizedValue: '',
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('1.23', responseConfig), {
+    message: 'Too many decimal places for this question.',
+    normalizedValue: '',
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('4.5', responseConfig), {
+    message: '',
+    normalizedValue: 4.5,
+  });
+});
+
+test('getNumberInputErrorMessage ignores legacy step config', async () => {
+  const mod = await loadViewerModule();
+  const responseConfig = { min: 0, max: 10, step: 0.5 };
+
+  assert.deepEqual(mod.getNumberInputErrorMessage('1.3', responseConfig), {
+    message: '',
+    normalizedValue: 1.3,
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('2.5', responseConfig), {
+    message: '',
+    normalizedValue: 2.5,
+  });
+});
+
+test('number rendering branch avoids text input min/max attributes and uses pattern hint', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("if (Number.isFinite(block.responseConfig?.min)) control.min"), false);
+  assert.equal(source.includes("if (Number.isFinite(block.responseConfig?.max)) control.max"), false);
+  assert.equal(source.includes('control.pattern ='), true);
+  assert.equal(source.includes('control.title ='), true);
+  assert.equal(source.includes("'Enter a valid integer or decimal number for this question.'"), false);
+});
+
+test('createInputErrorNode applies stable id and live region semantics', async () => {
+  const created = [];
+  const mod = await loadViewerModule({
+    document: {
+      getElementById: () => null,
+      createElement: (tag) => {
+        const node = {
+          tagName: tag,
+          className: '',
+          textContent: '',
+          id: '',
+          attrs: {},
+          setAttribute(name, value) {
+            this.attrs[name] = String(value);
+          },
+          getAttribute(name) {
+            return this.attrs[name] ?? null;
+          },
+        };
+        created.push(node);
+        return node;
+      },
+    },
+  });
+  const node = mod.createInputErrorNode('answer-q1-error');
+  assert.equal(created.length > 0, true);
+  assert.equal(node.id, 'answer-q1-error');
+  assert.equal(node.className, 'input-error');
+  assert.equal(node.getAttribute('aria-live'), 'polite');
+  assert.equal(node.getAttribute('role'), 'status');
+});
+
+test('ensureControlDescribedBy links control to existing error id without duplicates', async () => {
+  const mod = await loadViewerModule();
+  const control = {
+    attrs: {},
+    getAttribute(name) {
+      return this.attrs[name] ?? null;
+    },
+    setAttribute(name, value) {
+      this.attrs[name] = String(value);
+    },
+  };
+  mod.ensureControlDescribedBy(control, 'answer-q1-error');
+  mod.ensureControlDescribedBy(control, 'answer-q1-error');
+  assert.equal(control.getAttribute('aria-describedby'), 'answer-q1-error');
+});
+
+test('clampTextAnswer enforces hard max length truncation', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.clampTextAnswer('abcdef', 4), 'abcd');
+  assert.equal(mod.clampTextAnswer('abc', 10), 'abc');
+  assert.equal(mod.clampTextAnswer('abc', null), 'abc');
+});
+
+test('clampTextAnswer handles non-integer finite maxLength via Math.trunc', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.clampTextAnswer('abcdef', 4.9), 'abcd');
+  assert.equal(mod.clampTextAnswer('abcdef', 4.1), 'abcd');
+  // Math.trunc(0.9) === 0, so no clamping occurs (treated as no valid limit)
+  assert.equal(mod.clampTextAnswer('abcdef', 0.9), 'abcdef');
+});
+
+test('computeTextLengthFeedback returns normal, warning, and over-limit states', async () => {
+  const mod = await loadViewerModule();
+  assert.deepEqual(mod.computeTextLengthFeedback('abcd', 50), {
+    current: 4,
+    max: 50,
+    remaining: 46,
+    state: 'normal',
+    statusText: '',
+    counterText: '4/50',
+  });
+  assert.deepEqual(mod.computeTextLengthFeedback('x'.repeat(45), 50), {
+    current: 45,
+    max: 50,
+    remaining: 5,
+    state: 'warning',
+    statusText: '5 characters remaining.',
+    counterText: '45/50',
+  });
+  assert.deepEqual(mod.computeTextLengthFeedback('x'.repeat(55), 50), {
+    current: 55,
+    max: 50,
+    remaining: -5,
+    state: 'over',
+    statusText: 'Over by 5 characters. On save, text will be truncated to 50.',
+    counterText: '55/50',
+  });
+});
+
+test('computeTextLengthFeedback handles non-integer finite maxLength via Math.trunc', async () => {
+  const mod = await loadViewerModule();
+  const result = mod.computeTextLengthFeedback('abcd', 50.7);
+  assert.equal(result.max, 50);
+  assert.equal(result.current, 4);
+  assert.equal(result.counterText, '4/50');
+});
+
+test('computeTextLengthFeedback uses singular character when count is 1', async () => {
+  const mod = await loadViewerModule();
+  const warningResult = mod.computeTextLengthFeedback('x'.repeat(49), 50);
+  assert.equal(warningResult.state, 'warning');
+  assert.equal(warningResult.statusText, '1 character remaining.');
+
+  const overResult = mod.computeTextLengthFeedback('x'.repeat(51), 50);
+  assert.equal(overResult.state, 'over');
+  assert.equal(overResult.statusText, 'Over by 1 character. On save, text will be truncated to 50.');
+});
+
+test('computeTextLengthFeedback uses plural characters when count is not 1', async () => {
+  const mod = await loadViewerModule();
+  const warningResult = mod.computeTextLengthFeedback('x'.repeat(45), 50);
+  assert.equal(warningResult.statusText, '5 characters remaining.');
+
+  const overResult = mod.computeTextLengthFeedback('x'.repeat(55), 50);
+  assert.equal(overResult.statusText, 'Over by 5 characters. On save, text will be truncated to 50.');
+});
+
+test('updateTextCounterUI sets text and semantic classes', async () => {
+  const mod = await loadViewerModule();
+  const counterNode = { textContent: '', className: '' };
+  const statusNode = { textContent: '', className: '' };
+  mod.updateTextCounterUI(counterNode, statusNode, {
+    counterText: '99/100',
+    statusText: '1 character remaining.',
+    state: 'warning',
+  });
+  assert.equal(counterNode.textContent, '99/100');
+  assert.equal(counterNode.className, 'text-counter text-counter--warning');
+  assert.equal(statusNode.textContent, '1 character remaining.');
+  assert.equal(statusNode.className, 'text-counter-status text-counter-status--warning');
 });

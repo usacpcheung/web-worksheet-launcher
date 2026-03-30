@@ -1,6 +1,7 @@
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
+import { normalizeNumberRules, validateNumberInputFormat } from '../app/contracts/number-input-validator.js';
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 
 const app = document.getElementById('app');
@@ -8,6 +9,7 @@ const app = document.getElementById('app');
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
+const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
 
 function nowIso() {
   return new Date().toISOString();
@@ -107,14 +109,12 @@ function normalizeViewerBlock(block, index) {
     }
 
     if (inputType === 'number') {
+      normalizedResponseConfig.numberRules = normalizeNumberRules(responseConfigSource.numberRules);
       if (Number.isFinite(responseConfigSource.min)) {
         normalizedResponseConfig.min = Number(responseConfigSource.min);
       }
       if (Number.isFinite(responseConfigSource.max)) {
         normalizedResponseConfig.max = Number(responseConfigSource.max);
-      }
-      if (Number.isFinite(responseConfigSource.step) && Number(responseConfigSource.step) > 0) {
-        normalizedResponseConfig.step = Number(responseConfigSource.step);
       }
     }
 
@@ -199,37 +199,84 @@ function coerceAnswerValueByInputType(inputType, rawValue) {
   return String(rawValue ?? '');
 }
 
-function clampToNumberConfig(value, responseConfig = {}) {
-  if (!Number.isFinite(value)) return '';
-  let nextValue = value;
-  const min = Number.isFinite(responseConfig.min) ? Number(responseConfig.min) : null;
-  const max = Number.isFinite(responseConfig.max) ? Number(responseConfig.max) : null;
-  const step = Number.isFinite(responseConfig.step) && Number(responseConfig.step) > 0
-    ? Number(responseConfig.step)
-    : null;
-
-  if (min !== null) nextValue = Math.max(min, nextValue);
-  if (max !== null) nextValue = Math.min(max, nextValue);
-  if (step !== null) {
-    const base = min !== null ? min : 0;
-    nextValue = Math.round((nextValue - base) / step) * step + base;
-    if (min !== null) nextValue = Math.max(min, nextValue);
-    if (max !== null) nextValue = Math.min(max, nextValue);
-    const decimals = String(step).includes('.') ? String(step).split('.')[1].length : 0;
-    if (decimals > 0) {
-      nextValue = Number(nextValue.toFixed(decimals));
-    }
-  }
-  return nextValue;
+function clampTextAnswer(rawValue, maxLength) {
+  const value = String(rawValue ?? '');
+  const max = Number.isFinite(maxLength) && maxLength > 0 ? Math.trunc(maxLength) : 0;
+  if (max <= 0) return value;
+  return value.slice(0, max);
 }
 
-function coerceAnswerValueForQuestion(questionBlock, rawValue) {
+function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = TEXT_WARNING_THRESHOLD_RATIO) {
+  const current = String(rawValue ?? '').length;
+  const max = Number.isFinite(maxLength) && maxLength > 0 ? Math.trunc(maxLength) : 0;
+  const remaining = max - current;
+  const warningThreshold = Math.ceil(max * warningThresholdRatio);
+  if (max === 0) {
+    return {
+      current,
+      max,
+      remaining,
+      state: 'normal',
+      statusText: '',
+      counterText: `${current}/${max}`,
+    };
+  }
+  if (remaining < 0) {
+    const absOver = Math.abs(remaining);
+    return {
+      current,
+      max,
+      remaining,
+      state: 'over',
+      statusText: `Over by ${absOver} ${absOver === 1 ? 'character' : 'characters'}. On save, text will be truncated to ${max}.`,
+      counterText: `${current}/${max}`,
+    };
+  }
+  if (remaining <= warningThreshold) {
+    return {
+      current,
+      max,
+      remaining,
+      state: 'warning',
+      statusText: `${remaining} ${remaining === 1 ? 'character' : 'characters'} remaining.`,
+      counterText: `${current}/${max}`,
+    };
+  }
+  return {
+    current,
+    max,
+    remaining,
+    state: 'normal',
+    statusText: '',
+    counterText: `${current}/${max}`,
+  };
+}
+
+function updateTextCounterUI(counterNode, statusNode, feedback) {
+  if (!counterNode || !feedback) return;
+  counterNode.textContent = feedback.counterText;
+  counterNode.className = `text-counter text-counter--${feedback.state}`;
+  if (statusNode) {
+    statusNode.textContent = feedback.statusText;
+    statusNode.className = `text-counter-status text-counter-status--${feedback.state}`;
+  }
+}
+
+function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
+  const phase = options.phase || 'save';
   if (inputType === 'number') {
-    const coerced = coerceAnswerValueByInputType('number', rawValue);
-    if (coerced === '') return '';
-    return clampToNumberConfig(coerced, responseConfig);
+    // Already-normalized finite numbers (e.g. 1e-7) are returned directly to
+    // avoid re-running string-based regex validation that rejects scientific
+    // notation representations. Input validation is performed upstream by
+    // getNumberInputErrorMessage before the normalized value is stored.
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+      return rawValue;
+    }
+    const validation = validateNumberInputFormat(rawValue, responseConfig.numberRules);
+    if (!validation.ok) return '';
+    return validation.normalizedValue;
   }
   if (inputType === 'multiple_choice') {
     const options = Array.isArray(responseConfig.options)
@@ -241,6 +288,12 @@ function coerceAnswerValueForQuestion(questionBlock, rawValue) {
     }
     const single = String(rawValue ?? '');
     return options.includes(single) ? single : '';
+  }
+  if (inputType === 'text') {
+    if (phase === 'edit') {
+      return String(rawValue ?? '');
+    }
+    return clampTextAnswer(rawValue, responseConfig.maxLength);
   }
   return coerceAnswerValueByInputType(inputType, rawValue);
 }
@@ -287,12 +340,94 @@ function computeAnswerSummary(viewerPayload, answers) {
   return { answered, total: questions.length };
 }
 
-function getInputHelperText(inputType) {
+function getInputHelperText(inputType, responseConfig = {}) {
   if (inputType === 'text') return 'Text response.';
-  if (inputType === 'number') return 'Numeric answer only.';
+  if (inputType === 'number') {
+    const constraints = [];
+    if (Number.isFinite(responseConfig.min)) {
+      constraints.push(`minimum ${Number(responseConfig.min)}`);
+    }
+    if (Number.isFinite(responseConfig.max)) {
+      constraints.push(`maximum ${Number(responseConfig.max)}`);
+    }
+    const suffix = constraints.length > 0 ? ` Range: ${constraints.join(', ')}.` : '';
+    return `Enter integer/decimal only (fractions like 2/3 are not supported).${suffix}`;
+  }
   if (inputType === 'boolean') return 'Choose True / False.';
   if (inputType === 'multiple_choice') return 'Choose one or more options.';
   return 'Text response.';
+}
+
+function getNumberInputErrorMessage(rawValue, responseConfig = {}) {
+  const trimmed = String(rawValue ?? '').trim();
+  if (trimmed === '') {
+    return { message: '', normalizedValue: '' };
+  }
+
+  const normalizedRules = normalizeNumberRules(responseConfig.numberRules);
+  const formatValidation = validateNumberInputFormat(trimmed, {
+    allowedKinds: ['integer', 'decimal'],
+    allowSigned: true,
+    decimalPlacesAllowed: null,
+  });
+  if (!formatValidation.ok) {
+    const messageByCode = {
+      fraction_not_allowed: 'Fractions are not supported (for example, 2/3).',
+      invalid_syntax: 'Enter a valid integer or decimal number.',
+    };
+    return {
+      message: messageByCode[formatValidation.errorCode] || 'Enter a valid integer or decimal number.',
+      normalizedValue: '',
+    };
+  }
+
+  const numericValue = formatValidation.normalizedValue;
+  const min = Number.isFinite(responseConfig.min) ? Number(responseConfig.min) : null;
+  const max = Number.isFinite(responseConfig.max) ? Number(responseConfig.max) : null;
+  if (min !== null && numericValue < min) {
+    return { message: `Value is below minimum (${min}).`, normalizedValue: '' };
+  }
+  if (max !== null && numericValue > max) {
+    return { message: `Value is above maximum (${max}).`, normalizedValue: '' };
+  }
+
+  if (!normalizedRules.allowSigned && (/^[+-]/).test(trimmed)) {
+    return { message: 'Signed values are not allowed for this question.', normalizedValue: '' };
+  }
+
+  const strictValidation = validateNumberInputFormat(trimmed, normalizedRules);
+  if (!strictValidation.ok) {
+    const messageByCode = {
+      kind_not_allowed: 'Only the configured number format is allowed.',
+      decimal_places_exceeded: 'Too many decimal places for this question.',
+      sign_not_allowed: 'Signed values are not allowed for this question.',
+      fraction_not_allowed: 'Fractions are not supported (for example, 2/3).',
+      invalid_syntax: 'Enter a valid integer or decimal number.',
+    };
+    return { message: messageByCode[strictValidation.errorCode] || 'Invalid number format.', normalizedValue: '' };
+  }
+
+  return { message: '', normalizedValue: strictValidation.normalizedValue };
+}
+
+function ensureControlDescribedBy(control, describedById) {
+  if (!control || !describedById) return;
+  const existing = String(control.getAttribute('aria-describedby') || '').trim();
+  const tokens = existing ? existing.split(/\s+/).filter(Boolean) : [];
+  if (!tokens.includes(describedById)) {
+    tokens.push(describedById);
+  }
+  control.setAttribute('aria-describedby', tokens.join(' ').trim());
+}
+
+function createInputErrorNode(errorId) {
+  const node = document.createElement('p');
+  node.className = 'input-error';
+  node.textContent = '';
+  node.id = errorId;
+  node.setAttribute('aria-live', 'polite');
+  node.setAttribute('role', 'status');
+  return node;
 }
 
 function deterministicShuffle(items, seedText) {
@@ -575,7 +710,7 @@ class ViewerAttemptSession {
     if (!questionBlock) {
       return;
     }
-    const coercedValue = coerceAnswerValueForQuestion(questionBlock, value);
+    const coercedValue = coerceAnswerValueForQuestion(questionBlock, value, { phase: 'edit' });
 
     this.state.answers = {
       ...this.state.answers,
@@ -625,6 +760,18 @@ class ViewerAttemptSession {
     const revisionAtSaveStart = this.state.attemptRevision;
     const updatedAt = nowIso();
 
+    const normalizedAnswers = {};
+    Object.entries(this.state.answers || {}).forEach(([blockId, answer]) => {
+      const questionBlock = this.state.viewerPayload?.blocks?.find(
+        (block) => block.blockId === blockId && block.kind === 'question'
+      );
+      if (!questionBlock) return;
+      normalizedAnswers[blockId] = {
+        ...answer,
+        value: coerceAnswerValueForQuestion(questionBlock, answer?.value, { phase: 'save' }),
+      };
+    });
+
     const attemptRecord = {
       localId: this.state.localAttemptId,
       localAttemptId: this.state.localAttemptId,
@@ -634,7 +781,7 @@ class ViewerAttemptSession {
       startedAt: this.state.startedAt,
       lastSavedAt: updatedAt,
       completedAt: this.state.completedAt,
-      answers: this.state.answers,
+      answers: normalizedAnswers,
       metadata: {
         localId: this.state.localAttemptId,
         origin: this.state.source || 'local_source',
@@ -783,8 +930,10 @@ function renderViewerShell(session) {
   const questionList = document.createElement('div');
   questionList.id = 'viewer-answer-form';
   const answerControls = new Map();
+  const textControlFeedback = new Map();
   let contentSignature = null;
   let questionSignature = null;
+  const numberInputErrors = new Map();
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
@@ -849,6 +998,7 @@ function renderViewerShell(session) {
     }
     questionSignature = nextSignature;
     answerControls.clear();
+    textControlFeedback.clear();
     questionList.innerHTML = '';
 
     questionBlocks.forEach((block, index) => {
@@ -862,27 +1012,91 @@ function renderViewerShell(session) {
 
       const helper = document.createElement('p');
       helper.className = 'muted';
-      helper.textContent = getInputHelperText(inputType);
+      helper.textContent = getInputHelperText(inputType, block.responseConfig || {});
+      helper.id = `${controlId}-helper`;
+      const inputError = createInputErrorNode(`${controlId}-error`);
+      let textCounter = null;
+      let textStatus = null;
+      if (inputType === 'text') {
+        textCounter = document.createElement('p');
+        textCounter.className = 'text-counter';
+        textCounter.id = `${controlId}-counter`;
+        textStatus = document.createElement('p');
+        textStatus.className = 'text-counter-status';
+        textStatus.id = `${controlId}-status`;
+        textStatus.setAttribute('aria-live', 'polite');
+        textStatus.setAttribute('role', 'status');
+      }
 
       let control;
       if (inputType === 'text' && block.responseConfig?.displayMode === 'single_line') {
         control = document.createElement('input');
         control.type = 'text';
-        control.maxLength = block.responseConfig?.maxLength || 200;
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
+          const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
+          updateTextCounterUI(textCounter, textStatus, feedback);
           updateSummary();
         });
       } else if (inputType === 'number') {
         control = document.createElement('input');
-        control.type = 'number';
-        if (Number.isFinite(block.responseConfig?.min)) control.min = String(block.responseConfig.min);
-        if (Number.isFinite(block.responseConfig?.max)) control.max = String(block.responseConfig.max);
-        if (Number.isFinite(block.responseConfig?.step) && Number(block.responseConfig.step) > 0) {
-          control.step = String(block.responseConfig.step);
+        control.type = 'text';
+        control.inputMode = 'decimal';
+        const numberRules = normalizeNumberRules(block.responseConfig?.numberRules);
+        const allowSignedPrefix = numberRules.allowSigned ? '[+-]?' : '';
+        let decimalPattern;
+        if (numberRules.allowedKinds.includes('decimal') && typeof numberRules.decimalPlacesAllowed === 'number') {
+          decimalPattern = numberRules.decimalPlacesAllowed > 0
+            ? `\\d+\\.\\d{1,${numberRules.decimalPlacesAllowed}}`
+            : '\\d+';
+        } else {
+          decimalPattern = '\\d+\\.\\d+';
         }
+        const kindPattern = numberRules.allowedKinds.includes('integer') && numberRules.allowedKinds.includes('decimal')
+          ? '\\d+(\\.\\d+)?'
+          : numberRules.allowedKinds.includes('decimal')
+            ? decimalPattern
+            : '\\d+';
+        control.pattern = `${allowSignedPrefix}${kindPattern}`;
+        const kinds = numberRules.allowedKinds;
+        let kindDescription;
+        if (kinds.includes('integer') && kinds.includes('decimal')) {
+          kindDescription = 'integer or decimal number';
+        } else if (kinds.includes('integer')) {
+          kindDescription = 'integer';
+        } else if (kinds.includes('decimal')) {
+          kindDescription = 'decimal number';
+        } else {
+          kindDescription = 'number';
+        }
+        const constraints = [];
+        if (!numberRules.allowSigned) {
+          constraints.push('without a leading + or - sign');
+        }
+        if (kinds.includes('decimal') && typeof numberRules.decimalPlacesAllowed === 'number') {
+          if (numberRules.decimalPlacesAllowed === 1) {
+            constraints.push('with at most 1 digit after the decimal point');
+          } else if (numberRules.decimalPlacesAllowed > 1) {
+            constraints.push(`with at most ${numberRules.decimalPlacesAllowed} digits after the decimal point`);
+          }
+        }
+        let title = `Enter a valid ${kindDescription}`;
+        if (constraints.length > 0) {
+          title += ` (${constraints.join(', ')}).`;
+        } else {
+          title += '.';
+        }
+        control.title = title;
         control.addEventListener('input', () => {
-          session.setAnswer(block.blockId, control.value);
+          const { message, normalizedValue } = getNumberInputErrorMessage(control.value, block.responseConfig || {});
+          if (message) {
+            numberInputErrors.set(block.blockId, message);
+            session.setAnswer(block.blockId, '');
+            updateSummary();
+            return;
+          }
+          numberInputErrors.set(block.blockId, '');
+          session.setAnswer(block.blockId, normalizedValue);
           updateSummary();
         });
       } else if (inputType === 'boolean') {
@@ -952,18 +1166,33 @@ function renderViewerShell(session) {
       } else {
         control = document.createElement('textarea');
         control.rows = 5;
-        control.maxLength = block.responseConfig?.maxLength || 200;
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
+          const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
+          updateTextCounterUI(textCounter, textStatus, feedback);
           updateSummary();
         });
       }
 
       if (typeof HTMLElement !== 'undefined' && control instanceof HTMLElement) {
         control.id = controlId;
+        ensureControlDescribedBy(control, helper.id);
+        if (inputType === 'text') {
+          ensureControlDescribedBy(control, textCounter.id);
+          ensureControlDescribedBy(control, textStatus.id);
+        }
+        ensureControlDescribedBy(control, inputError.id);
       }
       answerControls.set(block.blockId, control);
-      card.append(label, helper, control);
+      if (inputType === 'text') {
+        textControlFeedback.set(block.blockId, {
+          counter: textCounter,
+          status: textStatus,
+        });
+        card.append(label, helper, control, textCounter, textStatus, inputError);
+      } else {
+        card.append(label, helper, control, inputError);
+      }
       questionList.appendChild(card);
     });
   };
@@ -991,8 +1220,18 @@ function renderViewerShell(session) {
       } else if (control !== activeElement && control.value !== nextValue) {
         control.value = nextValue;
       }
+      if (inputType === 'text') {
+        const feedbackNodes = textControlFeedback.get(block.blockId);
+        const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
+        updateTextCounterUI(feedbackNodes?.counter, feedbackNodes?.status, feedback);
+      }
       if (!(inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi')) {
         control.disabled = session.state.status === 'completed';
+      }
+      const card = control.closest('.question-card');
+      const errorNode = card?.querySelector('.input-error');
+      if (errorNode) {
+        errorNode.textContent = inputType === 'number' ? (numberInputErrors.get(block.blockId) || '') : '';
       }
     });
   };
@@ -1089,6 +1328,12 @@ export {
   computeAnswerSummary,
   partitionBlocksForDisplay,
   getInputHelperText,
+  getNumberInputErrorMessage,
   coerceAnswerValueForQuestion,
+  clampTextAnswer,
+  computeTextLengthFeedback,
+  updateTextCounterUI,
   deterministicShuffle,
+  ensureControlDescribedBy,
+  createInputErrorNode,
 };
