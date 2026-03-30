@@ -1218,7 +1218,7 @@ function renderViewerShell(session) {
               session.setAnswer(block.blockId, optionValues.filter((value) => selectedSet.has(value)));
             } else {
               const currentState = getChoiceSelectionState(selectionMode, currentRawValue, optionValues);
-              const nextValue = currentState.selectedValue === choiceValue ? currentState.selectedValue : choiceValue;
+              const nextValue = currentState.selectedValue === choiceValue ? '' : choiceValue;
               session.setAnswer(block.blockId, nextValue);
             }
             updateSummary();
