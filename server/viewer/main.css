@@ -54,6 +54,34 @@ body {
   min-height: 1.2em;
 }
 
+.text-counter {
+  margin: 2px 0 0;
+  color: #067647;
+  font-size: 0.85rem;
+}
+
+.text-counter-status {
+  margin: 0;
+  font-size: 0.85rem;
+  min-height: 1.2em;
+  color: #067647;
+}
+
+.text-counter--normal,
+.text-counter-status--normal {
+  color: #067647;
+}
+
+.text-counter--warning,
+.text-counter-status--warning {
+  color: #b54708;
+}
+
+.text-counter--over,
+.text-counter-status--over {
+  color: #b42318;
+}
+
 .content-card,
 .question-card {
   border: 1px solid #d8dde8;

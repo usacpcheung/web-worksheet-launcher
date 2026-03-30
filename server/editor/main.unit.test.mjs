@@ -342,7 +342,6 @@ test('text response normalization removes stale numeric constraints', async () =
         displayMode: 'single_line',
         min: 1,
         max: 10,
-        step: 2,
       },
     },
   ]);
@@ -616,9 +615,10 @@ test('question number config and multiple choice settings update through helpers
   session.updateQuestionNumberConfig(block.blockId, 'step', '0.5');
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.deepEqual(
-    { min: updated.responseConfig.min, max: updated.responseConfig.max, step: updated.responseConfig.step },
-    { min: 1, max: 10, step: 0.5 }
+    { min: updated.responseConfig.min, max: updated.responseConfig.max },
+    { min: 1, max: 10 }
   );
+  assert.equal(Object.hasOwn(updated.responseConfig, 'step'), false);
 
   session.updateQuestionInputType(block.blockId, 'multiple_choice');
   session.updateQuestionSelectionMode(block.blockId, 'multi');

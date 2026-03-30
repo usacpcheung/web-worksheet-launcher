@@ -38,7 +38,6 @@ const draftFixture = {
         inputType: 'number',
         min: 0,
         max: 10,
-        step: 0.5,
         numberRules: {
           allowedKinds: ['decimal'],
           allowSigned: false,
@@ -116,7 +115,6 @@ const snapshotFixture = {
         inputType: 'number',
         min: 0,
         max: 10,
-        step: 0.5,
         numberRules: {
           allowedKinds: ['decimal'],
           allowSigned: false,
@@ -183,7 +181,6 @@ const viewerPayloadFixture = {
         inputType: 'number',
         min: 0,
         max: 10,
-        step: 0.5,
         numberRules: {
           allowedKinds: ['decimal'],
           allowSigned: false,
