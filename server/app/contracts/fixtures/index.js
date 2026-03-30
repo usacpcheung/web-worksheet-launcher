@@ -14,8 +14,9 @@ const draftFixture = {
         format: 'plain_text',
       },
       responseConfig: {
-        inputType: 'rich_text',
-        maxLength: 500,
+        inputType: 'text',
+        maxLength: 240,
+        displayMode: 'multi_line',
       },
       draftMeta: {
         isDirty: true,
@@ -23,6 +24,46 @@ const draftFixture = {
       localValidation: {
         level: 'warning',
         messages: ['Prompt should mention success criteria.'],
+      },
+    },
+    {
+      blockId: 'blk_q_002',
+      kind: 'question',
+      position: 1,
+      prompt: {
+        text: 'Enter a score between 0 and 10 in 0.5 increments.',
+        format: 'plain_text',
+      },
+      responseConfig: {
+        inputType: 'number',
+        min: 0,
+        max: 10,
+        numberRules: {
+          allowedKinds: ['decimal'],
+          allowSigned: false,
+          decimalPlacesAllowed: 1,
+        },
+        correctAnswer: 7.5,
+      },
+    },
+    {
+      blockId: 'blk_q_003',
+      kind: 'question',
+      position: 2,
+      prompt: {
+        text: 'Select all claims supported by evidence.',
+        format: 'plain_text',
+      },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        selectionMode: 'multi',
+        shuffleOptions: true,
+        options: [
+          { value: 'claim_a', label: 'Claim A' },
+          { value: 'claim_b', label: 'Claim B' },
+          { value: 'claim_c', label: 'Claim C' },
+        ],
+        correctAnswer: ['claim_a', 'claim_c'],
       },
     },
   ],
@@ -57,8 +98,49 @@ const snapshotFixture = {
         format: 'plain_text',
       },
       responseConfig: {
-        inputType: 'rich_text',
-        maxLength: 500,
+        inputType: 'text',
+        maxLength: 240,
+        displayMode: 'multi_line',
+      },
+    },
+    {
+      blockId: 'blk_q_002',
+      kind: 'question',
+      position: 1,
+      prompt: {
+        text: 'Enter a score between 0 and 10 in 0.5 increments.',
+        format: 'plain_text',
+      },
+      responseConfig: {
+        inputType: 'number',
+        min: 0,
+        max: 10,
+        numberRules: {
+          allowedKinds: ['decimal'],
+          allowSigned: false,
+          decimalPlacesAllowed: 1,
+        },
+        correctAnswer: 7.5,
+      },
+    },
+    {
+      blockId: 'blk_q_003',
+      kind: 'question',
+      position: 2,
+      prompt: {
+        text: 'Select all claims supported by evidence.',
+        format: 'plain_text',
+      },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        selectionMode: 'multi',
+        shuffleOptions: true,
+        options: [
+          { value: 'claim_a', label: 'Claim A' },
+          { value: 'claim_b', label: 'Claim B' },
+          { value: 'claim_c', label: 'Claim C' },
+        ],
+        correctAnswer: ['claim_a', 'claim_c'],
       },
     },
   ],
@@ -82,8 +164,49 @@ const viewerPayloadFixture = {
         format: 'plain_text',
       },
       responseConfig: {
-        inputType: 'rich_text',
-        maxLength: 500,
+        inputType: 'text',
+        maxLength: 240,
+        displayMode: 'multi_line',
+      },
+    },
+    {
+      blockId: 'blk_q_002',
+      kind: 'question',
+      position: 1,
+      prompt: {
+        text: 'Enter a score between 0 and 10 in 0.5 increments.',
+        format: 'plain_text',
+      },
+      responseConfig: {
+        inputType: 'number',
+        min: 0,
+        max: 10,
+        numberRules: {
+          allowedKinds: ['decimal'],
+          allowSigned: false,
+          decimalPlacesAllowed: 1,
+        },
+        correctAnswer: 7.5,
+      },
+    },
+    {
+      blockId: 'blk_q_003',
+      kind: 'question',
+      position: 2,
+      prompt: {
+        text: 'Select all claims supported by evidence.',
+        format: 'plain_text',
+      },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        selectionMode: 'multi',
+        shuffleOptions: true,
+        options: [
+          { value: 'claim_a', label: 'Claim A' },
+          { value: 'claim_b', label: 'Claim B' },
+          { value: 'claim_c', label: 'Claim C' },
+        ],
+        correctAnswer: ['claim_a', 'claim_c'],
       },
     },
   ],
@@ -101,10 +224,16 @@ const attemptPayloadFixture = {
   submittedAt: '2026-03-22T12:15:00Z',
   answers: {
     blk_q_001: {
-      value: {
-        text: 'A stronger claim uses evidence from the passage to support the argument.',
-      },
+      value: 'A stronger claim uses evidence from the passage to support the argument.',
       answeredAt: '2026-03-22T12:14:30Z',
+    },
+    blk_q_002: {
+      value: 7.5,
+      answeredAt: '2026-03-22T12:14:45Z',
+    },
+    blk_q_003: {
+      value: ['claim_a', 'claim_c'],
+      answeredAt: '2026-03-22T12:14:55Z',
     },
   },
 };
