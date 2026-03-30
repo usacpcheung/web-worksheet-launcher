@@ -58,7 +58,6 @@ body {
   margin: 2px 0 0;
   color: #067647;
   font-size: 0.85rem;
-  font-weight: 600;
 }
 
 .text-counter-status {
@@ -66,7 +65,6 @@ body {
   font-size: 0.85rem;
   min-height: 1.2em;
   color: #067647;
-  font-weight: 500;
 }
 
 .text-counter--normal,
