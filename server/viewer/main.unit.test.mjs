@@ -200,6 +200,14 @@ test('coerceAnswerValueForQuestion does not silently clamp out-of-range numbers'
   assert.equal(mod.coerceAnswerValueForQuestion(question, '3.24'), 3.24);
 });
 
+test('coerceAnswerValueForQuestion preserves already-normalized finite numbers including scientific notation', async () => {
+  const mod = await loadViewerModule();
+  const question = { responseConfig: { inputType: 'number' } };
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 1e-7), 1e-7);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 0.0000001), 1e-7);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 42), 42);
+});
+
 test('coerceAnswerValueForQuestion validates number format rules (integer/decimal only)', async () => {
   const mod = await loadViewerModule();
   const question = {
@@ -555,6 +563,24 @@ test('getNumberInputErrorMessage reports range and rule errors without coercion'
   assert.deepEqual(mod.getNumberInputErrorMessage('4.5', responseConfig), {
     message: '',
     normalizedValue: 4.5,
+  });
+});
+
+test('getNumberInputErrorMessage validates step alignment', async () => {
+  const mod = await loadViewerModule();
+  const responseConfig = { min: 0, max: 10, step: 0.5 };
+
+  assert.deepEqual(mod.getNumberInputErrorMessage('1.3', responseConfig), {
+    message: 'Value must be in increments of 0.5.',
+    normalizedValue: '',
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('2.5', responseConfig), {
+    message: '',
+    normalizedValue: 2.5,
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('3', responseConfig), {
+    message: '',
+    normalizedValue: 3,
   });
 });
 

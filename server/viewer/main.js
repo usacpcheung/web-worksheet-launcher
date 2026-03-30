@@ -10,6 +10,7 @@ const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
+const STEP_ALIGNMENT_EPSILON = 1e-9;
 
 function nowIso() {
   return new Date().toISOString();
@@ -270,6 +271,13 @@ function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
   const phase = options.phase || 'save';
   if (inputType === 'number') {
+    // Already-normalized finite numbers (e.g. 1e-7) are returned directly to
+    // avoid re-running string-based regex validation that rejects scientific
+    // notation representations. Input validation is performed upstream by
+    // getNumberInputErrorMessage before the normalized value is stored.
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+      return rawValue;
+    }
     const validation = validateNumberInputFormat(rawValue, responseConfig.numberRules);
     if (!validation.ok) return '';
     return validation.normalizedValue;
@@ -385,6 +393,18 @@ function getNumberInputErrorMessage(rawValue, responseConfig = {}) {
   }
   if (max !== null && numericValue > max) {
     return { message: `Value is above maximum (${max}).`, normalizedValue: '' };
+  }
+
+  if (Number.isFinite(responseConfig.step)) {
+    const step = Number(responseConfig.step);
+    if (step > 0) {
+      const base = min !== null ? min : 0;
+      const offset = (numericValue - base) / step;
+      const nearestInteger = Math.round(offset);
+      if (Math.abs(offset - nearestInteger) > STEP_ALIGNMENT_EPSILON) {
+        return { message: `Value must be in increments of ${step}.`, normalizedValue: '' };
+      }
+    }
   }
 
   if (!normalizedRules.allowSigned && (/^[+-]/).test(trimmed)) {
