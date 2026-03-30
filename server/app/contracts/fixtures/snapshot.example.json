@@ -19,8 +19,9 @@
         "format": "plain_text"
       },
       "responseConfig": {
-        "inputType": "rich_text",
-        "maxLength": 500
+        "inputType": "text",
+        "maxLength": 240,
+        "displayMode": "multi_line"
       }
     },
     {
@@ -28,13 +29,36 @@
       "kind": "question",
       "position": 1,
       "prompt": {
+        "text": "Enter a score between 0 and 10 in 0.5 increments.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "number",
+        "min": 0,
+        "max": 10,
+        "step": 0.5,
+        "numberRules": {
+          "allowedKinds": [
+            "decimal"
+          ],
+          "allowSigned": false,
+          "decimalPlacesAllowed": 1
+        },
+        "correctAnswer": 7.5
+      }
+    },
+    {
+      "blockId": "blk_q_003",
+      "kind": "question",
+      "position": 2,
+      "prompt": {
         "text": "Select all claims supported by evidence.",
         "format": "plain_text"
       },
       "responseConfig": {
         "inputType": "multiple_choice",
         "selectionMode": "multi",
-        "shuffleOptions": false,
+        "shuffleOptions": true,
         "options": [
           {
             "value": "claim_a",

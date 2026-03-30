@@ -94,8 +94,9 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
         "format": "plain_text"
       },
       "responseConfig": {
-        "inputType": "rich_text",
-        "maxLength": 500
+        "inputType": "text",
+        "maxLength": 240,
+        "displayMode": "multi_line"
       },
       "draftMeta": {
         "isNew": false,
@@ -108,9 +109,66 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
       }
     },
     {
-      "blockId": "blk_txt_002",
-      "kind": "content",
+      "blockId": "blk_q_002",
+      "kind": "question",
       "position": 1,
+      "prompt": {
+        "text": "Enter a score between 0 and 10 in 0.5 increments.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "number",
+        "min": 0,
+        "max": 10,
+        "step": 0.5,
+        "numberRules": {
+          "allowedKinds": ["decimal"],
+          "allowSigned": false,
+          "decimalPlacesAllowed": 1
+        },
+        "correctAnswer": 7.5
+      },
+      "draftMeta": {
+        "isNew": false,
+        "isDirty": false
+      },
+      "localValidation": {
+        "level": "ok",
+        "messages": []
+      }
+    },
+    {
+      "blockId": "blk_q_003",
+      "kind": "question",
+      "position": 2,
+      "prompt": {
+        "text": "Select all evidence-backed claims.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "multiple_choice",
+        "selectionMode": "multi",
+        "shuffleOptions": true,
+        "options": [
+          { "value": "claim_a", "label": "Claim A" },
+          { "value": "claim_b", "label": "Claim B" },
+          { "value": "claim_c", "label": "Claim C" }
+        ],
+        "correctAnswer": ["claim_a", "claim_c"]
+      },
+      "draftMeta": {
+        "isNew": true,
+        "isDirty": true
+      },
+      "localValidation": {
+        "level": "ok",
+        "messages": []
+      }
+    },
+    {
+      "blockId": "blk_txt_004",
+      "kind": "content",
+      "position": 3,
       "content": {
         "text": "Use evidence from the passage in your revision.",
         "format": "plain_text"
@@ -184,14 +242,56 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
         "format": "plain_text"
       },
       "responseConfig": {
-        "inputType": "rich_text",
-        "maxLength": 500
+        "inputType": "text",
+        "maxLength": 240,
+        "displayMode": "multi_line"
       }
     },
     {
-      "blockId": "blk_txt_002",
-      "kind": "content",
+      "blockId": "blk_q_002",
+      "kind": "question",
       "position": 1,
+      "prompt": {
+        "text": "Enter a score between 0 and 10 in 0.5 increments.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "number",
+        "min": 0,
+        "max": 10,
+        "step": 0.5,
+        "numberRules": {
+          "allowedKinds": ["decimal"],
+          "allowSigned": false,
+          "decimalPlacesAllowed": 1
+        },
+        "correctAnswer": 7.5
+      }
+    },
+    {
+      "blockId": "blk_q_003",
+      "kind": "question",
+      "position": 2,
+      "prompt": {
+        "text": "Select all evidence-backed claims.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "multiple_choice",
+        "selectionMode": "multi",
+        "shuffleOptions": true,
+        "options": [
+          { "value": "claim_a", "label": "Claim A" },
+          { "value": "claim_b", "label": "Claim B" },
+          { "value": "claim_c", "label": "Claim C" }
+        ],
+        "correctAnswer": ["claim_a", "claim_c"]
+      }
+    },
+    {
+      "blockId": "blk_txt_004",
+      "kind": "content",
+      "position": 3,
       "content": {
         "text": "Use evidence from the passage in your revision.",
         "format": "plain_text"
@@ -339,14 +439,56 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
         "format": "plain_text"
       },
       "responseConfig": {
-        "inputType": "rich_text",
-        "maxLength": 500
+        "inputType": "text",
+        "maxLength": 240,
+        "displayMode": "multi_line"
       }
     },
     {
-      "blockId": "blk_txt_002",
-      "kind": "content",
+      "blockId": "blk_q_002",
+      "kind": "question",
       "position": 1,
+      "prompt": {
+        "text": "Enter a score between 0 and 10 in 0.5 increments.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "number",
+        "min": 0,
+        "max": 10,
+        "step": 0.5,
+        "numberRules": {
+          "allowedKinds": ["decimal"],
+          "allowSigned": false,
+          "decimalPlacesAllowed": 1
+        },
+        "correctAnswer": 7.5
+      }
+    },
+    {
+      "blockId": "blk_q_003",
+      "kind": "question",
+      "position": 2,
+      "prompt": {
+        "text": "Select all evidence-backed claims.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "multiple_choice",
+        "selectionMode": "multi",
+        "shuffleOptions": true,
+        "options": [
+          { "value": "claim_a", "label": "Claim A" },
+          { "value": "claim_b", "label": "Claim B" },
+          { "value": "claim_c", "label": "Claim C" }
+        ],
+        "correctAnswer": ["claim_a", "claim_c"]
+      }
+    },
+    {
+      "blockId": "blk_txt_004",
+      "kind": "content",
+      "position": 3,
       "content": {
         "text": "Use evidence from the passage in your revision.",
         "format": "plain_text"
@@ -389,10 +531,16 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
   "submittedAt": "2026-03-22T12:15:00Z",
   "answers": {
     "blk_q_001": {
-      "value": {
-        "text": "A stronger claim uses evidence from the passage to support the argument."
-      },
+      "value": "A stronger claim uses evidence from the passage to support the argument.",
       "answeredAt": "2026-03-22T12:14:30Z"
+    },
+    "blk_q_002": {
+      "value": 7.5,
+      "answeredAt": "2026-03-22T12:14:45Z"
+    },
+    "blk_q_003": {
+      "value": ["claim_a", "claim_c"],
+      "answeredAt": "2026-03-22T12:14:55Z"
     }
   }
 }
