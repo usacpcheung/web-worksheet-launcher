@@ -16,6 +16,150 @@ This document defines the bounded popup launch-query contract and postMessage co
 
 Companion editor/viewer route + auth contract (later-phase runtime surfaces) is defined in `worksheet_launcher_editor_viewer_spec.md` under **Route + Auth Contract (Normative)**.
 
+## Editor/Viewer response schema normalization (local draft/snapshot/viewer payloads)
+
+The editor + viewer runtime now uses these canonical `responseConfig` input types for question blocks:
+
+- `text`
+- `number`
+- `boolean`
+- `multiple_choice`
+
+### Backward compatibility rules (required on load/normalize)
+
+- `plain_text` and `short_text` must normalize to `text`.
+- `single_choice` must normalize to `multiple_choice` with `selectionMode: "single"`.
+- Existing `options: [{ value, label }]` payloads must be preserved.
+
+### Canonical responseConfig examples
+
+`text` (single-line or multi-line mode):
+
+```json
+{
+  "inputType": "text",
+  "maxLength": 200,
+  "displayMode": "multi_line"
+}
+```
+
+```json
+{
+  "inputType": "text",
+  "maxLength": 120,
+  "displayMode": "single_line"
+}
+```
+
+`number` (input-format validation only; not correctness/equivalence grading):
+
+```json
+{
+  "inputType": "number",
+  "numberRules": {
+    "allowedKinds": ["integer", "decimal"],
+    "allowSigned": true,
+    "decimalPlacesAllowed": null
+  },
+  "min": 0,
+  "max": 100
+}
+```
+
+`numberRules` constraints in this phase:
+
+- Only integer/decimal syntax is in scope.
+- Fraction syntax (for example `2/3`) is out of scope and must be rejected.
+- `decimalPlacesAllowed: null` means unlimited decimal places.
+- `allowedKinds` accepts only `integer` and/or `decimal`; when provided, an empty array is invalid at schema-validation time.
+- `allowSigned: false` rejects prefixed signed inputs (`+` and `-`) during input-format validation.
+- `min`/`max` are numeric validation controls in viewer answer handling:
+  - values outside `min` and/or `max` are rejected with an inline error (no silent clamping)
+
+`number` answer-key (`correctAnswer`) validity constraints:
+
+- must be a finite `number`
+- must satisfy `allowSigned` (no negative value when `allowSigned` is `false`)
+- must satisfy `min` and `max` when those bounds are present
+- for decimal values, must not exceed `decimalPlacesAllowed` when `decimalPlacesAllowed` is an integer
+- canonical normalization prunes invalid `correctAnswer` values from persisted `responseConfig`
+
+`boolean` (labeling guidance):
+
+```json
+{
+  "inputType": "boolean"
+}
+```
+
+UI copy for boolean prompts should use **“True / False”** helper/labels.
+
+`multiple_choice` single-select:
+
+```json
+{
+  "inputType": "multiple_choice",
+  "selectionMode": "single",
+  "shuffleOptions": false,
+  "options": [
+    { "value": "a", "label": "Option A" },
+    { "value": "b", "label": "Option B" }
+  ]
+}
+```
+
+`multiple_choice` multi-select with deterministic shuffle:
+
+```json
+{
+  "inputType": "multiple_choice",
+  "selectionMode": "multi",
+  "shuffleOptions": true,
+  "options": [
+    { "value": "x", "label": "Choice X" },
+    { "value": "y", "label": "Choice Y" },
+    { "value": "z", "label": "Choice Z" }
+  ]
+}
+```
+
+When `shuffleOptions` is enabled, viewer rendering should use a deterministic order for the active session (stable during that session).
+
+Deterministic shuffle seed behavior (viewer):
+
+- seed input is the string: ``${localAttemptId || "attempt"}:${blockId}``
+- options for a given question stay stable for one attempt/session
+- a different attempt id produces a different deterministic order
+- when `shuffleOptions` is `false`, original option order is preserved
+
+### Answer value shape rules
+
+- `text` → `string`
+- `number` → finite `number` (or empty when unanswered)
+- `boolean` → `boolean` (or null/empty when unanswered)
+- `multiple_choice` with `selectionMode: "single"` → `string` matching an existing `options[*].value`
+- `multiple_choice` with `selectionMode: "multi"` → `string[]`
+
+### Answer-key shape rules (`responseConfig.correctAnswer`, optional)
+
+`responseConfig.correctAnswer` is optional editor/viewer worksheet model data used for answer-key authoring and rendering. It is **not** part of the popup launch query or popup `postMessage` transport schema defined later in this document.
+
+When present on question blocks, `correctAnswer` must match the response input shape:
+
+- `boolean` → `boolean`
+- `number` → finite `number`
+- `multiple_choice` with `selectionMode: "single"` → `string` matching an existing `options[*].value`
+- `multiple_choice` with `selectionMode: "multi"` → `string[]` containing unique entries, where each entry matches an existing `options[*].value`
+
+`multiple_choice` mode-switch + pruning/coercion behavior (editor/runtime normalization):
+
+- canonical `selectionMode` is `single` unless explicitly set to `multi`
+- canonical `shuffleOptions` is a boolean
+- if `selectionMode` is `single`, non-string/invalid `correctAnswer` values are removed
+- if `selectionMode` is `multi`, `correctAnswer` is coerced to unique valid `string[]` values (invalid/non-string/duplicate values are pruned)
+- switching `single → multi` converts a valid single `correctAnswer` string to a one-element array
+- switching `multi → single` keeps only the first valid array entry as the single `correctAnswer`; if none are valid, `correctAnswer` is removed
+
 ## 1) Launch query contract
 
 The popup URL query string **must** follow:

@@ -239,6 +239,306 @@ Protected APIs are authenticated enhancement services:
 - server-backed worksheet load service
 - attempt sync/save/load service
 
+## Minimum Backend API Contract (Scaffolding-Normative)
+
+This section defines the **minimum** JSON contract for backend draft/snapshot/attempt endpoints so frontend and backend can integrate before full business logic exists.
+
+Identifier mapping in all request/response payloads is fixed to the database schema contract:
+- frontend `worksheetId` ↔ DB `worksheets.public_id`
+- frontend `snapshotId` ↔ DB `worksheet_versions.public_id`
+- frontend `attemptId` ↔ DB `worksheet_attempts.public_id`
+
+### Common response envelope and auth/error semantics
+
+Success envelope:
+
+```json
+{
+  "ok": true,
+  "data": {}
+}
+```
+
+Error envelope:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "string_enum",
+    "message": "human readable",
+    "details": {}
+  }
+}
+```
+
+Required auth/error status behavior across endpoints:
+
+- `401 Unauthenticated` + `AUTH_UNAUTHENTICATED`: no valid OIDC session for an endpoint that requires authenticated identity
+- `403 Unauthorized` + `AUTH_FORBIDDEN`: authenticated identity exists, the target resource is known to the server and is allowed to be *existence-revealing* for this endpoint, but the caller does not have permission to perform the requested action on that worksheet/snapshot/attempt
+- `400 Invalid Request` + `INVALID_REQUEST`: malformed request shape or invalid create/update usage for contracts that support both create and update semantics
+- `409 Conflict` + `STATE_CONFLICT`: optimistic concurrency/revision mismatch or duplicate-resume conflict
+- `404 Not Found` + `NOT_FOUND`: the resource identifier is unknown **or** the resource exists but is *not visible to the caller by policy*, and the endpoint intentionally does not acknowledge its existence (i.e., the response is 404 instead of 403 to avoid existence disclosure)
+
+**403 vs 404 rule:** For any endpoint, if a request targets a resource whose existence is safe and intended to be acknowledged (e.g., a user’s own worksheet listed via an index call), implementations MUST return `403` when the caller is authenticated but lacks permission for the requested action. If either (a) the identifier is unknown or (b) the endpoint’s access-control policy requires hiding whether the resource exists for this caller, implementations MUST return `404` and `NOT_FOUND` instead of `403` to avoid existence disclosure. Endpoints MUST apply this rule consistently for the same resource type.
+### 1) `saveDraft`
+
+Purpose: upsert authenticated draft state for a worksheet owner.
+
+Auth:
+- Requires authenticated OIDC subject (`sub`)
+- Guest/anonymous not allowed
+
+Request example:
+
+```json
+{
+  "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+  "baseRevision": "wr_000041",
+  "draftContent": {
+    "title": "Fractions Practice",
+    "blocks": []
+  },
+  "clientUpdatedAt": "2026-03-27T10:00:00Z"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+    "revision": "wr_000042",
+    "updatedAt": "2026-03-27T10:00:01Z"
+  }
+}
+```
+
+### 2) `loadDraft`
+
+Purpose: load current authenticated owner draft by public worksheet identifier.
+
+Auth:
+- Requires authenticated OIDC subject (`sub`)
+- Guest/anonymous not allowed
+
+Request example:
+
+```json
+{
+  "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de"
+}
+```
+
+Normative no-draft behavior:
+- If `worksheetId` is valid and visible/authorized for the caller but no server draft exists yet, backend MUST return `200` with `{"ok": true, "data": null}`.
+- `404 NOT_FOUND` is reserved for worksheet identifiers that are unknown or not visible to the caller by policy.
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+    "revision": "wr_000042",
+    "draftContent": {
+      "title": "Fractions Practice",
+      "blocks": []
+    },
+    "updatedAt": "2026-03-27T10:00:01Z"
+  }
+}
+```
+
+Response example (no server draft yet):
+
+```json
+{
+  "ok": true,
+  "data": null
+}
+```
+
+Frontend handling note:
+- Branch `ok=true && data=null` as a normal “no server draft yet” state and continue local-first draft flow (optionally first-save prompt).
+- Branch `404 NOT_FOUND` as “worksheet missing or not visible” and route to unavailable/not-found UX; do not silently treat this as empty draft state.
+
+### 3) `publishSnapshot`
+
+Purpose: create immutable published snapshot from current draft.
+
+Auth:
+- Requires authenticated OIDC subject (`sub`)
+- Guest/anonymous not allowed
+
+Request example:
+
+```json
+{
+  "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+  "baseRevision": "wr_000042",
+  "publishNote": "Unit 3 release"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+    "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+    "versionNo": 3,
+    "publishedAt": "2026-03-27T10:05:00Z"
+  }
+}
+```
+
+### 4) `loadPublishedSnapshot`
+
+Purpose: load immutable published worksheet content for viewer/runtime.
+
+Auth:
+- OIDC subject not required for public snapshot access
+- If product policy marks a snapshot restricted, require authenticated OIDC subject and enforce authorization
+
+Request example:
+
+```json
+{
+  "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+    "worksheetId": "1f1f3f7e-8e7e-4f5a-a4d1-2d4a4ff0f3de",
+    "versionNo": 3,
+    "content": {
+      "title": "Fractions Practice",
+      "blocks": []
+    },
+    "publishedAt": "2026-03-27T10:05:00Z"
+  }
+}
+```
+
+### 5) `saveAttempt`
+
+Purpose: persist or update in-progress viewer attempt state.
+
+Auth / guest rules:
+- Authenticated mode: requires OIDC subject (`sub`) and stores `user_oidc_sub`
+- Guest mode: allowed without OIDC only when request includes `anonymousToken` and target snapshot policy allows guest attempts
+- `anonymousToken` must be treated as a stable pseudonymous resume key, not as proof of ownership across unrelated snapshots
+- `attemptId` is optional:
+  - if omitted, backend MUST treat request as **create attempt** and return backend-issued `attemptId`
+  - if present, backend MUST treat request as **update attempt** for an existing attempt owned/authorized for caller
+- Backend MUST return `400 INVALID_REQUEST` for invalid create/update shape (for example, update path with unknown/invalid `attemptId` format or create/update field combinations that violate endpoint contract)
+
+Request example (create attempt: no `attemptId`):
+
+```json
+{
+  "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+  "baseRevision": "ar_000000",
+  "answers": {
+    "blk_q1": "3/4"
+  },
+  "status": "in_progress"
+}
+```
+
+Request example (update attempt: with prior `attemptId`):
+
+```json
+{
+  "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+  "attemptId": "e7d36570-8258-48a1-a6b5-0f96f6a3da6c",
+  "baseRevision": "ar_000007",
+  "answers": {
+    "blk_q1": "3/4"
+  },
+  "status": "in_progress"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "attemptId": "e7d36570-8258-48a1-a6b5-0f96f6a3da6c",
+    "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+    "revision": "ar_000008",
+    "savedAt": "2026-03-27T10:15:00Z"
+  }
+}
+```
+
+Frontend handling note:
+- If client has no server `attemptId`, call create path (omit `attemptId`) and persist returned backend-issued `attemptId` for subsequent saves.
+- If client has an `attemptId`, call update path and handle `400 INVALID_REQUEST` as a request-shape/contract bug and `404/403` as missing/not-visible vs forbidden attempt access per endpoint policy.
+
+### 6) `resumeAttempt`
+
+Purpose: resume previously saved attempt state.
+
+Auth / guest rules:
+- Authenticated resume by `attemptId` requires matching authorized OIDC subject
+- Guest resume is allowed via `{ snapshotId, anonymousToken }` when guest attempts are enabled
+- If both OIDC and `anonymousToken` are present, backend must prioritize OIDC ownership checks and reject token-only escalation attempts
+
+Request example (authenticated by attempt):
+
+```json
+{
+  "attemptId": "e7d36570-8258-48a1-a6b5-0f96f6a3da6c"
+}
+```
+
+Request example (guest by snapshot/token):
+
+```json
+{
+  "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+  "anonymousToken": "anon_9xK2fV0uEw"
+}
+```
+
+Response example:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "attemptId": "e7d36570-8258-48a1-a6b5-0f96f6a3da6c",
+    "snapshotId": "7d5176ac-3cb9-46d6-b59f-c4bf15ce8fe1",
+    "revision": "ar_000008",
+    "status": "in_progress",
+    "answers": {
+      "blk_q1": "3/4"
+    },
+    "updatedAt": "2026-03-27T10:15:00Z"
+  }
+}
+```
+
+### Compatibility guardrail with popup Phase 1 transport
+
+- These backend contracts are for later-phase editor/viewer APIs and do **not** alter popup launch-query or popup `postMessage` behavior defined in `docs/message-contract.md`.
+- Do not modify popup transport fields, popup validation invariants, or Phase 1 popup scaffolding unless `docs/message-contract.md` itself is intentionally versioned/updated in the same change.
+
 ## Storage Modes
 
 ### Local Storage Mode
