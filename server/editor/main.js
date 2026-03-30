@@ -86,6 +86,22 @@ function getOptionValueForAnswerKey(option) {
   return null;
 }
 
+function getDuplicateOptionValues(options) {
+  const seen = new Set();
+  const duplicates = new Set();
+  (Array.isArray(options) ? options : []).forEach((option, index) => {
+    const normalized = normalizeResponseOption(option, `option_${index}`);
+    const value = String(normalized.value ?? '').trim();
+    if (!value) return;
+    if (seen.has(value)) {
+      duplicates.add(value);
+      return;
+    }
+    seen.add(value);
+  });
+  return Array.from(duplicates);
+}
+
 function normalizeNumberRulesConfig(numberRules) {
   const source = isRecord(numberRules) ? numberRules : {};
   const allowedKinds = Array.isArray(source.allowedKinds)
@@ -414,6 +430,14 @@ class EditorDraftSession {
       if (block.kind === 'question') {
         if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
         if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
+        if (block.responseConfig?.inputType === 'multiple_choice') {
+          const duplicateOptionValues = getDuplicateOptionValues(block.responseConfig.options);
+          if (duplicateOptionValues.length > 0) {
+            errors.push(
+              `draft.blocks[${index}].responseConfig.options contains duplicate values: ${duplicateOptionValues.join(', ')}`
+            );
+          }
+        }
       } else if (!block?.content?.text?.trim()) {
         errors.push(`draft.blocks[${index}].content.text is required for content blocks`);
       }
@@ -1463,6 +1487,9 @@ function renderEditorShell(session) {
   questionOptions.style.display = 'none';
   const questionOptionsList = document.createElement('div');
   questionOptionsList.className = 'question-options-list';
+  const questionOptionWarning = document.createElement('p');
+  questionOptionWarning.className = 'control-error option-warning';
+  questionOptionWarning.hidden = true;
   const addOptionBtn = document.createElement('button');
   addOptionBtn.type = 'button';
   addOptionBtn.className = 'option-add-btn';
@@ -1887,16 +1914,14 @@ function renderEditorShell(session) {
       const selectedSingleValue = hasSelectedSingleValue
         ? normalizedResponseConfig.correctAnswer
         : '';
-      const clearCorrectAnswerBtn = document.createElement('button');
-      clearCorrectAnswerBtn.type = 'button';
-      clearCorrectAnswerBtn.textContent = 'Clear correct answer';
-      clearCorrectAnswerBtn.title = 'Unset the correct answer';
-      clearCorrectAnswerBtn.className = 'option-add-btn';
-      clearCorrectAnswerBtn.disabled = !hasSelectedSingleValue;
-      clearCorrectAnswerBtn.addEventListener('click', () => {
-        session.updateQuestionCorrectAnswerChoice(selectedBlock.blockId, '');
-        updateSummary();
-      });
+      const duplicateOptionValues = getDuplicateOptionValues(normalizedOptions);
+      if (duplicateOptionValues.length > 0) {
+        questionOptionWarning.hidden = false;
+        questionOptionWarning.textContent = `Option values must be unique. Duplicate values: ${duplicateOptionValues.join(', ')}.`;
+      } else {
+        questionOptionWarning.hidden = true;
+        questionOptionWarning.textContent = '';
+      }
 
       questionOptionsList.innerHTML = '';
       optionList.forEach((option, optionIndex) => {
@@ -1904,35 +1929,46 @@ function renderEditorShell(session) {
         const row = document.createElement('div');
         row.className = 'option-row';
 
-        const correctToggle = document.createElement('label');
-        correctToggle.className = 'option-correct-toggle';
-        correctToggle.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
-        const answerTick = document.createElement('input');
-        answerTick.type = isMultiSelect ? 'checkbox' : 'radio';
-        answerTick.checked = isMultiSelect
+        const isSelected = isMultiSelect
           ? selectedValues.has(optionValue)
           : hasSelectedSingleValue && selectedSingleValue === optionValue;
-        answerTick.setAttribute('aria-label', `Mark option ${optionIndex + 1} as correct`);
-        answerTick.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
-        if (!isMultiSelect) {
-          answerTick.name = `editor-question-correct-answer-${selectedBlock.blockId}`;
-        }
-        answerTick.addEventListener('change', () => {
+        const correctToggle = document.createElement('button');
+        correctToggle.type = 'button';
+        correctToggle.className = 'option-correct-toggle';
+        correctToggle.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
+        correctToggle.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        correctToggle.setAttribute(
+          'aria-label',
+          isMultiSelect
+            ? `Toggle option ${optionIndex + 1} correct answer`
+            : `Toggle option ${optionIndex + 1} as the correct answer`
+        );
+        correctToggle.addEventListener('click', () => {
           if (!isMultiSelect) {
             session.updateQuestionCorrectAnswerChoice(
               selectedBlock.blockId,
-              answerTick.checked ? optionValue : ''
+              isSelected ? '' : optionValue
             );
             updateSummary();
             return;
           }
-          const nextValues = Array.from(questionOptionsList.querySelectorAll('input[type="checkbox"]:checked'))
-            .map((input) => String(input.value));
+          const nextValues = Array.from(selectedValues);
+          if (selectedValues.has(optionValue)) {
+            const removeIndex = nextValues.indexOf(optionValue);
+            if (removeIndex >= 0) {
+              nextValues.splice(removeIndex, 1);
+            }
+          } else {
+            nextValues.push(optionValue);
+          }
           session.updateQuestionCorrectAnswerChoices(selectedBlock.blockId, nextValues);
           updateSummary();
         });
-        answerTick.value = optionValue;
-        correctToggle.appendChild(answerTick);
+        const tickIcon = document.createElement('span');
+        tickIcon.className = 'option-correct-toggle__tick';
+        tickIcon.setAttribute('aria-hidden', 'true');
+        tickIcon.textContent = '✓';
+        correctToggle.appendChild(tickIcon);
 
         const optionInput = document.createElement('input');
         optionInput.type = 'text';
@@ -1956,11 +1992,7 @@ function renderEditorShell(session) {
         row.append(correctToggle, optionInput, removeBtn);
         questionOptionsList.appendChild(row);
       });
-      if (isMultiSelect) {
-        rightPanel.append(questionOptionsList, addOptionBtn, questionOptions);
-      } else {
-        rightPanel.append(questionOptionsList, addOptionBtn, clearCorrectAnswerBtn, questionOptions);
-      }
+      rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
     }
   };
 
