@@ -120,7 +120,6 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
         "inputType": "number",
         "min": 0,
         "max": 10,
-        "step": 0.5,
         "numberRules": {
           "allowedKinds": ["decimal"],
           "allowSigned": false,
@@ -259,7 +258,6 @@ If later phases use PostgreSQL tables similar to the schema in `worksheet_launch
         "inputType": "number",
         "min": 0,
         "max": 10,
-        "step": 0.5,
         "numberRules": {
           "allowedKinds": ["decimal"],
           "allowSigned": false,
@@ -456,7 +454,6 @@ Once a worksheet has at least one published snapshot, subsequent draft edits onl
         "inputType": "number",
         "min": 0,
         "max": 10,
-        "step": 0.5,
         "numberRules": {
           "allowedKinds": ["decimal"],
           "allowSigned": false,

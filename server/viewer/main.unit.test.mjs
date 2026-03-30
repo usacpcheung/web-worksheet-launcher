@@ -148,7 +148,7 @@ test('normalizeViewerBlock does not emit text-only responseConfig fields for non
   const number = mod.normalizeViewerBlock({
     kind: 'question',
     prompt: { text: 'How many?' },
-    responseConfig: { inputType: 'number', min: 1, max: 5, step: 1, maxLength: 20, displayMode: 'single_line' },
+    responseConfig: { inputType: 'number', min: 1, max: 5, maxLength: 20, displayMode: 'single_line' },
   }, 0);
   const bool = mod.normalizeViewerBlock({
     kind: 'question',
@@ -193,7 +193,7 @@ test('normalizeViewerBlock migrates plain_text/short_text to text with defaults'
 test('coerceAnswerValueForQuestion does not silently clamp out-of-range numbers', async () => {
   const mod = await loadViewerModule();
   const question = {
-    responseConfig: { inputType: 'number', min: 0, max: 10, step: 0.5 },
+    responseConfig: { inputType: 'number', min: 0, max: 10 },
   };
   assert.equal(mod.coerceAnswerValueForQuestion(question, '12.3'), 12.3);
   assert.equal(mod.coerceAnswerValueForQuestion(question, '-3'), -3);
@@ -566,21 +566,17 @@ test('getNumberInputErrorMessage reports range and rule errors without coercion'
   });
 });
 
-test('getNumberInputErrorMessage validates step alignment', async () => {
+test('getNumberInputErrorMessage ignores legacy step config', async () => {
   const mod = await loadViewerModule();
   const responseConfig = { min: 0, max: 10, step: 0.5 };
 
   assert.deepEqual(mod.getNumberInputErrorMessage('1.3', responseConfig), {
-    message: 'Value must be in increments of 0.5.',
-    normalizedValue: '',
+    message: '',
+    normalizedValue: 1.3,
   });
   assert.deepEqual(mod.getNumberInputErrorMessage('2.5', responseConfig), {
     message: '',
     normalizedValue: 2.5,
-  });
-  assert.deepEqual(mod.getNumberInputErrorMessage('3', responseConfig), {
-    message: '',
-    normalizedValue: 3,
   });
 });
 
