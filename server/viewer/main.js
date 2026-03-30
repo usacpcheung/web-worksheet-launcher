@@ -1137,7 +1137,8 @@ function renderViewerShell(session) {
           button.setAttribute('aria-pressed', 'false');
           button.addEventListener('click', () => {
             const currentValue = session.state.answers?.[block.blockId]?.value;
-            const nextValue = currentValue === optionConfig.value ? null : optionConfig.value;
+            const normalizedCurrentValue = coerceAnswerValueByInputType('boolean', currentValue);
+            const nextValue = normalizedCurrentValue === optionConfig.value ? null : optionConfig.value;
             session.setAnswer(block.blockId, nextValue);
             updateSummary();
           });

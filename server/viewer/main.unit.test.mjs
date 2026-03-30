@@ -274,6 +274,26 @@ test('getBooleanSelectionState maps stored values to selected button state', asy
     truePressed: false,
     falsePressed: false,
   });
+  assert.deepEqual(mod.getBooleanSelectionState('true'), {
+    selectedValue: true,
+    truePressed: true,
+    falsePressed: false,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState('false'), {
+    selectedValue: false,
+    truePressed: false,
+    falsePressed: true,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState(''), {
+    selectedValue: null,
+    truePressed: false,
+    falsePressed: false,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState(undefined), {
+    selectedValue: null,
+    truePressed: false,
+    falsePressed: false,
+  });
 });
 
 test('applyBooleanGroupState hydrates selected and disabled button state', async () => {
@@ -656,6 +676,7 @@ test('boolean rendering branch uses aria-labelledby and only labelable controls 
   assert.equal(source.includes("control.setAttribute('aria-labelledby', label.id);"), true);
   assert.equal(source.includes("control.setAttribute('aria-label', 'Choose True or False');"), false);
   assert.equal(source.includes("if (control.matches('input, select, textarea'))"), true);
+  assert.equal(source.includes("const normalizedCurrentValue = coerceAnswerValueByInputType('boolean', currentValue);"), true);
 });
 
 test('createInputErrorNode applies stable id and live region semantics', async () => {
