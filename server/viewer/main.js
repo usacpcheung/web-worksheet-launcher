@@ -229,7 +229,7 @@ function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = 
       max,
       remaining,
       state: 'over',
-      statusText: `${Math.abs(remaining)} characters over the limit.`,
+      statusText: `Over by ${Math.abs(remaining)} characters. On save, text will be truncated to ${max}.`,
       counterText: `${current}/${max}`,
     };
   }
@@ -287,9 +287,10 @@ function clampToNumberConfig(value, responseConfig = {}) {
   return nextValue;
 }
 
-function coerceAnswerValueForQuestion(questionBlock, rawValue) {
+function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
+  const phase = options.phase || 'save';
   if (inputType === 'number') {
     const validation = validateNumberInputFormat(rawValue, responseConfig.numberRules);
     if (!validation.ok) return '';
@@ -307,6 +308,9 @@ function coerceAnswerValueForQuestion(questionBlock, rawValue) {
     return options.includes(single) ? single : '';
   }
   if (inputType === 'text') {
+    if (phase === 'edit') {
+      return String(rawValue ?? '');
+    }
     return clampTextAnswer(rawValue, responseConfig.maxLength);
   }
   return coerceAnswerValueByInputType(inputType, rawValue);
@@ -662,7 +666,7 @@ class ViewerAttemptSession {
     if (!questionBlock) {
       return;
     }
-    const coercedValue = coerceAnswerValueForQuestion(questionBlock, value);
+    const coercedValue = coerceAnswerValueForQuestion(questionBlock, value, { phase: 'edit' });
 
     this.state.answers = {
       ...this.state.answers,
@@ -712,6 +716,18 @@ class ViewerAttemptSession {
     const revisionAtSaveStart = this.state.attemptRevision;
     const updatedAt = nowIso();
 
+    const normalizedAnswers = {};
+    Object.entries(this.state.answers || {}).forEach(([blockId, answer]) => {
+      const questionBlock = this.state.viewerPayload?.blocks?.find(
+        (block) => block.blockId === blockId && block.kind === 'question'
+      );
+      if (!questionBlock) return;
+      normalizedAnswers[blockId] = {
+        ...answer,
+        value: coerceAnswerValueForQuestion(questionBlock, answer?.value, { phase: 'save' }),
+      };
+    });
+
     const attemptRecord = {
       localId: this.state.localAttemptId,
       localAttemptId: this.state.localAttemptId,
@@ -721,7 +737,7 @@ class ViewerAttemptSession {
       startedAt: this.state.startedAt,
       lastSavedAt: updatedAt,
       completedAt: this.state.completedAt,
-      answers: this.state.answers,
+      answers: normalizedAnswers,
       metadata: {
         localId: this.state.localAttemptId,
         origin: this.state.source || 'local_source',
@@ -968,10 +984,9 @@ function renderViewerShell(session) {
       if (inputType === 'text' && block.responseConfig?.displayMode === 'single_line') {
         control = document.createElement('input');
         control.type = 'text';
-        control.maxLength = block.responseConfig?.maxLength || 200;
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
-          const feedback = computeTextLengthFeedback(control.value, control.maxLength);
+          const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
           updateSummary();
         });
@@ -1117,10 +1132,9 @@ function renderViewerShell(session) {
       } else {
         control = document.createElement('textarea');
         control.rows = 5;
-        control.maxLength = block.responseConfig?.maxLength || 200;
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
-          const feedback = computeTextLengthFeedback(control.value, control.maxLength);
+          const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
           updateSummary();
         });
@@ -1174,7 +1188,7 @@ function renderViewerShell(session) {
       }
       if (inputType === 'text') {
         const feedbackNodes = textControlFeedback.get(block.blockId);
-        const feedback = computeTextLengthFeedback(control.value, control.maxLength);
+        const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
         updateTextCounterUI(feedbackNodes?.counter, feedbackNodes?.status, feedback);
       }
       if (!(inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi')) {

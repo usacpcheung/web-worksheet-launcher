@@ -219,6 +219,15 @@ test('coerceAnswerValueForQuestion validates number format rules (integer/decima
   assert.equal(mod.coerceAnswerValueForQuestion(question, '1.23'), '');
 });
 
+test('coerceAnswerValueForQuestion keeps over-limit text during edit and truncates on save', async () => {
+  const mod = await loadViewerModule();
+  const question = {
+    responseConfig: { inputType: 'text', maxLength: 5 },
+  };
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 'abcdefghij', { phase: 'edit' }), 'abcdefghij');
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 'abcdefghij', { phase: 'save' }), 'abcde');
+});
+
 test('coerceAnswerValueForQuestion supports multiple_choice single and multi answers', async () => {
   const mod = await loadViewerModule();
   const single = {
@@ -317,6 +326,47 @@ test('viewer autosave emits state transitions and clears pending state without e
 
   assert.equal(session.state.autosavePending, false);
   assert.ok(emissions >= 3, 'expected pending, success, and final state emissions');
+});
+
+test('viewer stores raw over-limit text in edit state and truncates in autosave/manual/finalize persistence', async () => {
+  const mod = await loadViewerModule();
+  const savedPayloads = [];
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      put: async (value) => {
+        savedPayloads.push(value);
+        return value;
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.localAttemptId = 'attempt_text_save';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q' },
+      responseConfig: { inputType: 'text', maxLength: 5 },
+    }],
+  };
+  session.state.attemptRevision = 1;
+
+  session.setAnswer('q1', 'abcdefghij');
+  assert.equal(session.state.answers.q1.value, 'abcdefghij');
+
+  clearTimeout(session.autosaveTimer);
+  await session.autosave();
+  assert.equal(savedPayloads[0].answers.q1.value, 'abcde');
+
+  await session.saveNow();
+  assert.equal(savedPayloads[1].answers.q1.value, 'abcde');
+
+  await session.completeLocalAttempt();
+  assert.equal(savedPayloads[2].answers.q1.value, 'abcde');
 });
 
 test('viewer autosave keeps newest save status when older save finishes later', async () => {
@@ -558,7 +608,7 @@ test('computeTextLengthFeedback returns normal, warning, and over-limit states',
     max: 50,
     remaining: -5,
     state: 'over',
-    statusText: '5 characters over the limit.',
+    statusText: 'Over by 5 characters. On save, text will be truncated to 50.',
     counterText: '55/50',
   });
 });
@@ -585,5 +635,6 @@ test('text input rendering includes counter wiring and hydrate updates', async (
   assert.equal(source.includes('textStatus.setAttribute(\'aria-live\', \'polite\');'), true);
   assert.equal(source.includes('ensureControlDescribedBy(control, textCounter.id);'), true);
   assert.equal(source.includes('ensureControlDescribedBy(control, textStatus.id);'), true);
-  assert.equal(source.includes('computeTextLengthFeedback(control.value, control.maxLength);'), true);
+  assert.equal(source.includes('computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);'), true);
+  assert.equal(source.includes('control.maxLength = block.responseConfig?.maxLength || 200;'), false);
 });
