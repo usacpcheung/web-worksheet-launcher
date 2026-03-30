@@ -116,9 +116,6 @@ function normalizeViewerBlock(block, index) {
       if (Number.isFinite(responseConfigSource.max)) {
         normalizedResponseConfig.max = Number(responseConfigSource.max);
       }
-      if (Number.isFinite(responseConfigSource.step) && Number(responseConfigSource.step) > 0) {
-        normalizedResponseConfig.step = Number(responseConfigSource.step);
-      }
     }
 
     if (inputType === 'multiple_choice') {
@@ -265,38 +262,21 @@ function updateTextCounterUI(counterNode, statusNode, feedback) {
   }
 }
 
-function clampToNumberConfig(value, responseConfig = {}) {
-  if (!Number.isFinite(value)) return '';
-  let nextValue = value;
-  const min = Number.isFinite(responseConfig.min) ? Number(responseConfig.min) : null;
-  const max = Number.isFinite(responseConfig.max) ? Number(responseConfig.max) : null;
-  const step = Number.isFinite(responseConfig.step) && Number(responseConfig.step) > 0
-    ? Number(responseConfig.step)
-    : null;
-
-  if (min !== null) nextValue = Math.max(min, nextValue);
-  if (max !== null) nextValue = Math.min(max, nextValue);
-  if (step !== null) {
-    const base = min !== null ? min : 0;
-    nextValue = Math.round((nextValue - base) / step) * step + base;
-    if (min !== null) nextValue = Math.max(min, nextValue);
-    if (max !== null) nextValue = Math.min(max, nextValue);
-    const decimals = String(step).includes('.') ? String(step).split('.')[1].length : 0;
-    if (decimals > 0) {
-      nextValue = Number(nextValue.toFixed(decimals));
-    }
-  }
-  return nextValue;
-}
-
 function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
   const phase = options.phase || 'save';
   if (inputType === 'number') {
+    // Already-normalized finite numbers (e.g. 1e-7) are returned directly to
+    // avoid re-running string-based regex validation that rejects scientific
+    // notation representations. Input validation is performed upstream by
+    // getNumberInputErrorMessage before the normalized value is stored.
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+      return rawValue;
+    }
     const validation = validateNumberInputFormat(rawValue, responseConfig.numberRules);
     if (!validation.ok) return '';
-    return clampToNumberConfig(validation.normalizedValue, responseConfig);
+    return validation.normalizedValue;
   }
   if (inputType === 'multiple_choice') {
     const options = Array.isArray(responseConfig.options)
@@ -360,12 +340,74 @@ function computeAnswerSummary(viewerPayload, answers) {
   return { answered, total: questions.length };
 }
 
-function getInputHelperText(inputType) {
+function getInputHelperText(inputType, responseConfig = {}) {
   if (inputType === 'text') return 'Text response.';
-  if (inputType === 'number') return 'Enter integer/decimal only (fractions like 2/3 are not supported).';
+  if (inputType === 'number') {
+    const constraints = [];
+    if (Number.isFinite(responseConfig.min)) {
+      constraints.push(`minimum ${Number(responseConfig.min)}`);
+    }
+    if (Number.isFinite(responseConfig.max)) {
+      constraints.push(`maximum ${Number(responseConfig.max)}`);
+    }
+    const suffix = constraints.length > 0 ? ` Range: ${constraints.join(', ')}.` : '';
+    return `Enter integer/decimal only (fractions like 2/3 are not supported).${suffix}`;
+  }
   if (inputType === 'boolean') return 'Choose True / False.';
   if (inputType === 'multiple_choice') return 'Choose one or more options.';
   return 'Text response.';
+}
+
+function getNumberInputErrorMessage(rawValue, responseConfig = {}) {
+  const trimmed = String(rawValue ?? '').trim();
+  if (trimmed === '') {
+    return { message: '', normalizedValue: '' };
+  }
+
+  const normalizedRules = normalizeNumberRules(responseConfig.numberRules);
+  const formatValidation = validateNumberInputFormat(trimmed, {
+    allowedKinds: ['integer', 'decimal'],
+    allowSigned: true,
+    decimalPlacesAllowed: null,
+  });
+  if (!formatValidation.ok) {
+    const messageByCode = {
+      fraction_not_allowed: 'Fractions are not supported (for example, 2/3).',
+      invalid_syntax: 'Enter a valid integer or decimal number.',
+    };
+    return {
+      message: messageByCode[formatValidation.errorCode] || 'Enter a valid integer or decimal number.',
+      normalizedValue: '',
+    };
+  }
+
+  const numericValue = formatValidation.normalizedValue;
+  const min = Number.isFinite(responseConfig.min) ? Number(responseConfig.min) : null;
+  const max = Number.isFinite(responseConfig.max) ? Number(responseConfig.max) : null;
+  if (min !== null && numericValue < min) {
+    return { message: `Value is below minimum (${min}).`, normalizedValue: '' };
+  }
+  if (max !== null && numericValue > max) {
+    return { message: `Value is above maximum (${max}).`, normalizedValue: '' };
+  }
+
+  if (!normalizedRules.allowSigned && (/^[+-]/).test(trimmed)) {
+    return { message: 'Signed values are not allowed for this question.', normalizedValue: '' };
+  }
+
+  const strictValidation = validateNumberInputFormat(trimmed, normalizedRules);
+  if (!strictValidation.ok) {
+    const messageByCode = {
+      kind_not_allowed: 'Only the configured number format is allowed.',
+      decimal_places_exceeded: 'Too many decimal places for this question.',
+      sign_not_allowed: 'Signed values are not allowed for this question.',
+      fraction_not_allowed: 'Fractions are not supported (for example, 2/3).',
+      invalid_syntax: 'Enter a valid integer or decimal number.',
+    };
+    return { message: messageByCode[strictValidation.errorCode] || 'Invalid number format.', normalizedValue: '' };
+  }
+
+  return { message: '', normalizedValue: strictValidation.normalizedValue };
 }
 
 function ensureControlDescribedBy(control, describedById) {
@@ -970,7 +1012,7 @@ function renderViewerShell(session) {
 
       const helper = document.createElement('p');
       helper.className = 'muted';
-      helper.textContent = getInputHelperText(inputType);
+      helper.textContent = getInputHelperText(inputType, block.responseConfig || {});
       helper.id = `${controlId}-helper`;
       const inputError = createInputErrorNode(`${controlId}-error`);
       let textCounter = null;
@@ -1046,29 +1088,15 @@ function renderViewerShell(session) {
         }
         control.title = title;
         control.addEventListener('input', () => {
-          const trimmed = control.value.trim();
-          if (trimmed === '') {
-            numberInputErrors.set(block.blockId, '');
-            session.setAnswer(block.blockId, '');
-            updateSummary();
-            return;
-          }
-          const validation = validateNumberInputFormat(trimmed, block.responseConfig?.numberRules);
-          if (!validation.ok) {
-            const messageByCode = {
-              fraction_not_allowed: 'Fractions are not supported (for example, 2/3).',
-              sign_not_allowed: 'Signed values are not allowed for this question.',
-              kind_not_allowed: 'Only the configured number format is allowed.',
-              decimal_places_exceeded: 'Too many decimal places for this question.',
-              invalid_syntax: 'Enter a valid integer or decimal number.',
-            };
-            numberInputErrors.set(block.blockId, messageByCode[validation.errorCode] || 'Invalid number format.');
+          const { message, normalizedValue } = getNumberInputErrorMessage(control.value, block.responseConfig || {});
+          if (message) {
+            numberInputErrors.set(block.blockId, message);
             session.setAnswer(block.blockId, '');
             updateSummary();
             return;
           }
           numberInputErrors.set(block.blockId, '');
-          session.setAnswer(block.blockId, control.value);
+          session.setAnswer(block.blockId, normalizedValue);
           updateSummary();
         });
       } else if (inputType === 'boolean') {
@@ -1300,6 +1328,7 @@ export {
   computeAnswerSummary,
   partitionBlocksForDisplay,
   getInputHelperText,
+  getNumberInputErrorMessage,
   coerceAnswerValueForQuestion,
   clampTextAnswer,
   computeTextLengthFeedback,

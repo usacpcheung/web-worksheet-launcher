@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -148,7 +148,7 @@ test('normalizeViewerBlock does not emit text-only responseConfig fields for non
   const number = mod.normalizeViewerBlock({
     kind: 'question',
     prompt: { text: 'How many?' },
-    responseConfig: { inputType: 'number', min: 1, max: 5, step: 1, maxLength: 20, displayMode: 'single_line' },
+    responseConfig: { inputType: 'number', min: 1, max: 5, maxLength: 20, displayMode: 'single_line' },
   }, 0);
   const bool = mod.normalizeViewerBlock({
     kind: 'question',
@@ -190,14 +190,22 @@ test('normalizeViewerBlock migrates plain_text/short_text to text with defaults'
   assert.equal(short.responseConfig.displayMode, 'single_line');
 });
 
-test('coerceAnswerValueForQuestion enforces numeric min/max/step', async () => {
+test('coerceAnswerValueForQuestion does not silently clamp out-of-range numbers', async () => {
   const mod = await loadViewerModule();
   const question = {
-    responseConfig: { inputType: 'number', min: 0, max: 10, step: 0.5 },
+    responseConfig: { inputType: 'number', min: 0, max: 10 },
   };
-  assert.equal(mod.coerceAnswerValueForQuestion(question, '12.3'), 10);
-  assert.equal(mod.coerceAnswerValueForQuestion(question, '-3'), 0);
-  assert.equal(mod.coerceAnswerValueForQuestion(question, '3.24'), 3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '12.3'), 12.3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '-3'), -3);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, '3.24'), 3.24);
+});
+
+test('coerceAnswerValueForQuestion preserves already-normalized finite numbers including scientific notation', async () => {
+  const mod = await loadViewerModule();
+  const question = { responseConfig: { inputType: 'number' } };
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 1e-7), 1e-7);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 0.0000001), 1e-7);
+  assert.equal(mod.coerceAnswerValueForQuestion(question, 42), 42);
 });
 
 test('coerceAnswerValueForQuestion validates number format rules (integer/decimal only)', async () => {
@@ -515,10 +523,61 @@ test('computeAnswerSummary treats empty multi-select arrays as unanswered', asyn
 
 test('getInputHelperText maps input types to guidance', async () => {
   const mod = await loadViewerModule();
-  assert.equal(mod.getInputHelperText('number'), 'Enter integer/decimal only (fractions like 2/3 are not supported).');
+  assert.equal(
+    mod.getInputHelperText('number', { min: 1, max: 5 }),
+    'Enter integer/decimal only (fractions like 2/3 are not supported). Range: minimum 1, maximum 5.'
+  );
   assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one or more options.');
   assert.equal(mod.getInputHelperText('boolean'), 'Choose True / False.');
   assert.equal(mod.getInputHelperText('text'), 'Text response.');
+});
+
+test('getNumberInputErrorMessage reports range and rule errors without coercion', async () => {
+  const mod = await loadViewerModule();
+  const responseConfig = {
+    min: 1,
+    max: 5,
+    numberRules: {
+      allowedKinds: ['integer', 'decimal'],
+      allowSigned: false,
+      decimalPlacesAllowed: 1,
+    },
+  };
+
+  assert.deepEqual(mod.getNumberInputErrorMessage('0', responseConfig), {
+    message: 'Value is below minimum (1).',
+    normalizedValue: '',
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('6', responseConfig), {
+    message: 'Value is above maximum (5).',
+    normalizedValue: '',
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('+2', responseConfig), {
+    message: 'Signed values are not allowed for this question.',
+    normalizedValue: '',
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('1.23', responseConfig), {
+    message: 'Too many decimal places for this question.',
+    normalizedValue: '',
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('4.5', responseConfig), {
+    message: '',
+    normalizedValue: 4.5,
+  });
+});
+
+test('getNumberInputErrorMessage ignores legacy step config', async () => {
+  const mod = await loadViewerModule();
+  const responseConfig = { min: 0, max: 10, step: 0.5 };
+
+  assert.deepEqual(mod.getNumberInputErrorMessage('1.3', responseConfig), {
+    message: '',
+    normalizedValue: 1.3,
+  });
+  assert.deepEqual(mod.getNumberInputErrorMessage('2.5', responseConfig), {
+    message: '',
+    normalizedValue: 2.5,
+  });
 });
 
 test('number rendering branch avoids text input min/max attributes and uses pattern hint', async () => {

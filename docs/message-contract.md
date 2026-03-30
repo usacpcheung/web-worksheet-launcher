@@ -73,11 +73,8 @@ The editor + viewer runtime now uses these canonical `responseConfig` input type
 - `decimalPlacesAllowed: null` means unlimited decimal places.
 - `allowedKinds` accepts only `integer` and/or `decimal`; when provided, an empty array is invalid at schema-validation time.
 - `allowSigned: false` rejects prefixed signed inputs (`+` and `-`) during input-format validation.
-- `min`/`max`/`step` are numeric clamps/coercion controls in viewer answer handling:
-  - values are clamped to `min` and/or `max` when present
-  - `step` applies rounding using `base = min` when `min` is set, otherwise `base = 0`
-  - `step` is used only when finite and `> 0`
-  - when `step` has decimals, the coerced value is rounded to the step precision
+- `min`/`max` are numeric validation controls in viewer answer handling:
+  - values outside `min` and/or `max` are rejected with an inline error (no silent clamping)
 
 `number` answer-key (`correctAnswer`) validity constraints:
 
