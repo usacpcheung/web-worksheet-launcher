@@ -903,13 +903,49 @@ function renderViewerShell(session) {
         control.inputMode = 'decimal';
         const numberRules = normalizeNumberRules(block.responseConfig?.numberRules);
         const allowSignedPrefix = numberRules.allowSigned ? '[+-]?' : '';
+        let decimalPattern;
+        if (numberRules.allowedKinds.includes('decimal') && typeof numberRules.decimalPlacesAllowed === 'number') {
+          decimalPattern = numberRules.decimalPlacesAllowed > 0
+            ? `\\d+\\.\\d{1,${numberRules.decimalPlacesAllowed}}`
+            : '\\d+';
+        } else {
+          decimalPattern = '\\d+\\.\\d+';
+        }
         const kindPattern = numberRules.allowedKinds.includes('integer') && numberRules.allowedKinds.includes('decimal')
           ? '\\d+(\\.\\d+)?'
           : numberRules.allowedKinds.includes('decimal')
-            ? '\\d+\\.\\d+'
+            ? decimalPattern
             : '\\d+';
         control.pattern = `${allowSignedPrefix}${kindPattern}`;
-        control.title = 'Enter a valid integer or decimal number for this question.';
+        const kinds = numberRules.allowedKinds;
+        let kindDescription;
+        if (kinds.includes('integer') && kinds.includes('decimal')) {
+          kindDescription = 'integer or decimal number';
+        } else if (kinds.includes('integer')) {
+          kindDescription = 'integer';
+        } else if (kinds.includes('decimal')) {
+          kindDescription = 'decimal number';
+        } else {
+          kindDescription = 'number';
+        }
+        const constraints = [];
+        if (!numberRules.allowSigned) {
+          constraints.push('without a leading + or - sign');
+        }
+        if (kinds.includes('decimal') && typeof numberRules.decimalPlacesAllowed === 'number') {
+          if (numberRules.decimalPlacesAllowed === 1) {
+            constraints.push('with at most 1 digit after the decimal point');
+          } else if (numberRules.decimalPlacesAllowed > 1) {
+            constraints.push(`with at most ${numberRules.decimalPlacesAllowed} digits after the decimal point`);
+          }
+        }
+        let title = `Enter a valid ${kindDescription}`;
+        if (constraints.length > 0) {
+          title += ` (${constraints.join(', ')}).`;
+        } else {
+          title += '.';
+        }
+        control.title = title;
         control.addEventListener('input', () => {
           const trimmed = control.value.trim();
           if (trimmed === '') {

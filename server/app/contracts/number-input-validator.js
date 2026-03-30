@@ -50,7 +50,10 @@ function getNumberCorrectAnswerConfigViolation(value, config = {}) {
   }
 
   const kind = getNumberKind(value);
-  if (!rules.allowedKinds.includes(kind)) {
+  const kindAllowed =
+    rules.allowedKinds.includes(kind)
+    || (kind === 'integer' && rules.allowedKinds.includes('decimal'));
+  if (!kindAllowed) {
     return 'kind_not_allowed';
   }
 

@@ -2423,6 +2423,9 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
       delete normalized.correctAnswerMappingWarning;
     }
   } else {
+    delete normalized.correctAnswerOptionId;
+    delete normalized.correctAnswerOptionIds;
+    delete normalized.correctAnswerMappingWarning;
     delete normalized.maxLength;
     delete normalized.displayMode;
     delete normalized.options;

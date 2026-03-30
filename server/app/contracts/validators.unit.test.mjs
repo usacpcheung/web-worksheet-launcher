@@ -222,6 +222,21 @@ test('number correctAnswer semantic checks pass/fail across draft/snapshot/viewe
       true
     );
 
+    const integerInDecimalAllowed = validate(makePayload(makeNumberConfig({
+      numberRules: {
+        allowedKinds: ['decimal'],
+        allowSigned: true,
+      },
+      min: undefined,
+      max: undefined,
+      correctAnswer: 2,
+    })));
+    assert.equal(
+      integerInDecimalAllowed.valid,
+      true,
+      `${path} should accept an integer-valued correctAnswer when allowedKinds includes decimal`
+    );
+
     const decimalPlacesExceeded = validate(makePayload(makeNumberConfig({
       numberRules: {
         allowedKinds: ['decimal'],

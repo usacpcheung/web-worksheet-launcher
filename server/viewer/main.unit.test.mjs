@@ -476,6 +476,8 @@ test('number rendering branch avoids text input min/max attributes and uses patt
   assert.equal(source.includes("if (Number.isFinite(block.responseConfig?.min)) control.min"), false);
   assert.equal(source.includes("if (Number.isFinite(block.responseConfig?.max)) control.max"), false);
   assert.equal(source.includes('control.pattern ='), true);
+  assert.equal(source.includes('control.title ='), true);
+  assert.equal(source.includes("'Enter a valid integer or decimal number for this question.'"), false);
 });
 
 test('createInputErrorNode applies stable id and live region semantics', async () => {
