@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, coerceAnswerValueForQuestion, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -526,4 +526,64 @@ test('ensureControlDescribedBy links control to existing error id without duplic
   mod.ensureControlDescribedBy(control, 'answer-q1-error');
   mod.ensureControlDescribedBy(control, 'answer-q1-error');
   assert.equal(control.getAttribute('aria-describedby'), 'answer-q1-error');
+});
+
+test('clampTextAnswer enforces hard max length truncation', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.clampTextAnswer('abcdef', 4), 'abcd');
+  assert.equal(mod.clampTextAnswer('abc', 10), 'abc');
+  assert.equal(mod.clampTextAnswer('abc', null), 'abc');
+});
+
+test('computeTextLengthFeedback returns normal, warning, and over-limit states', async () => {
+  const mod = await loadViewerModule();
+  assert.deepEqual(mod.computeTextLengthFeedback('abcd', 50), {
+    current: 4,
+    max: 50,
+    remaining: 46,
+    state: 'normal',
+    statusText: '',
+    counterText: '4/50',
+  });
+  assert.deepEqual(mod.computeTextLengthFeedback('x'.repeat(45), 50), {
+    current: 45,
+    max: 50,
+    remaining: 5,
+    state: 'warning',
+    statusText: '5 characters remaining.',
+    counterText: '45/50',
+  });
+  assert.deepEqual(mod.computeTextLengthFeedback('x'.repeat(55), 50), {
+    current: 55,
+    max: 50,
+    remaining: -5,
+    state: 'over',
+    statusText: '5 characters over the limit.',
+    counterText: '55/50',
+  });
+});
+
+test('updateTextCounterUI sets text and semantic classes', async () => {
+  const mod = await loadViewerModule();
+  const counterNode = { textContent: '', className: '' };
+  const statusNode = { textContent: '', className: '' };
+  mod.updateTextCounterUI(counterNode, statusNode, {
+    counterText: '99/100',
+    statusText: '1 characters remaining.',
+    state: 'warning',
+  });
+  assert.equal(counterNode.textContent, '99/100');
+  assert.equal(counterNode.className, 'text-counter text-counter--warning');
+  assert.equal(statusNode.textContent, '1 characters remaining.');
+  assert.equal(statusNode.className, 'text-counter-status text-counter-status--warning');
+});
+
+test('text input rendering includes counter wiring and hydrate updates', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const textCounter = document.createElement(\'p\');'), true);
+  assert.equal(source.includes('const textStatus = document.createElement(\'p\');'), true);
+  assert.equal(source.includes('textStatus.setAttribute(\'aria-live\', \'polite\');'), true);
+  assert.equal(source.includes('ensureControlDescribedBy(control, textCounter.id);'), true);
+  assert.equal(source.includes('ensureControlDescribedBy(control, textStatus.id);'), true);
+  assert.equal(source.includes('computeTextLengthFeedback(control.value, control.maxLength);'), true);
 });

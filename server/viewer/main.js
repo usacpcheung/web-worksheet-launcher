@@ -9,6 +9,7 @@ const app = document.getElementById('app');
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
+const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
 
 function nowIso() {
   return new Date().toISOString();
@@ -201,6 +202,67 @@ function coerceAnswerValueByInputType(inputType, rawValue) {
   return String(rawValue ?? '');
 }
 
+function clampTextAnswer(rawValue, maxLength) {
+  const value = String(rawValue ?? '');
+  if (!Number.isInteger(maxLength) || maxLength <= 0) return value;
+  return value.slice(0, maxLength);
+}
+
+function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = TEXT_WARNING_THRESHOLD_RATIO) {
+  const current = String(rawValue ?? '').length;
+  const max = Number.isInteger(maxLength) && maxLength > 0 ? maxLength : 0;
+  const remaining = max - current;
+  const warningThreshold = Math.ceil(max * warningThresholdRatio);
+  if (max === 0) {
+    return {
+      current,
+      max,
+      remaining,
+      state: 'normal',
+      statusText: '',
+      counterText: `${current}/${max}`,
+    };
+  }
+  if (remaining < 0) {
+    return {
+      current,
+      max,
+      remaining,
+      state: 'over',
+      statusText: `${Math.abs(remaining)} characters over the limit.`,
+      counterText: `${current}/${max}`,
+    };
+  }
+  if (remaining <= warningThreshold) {
+    return {
+      current,
+      max,
+      remaining,
+      state: 'warning',
+      statusText: `${remaining} characters remaining.`,
+      counterText: `${current}/${max}`,
+    };
+  }
+  return {
+    current,
+    max,
+    remaining,
+    state: 'normal',
+    statusText: '',
+    counterText: `${current}/${max}`,
+  };
+}
+
+function updateTextCounterUI(counterNode, statusNode, feedback) {
+  if (!counterNode || !feedback) return;
+  counterNode.textContent = feedback.counterText;
+  counterNode.className = `text-counter text-counter--${feedback.state}`;
+  if (statusNode) {
+    statusNode.textContent = feedback.statusText;
+    statusNode.className = `text-counter-status text-counter-status--${feedback.state}`;
+  }
+}
+
 function clampToNumberConfig(value, responseConfig = {}) {
   if (!Number.isFinite(value)) return '';
   let nextValue = value;
@@ -243,6 +305,9 @@ function coerceAnswerValueForQuestion(questionBlock, rawValue) {
     }
     const single = String(rawValue ?? '');
     return options.includes(single) ? single : '';
+  }
+  if (inputType === 'text') {
+    return clampTextAnswer(rawValue, responseConfig.maxLength);
   }
   return coerceAnswerValueByInputType(inputType, rawValue);
 }
@@ -805,6 +870,7 @@ function renderViewerShell(session) {
   const questionList = document.createElement('div');
   questionList.id = 'viewer-answer-form';
   const answerControls = new Map();
+  const textControlFeedback = new Map();
   let contentSignature = null;
   let questionSignature = null;
   const numberInputErrors = new Map();
@@ -872,6 +938,7 @@ function renderViewerShell(session) {
     }
     questionSignature = nextSignature;
     answerControls.clear();
+    textControlFeedback.clear();
     questionList.innerHTML = '';
 
     questionBlocks.forEach((block, index) => {
@@ -886,7 +953,16 @@ function renderViewerShell(session) {
       const helper = document.createElement('p');
       helper.className = 'muted';
       helper.textContent = getInputHelperText(inputType);
+      helper.id = `${controlId}-helper`;
       const inputError = createInputErrorNode(`${controlId}-error`);
+      const textCounter = document.createElement('p');
+      textCounter.className = 'text-counter';
+      textCounter.id = `${controlId}-counter`;
+      const textStatus = document.createElement('p');
+      textStatus.className = 'text-counter-status';
+      textStatus.id = `${controlId}-status`;
+      textStatus.setAttribute('aria-live', 'polite');
+      textStatus.setAttribute('role', 'status');
 
       let control;
       if (inputType === 'text' && block.responseConfig?.displayMode === 'single_line') {
@@ -895,6 +971,8 @@ function renderViewerShell(session) {
         control.maxLength = block.responseConfig?.maxLength || 200;
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
+          const feedback = computeTextLengthFeedback(control.value, control.maxLength);
+          updateTextCounterUI(textCounter, textStatus, feedback);
           updateSummary();
         });
       } else if (inputType === 'number') {
@@ -1042,16 +1120,31 @@ function renderViewerShell(session) {
         control.maxLength = block.responseConfig?.maxLength || 200;
         control.addEventListener('input', () => {
           session.setAnswer(block.blockId, control.value);
+          const feedback = computeTextLengthFeedback(control.value, control.maxLength);
+          updateTextCounterUI(textCounter, textStatus, feedback);
           updateSummary();
         });
       }
 
       if (typeof HTMLElement !== 'undefined' && control instanceof HTMLElement) {
         control.id = controlId;
+        ensureControlDescribedBy(control, helper.id);
+        if (inputType === 'text') {
+          ensureControlDescribedBy(control, textCounter.id);
+          ensureControlDescribedBy(control, textStatus.id);
+        }
         ensureControlDescribedBy(control, inputError.id);
       }
       answerControls.set(block.blockId, control);
-      card.append(label, helper, control, inputError);
+      if (inputType === 'text') {
+        textControlFeedback.set(block.blockId, {
+          counter: textCounter,
+          status: textStatus,
+        });
+        card.append(label, helper, control, textCounter, textStatus, inputError);
+      } else {
+        card.append(label, helper, control, inputError);
+      }
       questionList.appendChild(card);
     });
   };
@@ -1078,6 +1171,11 @@ function renderViewerShell(session) {
         });
       } else if (control !== activeElement && control.value !== nextValue) {
         control.value = nextValue;
+      }
+      if (inputType === 'text') {
+        const feedbackNodes = textControlFeedback.get(block.blockId);
+        const feedback = computeTextLengthFeedback(control.value, control.maxLength);
+        updateTextCounterUI(feedbackNodes?.counter, feedbackNodes?.status, feedback);
       }
       if (!(inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi')) {
         control.disabled = session.state.status === 'completed';
@@ -1183,6 +1281,9 @@ export {
   partitionBlocksForDisplay,
   getInputHelperText,
   coerceAnswerValueForQuestion,
+  clampTextAnswer,
+  computeTextLengthFeedback,
+  updateTextCounterUI,
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
