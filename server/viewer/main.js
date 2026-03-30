@@ -1028,8 +1028,8 @@ function renderViewerShell(session) {
       const label = document.createElement('label');
       const inputType = block.responseConfig?.inputType || 'text';
       const controlId = `answer-${block.blockId}`;
+      label.id = `${controlId}-label`;
       label.textContent = `${index + 1}. ${block.prompt?.text || 'Question'}`;
-      label.htmlFor = controlId;
 
       const helper = document.createElement('p');
       helper.className = 'muted';
@@ -1124,7 +1124,7 @@ function renderViewerShell(session) {
         control = document.createElement('div');
         control.className = 'boolean-segmented-control';
         control.setAttribute('role', 'group');
-        control.setAttribute('aria-label', 'Choose True or False');
+        control.setAttribute('aria-labelledby', label.id);
         [
           { value: true, datasetValue: 'true', label: 'True' },
           { value: false, datasetValue: 'false', label: 'False' },
@@ -1202,6 +1202,11 @@ function renderViewerShell(session) {
 
       if (typeof HTMLElement !== 'undefined' && control instanceof HTMLElement) {
         control.id = controlId;
+        if (control.matches('input, select, textarea')) {
+          label.htmlFor = controlId;
+        } else {
+          label.removeAttribute('for');
+        }
         ensureControlDescribedBy(control, helper.id);
         if (inputType === 'text') {
           ensureControlDescribedBy(control, textCounter.id);

@@ -650,6 +650,14 @@ test('number rendering branch avoids text input min/max attributes and uses patt
   assert.equal(source.includes("'Enter a valid integer or decimal number for this question.'"), false);
 });
 
+test('boolean rendering branch uses aria-labelledby and only labelable controls receive htmlFor', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("label.id = `${controlId}-label`;"), true);
+  assert.equal(source.includes("control.setAttribute('aria-labelledby', label.id);"), true);
+  assert.equal(source.includes("control.setAttribute('aria-label', 'Choose True or False');"), false);
+  assert.equal(source.includes("if (control.matches('input, select, textarea'))"), true);
+});
+
 test('createInputErrorNode applies stable id and live region semantics', async () => {
   const created = [];
   const mod = await loadViewerModule({
