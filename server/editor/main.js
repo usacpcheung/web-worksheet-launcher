@@ -25,6 +25,10 @@ function isRecord(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 async function loadContracts() {
   if (!contractsPromise) {
     contractsPromise = import('../app/contracts/index.js');
@@ -57,17 +61,18 @@ function mapOptionsTextToResponseOptions(rawText) {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => ({ value: line, label: line }));
+    .map((line) => ({ id: createLocalId('opt'), value: line, label: line }));
 }
 
 function normalizeResponseOption(option, fallback = '') {
   if (isRecord(option)) {
+    const id = isNonEmptyString(option.id) ? String(option.id) : createLocalId('opt');
     const value = String(option.value ?? option.label ?? fallback);
     const label = String(option.label ?? option.value ?? fallback);
-    return { value, label };
+    return { id, value, label };
   }
   const normalized = String(option ?? fallback);
-  return { value: normalized, label: normalized };
+  return { id: createLocalId('opt'), value: normalized, label: normalized };
 }
 
 function getOptionValueForAnswerKey(option) {
@@ -82,6 +87,13 @@ function getOptionValueForAnswerKey(option) {
   }
   if (typeof option === 'string' || typeof option === 'number' || typeof option === 'boolean') {
     return String(option);
+  }
+  return null;
+}
+
+function getOptionIdForAnswerKey(option) {
+  if (isRecord(option) && isNonEmptyString(option.id)) {
+    return String(option.id);
   }
   return null;
 }
@@ -393,7 +405,7 @@ class EditorDraftSession {
               format: block?.prompt?.format || 'plain_text',
             },
             responseConfig: isRecord(block.responseConfig)
-              ? normalizeQuestionResponseConfig(block.responseConfig)
+              ? normalizeQuestionResponseConfig(block.responseConfig, { forContract: true })
               : { inputType: 'text', maxLength: 200, displayMode: 'multi_line' },
           };
         }
@@ -588,7 +600,6 @@ class EditorDraftSession {
       if (normalizedInputType !== 'number') {
         delete nextResponseConfig.min;
         delete nextResponseConfig.max;
-        delete nextResponseConfig.step;
       }
 
       return {
@@ -643,7 +654,7 @@ class EditorDraftSession {
   }
 
   updateQuestionNumberConfig(blockId, key, rawValue) {
-    if (!this.state.draft || !blockId || !['min', 'max', 'step'].includes(key)) return;
+    if (!this.state.draft || !blockId || !['min', 'max'].includes(key)) return;
     const parsed = Number(rawValue);
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') {
@@ -655,7 +666,7 @@ class EditorDraftSession {
       }
 
       const updated = { ...nextResponseConfig };
-      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isFinite(parsed) || (key === 'step' && parsed <= 0)) {
+      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isFinite(parsed)) {
         delete updated[key];
       } else {
         updated[key] = parsed;
@@ -763,7 +774,7 @@ class EditorDraftSession {
     this.touchDraft();
   }
 
-  updateQuestionCorrectAnswerChoice(blockId, value) {
+  updateQuestionCorrectAnswerChoice(blockId, optionId) {
     if (!this.state.draft || !blockId) return;
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
@@ -772,9 +783,12 @@ class EditorDraftSession {
         return block;
       }
       const updated = { ...nextResponseConfig };
-      if (typeof value === 'string' && value.length > 0) {
-        updated.correctAnswer = value;
+      if (typeof optionId === 'string' && optionId.length > 0) {
+        updated.correctAnswerOptionId = optionId;
+        delete updated.correctAnswerOptionIds;
+        delete updated.correctAnswer;
       } else {
+        delete updated.correctAnswerOptionId;
         delete updated.correctAnswer;
       }
       return {
@@ -785,9 +799,9 @@ class EditorDraftSession {
     this.touchDraft();
   }
 
-  updateQuestionCorrectAnswerChoices(blockId, values) {
+  updateQuestionCorrectAnswerChoices(blockId, optionIds) {
     if (!this.state.draft || !blockId) return;
-    const nextValues = Array.isArray(values) ? values.filter((value) => typeof value === 'string') : [];
+    const nextOptionIds = Array.isArray(optionIds) ? optionIds.filter((optionId) => typeof optionId === 'string') : [];
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
       const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
@@ -796,8 +810,10 @@ class EditorDraftSession {
       }
       const updated = {
         ...nextResponseConfig,
-        correctAnswer: nextValues,
+        correctAnswerOptionIds: nextOptionIds,
       };
+      delete updated.correctAnswerOptionId;
+      delete updated.correctAnswer;
       return {
         ...block,
         responseConfig: normalizeQuestionResponseConfig(updated),
@@ -813,10 +829,10 @@ class EditorDraftSession {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
       const nextResponseConfig = normalizeQuestionResponseConfig(block.responseConfig);
       if (nextResponseConfig.inputType !== 'multiple_choice') return block;
-      const optionValues = new Set(
+      const optionIds = new Set(
         (Array.isArray(nextResponseConfig.options) ? nextResponseConfig.options : [])
-          .map((option, index) => normalizeResponseOption(option, `option_${index}`).value)
-          .map((value) => String(value))
+          .map((option, index) => normalizeResponseOption(option, `option_${index}`).id)
+          .map((optionId) => String(optionId))
       );
       const updated = {
         ...nextResponseConfig,
@@ -827,25 +843,25 @@ class EditorDraftSession {
         && normalizedSelectionMode === 'multi'
       ) {
         if (
-          typeof nextResponseConfig.correctAnswer === 'string'
-          && optionValues.has(nextResponseConfig.correctAnswer)
+          typeof nextResponseConfig.correctAnswerOptionId === 'string'
+          && optionIds.has(nextResponseConfig.correctAnswerOptionId)
         ) {
-          updated.correctAnswer = [nextResponseConfig.correctAnswer];
+          updated.correctAnswerOptionIds = [nextResponseConfig.correctAnswerOptionId];
         } else {
-          delete updated.correctAnswer;
+          delete updated.correctAnswerOptionIds;
         }
       }
       if (
         nextResponseConfig.selectionMode === 'multi'
         && normalizedSelectionMode === 'single'
       ) {
-        const firstValid = Array.isArray(nextResponseConfig.correctAnswer)
-          ? nextResponseConfig.correctAnswer.find((value) => typeof value === 'string' && optionValues.has(value))
+        const firstValid = Array.isArray(nextResponseConfig.correctAnswerOptionIds)
+          ? nextResponseConfig.correctAnswerOptionIds.find((optionId) => typeof optionId === 'string' && optionIds.has(optionId))
           : null;
         if (typeof firstValid === 'string') {
-          updated.correctAnswer = firstValid;
+          updated.correctAnswerOptionId = firstValid;
         } else {
-          delete updated.correctAnswer;
+          delete updated.correctAnswerOptionId;
         }
       }
       return {
@@ -905,9 +921,9 @@ class EditorDraftSession {
         ? responseConfig.options.map((option) => normalizeResponseOption(option))
         : [];
       while (options.length <= index) {
-        options.push({ value: '', label: '' });
+        options.push({ id: createLocalId('opt'), value: '', label: '' });
       }
-      options[index] = { value: normalizedLabel, label: normalizedLabel };
+      options[index] = { ...options[index], value: normalizedLabel, label: normalizedLabel };
       return {
         ...block,
         responseConfig: normalizeQuestionResponseConfig({
@@ -928,7 +944,7 @@ class EditorDraftSession {
       const options = Array.isArray(responseConfig.options)
         ? responseConfig.options.map((option) => normalizeResponseOption(option))
         : [];
-      options.push({ value: '', label: '' });
+      options.push({ id: createLocalId('opt'), value: '', label: '' });
       return {
         ...block,
         responseConfig: normalizeQuestionResponseConfig({
@@ -1518,12 +1534,6 @@ function renderEditorShell(session) {
   questionMax.id = 'editor-question-max';
   questionMax.type = 'number';
   questionMax.className = 'control';
-  const questionStep = document.createElement('input');
-  questionStep.id = 'editor-question-step';
-  questionStep.type = 'number';
-  questionStep.min = '0.0000001';
-  questionStep.step = 'any';
-  questionStep.className = 'control';
   const questionNumberAllowSigned = document.createElement('input');
   questionNumberAllowSigned.id = 'editor-question-number-allow-signed';
   questionNumberAllowSigned.type = 'checkbox';
@@ -1678,7 +1688,6 @@ function renderEditorShell(session) {
       }
       if (activeElement !== questionMin) questionMin.value = responseConfig.min ?? '';
       if (activeElement !== questionMax) questionMax.value = responseConfig.max ?? '';
-      if (activeElement !== questionStep) questionStep.value = responseConfig.step ?? '';
       if (activeElement !== questionNumberAllowSigned) {
         questionNumberAllowSigned.checked = responseConfig.numberRules?.allowSigned !== false;
       }
@@ -1904,20 +1913,23 @@ function renderEditorShell(session) {
         normalizeResponseOption(option, `option_${index}`));
       const optionList = normalizedOptions.length > 0
         ? normalizedOptions
-        : [{ value: '', label: '' }];
+        : [{ id: createLocalId('opt'), value: '', label: '' }];
       const isMultiSelect = normalizedResponseConfig.selectionMode === 'multi';
-      const selectedValues = new Set(Array.isArray(normalizedResponseConfig.correctAnswer)
-        ? normalizedResponseConfig.correctAnswer.map((value) => String(value))
+      const selectedOptionIds = new Set(Array.isArray(normalizedResponseConfig.correctAnswerOptionIds)
+        ? normalizedResponseConfig.correctAnswerOptionIds.map((optionId) => String(optionId))
         : []);
-      const hasSelectedSingleValue = typeof normalizedResponseConfig.correctAnswer === 'string'
-        && normalizedResponseConfig.correctAnswer.length > 0;
-      const selectedSingleValue = hasSelectedSingleValue
-        ? normalizedResponseConfig.correctAnswer
+      const hasSelectedSingleOptionId = typeof normalizedResponseConfig.correctAnswerOptionId === 'string'
+        && normalizedResponseConfig.correctAnswerOptionId.length > 0;
+      const selectedSingleOptionId = hasSelectedSingleOptionId
+        ? normalizedResponseConfig.correctAnswerOptionId
         : '';
       const duplicateOptionValues = getDuplicateOptionValues(normalizedOptions);
       if (duplicateOptionValues.length > 0) {
         questionOptionWarning.hidden = false;
         questionOptionWarning.textContent = `Option values must be unique. Duplicate values: ${duplicateOptionValues.join(', ')}.`;
+      } else if (isNonEmptyString(normalizedResponseConfig.correctAnswerMappingWarning)) {
+        questionOptionWarning.hidden = false;
+        questionOptionWarning.textContent = normalizedResponseConfig.correctAnswerMappingWarning;
       } else {
         questionOptionWarning.hidden = true;
         questionOptionWarning.textContent = '';
@@ -1925,13 +1937,14 @@ function renderEditorShell(session) {
 
       questionOptionsList.innerHTML = '';
       optionList.forEach((option, optionIndex) => {
+        const optionId = String(option?.id || '');
         const optionValue = String(option?.value ?? '');
         const row = document.createElement('div');
         row.className = 'option-row';
 
         const isSelected = isMultiSelect
-          ? selectedValues.has(optionValue)
-          : hasSelectedSingleValue && selectedSingleValue === optionValue;
+          ? selectedOptionIds.has(optionId)
+          : hasSelectedSingleOptionId && selectedSingleOptionId === optionId;
         const correctToggle = document.createElement('button');
         correctToggle.type = 'button';
         correctToggle.className = 'option-correct-toggle';
@@ -1947,21 +1960,21 @@ function renderEditorShell(session) {
           if (!isMultiSelect) {
             session.updateQuestionCorrectAnswerChoice(
               selectedBlock.blockId,
-              isSelected ? '' : optionValue
+              isSelected ? '' : optionId
             );
             updateSummary();
             return;
           }
-          const nextValues = Array.from(selectedValues);
-          if (selectedValues.has(optionValue)) {
-            const removeIndex = nextValues.indexOf(optionValue);
+          const nextOptionIds = Array.from(selectedOptionIds);
+          if (selectedOptionIds.has(optionId)) {
+            const removeIndex = nextOptionIds.indexOf(optionId);
             if (removeIndex >= 0) {
-              nextValues.splice(removeIndex, 1);
+              nextOptionIds.splice(removeIndex, 1);
             }
           } else {
-            nextValues.push(optionValue);
+            nextOptionIds.push(optionId);
           }
-          session.updateQuestionCorrectAnswerChoices(selectedBlock.blockId, nextValues);
+          session.updateQuestionCorrectAnswerChoices(selectedBlock.blockId, nextOptionIds);
           updateSummary();
         });
         const tickIcon = document.createElement('span');
@@ -2082,10 +2095,6 @@ function renderEditorShell(session) {
   });
   questionMax.addEventListener('input', () => {
     session.updateQuestionNumberConfig(session.state.selectedBlockId, 'max', questionMax.value);
-    updateSummary();
-  });
-  questionStep.addEventListener('input', () => {
-    session.updateQuestionNumberConfig(session.state.selectedBlockId, 'step', questionStep.value);
     updateSummary();
   });
   questionCorrectAnswerBoolean.addEventListener('change', () => {
@@ -2236,7 +2245,8 @@ export {
   buildViewerUrlFromCurrentLocation,
   getNumberQuestionValidationErrors,
 };
-function normalizeQuestionResponseConfig(responseConfig) {
+function normalizeQuestionResponseConfig(responseConfig, options = {}) {
+  const forContract = options.forContract === true;
   const source = isRecord(responseConfig) ? { ...responseConfig } : {};
   const legacyInputType = source.inputType || 'text';
   const inputType = legacyInputType === 'plain_text' || legacyInputType === 'short_text'
@@ -2249,6 +2259,7 @@ function normalizeQuestionResponseConfig(responseConfig) {
     ...source,
     inputType,
   };
+  delete normalized.step;
 
   if (inputType === 'text') {
     normalized.maxLength = Number.isFinite(source.maxLength) ? Number(source.maxLength) : 200;
@@ -2258,7 +2269,6 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.shuffleOptions;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
     delete normalized.numberRules;
     delete normalized.correctAnswer;
   } else if (inputType === 'boolean') {
@@ -2267,7 +2277,6 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.shuffleOptions;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
     delete normalized.numberRules;
     delete normalized.maxLength;
     delete normalized.displayMode;
@@ -2282,7 +2291,6 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.shuffleOptions;
     if (Number.isFinite(source.min)) normalized.min = Number(source.min); else delete normalized.min;
     if (Number.isFinite(source.max)) normalized.max = Number(source.max); else delete normalized.max;
-    if (Number.isFinite(source.step) && Number(source.step) > 0) normalized.step = Number(source.step); else delete normalized.step;
     normalized.numberRules = normalizeNumberRulesConfig(source.numberRules);
     delete normalized.maxLength;
     delete normalized.displayMode;
@@ -2298,39 +2306,111 @@ function normalizeQuestionResponseConfig(responseConfig) {
   } else if (inputType === 'multiple_choice') {
     normalized.selectionMode = source.selectionMode === 'multi' ? 'multi' : 'single';
     normalized.shuffleOptions = Boolean(source.shuffleOptions);
-    normalized.options = Array.isArray(source.options) ? source.options : [];
-    const optionValueSet = new Set(
-      normalized.options
-        .map((option) => getOptionValueForAnswerKey(option))
-        .filter((value) => typeof value === 'string')
-    );
+    const sourceOptions = Array.isArray(source.options) ? source.options : [];
+    const normalizedOptions = sourceOptions
+      ? sourceOptions.map((option, index) => normalizeResponseOption(option, `option_${index}`))
+      : [];
+    const optionById = new Map();
+    const optionIdByValue = new Map();
+    normalizedOptions.forEach((option, index) => {
+      const optionId = getOptionIdForAnswerKey(option);
+      const optionValue = getOptionValueForAnswerKey(sourceOptions[index]);
+      if (!optionId || optionValue === null) return;
+      optionById.set(optionId, optionValue);
+      if (!optionIdByValue.has(optionValue)) {
+        optionIdByValue.set(optionValue, []);
+      }
+      optionIdByValue.get(optionValue).push(optionId);
+    });
+    const consumeOptionIdByValue = (optionValue, consumedIds) => {
+      const candidates = optionIdByValue.get(optionValue) || [];
+      const available = candidates.find((candidateId) => !consumedIds.has(candidateId));
+      if (available) {
+        consumedIds.add(available);
+        return available;
+      }
+      return null;
+    };
+
+    const ambiguousFromValueMigration = new Set();
+    const consumedIds = new Set();
+    let selectedSingleOptionId = null;
+    let selectedMultiOptionIds = [];
+
+    if (typeof source.correctAnswerOptionId === 'string' && optionById.has(source.correctAnswerOptionId)) {
+      selectedSingleOptionId = source.correctAnswerOptionId;
+    } else if (typeof source.correctAnswer === 'string') {
+      const candidates = optionIdByValue.get(source.correctAnswer) || [];
+      if (candidates.length > 1) {
+        ambiguousFromValueMigration.add(source.correctAnswer);
+      }
+      selectedSingleOptionId = consumeOptionIdByValue(source.correctAnswer, consumedIds);
+    }
+
+    if (Array.isArray(source.correctAnswerOptionIds)) {
+      const dedupedIds = [];
+      const seenIds = new Set();
+      source.correctAnswerOptionIds.forEach((optionId) => {
+        if (typeof optionId !== 'string' || seenIds.has(optionId) || !optionById.has(optionId)) return;
+        seenIds.add(optionId);
+        dedupedIds.push(optionId);
+      });
+      selectedMultiOptionIds = dedupedIds;
+    } else if (Array.isArray(source.correctAnswer)) {
+      const dedupedIds = [];
+      const seenIds = new Set();
+      source.correctAnswer.forEach((optionValue) => {
+        if (typeof optionValue !== 'string') return;
+        const candidates = optionIdByValue.get(optionValue) || [];
+        if (candidates.length > 1) {
+          ambiguousFromValueMigration.add(optionValue);
+        }
+        const mappedId = consumeOptionIdByValue(optionValue, consumedIds);
+        if (!mappedId || seenIds.has(mappedId)) return;
+        seenIds.add(mappedId);
+        dedupedIds.push(mappedId);
+      });
+      selectedMultiOptionIds = dedupedIds;
+    }
+
+    normalized.options = forContract
+      ? normalizedOptions.map((option) => ({ value: option.value, label: option.label }))
+      : normalizedOptions;
+
     if (normalized.selectionMode === 'single') {
-      if (typeof source.correctAnswer === 'string' && optionValueSet.has(source.correctAnswer)) {
-        normalized.correctAnswer = source.correctAnswer;
+      if (selectedSingleOptionId && optionById.has(selectedSingleOptionId)) {
+        normalized.correctAnswerOptionId = selectedSingleOptionId;
+        normalized.correctAnswer = optionById.get(selectedSingleOptionId);
       } else {
+        delete normalized.correctAnswerOptionId;
         delete normalized.correctAnswer;
       }
-    } else if (Array.isArray(source.correctAnswer)) {
-      const uniqueValues = [];
-      const seen = new Set();
-      source.correctAnswer.forEach((value) => {
-        if (typeof value !== 'string' || !optionValueSet.has(value) || seen.has(value)) {
-          return;
-        }
-        seen.add(value);
-        uniqueValues.push(value);
-      });
-      normalized.correctAnswer = uniqueValues;
+      delete normalized.correctAnswerOptionIds;
     } else {
-      delete normalized.correctAnswer;
+      const validOptionIds = selectedMultiOptionIds.filter((optionId) => optionById.has(optionId));
+      normalized.correctAnswerOptionIds = validOptionIds;
+      normalized.correctAnswer = validOptionIds.map((optionId) => optionById.get(optionId));
+      delete normalized.correctAnswerOptionId;
+    }
+    if (!forContract && ambiguousFromValueMigration.size > 0) {
+      normalized.correctAnswerMappingWarning = `Ambiguous value-to-option mapping for duplicate values: ${Array.from(ambiguousFromValueMigration).join(', ')}.`;
+    } else {
+      delete normalized.correctAnswerMappingWarning;
     }
     delete normalized.maxLength;
     delete normalized.displayMode;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
     delete normalized.numberRules;
+    if (forContract) {
+      delete normalized.correctAnswerOptionId;
+      delete normalized.correctAnswerOptionIds;
+      delete normalized.correctAnswerMappingWarning;
+    }
   } else {
+    delete normalized.correctAnswerOptionId;
+    delete normalized.correctAnswerOptionIds;
+    delete normalized.correctAnswerMappingWarning;
     delete normalized.maxLength;
     delete normalized.displayMode;
     delete normalized.options;
@@ -2338,7 +2418,6 @@ function normalizeQuestionResponseConfig(responseConfig) {
     delete normalized.shuffleOptions;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
     delete normalized.numberRules;
     delete normalized.correctAnswer;
   }

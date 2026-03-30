@@ -59,6 +59,17 @@ function createEmptyQuestionBlock`
   return import(dataUrl);
 }
 
+function stripOptionIds(options = []) {
+  return (Array.isArray(options) ? options : []).map((option) => ({
+    value: option.value,
+    label: option.label,
+  }));
+}
+
+function getOptionIdByValue(options = [], value) {
+  return (Array.isArray(options) ? options : []).find((option) => option.value === value)?.id || null;
+}
+
 test('normalizeBlocks preserves question responseConfig and extra fields', async () => {
   const mod = await loadEditorModule();
   const blocks = mod.normalizeBlocks([
@@ -287,11 +298,12 @@ test('buildViewerUrlFromCurrentLocation resolves sibling viewer route from curre
 test('mapOptionsTextToResponseOptions maps trimmed non-empty lines', async () => {
   const mod = await loadEditorModule();
   const mapped = mod.mapOptionsTextToResponseOptions('  Alpha\n\nBeta  \n Gamma ');
-  assert.deepEqual(mapped, [
+  assert.deepEqual(stripOptionIds(mapped), [
     { value: 'Alpha', label: 'Alpha' },
     { value: 'Beta', label: 'Beta' },
     { value: 'Gamma', label: 'Gamma' },
   ]);
+  assert.equal(mapped.every((option) => typeof option.id === 'string' && option.id.length > 0), true);
 });
 
 test('question field updates map inputType, maxLength, and options through draft blocks', async () => {
@@ -330,7 +342,6 @@ test('text response normalization removes stale numeric constraints', async () =
         displayMode: 'single_line',
         min: 1,
         max: 10,
-        step: 2,
       },
     },
   ]);
@@ -358,7 +369,7 @@ test('normalizeBlocks migrates single_choice to multiple_choice and preserves op
   ]);
   assert.equal(blocks[0].responseConfig.inputType, 'multiple_choice');
   assert.equal(blocks[0].responseConfig.selectionMode, 'single');
-  assert.deepEqual(blocks[0].responseConfig.options, [{ value: 'a', label: 'A' }]);
+  assert.deepEqual(stripOptionIds(blocks[0].responseConfig.options), [{ value: 'a', label: 'A' }]);
 });
 
 test('normalizeBlocks keeps only type-compatible correctAnswer values', async () => {
@@ -499,18 +510,23 @@ test('option mutations prune correctAnswer values not present in options', async
   session.updateQuestionInputType(block.blockId, 'multiple_choice');
   session.updateQuestionSelectionMode(block.blockId, 'multi');
   session.updateQuestionOptionsFromText(block.blockId, 'A\nB\nC');
-  session.updateQuestionCorrectAnswerChoices(block.blockId, ['A', 'C']);
-  session.updateQuestionOptionAtIndex(block.blockId, 2, 'D');
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
-  assert.deepEqual(updated.responseConfig.correctAnswer, ['A']);
+  let optionIdA = getOptionIdByValue(updated.responseConfig.options, 'A');
+  let optionIdC = getOptionIdByValue(updated.responseConfig.options, 'C');
+  session.updateQuestionCorrectAnswerChoices(block.blockId, [optionIdA, optionIdC]);
+  session.updateQuestionOptionAtIndex(block.blockId, 2, 'D');
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.deepEqual(updated.responseConfig.correctAnswer, ['A', 'D']);
 
-  session.updateQuestionCorrectAnswerChoices(block.blockId, ['A', 'B']);
+  optionIdA = getOptionIdByValue(updated.responseConfig.options, 'A');
+  const optionIdB = getOptionIdByValue(updated.responseConfig.options, 'B');
+  session.updateQuestionCorrectAnswerChoices(block.blockId, [optionIdA, optionIdB]);
   session.removeQuestionOption(block.blockId, 0);
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.deepEqual(updated.responseConfig.correctAnswer, ['B']);
 
   session.updateQuestionSelectionMode(block.blockId, 'single');
-  session.updateQuestionCorrectAnswerChoice(block.blockId, 'B');
+  session.updateQuestionCorrectAnswerChoice(block.blockId, getOptionIdByValue(updated.responseConfig.options, 'B'));
   session.updateQuestionOptionsFromText(block.blockId, 'X\nY');
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
@@ -551,10 +567,14 @@ test('duplicate selection values normalize deterministically in multi mode', asy
   session.updateQuestionInputType(block.blockId, 'multiple_choice');
   session.updateQuestionSelectionMode(block.blockId, 'multi');
   session.updateQuestionOptionsFromText(block.blockId, 'A\nA\nB');
-  session.updateQuestionCorrectAnswerChoices(block.blockId, ['A', 'A', 'B']);
+  const updatedBeforeSelect = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  const firstA = getOptionIdByValue(updatedBeforeSelect.responseConfig.options, 'A');
+  const secondA = updatedBeforeSelect.responseConfig.options.find((opt) => opt.value === 'A' && opt.id !== firstA)?.id;
+  const optionB = getOptionIdByValue(updatedBeforeSelect.responseConfig.options, 'B');
+  session.updateQuestionCorrectAnswerChoices(block.blockId, [firstA, secondA, optionB]);
 
   const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
-  assert.deepEqual(updated.responseConfig.correctAnswer, ['A', 'B']);
+  assert.deepEqual(updated.responseConfig.correctAnswer, ['A', 'A', 'B']);
 });
 
 test('input type transitions clear incompatible correctAnswer values', async () => {
@@ -595,9 +615,10 @@ test('question number config and multiple choice settings update through helpers
   session.updateQuestionNumberConfig(block.blockId, 'step', '0.5');
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.deepEqual(
-    { min: updated.responseConfig.min, max: updated.responseConfig.max, step: updated.responseConfig.step },
-    { min: 1, max: 10, step: 0.5 }
+    { min: updated.responseConfig.min, max: updated.responseConfig.max },
+    { min: 1, max: 10 }
   );
+  assert.equal(Object.hasOwn(updated.responseConfig, 'step'), false);
 
   session.updateQuestionInputType(block.blockId, 'multiple_choice');
   session.updateQuestionSelectionMode(block.blockId, 'multi');
@@ -607,7 +628,7 @@ test('question number config and multiple choice settings update through helpers
   assert.equal(updated.responseConfig.inputType, 'multiple_choice');
   assert.equal(updated.responseConfig.selectionMode, 'multi');
   assert.equal(updated.responseConfig.shuffleOptions, true);
-  assert.deepEqual(updated.responseConfig.options, [{ value: 'A', label: 'A' }, { value: 'B', label: 'B' }]);
+  assert.deepEqual(stripOptionIds(updated.responseConfig.options), [{ value: 'A', label: 'A' }, { value: 'B', label: 'B' }]);
 });
 
 test('number rules authoring persists and prunes conflicting correctAnswer', async () => {
@@ -656,12 +677,21 @@ test('question correctAnswer helpers update typed answer keys', async () => {
   session.updateQuestionInputType(block.blockId, 'multiple_choice');
   session.updateQuestionSelectionMode(block.blockId, 'single');
   session.updateQuestionOptionsFromText(block.blockId, 'A\nB');
-  session.updateQuestionCorrectAnswerChoice(block.blockId, 'B');
+  let optionId = getOptionIdByValue(
+    session.state.draft.blocks.find((entry) => entry.blockId === block.blockId).responseConfig.options,
+    'B'
+  );
+  session.updateQuestionCorrectAnswerChoice(block.blockId, optionId);
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.equal(updated.responseConfig.correctAnswer, 'B');
+  assert.equal(updated.responseConfig.correctAnswerOptionId, optionId);
 
   session.updateQuestionSelectionMode(block.blockId, 'multi');
-  session.updateQuestionCorrectAnswerChoices(block.blockId, ['A', 'B']);
+  const optionIds = session.state.draft.blocks
+    .find((entry) => entry.blockId === block.blockId)
+    .responseConfig.options
+    .map((option) => option.id);
+  session.updateQuestionCorrectAnswerChoices(block.blockId, optionIds);
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.deepEqual(updated.responseConfig.correctAnswer, ['A', 'B']);
 });
@@ -680,7 +710,8 @@ test('multiple choice toggle semantics match single and multi selection behavior
   session.updateQuestionSelectionMode(block.blockId, 'single');
   session.updateQuestionOptionsFromText(block.blockId, 'A\nB\nC');
 
-  session.updateQuestionCorrectAnswerChoice(block.blockId, 'A');
+  let currentOptions = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId).responseConfig.options;
+  session.updateQuestionCorrectAnswerChoice(block.blockId, getOptionIdByValue(currentOptions, 'A'));
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.equal(updated.responseConfig.correctAnswer, 'A', 'single mode first click should set value');
 
@@ -688,7 +719,8 @@ test('multiple choice toggle semantics match single and multi selection behavior
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false, 'single mode second click should clear');
 
-  session.updateQuestionCorrectAnswerChoice(block.blockId, 'B');
+  currentOptions = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId).responseConfig.options;
+  session.updateQuestionCorrectAnswerChoice(block.blockId, getOptionIdByValue(currentOptions, 'B'));
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.equal(updated.responseConfig.correctAnswer, 'B', 'single mode selecting another option should replace');
 
@@ -696,11 +728,16 @@ test('multiple choice toggle semantics match single and multi selection behavior
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.deepEqual(updated.responseConfig.correctAnswer, ['B'], 'mode switch should coerce single string to array');
 
-  session.updateQuestionCorrectAnswerChoices(block.blockId, ['B', 'C']);
+  currentOptions = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId).responseConfig.options;
+  session.updateQuestionCorrectAnswerChoices(block.blockId, [
+    getOptionIdByValue(currentOptions, 'B'),
+    getOptionIdByValue(currentOptions, 'C'),
+  ]);
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.deepEqual(updated.responseConfig.correctAnswer, ['B', 'C'], 'multi mode toggle-on should add value');
 
-  session.updateQuestionCorrectAnswerChoices(block.blockId, ['C']);
+  currentOptions = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId).responseConfig.options;
+  session.updateQuestionCorrectAnswerChoices(block.blockId, [getOptionIdByValue(currentOptions, 'C')]);
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.deepEqual(updated.responseConfig.correctAnswer, ['C'], 'multi mode toggle-off should remove value');
 
@@ -727,7 +764,7 @@ test('multiple choice option helpers add, update, and remove options', async () 
   session.removeQuestionOption(block.blockId, 0);
 
   const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
-  assert.deepEqual(updated.responseConfig.options, [{ value: 'Second', label: 'Second' }]);
+  assert.deepEqual(stripOptionIds(updated.responseConfig.options), [{ value: 'Second', label: 'Second' }]);
 });
 
 test('typing first visible option persists when options array starts empty', async () => {
@@ -744,11 +781,11 @@ test('typing first visible option persists when options array starts empty', asy
   session.updateQuestionOptionAtIndex(block.blockId, 0, 'First typed option');
 
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
-  assert.deepEqual(updated.responseConfig.options, [{ value: 'First typed option', label: 'First typed option' }]);
+  assert.deepEqual(stripOptionIds(updated.responseConfig.options), [{ value: 'First typed option', label: 'First typed option' }]);
 
   session.addQuestionOption(block.blockId);
   updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
-  assert.deepEqual(updated.responseConfig.options, [
+  assert.deepEqual(stripOptionIds(updated.responseConfig.options), [
     { value: 'First typed option', label: 'First typed option' },
     { value: '', label: '' },
   ]);
@@ -798,7 +835,12 @@ test('autosave persists normalized contractDraft with typed correctAnswer', asyn
   session.updateQuestionInputType(block.blockId, 'multiple_choice');
   session.updateQuestionSelectionMode(block.blockId, 'multi');
   session.updateQuestionOptionsFromText(block.blockId, 'A\nB');
-  session.updateQuestionCorrectAnswerChoices(block.blockId, ['A', 'B', 'X']);
+  const autosaveOptions = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId).responseConfig.options;
+  session.updateQuestionCorrectAnswerChoices(block.blockId, [
+    getOptionIdByValue(autosaveOptions, 'A'),
+    getOptionIdByValue(autosaveOptions, 'B'),
+    'missing-option-id',
+  ]);
   clearTimeout(session.autosaveTimer);
   await session.autosave();
 
@@ -834,6 +876,7 @@ test('importWorksheetJson convert flow preserves normalized correctAnswer values
 
   const importedQuestion = session.state.draft.blocks.find((entry) => entry.blockId === 'q_import');
   assert.equal(importedQuestion.responseConfig.correctAnswer, 'A');
+  assert.equal(typeof importedQuestion.responseConfig.correctAnswerOptionId, 'string');
 });
 
 test('number validation helper reports min > max error', async () => {

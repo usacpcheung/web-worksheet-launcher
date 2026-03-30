@@ -1,3 +1,5 @@
+import { getNumberCorrectAnswerConfigViolation, normalizeNumberRules } from './number-input-validator.js';
+
 function isObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -88,6 +90,12 @@ function validateQuestionResponseConfig(responseConfig, path, errors) {
   if (inputType === 'number') {
     if (typeof correctAnswer !== 'number' || !Number.isFinite(correctAnswer)) {
       errors.push(`${path}.correctAnswer must be a finite number for number inputType`);
+      return;
+    }
+
+    const numberAnswerViolation = getNumberCorrectAnswerConfigViolation(correctAnswer, responseConfig);
+    if (numberAnswerViolation !== null) {
+      errors.push(`${path}.correctAnswer violates numberRules or min/max constraints for number inputType`);
     }
     return;
   }
@@ -318,4 +326,3 @@ export {
   validateViewerPayloadSchema,
   validateAttemptPayloadSchema,
 };
-import { normalizeNumberRules } from './number-input-validator.js';
