@@ -10,7 +10,6 @@ const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
-const STEP_ALIGNMENT_EPSILON = 1e-9;
 
 function nowIso() {
   return new Date().toISOString();
@@ -116,9 +115,6 @@ function normalizeViewerBlock(block, index) {
       }
       if (Number.isFinite(responseConfigSource.max)) {
         normalizedResponseConfig.max = Number(responseConfigSource.max);
-      }
-      if (Number.isFinite(responseConfigSource.step) && Number(responseConfigSource.step) > 0) {
-        normalizedResponseConfig.step = Number(responseConfigSource.step);
       }
     }
 
@@ -393,18 +389,6 @@ function getNumberInputErrorMessage(rawValue, responseConfig = {}) {
   }
   if (max !== null && numericValue > max) {
     return { message: `Value is above maximum (${max}).`, normalizedValue: '' };
-  }
-
-  if (Number.isFinite(responseConfig.step)) {
-    const step = Number(responseConfig.step);
-    if (step > 0) {
-      const base = min !== null ? min : 0;
-      const offset = (numericValue - base) / step;
-      const nearestInteger = Math.round(offset);
-      if (Math.abs(offset - nearestInteger) > STEP_ALIGNMENT_EPSILON) {
-        return { message: `Value must be in increments of ${step}.`, normalizedValue: '' };
-      }
-    }
   }
 
   if (!normalizedRules.allowSigned && (/^[+-]/).test(trimmed)) {

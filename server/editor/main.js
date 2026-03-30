@@ -600,7 +600,6 @@ class EditorDraftSession {
       if (normalizedInputType !== 'number') {
         delete nextResponseConfig.min;
         delete nextResponseConfig.max;
-        delete nextResponseConfig.step;
       }
 
       return {
@@ -655,7 +654,7 @@ class EditorDraftSession {
   }
 
   updateQuestionNumberConfig(blockId, key, rawValue) {
-    if (!this.state.draft || !blockId || !['min', 'max', 'step'].includes(key)) return;
+    if (!this.state.draft || !blockId || !['min', 'max'].includes(key)) return;
     const parsed = Number(rawValue);
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') {
@@ -667,7 +666,7 @@ class EditorDraftSession {
       }
 
       const updated = { ...nextResponseConfig };
-      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isFinite(parsed) || (key === 'step' && parsed <= 0)) {
+      if (rawValue === '' || rawValue === null || rawValue === undefined || !Number.isFinite(parsed)) {
         delete updated[key];
       } else {
         updated[key] = parsed;
@@ -1535,12 +1534,6 @@ function renderEditorShell(session) {
   questionMax.id = 'editor-question-max';
   questionMax.type = 'number';
   questionMax.className = 'control';
-  const questionStep = document.createElement('input');
-  questionStep.id = 'editor-question-step';
-  questionStep.type = 'number';
-  questionStep.min = '0.0000001';
-  questionStep.step = 'any';
-  questionStep.className = 'control';
   const questionNumberAllowSigned = document.createElement('input');
   questionNumberAllowSigned.id = 'editor-question-number-allow-signed';
   questionNumberAllowSigned.type = 'checkbox';
@@ -1695,7 +1688,6 @@ function renderEditorShell(session) {
       }
       if (activeElement !== questionMin) questionMin.value = responseConfig.min ?? '';
       if (activeElement !== questionMax) questionMax.value = responseConfig.max ?? '';
-      if (activeElement !== questionStep) questionStep.value = responseConfig.step ?? '';
       if (activeElement !== questionNumberAllowSigned) {
         questionNumberAllowSigned.checked = responseConfig.numberRules?.allowSigned !== false;
       }
@@ -2105,10 +2097,6 @@ function renderEditorShell(session) {
     session.updateQuestionNumberConfig(session.state.selectedBlockId, 'max', questionMax.value);
     updateSummary();
   });
-  questionStep.addEventListener('input', () => {
-    session.updateQuestionNumberConfig(session.state.selectedBlockId, 'step', questionStep.value);
-    updateSummary();
-  });
   questionCorrectAnswerBoolean.addEventListener('change', () => {
     session.updateQuestionCorrectAnswerBoolean(session.state.selectedBlockId, questionCorrectAnswerBoolean.value);
     updateSummary();
@@ -2271,6 +2259,7 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
     ...source,
     inputType,
   };
+  delete normalized.step;
 
   if (inputType === 'text') {
     normalized.maxLength = Number.isFinite(source.maxLength) ? Number(source.maxLength) : 200;
@@ -2280,7 +2269,6 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
     delete normalized.shuffleOptions;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
     delete normalized.numberRules;
     delete normalized.correctAnswer;
   } else if (inputType === 'boolean') {
@@ -2289,7 +2277,6 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
     delete normalized.shuffleOptions;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
     delete normalized.numberRules;
     delete normalized.maxLength;
     delete normalized.displayMode;
@@ -2304,7 +2291,6 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
     delete normalized.shuffleOptions;
     if (Number.isFinite(source.min)) normalized.min = Number(source.min); else delete normalized.min;
     if (Number.isFinite(source.max)) normalized.max = Number(source.max); else delete normalized.max;
-    if (Number.isFinite(source.step) && Number(source.step) > 0) normalized.step = Number(source.step); else delete normalized.step;
     normalized.numberRules = normalizeNumberRulesConfig(source.numberRules);
     delete normalized.maxLength;
     delete normalized.displayMode;
@@ -2415,7 +2401,6 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
     delete normalized.displayMode;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
     delete normalized.numberRules;
     if (forContract) {
       delete normalized.correctAnswerOptionId;
@@ -2433,7 +2418,6 @@ function normalizeQuestionResponseConfig(responseConfig, options = {}) {
     delete normalized.shuffleOptions;
     delete normalized.min;
     delete normalized.max;
-    delete normalized.step;
     delete normalized.numberRules;
     delete normalized.correctAnswer;
   }
