@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoiceOptionValues, normalizeMultiChoiceAnswerValues, getChoiceSelectionState, applyChoiceListState, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -254,7 +254,41 @@ test('coerceAnswerValueForQuestion supports multiple_choice single and multi ans
   };
   assert.equal(mod.coerceAnswerValueForQuestion(single, 'a'), 'a');
   assert.equal(mod.coerceAnswerValueForQuestion(single, 'z'), '');
-  assert.deepEqual(mod.coerceAnswerValueForQuestion(multi, ['b', 'a', 'b', 'x']), ['b', 'a']);
+  assert.deepEqual(mod.coerceAnswerValueForQuestion(multi, ['b', 'a', 'b', 'x']), ['a', 'b']);
+});
+
+test('normalizeMultiChoiceAnswerValues returns unique selections in option order', async () => {
+  const mod = await loadViewerModule();
+  assert.deepEqual(
+    mod.normalizeMultiChoiceAnswerValues(['b', 'a', 'b', 'x'], ['a', 'b', 'c']),
+    ['a', 'b']
+  );
+});
+
+test('getChoiceSelectionState normalizes single and multi selection values', async () => {
+  const mod = await loadViewerModule();
+  assert.deepEqual(
+    mod.getChoiceSelectionState('single', 'b', ['a', 'b', 'c']),
+    {
+      selectedValues: ['b'],
+      selectedSet: new Set(['b']),
+      selectedValue: 'b',
+    }
+  );
+  assert.deepEqual(
+    mod.getChoiceSelectionState('single', 'x', ['a', 'b', 'c']),
+    {
+      selectedValues: [],
+      selectedSet: new Set(),
+      selectedValue: '',
+    }
+  );
+  const multi = mod.getChoiceSelectionState('multi', ['c', 'a', 'x'], ['a', 'b', 'c']);
+  assert.deepEqual(multi.selectedValues, ['a', 'c']);
+  assert.equal(multi.selectedSet.has('a'), true);
+  assert.equal(multi.selectedSet.has('b'), false);
+  assert.equal(multi.selectedSet.has('c'), true);
+  assert.equal(multi.selectedValue, '');
 });
 
 test('getBooleanSelectionState maps stored values to selected button state', async () => {
@@ -336,6 +370,48 @@ test('applyBooleanGroupState hydrates selected and disabled button state', async
   assert.equal(falseButton.attributes['aria-pressed'], 'false');
   assert.equal(trueButton.disabled, false);
   assert.equal(falseButton.disabled, false);
+});
+
+test('applyChoiceListState hydrates selected and disabled button state for multi and single', async () => {
+  const mod = await loadViewerModule();
+  function createButton(choiceValue) {
+    const button = {
+      dataset: { choiceValue },
+      disabled: false,
+      attributes: {},
+      selectedClass: false,
+      setAttribute(name, value) {
+        this.attributes[name] = value;
+      },
+    };
+    button.classList = {
+      toggle: (_className, flag) => {
+        button.selectedClass = Boolean(flag);
+      },
+    };
+    return button;
+  }
+  const buttonA = createButton('a');
+  const buttonB = createButton('b');
+  const group = {
+    querySelectorAll: () => [buttonA, buttonB],
+  };
+
+  mod.applyChoiceListState(group, 'multi', ['b'], true);
+  assert.equal(buttonA.selectedClass, false);
+  assert.equal(buttonB.selectedClass, true);
+  assert.equal(buttonA.attributes['aria-pressed'], 'false');
+  assert.equal(buttonB.attributes['aria-pressed'], 'true');
+  assert.equal(buttonA.disabled, true);
+  assert.equal(buttonB.disabled, true);
+
+  mod.applyChoiceListState(group, 'single', 'a', false);
+  assert.equal(buttonA.selectedClass, true);
+  assert.equal(buttonB.selectedClass, false);
+  assert.equal(buttonA.attributes['aria-pressed'], 'true');
+  assert.equal(buttonB.attributes['aria-pressed'], 'false');
+  assert.equal(buttonA.disabled, false);
+  assert.equal(buttonB.disabled, false);
 });
 
 test('deterministicShuffle remains stable per seed', async () => {
@@ -677,6 +753,16 @@ test('boolean rendering branch uses aria-labelledby and only labelable controls 
   assert.equal(source.includes("control.setAttribute('aria-label', 'Choose True or False');"), false);
   assert.equal(source.includes("if (control.matches('input, select, textarea'))"), true);
   assert.equal(source.includes("const normalizedCurrentValue = coerceAnswerValueByInputType('boolean', currentValue);"), true);
+});
+
+test('multiple choice rendering branch uses unified button choice list pattern', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("container.className = 'choice-list';"), true);
+  assert.equal(source.includes("button.className = 'choice-item';"), true);
+  assert.equal(source.includes("button.dataset.choiceValue = choiceValue;"), true);
+  assert.equal(source.includes("button.setAttribute('aria-pressed', 'false');"), true);
+  assert.equal(source.includes("control = document.createElement('select');"), false);
+  assert.equal(source.includes("checkbox.type = 'checkbox';"), false);
 });
 
 test('createInputErrorNode applies stable id and live region semantics', async () => {
