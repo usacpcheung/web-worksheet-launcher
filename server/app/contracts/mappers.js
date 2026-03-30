@@ -47,8 +47,6 @@ function mapDraftToSnapshot(draft, publishMetadata) {
   }
 
   const requiredMetadataFields = [
-    'worksheetId',
-    'snapshotId',
     'schemaVersion',
     'snapshotVersion',
     'publishedAt',
