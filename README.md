@@ -12,16 +12,21 @@ Phase 1 establishes contracts and file scaffolding only.
 - Render route security headers/CSP guidance: `docs/render-security-headers.md`
 - Widget styles placeholder: `server/worksheet_launcher/widgets/rewrite-widget.css`
 
+## Editor/Viewer route assumptions
+
+- Canonical product-style routes are `/editor/` and `/viewer/`.
+- Static or nested deployments may instead serve those entries from file paths such as `server/editor/index.html` and `server/viewer/index.html`.
+- Editor-to-viewer navigation should therefore resolve relative to the current page location (for example, sibling `../viewer/`) rather than hardcoding an absolute `/viewer/` URL.
+
 ## Parent launcher SDK source
 
 - Canonical SDK source in this repo: `parent_prototype/sdk/parent-launcher.js`
-- Legacy compatibility path (existing references only): `server/worksheet_launcher/parent-launcher.js`
 - For new integrations, copy/host from the canonical SDK source.
 
 ## 5-line parent integration
 
 ```html
-<script src="/worksheet/parent-launcher.js"></script>
+<script src="./sdk/parent-launcher.js"></script>
 <script>
 const launcher = WorksheetLauncher.create({ renderOrigin, renderPath, trustedSenderOrigin, questionSelector: "#question", answerTargetSelector: "#answer" });
 document.querySelector("#open").addEventListener("click", () => launcher.open({ title: "Quick Check" }));

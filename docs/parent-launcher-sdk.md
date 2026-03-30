@@ -3,12 +3,12 @@
 This document shows the public parent-side API for launching the worksheet popup and receiving one rewritten answer.
 
 > **Source of truth:** `parent_prototype/sdk/parent-launcher.js` is the canonical SDK source in this repo.
-> Legacy path `server/worksheet_launcher/parent-launcher.js` is kept as a **compatibility-only mirror** for existing references and is not recommended for new integrations.
+> Integrators should copy/host this SDK in the parent app (or reference the prototype path directly during local development).
 
 ## 5-line integration (selectors)
 
 ```html
-<script src="/worksheet/parent-launcher.js"></script>
+<script src="./sdk/parent-launcher.js"></script>
 <script>
 const launcher = WorksheetLauncher.create({ renderOrigin: "https://oidc.example.com", renderPath: "/worksheet/render.html", trustedSenderOrigin: "https://oidc.example.com", questionSelector: "#question", answerTargetSelector: "#answer" });
 document.querySelector("#open").addEventListener("click", () => launcher.open({ title: "Quick Check" }));
@@ -22,7 +22,7 @@ That is enough for the common case: question text is read from `#question`, and 
 Use this when your app state is not DOM-first, or when answer writing needs custom logic.
 
 ```html
-<script src="/worksheet/parent-launcher.js"></script>
+<script src="./sdk/parent-launcher.js"></script>
 <script>
 const launcher = WorksheetLauncher.create({
   renderOrigin: "https://oidc.example.com",

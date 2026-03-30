@@ -1,0 +1,76 @@
+{
+  "worksheetId": "ws_01HXYZ",
+  "snapshotId": "wss_01JABC",
+  "snapshotVersion": 3,
+  "title": "Argument writing practice",
+  "blocks": [
+    {
+      "blockId": "blk_q_001",
+      "kind": "question",
+      "position": 0,
+      "prompt": {
+        "text": "Read the claim and write a stronger revision.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "text",
+        "maxLength": 240,
+        "displayMode": "multi_line"
+      }
+    },
+    {
+      "blockId": "blk_q_002",
+      "kind": "question",
+      "position": 1,
+      "prompt": {
+        "text": "Enter a score between 0 and 10 in 0.5 increments.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "number",
+        "min": 0,
+        "max": 10,
+        "numberRules": {
+          "allowedKinds": [
+            "decimal"
+          ],
+          "allowSigned": false,
+          "decimalPlacesAllowed": 1
+        },
+        "correctAnswer": 7.5
+      }
+    },
+    {
+      "blockId": "blk_q_003",
+      "kind": "question",
+      "position": 2,
+      "prompt": {
+        "text": "Select all claims supported by evidence.",
+        "format": "plain_text"
+      },
+      "responseConfig": {
+        "inputType": "multiple_choice",
+        "selectionMode": "multi",
+        "shuffleOptions": true,
+        "options": [
+          {
+            "value": "claim_a",
+            "label": "Claim A"
+          },
+          {
+            "value": "claim_b",
+            "label": "Claim B"
+          },
+          {
+            "value": "claim_c",
+            "label": "Claim C"
+          }
+        ],
+        "correctAnswer": [
+          "claim_a",
+          "claim_c"
+        ]
+      }
+    }
+  ]
+}
