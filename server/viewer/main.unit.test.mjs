@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, coerceAnswerValueForQuestion, deterministicShuffle };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, coerceAnswerValueForQuestion, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -44,8 +44,8 @@ async function loadViewerModule(overrides = {}) {
     }
     return { ok: true, normalizedValue: Number(text), kind };
   });
-  globalThis.document = { getElementById: () => null };
-  globalThis.window = {};
+  globalThis.document = overrides.document || { getElementById: () => null };
+  globalThis.window = overrides.window || {};
 
   const dataUrl = `data:text/javascript,${encodeURIComponent(source)}`;
   return import(dataUrl);
@@ -469,4 +469,59 @@ test('getInputHelperText maps input types to guidance', async () => {
   assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one or more options.');
   assert.equal(mod.getInputHelperText('boolean'), 'Choose True / False.');
   assert.equal(mod.getInputHelperText('text'), 'Text response.');
+});
+
+test('number rendering branch avoids text input min/max attributes and uses pattern hint', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("if (Number.isFinite(block.responseConfig?.min)) control.min"), false);
+  assert.equal(source.includes("if (Number.isFinite(block.responseConfig?.max)) control.max"), false);
+  assert.equal(source.includes('control.pattern ='), true);
+});
+
+test('createInputErrorNode applies stable id and live region semantics', async () => {
+  const created = [];
+  const mod = await loadViewerModule({
+    document: {
+      getElementById: () => null,
+      createElement: (tag) => {
+        const node = {
+          tagName: tag,
+          className: '',
+          textContent: '',
+          id: '',
+          attrs: {},
+          setAttribute(name, value) {
+            this.attrs[name] = String(value);
+          },
+          getAttribute(name) {
+            return this.attrs[name] ?? null;
+          },
+        };
+        created.push(node);
+        return node;
+      },
+    },
+  });
+  const node = mod.createInputErrorNode('answer-q1-error');
+  assert.equal(created.length > 0, true);
+  assert.equal(node.id, 'answer-q1-error');
+  assert.equal(node.className, 'input-error');
+  assert.equal(node.getAttribute('aria-live'), 'polite');
+  assert.equal(node.getAttribute('role'), 'status');
+});
+
+test('ensureControlDescribedBy links control to existing error id without duplicates', async () => {
+  const mod = await loadViewerModule();
+  const control = {
+    attrs: {},
+    getAttribute(name) {
+      return this.attrs[name] ?? null;
+    },
+    setAttribute(name, value) {
+      this.attrs[name] = String(value);
+    },
+  };
+  mod.ensureControlDescribedBy(control, 'answer-q1-error');
+  mod.ensureControlDescribedBy(control, 'answer-q1-error');
+  assert.equal(control.getAttribute('aria-describedby'), 'answer-q1-error');
 });

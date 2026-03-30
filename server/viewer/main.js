@@ -297,6 +297,26 @@ function getInputHelperText(inputType) {
   return 'Text response.';
 }
 
+function ensureControlDescribedBy(control, describedById) {
+  if (!control || !describedById) return;
+  const existing = String(control.getAttribute('aria-describedby') || '').trim();
+  const tokens = existing ? existing.split(/\s+/).filter(Boolean) : [];
+  if (!tokens.includes(describedById)) {
+    tokens.push(describedById);
+  }
+  control.setAttribute('aria-describedby', tokens.join(' ').trim());
+}
+
+function createInputErrorNode(errorId) {
+  const node = document.createElement('p');
+  node.className = 'input-error';
+  node.textContent = '';
+  node.id = errorId;
+  node.setAttribute('aria-live', 'polite');
+  node.setAttribute('role', 'status');
+  return node;
+}
+
 function deterministicShuffle(items, seedText) {
   const list = [...items];
   const seedSource = String(seedText ?? '');
@@ -866,9 +886,7 @@ function renderViewerShell(session) {
       const helper = document.createElement('p');
       helper.className = 'muted';
       helper.textContent = getInputHelperText(inputType);
-      const inputError = document.createElement('p');
-      inputError.className = 'input-error';
-      inputError.textContent = '';
+      const inputError = createInputErrorNode(`${controlId}-error`);
 
       let control;
       if (inputType === 'text' && block.responseConfig?.displayMode === 'single_line') {
@@ -883,8 +901,15 @@ function renderViewerShell(session) {
         control = document.createElement('input');
         control.type = 'text';
         control.inputMode = 'decimal';
-        if (Number.isFinite(block.responseConfig?.min)) control.min = String(block.responseConfig.min);
-        if (Number.isFinite(block.responseConfig?.max)) control.max = String(block.responseConfig.max);
+        const numberRules = normalizeNumberRules(block.responseConfig?.numberRules);
+        const allowSignedPrefix = numberRules.allowSigned ? '[+-]?' : '';
+        const kindPattern = numberRules.allowedKinds.includes('integer') && numberRules.allowedKinds.includes('decimal')
+          ? '\\d+(\\.\\d+)?'
+          : numberRules.allowedKinds.includes('decimal')
+            ? '\\d+\\.\\d+'
+            : '\\d+';
+        control.pattern = `${allowSignedPrefix}${kindPattern}`;
+        control.title = 'Enter a valid integer or decimal number for this question.';
         control.addEventListener('input', () => {
           const trimmed = control.value.trim();
           if (trimmed === '') {
@@ -987,6 +1012,7 @@ function renderViewerShell(session) {
 
       if (typeof HTMLElement !== 'undefined' && control instanceof HTMLElement) {
         control.id = controlId;
+        ensureControlDescribedBy(control, inputError.id);
       }
       answerControls.set(block.blockId, control);
       card.append(label, helper, control, inputError);
@@ -1122,4 +1148,6 @@ export {
   getInputHelperText,
   coerceAnswerValueForQuestion,
   deterministicShuffle,
+  ensureControlDescribedBy,
+  createInputErrorNode,
 };
