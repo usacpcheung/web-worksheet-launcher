@@ -249,9 +249,13 @@ function getNumberQuestionValidationErrors(config, rawValues = {}) {
 }
 
 
-function buildViewerUrlFromCurrentLocation(currentHref, localDraftId) {
+function buildViewerUrlFromCurrentLocation(currentHref, localDraftId, draftUpdatedAt = null) {
   const viewerUrl = new URL('../viewer/', currentHref);
   viewerUrl.searchParams.set('localDraftId', localDraftId);
+  viewerUrl.searchParams.set('preview', '1');
+  if (draftUpdatedAt) {
+    viewerUrl.searchParams.set('draftUpdatedAt', draftUpdatedAt);
+  }
   return viewerUrl;
 }
 
@@ -2074,7 +2078,8 @@ function renderEditorShell(session) {
     if (!localDraftId) return;
     await session.saveNow();
     updateSummary();
-    const viewerUrl = buildViewerUrlFromCurrentLocation(window.location.href, localDraftId);
+    const draftUpdatedAt = session.state.draft?.metadata?.updatedAt || null;
+    const viewerUrl = buildViewerUrlFromCurrentLocation(window.location.href, localDraftId, draftUpdatedAt);
     window.location.assign(viewerUrl);
   });
   questionInputType.addEventListener('change', () => {

@@ -279,20 +279,27 @@ test('older autosave completion cannot override newer save status', async () => 
 test('viewer navigation no longer uses hardcoded /viewer absolute assign path', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);"), false);
-  assert.equal(source.includes('buildViewerUrlFromCurrentLocation(window.location.href, localDraftId)'), true);
+  assert.equal(source.includes('buildViewerUrlFromCurrentLocation(window.location.href, localDraftId, draftUpdatedAt)'), true);
   assert.equal(source.includes("new URL('../viewer/', currentHref)"), true);
 });
 
 test('buildViewerUrlFromCurrentLocation resolves sibling viewer route from current page', async () => {
   const mod = await loadEditorModule();
-  const rootResolved = mod.buildViewerUrlFromCurrentLocation('https://example.test/editor/', 'draft_root');
-  assert.equal(rootResolved.toString(), 'https://example.test/viewer/?localDraftId=draft_root');
+  const rootResolved = mod.buildViewerUrlFromCurrentLocation(
+    'https://example.test/editor/',
+    'draft_root',
+    '2026-03-31T00:00:00.000Z'
+  );
+  assert.equal(
+    rootResolved.toString(),
+    'https://example.test/viewer/?localDraftId=draft_root&preview=1&draftUpdatedAt=2026-03-31T00%3A00%3A00.000Z'
+  );
 
   const nestedResolved = mod.buildViewerUrlFromCurrentLocation(
     'https://example.test/server/editor/index.html?mode=edit#section',
     'draft_nested'
   );
-  assert.equal(nestedResolved.toString(), 'https://example.test/server/viewer/?localDraftId=draft_nested');
+  assert.equal(nestedResolved.toString(), 'https://example.test/server/viewer/?localDraftId=draft_nested&preview=1');
 });
 
 test('mapOptionsTextToResponseOptions maps trimmed non-empty lines', async () => {

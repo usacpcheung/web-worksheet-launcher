@@ -661,6 +661,9 @@ class ViewerAttemptSession {
       attemptValidationErrors: [],
       lastManualSaveAt: null,
       source: 'unknown',
+      sourceDraftUpdatedAt: null,
+      isFinalizing: false,
+      lastFinalizeError: null,
       attemptRevision: 0,
       lastSavedRevision: 0,
       recoveryMessage: null,
@@ -693,30 +696,59 @@ class ViewerAttemptSession {
 
   async bootstrap() {
     const params = new URLSearchParams(window.location.search);
-    const resumeMetadata = this.storage.resumeFlags.get(RESUME_FLAG_KEY);
+    const previewIntent = this.parsePreviewIntent(params);
+    const freshnessMarker = params.get('draftUpdatedAt') || null;
 
-    const explicitAttemptId = params.get('localAttemptId') || resumeMetadata?.localId || null;
+    const explicitAttemptId = params.get('localAttemptId');
     if (explicitAttemptId) {
-      const resumed = await this.tryResumeAttempt(explicitAttemptId);
+      const resumed = await this.tryResumeAttempt(explicitAttemptId, {
+        sourceDraftUpdatedAt: freshnessMarker,
+        preferFreshPreview: Boolean(previewIntent?.preview && previewIntent?.localDraftId),
+      });
       if (resumed) {
         this.persistResumeMetadata();
         return this.state;
       }
     }
 
-    const loadedPayload = await this.loadViewerPayloadFromSources(params);
+    const loadedPayload = await this.loadViewerPayloadFromSources(params, previewIntent);
     await this.validateViewerPayload(loadedPayload.payload);
-    const attempt = this.createLocalAttemptState(loadedPayload.payload, loadedPayload.source);
+    const attempt = this.createLocalAttemptState(
+      loadedPayload.payload,
+      loadedPayload.source,
+      { sourceDraftUpdatedAt: loadedPayload.sourceDraftUpdatedAt }
+    );
     this.applyAttemptState(attempt, { markDirty: true });
     this.persistResumeMetadata();
 
     return this.state;
   }
 
-  async tryResumeAttempt(localAttemptId) {
+  parsePreviewIntent(params) {
+    const localDraftId = params.get('localDraftId');
+    if (!localDraftId) {
+      return null;
+    }
+
+    return {
+      localDraftId,
+      preview: params.get('preview') === '1',
+      sourceDraftUpdatedAt: params.get('draftUpdatedAt') || null,
+    };
+  }
+
+  async tryResumeAttempt(localAttemptId, options = {}) {
     try {
       const attemptRecord = await this.storage.attempts.get(localAttemptId);
       if (!attemptRecord) {
+        return false;
+      }
+      const attemptSourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
+      const shouldBypassResumeForFreshPreview =
+        options.preferFreshPreview
+        && options.sourceDraftUpdatedAt
+        && options.sourceDraftUpdatedAt !== attemptSourceDraftUpdatedAt;
+      if (shouldBypassResumeForFreshPreview) {
         return false;
       }
 
@@ -745,7 +777,20 @@ class ViewerAttemptSession {
     }
   }
 
-  async loadViewerPayloadFromSources(params) {
+  async loadViewerPayloadFromSources(params, previewIntent = null) {
+    if (previewIntent?.localDraftId && previewIntent?.preview) {
+      const draftRecord = await this.storage.drafts.get(previewIntent.localDraftId);
+      if (!draftRecord) {
+        throw new Error(`Local draft not found for localId=${previewIntent.localDraftId}`);
+      }
+
+      return {
+        source: 'local_draft_preview',
+        payload: mapDraftRecordToViewerPayload(draftRecord),
+        sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || previewIntent.sourceDraftUpdatedAt || null,
+      };
+    }
+
     const inlinePayload =
       maybeParseEncodedJson(params.get('viewerPayload')) ||
       (typeof window !== 'undefined' ? parseJsonInput(window.__VIEWER_PAYLOAD__) : null);
@@ -788,6 +833,7 @@ class ViewerAttemptSession {
       return {
         source: 'local_draft',
         payload: mapDraftRecordToViewerPayload(draftRecord),
+        sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || null,
       };
     }
 
@@ -821,9 +867,10 @@ class ViewerAttemptSession {
     };
   }
 
-  createLocalAttemptState(viewerPayload, source) {
+  createLocalAttemptState(viewerPayload, source, options = {}) {
     const localAttemptId = createLocalId('attempt');
     const startedAt = nowIso();
+    const sourceDraftUpdatedAt = options.sourceDraftUpdatedAt || null;
 
     return {
       localId: localAttemptId,
@@ -838,6 +885,7 @@ class ViewerAttemptSession {
       metadata: {
         localId: localAttemptId,
         origin: source || 'local_source',
+        sourceDraftUpdatedAt,
         updatedAt: startedAt,
       },
     };
@@ -852,7 +900,10 @@ class ViewerAttemptSession {
     this.state.lastSavedAt = attemptRecord.lastSavedAt || null;
     this.state.completedAt = attemptRecord.completedAt || attemptRecord.submittedAt || null;
     this.state.source = attemptRecord.metadata?.origin || 'local_source';
+    this.state.sourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
     this.state.lastSaveError = null;
+    this.state.isFinalizing = false;
+    this.state.lastFinalizeError = null;
 
     if (options.markDirty) {
       this.state.attemptRevision += 1;
@@ -891,19 +942,36 @@ class ViewerAttemptSession {
   }
 
   async completeLocalAttempt() {
-    if (!this.state.localAttemptId || this.state.status === 'completed') {
+    if (!this.state.localAttemptId || this.state.isFinalizing || this.state.status === 'completed') {
       return null;
     }
 
+    this.state.isFinalizing = true;
+    this.state.lastFinalizeError = null;
     this.state.status = 'completed';
     this.state.completedAt = nowIso();
     this.state.attemptRevision += 1;
     this.persistResumeMetadata();
+    this.notifyStateChange();
 
     clearTimeout(this.autosaveTimer);
     this.autosaveTimer = null;
 
-    return this.autosave();
+    try {
+      const persisted = await this.autosave();
+      this.state.lastFinalizeError = null;
+      return persisted;
+    } catch (error) {
+      this.state.status = 'in_progress';
+      this.state.completedAt = null;
+      this.state.lastFinalizeError = `Finalize failed. Please check your connection and try again. ${error?.message || String(error)}`;
+      this.persistResumeMetadata();
+      this.notifyStateChange();
+      return null;
+    } finally {
+      this.state.isFinalizing = false;
+      this.notifyStateChange();
+    }
   }
 
   scheduleAutosave() {
@@ -950,6 +1018,7 @@ class ViewerAttemptSession {
       metadata: {
         localId: this.state.localAttemptId,
         origin: this.state.source || 'local_source',
+        sourceDraftUpdatedAt: this.state.sourceDraftUpdatedAt || null,
         updatedAt,
       },
     };
@@ -1018,6 +1087,38 @@ class ViewerAttemptSession {
   async restoreByLocalId(localId) {
     if (!localId) return false;
     return this.tryResumeAttempt(localId);
+  }
+
+  async startImportedWorksheetFromJsonText(rawJson) {
+    let worksheet;
+    try {
+      worksheet = JSON.parse(rawJson);
+    } catch (error) {
+      throw new Error(`Unable to parse worksheet JSON. ${error?.message || String(error)}`);
+    }
+
+    const importedRecord = {
+      localId: createLocalId('imported'),
+      worksheet,
+      importedAt: nowIso(),
+    };
+
+    try {
+      await this.storage.importedWorksheets.put(importedRecord);
+    } catch (error) {
+      throw new Error(`Failed to save imported worksheet. ${error?.message || String(error)}`);
+    }
+
+    try {
+      const payload = resolveImportedWorksheetPayload(importedRecord);
+      await this.validateViewerPayload(payload);
+      const attempt = this.createLocalAttemptState(payload, 'imported_worksheet');
+      this.applyAttemptState(attempt, { markDirty: true });
+      this.persistResumeMetadata();
+      return this.state;
+    } catch (error) {
+      throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
+    }
   }
 
   applyUiRestoreState(_ui = {}) {
@@ -1121,13 +1222,8 @@ function renderViewerShell(session) {
   secondaryActions.className = 'secondary-actions';
   secondaryActions.append(syncResumeBtn, rewriteAssistBtn);
 
-  completeBtn.disabled = session.state.status === 'completed';
   completeBtn.addEventListener('click', async () => {
     await session.completeLocalAttempt();
-    completeBtn.disabled = true;
-    Array.from(questionList.querySelectorAll('textarea, input, select, button[data-choice-value], button[data-boolean-value]')).forEach((control) => {
-      control.disabled = true;
-    });
     updateSummary();
   });
   stickyActions.append(saveBtn, completeBtn, secondaryActions);
@@ -1391,11 +1487,18 @@ function renderViewerShell(session) {
     syncAnswerControlValues(questionBlocks);
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
-    status.textContent = session.state.lastSaveError
-      ? `⚠️ ${session.state.lastSaveError}`
-      : session.state.autosavePending
-        ? 'Saving…'
-        : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+    status.textContent = session.state.isFinalizing
+      ? 'Finalizing submission…'
+      : session.state.lastFinalizeError
+        ? `⚠️ ${session.state.lastFinalizeError}`
+        : session.state.status === 'completed'
+          ? `Finalized${session.state.completedAt ? ` at ${session.state.completedAt}` : ''}`
+          : session.state.lastSaveError
+            ? `⚠️ ${session.state.lastSaveError}`
+            : session.state.autosavePending
+              ? 'Saving…'
+              : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+    completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     metadata.textContent =
       `worksheetId: ${session.state.viewerPayload?.worksheetId || 'n/a'} · `
       + `snapshotId: ${session.state.viewerPayload?.snapshotId || 'n/a'} · `
@@ -1430,9 +1533,61 @@ function renderViewerShell(session) {
   updateSummary();
 }
 
+function renderViewerStartPanel(session) {
+  if (!app) {
+    return;
+  }
+
+  const panel = document.createElement('section');
+  panel.className = 'viewer-start-panel';
+  const heading = document.createElement('h1');
+  heading.textContent = 'Start Viewer';
+  const description = document.createElement('p');
+  description.className = 'muted';
+  description.textContent = 'Import worksheet JSON to launch a local attempt preview.';
+  const importBtn = document.createElement('button');
+  importBtn.type = 'button';
+  importBtn.textContent = 'Import worksheet JSON';
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'application/json,.json';
+  fileInput.hidden = true;
+
+  const errorMessage = document.createElement('p');
+  errorMessage.className = 'viewer-start-error';
+  errorMessage.textContent = '';
+  errorMessage.setAttribute('role', 'status');
+  errorMessage.setAttribute('aria-live', 'polite');
+
+  importBtn.addEventListener('click', () => {
+    errorMessage.textContent = '';
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', async () => {
+    const selected = fileInput.files?.[0];
+    if (!selected) return;
+
+    try {
+      const rawJson = await selected.text();
+      await session.startImportedWorksheetFromJsonText(rawJson);
+      renderViewerShell(session);
+      window.viewerSession = session;
+    } catch (error) {
+      errorMessage.textContent = error?.message || 'Unable to import worksheet JSON.';
+    } finally {
+      fileInput.value = '';
+    }
+  });
+
+  panel.append(heading, description, importBtn, fileInput, errorMessage);
+  app.innerHTML = '';
+  app.append(panel);
+}
+
 async function bootstrapViewer() {
   const session = new ViewerAttemptSession(viewerStorage);
-  await session.bootstrap();
 
   const authGate = new SharedAuthGate({
     appArea: 'viewer',
@@ -1455,6 +1610,22 @@ async function bootstrapViewer() {
   });
 
   session.authGate = authGate;
+
+  const params = new URLSearchParams(window.location.search);
+  const hasLaunchIntent =
+    params.has('localAttemptId')
+    || params.has('localDraftId')
+    || params.has('viewerPayload')
+    || params.has('snapshot')
+    || params.has('importedWorksheetId')
+    || params.get('authReturn') === '1';
+
+  if (!hasLaunchIntent) {
+    renderViewerStartPanel(session);
+    return;
+  }
+
+  await session.bootstrap();
   await authGate.restoreAfterAuthReturn();
 
   renderViewerShell(session);
