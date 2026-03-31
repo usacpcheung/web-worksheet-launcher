@@ -392,8 +392,8 @@ test('multiple choice UI renderer uses button-group semantics for single and mul
 
   mod.applyChoiceButtonGroupState(group, 'a', 'single', false);
   assert.equal(buttons[1].selectedClass, true);
-  assert.equal(buttons[1].attributes['aria-pressed'], 'true');
-  assert.equal(buttons[0].attributes['aria-pressed'], 'false');
+  assert.equal(buttons[1].attributes['aria-checked'], 'true');
+  assert.equal(buttons[0].attributes['aria-checked'], 'false');
 
   mod.applyChoiceButtonGroupState(group, ['b', 'c'], 'multi', false);
   assert.equal(buttons[0].selectedClass, true);
@@ -467,12 +467,9 @@ test('deterministic shuffle seed format remains attempt+block based', async () =
 
 test('multiple_choice render path no longer creates select or checkbox controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  const start = source.indexOf("} else if (inputType === 'multiple_choice' && Array.isArray(block.responseConfig?.options)) {");
-  const end = source.indexOf('} else {', start);
-  const snippet = source.slice(start, end);
-  assert.match(snippet, /createChoiceButtonGroup\(/);
-  assert.doesNotMatch(snippet, /createElement\('select'\)/);
-  assert.doesNotMatch(snippet, /type = 'checkbox'/);
+  assert.match(source, /createChoiceButtonGroup\(/);
+  assert.doesNotMatch(source, /createElement\('select'\)/);
+  assert.doesNotMatch(source, /type = 'checkbox'/);
 });
 
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {

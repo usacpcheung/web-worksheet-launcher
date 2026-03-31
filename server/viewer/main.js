@@ -300,13 +300,27 @@ function applyChoiceButtonGroupState(groupNode, rawValue, selectionMode = 'singl
   const selectedSet = isMulti
     ? new Set(Array.isArray(rawValue) ? rawValue.map((value) => String(value)) : [])
     : new Set(rawValue === null || rawValue === undefined || rawValue === '' ? [] : [String(rawValue)]);
-  Array.from(groupNode.querySelectorAll('button[data-choice-value]')).forEach((button) => {
+  const buttons = Array.from(groupNode.querySelectorAll('button[data-choice-value]'));
+  let hasSelected = false;
+  buttons.forEach((button) => {
     const choiceValue = String(button.dataset.choiceValue || '');
     const isSelected = selectedSet.has(choiceValue);
+    if (isSelected) hasSelected = true;
     button.classList.toggle('is-selected', isSelected);
-    button.setAttribute('aria-pressed', String(isSelected));
+    if (isMulti) {
+      button.setAttribute('aria-pressed', String(isSelected));
+    } else {
+      button.setAttribute('aria-checked', String(isSelected));
+    }
     button.disabled = isDisabled;
   });
+  if (!isMulti) {
+    buttons.forEach((button, index) => {
+      const choiceValue = String(button.dataset.choiceValue || '');
+      const isSelected = selectedSet.has(choiceValue);
+      button.tabIndex = hasSelected ? (isSelected ? 0 : -1) : (index === 0 ? 0 : -1);
+    });
+  }
 }
 
 function computeNextChoiceValue({ selectionMode = 'single', currentValue, clickedValue, validValues = [] }) {
@@ -326,9 +340,10 @@ function computeNextChoiceValue({ selectionMode = 'single', currentValue, clicke
     } else {
       nextSet.add(clicked);
     }
-    return normalizedCurrent
-      .filter((value) => nextSet.has(value) && allowedValues.has(value))
-      .concat([...nextSet].filter((value) => !normalizedCurrent.includes(value) && allowedValues.has(value)));
+    // Return selected values in validValues (option) order to keep answers deterministic
+    return validValues
+      .map((value) => String(value))
+      .filter((value) => nextSet.has(value));
   }
 
   const normalizedCurrent = String(currentValue ?? '');
@@ -347,8 +362,12 @@ function createChoiceButtonGroup({
   const validValues = optionSource.map((option) => String(option.value ?? option.label ?? ''));
   const container = document.createElement('div');
   container.className = 'choice-button-group';
-  container.setAttribute('role', 'group');
   container.setAttribute('aria-labelledby', labelId);
+  if (selectionMode === 'single') {
+    container.setAttribute('role', 'radiogroup');
+  } else {
+    container.setAttribute('role', 'group');
+  }
   optionSource.forEach((opt, optionIndex) => {
     const value = String(opt.value ?? opt.label ?? '');
     const button = document.createElement('button');
@@ -356,7 +375,13 @@ function createChoiceButtonGroup({
     button.className = 'choice-button-group__item';
     button.dataset.choiceValue = value;
     button.id = `${controlId}-${optionIndex}`;
-    button.setAttribute('aria-pressed', 'false');
+    if (selectionMode === 'single') {
+      button.setAttribute('role', 'radio');
+      button.setAttribute('aria-checked', 'false');
+      button.tabIndex = optionIndex === 0 ? 0 : -1;
+    } else {
+      button.setAttribute('aria-pressed', 'false');
+    }
 
     const prefix = document.createElement('span');
     prefix.className = 'choice-button-group__prefix';
@@ -380,6 +405,24 @@ function createChoiceButtonGroup({
     });
     container.appendChild(button);
   });
+
+  if (selectionMode === 'single') {
+    container.addEventListener('keydown', (event) => {
+      if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft'].includes(event.key)) return;
+      const radioButtons = Array.from(container.querySelectorAll('button[data-choice-value]'));
+      const currentIndex = radioButtons.indexOf(document.activeElement);
+      if (currentIndex === -1) return;
+      event.preventDefault();
+      const isForward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
+      const nextIndex = isForward
+        ? (currentIndex + 1) % radioButtons.length
+        : (currentIndex - 1 + radioButtons.length) % radioButtons.length;
+      radioButtons.forEach((btn, idx) => {
+        btn.tabIndex = idx === nextIndex ? 0 : -1;
+      });
+      radioButtons[nextIndex].focus();
+    });
+  }
 
   return container;
 }
