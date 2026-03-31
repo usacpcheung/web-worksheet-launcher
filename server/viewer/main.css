@@ -1,19 +1,20 @@
 :root {
   color-scheme: light;
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --viewer-bottom-bar-clearance: 168px;
 }
 
 body {
   margin: 0;
   background: #f3f6fb;
   color: #111827;
-  padding-bottom: 110px;
+  padding-bottom: var(--viewer-bottom-bar-clearance);
 }
 
 #app {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 22px 28px 40px;
+  padding: 22px 28px calc(var(--viewer-bottom-bar-clearance) + 12px);
 }
 
 .viewer-shell {
@@ -279,16 +280,23 @@ body {
   overflow-x: auto;
   padding: 2px 8px 42px;
   margin: 12px auto 4px;
-  max-width: 1100px;
-  scrollbar-width: thin;
+  width: min(1100px, 100%);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.block-stepper::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .block-stepper__item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: 156px;
-  flex: 0 0 auto;
+  min-width: clamp(102px, 10.5vw, 138px);
+  flex: 1 1 0;
   position: relative;
   justify-content: flex-start;
 }
@@ -314,7 +322,7 @@ body {
   top: 28px;
   left: 50%;
   transform: translateX(-50%);
-  width: 140px;
+  width: clamp(94px, 10vw, 126px);
   margin: 0;
   text-align: center;
   font-size: 0.92rem;
@@ -611,12 +619,16 @@ input[type='text']::placeholder {
 }
 
 @media (max-width: 640px) {
+  :root {
+    --viewer-bottom-bar-clearance: 192px;
+  }
+
   body {
-    padding-bottom: 154px;
+    padding-bottom: var(--viewer-bottom-bar-clearance);
   }
 
   #app {
-    padding: 14px 14px 30px;
+    padding: 14px 14px calc(var(--viewer-bottom-bar-clearance) + 8px);
   }
 
   .viewer-header h1 {
@@ -658,7 +670,8 @@ input[type='text']::placeholder {
   }
 
   .block-stepper__item {
-    min-width: 102px;
+    min-width: 94px;
+    flex: 0 0 auto;
   }
 
   .block-stepper__label {
