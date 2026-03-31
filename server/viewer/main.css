@@ -151,6 +151,53 @@ button {
   cursor: not-allowed;
 }
 
+.choice-button-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.choice-button-group__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: #fff;
+}
+
+.choice-button-group__item:hover:not(:disabled) {
+  border-color: #98a2b3;
+  background: #f8fafc;
+}
+
+.choice-button-group__item:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+.choice-button-group__item.is-selected {
+  border-color: #1d4ed8;
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+
+.choice-button-group__item:disabled {
+  background: #f1f5f9;
+  color: #667085;
+  cursor: not-allowed;
+}
+
+.choice-button-group__prefix {
+  min-width: 2.2rem;
+  font-weight: 700;
+  color: #344054;
+}
+
+.choice-button-group__label {
+  flex: 1;
+}
+
 textarea {
   resize: vertical;
 }

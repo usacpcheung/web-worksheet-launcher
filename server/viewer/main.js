@@ -283,6 +283,89 @@ function applyBooleanGroupState(groupNode, rawValue, isDisabled = false) {
   });
 }
 
+function getChoicePrefix(index) {
+  let label = '';
+  let current = Number(index) + 1;
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    label = String.fromCharCode(65 + remainder) + label;
+    current = Math.floor((current - 1) / 26);
+  }
+  return `${label}.`;
+}
+
+function applyChoiceButtonGroupState(groupNode, rawValue, selectionMode = 'single', isDisabled = false) {
+  if (!groupNode) return;
+  const isMulti = selectionMode === 'multi';
+  const selectedSet = isMulti
+    ? new Set(Array.isArray(rawValue) ? rawValue.map((value) => String(value)) : [])
+    : new Set(rawValue === null || rawValue === undefined || rawValue === '' ? [] : [String(rawValue)]);
+  Array.from(groupNode.querySelectorAll('button[data-choice-value]')).forEach((button) => {
+    const choiceValue = String(button.dataset.choiceValue || '');
+    const isSelected = selectedSet.has(choiceValue);
+    button.classList.toggle('is-selected', isSelected);
+    button.setAttribute('aria-pressed', String(isSelected));
+    button.disabled = isDisabled;
+  });
+}
+
+function createChoiceButtonGroup({
+  block,
+  labelId,
+  controlId,
+  optionSource,
+  session,
+  updateSummary,
+}) {
+  const selectionMode = block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
+  const container = document.createElement('div');
+  container.className = 'choice-button-group';
+  container.setAttribute('role', 'group');
+  container.setAttribute('aria-labelledby', labelId);
+  optionSource.forEach((opt, optionIndex) => {
+    const value = String(opt.value ?? opt.label ?? '');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'choice-button-group__item';
+    button.dataset.choiceValue = value;
+    button.id = `${controlId}-${optionIndex}`;
+    button.setAttribute('aria-pressed', 'false');
+
+    const prefix = document.createElement('span');
+    prefix.className = 'choice-button-group__prefix';
+    prefix.textContent = getChoicePrefix(optionIndex);
+
+    const labelText = document.createElement('span');
+    labelText.className = 'choice-button-group__label';
+    labelText.textContent = String(opt.label ?? opt.value ?? '');
+    button.append(prefix, labelText);
+
+    button.addEventListener('click', () => {
+      const currentValue = session.state.answers?.[block.blockId]?.value;
+      let nextValue;
+      if (selectionMode === 'multi') {
+        const selectedSet = new Set(Array.isArray(currentValue) ? currentValue.map((item) => String(item)) : []);
+        if (selectedSet.has(value)) {
+          selectedSet.delete(value);
+        } else {
+          selectedSet.add(value);
+        }
+        nextValue = optionSource
+          .map((option) => String(option.value ?? option.label ?? ''))
+          .filter((choiceValue, idx, allValues) => selectedSet.has(choiceValue) && allValues.indexOf(choiceValue) === idx);
+      } else {
+        const normalizedCurrent = String(currentValue ?? '');
+        nextValue = normalizedCurrent === value ? '' : value;
+      }
+      session.setAnswer(block.blockId, nextValue);
+      updateSummary();
+    });
+    container.appendChild(button);
+  });
+
+  return container;
+}
+
 function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
@@ -981,7 +1064,7 @@ function renderViewerShell(session) {
   completeBtn.addEventListener('click', async () => {
     await session.completeLocalAttempt();
     completeBtn.disabled = true;
-    Array.from(questionList.querySelectorAll('textarea, input, select')).forEach((control) => {
+    Array.from(questionList.querySelectorAll('textarea, input, select, button[data-choice-value], button[data-boolean-value]')).forEach((control) => {
       control.disabled = true;
     });
     updateSummary();
@@ -1151,45 +1234,14 @@ function renderViewerShell(session) {
             `${session.state.localAttemptId || 'attempt'}:${block.blockId}`
           )
           : block.responseConfig.options;
-
-        if (block.responseConfig.selectionMode === 'multi') {
-          const container = document.createElement('div');
-          container.className = 'choice-list';
-          optionSource.forEach((opt, optionIndex) => {
-            const wrapper = document.createElement('label');
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.dataset.choiceValue = String(opt.value ?? opt.label ?? '');
-            checkbox.id = `${controlId}-${optionIndex}`;
-            checkbox.addEventListener('change', () => {
-              const checkedValues = Array.from(container.querySelectorAll('input[type="checkbox"]:checked'))
-                .map((input) => input.dataset.choiceValue || '');
-              session.setAnswer(block.blockId, checkedValues);
-              updateSummary();
-            });
-            const text = document.createElement('span');
-            text.textContent = String(opt.label ?? opt.value ?? '');
-            wrapper.append(checkbox, text);
-            container.appendChild(wrapper);
-          });
-          control = container;
-        } else {
-          control = document.createElement('select');
-          const blank = document.createElement('option');
-          blank.value = '';
-          blank.textContent = 'Select…';
-          control.appendChild(blank);
-          optionSource.forEach((opt) => {
-            const option = document.createElement('option');
-            option.value = String(opt.value ?? opt.label ?? '');
-            option.textContent = String(opt.label ?? opt.value ?? '');
-            control.appendChild(option);
-          });
-          control.addEventListener('change', () => {
-            session.setAnswer(block.blockId, control.value);
-            updateSummary();
-          });
-        }
+        control = createChoiceButtonGroup({
+          block,
+          labelId: label.id,
+          controlId,
+          optionSource,
+          session,
+          updateSummary,
+        });
       } else {
         control = document.createElement('textarea');
         control.rows = 5;
@@ -1243,12 +1295,13 @@ function renderViewerShell(session) {
         : inputType === 'boolean'
           ? (storedValue === true ? 'true' : storedValue === false ? 'false' : '')
           : String(storedValue || '');
-      if (inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi') {
-        const selectedSet = new Set(Array.isArray(storedValue) ? storedValue.map((v) => String(v)) : []);
-        Array.from(control.querySelectorAll('input[type="checkbox"]')).forEach((checkbox) => {
-          checkbox.checked = selectedSet.has(checkbox.dataset.choiceValue || '');
-          checkbox.disabled = session.state.status === 'completed';
-        });
+      if (inputType === 'multiple_choice') {
+        applyChoiceButtonGroupState(
+          control,
+          storedValue,
+          block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single',
+          session.state.status === 'completed'
+        );
       } else if (inputType === 'boolean') {
         applyBooleanGroupState(control, storedValue, session.state.status === 'completed');
       } else if (control !== activeElement && control.value !== nextValue) {
@@ -1259,7 +1312,7 @@ function renderViewerShell(session) {
         const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
         updateTextCounterUI(feedbackNodes?.counter, feedbackNodes?.status, feedback);
       }
-      if (!(inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi') && inputType !== 'boolean') {
+      if (inputType !== 'multiple_choice' && inputType !== 'boolean') {
         control.disabled = session.state.status === 'completed';
       }
       const card = control.closest('.question-card');

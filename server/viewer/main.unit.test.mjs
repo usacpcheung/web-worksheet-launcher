@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, getChoicePrefix, applyChoiceButtonGroupState };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -354,6 +354,108 @@ test('deterministicShuffle handles nullish seed values safely', async () => {
   assert.doesNotThrow(() => mod.deterministicShuffle(items, undefined));
   assert.deepEqual(mod.deterministicShuffle(items, null), mod.deterministicShuffle(items, ''));
   assert.deepEqual(mod.deterministicShuffle(items, undefined), mod.deterministicShuffle(items, ''));
+});
+
+test('getChoicePrefix returns alphabetical labels in sequence', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.getChoicePrefix(0), 'A.');
+  assert.equal(mod.getChoicePrefix(1), 'B.');
+  assert.equal(mod.getChoicePrefix(25), 'Z.');
+  assert.equal(mod.getChoicePrefix(26), 'AA.');
+});
+
+test('multiple choice UI renderer uses button-group semantics for single and multi', async () => {
+  const mod = await loadViewerModule();
+  function createChoiceButton(value) {
+    const button = {
+      dataset: { choiceValue: value },
+      disabled: false,
+      attributes: {},
+      selectedClass: false,
+      tagName: 'BUTTON',
+      setAttribute(name, attrValue) {
+        this.attributes[name] = attrValue;
+      },
+    };
+    button.classList = {
+      toggle: (_className, flag) => {
+        button.selectedClass = Boolean(flag);
+      },
+    };
+    return button;
+  }
+
+  const buttons = [createChoiceButton('b'), createChoiceButton('a'), createChoiceButton('c')];
+  const group = {
+    querySelectorAll: (selector) => (selector === 'button[data-choice-value]' ? buttons : []),
+  };
+
+  mod.applyChoiceButtonGroupState(group, 'a', 'single', false);
+  assert.equal(buttons[1].selectedClass, true);
+  assert.equal(buttons[1].attributes['aria-pressed'], 'true');
+  assert.equal(buttons[0].attributes['aria-pressed'], 'false');
+
+  mod.applyChoiceButtonGroupState(group, ['b', 'c'], 'multi', false);
+  assert.equal(buttons[0].selectedClass, true);
+  assert.equal(buttons[1].selectedClass, false);
+  assert.equal(buttons[2].selectedClass, true);
+});
+
+test('multiple choice selection state sync supports rerender and completed status disablement', async () => {
+  const mod = await loadViewerModule();
+  function createChoiceButton(value) {
+    const button = {
+      dataset: { choiceValue: value },
+      disabled: false,
+      attributes: {},
+      selectedClass: false,
+      setAttribute(name, attrValue) {
+        this.attributes[name] = attrValue;
+      },
+    };
+    button.classList = {
+      toggle: (_className, flag) => {
+        button.selectedClass = Boolean(flag);
+      },
+    };
+    return button;
+  }
+
+  const firstRenderButtons = [createChoiceButton('x'), createChoiceButton('y')];
+  const secondRenderButtons = [createChoiceButton('x'), createChoiceButton('y')];
+  const firstGroup = { querySelectorAll: () => firstRenderButtons };
+  const secondGroup = { querySelectorAll: () => secondRenderButtons };
+
+  mod.applyChoiceButtonGroupState(firstGroup, 'y', 'single', false);
+  assert.equal(firstRenderButtons[1].selectedClass, true);
+  assert.equal(firstRenderButtons[1].disabled, false);
+
+  mod.applyChoiceButtonGroupState(secondGroup, 'y', 'single', true);
+  assert.equal(secondRenderButtons[1].selectedClass, true);
+  assert.equal(secondRenderButtons[0].disabled, true);
+  assert.equal(secondRenderButtons[1].disabled, true);
+});
+
+test('deterministic shuffle seed format remains attempt+block based', async () => {
+  const mod = await loadViewerModule();
+  const options = [{ value: 'a' }, { value: 'b' }, { value: 'c' }, { value: 'd' }];
+  const seed = `${'attempt_42'}:${'block_7'}`;
+  const first = mod.deterministicShuffle(options, seed).map((opt) => opt.value);
+  const second = mod.deterministicShuffle(options, seed).map((opt) => opt.value);
+  const differentAttempt = mod.deterministicShuffle(options, `${'attempt_99'}:${'block_7'}`).map((opt) => opt.value);
+
+  assert.deepEqual(first, second);
+  assert.notDeepEqual(first, differentAttempt);
+});
+
+test('multiple_choice render path no longer creates select or checkbox controls', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  const start = source.indexOf("} else if (inputType === 'multiple_choice' && Array.isArray(block.responseConfig?.options)) {");
+  const end = source.indexOf('} else {', start);
+  const snippet = source.slice(start, end);
+  assert.match(snippet, /createChoiceButtonGroup\(/);
+  assert.doesNotMatch(snippet, /createElement\('select'\)/);
+  assert.doesNotMatch(snippet, /type = 'checkbox'/);
 });
 
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
