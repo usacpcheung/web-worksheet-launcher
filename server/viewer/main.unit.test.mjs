@@ -652,6 +652,99 @@ test('viewer save error clears after subsequent successful save', async () => {
   assert.equal(session.state.lastSaveError, null);
 });
 
+test('bootstrap prefers localDraftId preview over resume flag session', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      location: {
+        search: '?localDraftId=draft_latest&preview=1',
+      },
+    },
+  });
+
+  let resumedAttemptReads = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => {
+        resumedAttemptReads += 1;
+        return {
+          localId: 'attempt_old',
+          viewerPayload: {
+            worksheetId: 'old_ws',
+            snapshotId: 'old_snap',
+            blocks: [{ blockId: 'q_old', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: {} }],
+          },
+          answers: {},
+          metadata: { origin: 'resume_flag' },
+        };
+      },
+      put: async (value) => value,
+    },
+    drafts: {
+      get: async (localId) => {
+        assert.equal(localId, 'draft_latest');
+        return {
+          localId: 'draft_latest',
+          title: 'Latest draft',
+          blocks: [{ blockId: 'q_new', kind: 'question', position: 0, prompt: { text: 'New' }, responseConfig: {} }],
+        };
+      },
+    },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: {
+      get: () => ({ localId: 'attempt_old' }),
+      set: () => {},
+    },
+  });
+
+  await session.bootstrap();
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(resumedAttemptReads, 0);
+  assert.equal(session.state.source, 'local_draft_preview');
+  assert.equal(session.state.viewerPayload.worksheetId, 'draft_latest');
+});
+
+test('bootstrap resumes explicit localAttemptId before loading draft sources', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      location: {
+        search: '?localAttemptId=attempt_explicit&localDraftId=draft_latest&preview=1',
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async (localId) => {
+        assert.equal(localId, 'attempt_explicit');
+        return {
+          localId: 'attempt_explicit',
+          viewerPayload: {
+            worksheetId: 'explicit_ws',
+            snapshotId: 'explicit_snap',
+            blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Resume me' }, responseConfig: {} }],
+          },
+          answers: { q1: { value: 'saved' } },
+          metadata: { origin: 'local_attempt' },
+        };
+      },
+    },
+    drafts: {
+      get: async () => {
+        throw new Error('draft lookup should not be called for explicit localAttemptId');
+      },
+    },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => ({ localId: 'attempt_from_flag' }), set: () => {} },
+  });
+
+  await session.bootstrap();
+
+  assert.equal(session.state.localAttemptId, 'attempt_explicit');
+  assert.equal(session.state.viewerPayload.worksheetId, 'explicit_ws');
+  assert.equal(session.state.answers.q1.value, 'saved');
+});
+
 test('partitionBlocksForDisplay returns ordered content and question sets', async () => {
   const mod = await loadViewerModule();
   const result = mod.partitionBlocksForDisplay([

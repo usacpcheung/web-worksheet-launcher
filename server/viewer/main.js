@@ -693,9 +693,9 @@ class ViewerAttemptSession {
 
   async bootstrap() {
     const params = new URLSearchParams(window.location.search);
-    const resumeMetadata = this.storage.resumeFlags.get(RESUME_FLAG_KEY);
+    const previewIntent = this.parsePreviewIntent(params);
 
-    const explicitAttemptId = params.get('localAttemptId') || resumeMetadata?.localId || null;
+    const explicitAttemptId = params.get('localAttemptId');
     if (explicitAttemptId) {
       const resumed = await this.tryResumeAttempt(explicitAttemptId);
       if (resumed) {
@@ -704,13 +704,25 @@ class ViewerAttemptSession {
       }
     }
 
-    const loadedPayload = await this.loadViewerPayloadFromSources(params);
+    const loadedPayload = await this.loadViewerPayloadFromSources(params, previewIntent);
     await this.validateViewerPayload(loadedPayload.payload);
     const attempt = this.createLocalAttemptState(loadedPayload.payload, loadedPayload.source);
     this.applyAttemptState(attempt, { markDirty: true });
     this.persistResumeMetadata();
 
     return this.state;
+  }
+
+  parsePreviewIntent(params) {
+    const localDraftId = params.get('localDraftId');
+    if (!localDraftId) {
+      return null;
+    }
+
+    return {
+      localDraftId,
+      preview: params.get('preview') === '1',
+    };
   }
 
   async tryResumeAttempt(localAttemptId) {
@@ -745,7 +757,19 @@ class ViewerAttemptSession {
     }
   }
 
-  async loadViewerPayloadFromSources(params) {
+  async loadViewerPayloadFromSources(params, previewIntent = null) {
+    if (previewIntent?.localDraftId) {
+      const draftRecord = await this.storage.drafts.get(previewIntent.localDraftId);
+      if (!draftRecord) {
+        throw new Error(`Local draft not found for localId=${previewIntent.localDraftId}`);
+      }
+
+      return {
+        source: previewIntent.preview ? 'local_draft_preview' : 'local_draft',
+        payload: mapDraftRecordToViewerPayload(draftRecord),
+      };
+    }
+
     const inlinePayload =
       maybeParseEncodedJson(params.get('viewerPayload')) ||
       (typeof window !== 'undefined' ? parseJsonInput(window.__VIEWER_PAYLOAD__) : null);
