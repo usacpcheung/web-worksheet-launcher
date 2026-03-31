@@ -100,6 +100,11 @@ body {
   gap: 4px;
 }
 
+.viewer-details-modal[hidden],
+.viewer-utility-menu__list[hidden] {
+  display: none !important;
+}
+
 .viewer-utility-menu__item {
   text-align: left;
   background: #fff;
