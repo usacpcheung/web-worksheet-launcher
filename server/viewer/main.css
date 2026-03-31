@@ -21,6 +21,29 @@ body {
   gap: 14px;
 }
 
+.viewer-start-panel {
+  background: #fff;
+  border: 1px solid #d6d9e0;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 8%);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 640px;
+}
+
+.viewer-start-panel h1 {
+  margin: 0;
+}
+
+.viewer-start-error {
+  margin: 0;
+  min-height: 1.2em;
+  color: #b42318;
+  font-size: 0.92rem;
+}
+
 .viewer-header,
 .viewer-section,
 .sticky-action-row {

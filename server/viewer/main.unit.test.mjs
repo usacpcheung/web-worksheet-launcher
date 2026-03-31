@@ -584,6 +584,64 @@ test('completeLocalAttempt failure reverts status and allows retry to succeed', 
   assert.equal(saveAttempts, 2);
 });
 
+test('startImportedWorksheetFromJsonText creates fresh attempt from imported worksheet JSON', async () => {
+  const mod = await loadViewerModule();
+  const importedRecords = [];
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: {
+      put: async (record) => {
+        importedRecords.push(record);
+        return record;
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  await session.startImportedWorksheetFromJsonText(JSON.stringify({
+    title: 'Imported worksheet',
+    blocks: [
+      { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Question 1' }, responseConfig: { inputType: 'text' } },
+    ],
+  }));
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(importedRecords.length, 1);
+  assert.equal(session.state.source, 'imported_worksheet');
+  assert.equal(session.state.status, 'in_progress');
+  assert.equal(session.state.viewerPayload.title, 'Imported worksheet');
+  assert.equal(session.state.viewerPayload.blocks.length, 1);
+});
+
+test('startImportedWorksheetFromJsonText returns friendly parse/schema errors', async () => {
+  const mod = await loadViewerModule();
+  let putCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: {
+      put: async (record) => {
+        putCalls += 1;
+        return record;
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  await assert.rejects(
+    () => session.startImportedWorksheetFromJsonText('{bad json'),
+    /Unable to parse worksheet JSON\./
+  );
+  assert.equal(putCalls, 0);
+
+  await assert.rejects(
+    () => session.startImportedWorksheetFromJsonText(JSON.stringify({ title: 'Invalid worksheet', blocks: [] })),
+    /Imported worksheet is invalid\./
+  );
+  assert.equal(putCalls, 1);
+});
+
 test('viewer autosave emits state transitions and clears pending state without extra clicks', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({

@@ -1089,6 +1089,33 @@ class ViewerAttemptSession {
     return this.tryResumeAttempt(localId);
   }
 
+  async startImportedWorksheetFromJsonText(rawJson) {
+    let worksheet;
+    try {
+      worksheet = JSON.parse(rawJson);
+    } catch (error) {
+      throw new Error(`Unable to parse worksheet JSON. ${error?.message || String(error)}`);
+    }
+
+    const importedRecord = {
+      localId: createLocalId('imported'),
+      worksheet,
+      importedAt: nowIso(),
+    };
+
+    try {
+      await this.storage.importedWorksheets.put(importedRecord);
+      const payload = resolveImportedWorksheetPayload(importedRecord);
+      await this.validateViewerPayload(payload);
+      const attempt = this.createLocalAttemptState(payload, 'imported_worksheet');
+      this.applyAttemptState(attempt, { markDirty: true });
+      this.persistResumeMetadata();
+      return this.state;
+    } catch (error) {
+      throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
+    }
+  }
+
   applyUiRestoreState(_ui = {}) {
     this.persistResumeMetadata();
   }
@@ -1501,9 +1528,61 @@ function renderViewerShell(session) {
   updateSummary();
 }
 
+function renderViewerStartPanel(session) {
+  if (!app) {
+    return;
+  }
+
+  const panel = document.createElement('section');
+  panel.className = 'viewer-start-panel';
+  const heading = document.createElement('h1');
+  heading.textContent = 'Start Viewer';
+  const description = document.createElement('p');
+  description.className = 'muted';
+  description.textContent = 'Import worksheet JSON to launch a local attempt preview.';
+  const importBtn = document.createElement('button');
+  importBtn.type = 'button';
+  importBtn.textContent = 'Import worksheet JSON';
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'application/json,.json';
+  fileInput.hidden = true;
+
+  const errorMessage = document.createElement('p');
+  errorMessage.className = 'viewer-start-error';
+  errorMessage.textContent = '';
+  errorMessage.setAttribute('role', 'status');
+  errorMessage.setAttribute('aria-live', 'polite');
+
+  importBtn.addEventListener('click', () => {
+    errorMessage.textContent = '';
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', async () => {
+    const selected = fileInput.files?.[0];
+    if (!selected) return;
+
+    try {
+      const rawJson = await selected.text();
+      await session.startImportedWorksheetFromJsonText(rawJson);
+      renderViewerShell(session);
+      window.viewerSession = session;
+    } catch (error) {
+      errorMessage.textContent = error?.message || 'Unable to import worksheet JSON.';
+    } finally {
+      fileInput.value = '';
+    }
+  });
+
+  panel.append(heading, description, importBtn, fileInput, errorMessage);
+  app.innerHTML = '';
+  app.append(panel);
+}
+
 async function bootstrapViewer() {
   const session = new ViewerAttemptSession(viewerStorage);
-  await session.bootstrap();
 
   const authGate = new SharedAuthGate({
     appArea: 'viewer',
@@ -1526,6 +1605,21 @@ async function bootstrapViewer() {
   });
 
   session.authGate = authGate;
+
+  const params = new URLSearchParams(window.location.search);
+  const hasLaunchIntent =
+    params.has('localAttemptId')
+    || params.has('localDraftId')
+    || params.has('viewerPayload')
+    || params.has('snapshot')
+    || params.has('importedWorksheetId');
+
+  if (!hasLaunchIntent) {
+    renderViewerStartPanel(session);
+    return;
+  }
+
+  await session.bootstrap();
   await authGate.restoreAfterAuthReturn();
 
   renderViewerShell(session);
