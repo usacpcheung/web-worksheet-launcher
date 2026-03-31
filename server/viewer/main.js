@@ -661,6 +661,7 @@ class ViewerAttemptSession {
       attemptValidationErrors: [],
       lastManualSaveAt: null,
       source: 'unknown',
+      sourceDraftUpdatedAt: null,
       attemptRevision: 0,
       lastSavedRevision: 0,
       recoveryMessage: null,
@@ -694,10 +695,14 @@ class ViewerAttemptSession {
   async bootstrap() {
     const params = new URLSearchParams(window.location.search);
     const previewIntent = this.parsePreviewIntent(params);
+    const freshnessMarker = params.get('draftUpdatedAt') || null;
 
     const explicitAttemptId = params.get('localAttemptId');
     if (explicitAttemptId) {
-      const resumed = await this.tryResumeAttempt(explicitAttemptId);
+      const resumed = await this.tryResumeAttempt(explicitAttemptId, {
+        sourceDraftUpdatedAt: freshnessMarker,
+        preferFreshPreview: Boolean(previewIntent?.preview && previewIntent?.localDraftId),
+      });
       if (resumed) {
         this.persistResumeMetadata();
         return this.state;
@@ -706,7 +711,11 @@ class ViewerAttemptSession {
 
     const loadedPayload = await this.loadViewerPayloadFromSources(params, previewIntent);
     await this.validateViewerPayload(loadedPayload.payload);
-    const attempt = this.createLocalAttemptState(loadedPayload.payload, loadedPayload.source);
+    const attempt = this.createLocalAttemptState(
+      loadedPayload.payload,
+      loadedPayload.source,
+      { sourceDraftUpdatedAt: loadedPayload.sourceDraftUpdatedAt }
+    );
     this.applyAttemptState(attempt, { markDirty: true });
     this.persistResumeMetadata();
 
@@ -722,13 +731,22 @@ class ViewerAttemptSession {
     return {
       localDraftId,
       preview: params.get('preview') === '1',
+      sourceDraftUpdatedAt: params.get('draftUpdatedAt') || null,
     };
   }
 
-  async tryResumeAttempt(localAttemptId) {
+  async tryResumeAttempt(localAttemptId, options = {}) {
     try {
       const attemptRecord = await this.storage.attempts.get(localAttemptId);
       if (!attemptRecord) {
+        return false;
+      }
+      const attemptSourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
+      const shouldBypassResumeForFreshPreview =
+        options.preferFreshPreview
+        && options.sourceDraftUpdatedAt
+        && options.sourceDraftUpdatedAt !== attemptSourceDraftUpdatedAt;
+      if (shouldBypassResumeForFreshPreview) {
         return false;
       }
 
@@ -767,6 +785,7 @@ class ViewerAttemptSession {
       return {
         source: previewIntent.preview ? 'local_draft_preview' : 'local_draft',
         payload: mapDraftRecordToViewerPayload(draftRecord),
+        sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || previewIntent.sourceDraftUpdatedAt || null,
       };
     }
 
@@ -812,6 +831,7 @@ class ViewerAttemptSession {
       return {
         source: 'local_draft',
         payload: mapDraftRecordToViewerPayload(draftRecord),
+        sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || null,
       };
     }
 
@@ -845,9 +865,10 @@ class ViewerAttemptSession {
     };
   }
 
-  createLocalAttemptState(viewerPayload, source) {
+  createLocalAttemptState(viewerPayload, source, options = {}) {
     const localAttemptId = createLocalId('attempt');
     const startedAt = nowIso();
+    const sourceDraftUpdatedAt = options.sourceDraftUpdatedAt || null;
 
     return {
       localId: localAttemptId,
@@ -862,6 +883,7 @@ class ViewerAttemptSession {
       metadata: {
         localId: localAttemptId,
         origin: source || 'local_source',
+        sourceDraftUpdatedAt,
         updatedAt: startedAt,
       },
     };
@@ -876,6 +898,7 @@ class ViewerAttemptSession {
     this.state.lastSavedAt = attemptRecord.lastSavedAt || null;
     this.state.completedAt = attemptRecord.completedAt || attemptRecord.submittedAt || null;
     this.state.source = attemptRecord.metadata?.origin || 'local_source';
+    this.state.sourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
     this.state.lastSaveError = null;
 
     if (options.markDirty) {
@@ -974,6 +997,7 @@ class ViewerAttemptSession {
       metadata: {
         localId: this.state.localAttemptId,
         origin: this.state.source || 'local_source',
+        sourceDraftUpdatedAt: this.state.sourceDraftUpdatedAt || null,
         updatedAt,
       },
     };

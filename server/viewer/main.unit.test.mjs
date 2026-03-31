@@ -745,6 +745,70 @@ test('bootstrap resumes explicit localAttemptId before loading draft sources', a
   assert.equal(session.state.answers.q1.value, 'saved');
 });
 
+test('bootstrap starts fresh preview attempt when draft freshness marker mismatches resumed attempt', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      location: {
+        search: '?localAttemptId=attempt_explicit&localDraftId=draft_latest&preview=1&draftUpdatedAt=2026-03-31T10:00:00.000Z',
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => ({
+        localId: 'attempt_explicit',
+        viewerPayload: {
+          worksheetId: 'stale_ws',
+          snapshotId: 'stale_snap',
+          blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: {} }],
+        },
+        answers: { q1: { value: 'stale answer' } },
+        metadata: { origin: 'local_attempt', sourceDraftUpdatedAt: '2026-03-31T09:00:00.000Z' },
+      }),
+      put: async (value) => value,
+    },
+    drafts: {
+      get: async () => ({
+        localId: 'draft_latest',
+        title: 'Latest draft',
+        metadata: { updatedAt: '2026-03-31T10:00:00.000Z' },
+        blocks: [{ blockId: 'q_new', kind: 'question', position: 0, prompt: { text: 'New' }, responseConfig: {} }],
+      }),
+    },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.bootstrap();
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(session.state.source, 'local_draft_preview');
+  assert.equal(session.state.viewerPayload.worksheetId, 'draft_latest');
+  assert.equal(session.state.answers.q1, undefined);
+  assert.equal(session.state.sourceDraftUpdatedAt, '2026-03-31T10:00:00.000Z');
+});
+
+test('createLocalAttemptState persists sourceDraftUpdatedAt in attempt metadata', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  const payload = mod.normalizeViewerPayload({
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  });
+  const attempt = session.createLocalAttemptState(payload, 'local_draft_preview', {
+    sourceDraftUpdatedAt: '2026-03-31T11:00:00.000Z',
+  });
+
+  assert.equal(attempt.metadata.sourceDraftUpdatedAt, '2026-03-31T11:00:00.000Z');
+});
+
 test('partitionBlocksForDisplay returns ordered content and question sets', async () => {
   const mod = await loadViewerModule();
   const result = mod.partitionBlocksForDisplay([
