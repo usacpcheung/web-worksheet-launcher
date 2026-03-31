@@ -121,9 +121,7 @@ function normalizeViewerBlock(block, index) {
     if (inputType === 'multiple_choice') {
       normalizedResponseConfig.selectionMode = legacyInputType === 'single_choice'
         ? 'single'
-        : responseConfigSource.selectionMode === 'multi'
-          ? 'multi'
-          : 'single';
+        : normalizeSelectionMode(responseConfigSource.selectionMode);
       normalizedResponseConfig.shuffleOptions = Boolean(responseConfigSource.shuffleOptions);
       normalizedResponseConfig.options = Array.isArray(responseConfigSource.options)
         ? responseConfigSource.options
@@ -283,6 +281,10 @@ function applyBooleanGroupState(groupNode, rawValue, isDisabled = false) {
   });
 }
 
+function normalizeSelectionMode(rawMode) {
+  return rawMode === 'multi' || rawMode === 'multiple' ? 'multi' : 'single';
+}
+
 function getChoiceOptionValues(responseConfig = {}) {
   return Array.isArray(responseConfig.options)
     ? responseConfig.options.map((opt) => String(opt?.value ?? opt?.label ?? ''))
@@ -295,7 +297,7 @@ function normalizeMultiChoiceAnswerValues(rawValue, optionValues = []) {
 }
 
 function getChoiceSelectionState(selectionMode, rawValue, optionValues = []) {
-  if (selectionMode === 'multi') {
+  if (normalizeSelectionMode(selectionMode) === 'multi') {
     const selectedValues = normalizeMultiChoiceAnswerValues(rawValue, optionValues);
     return {
       selectedValues,
@@ -326,6 +328,22 @@ function applyChoiceListState(listNode, selectionMode, rawValue, isDisabled = fa
   });
 }
 
+function getOptionAlphaLabel(index) {
+  const normalizedIndex = Number.isInteger(index) && index >= 0 ? index : 0;
+  let label = '';
+  let current = normalizedIndex;
+  do {
+    label = String.fromCharCode(65 + (current % 26)) + label;
+    current = Math.floor(current / 26) - 1;
+  } while (current >= 0);
+  return label;
+}
+
+function getNextSingleChoiceValue(rawCurrentValue, clickedValue, optionValues = []) {
+  const currentState = getChoiceSelectionState('single', rawCurrentValue, optionValues);
+  return currentState.selectedValue === clickedValue ? '' : clickedValue;
+}
+
 function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
@@ -344,7 +362,7 @@ function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   }
   if (inputType === 'multiple_choice') {
     const optionValues = getChoiceOptionValues(responseConfig);
-    if (responseConfig.selectionMode === 'multi') {
+    if (normalizeSelectionMode(responseConfig.selectionMode) === 'multi') {
       return normalizeMultiChoiceAnswerValues(rawValue, optionValues);
     }
     const single = String(rawValue ?? '');
@@ -1191,7 +1209,7 @@ function renderViewerShell(session) {
             `${session.state.localAttemptId || 'attempt'}:${block.blockId}`
           )
           : block.responseConfig.options;
-        const selectionMode = block.responseConfig.selectionMode === 'multi' ? 'multi' : 'single';
+        const selectionMode = normalizeSelectionMode(block.responseConfig.selectionMode);
         const optionValues = optionSource.map((opt) => String(opt.value ?? opt.label ?? ''));
         const container = document.createElement('div');
         container.className = 'choice-list';
@@ -1204,7 +1222,13 @@ function renderViewerShell(session) {
           button.className = 'choice-item';
           button.id = `${controlId}-${optionIndex}`;
           button.dataset.choiceValue = choiceValue;
-          button.textContent = String(opt.label ?? opt.value ?? '');
+          const optionKey = document.createElement('span');
+          optionKey.className = 'choice-item__key';
+          optionKey.textContent = `${getOptionAlphaLabel(optionIndex)}.`;
+          const optionText = document.createElement('span');
+          optionText.className = 'choice-item__text';
+          optionText.textContent = String(opt.label ?? opt.value ?? '');
+          button.append(optionKey, optionText);
           button.setAttribute('aria-pressed', 'false');
           button.addEventListener('click', () => {
             const currentRawValue = session.state.answers?.[block.blockId]?.value;
@@ -1217,8 +1241,7 @@ function renderViewerShell(session) {
               }
               session.setAnswer(block.blockId, optionValues.filter((value) => selectedSet.has(value)));
             } else {
-              const currentState = getChoiceSelectionState(selectionMode, currentRawValue, optionValues);
-              const nextValue = currentState.selectedValue === choiceValue ? '' : choiceValue;
+              const nextValue = getNextSingleChoiceValue(currentRawValue, choiceValue, optionValues);
               session.setAnswer(block.blockId, nextValue);
             }
             updateSummary();
@@ -1401,10 +1424,13 @@ export {
   updateTextCounterUI,
   getBooleanSelectionState,
   applyBooleanGroupState,
+  normalizeSelectionMode,
   getChoiceOptionValues,
   normalizeMultiChoiceAnswerValues,
   getChoiceSelectionState,
   applyChoiceListState,
+  getOptionAlphaLabel,
+  getNextSingleChoiceValue,
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,

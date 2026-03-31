@@ -157,6 +157,10 @@ button {
 }
 
 .choice-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 10px;
   width: 100%;
   text-align: left;
   background: #fff;
@@ -165,6 +169,16 @@ button {
   padding: 10px 12px;
   border-radius: 10px;
   transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.choice-item__key {
+  font-weight: 700;
+  color: #344054;
+  min-width: 1.5rem;
+}
+
+.choice-item__text {
+  min-width: 0;
 }
 
 .choice-item:hover:not(:disabled) {

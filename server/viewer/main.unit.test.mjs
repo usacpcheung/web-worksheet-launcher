@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoiceOptionValues, normalizeMultiChoiceAnswerValues, getChoiceSelectionState, applyChoiceListState, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, normalizeSelectionMode, getChoiceOptionValues, normalizeMultiChoiceAnswerValues, getChoiceSelectionState, applyChoiceListState, getOptionAlphaLabel, getNextSingleChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -141,6 +141,21 @@ test('normalizeViewerBlock migrates legacy single_choice to multiple_choice', as
     { value: 'b', label: 'b' },
     { value: 'c', label: 'c' },
   ]);
+});
+
+test('normalizeViewerBlock accepts legacy multiple selectionMode alias', async () => {
+  const mod = await loadViewerModule();
+  const normalized = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Choose many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multiple',
+      options: ['a', 'b'],
+    },
+  }, 0);
+
+  assert.equal(normalized.responseConfig.selectionMode, 'multi');
 });
 
 test('normalizeViewerBlock does not emit text-only responseConfig fields for non-text input types', async () => {
@@ -289,6 +304,34 @@ test('getChoiceSelectionState normalizes single and multi selection values', asy
   assert.equal(multi.selectedSet.has('b'), false);
   assert.equal(multi.selectedSet.has('c'), true);
   assert.equal(multi.selectedValue, '');
+});
+
+test('normalizeSelectionMode supports canonical and legacy multi aliases', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.normalizeSelectionMode('multi'), 'multi');
+  assert.equal(mod.normalizeSelectionMode('multiple'), 'multi');
+  assert.equal(mod.normalizeSelectionMode('single'), 'single');
+  assert.equal(mod.normalizeSelectionMode(undefined), 'single');
+});
+
+test('getOptionAlphaLabel returns spreadsheet-style option labels', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.getOptionAlphaLabel(0), 'A');
+  assert.equal(mod.getOptionAlphaLabel(1), 'B');
+  assert.equal(mod.getOptionAlphaLabel(25), 'Z');
+  assert.equal(mod.getOptionAlphaLabel(26), 'AA');
+  assert.equal(mod.getOptionAlphaLabel(27), 'AB');
+  assert.equal(mod.getOptionAlphaLabel(51), 'AZ');
+  assert.equal(mod.getOptionAlphaLabel(52), 'BA');
+});
+
+test('getNextSingleChoiceValue toggles off when clicking currently selected option', async () => {
+  const mod = await loadViewerModule();
+  const optionValues = ['a', 'b', 'c'];
+  assert.equal(mod.getNextSingleChoiceValue('', 'a', optionValues), 'a');
+  assert.equal(mod.getNextSingleChoiceValue('a', 'a', optionValues), '');
+  assert.equal(mod.getNextSingleChoiceValue('a', 'b', optionValues), 'b');
+  assert.equal(mod.getNextSingleChoiceValue('z', 'b', optionValues), 'b');
 });
 
 test('getBooleanSelectionState maps stored values to selected button state', async () => {
@@ -759,6 +802,10 @@ test('multiple choice rendering branch uses unified button choice list pattern',
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("container.className = 'choice-list';"), true);
   assert.equal(source.includes("button.className = 'choice-item';"), true);
+  assert.equal(source.includes("optionKey.className = 'choice-item__key';"), true);
+  assert.equal(source.includes("optionText.className = 'choice-item__text';"), true);
+  assert.equal(source.includes('optionKey.textContent = `${getOptionAlphaLabel(optionIndex)}.`;'), true);
+  assert.equal(source.includes('const nextValue = getNextSingleChoiceValue(currentRawValue, choiceValue, optionValues);'), true);
   assert.equal(source.includes("button.dataset.choiceValue = choiceValue;"), true);
   assert.equal(source.includes("button.setAttribute('aria-pressed', 'false');"), true);
   assert.equal(source.includes("control = document.createElement('select');"), false);
