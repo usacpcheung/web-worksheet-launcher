@@ -309,6 +309,32 @@ function applyChoiceButtonGroupState(groupNode, rawValue, selectionMode = 'singl
   });
 }
 
+function computeNextChoiceValue({ selectionMode = 'single', currentValue, clickedValue, validValues = [] }) {
+  const clicked = String(clickedValue ?? '');
+  const allowedValues = new Set(validValues.map((value) => String(value)));
+  if (!allowedValues.has(clicked)) {
+    return selectionMode === 'multi' ? [] : '';
+  }
+
+  if (selectionMode === 'multi') {
+    const normalizedCurrent = Array.isArray(currentValue)
+      ? currentValue.map((value) => String(value)).filter((value, idx, allValues) => allValues.indexOf(value) === idx)
+      : [];
+    const nextSet = new Set(normalizedCurrent);
+    if (nextSet.has(clicked)) {
+      nextSet.delete(clicked);
+    } else {
+      nextSet.add(clicked);
+    }
+    return normalizedCurrent
+      .filter((value) => nextSet.has(value) && allowedValues.has(value))
+      .concat([...nextSet].filter((value) => !normalizedCurrent.includes(value) && allowedValues.has(value)));
+  }
+
+  const normalizedCurrent = String(currentValue ?? '');
+  return normalizedCurrent === clicked ? '' : clicked;
+}
+
 function createChoiceButtonGroup({
   block,
   labelId,
@@ -318,6 +344,7 @@ function createChoiceButtonGroup({
   updateSummary,
 }) {
   const selectionMode = block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
+  const validValues = optionSource.map((option) => String(option.value ?? option.label ?? ''));
   const container = document.createElement('div');
   container.className = 'choice-button-group';
   container.setAttribute('role', 'group');
@@ -342,21 +369,12 @@ function createChoiceButtonGroup({
 
     button.addEventListener('click', () => {
       const currentValue = session.state.answers?.[block.blockId]?.value;
-      let nextValue;
-      if (selectionMode === 'multi') {
-        const selectedSet = new Set(Array.isArray(currentValue) ? currentValue.map((item) => String(item)) : []);
-        if (selectedSet.has(value)) {
-          selectedSet.delete(value);
-        } else {
-          selectedSet.add(value);
-        }
-        nextValue = optionSource
-          .map((option) => String(option.value ?? option.label ?? ''))
-          .filter((choiceValue, idx, allValues) => selectedSet.has(choiceValue) && allValues.indexOf(choiceValue) === idx);
-      } else {
-        const normalizedCurrent = String(currentValue ?? '');
-        nextValue = normalizedCurrent === value ? '' : value;
-      }
+      const nextValue = computeNextChoiceValue({
+        selectionMode,
+        currentValue,
+        clickedValue: value,
+        validValues,
+      });
       session.setAnswer(block.blockId, nextValue);
       updateSummary();
     });
@@ -1422,6 +1440,9 @@ export {
   updateTextCounterUI,
   getBooleanSelectionState,
   applyBooleanGroupState,
+  getChoicePrefix,
+  applyChoiceButtonGroupState,
+  computeNextChoiceValue,
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,

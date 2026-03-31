@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, getChoicePrefix, applyChoiceButtonGroupState };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -399,6 +399,23 @@ test('multiple choice UI renderer uses button-group semantics for single and mul
   assert.equal(buttons[0].selectedClass, true);
   assert.equal(buttons[1].selectedClass, false);
   assert.equal(buttons[2].selectedClass, true);
+});
+
+test('computeNextChoiceValue toggles multi-select values without dropping existing selections', async () => {
+  const mod = await loadViewerModule();
+  const validValues = ['a', 'b', 'c'];
+  assert.deepEqual(
+    mod.computeNextChoiceValue({ selectionMode: 'multi', currentValue: ['a'], clickedValue: 'b', validValues }),
+    ['a', 'b']
+  );
+  assert.deepEqual(
+    mod.computeNextChoiceValue({ selectionMode: 'multi', currentValue: ['a', 'b'], clickedValue: 'a', validValues }),
+    ['b']
+  );
+  assert.equal(
+    mod.computeNextChoiceValue({ selectionMode: 'single', currentValue: 'b', clickedValue: 'b', validValues }),
+    ''
+  );
 });
 
 test('multiple choice selection state sync supports rerender and completed status disablement', async () => {
