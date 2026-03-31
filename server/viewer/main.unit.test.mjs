@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoiceOptionValues, normalizeMultiChoiceAnswerValues, getChoiceSelectionState, applyChoiceListState, getOptionAlphaLabel, getNextSingleChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, normalizeSelectionMode, getChoiceOptionValues, normalizeMultiChoiceAnswerValues, getChoiceSelectionState, applyChoiceListState, getOptionAlphaLabel, getNextSingleChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -141,6 +141,21 @@ test('normalizeViewerBlock migrates legacy single_choice to multiple_choice', as
     { value: 'b', label: 'b' },
     { value: 'c', label: 'c' },
   ]);
+});
+
+test('normalizeViewerBlock accepts legacy multiple selectionMode alias', async () => {
+  const mod = await loadViewerModule();
+  const normalized = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Choose many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multiple',
+      options: ['a', 'b'],
+    },
+  }, 0);
+
+  assert.equal(normalized.responseConfig.selectionMode, 'multi');
 });
 
 test('normalizeViewerBlock does not emit text-only responseConfig fields for non-text input types', async () => {
@@ -289,6 +304,14 @@ test('getChoiceSelectionState normalizes single and multi selection values', asy
   assert.equal(multi.selectedSet.has('b'), false);
   assert.equal(multi.selectedSet.has('c'), true);
   assert.equal(multi.selectedValue, '');
+});
+
+test('normalizeSelectionMode supports canonical and legacy multi aliases', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.normalizeSelectionMode('multi'), 'multi');
+  assert.equal(mod.normalizeSelectionMode('multiple'), 'multi');
+  assert.equal(mod.normalizeSelectionMode('single'), 'single');
+  assert.equal(mod.normalizeSelectionMode(undefined), 'single');
 });
 
 test('getOptionAlphaLabel returns spreadsheet-style option labels', async () => {

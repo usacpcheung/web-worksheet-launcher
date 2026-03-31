@@ -121,9 +121,7 @@ function normalizeViewerBlock(block, index) {
     if (inputType === 'multiple_choice') {
       normalizedResponseConfig.selectionMode = legacyInputType === 'single_choice'
         ? 'single'
-        : responseConfigSource.selectionMode === 'multi'
-          ? 'multi'
-          : 'single';
+        : normalizeSelectionMode(responseConfigSource.selectionMode);
       normalizedResponseConfig.shuffleOptions = Boolean(responseConfigSource.shuffleOptions);
       normalizedResponseConfig.options = Array.isArray(responseConfigSource.options)
         ? responseConfigSource.options
@@ -283,6 +281,10 @@ function applyBooleanGroupState(groupNode, rawValue, isDisabled = false) {
   });
 }
 
+function normalizeSelectionMode(rawMode) {
+  return rawMode === 'multi' || rawMode === 'multiple' ? 'multi' : 'single';
+}
+
 function getChoiceOptionValues(responseConfig = {}) {
   return Array.isArray(responseConfig.options)
     ? responseConfig.options.map((opt) => String(opt?.value ?? opt?.label ?? ''))
@@ -295,7 +297,7 @@ function normalizeMultiChoiceAnswerValues(rawValue, optionValues = []) {
 }
 
 function getChoiceSelectionState(selectionMode, rawValue, optionValues = []) {
-  if (selectionMode === 'multi') {
+  if (normalizeSelectionMode(selectionMode) === 'multi') {
     const selectedValues = normalizeMultiChoiceAnswerValues(rawValue, optionValues);
     return {
       selectedValues,
@@ -360,7 +362,7 @@ function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   }
   if (inputType === 'multiple_choice') {
     const optionValues = getChoiceOptionValues(responseConfig);
-    if (responseConfig.selectionMode === 'multi') {
+    if (normalizeSelectionMode(responseConfig.selectionMode) === 'multi') {
       return normalizeMultiChoiceAnswerValues(rawValue, optionValues);
     }
     const single = String(rawValue ?? '');
@@ -1207,7 +1209,7 @@ function renderViewerShell(session) {
             `${session.state.localAttemptId || 'attempt'}:${block.blockId}`
           )
           : block.responseConfig.options;
-        const selectionMode = block.responseConfig.selectionMode === 'multi' ? 'multi' : 'single';
+        const selectionMode = normalizeSelectionMode(block.responseConfig.selectionMode);
         const optionValues = optionSource.map((opt) => String(opt.value ?? opt.label ?? ''));
         const container = document.createElement('div');
         container.className = 'choice-list';
@@ -1422,6 +1424,7 @@ export {
   updateTextCounterUI,
   getBooleanSelectionState,
   applyBooleanGroupState,
+  normalizeSelectionMode,
   getChoiceOptionValues,
   normalizeMultiChoiceAnswerValues,
   getChoiceSelectionState,
