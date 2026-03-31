@@ -785,7 +785,7 @@ class ViewerAttemptSession {
       }
 
       return {
-        source: previewIntent.preview ? 'local_draft_preview' : 'local_draft',
+        source: 'local_draft_preview',
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || previewIntent.sourceDraftUpdatedAt || null,
       };
@@ -1612,15 +1612,13 @@ async function bootstrapViewer() {
   session.authGate = authGate;
 
   const params = new URLSearchParams(window.location.search);
-  const existingResumeMetadata = session.storage.resumeFlags.get(RESUME_FLAG_KEY);
   const hasLaunchIntent =
     params.has('localAttemptId')
     || params.has('localDraftId')
     || params.has('viewerPayload')
     || params.has('snapshot')
     || params.has('importedWorksheetId')
-    || params.get('authReturn') === '1'
-    || Boolean(existingResumeMetadata?.localId);
+    || params.get('authReturn') === '1';
 
   if (!hasLaunchIntent) {
     renderViewerStartPanel(session);
