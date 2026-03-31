@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoiceOptionValues, normalizeMultiChoiceAnswerValues, getChoiceSelectionState, applyChoiceListState, getOptionAlphaLabel, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoiceOptionValues, normalizeMultiChoiceAnswerValues, getChoiceSelectionState, applyChoiceListState, getOptionAlphaLabel, getNextSingleChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -300,6 +300,15 @@ test('getOptionAlphaLabel returns spreadsheet-style option labels', async () => 
   assert.equal(mod.getOptionAlphaLabel(27), 'AB');
   assert.equal(mod.getOptionAlphaLabel(51), 'AZ');
   assert.equal(mod.getOptionAlphaLabel(52), 'BA');
+});
+
+test('getNextSingleChoiceValue toggles off when clicking currently selected option', async () => {
+  const mod = await loadViewerModule();
+  const optionValues = ['a', 'b', 'c'];
+  assert.equal(mod.getNextSingleChoiceValue('', 'a', optionValues), 'a');
+  assert.equal(mod.getNextSingleChoiceValue('a', 'a', optionValues), '');
+  assert.equal(mod.getNextSingleChoiceValue('a', 'b', optionValues), 'b');
+  assert.equal(mod.getNextSingleChoiceValue('z', 'b', optionValues), 'b');
 });
 
 test('getBooleanSelectionState maps stored values to selected button state', async () => {
@@ -773,6 +782,7 @@ test('multiple choice rendering branch uses unified button choice list pattern',
   assert.equal(source.includes("optionKey.className = 'choice-item__key';"), true);
   assert.equal(source.includes("optionText.className = 'choice-item__text';"), true);
   assert.equal(source.includes('optionKey.textContent = `${getOptionAlphaLabel(optionIndex)}.`;'), true);
+  assert.equal(source.includes('const nextValue = getNextSingleChoiceValue(currentRawValue, choiceValue, optionValues);'), true);
   assert.equal(source.includes("button.dataset.choiceValue = choiceValue;"), true);
   assert.equal(source.includes("button.setAttribute('aria-pressed', 'false');"), true);
   assert.equal(source.includes("control = document.createElement('select');"), false);

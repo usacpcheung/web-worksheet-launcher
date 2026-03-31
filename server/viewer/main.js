@@ -337,6 +337,11 @@ function getOptionAlphaLabel(index) {
   return label;
 }
 
+function getNextSingleChoiceValue(rawCurrentValue, clickedValue, optionValues = []) {
+  const currentState = getChoiceSelectionState('single', rawCurrentValue, optionValues);
+  return currentState.selectedValue === clickedValue ? '' : clickedValue;
+}
+
 function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
@@ -1234,8 +1239,7 @@ function renderViewerShell(session) {
               }
               session.setAnswer(block.blockId, optionValues.filter((value) => selectedSet.has(value)));
             } else {
-              const currentState = getChoiceSelectionState(selectionMode, currentRawValue, optionValues);
-              const nextValue = currentState.selectedValue === choiceValue ? currentState.selectedValue : choiceValue;
+              const nextValue = getNextSingleChoiceValue(currentRawValue, choiceValue, optionValues);
               session.setAnswer(block.blockId, nextValue);
             }
             updateSummary();
@@ -1423,6 +1427,7 @@ export {
   getChoiceSelectionState,
   applyChoiceListState,
   getOptionAlphaLabel,
+  getNextSingleChoiceValue,
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
