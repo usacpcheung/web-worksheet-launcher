@@ -1212,6 +1212,8 @@ function renderViewerShell(session) {
   const answerControls = new Map();
   const textControlFeedback = new Map();
   let blockSignature = null;
+  let stepperOrderSignature = null;
+  let lastStepperActiveIndex = -1;
   const numberInputErrors = new Map();
   const localInputCache = new Map();
   let currentBlockIndex = 0;
@@ -1417,6 +1419,11 @@ function renderViewerShell(session) {
     utilityMenuBtn.setAttribute('aria-expanded', 'true');
   };
 
+  const isUtilityMenuOpen = () => (
+    !utilityMenuList.hidden
+    && utilityMenuBtn.getAttribute('aria-expanded') === 'true'
+  );
+
   const focusMenuItemByDelta = (delta) => {
     const items = getMenuItems();
     if (items.length === 0) return;
@@ -1479,7 +1486,7 @@ function renderViewerShell(session) {
   });
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && detailsModal.hidden) {
+    if (event.key === 'Escape' && detailsModal.hidden && isUtilityMenuOpen()) {
       closeUtilityMenu({ returnFocus: true });
     }
   });
@@ -1493,7 +1500,11 @@ function renderViewerShell(session) {
     return `Question ${counters.question}`;
   };
 
-  const renderStepper = (orderedBlocks, activeIndex) => {
+  const getStepperOrderSignature = (orderedBlocks) => (
+    orderedBlocks.map((block) => `${block.blockId}:${block.position}:${block.kind}`).join('|')
+  );
+
+  const renderStepper = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
     stepper.innerHTML = '';
     const counters = { content: 0, question: 0 };
 
@@ -1531,7 +1542,7 @@ function renderViewerShell(session) {
     });
 
     const activeNode = stepper.querySelector('.block-stepper__item.is-current');
-    if (activeNode && typeof activeNode.scrollIntoView === 'function') {
+    if (shouldScrollToActive && activeNode && typeof activeNode.scrollIntoView === 'function') {
       activeNode.scrollIntoView({ block: 'nearest', inline: 'center' });
     }
   };
@@ -1804,9 +1815,16 @@ function renderViewerShell(session) {
     if (orderedBlocks.length === 0) return;
     currentBlockIndex = Math.min(Math.max(currentBlockIndex, 0), orderedBlocks.length - 1);
     const currentBlock = orderedBlocks[currentBlockIndex];
+    const stepperSignature = getStepperOrderSignature(orderedBlocks);
+    const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
+    const shouldRenderStepper = stepperSignature !== stepperOrderSignature || activeIndexChanged;
 
     blockHeading.textContent = currentBlock.kind === 'content' ? 'Content' : 'Question';
-    renderStepper(orderedBlocks, currentBlockIndex);
+    if (shouldRenderStepper) {
+      renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged });
+      stepperOrderSignature = stepperSignature;
+      lastStepperActiveIndex = currentBlockIndex;
+    }
     renderCurrentBlockCard(currentBlock);
     syncAnswerControlValues(currentBlock);
 
