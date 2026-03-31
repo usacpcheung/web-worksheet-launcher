@@ -1570,6 +1570,11 @@ function renderViewerShell(session) {
     }
   };
 
+  const updateStepperFitState = () => {
+    const fitsContainer = stepper.scrollWidth <= stepper.clientWidth;
+    stepper.dataset.fit = fitsContainer ? 'true' : 'false';
+  };
+
   const renderStepper = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
     stepper.innerHTML = '';
     const counters = { content: 0, question: 0 };
@@ -1606,6 +1611,8 @@ function renderViewerShell(session) {
       }
       stepper.appendChild(item);
     });
+
+    updateStepperFitState();
 
     const activeNode = stepper.querySelector('.block-stepper__item.is-current');
     if (shouldScrollToActive && activeNode) {
@@ -1929,6 +1936,12 @@ function renderViewerShell(session) {
     closeUtilityMenu({ returnFocus: true });
     await session.triggerProtectedAction('resumeViewerRewriteAfterLogin');
     renderUI();
+  });
+  window.addEventListener('resize', () => {
+    updateStepperFitState();
+    if (currentBlockIndex === 0) {
+      stepper.scrollLeft = 0;
+    }
   });
   prevBtn.addEventListener('click', goPrev);
   nextBtn.addEventListener('click', goNext);
