@@ -472,6 +472,13 @@ test('multiple_choice render path no longer creates select or checkbox controls'
   assert.doesNotMatch(source, /type = 'checkbox'/);
 });
 
+test('viewer summary text includes distinct finalize outcome messages', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('Finalizing submission…'), true);
+  assert.equal(source.includes('Finalize failed. Please check your connection and try again.'), true);
+  assert.equal(source.includes('Finalized'), true);
+});
+
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
@@ -503,6 +510,78 @@ test('completeLocalAttempt clears pending autosave timer before immediate autosa
   assert.equal(session.autosaveTimer, null);
   assert.equal(autosaveCalls, 1);
   assert.equal(timerFired, false);
+});
+
+test('completeLocalAttempt is idempotent while finalize is in progress', async () => {
+  const mod = await loadViewerModule();
+  let resolveSave;
+  const savePromise = new Promise((resolve) => {
+    resolveSave = resolve;
+  });
+  let autosaveCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  session.state.localAttemptId = 'attempt_finalize_once';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.autosave = async () => {
+    autosaveCalls += 1;
+    await savePromise;
+    return { ok: true };
+  };
+
+  const firstFinalize = session.completeLocalAttempt();
+  assert.equal(session.state.isFinalizing, true);
+  const secondFinalize = await session.completeLocalAttempt();
+  assert.equal(secondFinalize, null);
+  assert.equal(autosaveCalls, 1);
+
+  resolveSave();
+  await firstFinalize;
+  assert.equal(session.state.isFinalizing, false);
+  assert.equal(session.state.status, 'completed');
+});
+
+test('completeLocalAttempt failure reverts status and allows retry to succeed', async () => {
+  const mod = await loadViewerModule();
+  let saveAttempts = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  session.state.localAttemptId = 'attempt_finalize_retry';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.autosave = async () => {
+    saveAttempts += 1;
+    if (saveAttempts === 1) {
+      throw new Error('db unavailable');
+    }
+    return { ok: true };
+  };
+
+  const failedFinalize = await session.completeLocalAttempt();
+  assert.equal(failedFinalize, null);
+  assert.equal(session.state.status, 'in_progress');
+  assert.equal(session.state.completedAt, null);
+  assert.equal(session.state.isFinalizing, false);
+  assert.match(session.state.lastFinalizeError, /Finalize failed\./);
+  assert.match(session.state.lastFinalizeError, /db unavailable/);
+
+  const successfulFinalize = await session.completeLocalAttempt();
+  assert.deepEqual(successfulFinalize, { ok: true });
+  assert.equal(session.state.status, 'completed');
+  assert.equal(session.state.isFinalizing, false);
+  assert.equal(session.state.lastFinalizeError, null);
+  assert.equal(saveAttempts, 2);
 });
 
 test('viewer autosave emits state transitions and clears pending state without extra clicks', async () => {

@@ -662,6 +662,8 @@ class ViewerAttemptSession {
       lastManualSaveAt: null,
       source: 'unknown',
       sourceDraftUpdatedAt: null,
+      isFinalizing: false,
+      lastFinalizeError: null,
       attemptRevision: 0,
       lastSavedRevision: 0,
       recoveryMessage: null,
@@ -900,6 +902,8 @@ class ViewerAttemptSession {
     this.state.source = attemptRecord.metadata?.origin || 'local_source';
     this.state.sourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
     this.state.lastSaveError = null;
+    this.state.isFinalizing = false;
+    this.state.lastFinalizeError = null;
 
     if (options.markDirty) {
       this.state.attemptRevision += 1;
@@ -938,19 +942,36 @@ class ViewerAttemptSession {
   }
 
   async completeLocalAttempt() {
-    if (!this.state.localAttemptId || this.state.status === 'completed') {
+    if (!this.state.localAttemptId || this.state.isFinalizing || this.state.status === 'completed') {
       return null;
     }
 
+    this.state.isFinalizing = true;
+    this.state.lastFinalizeError = null;
     this.state.status = 'completed';
     this.state.completedAt = nowIso();
     this.state.attemptRevision += 1;
     this.persistResumeMetadata();
+    this.notifyStateChange();
 
     clearTimeout(this.autosaveTimer);
     this.autosaveTimer = null;
 
-    return this.autosave();
+    try {
+      const persisted = await this.autosave();
+      this.state.lastFinalizeError = null;
+      return persisted;
+    } catch (error) {
+      this.state.status = 'in_progress';
+      this.state.completedAt = null;
+      this.state.lastFinalizeError = `Finalize failed. Please check your connection and try again. ${error?.message || String(error)}`;
+      this.persistResumeMetadata();
+      this.notifyStateChange();
+      return null;
+    } finally {
+      this.state.isFinalizing = false;
+      this.notifyStateChange();
+    }
   }
 
   scheduleAutosave() {
@@ -1169,13 +1190,8 @@ function renderViewerShell(session) {
   secondaryActions.className = 'secondary-actions';
   secondaryActions.append(syncResumeBtn, rewriteAssistBtn);
 
-  completeBtn.disabled = session.state.status === 'completed';
   completeBtn.addEventListener('click', async () => {
     await session.completeLocalAttempt();
-    completeBtn.disabled = true;
-    Array.from(questionList.querySelectorAll('textarea, input, select, button[data-choice-value], button[data-boolean-value]')).forEach((control) => {
-      control.disabled = true;
-    });
     updateSummary();
   });
   stickyActions.append(saveBtn, completeBtn, secondaryActions);
@@ -1439,11 +1455,18 @@ function renderViewerShell(session) {
     syncAnswerControlValues(questionBlocks);
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
-    status.textContent = session.state.lastSaveError
-      ? `⚠️ ${session.state.lastSaveError}`
-      : session.state.autosavePending
-        ? 'Saving…'
-        : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+    status.textContent = session.state.isFinalizing
+      ? 'Finalizing submission…'
+      : session.state.lastFinalizeError
+        ? `⚠️ ${session.state.lastFinalizeError}`
+        : session.state.status === 'completed'
+          ? `Finalized${session.state.completedAt ? ` at ${session.state.completedAt}` : ''}`
+          : session.state.lastSaveError
+            ? `⚠️ ${session.state.lastSaveError}`
+            : session.state.autosavePending
+              ? 'Saving…'
+              : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+    completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     metadata.textContent =
       `worksheetId: ${session.state.viewerPayload?.worksheetId || 'n/a'} · `
       + `snapshotId: ${session.state.viewerPayload?.snapshotId || 'n/a'} · `
