@@ -1199,13 +1199,13 @@ function renderViewerShell(session) {
   const prevBtn = document.createElement('button');
   prevBtn.type = 'button';
   prevBtn.className = 'icon-nav-btn';
-  prevBtn.textContent = '←';
+  prevBtn.textContent = '← Back';
   prevBtn.setAttribute('aria-label', 'Go to previous block');
   prevBtn.title = 'Previous block';
   const nextBtn = document.createElement('button');
   nextBtn.type = 'button';
   nextBtn.className = 'icon-nav-btn';
-  nextBtn.textContent = '→';
+  nextBtn.textContent = 'Next →';
   nextBtn.setAttribute('aria-label', 'Go to next block');
   nextBtn.title = 'Next block';
   navActions.append(prevBtn, nextBtn);
@@ -1220,10 +1220,10 @@ function renderViewerShell(session) {
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
-  saveBtn.textContent = 'Save Now';
+  saveBtn.textContent = 'Save';
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
-  completeBtn.textContent = 'Submit / Finalize';
+  completeBtn.textContent = 'Submit';
 
   const utilityMenu = document.createElement('div');
   utilityMenu.className = 'viewer-utility-menu';
@@ -1234,7 +1234,7 @@ function renderViewerShell(session) {
   infoBtn.className = 'viewer-utility-menu__trigger';
   infoBtn.setAttribute('aria-label', 'Open technical details');
   infoBtn.title = 'Technical details';
-  infoBtn.textContent = 'ⓘ';
+  infoBtn.textContent = '⋯';
   const utilityMenuBtn = document.createElement('button');
   utilityMenuBtn.type = 'button';
   utilityMenuBtn.className = 'viewer-utility-menu__trigger';
@@ -1243,7 +1243,7 @@ function renderViewerShell(session) {
   utilityMenuBtn.setAttribute('aria-controls', 'viewer-utility-menu-list');
   utilityMenuBtn.setAttribute('aria-label', 'Open more actions');
   utilityMenuBtn.title = 'More actions';
-  utilityMenuBtn.textContent = '⋮';
+  utilityMenuBtn.textContent = '≡';
   const utilityMenuList = document.createElement('div');
   utilityMenuList.className = 'viewer-utility-menu__list';
   utilityMenuList.id = 'viewer-utility-menu-list';
