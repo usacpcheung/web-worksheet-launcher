@@ -1504,6 +1504,72 @@ function renderViewerShell(session) {
     orderedBlocks.map((block) => `${block.blockId}:${block.position}:${block.kind}`).join('|')
   );
 
+  const scrollStepperToActive = (activeNode, activeIndex, totalItems) => {
+    if (!activeNode || !stepper) return;
+
+    const ensureActiveNodeVisible = () => {
+      const containerRect = stepper.getBoundingClientRect();
+      const nodeRect = activeNode.getBoundingClientRect();
+      const leftInset = 6;
+      const rightInset = 6;
+
+      if (nodeRect.left < containerRect.left + leftInset) {
+        const delta = (containerRect.left + leftInset) - nodeRect.left;
+        const nextLeft = Math.max(0, stepper.scrollLeft - delta);
+        stepper.scrollLeft = nextLeft;
+        return;
+      }
+
+      if (nodeRect.right > containerRect.right - rightInset) {
+        const delta = nodeRect.right - (containerRect.right - rightInset);
+        const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
+        const nextLeft = Math.min(maxScrollLeft, stepper.scrollLeft + delta);
+        stepper.scrollLeft = nextLeft;
+      }
+    };
+
+    const shouldReduceMotion = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
+    if (maxScrollLeft === 0) {
+      stepper.scrollLeft = 0;
+      return;
+    }
+
+    if (activeIndex <= 0) {
+      stepper.scrollLeft = 0;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          stepper.scrollLeft = 0;
+          ensureActiveNodeVisible();
+        });
+      }
+      return;
+    }
+
+    if (activeIndex >= totalItems - 1) {
+      stepper.scrollLeft = maxScrollLeft;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          stepper.scrollLeft = maxScrollLeft;
+          ensureActiveNodeVisible();
+        });
+      }
+      return;
+    }
+
+    const nodeLeft = activeNode.offsetLeft;
+    const targetLeft = nodeLeft - ((stepper.clientWidth - activeNode.offsetWidth) / 2);
+    const clampedLeft = Math.min(Math.max(targetLeft, 0), maxScrollLeft);
+    const behavior = shouldReduceMotion ? 'auto' : 'smooth';
+    stepper.scrollTo({ left: clampedLeft, behavior });
+    if (shouldReduceMotion) {
+      ensureActiveNodeVisible();
+    }
+  };
+
   const renderStepper = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
     stepper.innerHTML = '';
     const counters = { content: 0, question: 0 };
@@ -1542,8 +1608,8 @@ function renderViewerShell(session) {
     });
 
     const activeNode = stepper.querySelector('.block-stepper__item.is-current');
-    if (shouldScrollToActive && activeNode && typeof activeNode.scrollIntoView === 'function') {
-      activeNode.scrollIntoView({ block: 'nearest', inline: 'center' });
+    if (shouldScrollToActive && activeNode) {
+      scrollStepperToActive(activeNode, activeIndex, orderedBlocks.length);
     }
   };
 
@@ -1817,14 +1883,12 @@ function renderViewerShell(session) {
     const currentBlock = orderedBlocks[currentBlockIndex];
     const stepperSignature = getStepperOrderSignature(orderedBlocks);
     const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
-    const shouldRenderStepper = stepperSignature !== stepperOrderSignature || activeIndexChanged;
+    const orderChanged = stepperSignature !== stepperOrderSignature;
 
     blockHeading.textContent = currentBlock.kind === 'content' ? 'Content' : 'Question';
-    if (shouldRenderStepper) {
-      renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged });
-      stepperOrderSignature = stepperSignature;
-      lastStepperActiveIndex = currentBlockIndex;
-    }
+    renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged || orderChanged });
+    stepperOrderSignature = stepperSignature;
+    lastStepperActiveIndex = currentBlockIndex;
     renderCurrentBlockCard(currentBlock);
     syncAnswerControlValues(currentBlock);
 

@@ -257,11 +257,17 @@ body {
   box-shadow: 0 10px 22px rgb(15 23 42 / 5%);
 }
 
+.content-card {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .question-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  min-height: clamp(380px, calc(100vh - 330px), 580px);
+  gap: 8px;
+  padding: 26px 30px;
+  min-height: 0;
   justify-content: flex-start;
 }
 
@@ -270,6 +276,8 @@ body {
   line-height: 1.38;
   font-weight: 700;
   margin-bottom: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .block-stepper {
@@ -279,6 +287,7 @@ body {
   gap: 0;
   overflow-x: auto;
   padding: 2px 8px 42px;
+  scroll-padding-inline: 22px;
   margin: 12px auto 4px;
   width: min(1100px, 100%);
   scrollbar-width: none;
@@ -482,11 +491,11 @@ button {
 
 textarea {
   resize: vertical;
-  min-height: 220px;
+  min-height: 170px;
   border-radius: 14px;
   border: 1px solid #dde4ec;
   background: #f8fbff;
-  padding: 20px 22px;
+  padding: 16px 18px;
   color: #1f2937;
   font-size: 1.02rem;
   line-height: 1.55;
@@ -495,8 +504,8 @@ textarea {
 input[type='text'] {
   border-radius: 14px;
   background: #f8fbff;
-  min-height: 64px;
-  padding-inline: 20px;
+  min-height: 56px;
+  padding-inline: 16px;
 }
 
 textarea::placeholder,
@@ -639,6 +648,10 @@ input[type='text']::placeholder {
   .question-card {
     border-radius: 16px;
     padding: 20px;
+  }
+
+  .question-card {
+    gap: 8px;
   }
 
   .question-card label {
