@@ -151,60 +151,6 @@ button {
   cursor: not-allowed;
 }
 
-.choice-list {
-  display: grid;
-  gap: 8px;
-}
-
-.choice-item {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  column-gap: 10px;
-  width: 100%;
-  text-align: left;
-  background: #fff;
-  border: 1px solid #cbd5e1;
-  color: #111827;
-  padding: 10px 12px;
-  border-radius: 10px;
-  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
-}
-
-.choice-item__key {
-  font-weight: 700;
-  color: #344054;
-  min-width: 1.5rem;
-}
-
-.choice-item__text {
-  min-width: 0;
-}
-
-.choice-item:hover:not(:disabled) {
-  background: #f8fafc;
-  border-color: #94a3b8;
-}
-
-.choice-item:focus-visible {
-  outline: 2px solid #1d4ed8;
-  outline-offset: 2px;
-}
-
-.choice-item.is-selected {
-  background: #dbeafe;
-  border-color: #3b82f6;
-  color: #1e3a8a;
-  font-weight: 600;
-}
-
-.choice-item:disabled {
-  background: #f1f5f9;
-  border-color: #d0d5dd;
-  color: #667085;
-  cursor: not-allowed;
-}
-
 textarea {
   resize: vertical;
 }
