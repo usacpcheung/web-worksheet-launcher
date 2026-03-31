@@ -778,7 +778,7 @@ class ViewerAttemptSession {
   }
 
   async loadViewerPayloadFromSources(params, previewIntent = null) {
-    if (previewIntent?.localDraftId) {
+    if (previewIntent?.localDraftId && previewIntent?.preview) {
       const draftRecord = await this.storage.drafts.get(previewIntent.localDraftId);
       if (!draftRecord) {
         throw new Error(`Local draft not found for localId=${previewIntent.localDraftId}`);
@@ -1105,6 +1105,11 @@ class ViewerAttemptSession {
 
     try {
       await this.storage.importedWorksheets.put(importedRecord);
+    } catch (error) {
+      throw new Error(`Failed to save imported worksheet. ${error?.message || String(error)}`);
+    }
+
+    try {
       const payload = resolveImportedWorksheetPayload(importedRecord);
       await this.validateViewerPayload(payload);
       const attempt = this.createLocalAttemptState(payload, 'imported_worksheet');
@@ -1607,12 +1612,15 @@ async function bootstrapViewer() {
   session.authGate = authGate;
 
   const params = new URLSearchParams(window.location.search);
+  const existingResumeMetadata = session.storage.resumeFlags.get(RESUME_FLAG_KEY);
   const hasLaunchIntent =
     params.has('localAttemptId')
     || params.has('localDraftId')
     || params.has('viewerPayload')
     || params.has('snapshot')
-    || params.has('importedWorksheetId');
+    || params.has('importedWorksheetId')
+    || params.get('authReturn') === '1'
+    || Boolean(existingResumeMetadata?.localId);
 
   if (!hasLaunchIntent) {
     renderViewerStartPanel(session);

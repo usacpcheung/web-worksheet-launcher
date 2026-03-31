@@ -474,9 +474,9 @@ test('multiple_choice render path no longer creates select or checkbox controls'
 
 test('viewer summary text includes distinct finalize outcome messages', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('Finalizing submission…'), true);
-  assert.equal(source.includes('Finalize failed. Please check your connection and try again.'), true);
-  assert.equal(source.includes('Finalized'), true);
+  assert.match(source, /Finalizing submission…/);
+  assert.match(source, /Finalize failed\. Please check your connection and try again\./);
+  assert.match(source, /Finalized/);
 });
 
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
