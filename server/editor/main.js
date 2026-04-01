@@ -249,9 +249,13 @@ function getNumberQuestionValidationErrors(config, rawValues = {}) {
 }
 
 
-function buildViewerUrlFromCurrentLocation(currentHref, localDraftId) {
+function buildViewerUrlFromCurrentLocation(currentHref, localDraftId, draftUpdatedAt = null) {
   const viewerUrl = new URL('../viewer/', currentHref);
   viewerUrl.searchParams.set('localDraftId', localDraftId);
+  viewerUrl.searchParams.set('preview', '1');
+  if (draftUpdatedAt) {
+    viewerUrl.searchParams.set('draftUpdatedAt', draftUpdatedAt);
+  }
   return viewerUrl;
 }
 
@@ -1221,19 +1225,38 @@ class EditorDraftSession {
     await this.storage.importedWorksheets.put(importedRecord);
 
     if (options.convertToEditableDraft) {
+      // Clear any pending autosave before replacing the draft
+      clearTimeout(this.autosaveTimer);
+      
+      // Validate and extract blocks from parsed JSON
+      if (!Array.isArray(parsed.blocks) || parsed.blocks.length === 0) {
+        throw new Error('Imported worksheet must have a non-empty blocks array.');
+      }
+      
+      // For round-trip imports (exporting and re-importing), preserve metadata if present
+      // Otherwise, use 'imported_file' as default origin
+      const importedMetadata = {
+        createdAt: (isRecord(parsed.metadata) && parsed.metadata.createdAt) || nowIso(),
+        serverLink: (isRecord(parsed.metadata) && parsed.metadata.serverLink) || null,
+      };
+      
       const draft = createDraftRecord({
         title: parsed.title || 'Imported worksheet',
-        blocks: Array.isArray(parsed.blocks) ? parsed.blocks : [],
+        blocks: parsed.blocks,
         origin: 'imported_file',
+        metadata: importedMetadata,
       });
+      
       this.state.draft = draft;
       this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
       this.state.draftRevision += 1;
       this.state.lastImportedAt = nowIso();
       this.validateCurrentDraft();
-      this.autosave().catch((error) => {
+      try {
+        await this.autosave();
+      } catch (error) {
         console.warn('Initial autosave after import failed; draft remains in-memory.', error);
-      });
+      }
       this.persistRestoreMetadata();
       return { importedRecord, draftRecord: this.state.draft };
     }
@@ -1297,7 +1320,15 @@ class EditorDraftSession {
 
     const timestampToken = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `worksheet-draft-${this.state.draft.localId}-${timestampToken}.json`;
-    downloadJson(this.state.draft, filename);
+    
+    // Export only the public schema, exclude internal fields like contractDraft and contractValidation
+    const exportPayload = {
+      title: this.state.draft.title,
+      blocks: this.state.draft.blocks,
+      metadata: this.state.draft.metadata,
+    };
+    
+    downloadJson(exportPayload, filename);
     this.state.lastExportedAt = nowIso();
     return filename;
   }
@@ -2074,7 +2105,8 @@ function renderEditorShell(session) {
     if (!localDraftId) return;
     await session.saveNow();
     updateSummary();
-    const viewerUrl = buildViewerUrlFromCurrentLocation(window.location.href, localDraftId);
+    const draftUpdatedAt = session.state.draft?.metadata?.updatedAt || null;
+    const viewerUrl = buildViewerUrlFromCurrentLocation(window.location.href, localDraftId, draftUpdatedAt);
     window.location.assign(viewerUrl);
   });
   questionInputType.addEventListener('change', () => {

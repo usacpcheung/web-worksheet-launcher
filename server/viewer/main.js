@@ -5,6 +5,7 @@ import { normalizeNumberRules, validateNumberInputFormat } from '../app/contract
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 
 const app = document.getElementById('app');
+const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
 
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
@@ -283,6 +284,150 @@ function applyBooleanGroupState(groupNode, rawValue, isDisabled = false) {
   });
 }
 
+function getChoicePrefix(index) {
+  let label = '';
+  let current = Number(index) + 1;
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    label = String.fromCharCode(65 + remainder) + label;
+    current = Math.floor((current - 1) / 26);
+  }
+  return `${label}.`;
+}
+
+function applyChoiceButtonGroupState(groupNode, rawValue, selectionMode = 'single', isDisabled = false) {
+  if (!groupNode) return;
+  const isMulti = selectionMode === 'multi';
+  const selectedSet = isMulti
+    ? new Set(Array.isArray(rawValue) ? rawValue.map((value) => String(value)) : [])
+    : new Set(rawValue === null || rawValue === undefined || rawValue === '' ? [] : [String(rawValue)]);
+  const buttons = Array.from(groupNode.querySelectorAll('button[data-choice-value]'));
+  let hasSelected = false;
+  buttons.forEach((button) => {
+    const choiceValue = String(button.dataset.choiceValue || '');
+    const isSelected = selectedSet.has(choiceValue);
+    if (isSelected) hasSelected = true;
+    button.classList.toggle('is-selected', isSelected);
+    if (isMulti) {
+      button.setAttribute('aria-pressed', String(isSelected));
+    } else {
+      button.setAttribute('aria-checked', String(isSelected));
+    }
+    button.disabled = isDisabled;
+  });
+  if (!isMulti) {
+    buttons.forEach((button, index) => {
+      const choiceValue = String(button.dataset.choiceValue || '');
+      const isSelected = selectedSet.has(choiceValue);
+      button.tabIndex = hasSelected ? (isSelected ? 0 : -1) : (index === 0 ? 0 : -1);
+    });
+  }
+}
+
+function computeNextChoiceValue({ selectionMode = 'single', currentValue, clickedValue, validValues = [] }) {
+  const clicked = String(clickedValue ?? '');
+  const allowedValues = new Set(validValues.map((value) => String(value)));
+  if (!allowedValues.has(clicked)) {
+    return selectionMode === 'multi' ? [] : '';
+  }
+
+  if (selectionMode === 'multi') {
+    const normalizedCurrent = Array.isArray(currentValue)
+      ? currentValue.map((value) => String(value)).filter((value, idx, allValues) => allValues.indexOf(value) === idx)
+      : [];
+    const nextSet = new Set(normalizedCurrent);
+    if (nextSet.has(clicked)) {
+      nextSet.delete(clicked);
+    } else {
+      nextSet.add(clicked);
+    }
+    // Return selected values in validValues (option) order to keep answers deterministic
+    return validValues
+      .map((value) => String(value))
+      .filter((value) => nextSet.has(value));
+  }
+
+  const normalizedCurrent = String(currentValue ?? '');
+  return normalizedCurrent === clicked ? '' : clicked;
+}
+
+function createChoiceButtonGroup({
+  block,
+  labelId,
+  controlId,
+  optionSource,
+  session,
+  updateSummary,
+}) {
+  const selectionMode = block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
+  const validValues = optionSource.map((option) => String(option.value ?? option.label ?? ''));
+  const container = document.createElement('div');
+  container.className = 'choice-button-group';
+  container.setAttribute('aria-labelledby', labelId);
+  if (selectionMode === 'single') {
+    container.setAttribute('role', 'radiogroup');
+  } else {
+    container.setAttribute('role', 'group');
+  }
+  optionSource.forEach((opt, optionIndex) => {
+    const value = String(opt.value ?? opt.label ?? '');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'choice-button-group__item';
+    button.dataset.choiceValue = value;
+    button.id = `${controlId}-${optionIndex}`;
+    if (selectionMode === 'single') {
+      button.setAttribute('role', 'radio');
+      button.setAttribute('aria-checked', 'false');
+      button.tabIndex = optionIndex === 0 ? 0 : -1;
+    } else {
+      button.setAttribute('aria-pressed', 'false');
+    }
+
+    const prefix = document.createElement('span');
+    prefix.className = 'choice-button-group__prefix';
+    prefix.textContent = getChoicePrefix(optionIndex);
+
+    const labelText = document.createElement('span');
+    labelText.className = 'choice-button-group__label';
+    labelText.textContent = String(opt.label ?? opt.value ?? '');
+    button.append(prefix, labelText);
+
+    button.addEventListener('click', () => {
+      const currentValue = session.state.answers?.[block.blockId]?.value;
+      const nextValue = computeNextChoiceValue({
+        selectionMode,
+        currentValue,
+        clickedValue: value,
+        validValues,
+      });
+      session.setAnswer(block.blockId, nextValue);
+      updateSummary();
+    });
+    container.appendChild(button);
+  });
+
+  if (selectionMode === 'single') {
+    container.addEventListener('keydown', (event) => {
+      if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft'].includes(event.key)) return;
+      const radioButtons = Array.from(container.querySelectorAll('button[data-choice-value]'));
+      const currentIndex = radioButtons.indexOf(document.activeElement);
+      if (currentIndex === -1) return;
+      event.preventDefault();
+      const isForward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
+      const nextIndex = isForward
+        ? (currentIndex + 1) % radioButtons.length
+        : (currentIndex - 1 + radioButtons.length) % radioButtons.length;
+      radioButtons.forEach((btn, idx) => {
+        btn.tabIndex = idx === nextIndex ? 0 : -1;
+      });
+      radioButtons[nextIndex].focus();
+    });
+  }
+
+  return container;
+}
+
 function coerceAnswerValueForQuestion(questionBlock, rawValue, options = {}) {
   const inputType = questionBlock?.responseConfig?.inputType || 'text';
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
@@ -517,6 +662,9 @@ class ViewerAttemptSession {
       attemptValidationErrors: [],
       lastManualSaveAt: null,
       source: 'unknown',
+      sourceDraftUpdatedAt: null,
+      isFinalizing: false,
+      lastFinalizeError: null,
       attemptRevision: 0,
       lastSavedRevision: 0,
       recoveryMessage: null,
@@ -549,30 +697,59 @@ class ViewerAttemptSession {
 
   async bootstrap() {
     const params = new URLSearchParams(window.location.search);
-    const resumeMetadata = this.storage.resumeFlags.get(RESUME_FLAG_KEY);
+    const previewIntent = this.parsePreviewIntent(params);
+    const freshnessMarker = params.get('draftUpdatedAt') || null;
 
-    const explicitAttemptId = params.get('localAttemptId') || resumeMetadata?.localId || null;
+    const explicitAttemptId = params.get('localAttemptId');
     if (explicitAttemptId) {
-      const resumed = await this.tryResumeAttempt(explicitAttemptId);
+      const resumed = await this.tryResumeAttempt(explicitAttemptId, {
+        sourceDraftUpdatedAt: freshnessMarker,
+        preferFreshPreview: Boolean(previewIntent?.preview && previewIntent?.localDraftId),
+      });
       if (resumed) {
         this.persistResumeMetadata();
         return this.state;
       }
     }
 
-    const loadedPayload = await this.loadViewerPayloadFromSources(params);
+    const loadedPayload = await this.loadViewerPayloadFromSources(params, previewIntent);
     await this.validateViewerPayload(loadedPayload.payload);
-    const attempt = this.createLocalAttemptState(loadedPayload.payload, loadedPayload.source);
+    const attempt = this.createLocalAttemptState(
+      loadedPayload.payload,
+      loadedPayload.source,
+      { sourceDraftUpdatedAt: loadedPayload.sourceDraftUpdatedAt }
+    );
     this.applyAttemptState(attempt, { markDirty: true });
     this.persistResumeMetadata();
 
     return this.state;
   }
 
-  async tryResumeAttempt(localAttemptId) {
+  parsePreviewIntent(params) {
+    const localDraftId = params.get('localDraftId');
+    if (!localDraftId) {
+      return null;
+    }
+
+    return {
+      localDraftId,
+      preview: params.get('preview') === '1',
+      sourceDraftUpdatedAt: params.get('draftUpdatedAt') || null,
+    };
+  }
+
+  async tryResumeAttempt(localAttemptId, options = {}) {
     try {
       const attemptRecord = await this.storage.attempts.get(localAttemptId);
       if (!attemptRecord) {
+        return false;
+      }
+      const attemptSourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
+      const shouldBypassResumeForFreshPreview =
+        options.preferFreshPreview
+        && options.sourceDraftUpdatedAt
+        && options.sourceDraftUpdatedAt !== attemptSourceDraftUpdatedAt;
+      if (shouldBypassResumeForFreshPreview) {
         return false;
       }
 
@@ -601,7 +778,20 @@ class ViewerAttemptSession {
     }
   }
 
-  async loadViewerPayloadFromSources(params) {
+  async loadViewerPayloadFromSources(params, previewIntent = null) {
+    if (previewIntent?.localDraftId && previewIntent?.preview) {
+      const draftRecord = await this.storage.drafts.get(previewIntent.localDraftId);
+      if (!draftRecord) {
+        throw new Error(`Local draft not found for localId=${previewIntent.localDraftId}`);
+      }
+
+      return {
+        source: 'local_draft_preview',
+        payload: mapDraftRecordToViewerPayload(draftRecord),
+        sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || previewIntent.sourceDraftUpdatedAt || null,
+      };
+    }
+
     const inlinePayload =
       maybeParseEncodedJson(params.get('viewerPayload')) ||
       (typeof window !== 'undefined' ? parseJsonInput(window.__VIEWER_PAYLOAD__) : null);
@@ -644,6 +834,7 @@ class ViewerAttemptSession {
       return {
         source: 'local_draft',
         payload: mapDraftRecordToViewerPayload(draftRecord),
+        sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || null,
       };
     }
 
@@ -677,9 +868,10 @@ class ViewerAttemptSession {
     };
   }
 
-  createLocalAttemptState(viewerPayload, source) {
+  createLocalAttemptState(viewerPayload, source, options = {}) {
     const localAttemptId = createLocalId('attempt');
     const startedAt = nowIso();
+    const sourceDraftUpdatedAt = options.sourceDraftUpdatedAt || null;
 
     return {
       localId: localAttemptId,
@@ -694,6 +886,7 @@ class ViewerAttemptSession {
       metadata: {
         localId: localAttemptId,
         origin: source || 'local_source',
+        sourceDraftUpdatedAt,
         updatedAt: startedAt,
       },
     };
@@ -708,7 +901,10 @@ class ViewerAttemptSession {
     this.state.lastSavedAt = attemptRecord.lastSavedAt || null;
     this.state.completedAt = attemptRecord.completedAt || attemptRecord.submittedAt || null;
     this.state.source = attemptRecord.metadata?.origin || 'local_source';
+    this.state.sourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
     this.state.lastSaveError = null;
+    this.state.isFinalizing = false;
+    this.state.lastFinalizeError = null;
 
     if (options.markDirty) {
       this.state.attemptRevision += 1;
@@ -747,19 +943,36 @@ class ViewerAttemptSession {
   }
 
   async completeLocalAttempt() {
-    if (!this.state.localAttemptId || this.state.status === 'completed') {
+    if (!this.state.localAttemptId || this.state.isFinalizing || this.state.status === 'completed') {
       return null;
     }
 
+    this.state.isFinalizing = true;
+    this.state.lastFinalizeError = null;
     this.state.status = 'completed';
     this.state.completedAt = nowIso();
     this.state.attemptRevision += 1;
     this.persistResumeMetadata();
+    this.notifyStateChange();
 
     clearTimeout(this.autosaveTimer);
     this.autosaveTimer = null;
 
-    return this.autosave();
+    try {
+      const persisted = await this.autosave();
+      this.state.lastFinalizeError = null;
+      return persisted;
+    } catch (error) {
+      this.state.status = 'in_progress';
+      this.state.completedAt = null;
+      this.state.lastFinalizeError = `Finalize failed. Please check your connection and try again. ${error?.message || String(error)}`;
+      this.persistResumeMetadata();
+      this.notifyStateChange();
+      return null;
+    } finally {
+      this.state.isFinalizing = false;
+      this.notifyStateChange();
+    }
   }
 
   scheduleAutosave() {
@@ -806,6 +1019,7 @@ class ViewerAttemptSession {
       metadata: {
         localId: this.state.localAttemptId,
         origin: this.state.source || 'local_source',
+        sourceDraftUpdatedAt: this.state.sourceDraftUpdatedAt || null,
         updatedAt,
       },
     };
@@ -876,6 +1090,38 @@ class ViewerAttemptSession {
     return this.tryResumeAttempt(localId);
   }
 
+  async startImportedWorksheetFromJsonText(rawJson) {
+    let worksheet;
+    try {
+      worksheet = JSON.parse(rawJson);
+    } catch (error) {
+      throw new Error(`Unable to parse worksheet JSON. ${error?.message || String(error)}`);
+    }
+
+    const importedRecord = {
+      localId: createLocalId('imported'),
+      worksheet,
+      importedAt: nowIso(),
+    };
+
+    try {
+      await this.storage.importedWorksheets.put(importedRecord);
+    } catch (error) {
+      throw new Error(`Failed to save imported worksheet. ${error?.message || String(error)}`);
+    }
+
+    try {
+      const payload = resolveImportedWorksheetPayload(importedRecord);
+      await this.validateViewerPayload(payload);
+      const attempt = this.createLocalAttemptState(payload, 'imported_worksheet');
+      this.applyAttemptState(attempt, { markDirty: true });
+      this.persistResumeMetadata();
+      return this.state;
+    } catch (error) {
+      throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
+    }
+  }
+
   applyUiRestoreState(_ui = {}) {
     this.persistResumeMetadata();
   }
@@ -920,7 +1166,7 @@ class ViewerAttemptSession {
 }
 
 function renderViewerShell(session) {
-  if (!app) {
+  if (!app || !bottomBarRoot) {
     return;
   }
 
@@ -929,107 +1175,531 @@ function renderViewerShell(session) {
 
   const header = document.createElement('header');
   header.className = 'viewer-header';
+  const headerTop = document.createElement('div');
+  headerTop.className = 'viewer-header-top';
   const heading = document.createElement('h1');
   heading.textContent = session.state.viewerPayload.title;
-  const metadata = document.createElement('p');
-  metadata.className = 'muted';
 
   const answerSummary = document.createElement('p');
   answerSummary.className = 'answer-summary';
   const status = document.createElement('p');
+  let studentName = '';
 
-  const contentSection = document.createElement('section');
-  contentSection.className = 'viewer-section';
-  const contentHeading = document.createElement('h2');
-  contentHeading.textContent = 'Content';
-  const questionSection = document.createElement('section');
-  questionSection.className = 'viewer-section';
-  const questionHeading = document.createElement('h2');
-  questionHeading.textContent = 'Questions';
+  const blockSection = document.createElement('section');
+  blockSection.className = 'viewer-section';
+  const blockHeading = document.createElement('h2');
+  const blockList = document.createElement('div');
+  blockList.id = 'viewer-answer-form';
+  const stepper = document.createElement('div');
+  stepper.className = 'block-stepper';
+  stepper.setAttribute('role', 'list');
+  stepper.setAttribute('aria-label', 'Worksheet block progress');
 
-  const contentList = document.createElement('div');
-  const questionList = document.createElement('div');
-  questionList.id = 'viewer-answer-form';
+  const navActions = document.createElement('div');
+  navActions.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--center';
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'icon-nav-btn';
+  prevBtn.textContent = '← Back';
+  prevBtn.setAttribute('aria-label', 'Go to previous block');
+  prevBtn.title = 'Previous block';
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'icon-nav-btn';
+  nextBtn.textContent = 'Next →';
+  nextBtn.setAttribute('aria-label', 'Go to next block');
+  nextBtn.title = 'Next block';
+  navActions.append(prevBtn, nextBtn);
   const answerControls = new Map();
   const textControlFeedback = new Map();
-  let contentSignature = null;
-  let questionSignature = null;
+  let blockSignature = null;
+  let stepperOrderSignature = null;
+  let lastStepperActiveIndex = -1;
   const numberInputErrors = new Map();
+  const localInputCache = new Map();
+  let currentBlockIndex = 0;
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
-  saveBtn.textContent = 'Save Now';
+  saveBtn.textContent = 'Save';
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
-  completeBtn.textContent = 'Submit / Finalize';
+  completeBtn.textContent = 'Submit';
+
+  const utilityMenu = document.createElement('div');
+  utilityMenu.className = 'viewer-utility-menu';
+  const headerActions = document.createElement('div');
+  headerActions.className = 'viewer-header-actions';
+  const infoBtn = document.createElement('button');
+  infoBtn.type = 'button';
+  infoBtn.className = 'viewer-utility-menu__trigger';
+  infoBtn.setAttribute('aria-label', 'Open technical details');
+  infoBtn.title = 'Technical details';
+  infoBtn.textContent = 'ⓘ';
+  const utilityMenuBtn = document.createElement('button');
+  utilityMenuBtn.type = 'button';
+  utilityMenuBtn.className = 'viewer-utility-menu__trigger';
+  utilityMenuBtn.setAttribute('aria-haspopup', 'menu');
+  utilityMenuBtn.setAttribute('aria-expanded', 'false');
+  utilityMenuBtn.setAttribute('aria-controls', 'viewer-utility-menu-list');
+  utilityMenuBtn.setAttribute('aria-label', 'Open more actions');
+  utilityMenuBtn.title = 'More actions';
+  utilityMenuBtn.textContent = '≡';
+  const utilityMenuList = document.createElement('div');
+  utilityMenuList.className = 'viewer-utility-menu__list';
+  utilityMenuList.id = 'viewer-utility-menu-list';
+  utilityMenuList.setAttribute('role', 'menu');
+  utilityMenuList.hidden = true;
 
   const syncResumeBtn = document.createElement('button');
   syncResumeBtn.type = 'button';
+  syncResumeBtn.className = 'viewer-utility-menu__item';
+  syncResumeBtn.setAttribute('role', 'menuitem');
   syncResumeBtn.textContent = 'Sync/Resume (Sign-in required)';
 
   const rewriteAssistBtn = document.createElement('button');
   rewriteAssistBtn.type = 'button';
+  rewriteAssistBtn.className = 'viewer-utility-menu__item';
+  rewriteAssistBtn.setAttribute('role', 'menuitem');
   rewriteAssistBtn.textContent = 'Rewrite Assist (Sign-in required)';
+  utilityMenuList.append(syncResumeBtn, rewriteAssistBtn);
+  utilityMenu.append(utilityMenuBtn, utilityMenuList);
+  headerActions.append(infoBtn, utilityMenu);
 
-  const stickyActions = document.createElement('div');
-  stickyActions.className = 'sticky-action-row';
-  const secondaryActions = document.createElement('div');
-  secondaryActions.className = 'secondary-actions';
-  secondaryActions.append(syncResumeBtn, rewriteAssistBtn);
+  const detailsModal = document.createElement('div');
+  detailsModal.className = 'viewer-details-modal';
+  detailsModal.hidden = true;
+  detailsModal.setAttribute('role', 'dialog');
+  detailsModal.setAttribute('aria-modal', 'true');
+  detailsModal.setAttribute('aria-labelledby', 'viewer-details-modal-title');
+  const detailsContent = document.createElement('div');
+  detailsContent.className = 'viewer-details-modal__content';
+  const detailsTitle = document.createElement('h2');
+  detailsTitle.id = 'viewer-details-modal-title';
+  detailsTitle.textContent = 'Technical details';
+  const learnerNameForm = document.createElement('form');
+  learnerNameForm.className = 'viewer-details-form';
+  const learnerNameLabel = document.createElement('label');
+  learnerNameLabel.className = 'viewer-details-form__label';
+  learnerNameLabel.setAttribute('for', 'viewer-student-name-input');
+  learnerNameLabel.textContent = 'Student name';
+  const learnerNameInput = document.createElement('input');
+  learnerNameInput.id = 'viewer-student-name-input';
+  learnerNameInput.className = 'viewer-details-form__input';
+  learnerNameInput.type = 'text';
+  learnerNameInput.maxLength = 120;
+  learnerNameInput.placeholder = 'Enter student name';
+  learnerNameInput.autocomplete = 'name';
+  const learnerNameSaveBtn = document.createElement('button');
+  learnerNameSaveBtn.type = 'submit';
+  learnerNameSaveBtn.className = 'viewer-details-form__save';
+  learnerNameSaveBtn.textContent = 'Apply';
+  learnerNameForm.append(learnerNameLabel, learnerNameInput, learnerNameSaveBtn);
+  const detailsList = document.createElement('dl');
+  detailsList.className = 'viewer-details-list';
+  const detailsCloseBtn = document.createElement('button');
+  detailsCloseBtn.type = 'button';
+  detailsCloseBtn.textContent = 'Close';
+  detailsCloseBtn.className = 'viewer-details-modal__close';
+  detailsContent.append(detailsTitle, learnerNameForm, detailsList, detailsCloseBtn);
+  detailsModal.append(detailsContent);
 
-  completeBtn.disabled = session.state.status === 'completed';
+  const bottomBar = document.createElement('div');
+  bottomBar.className = 'viewer-bottom-bar';
+  const bottomBarInner = document.createElement('div');
+  bottomBarInner.className = 'viewer-bottom-bar__inner';
+  const leftZone = document.createElement('div');
+  leftZone.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--left';
+  const rightZone = document.createElement('div');
+  rightZone.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--right';
+
   completeBtn.addEventListener('click', async () => {
     await session.completeLocalAttempt();
-    completeBtn.disabled = true;
-    Array.from(questionList.querySelectorAll('textarea, input, select')).forEach((control) => {
-      control.disabled = true;
-    });
-    updateSummary();
+    renderUI();
   });
-  stickyActions.append(saveBtn, completeBtn, secondaryActions);
+  leftZone.append(saveBtn);
+  rightZone.append(completeBtn);
+  bottomBarInner.append(leftZone, navActions, rightZone);
+  bottomBar.append(bottomBarInner);
 
-  const renderContentCards = (contentBlocks) => {
-    const nextSignature = JSON.stringify(contentBlocks.map((block) => [block.blockId, block.content?.text || '']));
-    if (nextSignature === contentSignature) {
+  const getOrderedBlocks = () => (
+    [...(session.state.viewerPayload?.blocks || [])].sort((a, b) => a.position - b.position)
+  );
+
+  const getMenuItems = () => Array.from(utilityMenuList.querySelectorAll('.viewer-utility-menu__item'));
+  let lastFocusedElement = null;
+
+  const copyTextValue = async (rawValue) => {
+    const value = String(rawValue ?? '');
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
       return;
     }
-    contentSignature = nextSignature;
-    contentList.innerHTML = '';
+    const fallback = document.createElement('textarea');
+    fallback.value = value;
+    fallback.setAttribute('readonly', '');
+    fallback.style.position = 'absolute';
+    fallback.style.left = '-9999px';
+    document.body.appendChild(fallback);
+    fallback.select();
+    document.execCommand('copy');
+    fallback.remove();
+  };
 
-    contentBlocks.forEach((block) => {
-      const card = document.createElement('article');
-      card.className = 'content-card';
-      card.textContent = block.content?.text || '';
-      contentList.appendChild(card);
+  const renderTechnicalDetails = () => {
+    const technicalRows = [
+      ['Worksheet ID', session.state.viewerPayload?.worksheetId || 'n/a'],
+      ['Snapshot ID', session.state.viewerPayload?.snapshotId || 'n/a'],
+      ['Local attempt ID', session.state.localAttemptId || 'n/a'],
+      ['Source', session.state.source || 'n/a'],
+    ];
+    learnerNameInput.value = studentName;
+    detailsList.innerHTML = '';
+    technicalRows.forEach(([label, value]) => {
+      const row = document.createElement('div');
+      row.className = 'viewer-details-list__row';
+      const term = document.createElement('dt');
+      term.textContent = label;
+      const description = document.createElement('dd');
+      const valueText = document.createElement('code');
+      valueText.textContent = String(value);
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'viewer-details-list__copy';
+      copyBtn.textContent = 'Copy';
+      copyBtn.setAttribute('aria-label', `Copy ${label}`);
+      copyBtn.addEventListener('click', async () => {
+        await copyTextValue(value);
+      });
+      description.append(valueText, copyBtn);
+      row.append(term, description);
+      detailsList.appendChild(row);
     });
   };
 
-  const renderQuestionCards = (questionBlocks) => {
-    const nextSignature = JSON.stringify(questionBlocks.map((block) => ({
-      blockId: block.blockId,
-      prompt: block.prompt?.text || '',
-      inputType: block.responseConfig?.inputType || 'text',
-      maxLength: block.responseConfig?.maxLength || null,
-      options: Array.isArray(block.responseConfig?.options)
-        ? block.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
-        : [],
-    })));
-    if (nextSignature === questionSignature) {
+  const trapModalFocus = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeTechnicalDetails();
       return;
     }
-    questionSignature = nextSignature;
+    if (event.key !== 'Tab') return;
+    const focusable = detailsModal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  function closeTechnicalDetails() {
+    detailsModal.hidden = true;
+    detailsModal.removeEventListener('keydown', trapModalFocus);
+    if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+      lastFocusedElement.focus();
+    }
+  }
+
+  const openTechnicalDetails = () => {
+    lastFocusedElement = document.activeElement;
+    renderTechnicalDetails();
+    detailsModal.hidden = false;
+    detailsModal.addEventListener('keydown', trapModalFocus);
+    detailsCloseBtn.focus();
+  };
+
+  learnerNameForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    studentName = learnerNameInput.value.trim();
+    renderUI();
+    learnerNameInput.focus();
+  });
+
+  infoBtn.addEventListener('click', () => {
+    openTechnicalDetails();
+  });
+  detailsCloseBtn.addEventListener('click', () => {
+    closeTechnicalDetails();
+  });
+  detailsModal.addEventListener('click', (event) => {
+    if (event.target === detailsModal) {
+      closeTechnicalDetails();
+    }
+  });
+
+  const closeUtilityMenu = ({ returnFocus = false } = {}) => {
+    utilityMenuList.hidden = true;
+    utilityMenuBtn.setAttribute('aria-expanded', 'false');
+    if (returnFocus) {
+      utilityMenuBtn.focus();
+    }
+  };
+
+  const openUtilityMenu = () => {
+    utilityMenuList.hidden = false;
+    utilityMenuBtn.setAttribute('aria-expanded', 'true');
+  };
+
+  const isUtilityMenuOpen = () => (
+    !utilityMenuList.hidden
+    && utilityMenuBtn.getAttribute('aria-expanded') === 'true'
+  );
+
+  const focusMenuItemByDelta = (delta) => {
+    const items = getMenuItems();
+    if (items.length === 0) return;
+    const activeIndex = items.indexOf(document.activeElement);
+    const nextIndex = activeIndex === -1
+      ? 0
+      : (activeIndex + delta + items.length) % items.length;
+    items[nextIndex].focus();
+  };
+
+  utilityMenuBtn.addEventListener('click', () => {
+    const isOpen = utilityMenuBtn.getAttribute('aria-expanded') === 'true';
+    if (isOpen) {
+      closeUtilityMenu();
+      return;
+    }
+    openUtilityMenu();
+    getMenuItems()[0]?.focus();
+  });
+
+  utilityMenuBtn.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    openUtilityMenu();
+    getMenuItems()[0]?.focus();
+  });
+
+  utilityMenuList.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeUtilityMenu({ returnFocus: true });
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      focusMenuItemByDelta(1);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      focusMenuItemByDelta(-1);
+      return;
+    }
+    if (event.key === 'Home') {
+      event.preventDefault();
+      getMenuItems()[0]?.focus();
+      return;
+    }
+    if (event.key === 'End') {
+      event.preventDefault();
+      const items = getMenuItems();
+      items[items.length - 1]?.focus();
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!utilityMenu.contains(event.target)) {
+      closeUtilityMenu();
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && detailsModal.hidden && isUtilityMenuOpen()) {
+      closeUtilityMenu({ returnFocus: true });
+    }
+  });
+
+  const getStepperLabel = (block, counters) => {
+    if (block.kind === 'content') {
+      counters.content += 1;
+      return counters.content === 1 ? 'Instruction' : `Instruction ${counters.content}`;
+    }
+    counters.question += 1;
+    return `Question ${counters.question}`;
+  };
+
+  const getStepperOrderSignature = (orderedBlocks) => (
+    orderedBlocks.map((block) => `${block.blockId}:${block.position}:${block.kind}`).join('|')
+  );
+
+  const scrollStepperToActive = (activeNode, activeIndex, totalItems) => {
+    if (!activeNode || !stepper) return;
+
+    const ensureActiveNodeVisible = () => {
+      const containerRect = stepper.getBoundingClientRect();
+      const nodeRect = activeNode.getBoundingClientRect();
+      const leftInset = 6;
+      const rightInset = 6;
+
+      if (nodeRect.left < containerRect.left + leftInset) {
+        const delta = (containerRect.left + leftInset) - nodeRect.left;
+        const nextLeft = Math.max(0, stepper.scrollLeft - delta);
+        stepper.scrollLeft = nextLeft;
+        return;
+      }
+
+      if (nodeRect.right > containerRect.right - rightInset) {
+        const delta = nodeRect.right - (containerRect.right - rightInset);
+        const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
+        const nextLeft = Math.min(maxScrollLeft, stepper.scrollLeft + delta);
+        stepper.scrollLeft = nextLeft;
+      }
+    };
+
+    const shouldReduceMotion = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const scheduleEnsureActiveNodeVisible = () => {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          ensureActiveNodeVisible();
+        });
+        return;
+      }
+      ensureActiveNodeVisible();
+    };
+
+    const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
+    if (maxScrollLeft === 0) {
+      stepper.scrollLeft = 0;
+      scheduleEnsureActiveNodeVisible();
+      return;
+    }
+
+    if (activeIndex <= 0) {
+      stepper.scrollLeft = 0;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          stepper.scrollLeft = 0;
+          ensureActiveNodeVisible();
+        });
+      }
+      return;
+    }
+
+    if (activeIndex >= totalItems - 1) {
+      stepper.scrollLeft = maxScrollLeft;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          stepper.scrollLeft = maxScrollLeft;
+          ensureActiveNodeVisible();
+        });
+      }
+      return;
+    }
+
+    const nodeLeft = activeNode.offsetLeft;
+    const targetLeft = nodeLeft - ((stepper.clientWidth - activeNode.offsetWidth) / 2);
+    const clampedLeft = Math.min(Math.max(targetLeft, 0), maxScrollLeft);
+    const behavior = shouldReduceMotion ? 'auto' : 'smooth';
+    stepper.scrollTo({ left: clampedLeft, behavior });
+    scheduleEnsureActiveNodeVisible();
+  };
+
+  const updateStepperFitState = () => {
+    const fitsContainer = stepper.scrollWidth <= stepper.clientWidth;
+    stepper.dataset.fit = fitsContainer ? 'true' : 'false';
+  };
+
+  const renderStepper = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
+    stepper.innerHTML = '';
+    const counters = { content: 0, question: 0 };
+
+    orderedBlocks.forEach((block, index) => {
+      const item = document.createElement('div');
+      item.className = 'block-stepper__item';
+      item.setAttribute('role', 'listitem');
+
+      const isCompleted = index < activeIndex;
+      const isCurrent = index === activeIndex;
+      const stateClass = isCompleted ? 'is-completed' : isCurrent ? 'is-current' : 'is-upcoming';
+      item.classList.add(stateClass);
+
+      const node = document.createElement('button');
+      node.type = 'button';
+      node.className = 'block-stepper__node';
+      node.textContent = `${index + 1}`;
+      node.title = `Go to block ${index + 1}`;
+      if (isCurrent) {
+        node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
+        node.setAttribute('aria-current', 'step');
+      } else {
+        node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
+      }
+      node.addEventListener('click', () => {
+        if (currentBlockIndex === index) return;
+        currentBlockIndex = index;
+        renderUI();
+      });
+
+      const label = document.createElement('p');
+      label.className = 'block-stepper__label';
+      label.textContent = getStepperLabel(block, counters);
+
+      item.append(node, label);
+      if (index < orderedBlocks.length - 1) {
+        const connector = document.createElement('span');
+        connector.className = `block-stepper__connector ${isCompleted ? 'is-completed' : 'is-upcoming'}`;
+        item.append(connector);
+      }
+      stepper.appendChild(item);
+    });
+
+    updateStepperFitState();
+
+    const activeNode = stepper.querySelector('.block-stepper__item.is-current');
+    if (shouldScrollToActive && activeNode) {
+      scrollStepperToActive(activeNode, activeIndex, orderedBlocks.length);
+    }
+  };
+
+  const cacheRawControlValue = (blockId, value) => {
+    localInputCache.set(blockId, value);
+  };
+
+  const renderCurrentBlockCard = (currentBlock) => {
+    const nextSignature = JSON.stringify({
+      blockId: currentBlock?.blockId || null,
+      prompt: currentBlock?.prompt?.text || '',
+      content: currentBlock?.content?.text || '',
+      inputType: currentBlock?.responseConfig?.inputType || null,
+      maxLength: currentBlock?.responseConfig?.maxLength || null,
+      options: Array.isArray(currentBlock?.responseConfig?.options)
+        ? currentBlock.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
+        : [],
+    });
+    if (nextSignature === blockSignature) return;
+
+    blockSignature = nextSignature;
     answerControls.clear();
     textControlFeedback.clear();
-    questionList.innerHTML = '';
+    blockList.innerHTML = '';
+    if (!currentBlock) return;
 
-    questionBlocks.forEach((block, index) => {
+    if (currentBlock.kind === 'content') {
       const card = document.createElement('article');
-      card.className = 'question-card';
+      card.className = 'content-card viewer-card-transition';
+      card.textContent = currentBlock.content?.text || '';
+      blockList.appendChild(card);
+      return;
+    }
+
+    const block = currentBlock;
+    const card = document.createElement('article');
+    card.className = 'question-card viewer-card-transition';
       const label = document.createElement('label');
       const inputType = block.responseConfig?.inputType || 'text';
       const controlId = `answer-${block.blockId}`;
       label.id = `${controlId}-label`;
-      label.textContent = `${index + 1}. ${block.prompt?.text || 'Question'}`;
+      label.textContent = block.prompt?.text || 'Question';
 
       const helper = document.createElement('p');
       helper.className = 'muted';
@@ -1054,10 +1724,11 @@ function renderViewerShell(session) {
         control = document.createElement('input');
         control.type = 'text';
         control.addEventListener('input', () => {
+          cacheRawControlValue(block.blockId, control.value);
           session.setAnswer(block.blockId, control.value);
           const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
-          updateSummary();
+          renderUI();
         });
       } else if (inputType === 'number') {
         control = document.createElement('input');
@@ -1109,16 +1780,17 @@ function renderViewerShell(session) {
         }
         control.title = title;
         control.addEventListener('input', () => {
+          cacheRawControlValue(block.blockId, control.value);
           const { message, normalizedValue } = getNumberInputErrorMessage(control.value, block.responseConfig || {});
           if (message) {
             numberInputErrors.set(block.blockId, message);
             session.setAnswer(block.blockId, '');
-            updateSummary();
+            renderUI();
             return;
           }
           numberInputErrors.set(block.blockId, '');
           session.setAnswer(block.blockId, normalizedValue);
-          updateSummary();
+          renderUI();
         });
       } else if (inputType === 'boolean') {
         control = document.createElement('div');
@@ -1140,7 +1812,7 @@ function renderViewerShell(session) {
             const normalizedCurrentValue = coerceAnswerValueByInputType('boolean', currentValue);
             const nextValue = normalizedCurrentValue === optionConfig.value ? null : optionConfig.value;
             session.setAnswer(block.blockId, nextValue);
-            updateSummary();
+            renderUI();
           });
           control.appendChild(button);
         });
@@ -1151,53 +1823,23 @@ function renderViewerShell(session) {
             `${session.state.localAttemptId || 'attempt'}:${block.blockId}`
           )
           : block.responseConfig.options;
-
-        if (block.responseConfig.selectionMode === 'multi') {
-          const container = document.createElement('div');
-          container.className = 'choice-list';
-          optionSource.forEach((opt, optionIndex) => {
-            const wrapper = document.createElement('label');
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.dataset.choiceValue = String(opt.value ?? opt.label ?? '');
-            checkbox.id = `${controlId}-${optionIndex}`;
-            checkbox.addEventListener('change', () => {
-              const checkedValues = Array.from(container.querySelectorAll('input[type="checkbox"]:checked'))
-                .map((input) => input.dataset.choiceValue || '');
-              session.setAnswer(block.blockId, checkedValues);
-              updateSummary();
-            });
-            const text = document.createElement('span');
-            text.textContent = String(opt.label ?? opt.value ?? '');
-            wrapper.append(checkbox, text);
-            container.appendChild(wrapper);
-          });
-          control = container;
-        } else {
-          control = document.createElement('select');
-          const blank = document.createElement('option');
-          blank.value = '';
-          blank.textContent = 'Select…';
-          control.appendChild(blank);
-          optionSource.forEach((opt) => {
-            const option = document.createElement('option');
-            option.value = String(opt.value ?? opt.label ?? '');
-            option.textContent = String(opt.label ?? opt.value ?? '');
-            control.appendChild(option);
-          });
-          control.addEventListener('change', () => {
-            session.setAnswer(block.blockId, control.value);
-            updateSummary();
-          });
-        }
+        control = createChoiceButtonGroup({
+          block,
+          labelId: label.id,
+          controlId,
+          optionSource,
+          session,
+          updateSummary: () => renderUI(),
+        });
       } else {
         control = document.createElement('textarea');
         control.rows = 5;
         control.addEventListener('input', () => {
+          cacheRawControlValue(block.blockId, control.value);
           session.setAnswer(block.blockId, control.value);
           const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
-          updateSummary();
+          renderUI();
         });
       }
 
@@ -1225,30 +1867,32 @@ function renderViewerShell(session) {
       } else {
         card.append(label, helper, control, inputError);
       }
-      questionList.appendChild(card);
-    });
+      blockList.appendChild(card);
   };
 
-  const syncAnswerControlValues = (questionBlocks) => {
+  const syncAnswerControlValues = (currentBlock) => {
+    if (!currentBlock || currentBlock.kind !== 'question') return;
     const activeElement = document.activeElement;
-    questionBlocks.forEach((block) => {
-      const control = answerControls.get(block.blockId);
-      if (!control) {
-        return;
-      }
+    const block = currentBlock;
+    const control = answerControls.get(block.blockId);
+    if (!control) return;
       const inputType = block.responseConfig?.inputType || 'text';
       const storedValue = session.state.answers?.[block.blockId]?.value;
-      const nextValue = inputType === 'number'
+      const cachedRawValue = localInputCache.get(block.blockId);
+      const nextValue = cachedRawValue !== undefined
+        ? String(cachedRawValue)
+        : inputType === 'number'
         ? (storedValue === '' || storedValue === null || storedValue === undefined ? '' : String(storedValue))
         : inputType === 'boolean'
           ? (storedValue === true ? 'true' : storedValue === false ? 'false' : '')
           : String(storedValue || '');
-      if (inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi') {
-        const selectedSet = new Set(Array.isArray(storedValue) ? storedValue.map((v) => String(v)) : []);
-        Array.from(control.querySelectorAll('input[type="checkbox"]')).forEach((checkbox) => {
-          checkbox.checked = selectedSet.has(checkbox.dataset.choiceValue || '');
-          checkbox.disabled = session.state.status === 'completed';
-        });
+      if (inputType === 'multiple_choice') {
+        applyChoiceButtonGroupState(
+          control,
+          storedValue,
+          block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single',
+          session.state.status === 'completed'
+        );
       } else if (inputType === 'boolean') {
         applyBooleanGroupState(control, storedValue, session.state.status === 'completed');
       } else if (control !== activeElement && control.value !== nextValue) {
@@ -1259,7 +1903,7 @@ function renderViewerShell(session) {
         const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
         updateTextCounterUI(feedbackNodes?.counter, feedbackNodes?.status, feedback);
       }
-      if (!(inputType === 'multiple_choice' && block.responseConfig?.selectionMode === 'multi') && inputType !== 'boolean') {
+      if (inputType !== 'multiple_choice' && inputType !== 'boolean') {
         control.disabled = session.state.status === 'completed';
       }
       const card = control.closest('.question-card');
@@ -1267,58 +1911,159 @@ function renderViewerShell(session) {
       if (errorNode) {
         errorNode.textContent = inputType === 'number' ? (numberInputErrors.get(block.blockId) || '') : '';
       }
-    });
   };
 
-  const updateSummary = () => {
-    const { contentBlocks, questionBlocks } = partitionBlocksForDisplay(session.state.viewerPayload.blocks || []);
-    renderContentCards(contentBlocks);
-    renderQuestionCards(questionBlocks);
-    syncAnswerControlValues(questionBlocks);
+  const goPrev = () => {
+    currentBlockIndex = Math.max(0, currentBlockIndex - 1);
+    renderUI();
+  };
+
+  const goNext = () => {
+    const orderedBlocks = getOrderedBlocks();
+    currentBlockIndex = Math.min(Math.max(orderedBlocks.length - 1, 0), currentBlockIndex + 1);
+    renderUI();
+  };
+
+  const renderUI = () => {
+    const orderedBlocks = getOrderedBlocks();
+    if (orderedBlocks.length === 0) return;
+    currentBlockIndex = Math.min(Math.max(currentBlockIndex, 0), orderedBlocks.length - 1);
+    const currentBlock = orderedBlocks[currentBlockIndex];
+    const stepperSignature = getStepperOrderSignature(orderedBlocks);
+    const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
+    const orderChanged = stepperSignature !== stepperOrderSignature;
+
+    blockHeading.textContent = currentBlock.kind === 'content' ? 'Content' : 'Question';
+    renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged || orderChanged });
+    stepperOrderSignature = stepperSignature;
+    lastStepperActiveIndex = currentBlockIndex;
+    renderCurrentBlockCard(currentBlock);
+    syncAnswerControlValues(currentBlock);
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
-    status.textContent = session.state.lastSaveError
-      ? `⚠️ ${session.state.lastSaveError}`
-      : session.state.autosavePending
-        ? 'Saving…'
-        : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
-    metadata.textContent =
-      `worksheetId: ${session.state.viewerPayload?.worksheetId || 'n/a'} · `
-      + `snapshotId: ${session.state.viewerPayload?.snapshotId || 'n/a'} · `
-      + `source: ${session.state.source} · status: ${session.state.status}`;
-    answerSummary.textContent = `Answered ${summary.answered}/${summary.total} · ${status.textContent}`;
+    status.textContent = session.state.isFinalizing
+      ? 'Finalizing submission…'
+      : session.state.lastFinalizeError
+        ? `⚠️ ${session.state.lastFinalizeError}`
+        : session.state.status === 'completed'
+          ? `Finalized${session.state.completedAt ? ` at ${session.state.completedAt}` : ''}`
+          : session.state.lastSaveError
+            ? `⚠️ ${session.state.lastSaveError}`
+            : session.state.autosavePending
+              ? 'Saving…'
+              : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+    saveBtn.disabled = session.state.isFinalizing;
+    completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
+    prevBtn.disabled = currentBlockIndex === 0;
+    nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
+    const normalizedAttemptStatus = session.state.status
+      ? String(session.state.status).replace(/_/g, '-')
+      : 'n/a';
+    const summaryParts = [];
+    if (studentName) {
+      summaryParts.push(`Student ${studentName}`);
+    }
+    summaryParts.push(`Answered ${summary.answered}/${summary.total}`);
+    summaryParts.push(status.textContent);
+    summaryParts.push(`Status ${normalizedAttemptStatus}`);
+    answerSummary.textContent = summaryParts.join(' · ');
   };
 
   session.setOnStateChange(() => {
-    updateSummary();
+    renderUI();
   });
 
   saveBtn.addEventListener('click', async () => {
     await session.saveNow();
-    updateSummary();
+    renderUI();
   });
   syncResumeBtn.addEventListener('click', async () => {
+    closeUtilityMenu({ returnFocus: true });
     await session.triggerProtectedAction('resumeAttemptSyncAfterLogin');
-    updateSummary();
+    renderUI();
   });
 
   rewriteAssistBtn.addEventListener('click', async () => {
+    closeUtilityMenu({ returnFocus: true });
     await session.triggerProtectedAction('resumeViewerRewriteAfterLogin');
-    updateSummary();
+    renderUI();
+  });
+  window.addEventListener('resize', () => {
+    updateStepperFitState();
+    if (currentBlockIndex === 0) {
+      stepper.scrollLeft = 0;
+    }
+  });
+  prevBtn.addEventListener('click', goPrev);
+  nextBtn.addEventListener('click', goNext);
+
+  headerTop.append(heading, headerActions);
+  header.append(headerTop, answerSummary);
+  blockSection.append(blockHeading, stepper, blockList);
+  shell.append(header, blockSection);
+  app.innerHTML = '';
+  bottomBarRoot.innerHTML = '';
+  app.append(shell, detailsModal);
+  bottomBarRoot.append(bottomBar);
+  renderUI();
+}
+
+function renderViewerStartPanel(session) {
+  if (!app || !bottomBarRoot) {
+    return;
+  }
+
+  const panel = document.createElement('section');
+  panel.className = 'viewer-start-panel';
+  const heading = document.createElement('h1');
+  heading.textContent = 'Start Viewer';
+  const description = document.createElement('p');
+  description.className = 'muted';
+  description.textContent = 'Import worksheet JSON to launch a local attempt preview.';
+  const importBtn = document.createElement('button');
+  importBtn.type = 'button';
+  importBtn.textContent = 'Import worksheet JSON';
+
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'application/json,.json';
+  fileInput.hidden = true;
+
+  const errorMessage = document.createElement('p');
+  errorMessage.className = 'viewer-start-error';
+  errorMessage.textContent = '';
+  errorMessage.setAttribute('role', 'status');
+  errorMessage.setAttribute('aria-live', 'polite');
+
+  importBtn.addEventListener('click', () => {
+    errorMessage.textContent = '';
+    fileInput.click();
   });
 
-  header.append(heading, metadata, answerSummary);
-  contentSection.append(contentHeading, contentList);
-  questionSection.append(questionHeading, questionList);
-  shell.append(header, contentSection, questionSection, stickyActions);
+  fileInput.addEventListener('change', async () => {
+    const selected = fileInput.files?.[0];
+    if (!selected) return;
+
+    try {
+      const rawJson = await selected.text();
+      await session.startImportedWorksheetFromJsonText(rawJson);
+      renderViewerShell(session);
+      window.viewerSession = session;
+    } catch (error) {
+      errorMessage.textContent = error?.message || 'Unable to import worksheet JSON.';
+    } finally {
+      fileInput.value = '';
+    }
+  });
+
+  panel.append(heading, description, importBtn, fileInput, errorMessage);
   app.innerHTML = '';
-  app.append(shell);
-  updateSummary();
+  bottomBarRoot.innerHTML = '';
+  app.append(panel);
 }
 
 async function bootstrapViewer() {
   const session = new ViewerAttemptSession(viewerStorage);
-  await session.bootstrap();
 
   const authGate = new SharedAuthGate({
     appArea: 'viewer',
@@ -1341,6 +2086,22 @@ async function bootstrapViewer() {
   });
 
   session.authGate = authGate;
+
+  const params = new URLSearchParams(window.location.search);
+  const hasLaunchIntent =
+    params.has('localAttemptId')
+    || params.has('localDraftId')
+    || params.has('viewerPayload')
+    || params.has('snapshot')
+    || params.has('importedWorksheetId')
+    || params.get('authReturn') === '1';
+
+  if (!hasLaunchIntent) {
+    renderViewerStartPanel(session);
+    return;
+  }
+
+  await session.bootstrap();
   await authGate.restoreAfterAuthReturn();
 
   renderViewerShell(session);
@@ -1369,6 +2130,9 @@ export {
   updateTextCounterUI,
   getBooleanSelectionState,
   applyBooleanGroupState,
+  getChoicePrefix,
+  applyChoiceButtonGroupState,
+  computeNextChoiceValue,
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
