@@ -1531,10 +1531,20 @@ function renderViewerShell(session) {
     const shouldReduceMotion = typeof window !== 'undefined'
       && typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const scheduleEnsureActiveNodeVisible = () => {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          ensureActiveNodeVisible();
+        });
+        return;
+      }
+      ensureActiveNodeVisible();
+    };
 
     const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
     if (maxScrollLeft === 0) {
       stepper.scrollLeft = 0;
+      scheduleEnsureActiveNodeVisible();
       return;
     }
 
@@ -1565,9 +1575,12 @@ function renderViewerShell(session) {
     const clampedLeft = Math.min(Math.max(targetLeft, 0), maxScrollLeft);
     const behavior = shouldReduceMotion ? 'auto' : 'smooth';
     stepper.scrollTo({ left: clampedLeft, behavior });
-    if (shouldReduceMotion) {
-      ensureActiveNodeVisible();
-    }
+    scheduleEnsureActiveNodeVisible();
+  };
+
+  const updateStepperFitState = () => {
+    const fitsContainer = stepper.scrollWidth <= stepper.clientWidth;
+    stepper.dataset.fit = fitsContainer ? 'true' : 'false';
   };
 
   const renderStepper = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
@@ -1606,6 +1619,8 @@ function renderViewerShell(session) {
       }
       stepper.appendChild(item);
     });
+
+    updateStepperFitState();
 
     const activeNode = stepper.querySelector('.block-stepper__item.is-current');
     if (shouldScrollToActive && activeNode) {
@@ -1929,6 +1944,12 @@ function renderViewerShell(session) {
     closeUtilityMenu({ returnFocus: true });
     await session.triggerProtectedAction('resumeViewerRewriteAfterLogin');
     renderUI();
+  });
+  window.addEventListener('resize', () => {
+    updateStepperFitState();
+    if (currentBlockIndex === 0) {
+      stepper.scrollLeft = 0;
+    }
   });
   prevBtn.addEventListener('click', goPrev);
   nextBtn.addEventListener('click', goNext);

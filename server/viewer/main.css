@@ -283,7 +283,7 @@ body {
 .block-stepper {
   display: flex;
   align-items: flex-start;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 0;
   overflow-x: auto;
   padding: 2px 8px 42px;
@@ -292,6 +292,10 @@ body {
   width: min(1100px, 100%);
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+
+.block-stepper[data-fit="true"] {
+  justify-content: center;
 }
 
 .block-stepper::-webkit-scrollbar {
