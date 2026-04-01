@@ -275,6 +275,10 @@ body {
 .content-card {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  font-size: clamp(0.9rem, 0.82rem + 0.35vw, 1.12rem);
+  font-weight: 400;
+  line-height: 1.7;
+  color: #3a465b;
 }
 
 .question-card {
@@ -429,20 +433,23 @@ button {
 }
 
 .boolean-segmented-control {
-  display: inline-flex;
+  display: flex;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   overflow: hidden;
-  width: fit-content;
+  width: 100%;
 }
 
 .boolean-segmented-control__button {
-  min-width: 84px;
+  flex: 1 1 50%;
+  min-width: 0;
+  min-height: 52px;
   border: 0;
   border-right: 1px solid #cbd5e1;
   border-radius: 0;
   background: #fff;
   color: #111827;
+  text-align: center;
 }
 
 .boolean-segmented-control__button:last-child {
@@ -451,6 +458,16 @@ button {
 
 .boolean-segmented-control__button:hover:not(:disabled) {
   background: #f8fafc;
+}
+
+.boolean-segmented-control__button[data-boolean-value='true']:hover:not(:disabled) {
+  background: #eefcf3;
+  color: #1f6b46;
+}
+
+.boolean-segmented-control__button[data-boolean-value='false']:hover:not(:disabled) {
+  background: #fff1f1;
+  color: #8f2d2d;
 }
 
 .boolean-segmented-control__button:focus-visible {
@@ -466,9 +483,29 @@ button {
   font-weight: 600;
 }
 
+.boolean-segmented-control__button.is-selected[data-boolean-value='true'] {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.boolean-segmented-control__button.is-selected[data-boolean-value='false'] {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .boolean-segmented-control__button.is-selected:hover:not(:disabled) {
   background: #dbeafe;
   color: #1e3a8a;
+}
+
+.boolean-segmented-control__button.is-selected[data-boolean-value='true']:hover:not(:disabled) {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.boolean-segmented-control__button.is-selected[data-boolean-value='false']:hover:not(:disabled) {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .boolean-segmented-control__button:disabled {
