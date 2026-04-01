@@ -1597,15 +1597,22 @@ function renderViewerShell(session) {
       const stateClass = isCompleted ? 'is-completed' : isCurrent ? 'is-current' : 'is-upcoming';
       item.classList.add(stateClass);
 
-      const node = document.createElement('div');
+      const node = document.createElement('button');
+      node.type = 'button';
       node.className = 'block-stepper__node';
       node.textContent = `${index + 1}`;
+      node.title = `Go to block ${index + 1}`;
       if (isCurrent) {
         node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
         node.setAttribute('aria-current', 'step');
       } else {
         node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
       }
+      node.addEventListener('click', () => {
+        if (currentBlockIndex === index) return;
+        currentBlockIndex = index;
+        renderUI();
+      });
 
       const label = document.createElement('p');
       label.className = 'block-stepper__label';
@@ -1653,7 +1660,7 @@ function renderViewerShell(session) {
 
     if (currentBlock.kind === 'content') {
       const card = document.createElement('article');
-      card.className = 'content-card';
+      card.className = 'content-card viewer-card-transition';
       card.textContent = currentBlock.content?.text || '';
       blockList.appendChild(card);
       return;
@@ -1661,7 +1668,7 @@ function renderViewerShell(session) {
 
     const block = currentBlock;
     const card = document.createElement('article');
-    card.className = 'question-card';
+    card.className = 'question-card viewer-card-transition';
       const label = document.createElement('label');
       const inputType = block.responseConfig?.inputType || 'text';
       const controlId = `answer-${block.blockId}`;
