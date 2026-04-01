@@ -861,6 +861,7 @@ input[type='text']::placeholder {
     min-width: 0;
   }
 
+  .viewer-bottom-bar__zone--left button,
   .viewer-bottom-bar__zone--right button {
     width: 100%;
   }
