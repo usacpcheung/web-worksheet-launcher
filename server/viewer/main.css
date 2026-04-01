@@ -286,7 +286,7 @@ body {
   justify-content: flex-start;
   gap: 0;
   overflow-x: auto;
-  padding: 2px 8px 42px;
+  padding: 6px 8px 50px;
   scroll-padding-inline: 22px;
   margin: 12px auto 4px;
   width: min(1100px, 100%);
@@ -308,39 +308,42 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: clamp(102px, 10.5vw, 138px);
+  min-width: clamp(110px, 11vw, 146px);
   flex: 1 1 0;
   position: relative;
   justify-content: flex-start;
 }
 
 .block-stepper__node {
-  width: 14px;
-  height: 14px;
+  width: 38px;
+  height: 38px;
   border-radius: 999px;
-  border: 0;
-  background: #b9c1cb;
-  color: transparent;
+  border: 2px solid #c5cfdd;
+  background: linear-gradient(180deg, #eef2f8 0%, #dce3ee 100%);
+  color: #6c7ea6;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0;
+  font-size: 0.95rem;
   font-weight: 600;
   z-index: 1;
   margin-top: 1px;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 10%);
+  transform-origin: center;
+  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
 .block-stepper__label {
   position: absolute;
-  top: 28px;
+  top: 66px;
   left: 50%;
   transform: translateX(-50%);
-  width: clamp(94px, 10vw, 126px);
+  width: clamp(96px, 10vw, 128px);
   margin: 0;
   text-align: center;
   font-size: 0.92rem;
   line-height: 1.25;
-  color: #7f8897;
+  color: #5d6782;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -348,37 +351,46 @@ body {
 
 .block-stepper__connector {
   width: 100%;
-  height: 2px;
+  height: 4px;
   margin: 0;
   position: absolute;
-  top: 7px;
-  left: calc(50% + 7px);
-  right: calc(-50% + 7px);
+  top: 18px;
+  left: calc(50% + 19px);
+  right: calc(-50% + 19px);
   border-radius: 999px;
-  background: #d8dee7;
+  background: #c7d2e4;
   z-index: 0;
 }
 
 .block-stepper__item.is-completed .block-stepper__node {
-  background: #6f8dca;
+  border-color: #5e89de;
+  background: linear-gradient(180deg, #9cbcf3 0%, #4f79d4 100%);
+  color: #fff;
+  box-shadow: 0 2px 8px rgb(36 84 174 / 30%);
 }
 
 .block-stepper__item.is-completed .block-stepper__label {
-  color: #4062a8;
+  color: #3559a2;
+  font-weight: 500;
 }
 
 .block-stepper__item.is-current .block-stepper__node {
-  background: #2d6fdb;
-  border: 2px solid #d9e8ff;
+  border-color: #89b5ff;
+  background: radial-gradient(circle at 30% 30%, #5fa5ff 0%, #3f74df 42%, #2f56c8 100%);
+  color: #fff;
+  transform: scale(1.52);
+  box-shadow:
+    0 0 0 2px #e4efff,
+    0 10px 22px rgb(28 72 162 / 36%);
 }
 
 .block-stepper__item.is-current .block-stepper__label {
-  color: #2d6fdb;
-  font-weight: 600;
+  color: #2f56c8;
+  font-weight: 700;
 }
 
 .block-stepper__connector.is-completed {
-  background: #6e94d8;
+  background: #4b78d3;
 }
 
 input,
@@ -687,18 +699,18 @@ input[type='text']::placeholder {
   }
 
   .block-stepper__item {
-    min-width: 94px;
+    min-width: 98px;
     flex: 0 0 auto;
   }
 
   .block-stepper__label {
-    width: 96px;
-    font-size: 0.9rem;
+    width: 100px;
+    font-size: 0.88rem;
   }
 
   .block-stepper__connector {
-    left: calc(50% + 8px);
-    right: calc(-50% + 8px);
+    left: calc(50% + 18px);
+    right: calc(-50% + 18px);
   }
 
   .viewer-details-list__row {
