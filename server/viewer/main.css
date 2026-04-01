@@ -165,6 +165,23 @@ body {
   gap: 10px;
 }
 
+.viewer-details-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.viewer-details-form__label {
+  grid-column: 1 / -1;
+  color: #344054;
+  font-weight: 600;
+}
+
+.viewer-details-form__input {
+  min-height: 40px;
+}
+
 .viewer-details-list__row {
   display: grid;
   grid-template-columns: 160px 1fr;
