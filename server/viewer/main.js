@@ -9,6 +9,7 @@ const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
 
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
+const LEGACY_STUDENT_NAME_KEY = 'viewer:studentName';
 const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
 let activeViewerShellAbortController = null;
@@ -507,6 +508,61 @@ function computeAnswerSummary(viewerPayload, answers) {
   return { answered, total: questions.length };
 }
 
+function pickAttemptStudentName(attemptRecord) {
+  const direct = typeof attemptRecord?.studentName === 'string' ? attemptRecord.studentName.trim() : '';
+  if (direct) return direct;
+  const metadata = typeof attemptRecord?.metadata?.studentName === 'string'
+    ? attemptRecord.metadata.studentName.trim()
+    : '';
+  if (metadata) return metadata;
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return String(window.localStorage.getItem(LEGACY_STUDENT_NAME_KEY) || '').trim();
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+function overlayAnswersOnViewerPayload(viewerPayload, rawAnswers = {}) {
+  const normalizedAnswers = {};
+  const questionBlocks = Array.isArray(viewerPayload?.blocks)
+    ? viewerPayload.blocks.filter((block) => block?.kind === 'question')
+    : [];
+  questionBlocks.forEach((questionBlock) => {
+    const saved = rawAnswers?.[questionBlock.blockId];
+    if (!saved) return;
+    normalizedAnswers[questionBlock.blockId] = {
+      ...saved,
+      value: coerceAnswerValueForQuestion(questionBlock, saved?.value, { phase: 'save' }),
+    };
+  });
+  return normalizedAnswers;
+}
+
+function computeResumeStartBlockIndex(viewerPayload, answers = {}, attemptRecord = {}) {
+  const orderedBlocks = [...(viewerPayload?.blocks || [])].sort((a, b) => a.position - b.position);
+  if (orderedBlocks.length === 0) return 0;
+  if (attemptRecord?.lastActiveBlockId) {
+    const byId = orderedBlocks.findIndex((block) => block.blockId === attemptRecord.lastActiveBlockId);
+    if (byId >= 0) return byId;
+  }
+  if (Number.isInteger(attemptRecord?.lastActiveIndex)) {
+    const idx = Math.max(0, Math.min(orderedBlocks.length - 1, attemptRecord.lastActiveIndex));
+    return idx;
+  }
+  const firstUnanswered = orderedBlocks.findIndex((block) => {
+    if (block.kind !== 'question') return false;
+    const value = answers?.[block.blockId]?.value;
+    if (value === null || value === undefined) return true;
+    if (typeof value === 'string') return value.trim() === '';
+    if (Array.isArray(value)) return value.length === 0;
+    return false;
+  });
+  return firstUnanswered >= 0 ? firstUnanswered : 0;
+}
+
 function getInputHelperText(inputType, responseConfig = {}) {
   if (inputType === 'text') return 'Text response.';
   if (inputType === 'number') {
@@ -663,7 +719,13 @@ class ViewerAttemptSession {
       attemptValidationErrors: [],
       lastManualSaveAt: null,
       source: 'unknown',
+      sourceType: 'unknown',
+      sourceLocalDraftId: null,
+      sourceImportedWorksheetId: null,
       sourceDraftUpdatedAt: null,
+      studentName: '',
+      lastActiveBlockId: null,
+      lastActiveIndex: 0,
       isFinalizing: false,
       lastFinalizeError: null,
       attemptRevision: 0,
@@ -716,6 +778,7 @@ class ViewerAttemptSession {
         this.persistResumeMetadata();
         return this.state;
       }
+      this.state.recoveryMessage = `Unable to resume attempt ${explicitAttemptId}. Starting a new worksheet session.`;
     }
 
     if (!hasExplicitContentIntent) {
@@ -733,8 +796,12 @@ class ViewerAttemptSession {
     await this.validateViewerPayload(loadedPayload.payload);
     const attempt = this.createLocalAttemptState(
       loadedPayload.payload,
-      loadedPayload.source,
-      { sourceDraftUpdatedAt: loadedPayload.sourceDraftUpdatedAt }
+      loadedPayload.sourceType,
+      {
+        sourceDraftUpdatedAt: loadedPayload.sourceDraftUpdatedAt,
+        sourceLocalDraftId: loadedPayload.sourceLocalDraftId || null,
+        sourceImportedWorksheetId: loadedPayload.sourceImportedWorksheetId || null,
+      }
     );
     this.applyAttemptState(attempt, { markDirty: true });
     this.persistResumeMetadata();
@@ -770,16 +837,27 @@ class ViewerAttemptSession {
         return false;
       }
 
-      const normalizedPayload = normalizeViewerPayload(
-        attemptRecord.viewerPayload,
-        attemptRecord.viewerPayload?.title || 'Resumed worksheet'
-      );
+      const reconstructedPayload = await this.reconstructViewerPayloadFromAttempt(attemptRecord);
+      const payloadSource = reconstructedPayload || attemptRecord.viewerPayload;
+      if (!payloadSource) {
+        return false;
+      }
+      const normalizedPayload = normalizeViewerPayload(payloadSource, payloadSource?.title || 'Resumed worksheet');
       await this.validateViewerPayload(normalizedPayload);
+      const mergedAnswers = overlayAnswersOnViewerPayload(normalizedPayload, attemptRecord.answers || {});
+      const studentName = pickAttemptStudentName(attemptRecord);
+      const resumeStartIndex = computeResumeStartBlockIndex(normalizedPayload, mergedAnswers, attemptRecord);
+      const orderedBlocks = [...(normalizedPayload.blocks || [])].sort((a, b) => a.position - b.position);
+      const activeBlock = orderedBlocks[resumeStartIndex] || null;
 
       this.applyAttemptState(
         {
           ...attemptRecord,
+          answers: mergedAnswers,
           viewerPayload: normalizedPayload,
+          studentName,
+          lastActiveIndex: resumeStartIndex,
+          lastActiveBlockId: activeBlock?.blockId || null,
           metadata: {
             ...attemptRecord.metadata,
             localId: localAttemptId,
@@ -803,7 +881,8 @@ class ViewerAttemptSession {
       }
 
       return {
-        source: 'local_draft_preview',
+        sourceType: 'local_draft_preview',
+        sourceLocalDraftId: previewIntent.localDraftId,
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || previewIntent.sourceDraftUpdatedAt || null,
       };
@@ -815,7 +894,7 @@ class ViewerAttemptSession {
 
     if (inlinePayload) {
       return {
-        source: 'local_source',
+        sourceType: 'inline_payload',
         payload: normalizeViewerPayload(inlinePayload, 'Local worksheet'),
       };
     }
@@ -823,7 +902,7 @@ class ViewerAttemptSession {
     const snapshotPayload = maybeParseEncodedJson(params.get('snapshot'));
     if (snapshotPayload) {
       return {
-        source: 'snapshot_derived',
+        sourceType: 'snapshot_derived',
         payload: normalizeViewerPayload(mapSnapshotToViewerPayload(snapshotPayload), 'Snapshot worksheet'),
       };
     }
@@ -836,7 +915,8 @@ class ViewerAttemptSession {
       }
 
       return {
-        source: 'imported_worksheet',
+        sourceType: 'imported_worksheet',
+        sourceImportedWorksheetId: importedWorksheetId,
         payload: resolveImportedWorksheetPayload(importedRecord),
       };
     }
@@ -849,14 +929,15 @@ class ViewerAttemptSession {
       }
 
       return {
-        source: 'local_draft',
+        sourceType: 'local_draft',
+        sourceLocalDraftId: localDraftId,
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || null,
       };
     }
 
     return {
-      source: 'local_source',
+      sourceType: 'inline_payload',
       payload: normalizeViewerPayload(
         {
           worksheetId: createLocalId('ws'),
@@ -885,6 +966,22 @@ class ViewerAttemptSession {
     };
   }
 
+  async reconstructViewerPayloadFromAttempt(attemptRecord = {}) {
+    const sourceType = attemptRecord.sourceType || attemptRecord.metadata?.origin || 'inline_payload';
+    const sourceLocalDraftId = attemptRecord.sourceLocalDraftId || attemptRecord.metadata?.sourceLocalDraftId || null;
+    const sourceImportedWorksheetId =
+      attemptRecord.sourceImportedWorksheetId || attemptRecord.metadata?.sourceImportedWorksheetId || null;
+    if ((sourceType === 'local_draft' || sourceType === 'local_draft_preview') && sourceLocalDraftId) {
+      const draftRecord = await this.storage.drafts?.get(sourceLocalDraftId);
+      if (draftRecord) return mapDraftRecordToViewerPayload(draftRecord);
+    }
+    if (sourceType === 'imported_worksheet' && sourceImportedWorksheetId) {
+      const importedRecord = await this.storage.importedWorksheets?.get(sourceImportedWorksheetId);
+      if (importedRecord) return resolveImportedWorksheetPayload(importedRecord);
+    }
+    return null;
+  }
+
   createLocalAttemptState(viewerPayload, source, options = {}) {
     const localAttemptId = createLocalId('attempt');
     const startedAt = nowIso();
@@ -895,6 +992,14 @@ class ViewerAttemptSession {
       localAttemptId,
       viewerPayload,
       learnerId: DEFAULT_LEARNER_ID,
+      worksheetId: viewerPayload?.worksheetId || null,
+      snapshotId: viewerPayload?.snapshotId || null,
+      sourceType: source || 'inline_payload',
+      sourceLocalDraftId: options.sourceLocalDraftId || null,
+      sourceImportedWorksheetId: options.sourceImportedWorksheetId || null,
+      lastActiveBlockId: viewerPayload?.blocks?.[0]?.blockId || null,
+      lastActiveIndex: 0,
+      studentName: options.studentName || '',
       status: 'in_progress',
       startedAt,
       lastSavedAt: startedAt,
@@ -903,6 +1008,9 @@ class ViewerAttemptSession {
       metadata: {
         localId: localAttemptId,
         origin: source || 'local_source',
+        sourceLocalDraftId: options.sourceLocalDraftId || null,
+        sourceImportedWorksheetId: options.sourceImportedWorksheetId || null,
+        studentName: options.studentName || '',
         sourceDraftUpdatedAt,
         updatedAt: startedAt,
       },
@@ -918,7 +1026,14 @@ class ViewerAttemptSession {
     this.state.lastSavedAt = attemptRecord.lastSavedAt || null;
     this.state.completedAt = attemptRecord.completedAt || attemptRecord.submittedAt || null;
     this.state.source = attemptRecord.metadata?.origin || 'local_source';
+    this.state.sourceType = attemptRecord.sourceType || this.state.source;
+    this.state.sourceLocalDraftId = attemptRecord.sourceLocalDraftId || attemptRecord.metadata?.sourceLocalDraftId || null;
+    this.state.sourceImportedWorksheetId =
+      attemptRecord.sourceImportedWorksheetId || attemptRecord.metadata?.sourceImportedWorksheetId || null;
     this.state.sourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
+    this.state.studentName = pickAttemptStudentName(attemptRecord);
+    this.state.lastActiveBlockId = attemptRecord.lastActiveBlockId || null;
+    this.state.lastActiveIndex = Number.isInteger(attemptRecord.lastActiveIndex) ? attemptRecord.lastActiveIndex : 0;
     this.state.lastSaveError = null;
     this.state.isFinalizing = false;
     this.state.lastFinalizeError = null;
@@ -953,6 +1068,7 @@ class ViewerAttemptSession {
         answeredAt: nowIso(),
       },
     };
+    this.state.lastActiveBlockId = blockId;
 
     this.state.attemptRevision += 1;
     this.scheduleAutosave();
@@ -1028,6 +1144,14 @@ class ViewerAttemptSession {
       localAttemptId: this.state.localAttemptId,
       viewerPayload: this.state.viewerPayload,
       learnerId: DEFAULT_LEARNER_ID,
+      worksheetId: this.state.viewerPayload?.worksheetId || null,
+      snapshotId: this.state.viewerPayload?.snapshotId || null,
+      sourceType: this.state.sourceType || this.state.source || 'inline_payload',
+      sourceLocalDraftId: this.state.sourceLocalDraftId || null,
+      sourceImportedWorksheetId: this.state.sourceImportedWorksheetId || null,
+      lastActiveBlockId: this.state.lastActiveBlockId || null,
+      lastActiveIndex: Number.isInteger(this.state.lastActiveIndex) ? this.state.lastActiveIndex : 0,
+      studentName: this.state.studentName || '',
       status: this.state.status,
       startedAt: this.state.startedAt,
       lastSavedAt: updatedAt,
@@ -1035,7 +1159,10 @@ class ViewerAttemptSession {
       answers: normalizedAnswers,
       metadata: {
         localId: this.state.localAttemptId,
-        origin: this.state.source || 'local_source',
+        origin: this.state.sourceType || this.state.source || 'inline_payload',
+        sourceLocalDraftId: this.state.sourceLocalDraftId || null,
+        sourceImportedWorksheetId: this.state.sourceImportedWorksheetId || null,
+        studentName: this.state.studentName || '',
         sourceDraftUpdatedAt: this.state.sourceDraftUpdatedAt || null,
         updatedAt,
       },
@@ -1204,8 +1331,10 @@ function renderViewerShell(session) {
 
   const answerSummary = document.createElement('p');
   answerSummary.className = 'answer-summary';
+  const resumeWarning = document.createElement('p');
+  resumeWarning.className = 'answer-summary';
   const status = document.createElement('p');
-  let studentName = '';
+  let studentName = session.state.studentName || '';
 
   const blockSection = document.createElement('section');
   blockSection.className = 'viewer-section';
@@ -1240,6 +1369,10 @@ function renderViewerShell(session) {
   const numberInputErrors = new Map();
   const localInputCache = new Map();
   let currentBlockIndex = 0;
+  currentBlockIndex = computeResumeStartBlockIndex(session.state.viewerPayload, session.state.answers, {
+    lastActiveBlockId: session.state.lastActiveBlockId,
+    lastActiveIndex: session.state.lastActiveIndex,
+  });
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
@@ -1438,6 +1571,14 @@ function renderViewerShell(session) {
   learnerNameForm.addEventListener('submit', (event) => {
     event.preventDefault();
     studentName = learnerNameInput.value.trim();
+    session.state.studentName = studentName;
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(LEGACY_STUDENT_NAME_KEY, studentName);
+      }
+    } catch {
+      // Ignore localStorage failures in restricted contexts.
+    }
     renderUI();
     learnerNameInput.focus();
   });
@@ -1659,6 +1800,8 @@ function renderViewerShell(session) {
       node.addEventListener('click', () => {
         if (currentBlockIndex === index) return;
         currentBlockIndex = index;
+        session.state.lastActiveIndex = index;
+        session.state.lastActiveBlockId = orderedBlocks[index]?.blockId || null;
         renderUI();
       });
 
@@ -1971,12 +2114,17 @@ function renderViewerShell(session) {
 
   const goPrev = () => {
     currentBlockIndex = Math.max(0, currentBlockIndex - 1);
+    const orderedBlocks = getOrderedBlocks();
+    session.state.lastActiveIndex = currentBlockIndex;
+    session.state.lastActiveBlockId = orderedBlocks[currentBlockIndex]?.blockId || null;
     renderUI();
   };
 
   const goNext = () => {
     const orderedBlocks = getOrderedBlocks();
     currentBlockIndex = Math.min(Math.max(orderedBlocks.length - 1, 0), currentBlockIndex + 1);
+    session.state.lastActiveIndex = currentBlockIndex;
+    session.state.lastActiveBlockId = orderedBlocks[currentBlockIndex]?.blockId || null;
     renderUI();
   };
 
@@ -1984,6 +2132,8 @@ function renderViewerShell(session) {
     const orderedBlocks = getOrderedBlocks();
     if (orderedBlocks.length === 0) return;
     currentBlockIndex = Math.min(Math.max(currentBlockIndex, 0), orderedBlocks.length - 1);
+    session.state.lastActiveIndex = currentBlockIndex;
+    session.state.lastActiveBlockId = orderedBlocks[currentBlockIndex]?.blockId || null;
     const currentBlock = orderedBlocks[currentBlockIndex];
     const stepperSignature = getStepperOrderSignature(orderedBlocks);
     const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
@@ -2012,6 +2162,8 @@ function renderViewerShell(session) {
             : session.state.autosavePending
               ? 'Saving…'
               : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+    resumeWarning.textContent = session.state.recoveryMessage ? `⚠️ ${session.state.recoveryMessage}` : '';
+    resumeWarning.hidden = !session.state.recoveryMessage;
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     prevBtn.disabled = currentBlockIndex === 0;
@@ -2058,7 +2210,7 @@ function renderViewerShell(session) {
   nextBtn.addEventListener('click', goNext);
 
   headerTop.append(heading, headerActions);
-  header.append(headerTop, answerSummary);
+  header.append(headerTop, answerSummary, resumeWarning);
   blockSection.append(blockHeading, stepper, blockList);
   shell.append(header, blockSection);
   app.innerHTML = '';
