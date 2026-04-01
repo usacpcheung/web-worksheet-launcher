@@ -11,6 +11,7 @@ const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
+let activeViewerShellAbortController = null;
 
 function nowIso() {
   return new Date().toISOString();
@@ -1169,6 +1170,11 @@ function renderViewerShell(session) {
   if (!app || !bottomBarRoot) {
     return;
   }
+  if (activeViewerShellAbortController) {
+    activeViewerShellAbortController.abort();
+  }
+  activeViewerShellAbortController = new AbortController();
+  const { signal } = activeViewerShellAbortController;
 
   const shell = document.createElement('div');
   shell.className = 'viewer-shell';
@@ -1509,13 +1515,13 @@ function renderViewerShell(session) {
     if (!utilityMenu.contains(event.target)) {
       closeUtilityMenu();
     }
-  });
+  }, { signal });
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && detailsModal.hidden && isUtilityMenuOpen()) {
       closeUtilityMenu({ returnFocus: true });
     }
-  });
+  }, { signal });
 
   const getStepperLabel = (block, counters) => {
     if (block.kind === 'content') {
@@ -1658,6 +1664,40 @@ function renderViewerShell(session) {
     const activeNode = stepper.querySelector('.block-stepper__item.is-current');
     if (shouldScrollToActive && activeNode) {
       scrollStepperToActive(activeNode, activeIndex, orderedBlocks.length);
+    }
+  };
+
+  const updateStepperActiveState = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
+    const stepperItems = stepper.querySelectorAll('.block-stepper__item');
+    stepperItems.forEach((item, index) => {
+      const node = item.querySelector('.block-stepper__node');
+      const connector = item.querySelector('.block-stepper__connector');
+      const isCompleted = index < activeIndex;
+      const isCurrent = index === activeIndex;
+
+      item.classList.remove('is-completed', 'is-current', 'is-upcoming');
+      item.classList.add(isCompleted ? 'is-completed' : isCurrent ? 'is-current' : 'is-upcoming');
+
+      if (node) {
+        node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
+        if (isCurrent) {
+          node.setAttribute('aria-current', 'step');
+        } else {
+          node.removeAttribute('aria-current');
+        }
+      }
+
+      if (connector) {
+        connector.classList.remove('is-completed', 'is-upcoming');
+        connector.classList.add(isCompleted ? 'is-completed' : 'is-upcoming');
+      }
+    });
+
+    if (shouldScrollToActive) {
+      const activeNode = stepper.querySelector('.block-stepper__item.is-current');
+      if (activeNode) {
+        scrollStepperToActive(activeNode, activeIndex, orderedBlocks.length);
+      }
     }
   };
 
@@ -1934,7 +1974,11 @@ function renderViewerShell(session) {
     const orderChanged = stepperSignature !== stepperOrderSignature;
 
     blockHeading.textContent = currentBlock.kind === 'content' ? 'Content' : 'Question';
-    renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged || orderChanged });
+    if (orderChanged) {
+      renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged || orderChanged });
+    } else if (activeIndexChanged) {
+      updateStepperActiveState(orderedBlocks, currentBlockIndex, { shouldScrollToActive: true });
+    }
     stepperOrderSignature = stepperSignature;
     lastStepperActiveIndex = currentBlockIndex;
     renderCurrentBlockCard(currentBlock);
@@ -1993,7 +2037,7 @@ function renderViewerShell(session) {
     if (currentBlockIndex === 0) {
       stepper.scrollLeft = 0;
     }
-  });
+  }, { signal });
   prevBtn.addEventListener('click', goPrev);
   nextBtn.addEventListener('click', goNext);
 
@@ -2088,21 +2132,28 @@ async function bootstrapViewer() {
   session.authGate = authGate;
 
   const params = new URLSearchParams(window.location.search);
+  const hasAuthReturn = params.get('authReturn') === '1';
   const hasLaunchIntent =
     params.has('localAttemptId')
     || params.has('localDraftId')
     || params.has('viewerPayload')
     || params.has('snapshot')
     || params.has('importedWorksheetId')
-    || params.get('authReturn') === '1';
+    || hasAuthReturn;
 
   if (!hasLaunchIntent) {
     renderViewerStartPanel(session);
     return;
   }
 
-  await session.bootstrap();
-  await authGate.restoreAfterAuthReturn();
+  if (hasAuthReturn) {
+    const restoreResult = await authGate.restoreAfterAuthReturn();
+    if (restoreResult.status === 'no_pending_intent') {
+      await session.bootstrap();
+    }
+  } else {
+    await session.bootstrap();
+  }
 
   renderViewerShell(session);
   window.viewerSession = session;
