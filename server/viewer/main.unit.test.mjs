@@ -789,6 +789,70 @@ test('viewer save error clears after subsequent successful save', async () => {
   assert.equal(session.state.lastSaveError, null);
 });
 
+test('bootstrap with no launch params resumes attempt from resume flag localId', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      location: {
+        search: '',
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async (localId) => {
+        assert.equal(localId, 'attempt_from_flag');
+        return {
+          localId: 'attempt_from_flag',
+          viewerPayload: {
+            worksheetId: 'flag_ws',
+            snapshotId: 'flag_snap',
+            blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Resume me' }, responseConfig: {} }],
+          },
+          answers: { q1: { value: 'saved answer' } },
+          metadata: { origin: 'resume_flag' },
+        };
+      },
+    },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => ({ localId: 'attempt_from_flag' }), set: () => {} },
+  });
+
+  await session.bootstrap();
+
+  assert.equal(session.state.localAttemptId, 'attempt_from_flag');
+  assert.equal(session.state.viewerPayload.worksheetId, 'flag_ws');
+  assert.equal(session.state.answers.q1.value, 'saved answer');
+});
+
+test('bootstrap with no launch params gracefully falls back when resume flag attempt is missing', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      location: {
+        search: '',
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => null,
+      put: async (value) => value,
+    },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => ({ localId: 'attempt_missing' }), set: () => {} },
+  });
+
+  await session.bootstrap();
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(session.state.localAttemptId.startsWith('attempt_'), true);
+  assert.equal(session.state.source, 'local_source');
+  assert.equal(session.state.viewerPayload.title, 'Local worksheet');
+});
+
 test('bootstrap prefers localDraftId preview over resume flag session', async () => {
   const mod = await loadViewerModule({
     window: {

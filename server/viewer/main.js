@@ -700,6 +700,11 @@ class ViewerAttemptSession {
     const params = new URLSearchParams(window.location.search);
     const previewIntent = this.parsePreviewIntent(params);
     const freshnessMarker = params.get('draftUpdatedAt') || null;
+    const hasExplicitContentIntent =
+      params.has('localDraftId')
+      || params.has('viewerPayload')
+      || params.has('snapshot')
+      || params.has('importedWorksheetId');
 
     const explicitAttemptId = params.get('localAttemptId');
     if (explicitAttemptId) {
@@ -710,6 +715,17 @@ class ViewerAttemptSession {
       if (resumed) {
         this.persistResumeMetadata();
         return this.state;
+      }
+    }
+
+    if (!hasExplicitContentIntent) {
+      const flaggedAttemptId = this.storage.resumeFlags.get(RESUME_FLAG_KEY)?.localId || null;
+      if (flaggedAttemptId) {
+        const resumedFromFlag = await this.tryResumeAttempt(flaggedAttemptId);
+        if (resumedFromFlag) {
+          this.persistResumeMetadata();
+          return this.state;
+        }
       }
     }
 
