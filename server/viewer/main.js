@@ -1183,6 +1183,7 @@ function renderViewerShell(session) {
   const answerSummary = document.createElement('p');
   answerSummary.className = 'answer-summary';
   const status = document.createElement('p');
+  let studentName = '';
 
   const blockSection = document.createElement('section');
   blockSection.className = 'viewer-section';
@@ -1234,7 +1235,7 @@ function renderViewerShell(session) {
   infoBtn.className = 'viewer-utility-menu__trigger';
   infoBtn.setAttribute('aria-label', 'Open technical details');
   infoBtn.title = 'Technical details';
-  infoBtn.textContent = '⋯';
+  infoBtn.textContent = 'ⓘ';
   const utilityMenuBtn = document.createElement('button');
   utilityMenuBtn.type = 'button';
   utilityMenuBtn.className = 'viewer-utility-menu__trigger';
@@ -1276,13 +1277,31 @@ function renderViewerShell(session) {
   const detailsTitle = document.createElement('h2');
   detailsTitle.id = 'viewer-details-modal-title';
   detailsTitle.textContent = 'Technical details';
+  const learnerNameForm = document.createElement('form');
+  learnerNameForm.className = 'viewer-details-form';
+  const learnerNameLabel = document.createElement('label');
+  learnerNameLabel.className = 'viewer-details-form__label';
+  learnerNameLabel.setAttribute('for', 'viewer-student-name-input');
+  learnerNameLabel.textContent = 'Student name';
+  const learnerNameInput = document.createElement('input');
+  learnerNameInput.id = 'viewer-student-name-input';
+  learnerNameInput.className = 'viewer-details-form__input';
+  learnerNameInput.type = 'text';
+  learnerNameInput.maxLength = 120;
+  learnerNameInput.placeholder = 'Enter student name';
+  learnerNameInput.autocomplete = 'name';
+  const learnerNameSaveBtn = document.createElement('button');
+  learnerNameSaveBtn.type = 'submit';
+  learnerNameSaveBtn.className = 'viewer-details-form__save';
+  learnerNameSaveBtn.textContent = 'Apply';
+  learnerNameForm.append(learnerNameLabel, learnerNameInput, learnerNameSaveBtn);
   const detailsList = document.createElement('dl');
   detailsList.className = 'viewer-details-list';
   const detailsCloseBtn = document.createElement('button');
   detailsCloseBtn.type = 'button';
   detailsCloseBtn.textContent = 'Close';
   detailsCloseBtn.className = 'viewer-details-modal__close';
-  detailsContent.append(detailsTitle, detailsList, detailsCloseBtn);
+  detailsContent.append(detailsTitle, learnerNameForm, detailsList, detailsCloseBtn);
   detailsModal.append(detailsContent);
 
   const bottomBar = document.createElement('div');
@@ -1333,8 +1352,8 @@ function renderViewerShell(session) {
       ['Snapshot ID', session.state.viewerPayload?.snapshotId || 'n/a'],
       ['Local attempt ID', session.state.localAttemptId || 'n/a'],
       ['Source', session.state.source || 'n/a'],
-      ['Status', session.state.status || 'n/a'],
     ];
+    learnerNameInput.value = studentName;
     detailsList.innerHTML = '';
     technicalRows.forEach(([label, value]) => {
       const row = document.createElement('div');
@@ -1393,6 +1412,13 @@ function renderViewerShell(session) {
     detailsModal.addEventListener('keydown', trapModalFocus);
     detailsCloseBtn.focus();
   };
+
+  learnerNameForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    studentName = learnerNameInput.value.trim();
+    renderUI();
+    learnerNameInput.focus();
+  });
 
   infoBtn.addEventListener('click', () => {
     openTechnicalDetails();
@@ -1930,7 +1956,17 @@ function renderViewerShell(session) {
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
-    answerSummary.textContent = `Answered ${summary.answered}/${summary.total} · ${status.textContent}`;
+    const normalizedAttemptStatus = session.state.status
+      ? String(session.state.status).replace(/_/g, '-')
+      : 'n/a';
+    const summaryParts = [];
+    if (studentName) {
+      summaryParts.push(`Student ${studentName}`);
+    }
+    summaryParts.push(`Answered ${summary.answered}/${summary.total}`);
+    summaryParts.push(status.textContent);
+    summaryParts.push(`Status ${normalizedAttemptStatus}`);
+    answerSummary.textContent = summaryParts.join(' · ');
   };
 
   session.setOnStateChange(() => {
