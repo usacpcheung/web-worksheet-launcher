@@ -1183,6 +1183,7 @@ function renderViewerShell(session) {
   const answerSummary = document.createElement('p');
   answerSummary.className = 'answer-summary';
   const status = document.createElement('p');
+  let studentName = '';
 
   const blockSection = document.createElement('section');
   blockSection.className = 'viewer-section';
@@ -1199,13 +1200,13 @@ function renderViewerShell(session) {
   const prevBtn = document.createElement('button');
   prevBtn.type = 'button';
   prevBtn.className = 'icon-nav-btn';
-  prevBtn.textContent = '←';
+  prevBtn.textContent = '← Back';
   prevBtn.setAttribute('aria-label', 'Go to previous block');
   prevBtn.title = 'Previous block';
   const nextBtn = document.createElement('button');
   nextBtn.type = 'button';
   nextBtn.className = 'icon-nav-btn';
-  nextBtn.textContent = '→';
+  nextBtn.textContent = 'Next →';
   nextBtn.setAttribute('aria-label', 'Go to next block');
   nextBtn.title = 'Next block';
   navActions.append(prevBtn, nextBtn);
@@ -1220,10 +1221,10 @@ function renderViewerShell(session) {
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
-  saveBtn.textContent = 'Save Now';
+  saveBtn.textContent = 'Save';
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
-  completeBtn.textContent = 'Submit / Finalize';
+  completeBtn.textContent = 'Submit';
 
   const utilityMenu = document.createElement('div');
   utilityMenu.className = 'viewer-utility-menu';
@@ -1243,7 +1244,7 @@ function renderViewerShell(session) {
   utilityMenuBtn.setAttribute('aria-controls', 'viewer-utility-menu-list');
   utilityMenuBtn.setAttribute('aria-label', 'Open more actions');
   utilityMenuBtn.title = 'More actions';
-  utilityMenuBtn.textContent = '⋮';
+  utilityMenuBtn.textContent = '≡';
   const utilityMenuList = document.createElement('div');
   utilityMenuList.className = 'viewer-utility-menu__list';
   utilityMenuList.id = 'viewer-utility-menu-list';
@@ -1276,13 +1277,31 @@ function renderViewerShell(session) {
   const detailsTitle = document.createElement('h2');
   detailsTitle.id = 'viewer-details-modal-title';
   detailsTitle.textContent = 'Technical details';
+  const learnerNameForm = document.createElement('form');
+  learnerNameForm.className = 'viewer-details-form';
+  const learnerNameLabel = document.createElement('label');
+  learnerNameLabel.className = 'viewer-details-form__label';
+  learnerNameLabel.setAttribute('for', 'viewer-student-name-input');
+  learnerNameLabel.textContent = 'Student name';
+  const learnerNameInput = document.createElement('input');
+  learnerNameInput.id = 'viewer-student-name-input';
+  learnerNameInput.className = 'viewer-details-form__input';
+  learnerNameInput.type = 'text';
+  learnerNameInput.maxLength = 120;
+  learnerNameInput.placeholder = 'Enter student name';
+  learnerNameInput.autocomplete = 'name';
+  const learnerNameSaveBtn = document.createElement('button');
+  learnerNameSaveBtn.type = 'submit';
+  learnerNameSaveBtn.className = 'viewer-details-form__save';
+  learnerNameSaveBtn.textContent = 'Apply';
+  learnerNameForm.append(learnerNameLabel, learnerNameInput, learnerNameSaveBtn);
   const detailsList = document.createElement('dl');
   detailsList.className = 'viewer-details-list';
   const detailsCloseBtn = document.createElement('button');
   detailsCloseBtn.type = 'button';
   detailsCloseBtn.textContent = 'Close';
   detailsCloseBtn.className = 'viewer-details-modal__close';
-  detailsContent.append(detailsTitle, detailsList, detailsCloseBtn);
+  detailsContent.append(detailsTitle, learnerNameForm, detailsList, detailsCloseBtn);
   detailsModal.append(detailsContent);
 
   const bottomBar = document.createElement('div');
@@ -1333,8 +1352,8 @@ function renderViewerShell(session) {
       ['Snapshot ID', session.state.viewerPayload?.snapshotId || 'n/a'],
       ['Local attempt ID', session.state.localAttemptId || 'n/a'],
       ['Source', session.state.source || 'n/a'],
-      ['Status', session.state.status || 'n/a'],
     ];
+    learnerNameInput.value = studentName;
     detailsList.innerHTML = '';
     technicalRows.forEach(([label, value]) => {
       const row = document.createElement('div');
@@ -1393,6 +1412,13 @@ function renderViewerShell(session) {
     detailsModal.addEventListener('keydown', trapModalFocus);
     detailsCloseBtn.focus();
   };
+
+  learnerNameForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    studentName = learnerNameInput.value.trim();
+    renderUI();
+    learnerNameInput.focus();
+  });
 
   infoBtn.addEventListener('click', () => {
     openTechnicalDetails();
@@ -1504,6 +1530,85 @@ function renderViewerShell(session) {
     orderedBlocks.map((block) => `${block.blockId}:${block.position}:${block.kind}`).join('|')
   );
 
+  const scrollStepperToActive = (activeNode, activeIndex, totalItems) => {
+    if (!activeNode || !stepper) return;
+
+    const ensureActiveNodeVisible = () => {
+      const containerRect = stepper.getBoundingClientRect();
+      const nodeRect = activeNode.getBoundingClientRect();
+      const leftInset = 6;
+      const rightInset = 6;
+
+      if (nodeRect.left < containerRect.left + leftInset) {
+        const delta = (containerRect.left + leftInset) - nodeRect.left;
+        const nextLeft = Math.max(0, stepper.scrollLeft - delta);
+        stepper.scrollLeft = nextLeft;
+        return;
+      }
+
+      if (nodeRect.right > containerRect.right - rightInset) {
+        const delta = nodeRect.right - (containerRect.right - rightInset);
+        const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
+        const nextLeft = Math.min(maxScrollLeft, stepper.scrollLeft + delta);
+        stepper.scrollLeft = nextLeft;
+      }
+    };
+
+    const shouldReduceMotion = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const scheduleEnsureActiveNodeVisible = () => {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          ensureActiveNodeVisible();
+        });
+        return;
+      }
+      ensureActiveNodeVisible();
+    };
+
+    const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
+    if (maxScrollLeft === 0) {
+      stepper.scrollLeft = 0;
+      scheduleEnsureActiveNodeVisible();
+      return;
+    }
+
+    if (activeIndex <= 0) {
+      stepper.scrollLeft = 0;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          stepper.scrollLeft = 0;
+          ensureActiveNodeVisible();
+        });
+      }
+      return;
+    }
+
+    if (activeIndex >= totalItems - 1) {
+      stepper.scrollLeft = maxScrollLeft;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          stepper.scrollLeft = maxScrollLeft;
+          ensureActiveNodeVisible();
+        });
+      }
+      return;
+    }
+
+    const nodeLeft = activeNode.offsetLeft;
+    const targetLeft = nodeLeft - ((stepper.clientWidth - activeNode.offsetWidth) / 2);
+    const clampedLeft = Math.min(Math.max(targetLeft, 0), maxScrollLeft);
+    const behavior = shouldReduceMotion ? 'auto' : 'smooth';
+    stepper.scrollTo({ left: clampedLeft, behavior });
+    scheduleEnsureActiveNodeVisible();
+  };
+
+  const updateStepperFitState = () => {
+    const fitsContainer = stepper.scrollWidth <= stepper.clientWidth;
+    stepper.dataset.fit = fitsContainer ? 'true' : 'false';
+  };
+
   const renderStepper = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
     stepper.innerHTML = '';
     const counters = { content: 0, question: 0 };
@@ -1518,15 +1623,22 @@ function renderViewerShell(session) {
       const stateClass = isCompleted ? 'is-completed' : isCurrent ? 'is-current' : 'is-upcoming';
       item.classList.add(stateClass);
 
-      const node = document.createElement('div');
+      const node = document.createElement('button');
+      node.type = 'button';
       node.className = 'block-stepper__node';
       node.textContent = `${index + 1}`;
+      node.title = `Go to block ${index + 1}`;
       if (isCurrent) {
         node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
         node.setAttribute('aria-current', 'step');
       } else {
         node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
       }
+      node.addEventListener('click', () => {
+        if (currentBlockIndex === index) return;
+        currentBlockIndex = index;
+        renderUI();
+      });
 
       const label = document.createElement('p');
       label.className = 'block-stepper__label';
@@ -1541,9 +1653,11 @@ function renderViewerShell(session) {
       stepper.appendChild(item);
     });
 
+    updateStepperFitState();
+
     const activeNode = stepper.querySelector('.block-stepper__item.is-current');
-    if (shouldScrollToActive && activeNode && typeof activeNode.scrollIntoView === 'function') {
-      activeNode.scrollIntoView({ block: 'nearest', inline: 'center' });
+    if (shouldScrollToActive && activeNode) {
+      scrollStepperToActive(activeNode, activeIndex, orderedBlocks.length);
     }
   };
 
@@ -1572,7 +1686,7 @@ function renderViewerShell(session) {
 
     if (currentBlock.kind === 'content') {
       const card = document.createElement('article');
-      card.className = 'content-card';
+      card.className = 'content-card viewer-card-transition';
       card.textContent = currentBlock.content?.text || '';
       blockList.appendChild(card);
       return;
@@ -1580,7 +1694,7 @@ function renderViewerShell(session) {
 
     const block = currentBlock;
     const card = document.createElement('article');
-    card.className = 'question-card';
+    card.className = 'question-card viewer-card-transition';
       const label = document.createElement('label');
       const inputType = block.responseConfig?.inputType || 'text';
       const controlId = `answer-${block.blockId}`;
@@ -1817,14 +1931,12 @@ function renderViewerShell(session) {
     const currentBlock = orderedBlocks[currentBlockIndex];
     const stepperSignature = getStepperOrderSignature(orderedBlocks);
     const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
-    const shouldRenderStepper = stepperSignature !== stepperOrderSignature || activeIndexChanged;
+    const orderChanged = stepperSignature !== stepperOrderSignature;
 
     blockHeading.textContent = currentBlock.kind === 'content' ? 'Content' : 'Question';
-    if (shouldRenderStepper) {
-      renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged });
-      stepperOrderSignature = stepperSignature;
-      lastStepperActiveIndex = currentBlockIndex;
-    }
+    renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged || orderChanged });
+    stepperOrderSignature = stepperSignature;
+    lastStepperActiveIndex = currentBlockIndex;
     renderCurrentBlockCard(currentBlock);
     syncAnswerControlValues(currentBlock);
 
@@ -1844,7 +1956,17 @@ function renderViewerShell(session) {
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
-    answerSummary.textContent = `Answered ${summary.answered}/${summary.total} · ${status.textContent}`;
+    const normalizedAttemptStatus = session.state.status
+      ? String(session.state.status).replace(/_/g, '-')
+      : 'n/a';
+    const summaryParts = [];
+    if (studentName) {
+      summaryParts.push(`Student ${studentName}`);
+    }
+    summaryParts.push(`Answered ${summary.answered}/${summary.total}`);
+    summaryParts.push(status.textContent);
+    summaryParts.push(`Status ${normalizedAttemptStatus}`);
+    answerSummary.textContent = summaryParts.join(' · ');
   };
 
   session.setOnStateChange(() => {
@@ -1865,6 +1987,12 @@ function renderViewerShell(session) {
     closeUtilityMenu({ returnFocus: true });
     await session.triggerProtectedAction('resumeViewerRewriteAfterLogin');
     renderUI();
+  });
+  window.addEventListener('resize', () => {
+    updateStepperFitState();
+    if (currentBlockIndex === 0) {
+      stepper.scrollLeft = 0;
+    }
   });
   prevBtn.addEventListener('click', goPrev);
   nextBtn.addEventListener('click', goNext);
