@@ -5,6 +5,7 @@ import { normalizeNumberRules, validateNumberInputFormat } from '../app/contract
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 
 const app = document.getElementById('app');
+const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
 
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
@@ -1165,7 +1166,7 @@ class ViewerAttemptSession {
 }
 
 function renderViewerShell(session) {
-  if (!app) {
+  if (!app || !bottomBarRoot) {
     return;
   }
 
@@ -1174,102 +1175,531 @@ function renderViewerShell(session) {
 
   const header = document.createElement('header');
   header.className = 'viewer-header';
+  const headerTop = document.createElement('div');
+  headerTop.className = 'viewer-header-top';
   const heading = document.createElement('h1');
   heading.textContent = session.state.viewerPayload.title;
-  const metadata = document.createElement('p');
-  metadata.className = 'muted';
 
   const answerSummary = document.createElement('p');
   answerSummary.className = 'answer-summary';
   const status = document.createElement('p');
+  let studentName = '';
 
-  const contentSection = document.createElement('section');
-  contentSection.className = 'viewer-section';
-  const contentHeading = document.createElement('h2');
-  contentHeading.textContent = 'Content';
-  const questionSection = document.createElement('section');
-  questionSection.className = 'viewer-section';
-  const questionHeading = document.createElement('h2');
-  questionHeading.textContent = 'Questions';
+  const blockSection = document.createElement('section');
+  blockSection.className = 'viewer-section';
+  const blockHeading = document.createElement('h2');
+  const blockList = document.createElement('div');
+  blockList.id = 'viewer-answer-form';
+  const stepper = document.createElement('div');
+  stepper.className = 'block-stepper';
+  stepper.setAttribute('role', 'list');
+  stepper.setAttribute('aria-label', 'Worksheet block progress');
 
-  const contentList = document.createElement('div');
-  const questionList = document.createElement('div');
-  questionList.id = 'viewer-answer-form';
+  const navActions = document.createElement('div');
+  navActions.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--center';
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'icon-nav-btn';
+  prevBtn.textContent = '← Back';
+  prevBtn.setAttribute('aria-label', 'Go to previous block');
+  prevBtn.title = 'Previous block';
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'icon-nav-btn';
+  nextBtn.textContent = 'Next →';
+  nextBtn.setAttribute('aria-label', 'Go to next block');
+  nextBtn.title = 'Next block';
+  navActions.append(prevBtn, nextBtn);
   const answerControls = new Map();
   const textControlFeedback = new Map();
-  let contentSignature = null;
-  let questionSignature = null;
+  let blockSignature = null;
+  let stepperOrderSignature = null;
+  let lastStepperActiveIndex = -1;
   const numberInputErrors = new Map();
+  const localInputCache = new Map();
+  let currentBlockIndex = 0;
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
-  saveBtn.textContent = 'Save Now';
+  saveBtn.textContent = 'Save';
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
-  completeBtn.textContent = 'Submit / Finalize';
+  completeBtn.textContent = 'Submit';
+
+  const utilityMenu = document.createElement('div');
+  utilityMenu.className = 'viewer-utility-menu';
+  const headerActions = document.createElement('div');
+  headerActions.className = 'viewer-header-actions';
+  const infoBtn = document.createElement('button');
+  infoBtn.type = 'button';
+  infoBtn.className = 'viewer-utility-menu__trigger';
+  infoBtn.setAttribute('aria-label', 'Open technical details');
+  infoBtn.title = 'Technical details';
+  infoBtn.textContent = 'ⓘ';
+  const utilityMenuBtn = document.createElement('button');
+  utilityMenuBtn.type = 'button';
+  utilityMenuBtn.className = 'viewer-utility-menu__trigger';
+  utilityMenuBtn.setAttribute('aria-haspopup', 'menu');
+  utilityMenuBtn.setAttribute('aria-expanded', 'false');
+  utilityMenuBtn.setAttribute('aria-controls', 'viewer-utility-menu-list');
+  utilityMenuBtn.setAttribute('aria-label', 'Open more actions');
+  utilityMenuBtn.title = 'More actions';
+  utilityMenuBtn.textContent = '≡';
+  const utilityMenuList = document.createElement('div');
+  utilityMenuList.className = 'viewer-utility-menu__list';
+  utilityMenuList.id = 'viewer-utility-menu-list';
+  utilityMenuList.setAttribute('role', 'menu');
+  utilityMenuList.hidden = true;
 
   const syncResumeBtn = document.createElement('button');
   syncResumeBtn.type = 'button';
+  syncResumeBtn.className = 'viewer-utility-menu__item';
+  syncResumeBtn.setAttribute('role', 'menuitem');
   syncResumeBtn.textContent = 'Sync/Resume (Sign-in required)';
 
   const rewriteAssistBtn = document.createElement('button');
   rewriteAssistBtn.type = 'button';
+  rewriteAssistBtn.className = 'viewer-utility-menu__item';
+  rewriteAssistBtn.setAttribute('role', 'menuitem');
   rewriteAssistBtn.textContent = 'Rewrite Assist (Sign-in required)';
+  utilityMenuList.append(syncResumeBtn, rewriteAssistBtn);
+  utilityMenu.append(utilityMenuBtn, utilityMenuList);
+  headerActions.append(infoBtn, utilityMenu);
 
-  const stickyActions = document.createElement('div');
-  stickyActions.className = 'sticky-action-row';
-  const secondaryActions = document.createElement('div');
-  secondaryActions.className = 'secondary-actions';
-  secondaryActions.append(syncResumeBtn, rewriteAssistBtn);
+  const detailsModal = document.createElement('div');
+  detailsModal.className = 'viewer-details-modal';
+  detailsModal.hidden = true;
+  detailsModal.setAttribute('role', 'dialog');
+  detailsModal.setAttribute('aria-modal', 'true');
+  detailsModal.setAttribute('aria-labelledby', 'viewer-details-modal-title');
+  const detailsContent = document.createElement('div');
+  detailsContent.className = 'viewer-details-modal__content';
+  const detailsTitle = document.createElement('h2');
+  detailsTitle.id = 'viewer-details-modal-title';
+  detailsTitle.textContent = 'Technical details';
+  const learnerNameForm = document.createElement('form');
+  learnerNameForm.className = 'viewer-details-form';
+  const learnerNameLabel = document.createElement('label');
+  learnerNameLabel.className = 'viewer-details-form__label';
+  learnerNameLabel.setAttribute('for', 'viewer-student-name-input');
+  learnerNameLabel.textContent = 'Student name';
+  const learnerNameInput = document.createElement('input');
+  learnerNameInput.id = 'viewer-student-name-input';
+  learnerNameInput.className = 'viewer-details-form__input';
+  learnerNameInput.type = 'text';
+  learnerNameInput.maxLength = 120;
+  learnerNameInput.placeholder = 'Enter student name';
+  learnerNameInput.autocomplete = 'name';
+  const learnerNameSaveBtn = document.createElement('button');
+  learnerNameSaveBtn.type = 'submit';
+  learnerNameSaveBtn.className = 'viewer-details-form__save';
+  learnerNameSaveBtn.textContent = 'Apply';
+  learnerNameForm.append(learnerNameLabel, learnerNameInput, learnerNameSaveBtn);
+  const detailsList = document.createElement('dl');
+  detailsList.className = 'viewer-details-list';
+  const detailsCloseBtn = document.createElement('button');
+  detailsCloseBtn.type = 'button';
+  detailsCloseBtn.textContent = 'Close';
+  detailsCloseBtn.className = 'viewer-details-modal__close';
+  detailsContent.append(detailsTitle, learnerNameForm, detailsList, detailsCloseBtn);
+  detailsModal.append(detailsContent);
+
+  const bottomBar = document.createElement('div');
+  bottomBar.className = 'viewer-bottom-bar';
+  const bottomBarInner = document.createElement('div');
+  bottomBarInner.className = 'viewer-bottom-bar__inner';
+  const leftZone = document.createElement('div');
+  leftZone.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--left';
+  const rightZone = document.createElement('div');
+  rightZone.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--right';
 
   completeBtn.addEventListener('click', async () => {
     await session.completeLocalAttempt();
-    updateSummary();
+    renderUI();
   });
-  stickyActions.append(saveBtn, completeBtn, secondaryActions);
+  leftZone.append(saveBtn);
+  rightZone.append(completeBtn);
+  bottomBarInner.append(leftZone, navActions, rightZone);
+  bottomBar.append(bottomBarInner);
 
-  const renderContentCards = (contentBlocks) => {
-    const nextSignature = JSON.stringify(contentBlocks.map((block) => [block.blockId, block.content?.text || '']));
-    if (nextSignature === contentSignature) {
+  const getOrderedBlocks = () => (
+    [...(session.state.viewerPayload?.blocks || [])].sort((a, b) => a.position - b.position)
+  );
+
+  const getMenuItems = () => Array.from(utilityMenuList.querySelectorAll('.viewer-utility-menu__item'));
+  let lastFocusedElement = null;
+
+  const copyTextValue = async (rawValue) => {
+    const value = String(rawValue ?? '');
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
       return;
     }
-    contentSignature = nextSignature;
-    contentList.innerHTML = '';
+    const fallback = document.createElement('textarea');
+    fallback.value = value;
+    fallback.setAttribute('readonly', '');
+    fallback.style.position = 'absolute';
+    fallback.style.left = '-9999px';
+    document.body.appendChild(fallback);
+    fallback.select();
+    document.execCommand('copy');
+    fallback.remove();
+  };
 
-    contentBlocks.forEach((block) => {
-      const card = document.createElement('article');
-      card.className = 'content-card';
-      card.textContent = block.content?.text || '';
-      contentList.appendChild(card);
+  const renderTechnicalDetails = () => {
+    const technicalRows = [
+      ['Worksheet ID', session.state.viewerPayload?.worksheetId || 'n/a'],
+      ['Snapshot ID', session.state.viewerPayload?.snapshotId || 'n/a'],
+      ['Local attempt ID', session.state.localAttemptId || 'n/a'],
+      ['Source', session.state.source || 'n/a'],
+    ];
+    learnerNameInput.value = studentName;
+    detailsList.innerHTML = '';
+    technicalRows.forEach(([label, value]) => {
+      const row = document.createElement('div');
+      row.className = 'viewer-details-list__row';
+      const term = document.createElement('dt');
+      term.textContent = label;
+      const description = document.createElement('dd');
+      const valueText = document.createElement('code');
+      valueText.textContent = String(value);
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'viewer-details-list__copy';
+      copyBtn.textContent = 'Copy';
+      copyBtn.setAttribute('aria-label', `Copy ${label}`);
+      copyBtn.addEventListener('click', async () => {
+        await copyTextValue(value);
+      });
+      description.append(valueText, copyBtn);
+      row.append(term, description);
+      detailsList.appendChild(row);
     });
   };
 
-  const renderQuestionCards = (questionBlocks) => {
-    const nextSignature = JSON.stringify(questionBlocks.map((block) => ({
-      blockId: block.blockId,
-      prompt: block.prompt?.text || '',
-      inputType: block.responseConfig?.inputType || 'text',
-      maxLength: block.responseConfig?.maxLength || null,
-      options: Array.isArray(block.responseConfig?.options)
-        ? block.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
-        : [],
-    })));
-    if (nextSignature === questionSignature) {
+  const trapModalFocus = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeTechnicalDetails();
       return;
     }
-    questionSignature = nextSignature;
+    if (event.key !== 'Tab') return;
+    const focusable = detailsModal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  function closeTechnicalDetails() {
+    detailsModal.hidden = true;
+    detailsModal.removeEventListener('keydown', trapModalFocus);
+    if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+      lastFocusedElement.focus();
+    }
+  }
+
+  const openTechnicalDetails = () => {
+    lastFocusedElement = document.activeElement;
+    renderTechnicalDetails();
+    detailsModal.hidden = false;
+    detailsModal.addEventListener('keydown', trapModalFocus);
+    detailsCloseBtn.focus();
+  };
+
+  learnerNameForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    studentName = learnerNameInput.value.trim();
+    renderUI();
+    learnerNameInput.focus();
+  });
+
+  infoBtn.addEventListener('click', () => {
+    openTechnicalDetails();
+  });
+  detailsCloseBtn.addEventListener('click', () => {
+    closeTechnicalDetails();
+  });
+  detailsModal.addEventListener('click', (event) => {
+    if (event.target === detailsModal) {
+      closeTechnicalDetails();
+    }
+  });
+
+  const closeUtilityMenu = ({ returnFocus = false } = {}) => {
+    utilityMenuList.hidden = true;
+    utilityMenuBtn.setAttribute('aria-expanded', 'false');
+    if (returnFocus) {
+      utilityMenuBtn.focus();
+    }
+  };
+
+  const openUtilityMenu = () => {
+    utilityMenuList.hidden = false;
+    utilityMenuBtn.setAttribute('aria-expanded', 'true');
+  };
+
+  const isUtilityMenuOpen = () => (
+    !utilityMenuList.hidden
+    && utilityMenuBtn.getAttribute('aria-expanded') === 'true'
+  );
+
+  const focusMenuItemByDelta = (delta) => {
+    const items = getMenuItems();
+    if (items.length === 0) return;
+    const activeIndex = items.indexOf(document.activeElement);
+    const nextIndex = activeIndex === -1
+      ? 0
+      : (activeIndex + delta + items.length) % items.length;
+    items[nextIndex].focus();
+  };
+
+  utilityMenuBtn.addEventListener('click', () => {
+    const isOpen = utilityMenuBtn.getAttribute('aria-expanded') === 'true';
+    if (isOpen) {
+      closeUtilityMenu();
+      return;
+    }
+    openUtilityMenu();
+    getMenuItems()[0]?.focus();
+  });
+
+  utilityMenuBtn.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    openUtilityMenu();
+    getMenuItems()[0]?.focus();
+  });
+
+  utilityMenuList.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeUtilityMenu({ returnFocus: true });
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      focusMenuItemByDelta(1);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      focusMenuItemByDelta(-1);
+      return;
+    }
+    if (event.key === 'Home') {
+      event.preventDefault();
+      getMenuItems()[0]?.focus();
+      return;
+    }
+    if (event.key === 'End') {
+      event.preventDefault();
+      const items = getMenuItems();
+      items[items.length - 1]?.focus();
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!utilityMenu.contains(event.target)) {
+      closeUtilityMenu();
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && detailsModal.hidden && isUtilityMenuOpen()) {
+      closeUtilityMenu({ returnFocus: true });
+    }
+  });
+
+  const getStepperLabel = (block, counters) => {
+    if (block.kind === 'content') {
+      counters.content += 1;
+      return counters.content === 1 ? 'Instruction' : `Instruction ${counters.content}`;
+    }
+    counters.question += 1;
+    return `Question ${counters.question}`;
+  };
+
+  const getStepperOrderSignature = (orderedBlocks) => (
+    orderedBlocks.map((block) => `${block.blockId}:${block.position}:${block.kind}`).join('|')
+  );
+
+  const scrollStepperToActive = (activeNode, activeIndex, totalItems) => {
+    if (!activeNode || !stepper) return;
+
+    const ensureActiveNodeVisible = () => {
+      const containerRect = stepper.getBoundingClientRect();
+      const nodeRect = activeNode.getBoundingClientRect();
+      const leftInset = 6;
+      const rightInset = 6;
+
+      if (nodeRect.left < containerRect.left + leftInset) {
+        const delta = (containerRect.left + leftInset) - nodeRect.left;
+        const nextLeft = Math.max(0, stepper.scrollLeft - delta);
+        stepper.scrollLeft = nextLeft;
+        return;
+      }
+
+      if (nodeRect.right > containerRect.right - rightInset) {
+        const delta = nodeRect.right - (containerRect.right - rightInset);
+        const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
+        const nextLeft = Math.min(maxScrollLeft, stepper.scrollLeft + delta);
+        stepper.scrollLeft = nextLeft;
+      }
+    };
+
+    const shouldReduceMotion = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const scheduleEnsureActiveNodeVisible = () => {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          ensureActiveNodeVisible();
+        });
+        return;
+      }
+      ensureActiveNodeVisible();
+    };
+
+    const maxScrollLeft = Math.max(0, stepper.scrollWidth - stepper.clientWidth);
+    if (maxScrollLeft === 0) {
+      stepper.scrollLeft = 0;
+      scheduleEnsureActiveNodeVisible();
+      return;
+    }
+
+    if (activeIndex <= 0) {
+      stepper.scrollLeft = 0;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          stepper.scrollLeft = 0;
+          ensureActiveNodeVisible();
+        });
+      }
+      return;
+    }
+
+    if (activeIndex >= totalItems - 1) {
+      stepper.scrollLeft = maxScrollLeft;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          stepper.scrollLeft = maxScrollLeft;
+          ensureActiveNodeVisible();
+        });
+      }
+      return;
+    }
+
+    const nodeLeft = activeNode.offsetLeft;
+    const targetLeft = nodeLeft - ((stepper.clientWidth - activeNode.offsetWidth) / 2);
+    const clampedLeft = Math.min(Math.max(targetLeft, 0), maxScrollLeft);
+    const behavior = shouldReduceMotion ? 'auto' : 'smooth';
+    stepper.scrollTo({ left: clampedLeft, behavior });
+    scheduleEnsureActiveNodeVisible();
+  };
+
+  const updateStepperFitState = () => {
+    const fitsContainer = stepper.scrollWidth <= stepper.clientWidth;
+    stepper.dataset.fit = fitsContainer ? 'true' : 'false';
+  };
+
+  const renderStepper = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
+    stepper.innerHTML = '';
+    const counters = { content: 0, question: 0 };
+
+    orderedBlocks.forEach((block, index) => {
+      const item = document.createElement('div');
+      item.className = 'block-stepper__item';
+      item.setAttribute('role', 'listitem');
+
+      const isCompleted = index < activeIndex;
+      const isCurrent = index === activeIndex;
+      const stateClass = isCompleted ? 'is-completed' : isCurrent ? 'is-current' : 'is-upcoming';
+      item.classList.add(stateClass);
+
+      const node = document.createElement('button');
+      node.type = 'button';
+      node.className = 'block-stepper__node';
+      node.textContent = `${index + 1}`;
+      node.title = `Go to block ${index + 1}`;
+      if (isCurrent) {
+        node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
+        node.setAttribute('aria-current', 'step');
+      } else {
+        node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
+      }
+      node.addEventListener('click', () => {
+        if (currentBlockIndex === index) return;
+        currentBlockIndex = index;
+        renderUI();
+      });
+
+      const label = document.createElement('p');
+      label.className = 'block-stepper__label';
+      label.textContent = getStepperLabel(block, counters);
+
+      item.append(node, label);
+      if (index < orderedBlocks.length - 1) {
+        const connector = document.createElement('span');
+        connector.className = `block-stepper__connector ${isCompleted ? 'is-completed' : 'is-upcoming'}`;
+        item.append(connector);
+      }
+      stepper.appendChild(item);
+    });
+
+    updateStepperFitState();
+
+    const activeNode = stepper.querySelector('.block-stepper__item.is-current');
+    if (shouldScrollToActive && activeNode) {
+      scrollStepperToActive(activeNode, activeIndex, orderedBlocks.length);
+    }
+  };
+
+  const cacheRawControlValue = (blockId, value) => {
+    localInputCache.set(blockId, value);
+  };
+
+  const renderCurrentBlockCard = (currentBlock) => {
+    const nextSignature = JSON.stringify({
+      blockId: currentBlock?.blockId || null,
+      prompt: currentBlock?.prompt?.text || '',
+      content: currentBlock?.content?.text || '',
+      inputType: currentBlock?.responseConfig?.inputType || null,
+      maxLength: currentBlock?.responseConfig?.maxLength || null,
+      options: Array.isArray(currentBlock?.responseConfig?.options)
+        ? currentBlock.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
+        : [],
+    });
+    if (nextSignature === blockSignature) return;
+
+    blockSignature = nextSignature;
     answerControls.clear();
     textControlFeedback.clear();
-    questionList.innerHTML = '';
+    blockList.innerHTML = '';
+    if (!currentBlock) return;
 
-    questionBlocks.forEach((block, index) => {
+    if (currentBlock.kind === 'content') {
       const card = document.createElement('article');
-      card.className = 'question-card';
+      card.className = 'content-card viewer-card-transition';
+      card.textContent = currentBlock.content?.text || '';
+      blockList.appendChild(card);
+      return;
+    }
+
+    const block = currentBlock;
+    const card = document.createElement('article');
+    card.className = 'question-card viewer-card-transition';
       const label = document.createElement('label');
       const inputType = block.responseConfig?.inputType || 'text';
       const controlId = `answer-${block.blockId}`;
       label.id = `${controlId}-label`;
-      label.textContent = `${index + 1}. ${block.prompt?.text || 'Question'}`;
+      label.textContent = block.prompt?.text || 'Question';
 
       const helper = document.createElement('p');
       helper.className = 'muted';
@@ -1294,10 +1724,11 @@ function renderViewerShell(session) {
         control = document.createElement('input');
         control.type = 'text';
         control.addEventListener('input', () => {
+          cacheRawControlValue(block.blockId, control.value);
           session.setAnswer(block.blockId, control.value);
           const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
-          updateSummary();
+          renderUI();
         });
       } else if (inputType === 'number') {
         control = document.createElement('input');
@@ -1349,16 +1780,17 @@ function renderViewerShell(session) {
         }
         control.title = title;
         control.addEventListener('input', () => {
+          cacheRawControlValue(block.blockId, control.value);
           const { message, normalizedValue } = getNumberInputErrorMessage(control.value, block.responseConfig || {});
           if (message) {
             numberInputErrors.set(block.blockId, message);
             session.setAnswer(block.blockId, '');
-            updateSummary();
+            renderUI();
             return;
           }
           numberInputErrors.set(block.blockId, '');
           session.setAnswer(block.blockId, normalizedValue);
-          updateSummary();
+          renderUI();
         });
       } else if (inputType === 'boolean') {
         control = document.createElement('div');
@@ -1380,7 +1812,7 @@ function renderViewerShell(session) {
             const normalizedCurrentValue = coerceAnswerValueByInputType('boolean', currentValue);
             const nextValue = normalizedCurrentValue === optionConfig.value ? null : optionConfig.value;
             session.setAnswer(block.blockId, nextValue);
-            updateSummary();
+            renderUI();
           });
           control.appendChild(button);
         });
@@ -1397,16 +1829,17 @@ function renderViewerShell(session) {
           controlId,
           optionSource,
           session,
-          updateSummary,
+          updateSummary: () => renderUI(),
         });
       } else {
         control = document.createElement('textarea');
         control.rows = 5;
         control.addEventListener('input', () => {
+          cacheRawControlValue(block.blockId, control.value);
           session.setAnswer(block.blockId, control.value);
           const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
-          updateSummary();
+          renderUI();
         });
       }
 
@@ -1434,20 +1867,21 @@ function renderViewerShell(session) {
       } else {
         card.append(label, helper, control, inputError);
       }
-      questionList.appendChild(card);
-    });
+      blockList.appendChild(card);
   };
 
-  const syncAnswerControlValues = (questionBlocks) => {
+  const syncAnswerControlValues = (currentBlock) => {
+    if (!currentBlock || currentBlock.kind !== 'question') return;
     const activeElement = document.activeElement;
-    questionBlocks.forEach((block) => {
-      const control = answerControls.get(block.blockId);
-      if (!control) {
-        return;
-      }
+    const block = currentBlock;
+    const control = answerControls.get(block.blockId);
+    if (!control) return;
       const inputType = block.responseConfig?.inputType || 'text';
       const storedValue = session.state.answers?.[block.blockId]?.value;
-      const nextValue = inputType === 'number'
+      const cachedRawValue = localInputCache.get(block.blockId);
+      const nextValue = cachedRawValue !== undefined
+        ? String(cachedRawValue)
+        : inputType === 'number'
         ? (storedValue === '' || storedValue === null || storedValue === undefined ? '' : String(storedValue))
         : inputType === 'boolean'
           ? (storedValue === true ? 'true' : storedValue === false ? 'false' : '')
@@ -1477,14 +1911,34 @@ function renderViewerShell(session) {
       if (errorNode) {
         errorNode.textContent = inputType === 'number' ? (numberInputErrors.get(block.blockId) || '') : '';
       }
-    });
   };
 
-  const updateSummary = () => {
-    const { contentBlocks, questionBlocks } = partitionBlocksForDisplay(session.state.viewerPayload.blocks || []);
-    renderContentCards(contentBlocks);
-    renderQuestionCards(questionBlocks);
-    syncAnswerControlValues(questionBlocks);
+  const goPrev = () => {
+    currentBlockIndex = Math.max(0, currentBlockIndex - 1);
+    renderUI();
+  };
+
+  const goNext = () => {
+    const orderedBlocks = getOrderedBlocks();
+    currentBlockIndex = Math.min(Math.max(orderedBlocks.length - 1, 0), currentBlockIndex + 1);
+    renderUI();
+  };
+
+  const renderUI = () => {
+    const orderedBlocks = getOrderedBlocks();
+    if (orderedBlocks.length === 0) return;
+    currentBlockIndex = Math.min(Math.max(currentBlockIndex, 0), orderedBlocks.length - 1);
+    const currentBlock = orderedBlocks[currentBlockIndex];
+    const stepperSignature = getStepperOrderSignature(orderedBlocks);
+    const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
+    const orderChanged = stepperSignature !== stepperOrderSignature;
+
+    blockHeading.textContent = currentBlock.kind === 'content' ? 'Content' : 'Question';
+    renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged || orderChanged });
+    stepperOrderSignature = stepperSignature;
+    lastStepperActiveIndex = currentBlockIndex;
+    renderCurrentBlockCard(currentBlock);
+    syncAnswerControlValues(currentBlock);
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
     status.textContent = session.state.isFinalizing
@@ -1498,43 +1952,64 @@ function renderViewerShell(session) {
             : session.state.autosavePending
               ? 'Saving…'
               : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+    saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
-    metadata.textContent =
-      `worksheetId: ${session.state.viewerPayload?.worksheetId || 'n/a'} · `
-      + `snapshotId: ${session.state.viewerPayload?.snapshotId || 'n/a'} · `
-      + `source: ${session.state.source} · status: ${session.state.status}`;
-    answerSummary.textContent = `Answered ${summary.answered}/${summary.total} · ${status.textContent}`;
+    prevBtn.disabled = currentBlockIndex === 0;
+    nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
+    const normalizedAttemptStatus = session.state.status
+      ? String(session.state.status).replace(/_/g, '-')
+      : 'n/a';
+    const summaryParts = [];
+    if (studentName) {
+      summaryParts.push(`Student ${studentName}`);
+    }
+    summaryParts.push(`Answered ${summary.answered}/${summary.total}`);
+    summaryParts.push(status.textContent);
+    summaryParts.push(`Status ${normalizedAttemptStatus}`);
+    answerSummary.textContent = summaryParts.join(' · ');
   };
 
   session.setOnStateChange(() => {
-    updateSummary();
+    renderUI();
   });
 
   saveBtn.addEventListener('click', async () => {
     await session.saveNow();
-    updateSummary();
+    renderUI();
   });
   syncResumeBtn.addEventListener('click', async () => {
+    closeUtilityMenu({ returnFocus: true });
     await session.triggerProtectedAction('resumeAttemptSyncAfterLogin');
-    updateSummary();
+    renderUI();
   });
 
   rewriteAssistBtn.addEventListener('click', async () => {
+    closeUtilityMenu({ returnFocus: true });
     await session.triggerProtectedAction('resumeViewerRewriteAfterLogin');
-    updateSummary();
+    renderUI();
   });
+  window.addEventListener('resize', () => {
+    updateStepperFitState();
+    if (currentBlockIndex === 0) {
+      stepper.scrollLeft = 0;
+    }
+  });
+  prevBtn.addEventListener('click', goPrev);
+  nextBtn.addEventListener('click', goNext);
 
-  header.append(heading, metadata, answerSummary);
-  contentSection.append(contentHeading, contentList);
-  questionSection.append(questionHeading, questionList);
-  shell.append(header, contentSection, questionSection, stickyActions);
+  headerTop.append(heading, headerActions);
+  header.append(headerTop, answerSummary);
+  blockSection.append(blockHeading, stepper, blockList);
+  shell.append(header, blockSection);
   app.innerHTML = '';
-  app.append(shell);
-  updateSummary();
+  bottomBarRoot.innerHTML = '';
+  app.append(shell, detailsModal);
+  bottomBarRoot.append(bottomBar);
+  renderUI();
 }
 
 function renderViewerStartPanel(session) {
-  if (!app) {
+  if (!app || !bottomBarRoot) {
     return;
   }
 
@@ -1583,6 +2058,7 @@ function renderViewerStartPanel(session) {
 
   panel.append(heading, description, importBtn, fileInput, errorMessage);
   app.innerHTML = '';
+  bottomBarRoot.innerHTML = '';
   app.append(panel);
 }
 
