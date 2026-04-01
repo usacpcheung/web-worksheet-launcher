@@ -1956,12 +1956,16 @@ function renderViewerShell(session) {
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
+    const normalizedAttemptStatus = session.state.status
+      ? String(session.state.status).replace(/_/g, '-')
+      : 'n/a';
     const summaryParts = [];
     if (studentName) {
       summaryParts.push(`Student ${studentName}`);
     }
     summaryParts.push(`Answered ${summary.answered}/${summary.total}`);
     summaryParts.push(status.textContent);
+    summaryParts.push(`Status ${normalizedAttemptStatus}`);
     answerSummary.textContent = summaryParts.join(' · ');
   };
 

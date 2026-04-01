@@ -179,7 +179,20 @@ body {
 }
 
 .viewer-details-form__input {
-  min-height: 40px;
+  min-height: 52px;
+  padding: 0 16px;
+}
+
+.viewer-details-form__save,
+.viewer-details-list__copy,
+.viewer-details-modal__close {
+  min-height: 52px;
+  padding: 0 20px;
+  border-radius: 18px;
+}
+
+.viewer-details-form__save {
+  align-self: end;
 }
 
 .viewer-details-list__row {
@@ -202,6 +215,9 @@ body {
 }
 
 .viewer-details-list__row code {
+  display: inline-flex;
+  align-items: center;
+  min-height: 52px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   background: #f8fafc;
   border: 1px solid #e4e7ec;
