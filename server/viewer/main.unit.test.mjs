@@ -490,6 +490,15 @@ test('viewer summary text includes distinct finalize outcome messages', async ()
   assert.match(source, /Finalized/);
 });
 
+test('viewer shell exposes check action only in completed state', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.match(source, /checkBtn\.textContent = 'Check Answer';/);
+  assert.match(source, /const checkAvailable = session\.state\.status === 'completed';/);
+  assert.match(source, /checkBtn\.hidden = !checkAvailable;/);
+  assert.match(source, /checkBtn\.disabled = session\.state\.isFinalizing \|\| !checkAvailable;/);
+});
+
+
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
@@ -558,6 +567,61 @@ test('completeLocalAttempt is idempotent while finalize is in progress', async (
   assert.equal(session.state.status, 'completed');
 });
 
+test('checkAnswers is unavailable before finalize and computes results after finalize', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  session.state.localAttemptId = 'attempt_check_after_finalize';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: '2 + 2?' },
+      responseConfig: { inputType: 'number', correctAnswer: 4 },
+    }],
+  };
+  session.state.answers = {
+    q1: { value: 4, answeredAt: '2026-01-01T00:00:00.000Z' },
+  };
+
+  assert.equal(session.checkAnswers(), null);
+  assert.equal(session.state.checkResult, null);
+
+  await session.completeLocalAttempt();
+  const checked = session.checkAnswers();
+  const expected = mod.computeCheckResult(session.state.viewerPayload, session.state.answers);
+  assert.deepEqual(checked, expected);
+  assert.deepEqual(session.state.checkResult, expected);
+});
+
+test('checkAnswers returns null while finalizing is in progress', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  session.state.status = 'completed';
+  session.state.isFinalizing = true;
+  session.state.viewerPayload = {
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'True?' },
+      responseConfig: { inputType: 'boolean', correctAnswer: true },
+    }],
+  };
+  session.state.answers = { q1: { value: true } };
+
+  assert.equal(session.checkAnswers(), null);
+  assert.equal(session.state.checkResult, null);
+});
+
 test('completeLocalAttempt failure reverts status and allows retry to succeed', async () => {
   const mod = await loadViewerModule();
   let saveAttempts = 0;
@@ -586,6 +650,7 @@ test('completeLocalAttempt failure reverts status and allows retry to succeed', 
   assert.equal(session.state.completedAt, null);
   assert.equal(session.state.isFinalizing, false);
   assert.equal(session.state.checkResult, null);
+  assert.equal(session.checkAnswers(), null);
   assert.match(session.state.lastFinalizeError, /Finalize failed\./);
   assert.match(session.state.lastFinalizeError, /db unavailable/);
 

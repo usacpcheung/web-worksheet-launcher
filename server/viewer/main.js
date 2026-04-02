@@ -1258,6 +1258,7 @@ class ViewerAttemptSession {
     this.state.lastFinalizeError = null;
     this.state.status = 'completed';
     this.state.completedAt = nowIso();
+    this.state.checkResult = null;
     this.state.attemptRevision += 1;
     this.persistResumeMetadata();
     this.notifyStateChange();
@@ -1281,6 +1282,16 @@ class ViewerAttemptSession {
       this.state.isFinalizing = false;
       this.notifyStateChange();
     }
+  }
+
+  checkAnswers() {
+    if (this.state.isFinalizing || this.state.status !== 'completed' || !this.state.viewerPayload) {
+      return null;
+    }
+
+    this.state.checkResult = computeCheckResult(this.state.viewerPayload, this.state.answers || {});
+    this.notifyStateChange();
+    return this.state.checkResult;
   }
 
   scheduleAutosave() {
@@ -1562,6 +1573,9 @@ function renderViewerShell(session) {
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
   completeBtn.textContent = 'Submit';
+  const checkBtn = document.createElement('button');
+  checkBtn.type = 'button';
+  checkBtn.textContent = 'Check Answer';
 
   const utilityMenu = document.createElement('div');
   utilityMenu.className = 'viewer-utility-menu';
@@ -1654,8 +1668,12 @@ function renderViewerShell(session) {
     await session.completeLocalAttempt();
     renderUI();
   });
+  checkBtn.addEventListener('click', () => {
+    session.checkAnswers();
+    renderUI();
+  });
   leftZone.append(saveBtn);
-  rightZone.append(completeBtn);
+  rightZone.append(completeBtn, checkBtn);
   bottomBarInner.append(leftZone, navActions, rightZone);
   bottomBar.append(bottomBarInner);
 
@@ -2399,6 +2417,9 @@ function renderViewerShell(session) {
     resumeWarning.hidden = !session.state.recoveryMessage;
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
+    const checkAvailable = session.state.status === 'completed';
+    checkBtn.hidden = !checkAvailable;
+    checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
     const normalizedAttemptStatus = session.state.status
@@ -2409,6 +2430,9 @@ function renderViewerShell(session) {
       summaryParts.push(`Student ${studentName}`);
     }
     summaryParts.push(`Answered ${summary.answered}/${summary.total}`);
+    if (session.state.checkResult) {
+      summaryParts.push(`Checked ${session.state.checkResult.correctCount}/${session.state.checkResult.totalQuestions} correct`);
+    }
     summaryParts.push(status.textContent);
     summaryParts.push(`Status ${normalizedAttemptStatus}`);
     answerSummary.textContent = summaryParts.join(' · ');
