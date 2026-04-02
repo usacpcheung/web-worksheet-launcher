@@ -571,17 +571,44 @@ function areMultiSelectValuesEqual(learnerValues, correctValues) {
   return normalizedLearnerValues.every((value) => correctSet.has(value));
 }
 
+function hasValidCorrectAnswer(responseConfig) {
+  if (!responseConfig || !Object.hasOwn(responseConfig, 'correctAnswer')) {
+    return false;
+  }
+
+  const { inputType, selectionMode, correctAnswer } = responseConfig;
+
+  if (inputType === 'boolean') {
+    return typeof correctAnswer === 'boolean';
+  }
+
+  if (inputType === 'number') {
+    const numericValue = Number(correctAnswer);
+    return Number.isFinite(numericValue);
+  }
+
+  if (inputType === 'multiple_choice') {
+    if (selectionMode === 'multi') {
+      if (!Array.isArray(correctAnswer)) {
+        return false;
+      }
+      return correctAnswer.every((value) => typeof value === 'string');
+    }
+
+    return typeof correctAnswer === 'string';
+  }
+
+  // Other input types are not gradeable here.
+  return false;
+}
+
 function isGradeableQuestionBlock(block) {
   if (block?.kind !== 'question') {
     return false;
   }
 
   const responseConfig = block?.responseConfig;
-  const inputType = responseConfig?.inputType;
-  const hasCorrectAnswer = responseConfig && Object.hasOwn(responseConfig, 'correctAnswer');
-  const gradeableInputType = inputType === 'boolean' || inputType === 'number' || inputType === 'multiple_choice';
-
-  return Boolean(hasCorrectAnswer && gradeableInputType);
+  return hasValidCorrectAnswer(responseConfig);
 }
 
 function hasGradeableQuestions(viewerPayload) {
@@ -613,9 +640,15 @@ function computeCheckResult(viewerPayload, answers) {
     } else if (inputType === 'boolean') {
       isCorrect = coerceAnswerValueByInputType('boolean', learnerValue) === coerceAnswerValueByInputType('boolean', correctAnswer);
     } else if (inputType === 'number') {
-      const learnerNumber = Number(learnerValue);
-      const correctNumber = Number(correctAnswer);
-      isCorrect = Number.isFinite(learnerNumber) && Number.isFinite(correctNumber) && learnerNumber === correctNumber;
+      // Treat empty/absent learner values as unanswered rather than as 0.
+      if (learnerValue !== '' && learnerValue !== null && learnerValue !== undefined) {
+        const learnerNumber = Number(learnerValue);
+        const correctNumber = Number(correctAnswer);
+        isCorrect =
+          Number.isFinite(learnerNumber) &&
+          Number.isFinite(correctNumber) &&
+          learnerNumber === correctNumber;
+      }
     }
 
     byBlockId[block.blockId] = isCorrect;

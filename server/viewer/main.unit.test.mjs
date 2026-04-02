@@ -1951,3 +1951,31 @@ test('computeCheckResult grades only supported input types with correctAnswer', 
   assert.equal(result.correctCount, 3);
   assert.equal(result.totalQuestions, 3);
 });
+
+test('computeCheckResult does not treat unanswered number input as 0 when correctAnswer is 0', async () => {
+  const mod = await loadViewerModule();
+
+  const viewerPayload = {
+    blocks: [
+      {
+        blockId: 'q_number',
+        kind: 'question',
+        responseConfig: { inputType: 'number', correctAnswer: 0 },
+      },
+    ],
+  };
+
+  const resultEmpty = mod.computeCheckResult(viewerPayload, { q_number: { value: '' } });
+  const resultNull = mod.computeCheckResult(viewerPayload, { q_number: { value: null } });
+  const resultUndef = mod.computeCheckResult(viewerPayload, { q_number: { value: undefined } });
+  const resultZero = mod.computeCheckResult(viewerPayload, { q_number: { value: '0' } });
+
+  assert.equal(resultEmpty.byBlockId.q_number, false, 'empty string should not be correct');
+  assert.equal(resultEmpty.correctCount, 0);
+  assert.equal(resultNull.byBlockId.q_number, false, 'null should not be correct');
+  assert.equal(resultNull.correctCount, 0);
+  assert.equal(resultUndef.byBlockId.q_number, false, 'undefined should not be correct');
+  assert.equal(resultUndef.correctCount, 0);
+  assert.equal(resultZero.byBlockId.q_number, true, 'string "0" should be correct when correctAnswer is 0');
+  assert.equal(resultZero.correctCount, 1);
+});
