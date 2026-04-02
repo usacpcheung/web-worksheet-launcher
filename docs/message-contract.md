@@ -161,6 +161,18 @@ When present on question blocks, `correctAnswer` must match the response input s
 - switching `multi → single` keeps only the first valid array entry as the single `correctAnswer`; if none are valid, `correctAnswer` is removed
 
 
+
+### Viewer client-side check eligibility (integration note)
+
+Viewer client-side check UI is intentionally gated by answer-key availability in the viewer payload. Runtime helper implementation lives in `server/viewer/main.js` (`isGradeableQuestionBlock`, `hasGradeableQuestions`, `computeCheckResult`).
+
+Contract expectations for viewer/server integration:
+
+- Client-side check requires snapshot-derived viewer payload question blocks to include `responseConfig.correctAnswer`.
+- If `correctAnswer` is omitted for all eligible question blocks, `hasGradeableQuestions()` returns `false` and the viewer check button does not render.
+- This is expected behavior (not a launch/runtime error condition).
+- For high-stakes grading, evaluate answers server-side and avoid shipping authoritative answer keys in client payloads.
+
 ## Viewer launch failure semantics and precedence (deterministic contract)
 
 Viewer launch for `/viewer/` follows strict intent precedence and failure handling:

@@ -551,6 +551,86 @@ function partitionBlocksForDisplay(blocks = []) {
   };
 }
 
+
+function normalizeMultiSelectValues(rawValue) {
+  const normalizedValues = Array.isArray(rawValue)
+    ? rawValue.map((value) => String(value))
+    : [];
+  return Array.from(new Set(normalizedValues));
+}
+
+function areMultiSelectValuesEqual(learnerValues, correctValues) {
+  const normalizedLearnerValues = normalizeMultiSelectValues(learnerValues);
+  const normalizedCorrectValues = normalizeMultiSelectValues(correctValues);
+
+  if (normalizedLearnerValues.length !== normalizedCorrectValues.length) {
+    return false;
+  }
+
+  const correctSet = new Set(normalizedCorrectValues);
+  return normalizedLearnerValues.every((value) => correctSet.has(value));
+}
+
+function isGradeableQuestionBlock(block) {
+  if (block?.kind !== 'question') {
+    return false;
+  }
+
+  const responseConfig = block?.responseConfig;
+  const inputType = responseConfig?.inputType;
+  const hasCorrectAnswer = responseConfig && Object.hasOwn(responseConfig, 'correctAnswer');
+  const gradeableInputType = inputType === 'boolean' || inputType === 'number' || inputType === 'multiple_choice';
+
+  return Boolean(hasCorrectAnswer && gradeableInputType);
+}
+
+function hasGradeableQuestions(viewerPayload) {
+  return Array.isArray(viewerPayload?.blocks) && viewerPayload.blocks.some((block) => isGradeableQuestionBlock(block));
+}
+
+function computeCheckResult(viewerPayload, answers) {
+  const gradeableQuestions = Array.isArray(viewerPayload?.blocks)
+    ? viewerPayload.blocks.filter((block) => isGradeableQuestionBlock(block))
+    : [];
+
+  const byBlockId = {};
+  let correctCount = 0;
+
+  gradeableQuestions.forEach((block) => {
+    const inputType = block?.responseConfig?.inputType || 'text';
+    const selectionMode = block?.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
+    const learnerValue = answers?.[block.blockId]?.value;
+    const correctAnswer = block?.responseConfig?.correctAnswer;
+
+    let isCorrect = false;
+
+    if (inputType === 'multiple_choice') {
+      if (selectionMode === 'multi') {
+        isCorrect = areMultiSelectValuesEqual(learnerValue, correctAnswer);
+      } else {
+        isCorrect = String(learnerValue ?? '') === String(correctAnswer ?? '');
+      }
+    } else if (inputType === 'boolean') {
+      isCorrect = coerceAnswerValueByInputType('boolean', learnerValue) === coerceAnswerValueByInputType('boolean', correctAnswer);
+    } else if (inputType === 'number') {
+      const learnerNumber = Number(learnerValue);
+      const correctNumber = Number(correctAnswer);
+      isCorrect = Number.isFinite(learnerNumber) && Number.isFinite(correctNumber) && learnerNumber === correctNumber;
+    }
+
+    byBlockId[block.blockId] = isCorrect;
+    if (isCorrect) {
+      correctCount += 1;
+    }
+  });
+
+  return {
+    byBlockId,
+    correctCount,
+    totalQuestions: gradeableQuestions.length,
+  };
+}
+
 function computeAnswerSummary(viewerPayload, answers) {
   const questions = (viewerPayload?.blocks || []).filter((block) => block.kind === 'question');
 
@@ -795,6 +875,7 @@ class ViewerAttemptSession {
       attemptRevision: 0,
       lastSavedRevision: 0,
       recoveryMessage: null,
+      checkResult: null,
       lastProtectedAction: null,
     };
 
@@ -873,6 +954,7 @@ class ViewerAttemptSession {
         sourceImportedWorksheetId: loadedPayload.sourceImportedWorksheetId || null,
       }
     );
+    attempt.checkResult = null;
     this.applyAttemptState(attempt, { markDirty: true });
     this.persistResumeMetadata();
 
@@ -926,6 +1008,7 @@ class ViewerAttemptSession {
           answers: mergedAnswers,
           viewerPayload: normalizedPayload,
           studentName,
+          checkResult: null,
           lastActiveIndex: resumeStartIndex,
           lastActiveBlockId: activeBlock?.blockId || null,
           metadata: {
@@ -1061,6 +1144,7 @@ class ViewerAttemptSession {
       lastSavedAt: startedAt,
       completedAt: null,
       answers: {},
+      checkResult: null,
       metadata: {
         localId: localAttemptId,
         origin: source || 'local_source',
@@ -1093,6 +1177,7 @@ class ViewerAttemptSession {
     this.state.lastSaveError = null;
     this.state.isFinalizing = false;
     this.state.lastFinalizeError = null;
+    this.state.checkResult = null;
 
     if (options.markDirty) {
       this.state.attemptRevision += 1;
@@ -1154,6 +1239,7 @@ class ViewerAttemptSession {
     } catch (error) {
       this.state.status = 'in_progress';
       this.state.completedAt = null;
+      this.state.checkResult = null;
       this.state.lastFinalizeError = `Finalize failed. Please check your connection and try again. ${error?.message || String(error)}`;
       this.persistResumeMetadata();
       this.notifyStateChange();
@@ -1213,6 +1299,7 @@ class ViewerAttemptSession {
       lastSavedAt: updatedAt,
       completedAt: this.state.completedAt,
       answers: normalizedAnswers,
+      // checkResult is transient UI state and must not be persisted.
       metadata: {
         localId: this.state.localAttemptId,
         origin: this.state.sourceType || this.state.source || 'inline_payload',
@@ -1319,6 +1406,7 @@ class ViewerAttemptSession {
       const payload = resolveImportedWorksheetPayload(importedRecord);
       await this.validateViewerPayload(payload);
       const attempt = this.createLocalAttemptState(payload, 'imported_worksheet');
+      attempt.checkResult = null;
       this.applyAttemptState(attempt, { markDirty: true });
       this.persistResumeMetadata();
       return this.state;
@@ -1925,6 +2013,14 @@ function renderViewerShell(session) {
   };
 
   const renderCurrentBlockCard = (currentBlock) => {
+    const currentBlockCheckResult = currentBlock?.blockId
+      ? session.state.checkResult?.byBlockId?.[currentBlock.blockId]
+      : undefined;
+    const hasGlobalCheckResult = session.state.checkResult !== null;
+    const currentBlockIsGradeable = isGradeableQuestionBlock(currentBlock);
+    const hasCurrentBlockCheckResult = typeof currentBlockCheckResult === 'boolean';
+    const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsGradeable && hasCurrentBlockCheckResult;
+
     const nextSignature = JSON.stringify({
       blockId: currentBlock?.blockId || null,
       prompt: currentBlock?.prompt?.text || '',
@@ -1934,6 +2030,9 @@ function renderViewerShell(session) {
       options: Array.isArray(currentBlock?.responseConfig?.options)
         ? currentBlock.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
         : [],
+      hasGlobalCheckResult,
+      currentBlockIsGradeable,
+      currentBlockCheckResult: hasCurrentBlockCheckResult ? currentBlockCheckResult : null,
     });
     if (nextSignature === blockSignature) return;
 
@@ -1959,6 +2058,36 @@ function renderViewerShell(session) {
       const controlId = `answer-${block.blockId}`;
       label.id = `${controlId}-label`;
       label.textContent = block.prompt?.text || 'Question';
+
+      let checkBadge = null;
+      let checkReveal = null;
+      if (shouldShowCheckFeedback) {
+        const isCorrect = currentBlockCheckResult === true;
+        const correctAnswer = block.responseConfig?.correctAnswer;
+        const formatCorrectAnswer = () => {
+          if (inputType === 'multiple_choice') {
+            if (block.responseConfig?.selectionMode === 'multi') {
+              return Array.isArray(correctAnswer) ? correctAnswer.map((value) => String(value)).join(', ') : '';
+            }
+            return String(correctAnswer ?? '');
+          }
+          if (inputType === 'boolean') {
+            return coerceAnswerValueByInputType('boolean', correctAnswer) === true ? 'True' : 'False';
+          }
+          if (inputType === 'number') {
+            return String(correctAnswer ?? '');
+          }
+          return '';
+        };
+
+        checkBadge = document.createElement('p');
+        checkBadge.className = `viewer-check-badge ${isCorrect ? 'is-correct' : 'is-incorrect'}`;
+        checkBadge.textContent = isCorrect ? '✅ Correct' : '❌ Incorrect';
+
+        checkReveal = document.createElement('p');
+        checkReveal.className = 'viewer-check-reveal muted';
+        checkReveal.textContent = `Correct answer: ${formatCorrectAnswer()}`;
+      }
 
       const helper = document.createElement('p');
       helper.className = 'muted';
@@ -2122,9 +2251,17 @@ function renderViewerShell(session) {
           counter: textCounter,
           status: textStatus,
         });
-        card.append(label, helper, control, textCounter, textStatus, inputError);
+        card.append(label);
+        if (checkBadge && checkReveal) {
+          card.append(checkBadge, checkReveal);
+        }
+        card.append(helper, control, textCounter, textStatus, inputError);
       } else {
-        card.append(label, helper, control, inputError);
+        card.append(label);
+        if (checkBadge && checkReveal) {
+          card.append(checkBadge, checkReveal);
+        }
+        card.append(helper, control, inputError);
       }
       blockList.appendChild(card);
   };
@@ -2485,6 +2622,10 @@ export {
   resolveImportedWorksheetPayload,
   normalizeViewerBlock,
   computeAnswerSummary,
+  computeCheckResult,
+  hasGradeableQuestions,
+  normalizeMultiSelectValues,
+  areMultiSelectValuesEqual,
   partitionBlocksForDisplay,
   getInputHelperText,
   getNumberInputErrorMessage,

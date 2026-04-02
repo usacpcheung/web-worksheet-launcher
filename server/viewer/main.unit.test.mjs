@@ -52,7 +52,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };'
   );
 
   globalThis.document = globalThis[bagName].document;
@@ -578,12 +578,14 @@ test('completeLocalAttempt failure reverts status and allows retry to succeed', 
     }
     return { ok: true };
   };
+  session.state.checkResult = { correctCount: 1, totalQuestions: 1 };
 
   const failedFinalize = await session.completeLocalAttempt();
   assert.equal(failedFinalize, null);
   assert.equal(session.state.status, 'in_progress');
   assert.equal(session.state.completedAt, null);
   assert.equal(session.state.isFinalizing, false);
+  assert.equal(session.state.checkResult, null);
   assert.match(session.state.lastFinalizeError, /Finalize failed\./);
   assert.match(session.state.lastFinalizeError, /db unavailable/);
 
@@ -1287,6 +1289,18 @@ test('getNumberInputErrorMessage ignores legacy step config', async () => {
   });
 });
 
+
+
+test('renderCurrentBlockCard signature includes grading-derived fields and guarded check feedback rendering', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+
+  assert.equal(source.includes('hasGlobalCheckResult = session.state.checkResult !== null;'), true);
+  assert.equal(source.includes('currentBlockIsGradeable = isGradeableQuestionBlock(currentBlock);'), true);
+  assert.equal(source.includes('currentBlockCheckResult = currentBlock?.blockId'), true);
+  assert.equal(source.includes('currentBlockCheckResult: hasCurrentBlockCheckResult ? currentBlockCheckResult : null,'), true);
+  assert.equal(source.includes('const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsGradeable && hasCurrentBlockCheckResult;'), true);
+  assert.equal(source.includes('if (shouldShowCheckFeedback) {'), true);
+});
 test('number rendering branch avoids text input min/max attributes and uses pattern hint', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("if (Number.isFinite(block.responseConfig?.min)) control.min"), false);
@@ -1758,4 +1772,182 @@ test('bootstrapViewer renders fatal panel for explicit localAttemptId resume fai
   const panel = appRoot.children[0];
   assert.equal(panel.className, 'viewer-fatal-panel');
   assert.equal(putCalls, 0);
+});
+
+
+test('areMultiSelectValuesEqual normalizes, deduplicates, and compares membership without sort/join', async () => {
+  const mod = await loadViewerModule();
+
+  assert.equal(mod.areMultiSelectValuesEqual(['a', 2, 'a', 2], ['2', 'a']), true);
+  assert.equal(mod.areMultiSelectValuesEqual(['a', 'b'], ['b', 'a', 'a']), true);
+  assert.equal(mod.areMultiSelectValuesEqual(['a', 'b'], ['a']), false);
+  assert.equal(mod.areMultiSelectValuesEqual('a', ['a']), false);
+});
+
+test('computeCheckResult uses set membership for multi-select grading', async () => {
+  const mod = await loadViewerModule();
+
+  const viewerPayload = {
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        responseConfig: {
+          inputType: 'multiple_choice',
+          selectionMode: 'multi',
+          correctAnswer: ['b', 'a', 'a'],
+        },
+      },
+    ],
+  };
+
+  const resultMatch = mod.computeCheckResult(viewerPayload, {
+    q1: { value: ['a', 'b', 'a'] },
+  });
+  const resultMiss = mod.computeCheckResult(viewerPayload, {
+    q1: { value: ['a'] },
+  });
+
+  assert.equal(resultMatch.byBlockId.q1, true);
+  assert.equal(resultMatch.correctCount, 1);
+  assert.equal(resultMiss.byBlockId.q1, false);
+  assert.equal(resultMiss.correctCount, 0);
+});
+
+
+test('ViewerAttemptSession initializes checkResult as null transient state', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  assert.equal(session.state.checkResult, null);
+});
+
+test('applyAttemptState and resume paths clear stale checkResult values', async () => {
+  const mod = await loadViewerModule();
+  const attemptRecord = {
+    localId: 'attempt_resume_1',
+    status: 'in_progress',
+    checkResult: { correctCount: 2 },
+    viewerPayload: {
+      worksheetId: 'ws_1',
+      snapshotId: 'snap_1',
+      blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+    },
+    answers: {},
+    metadata: { origin: 'inline_payload', localId: 'attempt_resume_1', updatedAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => attemptRecord, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  session.applyAttemptState(attemptRecord, { markDirty: false });
+  assert.equal(session.state.checkResult, null);
+
+  session.state.checkResult = { correctCount: 99 };
+  const resumed = await session.tryResumeAttempt('attempt_resume_1');
+  assert.equal(resumed, true);
+  assert.equal(session.state.checkResult, null);
+});
+
+test('autosave payload does not persist transient checkResult', async () => {
+  const mod = await loadViewerModule();
+  let persisted = null;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => { persisted = value; return value; } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  session.state.localAttemptId = 'attempt_transient';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  };
+  session.state.checkResult = { correctCount: 1, totalQuestions: 1 };
+  session.state.attemptRevision = 1;
+
+  await session.autosave();
+  assert.equal(Object.hasOwn(persisted, 'checkResult'), false);
+});
+
+
+test('hasGradeableQuestions only returns true for question blocks with supported inputType and correctAnswer', async () => {
+  const mod = await loadViewerModule();
+
+  const noGradeable = {
+    blocks: [
+      { kind: 'content', blockId: 'c1' },
+      { kind: 'question', blockId: 'q_text', responseConfig: { inputType: 'text', correctAnswer: 'x' } },
+      { kind: 'question', blockId: 'q_unknown', responseConfig: { inputType: 'date', correctAnswer: '2026-01-01' } },
+      { kind: 'question', blockId: 'q_missing', responseConfig: { inputType: 'number' } },
+    ],
+  };
+
+  const hasGradeable = {
+    blocks: [
+      { kind: 'question', blockId: 'q_bool', responseConfig: { inputType: 'boolean', correctAnswer: true } },
+    ],
+  };
+
+  assert.equal(mod.hasGradeableQuestions(noGradeable), false);
+  assert.equal(mod.hasGradeableQuestions(hasGradeable), true);
+});
+
+test('computeCheckResult grades only supported input types with correctAnswer', async () => {
+  const mod = await loadViewerModule();
+
+  const viewerPayload = {
+    blocks: [
+      {
+        blockId: 'q_multi',
+        kind: 'question',
+        responseConfig: { inputType: 'multiple_choice', selectionMode: 'multi', correctAnswer: ['a', 'b'] },
+      },
+      {
+        blockId: 'q_bool',
+        kind: 'question',
+        responseConfig: { inputType: 'boolean', correctAnswer: true },
+      },
+      {
+        blockId: 'q_number',
+        kind: 'question',
+        responseConfig: { inputType: 'number', correctAnswer: 3 },
+      },
+      {
+        blockId: 'q_text',
+        kind: 'question',
+        responseConfig: { inputType: 'text', correctAnswer: 'hello' },
+      },
+      {
+        blockId: 'q_unknown',
+        kind: 'question',
+        responseConfig: { inputType: 'date', correctAnswer: '2026-04-02' },
+      },
+      {
+        blockId: 'q_missing',
+        kind: 'question',
+        responseConfig: { inputType: 'number' },
+      },
+    ],
+  };
+
+  const result = mod.computeCheckResult(viewerPayload, {
+    q_multi: { value: ['b', 'a', 'a'] },
+    q_bool: { value: true },
+    q_number: { value: '3' },
+    q_text: { value: 'hello' },
+    q_unknown: { value: '2026-04-02' },
+    q_missing: { value: 5 },
+  });
+
+  assert.deepEqual(Object.keys(result.byBlockId).sort(), ['q_bool', 'q_multi', 'q_number']);
+  assert.equal(result.correctCount, 3);
+  assert.equal(result.totalQuestions, 3);
 });
