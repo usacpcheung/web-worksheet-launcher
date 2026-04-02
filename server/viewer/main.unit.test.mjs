@@ -597,6 +597,7 @@ test('completeLocalAttempt failure reverts status and allows retry to succeed', 
 test('startImportedWorksheetFromJsonText creates fresh attempt from imported worksheet JSON', async () => {
   const mod = await loadViewerModule();
   const importedRecords = [];
+  let createAttemptCalls = 0;
   const session = new mod.ViewerAttemptSession({
     attempts: { put: async (value) => value },
     drafts: { get: async () => null },
@@ -608,6 +609,11 @@ test('startImportedWorksheetFromJsonText creates fresh attempt from imported wor
     },
     resumeFlags: { set: () => {}, get: () => null },
   });
+  const originalCreateLocalAttemptState = session.createLocalAttemptState.bind(session);
+  session.createLocalAttemptState = (...args) => {
+    createAttemptCalls += 1;
+    return originalCreateLocalAttemptState(...args);
+  };
 
   await session.startImportedWorksheetFromJsonText(JSON.stringify({
     title: 'Imported worksheet',
@@ -618,6 +624,11 @@ test('startImportedWorksheetFromJsonText creates fresh attempt from imported wor
   clearTimeout(session.autosaveTimer);
 
   assert.equal(importedRecords.length, 1);
+  assert.equal(importedRecords[0].localId, importedRecords[0].metadata.localId);
+  assert.equal(importedRecords[0].metadata.origin, 'imported_file');
+  assert.equal(importedRecords[0].metadata.updatedAt, importedRecords[0].importedAt);
+  assert.ok(importedRecords[0].metadata.updatedAt);
+  assert.equal(createAttemptCalls, 1);
   assert.equal(session.state.source, 'imported_worksheet');
   assert.equal(session.state.status, 'in_progress');
   assert.equal(session.state.viewerPayload.title, 'Imported worksheet');

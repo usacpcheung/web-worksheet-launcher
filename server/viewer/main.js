@@ -1247,6 +1247,11 @@ class ViewerAttemptSession {
       worksheet,
       importedAt: nowIso(),
     };
+    importedRecord.metadata = {
+      localId: importedRecord.localId,
+      origin: 'imported_file',
+      updatedAt: importedRecord.importedAt,
+    };
 
     try {
       await this.storage.importedWorksheets.put(importedRecord);
