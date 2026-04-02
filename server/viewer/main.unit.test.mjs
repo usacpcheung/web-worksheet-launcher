@@ -38,6 +38,7 @@ async function loadViewerModule(overrides = {}) {
       return { ok: true, normalizedValue: Number(text), kind };
     }),
     SharedAuthGate: overrides.SharedAuthGate || class {},
+    validateViewerPayloadSchema: overrides.validateViewerPayloadSchema || (() => ({ valid: true, errors: [] })),
     renderViewerShell: overrides.renderViewerShell || (() => {}),
     document: overrides.document || { getElementById: () => null },
     window: overrides.window || {},
@@ -45,13 +46,13 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     "import { viewerStorage } from './storage/index.js';\nimport { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';\nimport { validateViewerPayloadSchema } from '../app/contracts/validators.js';\nimport { normalizeNumberRules, validateNumberInputFormat } from '../app/contracts/number-input-validator.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
-    `const __testBag = globalThis.${bagName};\nconst viewerStorage = __testBag.viewerStorage;\nconst mapSnapshotToViewerPayload = __testBag.mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = (p) => ({ valid: true, errors: [] });\nconst normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;\nconst SharedAuthGate = __testBag.SharedAuthGate;\n`
+    `const __testBag = globalThis.${bagName};\nconst viewerStorage = __testBag.viewerStorage;\nconst mapSnapshotToViewerPayload = __testBag.mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = __testBag.validateViewerPayloadSchema;\nconst normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;\nconst SharedAuthGate = __testBag.SharedAuthGate;\n`
   );
   source = source.replace(/renderViewerShell\(session\);/g, '__testBag.renderViewerShell(session);');
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, bootstrapViewer };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };'
   );
 
   globalThis.document = globalThis[bagName].document;
@@ -847,7 +848,7 @@ test('bootstrap with no launch params resumes attempt from resume flag localId',
   assert.equal(session.state.answers.q1.value, 'saved answer');
 });
 
-test('bootstrap with no launch params gracefully falls back when resume flag attempt is missing', async () => {
+test('bootstrap with no launch params errors with NO_CONTENT_SOURCE when resume flag attempt is missing', async () => {
   const mod = await loadViewerModule({
     window: {
       location: {
@@ -866,12 +867,7 @@ test('bootstrap with no launch params gracefully falls back when resume flag att
     resumeFlags: { get: () => ({ localId: 'attempt_missing' }), set: () => {} },
   });
 
-  await session.bootstrap();
-  clearTimeout(session.autosaveTimer);
-
-  assert.equal(session.state.localAttemptId.startsWith('attempt_'), true);
-  assert.equal(session.state.source, 'inline_payload');
-  assert.equal(session.state.viewerPayload.title, 'Local worksheet');
+  await assert.rejects(() => session.bootstrap(), (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE);
 });
 
 test('bootstrap prefers localDraftId preview over resume flag session', async () => {
@@ -1009,7 +1005,7 @@ test('tryResumeAttempt reconstructs payload from source metadata and overlays ma
   assert.equal(session.state.studentName, 'Casey Student');
 });
 
-test('bootstrap starts fresh preview attempt when draft freshness marker mismatches resumed attempt', async () => {
+test('bootstrap hard-fails when explicit localAttemptId cannot resume even with preview params', async () => {
   const mod = await loadViewerModule({
     window: {
       location: {
@@ -1044,16 +1040,13 @@ test('bootstrap starts fresh preview attempt when draft freshness marker mismatc
     resumeFlags: { get: () => null, set: () => {} },
   });
 
-  await session.bootstrap();
-  clearTimeout(session.autosaveTimer);
-
-  assert.equal(session.state.source, 'local_draft_preview');
-  assert.equal(session.state.viewerPayload.worksheetId, 'draft_latest');
-  assert.equal(session.state.answers.q1, undefined);
-  assert.equal(session.state.sourceDraftUpdatedAt, '2026-03-31T10:00:00.000Z');
+  await assert.rejects(
+    () => session.bootstrap(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.LOCAL_ATTEMPT_RESUME_FAILED
+  );
 });
 
-test('bootstrap sets clear recovery warning when explicit localAttemptId cannot be resumed', async () => {
+test('bootstrap hard-fails when explicit localAttemptId cannot be resumed', async () => {
   const mod = await loadViewerModule({
     window: { location: { search: '?localAttemptId=missing_attempt' } },
   });
@@ -1064,10 +1057,10 @@ test('bootstrap sets clear recovery warning when explicit localAttemptId cannot 
     resumeFlags: { get: () => null, set: () => {} },
   });
 
-  await session.bootstrap();
-  clearTimeout(session.autosaveTimer);
-
-  assert.match(session.state.recoveryMessage, /Unable to resume attempt missing_attempt/);
+  await assert.rejects(
+    () => session.bootstrap(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.LOCAL_ATTEMPT_RESUME_FAILED
+  );
 });
 
 test('createLocalAttemptState persists sourceDraftUpdatedAt in attempt metadata', async () => {
@@ -1466,6 +1459,11 @@ function createFakeDom() {
       this.children.push(...nodes);
     }
 
+    appendChild(node) {
+      this.children.push(node);
+      return node;
+    }
+
     addEventListener(type, handler) {
       const existing = this.listeners.get(type) || [];
       existing.push(handler);
@@ -1603,4 +1601,161 @@ test('bootstrapViewer falls back to start panel with warning when resume flag re
   const panel = appRoot.children[0];
   const statusNode = panel.children.find((child) => child.className === 'viewer-start-error');
   assert.match(statusNode.textContent, /couldn't restore your previous session/i);
+});
+
+
+test('bootstrap hard-fails with parse-specific errors for malformed explicit payload params', async () => {
+  const mod = await loadViewerModule({
+    window: { location: { search: '?viewerPayload=@@bad@@' } },
+  });
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(
+    () => session.bootstrap(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.VIEWER_PAYLOAD_PARSE_FAILED
+  );
+
+  const snapshotMod = await loadViewerModule({
+    window: { location: { search: '?snapshot=@@bad@@' } },
+  });
+  const snapshotSession = new snapshotMod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await assert.rejects(
+    () => snapshotSession.bootstrap(),
+    (error) => error?.code === snapshotMod.VIEWER_BOOT_ERROR_CODES.SNAPSHOT_PARSE_FAILED
+  );
+});
+
+test('bootstrap hard-fails with typed not-found errors for explicit localDraftId/importedWorksheetId', async () => {
+  const mod = await loadViewerModule({
+    window: { location: { search: '?localDraftId=draft_missing' } },
+  });
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(
+    () => session.bootstrap(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.LOCAL_DRAFT_NOT_FOUND
+  );
+
+  const importedMod = await loadViewerModule({
+    window: { location: { search: '?importedWorksheetId=import_missing' } },
+  });
+  const importedSession = new importedMod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await assert.rejects(
+    () => importedSession.bootstrap(),
+    (error) => error?.code === importedMod.VIEWER_BOOT_ERROR_CODES.IMPORTED_WORKSHEET_NOT_FOUND
+  );
+});
+
+test('bootstrap maps payload schema validation failures to INVALID_VIEWER_PAYLOAD', async () => {
+  const mod = await loadViewerModule({
+    window: { location: { search: '?viewerPayload=%7B%22blocks%22%3A%5B%7B%22kind%22%3A%22question%22%2C%22position%22%3A0%2C%22prompt%22%3A%7B%22text%22%3A%22Q%22%7D%2C%22responseConfig%22%3A%7B%7D%7D%5D%7D' } },
+    validateViewerPayloadSchema: () => ({ valid: false, errors: ['missing worksheetId'] }),
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(
+    () => session.bootstrap(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.INVALID_VIEWER_PAYLOAD
+  );
+});
+
+test('bootstrapViewer renders start panel recovery warning for authReturn without restorable state and no content params', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  class FakeAuthGate {
+    constructor({ onRecoveryMessage }) {
+      this.onRecoveryMessage = onRecoveryMessage;
+    }
+    async restoreAfterAuthReturn() {
+      if (this.onRecoveryMessage) {
+        this.onRecoveryMessage('Session restore failed after sign-in.');
+      }
+      return { status: 'restore_failed' };
+    }
+  }
+
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/?authReturn=1', search: '?authReturn=1' },
+      history: { replaceState: () => {} },
+    },
+    SharedAuthGate: FakeAuthGate,
+    renderViewerShell: () => {
+      throw new Error('should not render shell for missing auth-return restore state');
+    },
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+  const panel = appRoot.children[0];
+  const statusNode = panel.children.find((child) => child.className === 'viewer-start-error');
+  assert.match(statusNode.textContent, /restore failed/i);
+});
+
+test('bootstrapViewer renders fatal panel for explicit localAttemptId resume failure and does not create synthetic attempt', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  let putCalls = 0;
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/?localAttemptId=missing_attempt', search: '?localAttemptId=missing_attempt' },
+      history: { replaceState: () => {} },
+    },
+    renderViewerShell: () => {
+      throw new Error('should not render shell');
+    },
+    viewerStorage: {
+      attempts: {
+        get: async () => null,
+        put: async (value) => { putCalls += 1; return value; },
+      },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await assert.rejects(async () => {
+    try {
+      await mod.bootstrapViewer();
+    } catch (error) {
+      mod.renderViewerFatalError(error);
+      throw error;
+    }
+  }, (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.LOCAL_ATTEMPT_RESUME_FAILED);
+
+  const panel = appRoot.children[0];
+  assert.equal(panel.className, 'viewer-fatal-panel');
+  assert.equal(putCalls, 0);
 });

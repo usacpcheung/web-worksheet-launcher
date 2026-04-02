@@ -160,6 +160,38 @@ When present on question blocks, `correctAnswer` must match the response input s
 - switching `single → multi` converts a valid single `correctAnswer` string to a one-element array
 - switching `multi → single` keeps only the first valid array entry as the single `correctAnswer`; if none are valid, `correctAnswer` is removed
 
+
+## Viewer launch failure semantics and precedence (deterministic contract)
+
+Viewer launch for `/viewer/` follows strict intent precedence and failure handling:
+
+1. `localAttemptId` (resume existing local attempt)
+2. `viewerPayload` (inline payload)
+3. `snapshot` (snapshot-derived payload)
+4. `importedWorksheetId` (imported worksheet lookup)
+5. `localDraftId` (draft lookup; includes preview mode when paired with `preview=1`)
+
+Deterministic behavior requirements:
+
+- **No explicit launch params present** (`localAttemptId`, `localDraftId`, `importedWorksheetId`, `viewerPayload`, `snapshot`) must render the viewer start/import UX only.
+- **Any explicit launch param present** must either:
+  - load valid viewer content, or
+  - fail as a typed fatal launch error in viewer UI.
+- Viewer must **never synthesize worksheet content** as a fallback when explicit launch intent fails.
+
+Explicit-parameter fatal error rules:
+
+- `localAttemptId`: if the explicit resume target is missing/corrupt/unreadable, launch fails fatally (no source fallback).
+- `viewerPayload` / `snapshot`: if present but unparseable, launch fails with parse-specific fatal error.
+- `localDraftId` / `importedWorksheetId`: if record lookup fails, launch fails with typed not-found fatal error.
+- Any payload schema validation failure is a typed invalid-payload fatal error.
+
+Auth-return behavior (`authReturn=1`):
+
+- If auth-return restore succeeds with restorable state, viewer continues.
+- If auth-return restore does not recover state **and** no real content intent params are present, viewer renders start/import UX with recovery guidance.
+- If real content intent params are present, normal explicit launch validation/fatal semantics above apply.
+
 ## 1) Launch query contract
 
 The popup URL query string **must** follow:

@@ -14,6 +14,69 @@ const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
 let activeViewerShellAbortController = null;
 
+
+const VIEWER_BOOT_ERROR_CODES = Object.freeze({
+  NO_CONTENT_SOURCE: 'NO_CONTENT_SOURCE',
+  LOCAL_ATTEMPT_RESUME_FAILED: 'LOCAL_ATTEMPT_RESUME_FAILED',
+  VIEWER_PAYLOAD_PARSE_FAILED: 'VIEWER_PAYLOAD_PARSE_FAILED',
+  SNAPSHOT_PARSE_FAILED: 'SNAPSHOT_PARSE_FAILED',
+  LOCAL_DRAFT_NOT_FOUND: 'LOCAL_DRAFT_NOT_FOUND',
+  IMPORTED_WORKSHEET_NOT_FOUND: 'IMPORTED_WORKSHEET_NOT_FOUND',
+  INVALID_VIEWER_PAYLOAD: 'INVALID_VIEWER_PAYLOAD',
+});
+
+class ViewerBootError extends Error {
+  constructor(code, options = {}) {
+    super(options.technicalMessage || options.message || code);
+    this.name = 'ViewerBootError';
+    this.code = code;
+    this.userMessage = options.userMessage || 'Viewer could not be started.';
+    this.technicalMessage = options.technicalMessage || this.message;
+    this.recoveryActions = Array.isArray(options.recoveryActions)
+      ? options.recoveryActions
+      : [
+        'Reopen the viewer from a valid worksheet link.',
+        'Import worksheet JSON again from the start panel.',
+        'Go back and launch viewer again.',
+      ];
+    this.cause = options.cause;
+  }
+}
+
+function asViewerBootError(error) {
+  if (error instanceof ViewerBootError) {
+    return error;
+  }
+  return new ViewerBootError('VIEWER_BOOT_FAILED', {
+    userMessage: 'Viewer failed to initialize due to an unexpected error.',
+    technicalMessage: error?.message || 'Unknown boot error',
+    cause: error,
+  });
+}
+
+function parseLaunchParamJson(params, key, parseErrorCode) {
+  if (!params.has(key)) {
+    return { present: false, value: null };
+  }
+  const rawValue = params.get(key);
+  if (!rawValue) {
+    throw new ViewerBootError(parseErrorCode, {
+      userMessage: `The ${key} launch parameter could not be read.`,
+      technicalMessage: `${key} is present but empty or malformed.`,
+    });
+  }
+
+  const parsed = maybeParseEncodedJson(rawValue);
+  if (!parsed) {
+    throw new ViewerBootError(parseErrorCode, {
+      userMessage: `The ${key} launch parameter is invalid or corrupted.`,
+      technicalMessage: `${key} could not be parsed as JSON or base64url JSON.`,
+    });
+  }
+
+  return { present: true, value: parsed };
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -753,7 +816,10 @@ class ViewerAttemptSession {
     const validation = validateViewerPayloadSchema(payload);
     this.state.payloadValidationErrors = validation.errors;
     if (!validation.valid) {
-      throw new Error(`Viewer payload validation failed: ${validation.errors.join('; ')}`);
+      throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.INVALID_VIEWER_PAYLOAD, {
+        userMessage: 'The worksheet content is invalid and cannot be opened in viewer.',
+        technicalMessage: `Viewer payload validation failed: ${validation.errors.join('; ')}`,
+      });
     }
     return validation;
   }
@@ -778,7 +844,10 @@ class ViewerAttemptSession {
         this.persistResumeMetadata();
         return this.state;
       }
-      this.state.recoveryMessage = `Unable to resume attempt ${explicitAttemptId}. Starting a new worksheet session.`;
+      throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.LOCAL_ATTEMPT_RESUME_FAILED, {
+        userMessage: 'We could not restore the requested local attempt.',
+        technicalMessage: `Unable to resume explicit localAttemptId=${explicitAttemptId}.`,
+      });
     }
 
     if (!hasExplicitContentIntent) {
@@ -877,7 +946,10 @@ class ViewerAttemptSession {
     if (previewIntent?.localDraftId && previewIntent?.preview) {
       const draftRecord = await this.storage.drafts.get(previewIntent.localDraftId);
       if (!draftRecord) {
-        throw new Error(`Local draft not found for localId=${previewIntent.localDraftId}`);
+        throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.LOCAL_DRAFT_NOT_FOUND, {
+          userMessage: 'The requested local draft was not found.',
+          technicalMessage: `Local draft not found for localId=${previewIntent.localDraftId}`,
+        });
       }
 
       return {
@@ -888,9 +960,10 @@ class ViewerAttemptSession {
       };
     }
 
-    const inlinePayload =
-      maybeParseEncodedJson(params.get('viewerPayload')) ||
-      (typeof window !== 'undefined' ? parseJsonInput(window.__VIEWER_PAYLOAD__) : null);
+    const viewerPayloadParam = parseLaunchParamJson(params, 'viewerPayload', VIEWER_BOOT_ERROR_CODES.VIEWER_PAYLOAD_PARSE_FAILED);
+    const inlinePayload = viewerPayloadParam.present
+      ? viewerPayloadParam.value
+      : (typeof window !== 'undefined' ? parseJsonInput(window.__VIEWER_PAYLOAD__) : null);
 
     if (inlinePayload) {
       return {
@@ -899,11 +972,11 @@ class ViewerAttemptSession {
       };
     }
 
-    const snapshotPayload = maybeParseEncodedJson(params.get('snapshot'));
-    if (snapshotPayload) {
+    const snapshotParam = parseLaunchParamJson(params, 'snapshot', VIEWER_BOOT_ERROR_CODES.SNAPSHOT_PARSE_FAILED);
+    if (snapshotParam.present) {
       return {
         sourceType: 'snapshot_derived',
-        payload: normalizeViewerPayload(mapSnapshotToViewerPayload(snapshotPayload), 'Snapshot worksheet'),
+        payload: normalizeViewerPayload(mapSnapshotToViewerPayload(snapshotParam.value), 'Snapshot worksheet'),
       };
     }
 
@@ -911,7 +984,10 @@ class ViewerAttemptSession {
     if (importedWorksheetId) {
       const importedRecord = await this.storage.importedWorksheets.get(importedWorksheetId);
       if (!importedRecord) {
-        throw new Error(`Imported worksheet not found for localId=${importedWorksheetId}`);
+        throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.IMPORTED_WORKSHEET_NOT_FOUND, {
+          userMessage: 'The imported worksheet could not be found.',
+          technicalMessage: `Imported worksheet not found for localId=${importedWorksheetId}`,
+        });
       }
 
       return {
@@ -925,7 +1001,10 @@ class ViewerAttemptSession {
     if (localDraftId) {
       const draftRecord = await this.storage.drafts.get(localDraftId);
       if (!draftRecord) {
-        throw new Error(`Local draft not found for localId=${localDraftId}`);
+        throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.LOCAL_DRAFT_NOT_FOUND, {
+          userMessage: 'The requested local draft was not found.',
+          technicalMessage: `Local draft not found for localId=${localDraftId}`,
+        });
       }
 
       return {
@@ -936,34 +1015,10 @@ class ViewerAttemptSession {
       };
     }
 
-    return {
-      sourceType: 'inline_payload',
-      payload: normalizeViewerPayload(
-        {
-          worksheetId: createLocalId('ws'),
-          snapshotId: createLocalId('snapshot_local'),
-          snapshotVersion: 1,
-          title: 'Local worksheet',
-          blocks: [
-            {
-              blockId: createLocalId('q'),
-              kind: 'question',
-              position: 0,
-              prompt: {
-                text: 'Type your answer to start a local attempt.',
-                format: 'plain_text',
-              },
-              responseConfig: {
-                inputType: 'text',
-                maxLength: 200,
-                displayMode: 'multi_line',
-              },
-            },
-          ],
-        },
-        'Local worksheet'
-      ),
-    };
+    throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE, {
+      userMessage: 'No worksheet launch content was provided.',
+      technicalMessage: 'No viewer launch parameter was provided (localAttemptId/localDraftId/importedWorksheetId/viewerPayload/snapshot).',
+    });
   }
 
   async reconstructViewerPayloadFromAttempt(attemptRecord = {}) {
@@ -2227,6 +2282,48 @@ function renderViewerShell(session) {
   renderUI();
 }
 
+
+function renderViewerFatalError(error) {
+  if (!app || !bottomBarRoot) {
+    return;
+  }
+  const bootError = asViewerBootError(error);
+  const panel = document.createElement('section');
+  panel.className = 'viewer-fatal-panel';
+
+  const heading = document.createElement('h1');
+  heading.textContent = 'Unable to open worksheet viewer';
+
+  const message = document.createElement('p');
+  message.className = 'viewer-fatal-panel__message';
+  message.textContent = bootError.userMessage;
+
+  const actionsHeading = document.createElement('h2');
+  actionsHeading.className = 'viewer-fatal-panel__subheading';
+  actionsHeading.textContent = 'What you can do';
+
+  const actions = document.createElement('ul');
+  actions.className = 'viewer-fatal-panel__actions';
+  bootError.recoveryActions.forEach((actionText) => {
+    const item = document.createElement('li');
+    item.textContent = actionText;
+    actions.appendChild(item);
+  });
+
+  const details = document.createElement('details');
+  details.className = 'viewer-fatal-panel__details';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Technical details';
+  const detailBody = document.createElement('pre');
+  detailBody.textContent = `${bootError.code}: ${bootError.technicalMessage}`;
+  details.append(summary, detailBody);
+
+  panel.append(heading, message, actionsHeading, actions, details);
+  app.innerHTML = '';
+  bottomBarRoot.innerHTML = '';
+  app.append(panel);
+}
+
 function renderViewerStartPanel(session, options = {}) {
   if (!app || !bottomBarRoot) {
     return;
@@ -2344,10 +2441,30 @@ async function bootstrapViewer() {
     return;
   }
 
+  const hasRealContentIntent =
+    params.has('localAttemptId')
+    || params.has('localDraftId')
+    || params.has('viewerPayload')
+    || params.has('snapshot')
+    || params.has('importedWorksheetId');
+
   if (hasAuthReturn) {
     const restoreResult = await authGate.restoreAfterAuthReturn();
-    // Bootstrap when there is no pending intent to restore, or when restore did not load
-    // a local record (e.g. restore_failed, missing_local_id, not_authenticated).
+    if (session.state.viewerPayload) {
+      renderViewerShell(session);
+      window.viewerSession = session;
+      return;
+    }
+
+    if (!hasRealContentIntent) {
+      session.setRecoveryMessage(
+        session.state.recoveryMessage
+        || 'We could not restore your previous auth-return session. Reopen a valid worksheet link or import worksheet JSON again.'
+      );
+      renderViewerStartPanel(session, { warningMessage: session.state.recoveryMessage });
+      return;
+    }
+
     if (restoreResult.status === 'no_pending_intent' || !session.state.viewerPayload) {
       await session.bootstrap();
     }
@@ -2361,9 +2478,7 @@ async function bootstrapViewer() {
 
 bootstrapViewer().catch((error) => {
   console.error('Failed to bootstrap viewer', error);
-  if (app) {
-    app.textContent = `Viewer failed to boot: ${error.message}`;
-  }
+  renderViewerFatalError(error);
 });
 
 export {
@@ -2387,4 +2502,7 @@ export {
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
+  renderViewerFatalError,
+  ViewerBootError,
+  VIEWER_BOOT_ERROR_CODES,
 };

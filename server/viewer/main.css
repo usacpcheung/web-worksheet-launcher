@@ -907,3 +907,51 @@ input[type='text']::placeholder {
     min-width: 0;
   }
 }
+
+.viewer-fatal-panel {
+  background: #fff;
+  border: 1px solid #fecdca;
+  border-left: 6px solid #d92d20;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 8%);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 760px;
+}
+
+.viewer-fatal-panel h1,
+.viewer-fatal-panel h2 {
+  margin: 0;
+}
+
+.viewer-fatal-panel__message {
+  margin: 0;
+  color: #344054;
+}
+
+.viewer-fatal-panel__subheading {
+  font-size: 1rem;
+}
+
+.viewer-fatal-panel__actions {
+  margin: 0;
+  padding-left: 20px;
+  color: #344054;
+}
+
+.viewer-fatal-panel__details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.viewer-fatal-panel__details pre {
+  margin: 8px 0 0;
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  padding: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
