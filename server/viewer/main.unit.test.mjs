@@ -1481,10 +1481,10 @@ test('renderCurrentBlockCard signature includes grading-derived fields and guard
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
 
   assert.equal(source.includes('hasGlobalCheckResult = session.state.checkResult !== null;'), true);
-  assert.equal(source.includes('currentBlockIsGradeable = isGradeableQuestionBlock(currentBlock);'), true);
-  assert.equal(source.includes('currentBlockCheckResult = currentBlock?.blockId'), true);
-  assert.equal(source.includes('currentBlockCheckResult: hasCurrentBlockCheckResult ? currentBlockCheckResult : null,'), true);
-  assert.equal(source.includes('const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsGradeable && hasCurrentBlockCheckResult;'), true);
+  assert.equal(source.includes('currentBlockIsCheckable = isCheckableQuestionBlock(currentBlock);'), true);
+  assert.equal(source.includes('currentBlockCheckStatus = currentBlock?.blockId'), true);
+  assert.equal(source.includes('currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,'), true);
+  assert.equal(source.includes('const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;'), true);
   assert.equal(source.includes('if (shouldShowCheckFeedback) {'), true);
 });
 test('number rendering branch avoids text input min/max attributes and uses pattern hint', async () => {
@@ -2134,8 +2134,15 @@ test('computeCheckResult grades only supported input types with correctAnswer', 
   });
 
   assert.deepEqual(Object.keys(result.byBlockId).sort(), ['q_bool', 'q_multi', 'q_number']);
+  assert.deepEqual(result.statusByBlockId, {
+    q_multi: 'correct',
+    q_bool: 'correct',
+    q_number: 'correct',
+    q_missing: 'ungraded_missing_key',
+  });
   assert.equal(result.correctCount, 3);
   assert.equal(result.totalQuestions, 3);
+  assert.equal(Object.hasOwn(result, 'ungradedCount'), false);
 });
 
 test('computeCheckResult does not treat unanswered number input as 0 when correctAnswer is 0', async () => {
@@ -2170,22 +2177,69 @@ test('getCheckRevealMessage uses explicit fallback when learner answer is empty'
   const mod = await loadViewerModule();
 
   const incorrectEmpty = mod.getCheckRevealMessage({
-    isCorrect: false,
+    status: 'incorrect',
     learnerAnswerText: '',
     correctAnswerText: 'A, B',
   });
   const incorrectWhitespace = mod.getCheckRevealMessage({
-    isCorrect: false,
+    status: 'incorrect',
     learnerAnswerText: '   ',
     correctAnswerText: 'True',
   });
   const correct = mod.getCheckRevealMessage({
-    isCorrect: true,
+    status: 'correct',
     learnerAnswerText: '',
     correctAnswerText: '4',
+  });
+  const ungradedMissingKey = mod.getCheckRevealMessage({
+    status: 'ungraded_missing_key',
+    learnerAnswerText: '',
+    correctAnswerText: '',
   });
 
   assert.equal(incorrectEmpty, 'Your answer was: No answer submitted · Correct answer: A, B');
   assert.equal(incorrectWhitespace, 'Your answer was: No answer submitted · Correct answer: True');
   assert.equal(correct, 'Correct answer: 4');
+  assert.equal(ungradedMissingKey, 'Your answer was: No answer submitted');
+});
+
+test('computeCheckResult marks gradeable missing key questions as ungraded without changing summary fields', async () => {
+  const mod = await loadViewerModule();
+
+  const viewerPayload = {
+    blocks: [
+      {
+        blockId: 'q_missing_key',
+        kind: 'question',
+        responseConfig: { inputType: 'number' },
+      },
+      {
+        blockId: 'q_graded',
+        kind: 'question',
+        responseConfig: { inputType: 'boolean', correctAnswer: true },
+      },
+    ],
+  };
+
+  const result = mod.computeCheckResult(viewerPayload, {
+    q_missing_key: { value: '12' },
+    q_graded: { value: false },
+  });
+
+  assert.equal(result.byBlockId.q_missing_key, undefined);
+  assert.equal(result.statusByBlockId.q_missing_key, 'ungraded_missing_key');
+  assert.equal(result.statusByBlockId.q_graded, 'incorrect');
+  assert.deepEqual(Object.keys(result).sort(), ['byBlockId', 'correctCount', 'statusByBlockId', 'totalQuestions']);
+  assert.equal(result.correctCount, 0);
+  assert.equal(result.totalQuestions, 1);
+});
+
+test('render check feedback includes neutral ungraded banner copy and learner answer fallback', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+
+  assert.equal(source.includes("checkTitle.textContent = isCorrect ? 'Correct' : isIncorrect ? 'Incorrect' : 'Not graded';"), true);
+  assert.equal(source.includes("'Answer key missing for this question.'"), true);
+  assert.equal(source.includes("status: checkStatus,"), true);
+  assert.equal(source.includes("correctAnswerText: isUngradedMissingKey ? '' : formatCorrectAnswer(),"), true);
+  assert.equal(source.includes("'Your answer was: No answer submitted'"), true);
 });
