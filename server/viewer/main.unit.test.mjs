@@ -14,7 +14,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex };'
   );
 
   globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
@@ -849,7 +849,7 @@ test('bootstrap with no launch params gracefully falls back when resume flag att
   clearTimeout(session.autosaveTimer);
 
   assert.equal(session.state.localAttemptId.startsWith('attempt_'), true);
-  assert.equal(session.state.source, 'local_source');
+  assert.equal(session.state.source, 'inline_payload');
   assert.equal(session.state.viewerPayload.title, 'Local worksheet');
 });
 
@@ -946,6 +946,48 @@ test('bootstrap resumes explicit localAttemptId before loading draft sources', a
   assert.equal(session.state.answers.q1.value, 'saved');
 });
 
+test('tryResumeAttempt reconstructs payload from source metadata and overlays matching answers only', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => ({
+        localId: 'attempt_src',
+        sourceType: 'local_draft',
+        sourceLocalDraftId: 'draft_1',
+        viewerPayload: {
+          worksheetId: 'legacy_ws',
+          snapshotId: 'legacy_snap',
+          blocks: [{ blockId: 'legacy_q', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: {} }],
+        },
+        answers: {
+          q1: { value: 'answer-1' },
+          orphan: { value: 'should-drop' },
+        },
+        studentName: 'Casey Student',
+      }),
+    },
+    drafts: {
+      get: async () => ({
+        localId: 'draft_1',
+        title: 'Fresh draft',
+        blocks: [
+          { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} },
+          { blockId: 'q2', kind: 'question', position: 1, prompt: { text: 'Q2' }, responseConfig: {} },
+        ],
+      }),
+    },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  const resumed = await session.tryResumeAttempt('attempt_src');
+  assert.equal(resumed, true);
+  assert.equal(session.state.viewerPayload.worksheetId, 'draft_1');
+  assert.equal(session.state.answers.q1.value, 'answer-1');
+  assert.equal(session.state.answers.orphan, undefined);
+  assert.equal(session.state.studentName, 'Casey Student');
+});
+
 test('bootstrap starts fresh preview attempt when draft freshness marker mismatches resumed attempt', async () => {
   const mod = await loadViewerModule({
     window: {
@@ -990,6 +1032,23 @@ test('bootstrap starts fresh preview attempt when draft freshness marker mismatc
   assert.equal(session.state.sourceDraftUpdatedAt, '2026-03-31T10:00:00.000Z');
 });
 
+test('bootstrap sets clear recovery warning when explicit localAttemptId cannot be resumed', async () => {
+  const mod = await loadViewerModule({
+    window: { location: { search: '?localAttemptId=missing_attempt' } },
+  });
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.bootstrap();
+  clearTimeout(session.autosaveTimer);
+
+  assert.match(session.state.recoveryMessage, /Unable to resume attempt missing_attempt/);
+});
+
 test('createLocalAttemptState persists sourceDraftUpdatedAt in attempt metadata', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
@@ -1005,9 +1064,88 @@ test('createLocalAttemptState persists sourceDraftUpdatedAt in attempt metadata'
   });
   const attempt = session.createLocalAttemptState(payload, 'local_draft_preview', {
     sourceDraftUpdatedAt: '2026-03-31T11:00:00.000Z',
+    sourceLocalDraftId: 'draft_11',
   });
 
   assert.equal(attempt.metadata.sourceDraftUpdatedAt, '2026-03-31T11:00:00.000Z');
+  assert.equal(attempt.sourceType, 'local_draft_preview');
+  assert.equal(attempt.sourceLocalDraftId, 'draft_11');
+  assert.equal(attempt.worksheetId, 'ws_1');
+  assert.equal(attempt.snapshotId, 'snap_1');
+});
+
+test('autosave persists new attempt linkage fields', async () => {
+  const mod = await loadViewerModule();
+  let persisted = null;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => { persisted = value; return value; } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  };
+  session.state.sourceType = 'imported_worksheet';
+  session.state.sourceImportedWorksheetId = 'imported_1';
+  session.state.studentName = 'Student A';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.lastActiveIndex = 0;
+  session.state.attemptRevision = 1;
+
+  await session.autosave();
+  assert.equal(persisted.sourceType, 'imported_worksheet');
+  assert.equal(persisted.sourceImportedWorksheetId, 'imported_1');
+  assert.equal(persisted.studentName, 'Student A');
+  assert.equal(persisted.lastActiveBlockId, 'q1');
+});
+
+test('computeResumeStartBlockIndex prioritizes lastActiveBlockId then first unanswered then zero', async () => {
+  const mod = await loadViewerModule();
+  const payload = {
+    blocks: [
+      { blockId: 'q1', kind: 'question', position: 0 },
+      { blockId: 'q2', kind: 'question', position: 1 },
+      { blockId: 'q3', kind: 'question', position: 2 },
+    ],
+  };
+
+  assert.equal(mod.computeResumeStartBlockIndex(payload, {}, { lastActiveBlockId: 'q2' }), 1);
+  assert.equal(mod.computeResumeStartBlockIndex(payload, { q1: { value: 'done' } }, {}), 1);
+  assert.equal(mod.computeResumeStartBlockIndex(payload, {
+    q1: { value: 'done' }, q2: { value: 'done' }, q3: { value: 'done' },
+  }, {}), 0);
+});
+
+test('tryResumeAttempt supports legacy schema by falling back to stored viewerPayload and localStorage student name', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      localStorage: { getItem: (key) => (key === 'viewer:studentName' ? 'Legacy Name' : null) },
+    },
+  });
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => ({
+        localId: 'attempt_legacy',
+        viewerPayload: {
+          worksheetId: 'ws_legacy',
+          snapshotId: 'snap_legacy',
+          blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+        },
+        answers: { q1: { value: 'legacy answer' } },
+        metadata: { origin: 'local_source' },
+      }),
+    },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  const resumed = await session.tryResumeAttempt('attempt_legacy');
+  assert.equal(resumed, true);
+  assert.equal(session.state.viewerPayload.worksheetId, 'ws_legacy');
+  assert.equal(session.state.studentName, 'Legacy Name');
 });
 
 test('partitionBlocksForDisplay returns ordered content and question sets', async () => {
