@@ -211,6 +211,29 @@ function normalizeViewerBlock(block, index) {
         : [];
     }
 
+    if (Object.hasOwn(responseConfigSource, 'correctAnswer')) {
+      if (inputType === 'number') {
+        const normalizedCorrectAnswer = coerceAnswerValueByInputType('number', responseConfigSource.correctAnswer);
+        if (normalizedCorrectAnswer !== '') {
+          normalizedResponseConfig.correctAnswer = normalizedCorrectAnswer;
+        }
+      } else if (inputType === 'boolean') {
+        const normalizedCorrectAnswer = coerceAnswerValueByInputType('boolean', responseConfigSource.correctAnswer);
+        if (normalizedCorrectAnswer === true || normalizedCorrectAnswer === false) {
+          normalizedResponseConfig.correctAnswer = normalizedCorrectAnswer;
+        }
+      } else if (inputType === 'multiple_choice') {
+        if (normalizedResponseConfig.selectionMode === 'multi') {
+          const normalizedCorrectAnswer = normalizeMultiSelectValues(responseConfigSource.correctAnswer);
+          if (Array.isArray(responseConfigSource.correctAnswer) && normalizedCorrectAnswer.length > 0) {
+            normalizedResponseConfig.correctAnswer = normalizedCorrectAnswer;
+          }
+        } else if (typeof responseConfigSource.correctAnswer === 'string') {
+          normalizedResponseConfig.correctAnswer = String(responseConfigSource.correctAnswer);
+        }
+      }
+    }
+
     return {
       ...base,
       prompt: {
@@ -592,7 +615,7 @@ function hasValidCorrectAnswer(responseConfig) {
       if (!Array.isArray(correctAnswer)) {
         return false;
       }
-      return correctAnswer.every((value) => typeof value === 'string');
+      return correctAnswer.length > 0 && correctAnswer.every((value) => typeof value === 'string');
     }
 
     return typeof correctAnswer === 'string';
@@ -611,20 +634,40 @@ function isGradeableQuestionBlock(block) {
   return hasValidCorrectAnswer(responseConfig);
 }
 
+function isSupportedCheckInputType(inputType) {
+  return inputType === 'multiple_choice' || inputType === 'boolean' || inputType === 'number';
+}
+
+function isSupportedCheckQuestionBlock(block) {
+  if (block?.kind !== 'question') {
+    return false;
+  }
+
+  return isSupportedCheckInputType(block?.responseConfig?.inputType);
+}
+
 function hasGradeableQuestions(viewerPayload) {
   return Array.isArray(viewerPayload?.blocks) && viewerPayload.blocks.some((block) => isGradeableQuestionBlock(block));
 }
 
 function computeCheckResult(viewerPayload, answers) {
-  const gradeableQuestions = Array.isArray(viewerPayload?.blocks)
-    ? viewerPayload.blocks.filter((block) => isGradeableQuestionBlock(block))
+  const checkableQuestions = Array.isArray(viewerPayload?.blocks)
+    ? viewerPayload.blocks.filter((block) => isSupportedCheckQuestionBlock(block))
     : [];
 
   const byBlockId = {};
+  const statusByBlockId = {};
   let correctCount = 0;
+  let totalQuestions = 0;
 
-  gradeableQuestions.forEach((block) => {
+  checkableQuestions.forEach((block) => {
     const inputType = block?.responseConfig?.inputType || 'text';
+    const hasValidAnswerKey = hasValidCorrectAnswer(block?.responseConfig);
+    if (!hasValidAnswerKey) {
+      statusByBlockId[block.blockId] = 'ungraded_missing_or_invalid_key';
+      return;
+    }
+
     const selectionMode = block?.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
     const learnerValue = answers?.[block.blockId]?.value;
     const correctAnswer = block?.responseConfig?.correctAnswer;
@@ -652,6 +695,8 @@ function computeCheckResult(viewerPayload, answers) {
     }
 
     byBlockId[block.blockId] = isCorrect;
+    statusByBlockId[block.blockId] = isCorrect ? 'correct' : 'incorrect';
+    totalQuestions += 1;
     if (isCorrect) {
       correctCount += 1;
     }
@@ -659,9 +704,29 @@ function computeCheckResult(viewerPayload, answers) {
 
   return {
     byBlockId,
+    statusByBlockId,
     correctCount,
-    totalQuestions: gradeableQuestions.length,
+    totalQuestions,
   };
+}
+
+function getCheckRevealMessage({ status, learnerAnswerText, correctAnswerText }) {
+  const normalizedLearnerAnswer = typeof learnerAnswerText === 'string'
+    ? learnerAnswerText.trim()
+    : '';
+  const learnerClause = normalizedLearnerAnswer.length > 0
+    ? `Your answer was: ${normalizedLearnerAnswer}`
+    : 'Your answer was: No answer submitted';
+
+  if (status === 'correct') {
+    return `Correct answer: ${correctAnswerText}`;
+  }
+
+  if (status === 'ungraded_missing_or_invalid_key' || status === 'ungraded_missing_key') {
+    return learnerClause;
+  }
+
+  return `${learnerClause} · Correct answer: ${correctAnswerText}`;
 }
 
 function computeAnswerSummary(viewerPayload, answers) {
@@ -1258,6 +1323,7 @@ class ViewerAttemptSession {
     this.state.lastFinalizeError = null;
     this.state.status = 'completed';
     this.state.completedAt = nowIso();
+    this.state.checkResult = null;
     this.state.attemptRevision += 1;
     this.persistResumeMetadata();
     this.notifyStateChange();
@@ -1281,6 +1347,16 @@ class ViewerAttemptSession {
       this.state.isFinalizing = false;
       this.notifyStateChange();
     }
+  }
+
+  checkAnswers() {
+    if (this.state.isFinalizing || this.state.status !== 'completed' || !this.state.viewerPayload) {
+      return null;
+    }
+
+    this.state.checkResult = computeCheckResult(this.state.viewerPayload, this.state.answers || {});
+    this.notifyStateChange();
+    return this.state.checkResult;
   }
 
   scheduleAutosave() {
@@ -1562,6 +1638,9 @@ function renderViewerShell(session) {
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
   completeBtn.textContent = 'Submit';
+  const checkBtn = document.createElement('button');
+  checkBtn.type = 'button';
+  checkBtn.textContent = 'Check Answer';
 
   const utilityMenu = document.createElement('div');
   utilityMenu.className = 'viewer-utility-menu';
@@ -1654,8 +1733,12 @@ function renderViewerShell(session) {
     await session.completeLocalAttempt();
     renderUI();
   });
+  checkBtn.addEventListener('click', () => {
+    session.checkAnswers();
+    renderUI();
+  });
   leftZone.append(saveBtn);
-  rightZone.append(completeBtn);
+  rightZone.append(completeBtn, checkBtn);
   bottomBarInner.append(leftZone, navActions, rightZone);
   bottomBar.append(bottomBarInner);
 
@@ -2046,13 +2129,13 @@ function renderViewerShell(session) {
   };
 
   const renderCurrentBlockCard = (currentBlock) => {
-    const currentBlockCheckResult = currentBlock?.blockId
-      ? session.state.checkResult?.byBlockId?.[currentBlock.blockId]
+    const currentBlockCheckStatus = currentBlock?.blockId
+      ? session.state.checkResult?.statusByBlockId?.[currentBlock.blockId]
       : undefined;
     const hasGlobalCheckResult = session.state.checkResult !== null;
-    const currentBlockIsGradeable = isGradeableQuestionBlock(currentBlock);
-    const hasCurrentBlockCheckResult = typeof currentBlockCheckResult === 'boolean';
-    const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsGradeable && hasCurrentBlockCheckResult;
+    const currentBlockIsCheckable = isSupportedCheckQuestionBlock(currentBlock);
+    const hasCurrentBlockCheckStatus = typeof currentBlockCheckStatus === 'string';
+    const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;
 
     const nextSignature = JSON.stringify({
       blockId: currentBlock?.blockId || null,
@@ -2064,8 +2147,8 @@ function renderViewerShell(session) {
         ? currentBlock.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
         : [],
       hasGlobalCheckResult,
-      currentBlockIsGradeable,
-      currentBlockCheckResult: hasCurrentBlockCheckResult ? currentBlockCheckResult : null,
+      currentBlockIsCheckable,
+      currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,
     });
     if (nextSignature === blockSignature) return;
 
@@ -2092,11 +2175,16 @@ function renderViewerShell(session) {
       label.id = `${controlId}-label`;
       label.textContent = block.prompt?.text || 'Question';
 
-      let checkBadge = null;
+      let checkBanner = null;
       let checkReveal = null;
       if (shouldShowCheckFeedback) {
-        const isCorrect = currentBlockCheckResult === true;
+        const checkStatus = currentBlockCheckStatus;
+        const isCorrect = checkStatus === 'correct';
+        const isIncorrect = checkStatus === 'incorrect';
+        const isUngradedMissingOrInvalidKey = checkStatus === 'ungraded_missing_or_invalid_key'
+          || checkStatus === 'ungraded_missing_key';
         const correctAnswer = block.responseConfig?.correctAnswer;
+        const learnerAnswer = session.state.answers?.[block.blockId]?.value;
         const formatCorrectAnswer = () => {
           if (inputType === 'multiple_choice') {
             if (block.responseConfig?.selectionMode === 'multi') {
@@ -2113,13 +2201,60 @@ function renderViewerShell(session) {
           return '';
         };
 
-        checkBadge = document.createElement('p');
-        checkBadge.className = `viewer-check-badge ${isCorrect ? 'is-correct' : 'is-incorrect'}`;
-        checkBadge.textContent = isCorrect ? '✅ Correct' : '❌ Incorrect';
+        const formatLearnerAnswer = () => {
+          if (inputType === 'multiple_choice') {
+            if (block.responseConfig?.selectionMode === 'multi') {
+              return Array.isArray(learnerAnswer) ? learnerAnswer.map((value) => String(value)).join(', ') : '';
+            }
+            return String(learnerAnswer ?? '');
+          }
+          if (inputType === 'boolean') {
+            const normalized = coerceAnswerValueByInputType('boolean', learnerAnswer);
+            if (normalized === true) return 'True';
+            if (normalized === false) return 'False';
+            return '';
+          }
+          if (inputType === 'number') {
+            return learnerAnswer === '' || learnerAnswer === null || learnerAnswer === undefined
+              ? ''
+              : String(learnerAnswer);
+          }
+          return '';
+        };
+
+        checkBanner = document.createElement('div');
+        checkBanner.className = `viewer-check-banner ${isCorrect ? 'is-correct' : isIncorrect ? 'is-incorrect' : 'is-ungraded'}`;
+        const checkIcon = document.createElement('span');
+        checkIcon.className = 'viewer-check-banner__icon';
+        checkIcon.textContent = isCorrect ? '✓' : isIncorrect ? '✕' : '•';
+        const checkBody = document.createElement('div');
+        checkBody.className = 'viewer-check-banner__body';
+        const checkTitle = document.createElement('p');
+        checkTitle.className = 'viewer-check-banner__title';
+        checkTitle.textContent = isCorrect ? 'Correct' : isIncorrect ? 'Incorrect' : 'Not graded';
+        const checkDetail = document.createElement('p');
+        checkDetail.className = 'viewer-check-banner__detail';
+        checkDetail.textContent = isCorrect
+          ? 'Great Work!'
+          : isIncorrect
+            ? 'Not quite.'
+            : 'Answer key missing or invalid for this question.';
+        checkBody.append(checkTitle, checkDetail);
+        checkBanner.append(checkIcon, checkBody);
 
         checkReveal = document.createElement('p');
         checkReveal.className = 'viewer-check-reveal muted';
-        checkReveal.textContent = `Correct answer: ${formatCorrectAnswer()}`;
+        checkReveal.textContent = getCheckRevealMessage({
+          status: checkStatus,
+          learnerAnswerText: formatLearnerAnswer(),
+          correctAnswerText: isUngradedMissingOrInvalidKey ? '' : formatCorrectAnswer(),
+        });
+
+        if (isCorrect) {
+          card.classList.add('question-card--checked-correct');
+        } else if (isIncorrect) {
+          card.classList.add('question-card--checked-incorrect');
+        }
       }
 
       const helper = document.createElement('p');
@@ -2285,14 +2420,14 @@ function renderViewerShell(session) {
           status: textStatus,
         });
         card.append(label);
-        if (checkBadge && checkReveal) {
-          card.append(checkBadge, checkReveal);
+        if (checkBanner && checkReveal) {
+          card.append(checkBanner, checkReveal);
         }
         card.append(helper, control, textCounter, textStatus, inputError);
       } else {
         card.append(label);
-        if (checkBadge && checkReveal) {
-          card.append(checkBadge, checkReveal);
+        if (checkBanner && checkReveal) {
+          card.append(checkBanner, checkReveal);
         }
         card.append(helper, control, inputError);
       }
@@ -2399,6 +2534,9 @@ function renderViewerShell(session) {
     resumeWarning.hidden = !session.state.recoveryMessage;
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
+    const checkAvailable = session.state.status === 'completed';
+    checkBtn.hidden = !checkAvailable;
+    checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
     const normalizedAttemptStatus = session.state.status
@@ -2409,6 +2547,9 @@ function renderViewerShell(session) {
       summaryParts.push(`Student ${studentName}`);
     }
     summaryParts.push(`Answered ${summary.answered}/${summary.total}`);
+    if (session.state.checkResult) {
+      summaryParts.push(`Checked ${session.state.checkResult.correctCount}/${session.state.checkResult.totalQuestions} correct`);
+    }
     summaryParts.push(status.textContent);
     summaryParts.push(`Status ${normalizedAttemptStatus}`);
     answerSummary.textContent = summaryParts.join(' · ');
@@ -2656,6 +2797,7 @@ export {
   normalizeViewerBlock,
   computeAnswerSummary,
   computeCheckResult,
+  getCheckRevealMessage,
   hasGradeableQuestions,
   normalizeMultiSelectValues,
   areMultiSelectValuesEqual,

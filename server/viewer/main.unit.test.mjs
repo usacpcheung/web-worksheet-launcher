@@ -52,7 +52,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };'
   );
 
   globalThis.document = globalThis[bagName].document;
@@ -199,6 +199,127 @@ test('normalizeViewerBlock migrates plain_text/short_text to text with defaults'
   assert.equal(short.responseConfig.inputType, 'text');
   assert.equal(short.responseConfig.maxLength, 80);
   assert.equal(short.responseConfig.displayMode, 'single_line');
+});
+
+test('normalizeViewerBlock preserves correctAnswer for gradeable question types', async () => {
+  const mod = await loadViewerModule();
+  const number = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'How many?' },
+    responseConfig: { inputType: 'number', correctAnswer: '4' },
+  }, 0);
+  const bool = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'True/False?' },
+    responseConfig: { inputType: 'boolean', correctAnswer: 'true' },
+  }, 1);
+  const single = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick one' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'single',
+      options: ['a', 'b'],
+      correctAnswer: 'b',
+    },
+  }, 2);
+  const multi = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: ['b', 'a', 'b'],
+    },
+  }, 3);
+
+  assert.equal(number.responseConfig.correctAnswer, 4);
+  assert.equal(bool.responseConfig.correctAnswer, true);
+  assert.equal(single.responseConfig.correctAnswer, 'b');
+  assert.deepEqual(multi.responseConfig.correctAnswer, ['b', 'a']);
+});
+
+test('normalizeViewerBlock omits multi-select correctAnswer when source is not a non-empty array', async () => {
+  const mod = await loadViewerModule();
+
+  const missing = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+    },
+  }, 0);
+  const nullValue = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: null,
+    },
+  }, 1);
+  const scalarValue = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: 'a',
+    },
+  }, 2);
+  const emptyArray = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: [],
+    },
+  }, 3);
+
+  assert.equal(Object.hasOwn(missing.responseConfig, 'correctAnswer'), false);
+  assert.equal(Object.hasOwn(nullValue.responseConfig, 'correctAnswer'), false);
+  assert.equal(Object.hasOwn(scalarValue.responseConfig, 'correctAnswer'), false);
+  assert.equal(Object.hasOwn(emptyArray.responseConfig, 'correctAnswer'), false);
+});
+
+test('computeCheckResult can grade normalized payload that includes correctAnswer fields', async () => {
+  const mod = await loadViewerModule();
+  const payload = mod.normalizeViewerPayload({
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: '2 + 2?' },
+        responseConfig: { inputType: 'number', correctAnswer: '4' },
+      },
+      {
+        blockId: 'q2',
+        kind: 'question',
+        position: 1,
+        prompt: { text: 'Sky is blue?' },
+        responseConfig: { inputType: 'boolean', correctAnswer: true },
+      },
+    ],
+  });
+
+  const result = mod.computeCheckResult(payload, {
+    q1: { value: 4 },
+    q2: { value: true },
+  });
+
+  assert.equal(result.totalQuestions, 2);
+  assert.equal(result.correctCount, 2);
+  assert.deepEqual(result.byBlockId, { q1: true, q2: true });
 });
 
 test('coerceAnswerValueForQuestion does not silently clamp out-of-range numbers', async () => {
@@ -490,6 +611,15 @@ test('viewer summary text includes distinct finalize outcome messages', async ()
   assert.match(source, /Finalized/);
 });
 
+test('viewer shell exposes check action only in completed state', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.match(source, /checkBtn\.textContent = 'Check Answer';/);
+  assert.match(source, /const checkAvailable = session\.state\.status === 'completed';/);
+  assert.match(source, /checkBtn\.hidden = !checkAvailable;/);
+  assert.match(source, /checkBtn\.disabled = session\.state\.isFinalizing \|\| !checkAvailable;/);
+});
+
+
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
@@ -558,6 +688,61 @@ test('completeLocalAttempt is idempotent while finalize is in progress', async (
   assert.equal(session.state.status, 'completed');
 });
 
+test('checkAnswers is unavailable before finalize and computes results after finalize', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  session.state.localAttemptId = 'attempt_check_after_finalize';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: '2 + 2?' },
+      responseConfig: { inputType: 'number', correctAnswer: 4 },
+    }],
+  };
+  session.state.answers = {
+    q1: { value: 4, answeredAt: '2026-01-01T00:00:00.000Z' },
+  };
+
+  assert.equal(session.checkAnswers(), null);
+  assert.equal(session.state.checkResult, null);
+
+  await session.completeLocalAttempt();
+  const checked = session.checkAnswers();
+  const expected = mod.computeCheckResult(session.state.viewerPayload, session.state.answers);
+  assert.deepEqual(checked, expected);
+  assert.deepEqual(session.state.checkResult, expected);
+});
+
+test('checkAnswers returns null while finalizing is in progress', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  session.state.status = 'completed';
+  session.state.isFinalizing = true;
+  session.state.viewerPayload = {
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'True?' },
+      responseConfig: { inputType: 'boolean', correctAnswer: true },
+    }],
+  };
+  session.state.answers = { q1: { value: true } };
+
+  assert.equal(session.checkAnswers(), null);
+  assert.equal(session.state.checkResult, null);
+});
+
 test('completeLocalAttempt failure reverts status and allows retry to succeed', async () => {
   const mod = await loadViewerModule();
   let saveAttempts = 0;
@@ -586,6 +771,7 @@ test('completeLocalAttempt failure reverts status and allows retry to succeed', 
   assert.equal(session.state.completedAt, null);
   assert.equal(session.state.isFinalizing, false);
   assert.equal(session.state.checkResult, null);
+  assert.equal(session.checkAnswers(), null);
   assert.match(session.state.lastFinalizeError, /Finalize failed\./);
   assert.match(session.state.lastFinalizeError, /db unavailable/);
 
@@ -1295,10 +1481,10 @@ test('renderCurrentBlockCard signature includes grading-derived fields and guard
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
 
   assert.equal(source.includes('hasGlobalCheckResult = session.state.checkResult !== null;'), true);
-  assert.equal(source.includes('currentBlockIsGradeable = isGradeableQuestionBlock(currentBlock);'), true);
-  assert.equal(source.includes('currentBlockCheckResult = currentBlock?.blockId'), true);
-  assert.equal(source.includes('currentBlockCheckResult: hasCurrentBlockCheckResult ? currentBlockCheckResult : null,'), true);
-  assert.equal(source.includes('const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsGradeable && hasCurrentBlockCheckResult;'), true);
+  assert.equal(source.includes('currentBlockIsCheckable = isSupportedCheckQuestionBlock(currentBlock);'), true);
+  assert.equal(source.includes('currentBlockCheckStatus = currentBlock?.blockId'), true);
+  assert.equal(source.includes('currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,'), true);
+  assert.equal(source.includes('const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;'), true);
   assert.equal(source.includes('if (shouldShowCheckFeedback) {'), true);
 });
 test('number rendering branch avoids text input min/max attributes and uses pattern hint', async () => {
@@ -1948,8 +2134,15 @@ test('computeCheckResult grades only supported input types with correctAnswer', 
   });
 
   assert.deepEqual(Object.keys(result.byBlockId).sort(), ['q_bool', 'q_multi', 'q_number']);
+  assert.deepEqual(result.statusByBlockId, {
+    q_multi: 'correct',
+    q_bool: 'correct',
+    q_number: 'correct',
+    q_missing: 'ungraded_missing_or_invalid_key',
+  });
   assert.equal(result.correctCount, 3);
   assert.equal(result.totalQuestions, 3);
+  assert.equal(Object.hasOwn(result, 'ungradedCount'), false);
 });
 
 test('computeCheckResult does not treat unanswered number input as 0 when correctAnswer is 0', async () => {
@@ -1978,4 +2171,81 @@ test('computeCheckResult does not treat unanswered number input as 0 when correc
   assert.equal(resultUndef.correctCount, 0);
   assert.equal(resultZero.byBlockId.q_number, true, 'string "0" should be correct when correctAnswer is 0');
   assert.equal(resultZero.correctCount, 1);
+});
+
+test('getCheckRevealMessage uses explicit fallback when learner answer is empty', async () => {
+  const mod = await loadViewerModule();
+
+  const incorrectEmpty = mod.getCheckRevealMessage({
+    status: 'incorrect',
+    learnerAnswerText: '',
+    correctAnswerText: 'A, B',
+  });
+  const incorrectWhitespace = mod.getCheckRevealMessage({
+    status: 'incorrect',
+    learnerAnswerText: '   ',
+    correctAnswerText: 'True',
+  });
+  const correct = mod.getCheckRevealMessage({
+    status: 'correct',
+    learnerAnswerText: '',
+    correctAnswerText: '4',
+  });
+  const ungradedMissingKey = mod.getCheckRevealMessage({
+    status: 'ungraded_missing_or_invalid_key',
+    learnerAnswerText: '',
+    correctAnswerText: '',
+  });
+
+  assert.equal(incorrectEmpty, 'Your answer was: No answer submitted · Correct answer: A, B');
+  assert.equal(incorrectWhitespace, 'Your answer was: No answer submitted · Correct answer: True');
+  assert.equal(correct, 'Correct answer: 4');
+  assert.equal(ungradedMissingKey, 'Your answer was: No answer submitted');
+});
+
+test('computeCheckResult marks gradeable missing key questions as ungraded without changing summary fields', async () => {
+  const mod = await loadViewerModule();
+
+  const viewerPayload = {
+    blocks: [
+      {
+        blockId: 'q_missing_key',
+        kind: 'question',
+        responseConfig: { inputType: 'number' },
+      },
+      {
+        blockId: 'q_graded',
+        kind: 'question',
+        responseConfig: { inputType: 'boolean', correctAnswer: true },
+      },
+    ],
+  };
+
+  const result = mod.computeCheckResult(viewerPayload, {
+    q_missing_key: { value: '12' },
+    q_graded: { value: false },
+  });
+
+  assert.equal(result.byBlockId.q_missing_key, undefined);
+  assert.equal(result.statusByBlockId.q_missing_key, 'ungraded_missing_or_invalid_key');
+  assert.equal(result.statusByBlockId.q_graded, 'incorrect');
+  assert.deepEqual(Object.keys(result).sort(), ['byBlockId', 'correctCount', 'statusByBlockId', 'totalQuestions']);
+  assert.equal(result.correctCount, 0);
+  assert.equal(result.totalQuestions, 1);
+});
+
+test('render check feedback includes neutral ungraded banner copy and learner answer fallback', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+
+  assert.equal(source.includes("checkTitle.textContent = isCorrect ? 'Correct' : isIncorrect ? 'Incorrect' : 'Not graded';"), true);
+  assert.equal(source.includes("'Answer key missing or invalid for this question.'"), true);
+  assert.equal(source.includes("status: checkStatus,"), true);
+  assert.equal(source.includes("correctAnswerText: isUngradedMissingOrInvalidKey ? '' : formatCorrectAnswer(),"), true);
+  assert.equal(source.includes("'Your answer was: No answer submitted'"), true);
+});
+
+test('viewer stylesheet defines neutral ungraded check banner styles', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.css'), 'utf8');
+  assert.equal(source.includes('.viewer-check-banner.is-ungraded {'), true);
+  assert.equal(source.includes('.viewer-check-banner.is-ungraded .viewer-check-banner__icon {'), true);
 });
