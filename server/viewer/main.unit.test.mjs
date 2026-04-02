@@ -201,6 +201,78 @@ test('normalizeViewerBlock migrates plain_text/short_text to text with defaults'
   assert.equal(short.responseConfig.displayMode, 'single_line');
 });
 
+test('normalizeViewerBlock preserves correctAnswer for gradeable question types', async () => {
+  const mod = await loadViewerModule();
+  const number = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'How many?' },
+    responseConfig: { inputType: 'number', correctAnswer: '4' },
+  }, 0);
+  const bool = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'True/False?' },
+    responseConfig: { inputType: 'boolean', correctAnswer: 'true' },
+  }, 1);
+  const single = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick one' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'single',
+      options: ['a', 'b'],
+      correctAnswer: 'b',
+    },
+  }, 2);
+  const multi = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: ['b', 'a', 'b'],
+    },
+  }, 3);
+
+  assert.equal(number.responseConfig.correctAnswer, 4);
+  assert.equal(bool.responseConfig.correctAnswer, true);
+  assert.equal(single.responseConfig.correctAnswer, 'b');
+  assert.deepEqual(multi.responseConfig.correctAnswer, ['b', 'a']);
+});
+
+test('computeCheckResult can grade normalized payload that includes correctAnswer fields', async () => {
+  const mod = await loadViewerModule();
+  const payload = mod.normalizeViewerPayload({
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: '2 + 2?' },
+        responseConfig: { inputType: 'number', correctAnswer: '4' },
+      },
+      {
+        blockId: 'q2',
+        kind: 'question',
+        position: 1,
+        prompt: { text: 'Sky is blue?' },
+        responseConfig: { inputType: 'boolean', correctAnswer: true },
+      },
+    ],
+  });
+
+  const result = mod.computeCheckResult(payload, {
+    q1: { value: 4 },
+    q2: { value: true },
+  });
+
+  assert.equal(result.totalQuestions, 2);
+  assert.equal(result.correctCount, 2);
+  assert.deepEqual(result.byBlockId, { q1: true, q2: true });
+});
+
 test('coerceAnswerValueForQuestion does not silently clamp out-of-range numbers', async () => {
   const mod = await loadViewerModule();
   const question = {

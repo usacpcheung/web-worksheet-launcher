@@ -211,6 +211,26 @@ function normalizeViewerBlock(block, index) {
         : [];
     }
 
+    if (Object.hasOwn(responseConfigSource, 'correctAnswer')) {
+      if (inputType === 'number') {
+        const normalizedCorrectAnswer = coerceAnswerValueByInputType('number', responseConfigSource.correctAnswer);
+        if (normalizedCorrectAnswer !== '') {
+          normalizedResponseConfig.correctAnswer = normalizedCorrectAnswer;
+        }
+      } else if (inputType === 'boolean') {
+        const normalizedCorrectAnswer = coerceAnswerValueByInputType('boolean', responseConfigSource.correctAnswer);
+        if (normalizedCorrectAnswer === true || normalizedCorrectAnswer === false) {
+          normalizedResponseConfig.correctAnswer = normalizedCorrectAnswer;
+        }
+      } else if (inputType === 'multiple_choice') {
+        if (normalizedResponseConfig.selectionMode === 'multi') {
+          normalizedResponseConfig.correctAnswer = normalizeMultiSelectValues(responseConfigSource.correctAnswer);
+        } else if (typeof responseConfigSource.correctAnswer === 'string') {
+          normalizedResponseConfig.correctAnswer = String(responseConfigSource.correctAnswer);
+        }
+      }
+    }
+
     return {
       ...base,
       prompt: {
