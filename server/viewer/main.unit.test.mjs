@@ -6,46 +6,57 @@ import path from 'node:path';
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
   let source = await fs.readFile(filePath, 'utf8');
+  const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
+
+  globalThis[bagName] = {
+    viewerStorage: overrides.viewerStorage || {},
+    mapSnapshotToViewerPayload: overrides.mapSnapshotToViewerPayload || ((v) => v),
+    normalizeNumberRules: (rules) => ({
+      allowedKinds: Array.isArray(rules?.allowedKinds) ? rules.allowedKinds : ['integer', 'decimal'],
+      allowSigned: rules?.allowSigned !== false,
+      decimalPlacesAllowed: Number.isInteger(rules?.decimalPlacesAllowed) ? rules.decimalPlacesAllowed : null,
+    }),
+    validateNumberInputFormat: overrides.validateNumberInputFormat || ((value, rulesArg) => {
+      const text = String(value ?? '').trim();
+      if (!text) return { ok: false, errorCode: 'empty' };
+      if (text.includes('/')) return { ok: false, errorCode: 'fraction_not_allowed' };
+      const activeRules = globalThis[bagName].normalizeNumberRules(rulesArg);
+      if (!activeRules.allowSigned && (text.startsWith('+') || text.startsWith('-'))) {
+        return { ok: false, errorCode: 'sign_not_allowed' };
+      }
+      if (!/^[+-]?\d+(\.\d+)?$/.test(text)) return { ok: false, errorCode: 'invalid_syntax' };
+      const kind = text.includes('.') ? 'decimal' : 'integer';
+      if (Array.isArray(activeRules.allowedKinds) && !activeRules.allowedKinds.includes(kind)) {
+        return { ok: false, errorCode: 'kind_not_allowed' };
+      }
+      if (kind === 'decimal' && Number.isInteger(activeRules.decimalPlacesAllowed)) {
+        const [, decimalPart = ''] = text.split('.');
+        if (decimalPart.length > activeRules.decimalPlacesAllowed) {
+          return { ok: false, errorCode: 'decimal_places_exceeded' };
+        }
+      }
+      return { ok: true, normalizedValue: Number(text), kind };
+    }),
+    SharedAuthGate: overrides.SharedAuthGate || class {},
+    validateViewerPayloadSchema: overrides.validateViewerPayloadSchema || (() => ({ valid: true, errors: [] })),
+    renderViewerShell: overrides.renderViewerShell || (() => {}),
+    document: overrides.document || { getElementById: () => null },
+    window: overrides.window || {},
+  };
 
   source = source.replace(
     "import { viewerStorage } from './storage/index.js';\nimport { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';\nimport { validateViewerPayloadSchema } from '../app/contracts/validators.js';\nimport { normalizeNumberRules, validateNumberInputFormat } from '../app/contracts/number-input-validator.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
-    'const viewerStorage = {};\nconst mapSnapshotToViewerPayload = globalThis.__mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = (p) => ({ valid: true, errors: [] });\nconst normalizeNumberRules = globalThis.__normalizeNumberRules;\nconst validateNumberInputFormat = globalThis.__validateNumberInputFormat;\nconst SharedAuthGate = class {};\n'
+    `const __testBag = globalThis.${bagName};\nconst viewerStorage = __testBag.viewerStorage;\nconst mapSnapshotToViewerPayload = __testBag.mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = __testBag.validateViewerPayloadSchema;\nconst normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;\nconst SharedAuthGate = __testBag.SharedAuthGate;\n`
   );
+  source = source.replace(/renderViewerShell\(session\);/g, '__testBag.renderViewerShell(session);');
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };'
   );
 
-  globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
-  globalThis.__normalizeNumberRules = (rules) => ({
-    allowedKinds: Array.isArray(rules?.allowedKinds) ? rules.allowedKinds : ['integer', 'decimal'],
-    allowSigned: rules?.allowSigned !== false,
-    decimalPlacesAllowed: Number.isInteger(rules?.decimalPlacesAllowed) ? rules.decimalPlacesAllowed : null,
-  });
-  globalThis.__validateNumberInputFormat = overrides.validateNumberInputFormat || ((value, rulesArg) => {
-    const text = String(value ?? '').trim();
-    if (!text) return { ok: false, errorCode: 'empty' };
-    if (text.includes('/')) return { ok: false, errorCode: 'fraction_not_allowed' };
-    const activeRules = globalThis.__normalizeNumberRules(rulesArg);
-    if (!activeRules.allowSigned && (text.startsWith('+') || text.startsWith('-'))) {
-      return { ok: false, errorCode: 'sign_not_allowed' };
-    }
-    if (!/^[+-]?\d+(\.\d+)?$/.test(text)) return { ok: false, errorCode: 'invalid_syntax' };
-    const kind = text.includes('.') ? 'decimal' : 'integer';
-    if (Array.isArray(activeRules.allowedKinds) && !activeRules.allowedKinds.includes(kind)) {
-      return { ok: false, errorCode: 'kind_not_allowed' };
-    }
-    if (kind === 'decimal' && Number.isInteger(activeRules.decimalPlacesAllowed)) {
-      const [, decimalPart = ''] = text.split('.');
-      if (decimalPart.length > activeRules.decimalPlacesAllowed) {
-        return { ok: false, errorCode: 'decimal_places_exceeded' };
-      }
-    }
-    return { ok: true, normalizedValue: Number(text), kind };
-  });
-  globalThis.document = overrides.document || { getElementById: () => null };
-  globalThis.window = overrides.window || {};
+  globalThis.document = globalThis[bagName].document;
+  globalThis.window = globalThis[bagName].window;
 
   const dataUrl = `data:text/javascript,${encodeURIComponent(source)}`;
   return import(dataUrl);
@@ -190,6 +201,127 @@ test('normalizeViewerBlock migrates plain_text/short_text to text with defaults'
   assert.equal(short.responseConfig.displayMode, 'single_line');
 });
 
+test('normalizeViewerBlock preserves correctAnswer for gradeable question types', async () => {
+  const mod = await loadViewerModule();
+  const number = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'How many?' },
+    responseConfig: { inputType: 'number', correctAnswer: '4' },
+  }, 0);
+  const bool = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'True/False?' },
+    responseConfig: { inputType: 'boolean', correctAnswer: 'true' },
+  }, 1);
+  const single = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick one' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'single',
+      options: ['a', 'b'],
+      correctAnswer: 'b',
+    },
+  }, 2);
+  const multi = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: ['b', 'a', 'b'],
+    },
+  }, 3);
+
+  assert.equal(number.responseConfig.correctAnswer, 4);
+  assert.equal(bool.responseConfig.correctAnswer, true);
+  assert.equal(single.responseConfig.correctAnswer, 'b');
+  assert.deepEqual(multi.responseConfig.correctAnswer, ['b', 'a']);
+});
+
+test('normalizeViewerBlock omits multi-select correctAnswer when source is not a non-empty array', async () => {
+  const mod = await loadViewerModule();
+
+  const missing = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+    },
+  }, 0);
+  const nullValue = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: null,
+    },
+  }, 1);
+  const scalarValue = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: 'a',
+    },
+  }, 2);
+  const emptyArray = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: [],
+    },
+  }, 3);
+
+  assert.equal(Object.hasOwn(missing.responseConfig, 'correctAnswer'), false);
+  assert.equal(Object.hasOwn(nullValue.responseConfig, 'correctAnswer'), false);
+  assert.equal(Object.hasOwn(scalarValue.responseConfig, 'correctAnswer'), false);
+  assert.equal(Object.hasOwn(emptyArray.responseConfig, 'correctAnswer'), false);
+});
+
+test('computeCheckResult can grade normalized payload that includes correctAnswer fields', async () => {
+  const mod = await loadViewerModule();
+  const payload = mod.normalizeViewerPayload({
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: '2 + 2?' },
+        responseConfig: { inputType: 'number', correctAnswer: '4' },
+      },
+      {
+        blockId: 'q2',
+        kind: 'question',
+        position: 1,
+        prompt: { text: 'Sky is blue?' },
+        responseConfig: { inputType: 'boolean', correctAnswer: true },
+      },
+    ],
+  });
+
+  const result = mod.computeCheckResult(payload, {
+    q1: { value: 4 },
+    q2: { value: true },
+  });
+
+  assert.equal(result.totalQuestions, 2);
+  assert.equal(result.correctCount, 2);
+  assert.deepEqual(result.byBlockId, { q1: true, q2: true });
+});
+
 test('coerceAnswerValueForQuestion does not silently clamp out-of-range numbers', async () => {
   const mod = await loadViewerModule();
   const question = {
@@ -257,6 +389,87 @@ test('coerceAnswerValueForQuestion supports multiple_choice single and multi ans
   assert.deepEqual(mod.coerceAnswerValueForQuestion(multi, ['b', 'a', 'b', 'x']), ['b', 'a']);
 });
 
+test('getBooleanSelectionState maps stored values to selected button state', async () => {
+  const mod = await loadViewerModule();
+  assert.deepEqual(mod.getBooleanSelectionState(true), {
+    selectedValue: true,
+    truePressed: true,
+    falsePressed: false,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState(false), {
+    selectedValue: false,
+    truePressed: false,
+    falsePressed: true,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState(null), {
+    selectedValue: null,
+    truePressed: false,
+    falsePressed: false,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState('true'), {
+    selectedValue: true,
+    truePressed: true,
+    falsePressed: false,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState('false'), {
+    selectedValue: false,
+    truePressed: false,
+    falsePressed: true,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState(''), {
+    selectedValue: null,
+    truePressed: false,
+    falsePressed: false,
+  });
+  assert.deepEqual(mod.getBooleanSelectionState(undefined), {
+    selectedValue: null,
+    truePressed: false,
+    falsePressed: false,
+  });
+});
+
+test('applyBooleanGroupState hydrates selected and disabled button state', async () => {
+  const mod = await loadViewerModule();
+  function createButton(booleanValue) {
+    const button = {
+      dataset: { booleanValue },
+      disabled: false,
+      attributes: {},
+      selectedClass: false,
+      setAttribute(name, value) {
+        this.attributes[name] = value;
+      },
+    };
+    button.classList = {
+      toggle: (_className, flag) => {
+        button.selectedClass = Boolean(flag);
+      },
+    };
+    return button;
+  }
+  const trueButton = createButton('true');
+  const falseButton = createButton('false');
+  const group = {
+    querySelectorAll: () => [trueButton, falseButton],
+  };
+
+  mod.applyBooleanGroupState(group, true, true);
+  assert.equal(trueButton.selectedClass, true);
+  assert.equal(falseButton.selectedClass, false);
+  assert.equal(trueButton.attributes['aria-pressed'], 'true');
+  assert.equal(falseButton.attributes['aria-pressed'], 'false');
+  assert.equal(trueButton.disabled, true);
+  assert.equal(falseButton.disabled, true);
+
+  mod.applyBooleanGroupState(group, null, false);
+  assert.equal(trueButton.selectedClass, false);
+  assert.equal(falseButton.selectedClass, false);
+  assert.equal(trueButton.attributes['aria-pressed'], 'false');
+  assert.equal(falseButton.attributes['aria-pressed'], 'false');
+  assert.equal(trueButton.disabled, false);
+  assert.equal(falseButton.disabled, false);
+});
+
 test('deterministicShuffle remains stable per seed', async () => {
   const mod = await loadViewerModule();
   const items = [{ value: '1' }, { value: '2' }, { value: '3' }];
@@ -274,6 +487,138 @@ test('deterministicShuffle handles nullish seed values safely', async () => {
   assert.deepEqual(mod.deterministicShuffle(items, null), mod.deterministicShuffle(items, ''));
   assert.deepEqual(mod.deterministicShuffle(items, undefined), mod.deterministicShuffle(items, ''));
 });
+
+test('getChoicePrefix returns alphabetical labels in sequence', async () => {
+  const mod = await loadViewerModule();
+  assert.equal(mod.getChoicePrefix(0), 'A.');
+  assert.equal(mod.getChoicePrefix(1), 'B.');
+  assert.equal(mod.getChoicePrefix(25), 'Z.');
+  assert.equal(mod.getChoicePrefix(26), 'AA.');
+});
+
+test('multiple choice UI renderer uses button-group semantics for single and multi', async () => {
+  const mod = await loadViewerModule();
+  function createChoiceButton(value) {
+    const button = {
+      dataset: { choiceValue: value },
+      disabled: false,
+      attributes: {},
+      selectedClass: false,
+      tagName: 'BUTTON',
+      setAttribute(name, attrValue) {
+        this.attributes[name] = attrValue;
+      },
+    };
+    button.classList = {
+      toggle: (_className, flag) => {
+        button.selectedClass = Boolean(flag);
+      },
+    };
+    return button;
+  }
+
+  const buttons = [createChoiceButton('b'), createChoiceButton('a'), createChoiceButton('c')];
+  const group = {
+    querySelectorAll: (selector) => (selector === 'button[data-choice-value]' ? buttons : []),
+  };
+
+  mod.applyChoiceButtonGroupState(group, 'a', 'single', false);
+  assert.equal(buttons[1].selectedClass, true);
+  assert.equal(buttons[1].attributes['aria-checked'], 'true');
+  assert.equal(buttons[0].attributes['aria-checked'], 'false');
+
+  mod.applyChoiceButtonGroupState(group, ['b', 'c'], 'multi', false);
+  assert.equal(buttons[0].selectedClass, true);
+  assert.equal(buttons[1].selectedClass, false);
+  assert.equal(buttons[2].selectedClass, true);
+});
+
+test('computeNextChoiceValue toggles multi-select values without dropping existing selections', async () => {
+  const mod = await loadViewerModule();
+  const validValues = ['a', 'b', 'c'];
+  assert.deepEqual(
+    mod.computeNextChoiceValue({ selectionMode: 'multi', currentValue: ['a'], clickedValue: 'b', validValues }),
+    ['a', 'b']
+  );
+  assert.deepEqual(
+    mod.computeNextChoiceValue({ selectionMode: 'multi', currentValue: ['a', 'b'], clickedValue: 'a', validValues }),
+    ['b']
+  );
+  assert.equal(
+    mod.computeNextChoiceValue({ selectionMode: 'single', currentValue: 'b', clickedValue: 'b', validValues }),
+    ''
+  );
+});
+
+test('multiple choice selection state sync supports rerender and completed status disablement', async () => {
+  const mod = await loadViewerModule();
+  function createChoiceButton(value) {
+    const button = {
+      dataset: { choiceValue: value },
+      disabled: false,
+      attributes: {},
+      selectedClass: false,
+      setAttribute(name, attrValue) {
+        this.attributes[name] = attrValue;
+      },
+    };
+    button.classList = {
+      toggle: (_className, flag) => {
+        button.selectedClass = Boolean(flag);
+      },
+    };
+    return button;
+  }
+
+  const firstRenderButtons = [createChoiceButton('x'), createChoiceButton('y')];
+  const secondRenderButtons = [createChoiceButton('x'), createChoiceButton('y')];
+  const firstGroup = { querySelectorAll: () => firstRenderButtons };
+  const secondGroup = { querySelectorAll: () => secondRenderButtons };
+
+  mod.applyChoiceButtonGroupState(firstGroup, 'y', 'single', false);
+  assert.equal(firstRenderButtons[1].selectedClass, true);
+  assert.equal(firstRenderButtons[1].disabled, false);
+
+  mod.applyChoiceButtonGroupState(secondGroup, 'y', 'single', true);
+  assert.equal(secondRenderButtons[1].selectedClass, true);
+  assert.equal(secondRenderButtons[0].disabled, true);
+  assert.equal(secondRenderButtons[1].disabled, true);
+});
+
+test('deterministic shuffle seed format remains attempt+block based', async () => {
+  const mod = await loadViewerModule();
+  const options = [{ value: 'a' }, { value: 'b' }, { value: 'c' }, { value: 'd' }];
+  const seed = `${'attempt_42'}:${'block_7'}`;
+  const first = mod.deterministicShuffle(options, seed).map((opt) => opt.value);
+  const second = mod.deterministicShuffle(options, seed).map((opt) => opt.value);
+  const differentAttempt = mod.deterministicShuffle(options, `${'attempt_99'}:${'block_7'}`).map((opt) => opt.value);
+
+  assert.deepEqual(first, second);
+  assert.notDeepEqual(first, differentAttempt);
+});
+
+test('multiple_choice render path no longer creates select or checkbox controls', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.match(source, /createChoiceButtonGroup\(/);
+  assert.doesNotMatch(source, /createElement\('select'\)/);
+  assert.doesNotMatch(source, /type = 'checkbox'/);
+});
+
+test('viewer summary text includes distinct finalize outcome messages', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.match(source, /Finalizing submission…/);
+  assert.match(source, /Finalize failed\. Please check your connection and try again\./);
+  assert.match(source, /Finalized/);
+});
+
+test('viewer shell exposes check action only in completed state', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.match(source, /checkBtn\.textContent = 'Check Answer';/);
+  assert.match(source, /const checkAvailable = session\.state\.status === 'completed';/);
+  assert.match(source, /checkBtn\.hidden = !checkAvailable;/);
+  assert.match(source, /checkBtn\.disabled = session\.state\.isFinalizing \|\| !checkAvailable;/);
+});
+
 
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
   const mod = await loadViewerModule();
@@ -306,6 +651,205 @@ test('completeLocalAttempt clears pending autosave timer before immediate autosa
   assert.equal(session.autosaveTimer, null);
   assert.equal(autosaveCalls, 1);
   assert.equal(timerFired, false);
+});
+
+test('completeLocalAttempt is idempotent while finalize is in progress', async () => {
+  const mod = await loadViewerModule();
+  let resolveSave;
+  const savePromise = new Promise((resolve) => {
+    resolveSave = resolve;
+  });
+  let autosaveCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  session.state.localAttemptId = 'attempt_finalize_once';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.autosave = async () => {
+    autosaveCalls += 1;
+    await savePromise;
+    return { ok: true };
+  };
+
+  const firstFinalize = session.completeLocalAttempt();
+  assert.equal(session.state.isFinalizing, true);
+  const secondFinalize = await session.completeLocalAttempt();
+  assert.equal(secondFinalize, null);
+  assert.equal(autosaveCalls, 1);
+
+  resolveSave();
+  await firstFinalize;
+  assert.equal(session.state.isFinalizing, false);
+  assert.equal(session.state.status, 'completed');
+});
+
+test('checkAnswers is unavailable before finalize and computes results after finalize', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  session.state.localAttemptId = 'attempt_check_after_finalize';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: '2 + 2?' },
+      responseConfig: { inputType: 'number', correctAnswer: 4 },
+    }],
+  };
+  session.state.answers = {
+    q1: { value: 4, answeredAt: '2026-01-01T00:00:00.000Z' },
+  };
+
+  assert.equal(session.checkAnswers(), null);
+  assert.equal(session.state.checkResult, null);
+
+  await session.completeLocalAttempt();
+  const checked = session.checkAnswers();
+  const expected = mod.computeCheckResult(session.state.viewerPayload, session.state.answers);
+  assert.deepEqual(checked, expected);
+  assert.deepEqual(session.state.checkResult, expected);
+});
+
+test('checkAnswers returns null while finalizing is in progress', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  session.state.status = 'completed';
+  session.state.isFinalizing = true;
+  session.state.viewerPayload = {
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'True?' },
+      responseConfig: { inputType: 'boolean', correctAnswer: true },
+    }],
+  };
+  session.state.answers = { q1: { value: true } };
+
+  assert.equal(session.checkAnswers(), null);
+  assert.equal(session.state.checkResult, null);
+});
+
+test('completeLocalAttempt failure reverts status and allows retry to succeed', async () => {
+  const mod = await loadViewerModule();
+  let saveAttempts = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  session.state.localAttemptId = 'attempt_finalize_retry';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.autosave = async () => {
+    saveAttempts += 1;
+    if (saveAttempts === 1) {
+      throw new Error('db unavailable');
+    }
+    return { ok: true };
+  };
+  session.state.checkResult = { correctCount: 1, totalQuestions: 1 };
+
+  const failedFinalize = await session.completeLocalAttempt();
+  assert.equal(failedFinalize, null);
+  assert.equal(session.state.status, 'in_progress');
+  assert.equal(session.state.completedAt, null);
+  assert.equal(session.state.isFinalizing, false);
+  assert.equal(session.state.checkResult, null);
+  assert.equal(session.checkAnswers(), null);
+  assert.match(session.state.lastFinalizeError, /Finalize failed\./);
+  assert.match(session.state.lastFinalizeError, /db unavailable/);
+
+  const successfulFinalize = await session.completeLocalAttempt();
+  assert.deepEqual(successfulFinalize, { ok: true });
+  assert.equal(session.state.status, 'completed');
+  assert.equal(session.state.isFinalizing, false);
+  assert.equal(session.state.lastFinalizeError, null);
+  assert.equal(saveAttempts, 2);
+});
+
+test('startImportedWorksheetFromJsonText creates fresh attempt from imported worksheet JSON', async () => {
+  const mod = await loadViewerModule();
+  const importedRecords = [];
+  let createAttemptCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: {
+      put: async (record) => {
+        importedRecords.push(record);
+        return record;
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+  const originalCreateLocalAttemptState = session.createLocalAttemptState.bind(session);
+  session.createLocalAttemptState = (...args) => {
+    createAttemptCalls += 1;
+    return originalCreateLocalAttemptState(...args);
+  };
+
+  await session.startImportedWorksheetFromJsonText(JSON.stringify({
+    title: 'Imported worksheet',
+    blocks: [
+      { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Question 1' }, responseConfig: { inputType: 'text' } },
+    ],
+  }));
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(importedRecords.length, 1);
+  assert.equal(importedRecords[0].localId, importedRecords[0].metadata.localId);
+  assert.equal(importedRecords[0].metadata.origin, 'imported_file');
+  assert.equal(importedRecords[0].metadata.updatedAt, importedRecords[0].importedAt);
+  assert.ok(importedRecords[0].metadata.updatedAt);
+  assert.equal(createAttemptCalls, 1);
+  assert.equal(session.state.source, 'imported_worksheet');
+  assert.equal(session.state.status, 'in_progress');
+  assert.equal(session.state.viewerPayload.title, 'Imported worksheet');
+  assert.equal(session.state.viewerPayload.blocks.length, 1);
+});
+
+test('startImportedWorksheetFromJsonText returns friendly parse/schema errors', async () => {
+  const mod = await loadViewerModule();
+  let putCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: {
+      put: async (record) => {
+        putCalls += 1;
+        return record;
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  await assert.rejects(
+    () => session.startImportedWorksheetFromJsonText('{bad json'),
+    /Unable to parse worksheet JSON\./
+  );
+  assert.equal(putCalls, 0);
+
+  await assert.rejects(
+    () => session.startImportedWorksheetFromJsonText(JSON.stringify({ title: 'Invalid worksheet', blocks: [] })),
+    /Imported worksheet is invalid\./
+  );
+  assert.equal(putCalls, 1);
 });
 
 test('viewer autosave emits state transitions and clears pending state without extra clicks', async () => {
@@ -455,6 +999,357 @@ test('viewer save error clears after subsequent successful save', async () => {
   assert.equal(session.state.lastSaveError, null);
 });
 
+test('bootstrap with no launch params resumes attempt from resume flag localId', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      location: {
+        search: '',
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async (localId) => {
+        assert.equal(localId, 'attempt_from_flag');
+        return {
+          localId: 'attempt_from_flag',
+          viewerPayload: {
+            worksheetId: 'flag_ws',
+            snapshotId: 'flag_snap',
+            blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Resume me' }, responseConfig: {} }],
+          },
+          answers: { q1: { value: 'saved answer' } },
+          metadata: { origin: 'resume_flag' },
+        };
+      },
+    },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => ({ localId: 'attempt_from_flag' }), set: () => {} },
+  });
+
+  await session.bootstrap();
+
+  assert.equal(session.state.localAttemptId, 'attempt_from_flag');
+  assert.equal(session.state.viewerPayload.worksheetId, 'flag_ws');
+  assert.equal(session.state.answers.q1.value, 'saved answer');
+});
+
+test('bootstrap with no launch params errors with NO_CONTENT_SOURCE when resume flag attempt is missing', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      location: {
+        search: '',
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => null,
+      put: async (value) => value,
+    },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => ({ localId: 'attempt_missing' }), set: () => {} },
+  });
+
+  await assert.rejects(() => session.bootstrap(), (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE);
+});
+
+test('bootstrap prefers localDraftId preview over resume flag session', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      location: {
+        search: '?localDraftId=draft_latest&preview=1',
+      },
+    },
+  });
+
+  let resumedAttemptReads = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => {
+        resumedAttemptReads += 1;
+        return {
+          localId: 'attempt_old',
+          viewerPayload: {
+            worksheetId: 'old_ws',
+            snapshotId: 'old_snap',
+            blocks: [{ blockId: 'q_old', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: {} }],
+          },
+          answers: {},
+          metadata: { origin: 'resume_flag' },
+        };
+      },
+      put: async (value) => value,
+    },
+    drafts: {
+      get: async (localId) => {
+        assert.equal(localId, 'draft_latest');
+        return {
+          localId: 'draft_latest',
+          title: 'Latest draft',
+          blocks: [{ blockId: 'q_new', kind: 'question', position: 0, prompt: { text: 'New' }, responseConfig: {} }],
+        };
+      },
+    },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: {
+      get: () => ({ localId: 'attempt_old' }),
+      set: () => {},
+    },
+  });
+
+  await session.bootstrap();
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(resumedAttemptReads, 0);
+  assert.equal(session.state.source, 'local_draft_preview');
+  assert.equal(session.state.viewerPayload.worksheetId, 'draft_latest');
+});
+
+test('bootstrap resumes explicit localAttemptId before loading draft sources', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      location: {
+        search: '?localAttemptId=attempt_explicit&localDraftId=draft_latest&preview=1',
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async (localId) => {
+        assert.equal(localId, 'attempt_explicit');
+        return {
+          localId: 'attempt_explicit',
+          viewerPayload: {
+            worksheetId: 'explicit_ws',
+            snapshotId: 'explicit_snap',
+            blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Resume me' }, responseConfig: {} }],
+          },
+          answers: { q1: { value: 'saved' } },
+          metadata: { origin: 'local_attempt' },
+        };
+      },
+    },
+    drafts: {
+      get: async () => {
+        throw new Error('draft lookup should not be called for explicit localAttemptId');
+      },
+    },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => ({ localId: 'attempt_from_flag' }), set: () => {} },
+  });
+
+  await session.bootstrap();
+
+  assert.equal(session.state.localAttemptId, 'attempt_explicit');
+  assert.equal(session.state.viewerPayload.worksheetId, 'explicit_ws');
+  assert.equal(session.state.answers.q1.value, 'saved');
+});
+
+test('tryResumeAttempt reconstructs payload from source metadata and overlays matching answers only', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => ({
+        localId: 'attempt_src',
+        sourceType: 'local_draft',
+        sourceLocalDraftId: 'draft_1',
+        viewerPayload: {
+          worksheetId: 'legacy_ws',
+          snapshotId: 'legacy_snap',
+          blocks: [{ blockId: 'legacy_q', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: {} }],
+        },
+        answers: {
+          q1: { value: 'answer-1' },
+          orphan: { value: 'should-drop' },
+        },
+        studentName: 'Casey Student',
+      }),
+    },
+    drafts: {
+      get: async () => ({
+        localId: 'draft_1',
+        title: 'Fresh draft',
+        blocks: [
+          { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} },
+          { blockId: 'q2', kind: 'question', position: 1, prompt: { text: 'Q2' }, responseConfig: {} },
+        ],
+      }),
+    },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  const resumed = await session.tryResumeAttempt('attempt_src');
+  assert.equal(resumed, true);
+  assert.equal(session.state.viewerPayload.worksheetId, 'draft_1');
+  assert.equal(session.state.answers.q1.value, 'answer-1');
+  assert.equal(session.state.answers.orphan, undefined);
+  assert.equal(session.state.studentName, 'Casey Student');
+});
+
+test('bootstrap hard-fails when explicit localAttemptId cannot resume even with preview params', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      location: {
+        search: '?localAttemptId=attempt_explicit&localDraftId=draft_latest&preview=1&draftUpdatedAt=2026-03-31T10:00:00.000Z',
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => ({
+        localId: 'attempt_explicit',
+        viewerPayload: {
+          worksheetId: 'stale_ws',
+          snapshotId: 'stale_snap',
+          blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: {} }],
+        },
+        answers: { q1: { value: 'stale answer' } },
+        metadata: { origin: 'local_attempt', sourceDraftUpdatedAt: '2026-03-31T09:00:00.000Z' },
+      }),
+      put: async (value) => value,
+    },
+    drafts: {
+      get: async () => ({
+        localId: 'draft_latest',
+        title: 'Latest draft',
+        metadata: { updatedAt: '2026-03-31T10:00:00.000Z' },
+        blocks: [{ blockId: 'q_new', kind: 'question', position: 0, prompt: { text: 'New' }, responseConfig: {} }],
+      }),
+    },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(
+    () => session.bootstrap(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.LOCAL_ATTEMPT_RESUME_FAILED
+  );
+});
+
+test('bootstrap hard-fails when explicit localAttemptId cannot be resumed', async () => {
+  const mod = await loadViewerModule({
+    window: { location: { search: '?localAttemptId=missing_attempt' } },
+  });
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(
+    () => session.bootstrap(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.LOCAL_ATTEMPT_RESUME_FAILED
+  );
+});
+
+test('createLocalAttemptState persists sourceDraftUpdatedAt in attempt metadata', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  const payload = mod.normalizeViewerPayload({
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  });
+  const attempt = session.createLocalAttemptState(payload, 'local_draft_preview', {
+    sourceDraftUpdatedAt: '2026-03-31T11:00:00.000Z',
+    sourceLocalDraftId: 'draft_11',
+  });
+
+  assert.equal(attempt.metadata.sourceDraftUpdatedAt, '2026-03-31T11:00:00.000Z');
+  assert.equal(attempt.sourceType, 'local_draft_preview');
+  assert.equal(attempt.sourceLocalDraftId, 'draft_11');
+  assert.equal(attempt.worksheetId, 'ws_1');
+  assert.equal(attempt.snapshotId, 'snap_1');
+});
+
+test('autosave persists new attempt linkage fields', async () => {
+  const mod = await loadViewerModule();
+  let persisted = null;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => { persisted = value; return value; } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  };
+  session.state.sourceType = 'imported_worksheet';
+  session.state.sourceImportedWorksheetId = 'imported_1';
+  session.state.studentName = 'Student A';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.lastActiveIndex = 0;
+  session.state.attemptRevision = 1;
+
+  await session.autosave();
+  assert.equal(persisted.sourceType, 'imported_worksheet');
+  assert.equal(persisted.sourceImportedWorksheetId, 'imported_1');
+  assert.equal(persisted.studentName, 'Student A');
+  assert.equal(persisted.lastActiveBlockId, 'q1');
+});
+
+test('computeResumeStartBlockIndex prioritizes lastActiveBlockId then first unanswered then zero', async () => {
+  const mod = await loadViewerModule();
+  const payload = {
+    blocks: [
+      { blockId: 'q1', kind: 'question', position: 0 },
+      { blockId: 'q2', kind: 'question', position: 1 },
+      { blockId: 'q3', kind: 'question', position: 2 },
+    ],
+  };
+
+  assert.equal(mod.computeResumeStartBlockIndex(payload, {}, { lastActiveBlockId: 'q2' }), 1);
+  assert.equal(mod.computeResumeStartBlockIndex(payload, { q1: { value: 'done' } }, {}), 1);
+  assert.equal(mod.computeResumeStartBlockIndex(payload, {
+    q1: { value: 'done' }, q2: { value: 'done' }, q3: { value: 'done' },
+  }, {}), 0);
+});
+
+test('tryResumeAttempt supports legacy schema by falling back to stored viewerPayload and localStorage student name', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      localStorage: { getItem: (key) => (key === 'viewer:studentName' ? 'Legacy Name' : null) },
+    },
+  });
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => ({
+        localId: 'attempt_legacy',
+        viewerPayload: {
+          worksheetId: 'ws_legacy',
+          snapshotId: 'snap_legacy',
+          blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+        },
+        answers: { q1: { value: 'legacy answer' } },
+        metadata: { origin: 'local_source' },
+      }),
+    },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  const resumed = await session.tryResumeAttempt('attempt_legacy');
+  assert.equal(resumed, true);
+  assert.equal(session.state.viewerPayload.worksheetId, 'ws_legacy');
+  assert.equal(session.state.studentName, 'Legacy Name');
+});
+
 test('partitionBlocksForDisplay returns ordered content and question sets', async () => {
   const mod = await loadViewerModule();
   const result = mod.partitionBlocksForDisplay([
@@ -580,6 +1475,18 @@ test('getNumberInputErrorMessage ignores legacy step config', async () => {
   });
 });
 
+
+
+test('renderCurrentBlockCard signature includes grading-derived fields and guarded check feedback rendering', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+
+  assert.equal(source.includes('hasGlobalCheckResult = session.state.checkResult !== null;'), true);
+  assert.equal(source.includes('currentBlockIsCheckable = isSupportedCheckQuestionBlock(currentBlock);'), true);
+  assert.equal(source.includes('currentBlockCheckStatus = currentBlock?.blockId'), true);
+  assert.equal(source.includes('currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,'), true);
+  assert.equal(source.includes('const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;'), true);
+  assert.equal(source.includes('if (shouldShowCheckFeedback) {'), true);
+});
 test('number rendering branch avoids text input min/max attributes and uses pattern hint', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("if (Number.isFinite(block.responseConfig?.min)) control.min"), false);
@@ -587,6 +1494,15 @@ test('number rendering branch avoids text input min/max attributes and uses patt
   assert.equal(source.includes('control.pattern ='), true);
   assert.equal(source.includes('control.title ='), true);
   assert.equal(source.includes("'Enter a valid integer or decimal number for this question.'"), false);
+});
+
+test('boolean rendering branch uses aria-labelledby and only labelable controls receive htmlFor', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("label.id = `${controlId}-label`;"), true);
+  assert.equal(source.includes("control.setAttribute('aria-labelledby', label.id);"), true);
+  assert.equal(source.includes("control.setAttribute('aria-label', 'Choose True or False');"), false);
+  assert.equal(source.includes("if (control.matches('input, select, textarea'))"), true);
+  assert.equal(source.includes("const normalizedCurrentValue = coerceAnswerValueByInputType('boolean', currentValue);"), true);
 });
 
 test('createInputErrorNode applies stable id and live region semantics', async () => {
@@ -721,4 +1637,615 @@ test('updateTextCounterUI sets text and semantic classes', async () => {
   assert.equal(counterNode.className, 'text-counter text-counter--warning');
   assert.equal(statusNode.textContent, '1 character remaining.');
   assert.equal(statusNode.className, 'text-counter-status text-counter-status--warning');
+});
+
+function createFakeDom() {
+  class FakeNode {
+    constructor(tagName = 'div') {
+      this.tagName = tagName.toUpperCase();
+      this.children = [];
+      this.listeners = new Map();
+      this.className = '';
+      this.textContent = '';
+      this.value = '';
+      this.hidden = false;
+      this.type = '';
+      this.accept = '';
+      this.files = null;
+      this.attrs = {};
+    }
+
+    append(...nodes) {
+      this.children.push(...nodes);
+    }
+
+    appendChild(node) {
+      this.children.push(node);
+      return node;
+    }
+
+    addEventListener(type, handler) {
+      const existing = this.listeners.get(type) || [];
+      existing.push(handler);
+      this.listeners.set(type, existing);
+    }
+
+    async dispatch(type) {
+      const handlers = this.listeners.get(type) || [];
+      for (const handler of handlers) {
+        await handler({ target: this });
+      }
+    }
+
+    click() {}
+
+    setAttribute(name, value) {
+      this.attrs[name] = String(value);
+    }
+  }
+
+  const appRoot = new FakeNode('div');
+  const bottomBarRoot = new FakeNode('div');
+  appRoot.id = 'app';
+  bottomBarRoot.id = 'viewer-bottom-bar-root';
+
+  const document = {
+    getElementById(id) {
+      if (id === 'app') return appRoot;
+      if (id === 'viewer-bottom-bar-root') return bottomBarRoot;
+      return null;
+    },
+    createElement(tag) {
+      return new FakeNode(tag);
+    },
+  };
+
+  return { document, appRoot, bottomBarRoot };
+}
+
+test('bootstrapViewer auto-resumes in-progress attempt from resume flag on bare /viewer/', { concurrency: false }, async () => {
+  const { document } = createFakeDom();
+  let renderedSession = null;
+  const attemptRecord = {
+    localId: 'attempt_resume',
+    status: 'in_progress',
+    viewerPayload: {
+      worksheetId: 'ws_1',
+      snapshotId: 'snap_1',
+      blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+    },
+    answers: {},
+  };
+
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+    renderViewerShell: (session) => {
+      renderedSession = session;
+    },
+    viewerStorage: {
+      attempts: { get: async () => attemptRecord, put: async (value) => value },
+      resumeFlags: { get: () => ({ localId: 'attempt_resume' }), set: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+
+  assert.equal(renderedSession?.state?.localAttemptId, 'attempt_resume');
+});
+
+test('renderViewerStartPanel import flow updates URL with localAttemptId via replaceState', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const replaceCalls = [];
+  const session = {
+    state: { localAttemptId: null },
+    startImportedWorksheetFromJsonText: async () => {
+      session.state.localAttemptId = 'attempt_new';
+    },
+  };
+
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/?auth=1', search: '?auth=1' },
+      history: {
+        replaceState: (...args) => replaceCalls.push(args),
+      },
+    },
+    renderViewerShell: () => {},
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+  mod.renderViewerStartPanel(session);
+
+  const fileInput = appRoot.children[0].children.find((child) => child.tagName === 'INPUT');
+  fileInput.files = [{ text: async () => '{"ok":true}' }];
+  await fileInput.dispatch('change');
+
+  assert.equal(replaceCalls.length, 1);
+  const [, , nextUrl] = replaceCalls[0];
+  assert.equal(String(nextUrl).includes('localAttemptId=attempt_new'), true);
+  assert.equal(String(nextUrl).includes('auth=1'), true);
+});
+
+test('bootstrapViewer falls back to start panel with warning when resume flag record is invalid', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+    renderViewerShell: () => {
+      throw new Error('should not render shell');
+    },
+    viewerStorage: {
+      attempts: { get: async () => ({ localId: 'attempt_bad', status: 'completed' }) },
+      resumeFlags: { get: () => ({ localId: 'attempt_bad' }), set: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+
+  const panel = appRoot.children[0];
+  const statusNode = panel.children.find((child) => child.className === 'viewer-start-error');
+  assert.match(statusNode.textContent, /couldn't restore your previous session/i);
+});
+
+
+test('bootstrap hard-fails with parse-specific errors for malformed explicit payload params', async () => {
+  const mod = await loadViewerModule({
+    window: { location: { search: '?viewerPayload=@@bad@@' } },
+  });
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(
+    () => session.bootstrap(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.VIEWER_PAYLOAD_PARSE_FAILED
+  );
+
+  const snapshotMod = await loadViewerModule({
+    window: { location: { search: '?snapshot=@@bad@@' } },
+  });
+  const snapshotSession = new snapshotMod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await assert.rejects(
+    () => snapshotSession.bootstrap(),
+    (error) => error?.code === snapshotMod.VIEWER_BOOT_ERROR_CODES.SNAPSHOT_PARSE_FAILED
+  );
+});
+
+test('bootstrap hard-fails with typed not-found errors for explicit localDraftId/importedWorksheetId', async () => {
+  const mod = await loadViewerModule({
+    window: { location: { search: '?localDraftId=draft_missing' } },
+  });
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(
+    () => session.bootstrap(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.LOCAL_DRAFT_NOT_FOUND
+  );
+
+  const importedMod = await loadViewerModule({
+    window: { location: { search: '?importedWorksheetId=import_missing' } },
+  });
+  const importedSession = new importedMod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await assert.rejects(
+    () => importedSession.bootstrap(),
+    (error) => error?.code === importedMod.VIEWER_BOOT_ERROR_CODES.IMPORTED_WORKSHEET_NOT_FOUND
+  );
+});
+
+test('bootstrap maps payload schema validation failures to INVALID_VIEWER_PAYLOAD', async () => {
+  const mod = await loadViewerModule({
+    window: { location: { search: '?viewerPayload=%7B%22blocks%22%3A%5B%7B%22kind%22%3A%22question%22%2C%22position%22%3A0%2C%22prompt%22%3A%7B%22text%22%3A%22Q%22%7D%2C%22responseConfig%22%3A%7B%7D%7D%5D%7D' } },
+    validateViewerPayloadSchema: () => ({ valid: false, errors: ['missing worksheetId'] }),
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(
+    () => session.bootstrap(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.INVALID_VIEWER_PAYLOAD
+  );
+});
+
+test('bootstrapViewer renders start panel recovery warning for authReturn without restorable state and no content params', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  class FakeAuthGate {
+    constructor({ onRecoveryMessage }) {
+      this.onRecoveryMessage = onRecoveryMessage;
+    }
+    async restoreAfterAuthReturn() {
+      if (this.onRecoveryMessage) {
+        this.onRecoveryMessage('Session restore failed after sign-in.');
+      }
+      return { status: 'restore_failed' };
+    }
+  }
+
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/?authReturn=1', search: '?authReturn=1' },
+      history: { replaceState: () => {} },
+    },
+    SharedAuthGate: FakeAuthGate,
+    renderViewerShell: () => {
+      throw new Error('should not render shell for missing auth-return restore state');
+    },
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+  const panel = appRoot.children[0];
+  const statusNode = panel.children.find((child) => child.className === 'viewer-start-error');
+  assert.match(statusNode.textContent, /restore failed/i);
+});
+
+test('bootstrapViewer renders fatal panel for explicit localAttemptId resume failure and does not create synthetic attempt', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  let putCalls = 0;
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/?localAttemptId=missing_attempt', search: '?localAttemptId=missing_attempt' },
+      history: { replaceState: () => {} },
+    },
+    renderViewerShell: () => {
+      throw new Error('should not render shell');
+    },
+    viewerStorage: {
+      attempts: {
+        get: async () => null,
+        put: async (value) => { putCalls += 1; return value; },
+      },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await assert.rejects(async () => {
+    try {
+      await mod.bootstrapViewer();
+    } catch (error) {
+      mod.renderViewerFatalError(error);
+      throw error;
+    }
+  }, (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.LOCAL_ATTEMPT_RESUME_FAILED);
+
+  const panel = appRoot.children[0];
+  assert.equal(panel.className, 'viewer-fatal-panel');
+  assert.equal(putCalls, 0);
+});
+
+
+test('areMultiSelectValuesEqual normalizes, deduplicates, and compares membership without sort/join', async () => {
+  const mod = await loadViewerModule();
+
+  assert.equal(mod.areMultiSelectValuesEqual(['a', 2, 'a', 2], ['2', 'a']), true);
+  assert.equal(mod.areMultiSelectValuesEqual(['a', 'b'], ['b', 'a', 'a']), true);
+  assert.equal(mod.areMultiSelectValuesEqual(['a', 'b'], ['a']), false);
+  assert.equal(mod.areMultiSelectValuesEqual('a', ['a']), false);
+});
+
+test('computeCheckResult uses set membership for multi-select grading', async () => {
+  const mod = await loadViewerModule();
+
+  const viewerPayload = {
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        responseConfig: {
+          inputType: 'multiple_choice',
+          selectionMode: 'multi',
+          correctAnswer: ['b', 'a', 'a'],
+        },
+      },
+    ],
+  };
+
+  const resultMatch = mod.computeCheckResult(viewerPayload, {
+    q1: { value: ['a', 'b', 'a'] },
+  });
+  const resultMiss = mod.computeCheckResult(viewerPayload, {
+    q1: { value: ['a'] },
+  });
+
+  assert.equal(resultMatch.byBlockId.q1, true);
+  assert.equal(resultMatch.correctCount, 1);
+  assert.equal(resultMiss.byBlockId.q1, false);
+  assert.equal(resultMiss.correctCount, 0);
+});
+
+
+test('ViewerAttemptSession initializes checkResult as null transient state', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  assert.equal(session.state.checkResult, null);
+});
+
+test('applyAttemptState and resume paths clear stale checkResult values', async () => {
+  const mod = await loadViewerModule();
+  const attemptRecord = {
+    localId: 'attempt_resume_1',
+    status: 'in_progress',
+    checkResult: { correctCount: 2 },
+    viewerPayload: {
+      worksheetId: 'ws_1',
+      snapshotId: 'snap_1',
+      blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+    },
+    answers: {},
+    metadata: { origin: 'inline_payload', localId: 'attempt_resume_1', updatedAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => attemptRecord, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  session.applyAttemptState(attemptRecord, { markDirty: false });
+  assert.equal(session.state.checkResult, null);
+
+  session.state.checkResult = { correctCount: 99 };
+  const resumed = await session.tryResumeAttempt('attempt_resume_1');
+  assert.equal(resumed, true);
+  assert.equal(session.state.checkResult, null);
+});
+
+test('autosave payload does not persist transient checkResult', async () => {
+  const mod = await loadViewerModule();
+  let persisted = null;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => { persisted = value; return value; } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  session.state.localAttemptId = 'attempt_transient';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  };
+  session.state.checkResult = { correctCount: 1, totalQuestions: 1 };
+  session.state.attemptRevision = 1;
+
+  await session.autosave();
+  assert.equal(Object.hasOwn(persisted, 'checkResult'), false);
+});
+
+
+test('hasGradeableQuestions only returns true for question blocks with supported inputType and correctAnswer', async () => {
+  const mod = await loadViewerModule();
+
+  const noGradeable = {
+    blocks: [
+      { kind: 'content', blockId: 'c1' },
+      { kind: 'question', blockId: 'q_text', responseConfig: { inputType: 'text', correctAnswer: 'x' } },
+      { kind: 'question', blockId: 'q_unknown', responseConfig: { inputType: 'date', correctAnswer: '2026-01-01' } },
+      { kind: 'question', blockId: 'q_missing', responseConfig: { inputType: 'number' } },
+    ],
+  };
+
+  const hasGradeable = {
+    blocks: [
+      { kind: 'question', blockId: 'q_bool', responseConfig: { inputType: 'boolean', correctAnswer: true } },
+    ],
+  };
+
+  assert.equal(mod.hasGradeableQuestions(noGradeable), false);
+  assert.equal(mod.hasGradeableQuestions(hasGradeable), true);
+});
+
+test('computeCheckResult grades only supported input types with correctAnswer', async () => {
+  const mod = await loadViewerModule();
+
+  const viewerPayload = {
+    blocks: [
+      {
+        blockId: 'q_multi',
+        kind: 'question',
+        responseConfig: { inputType: 'multiple_choice', selectionMode: 'multi', correctAnswer: ['a', 'b'] },
+      },
+      {
+        blockId: 'q_bool',
+        kind: 'question',
+        responseConfig: { inputType: 'boolean', correctAnswer: true },
+      },
+      {
+        blockId: 'q_number',
+        kind: 'question',
+        responseConfig: { inputType: 'number', correctAnswer: 3 },
+      },
+      {
+        blockId: 'q_text',
+        kind: 'question',
+        responseConfig: { inputType: 'text', correctAnswer: 'hello' },
+      },
+      {
+        blockId: 'q_unknown',
+        kind: 'question',
+        responseConfig: { inputType: 'date', correctAnswer: '2026-04-02' },
+      },
+      {
+        blockId: 'q_missing',
+        kind: 'question',
+        responseConfig: { inputType: 'number' },
+      },
+    ],
+  };
+
+  const result = mod.computeCheckResult(viewerPayload, {
+    q_multi: { value: ['b', 'a', 'a'] },
+    q_bool: { value: true },
+    q_number: { value: '3' },
+    q_text: { value: 'hello' },
+    q_unknown: { value: '2026-04-02' },
+    q_missing: { value: 5 },
+  });
+
+  assert.deepEqual(Object.keys(result.byBlockId).sort(), ['q_bool', 'q_multi', 'q_number']);
+  assert.deepEqual(result.statusByBlockId, {
+    q_multi: 'correct',
+    q_bool: 'correct',
+    q_number: 'correct',
+    q_missing: 'ungraded_missing_or_invalid_key',
+  });
+  assert.equal(result.correctCount, 3);
+  assert.equal(result.totalQuestions, 3);
+  assert.equal(Object.hasOwn(result, 'ungradedCount'), false);
+});
+
+test('computeCheckResult does not treat unanswered number input as 0 when correctAnswer is 0', async () => {
+  const mod = await loadViewerModule();
+
+  const viewerPayload = {
+    blocks: [
+      {
+        blockId: 'q_number',
+        kind: 'question',
+        responseConfig: { inputType: 'number', correctAnswer: 0 },
+      },
+    ],
+  };
+
+  const resultEmpty = mod.computeCheckResult(viewerPayload, { q_number: { value: '' } });
+  const resultNull = mod.computeCheckResult(viewerPayload, { q_number: { value: null } });
+  const resultUndef = mod.computeCheckResult(viewerPayload, { q_number: { value: undefined } });
+  const resultZero = mod.computeCheckResult(viewerPayload, { q_number: { value: '0' } });
+
+  assert.equal(resultEmpty.byBlockId.q_number, false, 'empty string should not be correct');
+  assert.equal(resultEmpty.correctCount, 0);
+  assert.equal(resultNull.byBlockId.q_number, false, 'null should not be correct');
+  assert.equal(resultNull.correctCount, 0);
+  assert.equal(resultUndef.byBlockId.q_number, false, 'undefined should not be correct');
+  assert.equal(resultUndef.correctCount, 0);
+  assert.equal(resultZero.byBlockId.q_number, true, 'string "0" should be correct when correctAnswer is 0');
+  assert.equal(resultZero.correctCount, 1);
+});
+
+test('getCheckRevealMessage uses explicit fallback when learner answer is empty', async () => {
+  const mod = await loadViewerModule();
+
+  const incorrectEmpty = mod.getCheckRevealMessage({
+    status: 'incorrect',
+    learnerAnswerText: '',
+    correctAnswerText: 'A, B',
+  });
+  const incorrectWhitespace = mod.getCheckRevealMessage({
+    status: 'incorrect',
+    learnerAnswerText: '   ',
+    correctAnswerText: 'True',
+  });
+  const correct = mod.getCheckRevealMessage({
+    status: 'correct',
+    learnerAnswerText: '',
+    correctAnswerText: '4',
+  });
+  const ungradedMissingKey = mod.getCheckRevealMessage({
+    status: 'ungraded_missing_or_invalid_key',
+    learnerAnswerText: '',
+    correctAnswerText: '',
+  });
+
+  assert.equal(incorrectEmpty, 'Your answer was: No answer submitted · Correct answer: A, B');
+  assert.equal(incorrectWhitespace, 'Your answer was: No answer submitted · Correct answer: True');
+  assert.equal(correct, 'Correct answer: 4');
+  assert.equal(ungradedMissingKey, 'Your answer was: No answer submitted');
+});
+
+test('computeCheckResult marks gradeable missing key questions as ungraded without changing summary fields', async () => {
+  const mod = await loadViewerModule();
+
+  const viewerPayload = {
+    blocks: [
+      {
+        blockId: 'q_missing_key',
+        kind: 'question',
+        responseConfig: { inputType: 'number' },
+      },
+      {
+        blockId: 'q_graded',
+        kind: 'question',
+        responseConfig: { inputType: 'boolean', correctAnswer: true },
+      },
+    ],
+  };
+
+  const result = mod.computeCheckResult(viewerPayload, {
+    q_missing_key: { value: '12' },
+    q_graded: { value: false },
+  });
+
+  assert.equal(result.byBlockId.q_missing_key, undefined);
+  assert.equal(result.statusByBlockId.q_missing_key, 'ungraded_missing_or_invalid_key');
+  assert.equal(result.statusByBlockId.q_graded, 'incorrect');
+  assert.deepEqual(Object.keys(result).sort(), ['byBlockId', 'correctCount', 'statusByBlockId', 'totalQuestions']);
+  assert.equal(result.correctCount, 0);
+  assert.equal(result.totalQuestions, 1);
+});
+
+test('render check feedback includes neutral ungraded banner copy and learner answer fallback', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+
+  assert.equal(source.includes("checkTitle.textContent = isCorrect ? 'Correct' : isIncorrect ? 'Incorrect' : 'Not graded';"), true);
+  assert.equal(source.includes("'Answer key missing or invalid for this question.'"), true);
+  assert.equal(source.includes("status: checkStatus,"), true);
+  assert.equal(source.includes("correctAnswerText: isUngradedMissingOrInvalidKey ? '' : formatCorrectAnswer(),"), true);
+  assert.equal(source.includes("'Your answer was: No answer submitted'"), true);
+});
+
+test('viewer stylesheet defines neutral ungraded check banner styles', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.css'), 'utf8');
+  assert.equal(source.includes('.viewer-check-banner.is-ungraded {'), true);
+  assert.equal(source.includes('.viewer-check-banner.is-ungraded .viewer-check-banner__icon {'), true);
 });
