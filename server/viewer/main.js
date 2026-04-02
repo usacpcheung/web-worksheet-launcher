@@ -2130,11 +2130,12 @@ function renderViewerShell(session) {
       label.id = `${controlId}-label`;
       label.textContent = block.prompt?.text || 'Question';
 
-      let checkBadge = null;
+      let checkBanner = null;
       let checkReveal = null;
       if (shouldShowCheckFeedback) {
         const isCorrect = currentBlockCheckResult === true;
         const correctAnswer = block.responseConfig?.correctAnswer;
+        const learnerAnswer = session.state.answers?.[block.blockId]?.value;
         const formatCorrectAnswer = () => {
           if (inputType === 'multiple_choice') {
             if (block.responseConfig?.selectionMode === 'multi') {
@@ -2151,13 +2152,52 @@ function renderViewerShell(session) {
           return '';
         };
 
-        checkBadge = document.createElement('p');
-        checkBadge.className = `viewer-check-badge ${isCorrect ? 'is-correct' : 'is-incorrect'}`;
-        checkBadge.textContent = isCorrect ? '✅ Correct' : '❌ Incorrect';
+        const formatLearnerAnswer = () => {
+          if (inputType === 'multiple_choice') {
+            if (block.responseConfig?.selectionMode === 'multi') {
+              return Array.isArray(learnerAnswer) ? learnerAnswer.map((value) => String(value)).join(', ') : '';
+            }
+            return String(learnerAnswer ?? '');
+          }
+          if (inputType === 'boolean') {
+            const normalized = coerceAnswerValueByInputType('boolean', learnerAnswer);
+            if (normalized === true) return 'True';
+            if (normalized === false) return 'False';
+            return '';
+          }
+          if (inputType === 'number') {
+            return learnerAnswer === '' || learnerAnswer === null || learnerAnswer === undefined
+              ? ''
+              : String(learnerAnswer);
+          }
+          return '';
+        };
+
+        checkBanner = document.createElement('div');
+        checkBanner.className = `viewer-check-banner ${isCorrect ? 'is-correct' : 'is-incorrect'}`;
+        const checkIcon = document.createElement('span');
+        checkIcon.className = 'viewer-check-banner__icon';
+        checkIcon.textContent = isCorrect ? '✓' : '✕';
+        const checkBody = document.createElement('div');
+        checkBody.className = 'viewer-check-banner__body';
+        const checkTitle = document.createElement('p');
+        checkTitle.className = 'viewer-check-banner__title';
+        checkTitle.textContent = isCorrect ? 'Correct' : 'Incorrect';
+        const checkDetail = document.createElement('p');
+        checkDetail.className = 'viewer-check-banner__detail';
+        checkDetail.textContent = isCorrect
+          ? 'Great work — your answer matches the expected result.'
+          : 'Not quite. Review the calculation and try again.';
+        checkBody.append(checkTitle, checkDetail);
+        checkBanner.append(checkIcon, checkBody);
 
         checkReveal = document.createElement('p');
         checkReveal.className = 'viewer-check-reveal muted';
-        checkReveal.textContent = `Correct answer: ${formatCorrectAnswer()}`;
+        checkReveal.textContent = isCorrect
+          ? `Correct answer: ${formatCorrectAnswer()}`
+          : `Your answer was: ${formatLearnerAnswer()} · Correct answer: ${formatCorrectAnswer()}`;
+
+        card.classList.add(isCorrect ? 'question-card--checked-correct' : 'question-card--checked-incorrect');
       }
 
       const helper = document.createElement('p');
@@ -2323,14 +2363,14 @@ function renderViewerShell(session) {
           status: textStatus,
         });
         card.append(label);
-        if (checkBadge && checkReveal) {
-          card.append(checkBadge, checkReveal);
+        if (checkBanner && checkReveal) {
+          card.append(checkBanner, checkReveal);
         }
         card.append(helper, control, textCounter, textStatus, inputError);
       } else {
         card.append(label);
-        if (checkBadge && checkReveal) {
-          card.append(checkBadge, checkReveal);
+        if (checkBanner && checkReveal) {
+          card.append(checkBanner, checkReveal);
         }
         card.append(helper, control, inputError);
       }
