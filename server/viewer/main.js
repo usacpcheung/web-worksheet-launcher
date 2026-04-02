@@ -2222,10 +2222,13 @@ function renderViewerShell(session) {
   renderUI();
 }
 
-function renderViewerStartPanel(session) {
+function renderViewerStartPanel(session, options = {}) {
   if (!app || !bottomBarRoot) {
     return;
   }
+  const startWarningMessage = typeof options.warningMessage === 'string' && options.warningMessage.trim()
+    ? options.warningMessage.trim()
+    : null;
 
   const panel = document.createElement('section');
   panel.className = 'viewer-start-panel';
@@ -2245,7 +2248,7 @@ function renderViewerStartPanel(session) {
 
   const errorMessage = document.createElement('p');
   errorMessage.className = 'viewer-start-error';
-  errorMessage.textContent = '';
+  errorMessage.textContent = startWarningMessage || '';
   errorMessage.setAttribute('role', 'status');
   errorMessage.setAttribute('aria-live', 'polite');
 
@@ -2261,6 +2264,11 @@ function renderViewerStartPanel(session) {
     try {
       const rawJson = await selected.text();
       await session.startImportedWorksheetFromJsonText(rawJson);
+      if (session.state.localAttemptId) {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+        window.history.replaceState({}, '', nextUrl);
+      }
       renderViewerShell(session);
       window.viewerSession = session;
     } catch (error) {
@@ -2312,7 +2320,22 @@ async function bootstrapViewer() {
     || hasAuthReturn;
 
   if (!hasLaunchIntent) {
-    renderViewerStartPanel(session);
+    const flaggedAttempt = session.storage.resumeFlags.get(RESUME_FLAG_KEY);
+    if (flaggedAttempt?.localId) {
+      const resumeCandidate = await session.storage.attempts.get(flaggedAttempt.localId);
+      if (resumeCandidate?.status === 'in_progress') {
+        const resumed = await session.tryResumeAttempt(flaggedAttempt.localId);
+        if (resumed) {
+          renderViewerShell(session);
+          window.viewerSession = session;
+          return;
+        }
+      }
+      session.setRecoveryMessage(
+        `We couldn't restore your previous session. Please import the worksheet JSON to continue.`
+      );
+    }
+    renderViewerStartPanel(session, { warningMessage: session.state.recoveryMessage });
     return;
   }
 

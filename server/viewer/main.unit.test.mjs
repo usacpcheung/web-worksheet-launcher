@@ -6,46 +6,56 @@ import path from 'node:path';
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
   let source = await fs.readFile(filePath, 'utf8');
+  const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
+
+  globalThis[bagName] = {
+    viewerStorage: overrides.viewerStorage || {},
+    mapSnapshotToViewerPayload: overrides.mapSnapshotToViewerPayload || ((v) => v),
+    normalizeNumberRules: (rules) => ({
+      allowedKinds: Array.isArray(rules?.allowedKinds) ? rules.allowedKinds : ['integer', 'decimal'],
+      allowSigned: rules?.allowSigned !== false,
+      decimalPlacesAllowed: Number.isInteger(rules?.decimalPlacesAllowed) ? rules.decimalPlacesAllowed : null,
+    }),
+    validateNumberInputFormat: overrides.validateNumberInputFormat || ((value, rulesArg) => {
+      const text = String(value ?? '').trim();
+      if (!text) return { ok: false, errorCode: 'empty' };
+      if (text.includes('/')) return { ok: false, errorCode: 'fraction_not_allowed' };
+      const activeRules = globalThis[bagName].normalizeNumberRules(rulesArg);
+      if (!activeRules.allowSigned && (text.startsWith('+') || text.startsWith('-'))) {
+        return { ok: false, errorCode: 'sign_not_allowed' };
+      }
+      if (!/^[+-]?\d+(\.\d+)?$/.test(text)) return { ok: false, errorCode: 'invalid_syntax' };
+      const kind = text.includes('.') ? 'decimal' : 'integer';
+      if (Array.isArray(activeRules.allowedKinds) && !activeRules.allowedKinds.includes(kind)) {
+        return { ok: false, errorCode: 'kind_not_allowed' };
+      }
+      if (kind === 'decimal' && Number.isInteger(activeRules.decimalPlacesAllowed)) {
+        const [, decimalPart = ''] = text.split('.');
+        if (decimalPart.length > activeRules.decimalPlacesAllowed) {
+          return { ok: false, errorCode: 'decimal_places_exceeded' };
+        }
+      }
+      return { ok: true, normalizedValue: Number(text), kind };
+    }),
+    SharedAuthGate: overrides.SharedAuthGate || class {},
+    renderViewerShell: overrides.renderViewerShell || (() => {}),
+    document: overrides.document || { getElementById: () => null },
+    window: overrides.window || {},
+  };
 
   source = source.replace(
     "import { viewerStorage } from './storage/index.js';\nimport { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';\nimport { validateViewerPayloadSchema } from '../app/contracts/validators.js';\nimport { normalizeNumberRules, validateNumberInputFormat } from '../app/contracts/number-input-validator.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
-    'const viewerStorage = {};\nconst mapSnapshotToViewerPayload = globalThis.__mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = (p) => ({ valid: true, errors: [] });\nconst normalizeNumberRules = globalThis.__normalizeNumberRules;\nconst validateNumberInputFormat = globalThis.__validateNumberInputFormat;\nconst SharedAuthGate = class {};\n'
+    `const __testBag = globalThis.${bagName};\nconst viewerStorage = __testBag.viewerStorage;\nconst mapSnapshotToViewerPayload = __testBag.mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = (p) => ({ valid: true, errors: [] });\nconst normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;\nconst SharedAuthGate = __testBag.SharedAuthGate;\n`
   );
+  source = source.replace(/renderViewerShell\(session\);/g, '__testBag.renderViewerShell(session);');
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, bootstrapViewer };'
   );
 
-  globalThis.__mapSnapshotToViewerPayload = overrides.mapSnapshotToViewerPayload || ((v) => v);
-  globalThis.__normalizeNumberRules = (rules) => ({
-    allowedKinds: Array.isArray(rules?.allowedKinds) ? rules.allowedKinds : ['integer', 'decimal'],
-    allowSigned: rules?.allowSigned !== false,
-    decimalPlacesAllowed: Number.isInteger(rules?.decimalPlacesAllowed) ? rules.decimalPlacesAllowed : null,
-  });
-  globalThis.__validateNumberInputFormat = overrides.validateNumberInputFormat || ((value, rulesArg) => {
-    const text = String(value ?? '').trim();
-    if (!text) return { ok: false, errorCode: 'empty' };
-    if (text.includes('/')) return { ok: false, errorCode: 'fraction_not_allowed' };
-    const activeRules = globalThis.__normalizeNumberRules(rulesArg);
-    if (!activeRules.allowSigned && (text.startsWith('+') || text.startsWith('-'))) {
-      return { ok: false, errorCode: 'sign_not_allowed' };
-    }
-    if (!/^[+-]?\d+(\.\d+)?$/.test(text)) return { ok: false, errorCode: 'invalid_syntax' };
-    const kind = text.includes('.') ? 'decimal' : 'integer';
-    if (Array.isArray(activeRules.allowedKinds) && !activeRules.allowedKinds.includes(kind)) {
-      return { ok: false, errorCode: 'kind_not_allowed' };
-    }
-    if (kind === 'decimal' && Number.isInteger(activeRules.decimalPlacesAllowed)) {
-      const [, decimalPart = ''] = text.split('.');
-      if (decimalPart.length > activeRules.decimalPlacesAllowed) {
-        return { ok: false, errorCode: 'decimal_places_exceeded' };
-      }
-    }
-    return { ok: true, normalizedValue: Number(text), kind };
-  });
-  globalThis.document = overrides.document || { getElementById: () => null };
-  globalThis.window = overrides.window || {};
+  globalThis.document = globalThis[bagName].document;
+  globalThis.window = globalThis[bagName].window;
 
   const dataUrl = `data:text/javascript,${encodeURIComponent(source)}`;
   return import(dataUrl);
@@ -1423,4 +1433,163 @@ test('updateTextCounterUI sets text and semantic classes', async () => {
   assert.equal(counterNode.className, 'text-counter text-counter--warning');
   assert.equal(statusNode.textContent, '1 character remaining.');
   assert.equal(statusNode.className, 'text-counter-status text-counter-status--warning');
+});
+
+function createFakeDom() {
+  class FakeNode {
+    constructor(tagName = 'div') {
+      this.tagName = tagName.toUpperCase();
+      this.children = [];
+      this.listeners = new Map();
+      this.className = '';
+      this.textContent = '';
+      this.value = '';
+      this.hidden = false;
+      this.type = '';
+      this.accept = '';
+      this.files = null;
+      this.attrs = {};
+    }
+
+    append(...nodes) {
+      this.children.push(...nodes);
+    }
+
+    addEventListener(type, handler) {
+      const existing = this.listeners.get(type) || [];
+      existing.push(handler);
+      this.listeners.set(type, existing);
+    }
+
+    async dispatch(type) {
+      const handlers = this.listeners.get(type) || [];
+      for (const handler of handlers) {
+        await handler({ target: this });
+      }
+    }
+
+    click() {}
+
+    setAttribute(name, value) {
+      this.attrs[name] = String(value);
+    }
+  }
+
+  const appRoot = new FakeNode('div');
+  const bottomBarRoot = new FakeNode('div');
+  appRoot.id = 'app';
+  bottomBarRoot.id = 'viewer-bottom-bar-root';
+
+  const document = {
+    getElementById(id) {
+      if (id === 'app') return appRoot;
+      if (id === 'viewer-bottom-bar-root') return bottomBarRoot;
+      return null;
+    },
+    createElement(tag) {
+      return new FakeNode(tag);
+    },
+  };
+
+  return { document, appRoot, bottomBarRoot };
+}
+
+test('bootstrapViewer auto-resumes in-progress attempt from resume flag on bare /viewer/', { concurrency: false }, async () => {
+  const { document } = createFakeDom();
+  let renderedSession = null;
+  const attemptRecord = {
+    localId: 'attempt_resume',
+    status: 'in_progress',
+    viewerPayload: {
+      worksheetId: 'ws_1',
+      snapshotId: 'snap_1',
+      blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+    },
+    answers: {},
+  };
+
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+    renderViewerShell: (session) => {
+      renderedSession = session;
+    },
+    viewerStorage: {
+      attempts: { get: async () => attemptRecord, put: async (value) => value },
+      resumeFlags: { get: () => ({ localId: 'attempt_resume' }), set: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+
+  assert.equal(renderedSession?.state?.localAttemptId, 'attempt_resume');
+});
+
+test('renderViewerStartPanel import flow updates URL with localAttemptId via replaceState', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const replaceCalls = [];
+  const session = {
+    state: { localAttemptId: null },
+    startImportedWorksheetFromJsonText: async () => {
+      session.state.localAttemptId = 'attempt_new';
+    },
+  };
+
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/?auth=1', search: '?auth=1' },
+      history: {
+        replaceState: (...args) => replaceCalls.push(args),
+      },
+    },
+    renderViewerShell: () => {},
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+  mod.renderViewerStartPanel(session);
+
+  const fileInput = appRoot.children[0].children.find((child) => child.tagName === 'INPUT');
+  fileInput.files = [{ text: async () => '{"ok":true}' }];
+  await fileInput.dispatch('change');
+
+  assert.equal(replaceCalls.length, 1);
+  const [, , nextUrl] = replaceCalls[0];
+  assert.equal(String(nextUrl).includes('localAttemptId=attempt_new'), true);
+  assert.equal(String(nextUrl).includes('auth=1'), true);
+});
+
+test('bootstrapViewer falls back to start panel with warning when resume flag record is invalid', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+    renderViewerShell: () => {
+      throw new Error('should not render shell');
+    },
+    viewerStorage: {
+      attempts: { get: async () => ({ localId: 'attempt_bad', status: 'completed' }) },
+      resumeFlags: { get: () => ({ localId: 'attempt_bad' }), set: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+
+  const panel = appRoot.children[0];
+  const statusNode = panel.children.find((child) => child.className === 'viewer-start-error');
+  assert.match(statusNode.textContent, /couldn't restore your previous session/i);
 });
