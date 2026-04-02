@@ -1634,12 +1634,15 @@ function renderViewerShell(session) {
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
+  saveBtn.className = 'viewer-bottom-action-btn';
   saveBtn.textContent = 'Save';
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
+  completeBtn.className = 'viewer-bottom-action-btn';
   completeBtn.textContent = 'Submit';
   const checkBtn = document.createElement('button');
   checkBtn.type = 'button';
+  checkBtn.className = 'viewer-bottom-action-btn';
   checkBtn.textContent = 'Check Answer';
 
   const utilityMenu = document.createElement('div');
@@ -1729,11 +1732,21 @@ function renderViewerShell(session) {
   const rightZone = document.createElement('div');
   rightZone.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--right';
 
+  const showBottomButtonClickFeedback = (button) => {
+    if (!button) return;
+    button.classList.remove('is-click-feedback');
+    // Force restart of animation for repeated clicks.
+    void button.offsetWidth;
+    button.classList.add('is-click-feedback');
+  };
+
   completeBtn.addEventListener('click', async () => {
+    showBottomButtonClickFeedback(completeBtn);
     await session.completeLocalAttempt();
     renderUI();
   });
   checkBtn.addEventListener('click', () => {
+    showBottomButtonClickFeedback(checkBtn);
     session.checkAnswers();
     renderUI();
   });
@@ -2560,6 +2573,7 @@ function renderViewerShell(session) {
   });
 
   saveBtn.addEventListener('click', async () => {
+    showBottomButtonClickFeedback(saveBtn);
     await session.saveNow();
     renderUI();
   });
