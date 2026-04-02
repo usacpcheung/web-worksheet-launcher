@@ -2186,8 +2186,8 @@ function renderViewerShell(session) {
         const checkDetail = document.createElement('p');
         checkDetail.className = 'viewer-check-banner__detail';
         checkDetail.textContent = isCorrect
-          ? 'Great work — your answer matches the expected result.'
-          : 'Not quite. Review the calculation and try again.';
+          ? 'Great Work!'
+          : 'Not quite.';
         checkBody.append(checkTitle, checkDetail);
         checkBanner.append(checkIcon, checkBody);
 
