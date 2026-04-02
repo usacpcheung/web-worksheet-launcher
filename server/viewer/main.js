@@ -23,6 +23,7 @@ const VIEWER_BOOT_ERROR_CODES = Object.freeze({
   LOCAL_DRAFT_NOT_FOUND: 'LOCAL_DRAFT_NOT_FOUND',
   IMPORTED_WORKSHEET_NOT_FOUND: 'IMPORTED_WORKSHEET_NOT_FOUND',
   INVALID_VIEWER_PAYLOAD: 'INVALID_VIEWER_PAYLOAD',
+  VIEWER_BOOT_FAILED: 'VIEWER_BOOT_FAILED',
 });
 
 class ViewerBootError extends Error {
@@ -47,7 +48,7 @@ function asViewerBootError(error) {
   if (error instanceof ViewerBootError) {
     return error;
   }
-  return new ViewerBootError('VIEWER_BOOT_FAILED', {
+  return new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
     userMessage: 'Viewer failed to initialize due to an unexpected error.',
     technicalMessage: error?.message || 'Unknown boot error',
     cause: error,
@@ -2424,14 +2425,11 @@ async function bootstrapViewer() {
   if (!hasLaunchIntent) {
     const flaggedAttempt = session.storage.resumeFlags.get(RESUME_FLAG_KEY);
     if (flaggedAttempt?.localId) {
-      const resumeCandidate = await session.storage.attempts.get(flaggedAttempt.localId);
-      if (resumeCandidate?.status === 'in_progress') {
-        const resumed = await session.tryResumeAttempt(flaggedAttempt.localId);
-        if (resumed) {
-          renderViewerShell(session);
-          window.viewerSession = session;
-          return;
-        }
+      const resumed = await session.tryResumeAttempt(flaggedAttempt.localId);
+      if (resumed) {
+        renderViewerShell(session);
+        window.viewerSession = session;
+        return;
       }
       session.setRecoveryMessage(
         `We couldn't restore your previous session. Please import the worksheet JSON to continue.`

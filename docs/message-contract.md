@@ -173,18 +173,20 @@ Viewer launch for `/viewer/` follows strict intent precedence and failure handli
 
 Deterministic behavior requirements:
 
-- **No explicit launch params present** (`localAttemptId`, `localDraftId`, `importedWorksheetId`, `viewerPayload`, `snapshot`) must render the viewer start/import UX only.
-- **Any explicit launch param present** must either:
+- **No explicit query launch params present** (`localAttemptId`, `localDraftId`, `importedWorksheetId`, `viewerPayload`, `snapshot`) must render the viewer start/import UX only **unless** a persisted resume flag indicates a concrete prior attempt to restore.
+- **Persisted resume flag auto-resume** (with no explicit query launch params) is treated as an explicit resume of that prior attempt, not as synthesized content; if the referenced attempt cannot be restored, the viewer must fall back to the start/import UX with a typed recovery message.
+- **Any explicit query launch param present** must either:
   - load valid viewer content, or
   - fail as a typed fatal launch error in viewer UI.
-- Viewer must **never synthesize worksheet content** as a fallback when explicit launch intent fails.
+- Viewer must **never synthesize new worksheet content** as a fallback when explicit launch intent or resume/restore behavior fails.
 
 Explicit-parameter fatal error rules:
 
 - `localAttemptId`: if the explicit resume target is missing/corrupt/unreadable, launch fails fatally (no source fallback).
 - `viewerPayload` / `snapshot`: if present but unparseable, launch fails with parse-specific fatal error.
 - `localDraftId` / `importedWorksheetId`: if record lookup fails, launch fails with typed not-found fatal error.
-- Any payload schema validation failure is a typed invalid-payload fatal error.
+- Any payload schema validation failure for explicit launch parameters **other than** `localAttemptId` is a typed invalid-payload fatal error (for example, `INVALID_VIEWER_PAYLOAD` in viewer UI).
+- For explicit `localAttemptId` resumes, any resume failure (including payload schema validation failures inside the stored attempt payload) surfaces as a `LOCAL_ATTEMPT_RESUME_FAILED` fatal error with no source fallback.
 
 Auth-return behavior (`authReturn=1`):
 
