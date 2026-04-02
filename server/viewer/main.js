@@ -9,8 +9,74 @@ const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
 
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
+const LEGACY_STUDENT_NAME_KEY = 'viewer:studentName';
 const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
+let activeViewerShellAbortController = null;
+
+
+const VIEWER_BOOT_ERROR_CODES = Object.freeze({
+  NO_CONTENT_SOURCE: 'NO_CONTENT_SOURCE',
+  LOCAL_ATTEMPT_RESUME_FAILED: 'LOCAL_ATTEMPT_RESUME_FAILED',
+  VIEWER_PAYLOAD_PARSE_FAILED: 'VIEWER_PAYLOAD_PARSE_FAILED',
+  SNAPSHOT_PARSE_FAILED: 'SNAPSHOT_PARSE_FAILED',
+  LOCAL_DRAFT_NOT_FOUND: 'LOCAL_DRAFT_NOT_FOUND',
+  IMPORTED_WORKSHEET_NOT_FOUND: 'IMPORTED_WORKSHEET_NOT_FOUND',
+  INVALID_VIEWER_PAYLOAD: 'INVALID_VIEWER_PAYLOAD',
+  VIEWER_BOOT_FAILED: 'VIEWER_BOOT_FAILED',
+});
+
+class ViewerBootError extends Error {
+  constructor(code, options = {}) {
+    super(options.technicalMessage || options.message || code);
+    this.name = 'ViewerBootError';
+    this.code = code;
+    this.userMessage = options.userMessage || 'Viewer could not be started.';
+    this.technicalMessage = options.technicalMessage || this.message;
+    this.recoveryActions = Array.isArray(options.recoveryActions)
+      ? options.recoveryActions
+      : [
+        'Reopen the viewer from a valid worksheet link.',
+        'Import worksheet JSON again from the start panel.',
+        'Go back and launch viewer again.',
+      ];
+    this.cause = options.cause;
+  }
+}
+
+function asViewerBootError(error) {
+  if (error instanceof ViewerBootError) {
+    return error;
+  }
+  return new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
+    userMessage: 'Viewer failed to initialize due to an unexpected error.',
+    technicalMessage: error?.message || 'Unknown boot error',
+    cause: error,
+  });
+}
+
+function parseLaunchParamJson(params, key, parseErrorCode) {
+  if (!params.has(key)) {
+    return { present: false, value: null };
+  }
+  const rawValue = params.get(key);
+  if (!rawValue) {
+    throw new ViewerBootError(parseErrorCode, {
+      userMessage: `The ${key} launch parameter could not be read.`,
+      technicalMessage: `${key} is present but empty or malformed.`,
+    });
+  }
+
+  const parsed = maybeParseEncodedJson(rawValue);
+  if (!parsed) {
+    throw new ViewerBootError(parseErrorCode, {
+      userMessage: `The ${key} launch parameter is invalid or corrupted.`,
+      technicalMessage: `${key} could not be parsed as JSON or base64url JSON.`,
+    });
+  }
+
+  return { present: true, value: parsed };
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -143,6 +209,29 @@ function normalizeViewerBlock(block, index) {
             return { value: normalizedOption, label: normalizedOption };
           })
         : [];
+    }
+
+    if (Object.hasOwn(responseConfigSource, 'correctAnswer')) {
+      if (inputType === 'number') {
+        const normalizedCorrectAnswer = coerceAnswerValueByInputType('number', responseConfigSource.correctAnswer);
+        if (normalizedCorrectAnswer !== '') {
+          normalizedResponseConfig.correctAnswer = normalizedCorrectAnswer;
+        }
+      } else if (inputType === 'boolean') {
+        const normalizedCorrectAnswer = coerceAnswerValueByInputType('boolean', responseConfigSource.correctAnswer);
+        if (normalizedCorrectAnswer === true || normalizedCorrectAnswer === false) {
+          normalizedResponseConfig.correctAnswer = normalizedCorrectAnswer;
+        }
+      } else if (inputType === 'multiple_choice') {
+        if (normalizedResponseConfig.selectionMode === 'multi') {
+          const normalizedCorrectAnswer = normalizeMultiSelectValues(responseConfigSource.correctAnswer);
+          if (Array.isArray(responseConfigSource.correctAnswer) && normalizedCorrectAnswer.length > 0) {
+            normalizedResponseConfig.correctAnswer = normalizedCorrectAnswer;
+          }
+        } else if (typeof responseConfigSource.correctAnswer === 'string') {
+          normalizedResponseConfig.correctAnswer = String(responseConfigSource.correctAnswer);
+        }
+      }
     }
 
     return {
@@ -485,6 +574,161 @@ function partitionBlocksForDisplay(blocks = []) {
   };
 }
 
+
+function normalizeMultiSelectValues(rawValue) {
+  const normalizedValues = Array.isArray(rawValue)
+    ? rawValue.map((value) => String(value))
+    : [];
+  return Array.from(new Set(normalizedValues));
+}
+
+function areMultiSelectValuesEqual(learnerValues, correctValues) {
+  const normalizedLearnerValues = normalizeMultiSelectValues(learnerValues);
+  const normalizedCorrectValues = normalizeMultiSelectValues(correctValues);
+
+  if (normalizedLearnerValues.length !== normalizedCorrectValues.length) {
+    return false;
+  }
+
+  const correctSet = new Set(normalizedCorrectValues);
+  return normalizedLearnerValues.every((value) => correctSet.has(value));
+}
+
+function hasValidCorrectAnswer(responseConfig) {
+  if (!responseConfig || !Object.hasOwn(responseConfig, 'correctAnswer')) {
+    return false;
+  }
+
+  const { inputType, selectionMode, correctAnswer } = responseConfig;
+
+  if (inputType === 'boolean') {
+    return typeof correctAnswer === 'boolean';
+  }
+
+  if (inputType === 'number') {
+    const numericValue = Number(correctAnswer);
+    return Number.isFinite(numericValue);
+  }
+
+  if (inputType === 'multiple_choice') {
+    if (selectionMode === 'multi') {
+      if (!Array.isArray(correctAnswer)) {
+        return false;
+      }
+      return correctAnswer.length > 0 && correctAnswer.every((value) => typeof value === 'string');
+    }
+
+    return typeof correctAnswer === 'string';
+  }
+
+  // Other input types are not gradeable here.
+  return false;
+}
+
+function isGradeableQuestionBlock(block) {
+  if (block?.kind !== 'question') {
+    return false;
+  }
+
+  const responseConfig = block?.responseConfig;
+  return hasValidCorrectAnswer(responseConfig);
+}
+
+function isSupportedCheckInputType(inputType) {
+  return inputType === 'multiple_choice' || inputType === 'boolean' || inputType === 'number';
+}
+
+function isSupportedCheckQuestionBlock(block) {
+  if (block?.kind !== 'question') {
+    return false;
+  }
+
+  return isSupportedCheckInputType(block?.responseConfig?.inputType);
+}
+
+function hasGradeableQuestions(viewerPayload) {
+  return Array.isArray(viewerPayload?.blocks) && viewerPayload.blocks.some((block) => isGradeableQuestionBlock(block));
+}
+
+function computeCheckResult(viewerPayload, answers) {
+  const checkableQuestions = Array.isArray(viewerPayload?.blocks)
+    ? viewerPayload.blocks.filter((block) => isSupportedCheckQuestionBlock(block))
+    : [];
+
+  const byBlockId = {};
+  const statusByBlockId = {};
+  let correctCount = 0;
+  let totalQuestions = 0;
+
+  checkableQuestions.forEach((block) => {
+    const inputType = block?.responseConfig?.inputType || 'text';
+    const hasValidAnswerKey = hasValidCorrectAnswer(block?.responseConfig);
+    if (!hasValidAnswerKey) {
+      statusByBlockId[block.blockId] = 'ungraded_missing_or_invalid_key';
+      return;
+    }
+
+    const selectionMode = block?.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
+    const learnerValue = answers?.[block.blockId]?.value;
+    const correctAnswer = block?.responseConfig?.correctAnswer;
+
+    let isCorrect = false;
+
+    if (inputType === 'multiple_choice') {
+      if (selectionMode === 'multi') {
+        isCorrect = areMultiSelectValuesEqual(learnerValue, correctAnswer);
+      } else {
+        isCorrect = String(learnerValue ?? '') === String(correctAnswer ?? '');
+      }
+    } else if (inputType === 'boolean') {
+      isCorrect = coerceAnswerValueByInputType('boolean', learnerValue) === coerceAnswerValueByInputType('boolean', correctAnswer);
+    } else if (inputType === 'number') {
+      // Treat empty/absent learner values as unanswered rather than as 0.
+      if (learnerValue !== '' && learnerValue !== null && learnerValue !== undefined) {
+        const learnerNumber = Number(learnerValue);
+        const correctNumber = Number(correctAnswer);
+        isCorrect =
+          Number.isFinite(learnerNumber) &&
+          Number.isFinite(correctNumber) &&
+          learnerNumber === correctNumber;
+      }
+    }
+
+    byBlockId[block.blockId] = isCorrect;
+    statusByBlockId[block.blockId] = isCorrect ? 'correct' : 'incorrect';
+    totalQuestions += 1;
+    if (isCorrect) {
+      correctCount += 1;
+    }
+  });
+
+  return {
+    byBlockId,
+    statusByBlockId,
+    correctCount,
+    totalQuestions,
+  };
+}
+
+function getCheckRevealMessage({ status, learnerAnswerText, correctAnswerText }) {
+  const normalizedLearnerAnswer = typeof learnerAnswerText === 'string'
+    ? learnerAnswerText.trim()
+    : '';
+  const learnerClause = normalizedLearnerAnswer.length > 0
+    ? `Your answer was: ${normalizedLearnerAnswer}`
+    : 'Your answer was: No answer submitted';
+
+  if (status === 'correct') {
+    return `Correct answer: ${correctAnswerText}`;
+  }
+
+  if (status === 'ungraded_missing_or_invalid_key' || status === 'ungraded_missing_key') {
+    return learnerClause;
+  }
+
+  return `${learnerClause} · Correct answer: ${correctAnswerText}`;
+}
+
 function computeAnswerSummary(viewerPayload, answers) {
   const questions = (viewerPayload?.blocks || []).filter((block) => block.kind === 'question');
 
@@ -504,6 +748,61 @@ function computeAnswerSummary(viewerPayload, answers) {
     return isAnsweredValue(value);
   }).length;
   return { answered, total: questions.length };
+}
+
+function pickAttemptStudentName(attemptRecord) {
+  const direct = typeof attemptRecord?.studentName === 'string' ? attemptRecord.studentName.trim() : '';
+  if (direct) return direct;
+  const metadata = typeof attemptRecord?.metadata?.studentName === 'string'
+    ? attemptRecord.metadata.studentName.trim()
+    : '';
+  if (metadata) return metadata;
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return String(window.localStorage.getItem(LEGACY_STUDENT_NAME_KEY) || '').trim();
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+function overlayAnswersOnViewerPayload(viewerPayload, rawAnswers = {}) {
+  const normalizedAnswers = {};
+  const questionBlocks = Array.isArray(viewerPayload?.blocks)
+    ? viewerPayload.blocks.filter((block) => block?.kind === 'question')
+    : [];
+  questionBlocks.forEach((questionBlock) => {
+    const saved = rawAnswers?.[questionBlock.blockId];
+    if (!saved) return;
+    normalizedAnswers[questionBlock.blockId] = {
+      ...saved,
+      value: coerceAnswerValueForQuestion(questionBlock, saved?.value, { phase: 'save' }),
+    };
+  });
+  return normalizedAnswers;
+}
+
+function computeResumeStartBlockIndex(viewerPayload, answers = {}, attemptRecord = {}) {
+  const orderedBlocks = [...(viewerPayload?.blocks || [])].sort((a, b) => a.position - b.position);
+  if (orderedBlocks.length === 0) return 0;
+  if (attemptRecord?.lastActiveBlockId) {
+    const byId = orderedBlocks.findIndex((block) => block.blockId === attemptRecord.lastActiveBlockId);
+    if (byId >= 0) return byId;
+  }
+  if (Number.isInteger(attemptRecord?.lastActiveIndex)) {
+    const idx = Math.max(0, Math.min(orderedBlocks.length - 1, attemptRecord.lastActiveIndex));
+    return idx;
+  }
+  const firstUnanswered = orderedBlocks.findIndex((block) => {
+    if (block.kind !== 'question') return false;
+    const value = answers?.[block.blockId]?.value;
+    if (value === null || value === undefined) return true;
+    if (typeof value === 'string') return value.trim() === '';
+    if (Array.isArray(value)) return value.length === 0;
+    return false;
+  });
+  return firstUnanswered >= 0 ? firstUnanswered : 0;
 }
 
 function getInputHelperText(inputType, responseConfig = {}) {
@@ -662,12 +961,19 @@ class ViewerAttemptSession {
       attemptValidationErrors: [],
       lastManualSaveAt: null,
       source: 'unknown',
+      sourceType: 'unknown',
+      sourceLocalDraftId: null,
+      sourceImportedWorksheetId: null,
       sourceDraftUpdatedAt: null,
+      studentName: '',
+      lastActiveBlockId: null,
+      lastActiveIndex: 0,
       isFinalizing: false,
       lastFinalizeError: null,
       attemptRevision: 0,
       lastSavedRevision: 0,
       recoveryMessage: null,
+      checkResult: null,
       lastProtectedAction: null,
     };
 
@@ -690,7 +996,10 @@ class ViewerAttemptSession {
     const validation = validateViewerPayloadSchema(payload);
     this.state.payloadValidationErrors = validation.errors;
     if (!validation.valid) {
-      throw new Error(`Viewer payload validation failed: ${validation.errors.join('; ')}`);
+      throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.INVALID_VIEWER_PAYLOAD, {
+        userMessage: 'The worksheet content is invalid and cannot be opened in viewer.',
+        technicalMessage: `Viewer payload validation failed: ${validation.errors.join('; ')}`,
+      });
     }
     return validation;
   }
@@ -699,6 +1008,11 @@ class ViewerAttemptSession {
     const params = new URLSearchParams(window.location.search);
     const previewIntent = this.parsePreviewIntent(params);
     const freshnessMarker = params.get('draftUpdatedAt') || null;
+    const hasExplicitContentIntent =
+      params.has('localDraftId')
+      || params.has('viewerPayload')
+      || params.has('snapshot')
+      || params.has('importedWorksheetId');
 
     const explicitAttemptId = params.get('localAttemptId');
     if (explicitAttemptId) {
@@ -710,15 +1024,35 @@ class ViewerAttemptSession {
         this.persistResumeMetadata();
         return this.state;
       }
+      throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.LOCAL_ATTEMPT_RESUME_FAILED, {
+        userMessage: 'We could not restore the requested local attempt.',
+        technicalMessage: `Unable to resume explicit localAttemptId=${explicitAttemptId}.`,
+      });
+    }
+
+    if (!hasExplicitContentIntent) {
+      const flaggedAttemptId = this.storage.resumeFlags.get(RESUME_FLAG_KEY)?.localId || null;
+      if (flaggedAttemptId) {
+        const resumedFromFlag = await this.tryResumeAttempt(flaggedAttemptId);
+        if (resumedFromFlag) {
+          this.persistResumeMetadata();
+          return this.state;
+        }
+      }
     }
 
     const loadedPayload = await this.loadViewerPayloadFromSources(params, previewIntent);
     await this.validateViewerPayload(loadedPayload.payload);
     const attempt = this.createLocalAttemptState(
       loadedPayload.payload,
-      loadedPayload.source,
-      { sourceDraftUpdatedAt: loadedPayload.sourceDraftUpdatedAt }
+      loadedPayload.sourceType,
+      {
+        sourceDraftUpdatedAt: loadedPayload.sourceDraftUpdatedAt,
+        sourceLocalDraftId: loadedPayload.sourceLocalDraftId || null,
+        sourceImportedWorksheetId: loadedPayload.sourceImportedWorksheetId || null,
+      }
     );
+    attempt.checkResult = null;
     this.applyAttemptState(attempt, { markDirty: true });
     this.persistResumeMetadata();
 
@@ -753,16 +1087,28 @@ class ViewerAttemptSession {
         return false;
       }
 
-      const normalizedPayload = normalizeViewerPayload(
-        attemptRecord.viewerPayload,
-        attemptRecord.viewerPayload?.title || 'Resumed worksheet'
-      );
+      const reconstructedPayload = await this.reconstructViewerPayloadFromAttempt(attemptRecord);
+      const payloadSource = reconstructedPayload || attemptRecord.viewerPayload;
+      if (!payloadSource) {
+        return false;
+      }
+      const normalizedPayload = normalizeViewerPayload(payloadSource, payloadSource?.title || 'Resumed worksheet');
       await this.validateViewerPayload(normalizedPayload);
+      const mergedAnswers = overlayAnswersOnViewerPayload(normalizedPayload, attemptRecord.answers || {});
+      const studentName = pickAttemptStudentName(attemptRecord);
+      const resumeStartIndex = computeResumeStartBlockIndex(normalizedPayload, mergedAnswers, attemptRecord);
+      const orderedBlocks = [...(normalizedPayload.blocks || [])].sort((a, b) => a.position - b.position);
+      const activeBlock = orderedBlocks[resumeStartIndex] || null;
 
       this.applyAttemptState(
         {
           ...attemptRecord,
+          answers: mergedAnswers,
           viewerPayload: normalizedPayload,
+          studentName,
+          checkResult: null,
+          lastActiveIndex: resumeStartIndex,
+          lastActiveBlockId: activeBlock?.blockId || null,
           metadata: {
             ...attemptRecord.metadata,
             localId: localAttemptId,
@@ -782,32 +1128,37 @@ class ViewerAttemptSession {
     if (previewIntent?.localDraftId && previewIntent?.preview) {
       const draftRecord = await this.storage.drafts.get(previewIntent.localDraftId);
       if (!draftRecord) {
-        throw new Error(`Local draft not found for localId=${previewIntent.localDraftId}`);
+        throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.LOCAL_DRAFT_NOT_FOUND, {
+          userMessage: 'The requested local draft was not found.',
+          technicalMessage: `Local draft not found for localId=${previewIntent.localDraftId}`,
+        });
       }
 
       return {
-        source: 'local_draft_preview',
+        sourceType: 'local_draft_preview',
+        sourceLocalDraftId: previewIntent.localDraftId,
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || previewIntent.sourceDraftUpdatedAt || null,
       };
     }
 
-    const inlinePayload =
-      maybeParseEncodedJson(params.get('viewerPayload')) ||
-      (typeof window !== 'undefined' ? parseJsonInput(window.__VIEWER_PAYLOAD__) : null);
+    const viewerPayloadParam = parseLaunchParamJson(params, 'viewerPayload', VIEWER_BOOT_ERROR_CODES.VIEWER_PAYLOAD_PARSE_FAILED);
+    const inlinePayload = viewerPayloadParam.present
+      ? viewerPayloadParam.value
+      : (typeof window !== 'undefined' ? parseJsonInput(window.__VIEWER_PAYLOAD__) : null);
 
     if (inlinePayload) {
       return {
-        source: 'local_source',
+        sourceType: 'inline_payload',
         payload: normalizeViewerPayload(inlinePayload, 'Local worksheet'),
       };
     }
 
-    const snapshotPayload = maybeParseEncodedJson(params.get('snapshot'));
-    if (snapshotPayload) {
+    const snapshotParam = parseLaunchParamJson(params, 'snapshot', VIEWER_BOOT_ERROR_CODES.SNAPSHOT_PARSE_FAILED);
+    if (snapshotParam.present) {
       return {
-        source: 'snapshot_derived',
-        payload: normalizeViewerPayload(mapSnapshotToViewerPayload(snapshotPayload), 'Snapshot worksheet'),
+        sourceType: 'snapshot_derived',
+        payload: normalizeViewerPayload(mapSnapshotToViewerPayload(snapshotParam.value), 'Snapshot worksheet'),
       };
     }
 
@@ -815,11 +1166,15 @@ class ViewerAttemptSession {
     if (importedWorksheetId) {
       const importedRecord = await this.storage.importedWorksheets.get(importedWorksheetId);
       if (!importedRecord) {
-        throw new Error(`Imported worksheet not found for localId=${importedWorksheetId}`);
+        throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.IMPORTED_WORKSHEET_NOT_FOUND, {
+          userMessage: 'The imported worksheet could not be found.',
+          technicalMessage: `Imported worksheet not found for localId=${importedWorksheetId}`,
+        });
       }
 
       return {
-        source: 'imported_worksheet',
+        sourceType: 'imported_worksheet',
+        sourceImportedWorksheetId: importedWorksheetId,
         payload: resolveImportedWorksheetPayload(importedRecord),
       };
     }
@@ -828,44 +1183,40 @@ class ViewerAttemptSession {
     if (localDraftId) {
       const draftRecord = await this.storage.drafts.get(localDraftId);
       if (!draftRecord) {
-        throw new Error(`Local draft not found for localId=${localDraftId}`);
+        throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.LOCAL_DRAFT_NOT_FOUND, {
+          userMessage: 'The requested local draft was not found.',
+          technicalMessage: `Local draft not found for localId=${localDraftId}`,
+        });
       }
 
       return {
-        source: 'local_draft',
+        sourceType: 'local_draft',
+        sourceLocalDraftId: localDraftId,
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || null,
       };
     }
 
-    return {
-      source: 'local_source',
-      payload: normalizeViewerPayload(
-        {
-          worksheetId: createLocalId('ws'),
-          snapshotId: createLocalId('snapshot_local'),
-          snapshotVersion: 1,
-          title: 'Local worksheet',
-          blocks: [
-            {
-              blockId: createLocalId('q'),
-              kind: 'question',
-              position: 0,
-              prompt: {
-                text: 'Type your answer to start a local attempt.',
-                format: 'plain_text',
-              },
-              responseConfig: {
-                inputType: 'text',
-                maxLength: 200,
-                displayMode: 'multi_line',
-              },
-            },
-          ],
-        },
-        'Local worksheet'
-      ),
-    };
+    throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE, {
+      userMessage: 'No worksheet launch content was provided.',
+      technicalMessage: 'No viewer launch parameter was provided (localAttemptId/localDraftId/importedWorksheetId/viewerPayload/snapshot).',
+    });
+  }
+
+  async reconstructViewerPayloadFromAttempt(attemptRecord = {}) {
+    const sourceType = attemptRecord.sourceType || attemptRecord.metadata?.origin || 'inline_payload';
+    const sourceLocalDraftId = attemptRecord.sourceLocalDraftId || attemptRecord.metadata?.sourceLocalDraftId || null;
+    const sourceImportedWorksheetId =
+      attemptRecord.sourceImportedWorksheetId || attemptRecord.metadata?.sourceImportedWorksheetId || null;
+    if ((sourceType === 'local_draft' || sourceType === 'local_draft_preview') && sourceLocalDraftId) {
+      const draftRecord = await this.storage.drafts?.get(sourceLocalDraftId);
+      if (draftRecord) return mapDraftRecordToViewerPayload(draftRecord);
+    }
+    if (sourceType === 'imported_worksheet' && sourceImportedWorksheetId) {
+      const importedRecord = await this.storage.importedWorksheets?.get(sourceImportedWorksheetId);
+      if (importedRecord) return resolveImportedWorksheetPayload(importedRecord);
+    }
+    return null;
   }
 
   createLocalAttemptState(viewerPayload, source, options = {}) {
@@ -878,14 +1229,26 @@ class ViewerAttemptSession {
       localAttemptId,
       viewerPayload,
       learnerId: DEFAULT_LEARNER_ID,
+      worksheetId: viewerPayload?.worksheetId || null,
+      snapshotId: viewerPayload?.snapshotId || null,
+      sourceType: source || 'inline_payload',
+      sourceLocalDraftId: options.sourceLocalDraftId || null,
+      sourceImportedWorksheetId: options.sourceImportedWorksheetId || null,
+      lastActiveBlockId: viewerPayload?.blocks?.[0]?.blockId || null,
+      lastActiveIndex: 0,
+      studentName: options.studentName || '',
       status: 'in_progress',
       startedAt,
       lastSavedAt: startedAt,
       completedAt: null,
       answers: {},
+      checkResult: null,
       metadata: {
         localId: localAttemptId,
         origin: source || 'local_source',
+        sourceLocalDraftId: options.sourceLocalDraftId || null,
+        sourceImportedWorksheetId: options.sourceImportedWorksheetId || null,
+        studentName: options.studentName || '',
         sourceDraftUpdatedAt,
         updatedAt: startedAt,
       },
@@ -901,10 +1264,18 @@ class ViewerAttemptSession {
     this.state.lastSavedAt = attemptRecord.lastSavedAt || null;
     this.state.completedAt = attemptRecord.completedAt || attemptRecord.submittedAt || null;
     this.state.source = attemptRecord.metadata?.origin || 'local_source';
+    this.state.sourceType = attemptRecord.sourceType || this.state.source;
+    this.state.sourceLocalDraftId = attemptRecord.sourceLocalDraftId || attemptRecord.metadata?.sourceLocalDraftId || null;
+    this.state.sourceImportedWorksheetId =
+      attemptRecord.sourceImportedWorksheetId || attemptRecord.metadata?.sourceImportedWorksheetId || null;
     this.state.sourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
+    this.state.studentName = pickAttemptStudentName(attemptRecord);
+    this.state.lastActiveBlockId = attemptRecord.lastActiveBlockId || null;
+    this.state.lastActiveIndex = Number.isInteger(attemptRecord.lastActiveIndex) ? attemptRecord.lastActiveIndex : 0;
     this.state.lastSaveError = null;
     this.state.isFinalizing = false;
     this.state.lastFinalizeError = null;
+    this.state.checkResult = null;
 
     if (options.markDirty) {
       this.state.attemptRevision += 1;
@@ -936,6 +1307,7 @@ class ViewerAttemptSession {
         answeredAt: nowIso(),
       },
     };
+    this.state.lastActiveBlockId = blockId;
 
     this.state.attemptRevision += 1;
     this.scheduleAutosave();
@@ -951,6 +1323,7 @@ class ViewerAttemptSession {
     this.state.lastFinalizeError = null;
     this.state.status = 'completed';
     this.state.completedAt = nowIso();
+    this.state.checkResult = null;
     this.state.attemptRevision += 1;
     this.persistResumeMetadata();
     this.notifyStateChange();
@@ -965,6 +1338,7 @@ class ViewerAttemptSession {
     } catch (error) {
       this.state.status = 'in_progress';
       this.state.completedAt = null;
+      this.state.checkResult = null;
       this.state.lastFinalizeError = `Finalize failed. Please check your connection and try again. ${error?.message || String(error)}`;
       this.persistResumeMetadata();
       this.notifyStateChange();
@@ -973,6 +1347,16 @@ class ViewerAttemptSession {
       this.state.isFinalizing = false;
       this.notifyStateChange();
     }
+  }
+
+  checkAnswers() {
+    if (this.state.isFinalizing || this.state.status !== 'completed' || !this.state.viewerPayload) {
+      return null;
+    }
+
+    this.state.checkResult = computeCheckResult(this.state.viewerPayload, this.state.answers || {});
+    this.notifyStateChange();
+    return this.state.checkResult;
   }
 
   scheduleAutosave() {
@@ -1011,14 +1395,26 @@ class ViewerAttemptSession {
       localAttemptId: this.state.localAttemptId,
       viewerPayload: this.state.viewerPayload,
       learnerId: DEFAULT_LEARNER_ID,
+      worksheetId: this.state.viewerPayload?.worksheetId || null,
+      snapshotId: this.state.viewerPayload?.snapshotId || null,
+      sourceType: this.state.sourceType || this.state.source || 'inline_payload',
+      sourceLocalDraftId: this.state.sourceLocalDraftId || null,
+      sourceImportedWorksheetId: this.state.sourceImportedWorksheetId || null,
+      lastActiveBlockId: this.state.lastActiveBlockId || null,
+      lastActiveIndex: Number.isInteger(this.state.lastActiveIndex) ? this.state.lastActiveIndex : 0,
+      studentName: this.state.studentName || '',
       status: this.state.status,
       startedAt: this.state.startedAt,
       lastSavedAt: updatedAt,
       completedAt: this.state.completedAt,
       answers: normalizedAnswers,
+      // checkResult is transient UI state and must not be persisted.
       metadata: {
         localId: this.state.localAttemptId,
-        origin: this.state.source || 'local_source',
+        origin: this.state.sourceType || this.state.source || 'inline_payload',
+        sourceLocalDraftId: this.state.sourceLocalDraftId || null,
+        sourceImportedWorksheetId: this.state.sourceImportedWorksheetId || null,
+        studentName: this.state.studentName || '',
         sourceDraftUpdatedAt: this.state.sourceDraftUpdatedAt || null,
         updatedAt,
       },
@@ -1103,6 +1499,11 @@ class ViewerAttemptSession {
       worksheet,
       importedAt: nowIso(),
     };
+    importedRecord.metadata = {
+      localId: importedRecord.localId,
+      origin: 'imported_file',
+      updatedAt: importedRecord.importedAt,
+    };
 
     try {
       await this.storage.importedWorksheets.put(importedRecord);
@@ -1114,6 +1515,7 @@ class ViewerAttemptSession {
       const payload = resolveImportedWorksheetPayload(importedRecord);
       await this.validateViewerPayload(payload);
       const attempt = this.createLocalAttemptState(payload, 'imported_worksheet');
+      attempt.checkResult = null;
       this.applyAttemptState(attempt, { markDirty: true });
       this.persistResumeMetadata();
       return this.state;
@@ -1169,6 +1571,11 @@ function renderViewerShell(session) {
   if (!app || !bottomBarRoot) {
     return;
   }
+  if (activeViewerShellAbortController) {
+    activeViewerShellAbortController.abort();
+  }
+  activeViewerShellAbortController = new AbortController();
+  const { signal } = activeViewerShellAbortController;
 
   const shell = document.createElement('div');
   shell.className = 'viewer-shell';
@@ -1182,8 +1589,10 @@ function renderViewerShell(session) {
 
   const answerSummary = document.createElement('p');
   answerSummary.className = 'answer-summary';
+  const resumeWarning = document.createElement('p');
+  resumeWarning.className = 'answer-summary';
   const status = document.createElement('p');
-  let studentName = '';
+  let studentName = session.state.studentName || '';
 
   const blockSection = document.createElement('section');
   blockSection.className = 'viewer-section';
@@ -1218,13 +1627,23 @@ function renderViewerShell(session) {
   const numberInputErrors = new Map();
   const localInputCache = new Map();
   let currentBlockIndex = 0;
+  currentBlockIndex = computeResumeStartBlockIndex(session.state.viewerPayload, session.state.answers, {
+    lastActiveBlockId: session.state.lastActiveBlockId,
+    lastActiveIndex: session.state.lastActiveIndex,
+  });
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
+  saveBtn.className = 'viewer-bottom-action-btn';
   saveBtn.textContent = 'Save';
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
+  completeBtn.className = 'viewer-bottom-action-btn';
   completeBtn.textContent = 'Submit';
+  const checkBtn = document.createElement('button');
+  checkBtn.type = 'button';
+  checkBtn.className = 'viewer-bottom-action-btn';
+  checkBtn.textContent = 'Check Answer';
 
   const utilityMenu = document.createElement('div');
   utilityMenu.className = 'viewer-utility-menu';
@@ -1313,12 +1732,26 @@ function renderViewerShell(session) {
   const rightZone = document.createElement('div');
   rightZone.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--right';
 
+  const showBottomButtonClickFeedback = (button) => {
+    if (!button) return;
+    button.classList.remove('is-click-feedback');
+    // Force restart of animation for repeated clicks.
+    void button.offsetWidth;
+    button.classList.add('is-click-feedback');
+  };
+
   completeBtn.addEventListener('click', async () => {
+    showBottomButtonClickFeedback(completeBtn);
     await session.completeLocalAttempt();
     renderUI();
   });
+  checkBtn.addEventListener('click', () => {
+    showBottomButtonClickFeedback(checkBtn);
+    session.checkAnswers();
+    renderUI();
+  });
   leftZone.append(saveBtn);
-  rightZone.append(completeBtn);
+  rightZone.append(completeBtn, checkBtn);
   bottomBarInner.append(leftZone, navActions, rightZone);
   bottomBar.append(bottomBarInner);
 
@@ -1416,6 +1849,14 @@ function renderViewerShell(session) {
   learnerNameForm.addEventListener('submit', (event) => {
     event.preventDefault();
     studentName = learnerNameInput.value.trim();
+    session.state.studentName = studentName;
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(LEGACY_STUDENT_NAME_KEY, studentName);
+      }
+    } catch {
+      // Ignore localStorage failures in restricted contexts.
+    }
     renderUI();
     learnerNameInput.focus();
   });
@@ -1509,13 +1950,13 @@ function renderViewerShell(session) {
     if (!utilityMenu.contains(event.target)) {
       closeUtilityMenu();
     }
-  });
+  }, { signal });
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && detailsModal.hidden && isUtilityMenuOpen()) {
       closeUtilityMenu({ returnFocus: true });
     }
-  });
+  }, { signal });
 
   const getStepperLabel = (block, counters) => {
     if (block.kind === 'content') {
@@ -1637,6 +2078,7 @@ function renderViewerShell(session) {
       node.addEventListener('click', () => {
         if (currentBlockIndex === index) return;
         currentBlockIndex = index;
+        persistNavigationState(orderedBlocks);
         renderUI();
       });
 
@@ -1661,11 +2103,53 @@ function renderViewerShell(session) {
     }
   };
 
+  const updateStepperActiveState = (orderedBlocks, activeIndex, { shouldScrollToActive = false } = {}) => {
+    const stepperItems = stepper.querySelectorAll('.block-stepper__item');
+    stepperItems.forEach((item, index) => {
+      const node = item.querySelector('.block-stepper__node');
+      const connector = item.querySelector('.block-stepper__connector');
+      const isCompleted = index < activeIndex;
+      const isCurrent = index === activeIndex;
+
+      item.classList.remove('is-completed', 'is-current', 'is-upcoming');
+      item.classList.add(isCompleted ? 'is-completed' : isCurrent ? 'is-current' : 'is-upcoming');
+
+      if (node) {
+        node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
+        if (isCurrent) {
+          node.setAttribute('aria-current', 'step');
+        } else {
+          node.removeAttribute('aria-current');
+        }
+      }
+
+      if (connector) {
+        connector.classList.remove('is-completed', 'is-upcoming');
+        connector.classList.add(isCompleted ? 'is-completed' : 'is-upcoming');
+      }
+    });
+
+    if (shouldScrollToActive) {
+      const activeNode = stepper.querySelector('.block-stepper__item.is-current');
+      if (activeNode) {
+        scrollStepperToActive(activeNode, activeIndex, orderedBlocks.length);
+      }
+    }
+  };
+
   const cacheRawControlValue = (blockId, value) => {
     localInputCache.set(blockId, value);
   };
 
   const renderCurrentBlockCard = (currentBlock) => {
+    const currentBlockCheckStatus = currentBlock?.blockId
+      ? session.state.checkResult?.statusByBlockId?.[currentBlock.blockId]
+      : undefined;
+    const hasGlobalCheckResult = session.state.checkResult !== null;
+    const currentBlockIsCheckable = isSupportedCheckQuestionBlock(currentBlock);
+    const hasCurrentBlockCheckStatus = typeof currentBlockCheckStatus === 'string';
+    const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;
+
     const nextSignature = JSON.stringify({
       blockId: currentBlock?.blockId || null,
       prompt: currentBlock?.prompt?.text || '',
@@ -1675,6 +2159,9 @@ function renderViewerShell(session) {
       options: Array.isArray(currentBlock?.responseConfig?.options)
         ? currentBlock.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
         : [],
+      hasGlobalCheckResult,
+      currentBlockIsCheckable,
+      currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,
     });
     if (nextSignature === blockSignature) return;
 
@@ -1700,6 +2187,88 @@ function renderViewerShell(session) {
       const controlId = `answer-${block.blockId}`;
       label.id = `${controlId}-label`;
       label.textContent = block.prompt?.text || 'Question';
+
+      let checkBanner = null;
+      let checkReveal = null;
+      if (shouldShowCheckFeedback) {
+        const checkStatus = currentBlockCheckStatus;
+        const isCorrect = checkStatus === 'correct';
+        const isIncorrect = checkStatus === 'incorrect';
+        const isUngradedMissingOrInvalidKey = checkStatus === 'ungraded_missing_or_invalid_key'
+          || checkStatus === 'ungraded_missing_key';
+        const correctAnswer = block.responseConfig?.correctAnswer;
+        const learnerAnswer = session.state.answers?.[block.blockId]?.value;
+        const formatCorrectAnswer = () => {
+          if (inputType === 'multiple_choice') {
+            if (block.responseConfig?.selectionMode === 'multi') {
+              return Array.isArray(correctAnswer) ? correctAnswer.map((value) => String(value)).join(', ') : '';
+            }
+            return String(correctAnswer ?? '');
+          }
+          if (inputType === 'boolean') {
+            return coerceAnswerValueByInputType('boolean', correctAnswer) === true ? 'True' : 'False';
+          }
+          if (inputType === 'number') {
+            return String(correctAnswer ?? '');
+          }
+          return '';
+        };
+
+        const formatLearnerAnswer = () => {
+          if (inputType === 'multiple_choice') {
+            if (block.responseConfig?.selectionMode === 'multi') {
+              return Array.isArray(learnerAnswer) ? learnerAnswer.map((value) => String(value)).join(', ') : '';
+            }
+            return String(learnerAnswer ?? '');
+          }
+          if (inputType === 'boolean') {
+            const normalized = coerceAnswerValueByInputType('boolean', learnerAnswer);
+            if (normalized === true) return 'True';
+            if (normalized === false) return 'False';
+            return '';
+          }
+          if (inputType === 'number') {
+            return learnerAnswer === '' || learnerAnswer === null || learnerAnswer === undefined
+              ? ''
+              : String(learnerAnswer);
+          }
+          return '';
+        };
+
+        checkBanner = document.createElement('div');
+        checkBanner.className = `viewer-check-banner ${isCorrect ? 'is-correct' : isIncorrect ? 'is-incorrect' : 'is-ungraded'}`;
+        const checkIcon = document.createElement('span');
+        checkIcon.className = 'viewer-check-banner__icon';
+        checkIcon.textContent = isCorrect ? '✓' : isIncorrect ? '✕' : '•';
+        const checkBody = document.createElement('div');
+        checkBody.className = 'viewer-check-banner__body';
+        const checkTitle = document.createElement('p');
+        checkTitle.className = 'viewer-check-banner__title';
+        checkTitle.textContent = isCorrect ? 'Correct' : isIncorrect ? 'Incorrect' : 'Not graded';
+        const checkDetail = document.createElement('p');
+        checkDetail.className = 'viewer-check-banner__detail';
+        checkDetail.textContent = isCorrect
+          ? 'Great Work!'
+          : isIncorrect
+            ? 'Not quite.'
+            : 'Answer key missing or invalid for this question.';
+        checkBody.append(checkTitle, checkDetail);
+        checkBanner.append(checkIcon, checkBody);
+
+        checkReveal = document.createElement('p');
+        checkReveal.className = 'viewer-check-reveal muted';
+        checkReveal.textContent = getCheckRevealMessage({
+          status: checkStatus,
+          learnerAnswerText: formatLearnerAnswer(),
+          correctAnswerText: isUngradedMissingOrInvalidKey ? '' : formatCorrectAnswer(),
+        });
+
+        if (isCorrect) {
+          card.classList.add('question-card--checked-correct');
+        } else if (isIncorrect) {
+          card.classList.add('question-card--checked-incorrect');
+        }
+      }
 
       const helper = document.createElement('p');
       helper.className = 'muted';
@@ -1863,9 +2432,17 @@ function renderViewerShell(session) {
           counter: textCounter,
           status: textStatus,
         });
-        card.append(label, helper, control, textCounter, textStatus, inputError);
+        card.append(label);
+        if (checkBanner && checkReveal) {
+          card.append(checkBanner, checkReveal);
+        }
+        card.append(helper, control, textCounter, textStatus, inputError);
       } else {
-        card.append(label, helper, control, inputError);
+        card.append(label);
+        if (checkBanner && checkReveal) {
+          card.append(checkBanner, checkReveal);
+        }
+        card.append(helper, control, inputError);
       }
       blockList.appendChild(card);
   };
@@ -1913,14 +2490,24 @@ function renderViewerShell(session) {
       }
   };
 
+  const persistNavigationState = (orderedBlocks) => {
+    session.state.lastActiveIndex = currentBlockIndex;
+    session.state.lastActiveBlockId = orderedBlocks[currentBlockIndex]?.blockId || null;
+    session.state.attemptRevision += 1;
+    session.scheduleAutosave();
+  };
+
   const goPrev = () => {
     currentBlockIndex = Math.max(0, currentBlockIndex - 1);
+    const orderedBlocks = getOrderedBlocks();
+    persistNavigationState(orderedBlocks);
     renderUI();
   };
 
   const goNext = () => {
     const orderedBlocks = getOrderedBlocks();
     currentBlockIndex = Math.min(Math.max(orderedBlocks.length - 1, 0), currentBlockIndex + 1);
+    persistNavigationState(orderedBlocks);
     renderUI();
   };
 
@@ -1934,7 +2521,11 @@ function renderViewerShell(session) {
     const orderChanged = stepperSignature !== stepperOrderSignature;
 
     blockHeading.textContent = currentBlock.kind === 'content' ? 'Content' : 'Question';
-    renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged || orderChanged });
+    if (orderChanged) {
+      renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged || orderChanged });
+    } else if (activeIndexChanged) {
+      updateStepperActiveState(orderedBlocks, currentBlockIndex, { shouldScrollToActive: true });
+    }
     stepperOrderSignature = stepperSignature;
     lastStepperActiveIndex = currentBlockIndex;
     renderCurrentBlockCard(currentBlock);
@@ -1952,8 +2543,13 @@ function renderViewerShell(session) {
             : session.state.autosavePending
               ? 'Saving…'
               : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+    resumeWarning.textContent = session.state.recoveryMessage ? `⚠️ ${session.state.recoveryMessage}` : '';
+    resumeWarning.hidden = !session.state.recoveryMessage;
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
+    const checkAvailable = session.state.status === 'completed';
+    checkBtn.hidden = !checkAvailable;
+    checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
     const normalizedAttemptStatus = session.state.status
@@ -1964,6 +2560,9 @@ function renderViewerShell(session) {
       summaryParts.push(`Student ${studentName}`);
     }
     summaryParts.push(`Answered ${summary.answered}/${summary.total}`);
+    if (session.state.checkResult) {
+      summaryParts.push(`Checked ${session.state.checkResult.correctCount}/${session.state.checkResult.totalQuestions} correct`);
+    }
     summaryParts.push(status.textContent);
     summaryParts.push(`Status ${normalizedAttemptStatus}`);
     answerSummary.textContent = summaryParts.join(' · ');
@@ -1974,6 +2573,7 @@ function renderViewerShell(session) {
   });
 
   saveBtn.addEventListener('click', async () => {
+    showBottomButtonClickFeedback(saveBtn);
     await session.saveNow();
     renderUI();
   });
@@ -1993,12 +2593,12 @@ function renderViewerShell(session) {
     if (currentBlockIndex === 0) {
       stepper.scrollLeft = 0;
     }
-  });
+  }, { signal });
   prevBtn.addEventListener('click', goPrev);
   nextBtn.addEventListener('click', goNext);
 
   headerTop.append(heading, headerActions);
-  header.append(headerTop, answerSummary);
+  header.append(headerTop, answerSummary, resumeWarning);
   blockSection.append(blockHeading, stepper, blockList);
   shell.append(header, blockSection);
   app.innerHTML = '';
@@ -2008,10 +2608,55 @@ function renderViewerShell(session) {
   renderUI();
 }
 
-function renderViewerStartPanel(session) {
+
+function renderViewerFatalError(error) {
   if (!app || !bottomBarRoot) {
     return;
   }
+  const bootError = asViewerBootError(error);
+  const panel = document.createElement('section');
+  panel.className = 'viewer-fatal-panel';
+
+  const heading = document.createElement('h1');
+  heading.textContent = 'Unable to open worksheet viewer';
+
+  const message = document.createElement('p');
+  message.className = 'viewer-fatal-panel__message';
+  message.textContent = bootError.userMessage;
+
+  const actionsHeading = document.createElement('h2');
+  actionsHeading.className = 'viewer-fatal-panel__subheading';
+  actionsHeading.textContent = 'What you can do';
+
+  const actions = document.createElement('ul');
+  actions.className = 'viewer-fatal-panel__actions';
+  bootError.recoveryActions.forEach((actionText) => {
+    const item = document.createElement('li');
+    item.textContent = actionText;
+    actions.appendChild(item);
+  });
+
+  const details = document.createElement('details');
+  details.className = 'viewer-fatal-panel__details';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Technical details';
+  const detailBody = document.createElement('pre');
+  detailBody.textContent = `${bootError.code}: ${bootError.technicalMessage}`;
+  details.append(summary, detailBody);
+
+  panel.append(heading, message, actionsHeading, actions, details);
+  app.innerHTML = '';
+  bottomBarRoot.innerHTML = '';
+  app.append(panel);
+}
+
+function renderViewerStartPanel(session, options = {}) {
+  if (!app || !bottomBarRoot) {
+    return;
+  }
+  const startWarningMessage = typeof options.warningMessage === 'string' && options.warningMessage.trim()
+    ? options.warningMessage.trim()
+    : null;
 
   const panel = document.createElement('section');
   panel.className = 'viewer-start-panel';
@@ -2031,7 +2676,7 @@ function renderViewerStartPanel(session) {
 
   const errorMessage = document.createElement('p');
   errorMessage.className = 'viewer-start-error';
-  errorMessage.textContent = '';
+  errorMessage.textContent = startWarningMessage || '';
   errorMessage.setAttribute('role', 'status');
   errorMessage.setAttribute('aria-live', 'polite');
 
@@ -2047,6 +2692,11 @@ function renderViewerStartPanel(session) {
     try {
       const rawJson = await selected.text();
       await session.startImportedWorksheetFromJsonText(rawJson);
+      if (session.state.localAttemptId) {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+        window.history.replaceState({}, '', nextUrl);
+      }
       renderViewerShell(session);
       window.viewerSession = session;
     } catch (error) {
@@ -2088,21 +2738,62 @@ async function bootstrapViewer() {
   session.authGate = authGate;
 
   const params = new URLSearchParams(window.location.search);
+  const hasAuthReturn = params.get('authReturn') === '1';
   const hasLaunchIntent =
     params.has('localAttemptId')
     || params.has('localDraftId')
     || params.has('viewerPayload')
     || params.has('snapshot')
     || params.has('importedWorksheetId')
-    || params.get('authReturn') === '1';
+    || hasAuthReturn;
 
   if (!hasLaunchIntent) {
-    renderViewerStartPanel(session);
+    const flaggedAttempt = session.storage.resumeFlags.get(RESUME_FLAG_KEY);
+    if (flaggedAttempt?.localId) {
+      const resumed = await session.tryResumeAttempt(flaggedAttempt.localId);
+      if (resumed) {
+        renderViewerShell(session);
+        window.viewerSession = session;
+        return;
+      }
+      session.setRecoveryMessage(
+        `We couldn't restore your previous session. Please import the worksheet JSON to continue.`
+      );
+    }
+    renderViewerStartPanel(session, { warningMessage: session.state.recoveryMessage });
     return;
   }
 
-  await session.bootstrap();
-  await authGate.restoreAfterAuthReturn();
+  const hasRealContentIntent =
+    params.has('localAttemptId')
+    || params.has('localDraftId')
+    || params.has('viewerPayload')
+    || params.has('snapshot')
+    || params.has('importedWorksheetId');
+
+  if (hasAuthReturn) {
+    const restoreResult = await authGate.restoreAfterAuthReturn();
+    if (session.state.viewerPayload) {
+      renderViewerShell(session);
+      window.viewerSession = session;
+      return;
+    }
+
+    if (!hasRealContentIntent) {
+      session.setRecoveryMessage(
+        session.state.recoveryMessage
+        || 'We could not restore your previous auth-return session. Reopen a valid worksheet link or import worksheet JSON again.'
+      );
+      renderViewerStartPanel(session, { warningMessage: session.state.recoveryMessage });
+      return;
+    }
+
+    if (restoreResult.status === 'no_pending_intent' || !session.state.viewerPayload) {
+      await session.bootstrap();
+    }
+  } else {
+    await session.bootstrap();
+  }
 
   renderViewerShell(session);
   window.viewerSession = session;
@@ -2110,9 +2801,7 @@ async function bootstrapViewer() {
 
 bootstrapViewer().catch((error) => {
   console.error('Failed to bootstrap viewer', error);
-  if (app) {
-    app.textContent = `Viewer failed to boot: ${error.message}`;
-  }
+  renderViewerFatalError(error);
 });
 
 export {
@@ -2121,6 +2810,11 @@ export {
   resolveImportedWorksheetPayload,
   normalizeViewerBlock,
   computeAnswerSummary,
+  computeCheckResult,
+  getCheckRevealMessage,
+  hasGradeableQuestions,
+  normalizeMultiSelectValues,
+  areMultiSelectValuesEqual,
   partitionBlocksForDisplay,
   getInputHelperText,
   getNumberInputErrorMessage,
@@ -2136,4 +2830,7 @@ export {
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
+  renderViewerFatalError,
+  ViewerBootError,
+  VIEWER_BOOT_ERROR_CODES,
 };

@@ -1225,40 +1225,47 @@ class EditorDraftSession {
     await this.storage.importedWorksheets.put(importedRecord);
 
     if (options.convertToEditableDraft) {
-      // Clear any pending autosave before replacing the draft
-      clearTimeout(this.autosaveTimer);
-      
       // Validate and extract blocks from parsed JSON
       if (!Array.isArray(parsed.blocks) || parsed.blocks.length === 0) {
         throw new Error('Imported worksheet must have a non-empty blocks array.');
       }
-      
-      // For round-trip imports (exporting and re-importing), preserve metadata if present
-      // Otherwise, use 'imported_file' as default origin
-      const importedMetadata = {
-        createdAt: (isRecord(parsed.metadata) && parsed.metadata.createdAt) || nowIso(),
-        serverLink: (isRecord(parsed.metadata) && parsed.metadata.serverLink) || null,
-      };
-      
-      const draft = createDraftRecord({
-        title: parsed.title || 'Imported worksheet',
-        blocks: parsed.blocks,
-        origin: 'imported_file',
-        metadata: importedMetadata,
-      });
-      
-      this.state.draft = draft;
-      this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
-      this.state.draftRevision += 1;
-      this.state.lastImportedAt = nowIso();
-      this.validateCurrentDraft();
+
+      // Clear any pending autosave before replacing the draft
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+      this.state.autosavePending = false;
       try {
-        await this.autosave();
+        // For round-trip imports (exporting and re-importing), preserve metadata if present
+        // Otherwise, use 'imported_file' as default origin
+        const importedMetadata = {
+          createdAt: (isRecord(parsed.metadata) && parsed.metadata.createdAt) || nowIso(),
+          serverLink: (isRecord(parsed.metadata) && parsed.metadata.serverLink) || null,
+        };
+
+        const draft = createDraftRecord({
+          title: parsed.title || 'Imported worksheet',
+          blocks: parsed.blocks,
+          origin: 'imported_file',
+          metadata: importedMetadata,
+        });
+
+        this.state.draft = draft;
+        this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
+        this.state.draftRevision += 1;
+        this.state.lastImportedAt = nowIso();
+        this.validateCurrentDraft();
+        try {
+          await this.autosave();
+        } catch (error) {
+          console.warn('Initial autosave after import failed; draft remains in-memory.', error);
+        }
+        this.persistRestoreMetadata();
+        return { importedRecord, draftRecord: this.state.draft };
       } catch (error) {
-        console.warn('Initial autosave after import failed; draft remains in-memory.', error);
+        this.state.autosavePending = false;
+        this.notifyStateChange();
+        throw error;
       }
-      this.persistRestoreMetadata();
-      return { importedRecord, draftRecord: this.state.draft };
     }
 
     return { importedRecord, draftRecord: null };

@@ -1,3 +1,4 @@
 reference/*
 !reference/.gitkeep
 !reference/README.md
+.vscode/
