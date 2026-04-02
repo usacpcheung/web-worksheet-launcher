@@ -415,6 +415,103 @@ body {
   text-overflow: ellipsis;
 }
 
+.viewer-check-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  padding: 14px 16px;
+  margin-top: 2px;
+}
+
+.viewer-check-banner__icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  line-height: 1;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.viewer-check-banner__body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.viewer-check-banner__title {
+  margin: 0;
+  font-weight: 700;
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+
+.viewer-check-banner__detail {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.viewer-check-banner.is-correct {
+  background: #e8f6ee;
+  border-color: #c6e7d3;
+  color: #20623f;
+}
+
+.viewer-check-banner.is-correct .viewer-check-banner__icon {
+  background: #61b685;
+  color: #fff;
+}
+
+.viewer-check-banner.is-incorrect {
+  background: #fbeff0;
+  border-color: #f0d4d8;
+  color: #b42335;
+}
+
+.viewer-check-banner.is-incorrect .viewer-check-banner__icon {
+  background: #de4d5e;
+  color: #fff;
+}
+
+.viewer-check-banner.is-ungraded {
+  background: #f3f5f9;
+  border-color: #d6deec;
+  color: #3f4d67;
+}
+
+.viewer-check-banner.is-ungraded .viewer-check-banner__icon {
+  background: #8b99b3;
+  color: #fff;
+}
+
+.question-card--checked-correct input[type='text'],
+.question-card--checked-correct textarea,
+.question-card--checked-correct .boolean-segmented-control,
+.question-card--checked-correct .choice-button-group__item {
+  border-color: #a6d7bc;
+  background: #f2faf5;
+}
+
+.question-card--checked-incorrect input[type='text'],
+.question-card--checked-incorrect textarea,
+.question-card--checked-incorrect .boolean-segmented-control,
+.question-card--checked-incorrect .choice-button-group__item {
+  border-color: #e8b7be;
+  background: #fff8f8;
+}
+
+.viewer-check-reveal {
+  margin: 0;
+  color: #53607a;
+  font-weight: 500;
+}
+
 .block-stepper__connector {
   width: 100%;
   height: 3px;
@@ -751,16 +848,52 @@ input[type='text']::placeholder {
   padding-inline: var(--viewer-bottom-control-padding-inline);
 }
 
-.viewer-bottom-bar__zone--left button {
-  background: #fff;
-  color: #50627b;
-}
-
-.viewer-bottom-bar__zone--right button {
+.viewer-bottom-action-btn {
   background: #cfe0ff;
   border-color: #b4cdf6;
   color: #0656b3;
   font-weight: 700;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease,
+    transform 100ms ease;
+}
+
+.viewer-bottom-action-btn:hover:not(:disabled) {
+  background: #bfd6ff;
+  border-color: #9fc3fb;
+  box-shadow: 0 4px 12px rgb(38 92 180 / 18%);
+  transform: translateY(-1px);
+}
+
+.viewer-bottom-action-btn:focus-visible {
+  outline: 2px solid #5b8fff;
+  outline-offset: 2px;
+}
+
+.viewer-bottom-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.viewer-bottom-action-btn.is-click-feedback {
+  animation: viewer-bottom-action-click 220ms ease;
+}
+
+@keyframes viewer-bottom-action-click {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  35% {
+    transform: translateY(1px) scale(0.98);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
 }
 
 @media (max-width: 960px) {
@@ -906,4 +1039,52 @@ input[type='text']::placeholder {
     flex: 1 1 100%;
     min-width: 0;
   }
+}
+
+.viewer-fatal-panel {
+  background: #fff;
+  border: 1px solid #fecdca;
+  border-left: 6px solid #d92d20;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 8%);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 760px;
+}
+
+.viewer-fatal-panel h1,
+.viewer-fatal-panel h2 {
+  margin: 0;
+}
+
+.viewer-fatal-panel__message {
+  margin: 0;
+  color: #344054;
+}
+
+.viewer-fatal-panel__subheading {
+  font-size: 1rem;
+}
+
+.viewer-fatal-panel__actions {
+  margin: 0;
+  padding-left: 20px;
+  color: #344054;
+}
+
+.viewer-fatal-panel__details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.viewer-fatal-panel__details pre {
+  margin: 8px 0 0;
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  padding: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
