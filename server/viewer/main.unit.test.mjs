@@ -52,7 +52,7 @@ async function loadViewerModule(overrides = {}) {
 
   source = source.replace(
     /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };'
+    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };'
   );
 
   globalThis.document = globalThis[bagName].document;
@@ -238,6 +238,55 @@ test('normalizeViewerBlock preserves correctAnswer for gradeable question types'
   assert.equal(bool.responseConfig.correctAnswer, true);
   assert.equal(single.responseConfig.correctAnswer, 'b');
   assert.deepEqual(multi.responseConfig.correctAnswer, ['b', 'a']);
+});
+
+test('normalizeViewerBlock omits multi-select correctAnswer when source is not a non-empty array', async () => {
+  const mod = await loadViewerModule();
+
+  const missing = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+    },
+  }, 0);
+  const nullValue = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: null,
+    },
+  }, 1);
+  const scalarValue = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: 'a',
+    },
+  }, 2);
+  const emptyArray = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick many' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'multi',
+      options: ['a', 'b', 'c'],
+      correctAnswer: [],
+    },
+  }, 3);
+
+  assert.equal(Object.hasOwn(missing.responseConfig, 'correctAnswer'), false);
+  assert.equal(Object.hasOwn(nullValue.responseConfig, 'correctAnswer'), false);
+  assert.equal(Object.hasOwn(scalarValue.responseConfig, 'correctAnswer'), false);
+  assert.equal(Object.hasOwn(emptyArray.responseConfig, 'correctAnswer'), false);
 });
 
 test('computeCheckResult can grade normalized payload that includes correctAnswer fields', async () => {
@@ -2115,4 +2164,28 @@ test('computeCheckResult does not treat unanswered number input as 0 when correc
   assert.equal(resultUndef.correctCount, 0);
   assert.equal(resultZero.byBlockId.q_number, true, 'string "0" should be correct when correctAnswer is 0');
   assert.equal(resultZero.correctCount, 1);
+});
+
+test('getCheckRevealMessage uses explicit fallback when learner answer is empty', async () => {
+  const mod = await loadViewerModule();
+
+  const incorrectEmpty = mod.getCheckRevealMessage({
+    isCorrect: false,
+    learnerAnswerText: '',
+    correctAnswerText: 'A, B',
+  });
+  const incorrectWhitespace = mod.getCheckRevealMessage({
+    isCorrect: false,
+    learnerAnswerText: '   ',
+    correctAnswerText: 'True',
+  });
+  const correct = mod.getCheckRevealMessage({
+    isCorrect: true,
+    learnerAnswerText: '',
+    correctAnswerText: '4',
+  });
+
+  assert.equal(incorrectEmpty, 'Your answer was: No answer submitted · Correct answer: A, B');
+  assert.equal(incorrectWhitespace, 'Your answer was: No answer submitted · Correct answer: True');
+  assert.equal(correct, 'Correct answer: 4');
 });

@@ -224,7 +224,10 @@ function normalizeViewerBlock(block, index) {
         }
       } else if (inputType === 'multiple_choice') {
         if (normalizedResponseConfig.selectionMode === 'multi') {
-          normalizedResponseConfig.correctAnswer = normalizeMultiSelectValues(responseConfigSource.correctAnswer);
+          const normalizedCorrectAnswer = normalizeMultiSelectValues(responseConfigSource.correctAnswer);
+          if (Array.isArray(responseConfigSource.correctAnswer) && normalizedCorrectAnswer.length > 0) {
+            normalizedResponseConfig.correctAnswer = normalizedCorrectAnswer;
+          }
         } else if (typeof responseConfigSource.correctAnswer === 'string') {
           normalizedResponseConfig.correctAnswer = String(responseConfigSource.correctAnswer);
         }
@@ -612,7 +615,7 @@ function hasValidCorrectAnswer(responseConfig) {
       if (!Array.isArray(correctAnswer)) {
         return false;
       }
-      return correctAnswer.every((value) => typeof value === 'string');
+      return correctAnswer.length > 0 && correctAnswer.every((value) => typeof value === 'string');
     }
 
     return typeof correctAnswer === 'string';
@@ -682,6 +685,21 @@ function computeCheckResult(viewerPayload, answers) {
     correctCount,
     totalQuestions: gradeableQuestions.length,
   };
+}
+
+function getCheckRevealMessage({ isCorrect, learnerAnswerText, correctAnswerText }) {
+  if (isCorrect) {
+    return `Correct answer: ${correctAnswerText}`;
+  }
+
+  const normalizedLearnerAnswer = typeof learnerAnswerText === 'string'
+    ? learnerAnswerText.trim()
+    : '';
+  const learnerClause = normalizedLearnerAnswer.length > 0
+    ? `Your answer was: ${normalizedLearnerAnswer}`
+    : 'Your answer was: No answer submitted';
+
+  return `${learnerClause} · Correct answer: ${correctAnswerText}`;
 }
 
 function computeAnswerSummary(viewerPayload, answers) {
@@ -2193,9 +2211,11 @@ function renderViewerShell(session) {
 
         checkReveal = document.createElement('p');
         checkReveal.className = 'viewer-check-reveal muted';
-        checkReveal.textContent = isCorrect
-          ? `Correct answer: ${formatCorrectAnswer()}`
-          : `Your answer was: ${formatLearnerAnswer()} · Correct answer: ${formatCorrectAnswer()}`;
+        checkReveal.textContent = getCheckRevealMessage({
+          isCorrect,
+          learnerAnswerText: formatLearnerAnswer(),
+          correctAnswerText: formatCorrectAnswer(),
+        });
 
         card.classList.add(isCorrect ? 'question-card--checked-correct' : 'question-card--checked-incorrect');
       }
@@ -2740,6 +2760,7 @@ export {
   normalizeViewerBlock,
   computeAnswerSummary,
   computeCheckResult,
+  getCheckRevealMessage,
   hasGradeableQuestions,
   normalizeMultiSelectValues,
   areMultiSelectValuesEqual,
