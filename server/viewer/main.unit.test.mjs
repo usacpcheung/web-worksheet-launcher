@@ -1481,7 +1481,7 @@ test('renderCurrentBlockCard signature includes grading-derived fields and guard
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
 
   assert.equal(source.includes('hasGlobalCheckResult = session.state.checkResult !== null;'), true);
-  assert.equal(source.includes('currentBlockIsCheckable = isCheckableQuestionBlock(currentBlock);'), true);
+  assert.equal(source.includes('currentBlockIsCheckable = isSupportedCheckQuestionBlock(currentBlock);'), true);
   assert.equal(source.includes('currentBlockCheckStatus = currentBlock?.blockId'), true);
   assert.equal(source.includes('currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,'), true);
   assert.equal(source.includes('const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;'), true);
@@ -2138,7 +2138,7 @@ test('computeCheckResult grades only supported input types with correctAnswer', 
     q_multi: 'correct',
     q_bool: 'correct',
     q_number: 'correct',
-    q_missing: 'ungraded_missing_key',
+    q_missing: 'ungraded_missing_or_invalid_key',
   });
   assert.equal(result.correctCount, 3);
   assert.equal(result.totalQuestions, 3);
@@ -2192,7 +2192,7 @@ test('getCheckRevealMessage uses explicit fallback when learner answer is empty'
     correctAnswerText: '4',
   });
   const ungradedMissingKey = mod.getCheckRevealMessage({
-    status: 'ungraded_missing_key',
+    status: 'ungraded_missing_or_invalid_key',
     learnerAnswerText: '',
     correctAnswerText: '',
   });
@@ -2227,7 +2227,7 @@ test('computeCheckResult marks gradeable missing key questions as ungraded witho
   });
 
   assert.equal(result.byBlockId.q_missing_key, undefined);
-  assert.equal(result.statusByBlockId.q_missing_key, 'ungraded_missing_key');
+  assert.equal(result.statusByBlockId.q_missing_key, 'ungraded_missing_or_invalid_key');
   assert.equal(result.statusByBlockId.q_graded, 'incorrect');
   assert.deepEqual(Object.keys(result).sort(), ['byBlockId', 'correctCount', 'statusByBlockId', 'totalQuestions']);
   assert.equal(result.correctCount, 0);
@@ -2238,8 +2238,14 @@ test('render check feedback includes neutral ungraded banner copy and learner an
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
 
   assert.equal(source.includes("checkTitle.textContent = isCorrect ? 'Correct' : isIncorrect ? 'Incorrect' : 'Not graded';"), true);
-  assert.equal(source.includes("'Answer key missing for this question.'"), true);
+  assert.equal(source.includes("'Answer key missing or invalid for this question.'"), true);
   assert.equal(source.includes("status: checkStatus,"), true);
-  assert.equal(source.includes("correctAnswerText: isUngradedMissingKey ? '' : formatCorrectAnswer(),"), true);
+  assert.equal(source.includes("correctAnswerText: isUngradedMissingOrInvalidKey ? '' : formatCorrectAnswer(),"), true);
   assert.equal(source.includes("'Your answer was: No answer submitted'"), true);
+});
+
+test('viewer stylesheet defines neutral ungraded check banner styles', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.css'), 'utf8');
+  assert.equal(source.includes('.viewer-check-banner.is-ungraded {'), true);
+  assert.equal(source.includes('.viewer-check-banner.is-ungraded .viewer-check-banner__icon {'), true);
 });

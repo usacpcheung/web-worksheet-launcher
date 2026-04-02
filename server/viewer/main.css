@@ -479,6 +479,17 @@ body {
   color: #fff;
 }
 
+.viewer-check-banner.is-ungraded {
+  background: #f3f5f9;
+  border-color: #d6deec;
+  color: #3f4d67;
+}
+
+.viewer-check-banner.is-ungraded .viewer-check-banner__icon {
+  background: #8b99b3;
+  color: #fff;
+}
+
 .question-card--checked-correct input[type='text'],
 .question-card--checked-correct textarea,
 .question-card--checked-correct .boolean-segmented-control,
