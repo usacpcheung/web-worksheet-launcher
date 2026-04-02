@@ -634,20 +634,40 @@ function isGradeableQuestionBlock(block) {
   return hasValidCorrectAnswer(responseConfig);
 }
 
+function isSupportedCheckInputType(inputType) {
+  return inputType === 'multiple_choice' || inputType === 'boolean' || inputType === 'number';
+}
+
+function isSupportedCheckQuestionBlock(block) {
+  if (block?.kind !== 'question') {
+    return false;
+  }
+
+  return isSupportedCheckInputType(block?.responseConfig?.inputType);
+}
+
 function hasGradeableQuestions(viewerPayload) {
   return Array.isArray(viewerPayload?.blocks) && viewerPayload.blocks.some((block) => isGradeableQuestionBlock(block));
 }
 
 function computeCheckResult(viewerPayload, answers) {
-  const gradeableQuestions = Array.isArray(viewerPayload?.blocks)
-    ? viewerPayload.blocks.filter((block) => isGradeableQuestionBlock(block))
+  const checkableQuestions = Array.isArray(viewerPayload?.blocks)
+    ? viewerPayload.blocks.filter((block) => isSupportedCheckQuestionBlock(block))
     : [];
 
   const byBlockId = {};
+  const statusByBlockId = {};
   let correctCount = 0;
+  let totalQuestions = 0;
 
-  gradeableQuestions.forEach((block) => {
+  checkableQuestions.forEach((block) => {
     const inputType = block?.responseConfig?.inputType || 'text';
+    const hasValidAnswerKey = hasValidCorrectAnswer(block?.responseConfig);
+    if (!hasValidAnswerKey) {
+      statusByBlockId[block.blockId] = 'ungraded_missing_or_invalid_key';
+      return;
+    }
+
     const selectionMode = block?.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
     const learnerValue = answers?.[block.blockId]?.value;
     const correctAnswer = block?.responseConfig?.correctAnswer;
@@ -675,6 +695,8 @@ function computeCheckResult(viewerPayload, answers) {
     }
 
     byBlockId[block.blockId] = isCorrect;
+    statusByBlockId[block.blockId] = isCorrect ? 'correct' : 'incorrect';
+    totalQuestions += 1;
     if (isCorrect) {
       correctCount += 1;
     }
@@ -682,22 +704,27 @@ function computeCheckResult(viewerPayload, answers) {
 
   return {
     byBlockId,
+    statusByBlockId,
     correctCount,
-    totalQuestions: gradeableQuestions.length,
+    totalQuestions,
   };
 }
 
-function getCheckRevealMessage({ isCorrect, learnerAnswerText, correctAnswerText }) {
-  if (isCorrect) {
-    return `Correct answer: ${correctAnswerText}`;
-  }
-
+function getCheckRevealMessage({ status, learnerAnswerText, correctAnswerText }) {
   const normalizedLearnerAnswer = typeof learnerAnswerText === 'string'
     ? learnerAnswerText.trim()
     : '';
   const learnerClause = normalizedLearnerAnswer.length > 0
     ? `Your answer was: ${normalizedLearnerAnswer}`
     : 'Your answer was: No answer submitted';
+
+  if (status === 'correct') {
+    return `Correct answer: ${correctAnswerText}`;
+  }
+
+  if (status === 'ungraded_missing_or_invalid_key' || status === 'ungraded_missing_key') {
+    return learnerClause;
+  }
 
   return `${learnerClause} · Correct answer: ${correctAnswerText}`;
 }
@@ -2102,13 +2129,13 @@ function renderViewerShell(session) {
   };
 
   const renderCurrentBlockCard = (currentBlock) => {
-    const currentBlockCheckResult = currentBlock?.blockId
-      ? session.state.checkResult?.byBlockId?.[currentBlock.blockId]
+    const currentBlockCheckStatus = currentBlock?.blockId
+      ? session.state.checkResult?.statusByBlockId?.[currentBlock.blockId]
       : undefined;
     const hasGlobalCheckResult = session.state.checkResult !== null;
-    const currentBlockIsGradeable = isGradeableQuestionBlock(currentBlock);
-    const hasCurrentBlockCheckResult = typeof currentBlockCheckResult === 'boolean';
-    const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsGradeable && hasCurrentBlockCheckResult;
+    const currentBlockIsCheckable = isSupportedCheckQuestionBlock(currentBlock);
+    const hasCurrentBlockCheckStatus = typeof currentBlockCheckStatus === 'string';
+    const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;
 
     const nextSignature = JSON.stringify({
       blockId: currentBlock?.blockId || null,
@@ -2120,8 +2147,8 @@ function renderViewerShell(session) {
         ? currentBlock.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
         : [],
       hasGlobalCheckResult,
-      currentBlockIsGradeable,
-      currentBlockCheckResult: hasCurrentBlockCheckResult ? currentBlockCheckResult : null,
+      currentBlockIsCheckable,
+      currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,
     });
     if (nextSignature === blockSignature) return;
 
@@ -2151,7 +2178,11 @@ function renderViewerShell(session) {
       let checkBanner = null;
       let checkReveal = null;
       if (shouldShowCheckFeedback) {
-        const isCorrect = currentBlockCheckResult === true;
+        const checkStatus = currentBlockCheckStatus;
+        const isCorrect = checkStatus === 'correct';
+        const isIncorrect = checkStatus === 'incorrect';
+        const isUngradedMissingOrInvalidKey = checkStatus === 'ungraded_missing_or_invalid_key'
+          || checkStatus === 'ungraded_missing_key';
         const correctAnswer = block.responseConfig?.correctAnswer;
         const learnerAnswer = session.state.answers?.[block.blockId]?.value;
         const formatCorrectAnswer = () => {
@@ -2192,32 +2223,38 @@ function renderViewerShell(session) {
         };
 
         checkBanner = document.createElement('div');
-        checkBanner.className = `viewer-check-banner ${isCorrect ? 'is-correct' : 'is-incorrect'}`;
+        checkBanner.className = `viewer-check-banner ${isCorrect ? 'is-correct' : isIncorrect ? 'is-incorrect' : 'is-ungraded'}`;
         const checkIcon = document.createElement('span');
         checkIcon.className = 'viewer-check-banner__icon';
-        checkIcon.textContent = isCorrect ? '✓' : '✕';
+        checkIcon.textContent = isCorrect ? '✓' : isIncorrect ? '✕' : '•';
         const checkBody = document.createElement('div');
         checkBody.className = 'viewer-check-banner__body';
         const checkTitle = document.createElement('p');
         checkTitle.className = 'viewer-check-banner__title';
-        checkTitle.textContent = isCorrect ? 'Correct' : 'Incorrect';
+        checkTitle.textContent = isCorrect ? 'Correct' : isIncorrect ? 'Incorrect' : 'Not graded';
         const checkDetail = document.createElement('p');
         checkDetail.className = 'viewer-check-banner__detail';
         checkDetail.textContent = isCorrect
           ? 'Great Work!'
-          : 'Not quite.';
+          : isIncorrect
+            ? 'Not quite.'
+            : 'Answer key missing or invalid for this question.';
         checkBody.append(checkTitle, checkDetail);
         checkBanner.append(checkIcon, checkBody);
 
         checkReveal = document.createElement('p');
         checkReveal.className = 'viewer-check-reveal muted';
         checkReveal.textContent = getCheckRevealMessage({
-          isCorrect,
+          status: checkStatus,
           learnerAnswerText: formatLearnerAnswer(),
-          correctAnswerText: formatCorrectAnswer(),
+          correctAnswerText: isUngradedMissingOrInvalidKey ? '' : formatCorrectAnswer(),
         });
 
-        card.classList.add(isCorrect ? 'question-card--checked-correct' : 'question-card--checked-incorrect');
+        if (isCorrect) {
+          card.classList.add('question-card--checked-correct');
+        } else if (isIncorrect) {
+          card.classList.add('question-card--checked-incorrect');
+        }
       }
 
       const helper = document.createElement('p');
