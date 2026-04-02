@@ -848,16 +848,52 @@ input[type='text']::placeholder {
   padding-inline: var(--viewer-bottom-control-padding-inline);
 }
 
-.viewer-bottom-bar__zone--left button {
-  background: #fff;
-  color: #50627b;
-}
-
-.viewer-bottom-bar__zone--right button {
+.viewer-bottom-action-btn {
   background: #cfe0ff;
   border-color: #b4cdf6;
   color: #0656b3;
   font-weight: 700;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease,
+    transform 100ms ease;
+}
+
+.viewer-bottom-action-btn:hover:not(:disabled) {
+  background: #bfd6ff;
+  border-color: #9fc3fb;
+  box-shadow: 0 4px 12px rgb(38 92 180 / 18%);
+  transform: translateY(-1px);
+}
+
+.viewer-bottom-action-btn:focus-visible {
+  outline: 2px solid #5b8fff;
+  outline-offset: 2px;
+}
+
+.viewer-bottom-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.viewer-bottom-action-btn.is-click-feedback {
+  animation: viewer-bottom-action-click 220ms ease;
+}
+
+@keyframes viewer-bottom-action-click {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  35% {
+    transform: translateY(1px) scale(0.98);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
 }
 
 @media (max-width: 960px) {
