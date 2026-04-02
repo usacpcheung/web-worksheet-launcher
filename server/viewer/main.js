@@ -1800,8 +1800,7 @@ function renderViewerShell(session) {
       node.addEventListener('click', () => {
         if (currentBlockIndex === index) return;
         currentBlockIndex = index;
-        session.state.lastActiveIndex = index;
-        session.state.lastActiveBlockId = orderedBlocks[index]?.blockId || null;
+        persistNavigationState(orderedBlocks);
         renderUI();
       });
 
@@ -2112,19 +2111,24 @@ function renderViewerShell(session) {
       }
   };
 
+  const persistNavigationState = (orderedBlocks) => {
+    session.state.lastActiveIndex = currentBlockIndex;
+    session.state.lastActiveBlockId = orderedBlocks[currentBlockIndex]?.blockId || null;
+    session.state.attemptRevision += 1;
+    session.scheduleAutosave();
+  };
+
   const goPrev = () => {
     currentBlockIndex = Math.max(0, currentBlockIndex - 1);
     const orderedBlocks = getOrderedBlocks();
-    session.state.lastActiveIndex = currentBlockIndex;
-    session.state.lastActiveBlockId = orderedBlocks[currentBlockIndex]?.blockId || null;
+    persistNavigationState(orderedBlocks);
     renderUI();
   };
 
   const goNext = () => {
     const orderedBlocks = getOrderedBlocks();
     currentBlockIndex = Math.min(Math.max(orderedBlocks.length - 1, 0), currentBlockIndex + 1);
-    session.state.lastActiveIndex = currentBlockIndex;
-    session.state.lastActiveBlockId = orderedBlocks[currentBlockIndex]?.blockId || null;
+    persistNavigationState(orderedBlocks);
     renderUI();
   };
 
@@ -2132,8 +2136,6 @@ function renderViewerShell(session) {
     const orderedBlocks = getOrderedBlocks();
     if (orderedBlocks.length === 0) return;
     currentBlockIndex = Math.min(Math.max(currentBlockIndex, 0), orderedBlocks.length - 1);
-    session.state.lastActiveIndex = currentBlockIndex;
-    session.state.lastActiveBlockId = orderedBlocks[currentBlockIndex]?.blockId || null;
     const currentBlock = orderedBlocks[currentBlockIndex];
     const stepperSignature = getStepperOrderSignature(orderedBlocks);
     const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
@@ -2316,7 +2318,9 @@ async function bootstrapViewer() {
 
   if (hasAuthReturn) {
     const restoreResult = await authGate.restoreAfterAuthReturn();
-    if (restoreResult.status === 'no_pending_intent') {
+    // Bootstrap when there is no pending intent to restore, or when restore did not load
+    // a local record (e.g. restore_failed, missing_local_id, not_authenticated).
+    if (restoreResult.status === 'no_pending_intent' || !session.state.viewerPayload) {
       await session.bootstrap();
     }
   } else {
