@@ -144,12 +144,9 @@ function normalizeViewerBlock(block, index) {
 
   if (base.kind === 'question') {
     const responseConfigSource = isRecord(safeBlock.responseConfig) ? safeBlock.responseConfig : {};
-    const legacyInputType = responseConfigSource.inputType || 'text';
-    const inputType = legacyInputType === 'plain_text' || legacyInputType === 'short_text'
-      ? 'text'
-      : legacyInputType === 'single_choice'
-        ? 'multiple_choice'
-        : legacyInputType;
+    const inputType = typeof responseConfigSource.inputType === 'string'
+      ? responseConfigSource.inputType
+      : 'text';
     const normalizedResponseConfig = {
       inputType,
     };
@@ -174,11 +171,9 @@ function normalizeViewerBlock(block, index) {
     }
 
     if (inputType === 'multiple_choice') {
-      normalizedResponseConfig.selectionMode = legacyInputType === 'single_choice'
-        ? 'single'
-        : responseConfigSource.selectionMode === 'multi'
-          ? 'multi'
-          : 'single';
+      normalizedResponseConfig.selectionMode = responseConfigSource.selectionMode === 'multi'
+        ? 'multi'
+        : 'single';
       normalizedResponseConfig.shuffleOptions = Boolean(responseConfigSource.shuffleOptions);
       normalizedResponseConfig.options = Array.isArray(responseConfigSource.options)
         ? responseConfigSource.options

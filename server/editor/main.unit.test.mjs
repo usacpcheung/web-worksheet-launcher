@@ -70,7 +70,7 @@ function getOptionIdByValue(options = [], value) {
   return (Array.isArray(options) ? options : []).find((option) => option.value === value)?.id || null;
 }
 
-test('normalizeBlocks preserves question responseConfig and extra fields', async () => {
+test('normalizeBlocks preserves canonical question responseConfig and extra fields', async () => {
   const mod = await loadEditorModule();
   const blocks = mod.normalizeBlocks([
     {
@@ -78,7 +78,7 @@ test('normalizeBlocks preserves question responseConfig and extra fields', async
       kind: 'question',
       position: 0,
       prompt: { text: 'Question?', format: 'markdown' },
-      responseConfig: { inputType: 'plain_text', maxLength: 42, displayMode: 'single_line' },
+      responseConfig: { inputType: 'text', maxLength: 42, displayMode: 'single_line' },
       extraField: 'keep-me',
     },
   ]);
@@ -105,6 +105,39 @@ test('normalizeBlocks preserves non-prompt extra fields while normalizing conten
   assert.equal(blocks[0].content.text, '99');
   assert.equal(blocks[0].content.format, 'plain_text');
   assert.deepEqual(blocks[0].customMeta, { foo: 'bar' });
+});
+
+test('validateCurrentDraft flags non-canonical responseConfig.inputType values', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  session.state.draft = {
+    draftWorksheetId: 'draft_legacy_input_type',
+    localId: 'draft_legacy_input_type',
+    title: 'Legacy draft',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Legacy?' },
+        responseConfig: { inputType: 'plain_text' },
+      },
+    ],
+  };
+
+  const validation = session.validateCurrentDraft();
+  assert.equal(validation.valid, false);
+  assert.equal(
+    validation.errors.includes(
+      'draft.blocks[0].responseConfig.inputType must be one of: text, number, boolean, multiple_choice'
+    ),
+    true
+  );
 });
 
 test('persistRestoreMetadata preserves explicit empty hash and zero-like scroll token', async () => {
@@ -360,7 +393,7 @@ test('text response normalization removes stale numeric constraints', async () =
   });
 });
 
-test('normalizeBlocks migrates single_choice to multiple_choice and preserves options', async () => {
+test('normalizeBlocks preserves non-canonical single_choice inputType without migration', async () => {
   const mod = await loadEditorModule();
   const blocks = mod.normalizeBlocks([
     {
@@ -374,9 +407,9 @@ test('normalizeBlocks migrates single_choice to multiple_choice and preserves op
       },
     },
   ]);
-  assert.equal(blocks[0].responseConfig.inputType, 'multiple_choice');
-  assert.equal(blocks[0].responseConfig.selectionMode, 'single');
-  assert.deepEqual(stripOptionIds(blocks[0].responseConfig.options), [{ value: 'a', label: 'A' }]);
+  assert.equal(blocks[0].responseConfig.inputType, 'single_choice');
+  assert.equal(Object.hasOwn(blocks[0].responseConfig, 'selectionMode'), false);
+  assert.equal(Object.hasOwn(blocks[0].responseConfig, 'options'), false);
 });
 
 test('normalizeBlocks keeps only type-compatible correctAnswer values', async () => {

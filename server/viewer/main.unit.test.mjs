@@ -126,7 +126,7 @@ test('normalizeViewerPayload tolerates malformed blocks and coerces unknown kind
   assert.equal(payload.blocks[2].kind, 'content');
 });
 
-test('normalizeViewerBlock migrates legacy single_choice to multiple_choice', async () => {
+test('normalizeViewerBlock preserves non-canonical single_choice inputType without coercion', async () => {
   const mod = await loadViewerModule();
   const normalized = mod.normalizeViewerBlock({
     blockId: 'q1',
@@ -145,13 +145,9 @@ test('normalizeViewerBlock migrates legacy single_choice to multiple_choice', as
     },
   }, 0);
 
-  assert.equal(normalized.responseConfig.inputType, 'multiple_choice');
-  assert.equal(normalized.responseConfig.selectionMode, 'single');
-  assert.deepEqual(normalized.responseConfig.options, [
-    { value: 'a', label: 'A' },
-    { value: 'b', label: 'b' },
-    { value: 'c', label: 'c' },
-  ]);
+  assert.equal(normalized.responseConfig.inputType, 'single_choice');
+  assert.equal(Object.hasOwn(normalized.responseConfig, 'selectionMode'), false);
+  assert.equal(Object.hasOwn(normalized.responseConfig, 'options'), false);
 });
 
 test('normalizeViewerBlock does not emit text-only responseConfig fields for non-text input types', async () => {
@@ -180,7 +176,7 @@ test('normalizeViewerBlock does not emit text-only responseConfig fields for non
   assert.equal(Object.hasOwn(multi.responseConfig, 'displayMode'), false);
 });
 
-test('normalizeViewerBlock migrates plain_text/short_text to text with defaults', async () => {
+test('normalizeViewerBlock preserves non-canonical plain_text/short_text inputType values', async () => {
   const mod = await loadViewerModule();
   const plain = mod.normalizeViewerBlock({
     kind: 'question',
@@ -193,12 +189,11 @@ test('normalizeViewerBlock migrates plain_text/short_text to text with defaults'
     responseConfig: { inputType: 'short_text', maxLength: 80, displayMode: 'single_line' },
   }, 1);
 
-  assert.equal(plain.responseConfig.inputType, 'text');
-  assert.equal(plain.responseConfig.maxLength, 200);
-  assert.equal(plain.responseConfig.displayMode, 'multi_line');
-  assert.equal(short.responseConfig.inputType, 'text');
-  assert.equal(short.responseConfig.maxLength, 80);
-  assert.equal(short.responseConfig.displayMode, 'single_line');
+  assert.equal(plain.responseConfig.inputType, 'plain_text');
+  assert.equal(short.responseConfig.inputType, 'short_text');
+  assert.equal(Object.hasOwn(plain.responseConfig, 'maxLength'), false);
+  assert.equal(Object.hasOwn(short.responseConfig, 'maxLength'), false);
+  assert.equal(Object.hasOwn(short.responseConfig, 'displayMode'), false);
 });
 
 test('normalizeViewerBlock preserves correctAnswer for gradeable question types', async () => {
