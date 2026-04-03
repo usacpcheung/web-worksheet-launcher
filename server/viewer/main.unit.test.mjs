@@ -168,7 +168,7 @@ test('normalizeViewerBlock preserves non-string inputType without coercing to te
     prompt: { text: 'Bad type object?' },
     responseConfig: { inputType: {} },
   }, 0);
-  assert.equal(typeof withObject.responseConfig.inputType, 'object');
+  assert.deepStrictEqual(withObject.responseConfig.inputType, {});
 });
 
 test('normalizeViewerBlock does not emit text-only responseConfig fields for non-text input types', async () => {
