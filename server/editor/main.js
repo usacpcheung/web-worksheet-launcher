@@ -2399,10 +2399,12 @@ function renderEditorShell(session) {
       : 'Question image: none attached';
     const attachImageBtn = document.createElement('button');
     attachImageBtn.type = 'button';
-    attachImageBtn.textContent = currentQuestionImageRef ? 'Replace image…' : 'Attach image…';
+    attachImageBtn.className = 'media-action-btn';
+    attachImageBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">🖼</span><span>${currentQuestionImageRef ? 'Replace image…' : 'Attach image…'}</span>`;
     const removeImageBtn = document.createElement('button');
     removeImageBtn.type = 'button';
-    removeImageBtn.textContent = 'Remove image';
+    removeImageBtn.className = 'media-action-btn media-action-btn--remove';
+    removeImageBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">🖼</span><span>Remove image</span>';
     removeImageBtn.disabled = !currentQuestionImageRef;
     attachImageBtn.addEventListener('click', () => {
       questionImageInput.dataset.blockId = selectedBlock.blockId;
@@ -2429,10 +2431,12 @@ function renderEditorShell(session) {
       : 'Question audio: none attached';
     const attachQuestionAudioBtn = document.createElement('button');
     attachQuestionAudioBtn.type = 'button';
-    attachQuestionAudioBtn.textContent = currentQuestionAudioRef ? 'Replace audio…' : 'Attach audio…';
+    attachQuestionAudioBtn.className = 'media-action-btn';
+    attachQuestionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${currentQuestionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
     const removeQuestionAudioBtn = document.createElement('button');
     removeQuestionAudioBtn.type = 'button';
-    removeQuestionAudioBtn.textContent = 'Remove audio';
+    removeQuestionAudioBtn.className = 'media-action-btn media-action-btn--remove';
+    removeQuestionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
     removeQuestionAudioBtn.disabled = !currentQuestionAudioRef;
     attachQuestionAudioBtn.addEventListener('click', () => {
       questionAudioInput.dataset.blockId = selectedBlock.blockId;
@@ -2608,7 +2612,8 @@ function renderEditorShell(session) {
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
         const optionAudioBtn = document.createElement('button');
         optionAudioBtn.type = 'button';
-        optionAudioBtn.textContent = optionAudioRef ? '🎵 Replace' : '🎵 Attach';
+        optionAudioBtn.className = 'media-action-btn';
+        optionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${optionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
         optionAudioBtn.title = optionAudioRef ? 'Replace option audio' : 'Attach option audio';
         optionAudioBtn.addEventListener('click', () => {
           pendingOptionAudioTarget = { blockId: selectedBlock.blockId, optionId };
@@ -2617,7 +2622,8 @@ function renderEditorShell(session) {
         });
         const removeOptionAudioBtn = document.createElement('button');
         removeOptionAudioBtn.type = 'button';
-        removeOptionAudioBtn.textContent = 'Remove 🎵';
+        removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove';
+        removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
         removeOptionAudioBtn.disabled = !optionAudioRef;
         removeOptionAudioBtn.addEventListener('click', () => {
           const confirmed = window.confirm(`Remove audio from option ${optionIndex + 1}?`);
