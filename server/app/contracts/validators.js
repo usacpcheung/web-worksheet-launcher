@@ -8,6 +8,8 @@ function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice']);
+
 function isIsoTimestamp(value) {
   if (!isNonEmptyString(value)) {
     return false;
@@ -45,6 +47,11 @@ function collectAllowedOptionValues(options) {
 }
 
 function validateQuestionResponseConfig(responseConfig, path, errors) {
+  if (!CANONICAL_RESPONSE_INPUT_TYPES.has(responseConfig.inputType)) {
+    errors.push(`${path}.inputType must be one of: text, number, boolean, multiple_choice`);
+    return;
+  }
+
   if (responseConfig.numberRules !== undefined && responseConfig.inputType !== 'number') {
     errors.push(`${path}.numberRules is only supported for number inputType`);
   }

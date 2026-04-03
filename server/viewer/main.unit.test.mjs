@@ -126,7 +126,7 @@ test('normalizeViewerPayload tolerates malformed blocks and coerces unknown kind
   assert.equal(payload.blocks[2].kind, 'content');
 });
 
-test('normalizeViewerBlock migrates legacy single_choice to multiple_choice', async () => {
+test('normalizeViewerBlock preserves non-canonical single_choice inputType without coercion', async () => {
   const mod = await loadViewerModule();
   const normalized = mod.normalizeViewerBlock({
     blockId: 'q1',
@@ -145,13 +145,30 @@ test('normalizeViewerBlock migrates legacy single_choice to multiple_choice', as
     },
   }, 0);
 
-  assert.equal(normalized.responseConfig.inputType, 'multiple_choice');
-  assert.equal(normalized.responseConfig.selectionMode, 'single');
-  assert.deepEqual(normalized.responseConfig.options, [
-    { value: 'a', label: 'A' },
-    { value: 'b', label: 'b' },
-    { value: 'c', label: 'c' },
-  ]);
+  assert.equal(normalized.responseConfig.inputType, 'single_choice');
+  assert.equal(Object.hasOwn(normalized.responseConfig, 'selectionMode'), false);
+  assert.equal(Object.hasOwn(normalized.responseConfig, 'options'), false);
+});
+
+test('normalizeViewerBlock preserves non-string inputType without coercing to text', async () => {
+  const mod = await loadViewerModule();
+  const withNumber = mod.normalizeViewerBlock({
+    blockId: 'q2',
+    kind: 'question',
+    position: 0,
+    prompt: { text: 'Bad type?' },
+    responseConfig: { inputType: 123 },
+  }, 0);
+  assert.equal(withNumber.responseConfig.inputType, 123);
+
+  const withObject = mod.normalizeViewerBlock({
+    blockId: 'q3',
+    kind: 'question',
+    position: 0,
+    prompt: { text: 'Bad type object?' },
+    responseConfig: { inputType: {} },
+  }, 0);
+  assert.deepStrictEqual(withObject.responseConfig.inputType, {});
 });
 
 test('normalizeViewerBlock does not emit text-only responseConfig fields for non-text input types', async () => {
@@ -180,7 +197,7 @@ test('normalizeViewerBlock does not emit text-only responseConfig fields for non
   assert.equal(Object.hasOwn(multi.responseConfig, 'displayMode'), false);
 });
 
-test('normalizeViewerBlock migrates plain_text/short_text to text with defaults', async () => {
+test('normalizeViewerBlock preserves non-canonical plain_text/short_text inputType values', async () => {
   const mod = await loadViewerModule();
   const plain = mod.normalizeViewerBlock({
     kind: 'question',
@@ -193,12 +210,11 @@ test('normalizeViewerBlock migrates plain_text/short_text to text with defaults'
     responseConfig: { inputType: 'short_text', maxLength: 80, displayMode: 'single_line' },
   }, 1);
 
-  assert.equal(plain.responseConfig.inputType, 'text');
-  assert.equal(plain.responseConfig.maxLength, 200);
-  assert.equal(plain.responseConfig.displayMode, 'multi_line');
-  assert.equal(short.responseConfig.inputType, 'text');
-  assert.equal(short.responseConfig.maxLength, 80);
-  assert.equal(short.responseConfig.displayMode, 'single_line');
+  assert.equal(plain.responseConfig.inputType, 'plain_text');
+  assert.equal(short.responseConfig.inputType, 'short_text');
+  assert.equal(Object.hasOwn(plain.responseConfig, 'maxLength'), false);
+  assert.equal(Object.hasOwn(short.responseConfig, 'maxLength'), false);
+  assert.equal(Object.hasOwn(short.responseConfig, 'displayMode'), false);
 });
 
 test('normalizeViewerBlock preserves correctAnswer for gradeable question types', async () => {
@@ -1058,6 +1074,33 @@ test('bootstrap with no launch params errors with NO_CONTENT_SOURCE when resume 
   await assert.rejects(() => session.bootstrap(), (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE);
 });
 
+test('bootstrap ignores window.__VIEWER_PAYLOAD__ when query launch params are missing', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      __VIEWER_PAYLOAD__: JSON.stringify({
+        worksheetId: 'legacy_ws',
+        snapshotId: 'legacy_snap',
+        blocks: [{ blockId: 'legacy_q1', kind: 'question', position: 0, prompt: { text: 'Legacy' }, responseConfig: {} }],
+      }),
+      location: {
+        search: '',
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => null,
+      put: async (value) => value,
+    },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(() => session.bootstrap(), (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE);
+});
+
 test('bootstrap prefers localDraftId preview over resume flag session', async () => {
   const mod = await loadViewerModule({
     window: {
@@ -1320,12 +1363,8 @@ test('computeResumeStartBlockIndex prioritizes lastActiveBlockId then first unan
   }, {}), 0);
 });
 
-test('tryResumeAttempt supports legacy schema by falling back to stored viewerPayload and localStorage student name', async () => {
-  const mod = await loadViewerModule({
-    window: {
-      localStorage: { getItem: (key) => (key === 'viewer:studentName' ? 'Legacy Name' : null) },
-    },
-  });
+test('tryResumeAttempt supports legacy schema by falling back to stored viewerPayload and metadata student name', async () => {
+  const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
     attempts: {
       get: async () => ({
@@ -1336,7 +1375,7 @@ test('tryResumeAttempt supports legacy schema by falling back to stored viewerPa
           blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
         },
         answers: { q1: { value: 'legacy answer' } },
-        metadata: { origin: 'local_source' },
+        metadata: { origin: 'local_source', studentName: 'Legacy Name' },
       }),
     },
     drafts: { get: async () => null },
