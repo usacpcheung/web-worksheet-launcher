@@ -185,6 +185,10 @@ Preferred source paths:
 4. `localDraftId` with `preview=1` (explicit editor preview; optional `draftUpdatedAt`)
 5. `viewerPayload` / `snapshot` (legacy compatibility path; no longer preferred as main route)
 
+Transitional terminology note:
+- `publishedPackageId` is the canonical published-viewer reference in the redesign direction.
+- `snapshot`/`snapshotId` wording in viewer launch docs is compatibility-only terminology and should be treated as transitional alias language.
+
 Deterministic behavior requirements:
 
 - **No explicit source params present** must render a viewer start screen (not direct auto-resume).
