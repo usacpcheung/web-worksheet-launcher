@@ -32,6 +32,13 @@ const viewerStorage = {
     remove: db.deleteLocalAttempt,
     clear: db.clearLocalAttempts,
   },
+  localAssets: {
+    put: db.putLocalAsset,
+    get: db.getLocalAsset,
+    list: db.listLocalAssets,
+    remove: db.deleteLocalAsset,
+    clear: db.clearLocalAssets,
+  },
   resumeFlags: {
     set: setResumeFlag,
     get: getResumeFlag,

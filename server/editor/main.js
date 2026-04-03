@@ -1,5 +1,10 @@
 import { editorStorage } from './storage/index.js';
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
+import {
+  createWorksheetPackageFromDraft,
+  mapLegacyJsonToPackageModel,
+  parseWorksheetPackage,
+} from './worksheet-package.js';
 
 const app = document.getElementById('app');
 
@@ -315,14 +320,34 @@ function createDraftRecord(overrides = {}) {
     localId,
     title: overrides.title || 'Untitled worksheet',
     blocks: normalizeBlocks(overrides.blocks),
+    assets: normalizeDraftAssets(overrides.assets),
     metadata: {
       localId,
       origin: overrides.origin || 'local_created',
       updatedAt,
       createdAt: overrides.metadata?.createdAt || updatedAt,
       serverLink: overrides.metadata?.serverLink || null,
+      importedFrom: overrides.metadata?.importedFrom || null,
+      modelVersion: overrides.metadata?.modelVersion || 'package-compatible-v1',
     },
   };
+}
+
+function normalizeDraftAssets(assets) {
+  return (Array.isArray(assets) ? assets : [])
+    .map((asset) => {
+      if (!isRecord(asset) || !isNonEmptyString(asset.assetId)) return null;
+      return {
+        assetId: String(asset.assetId),
+        kind: asset.kind === 'audio' ? 'audio' : 'image',
+        usage: ['question_image', 'question_audio', 'option_audio'].includes(asset.usage)
+          ? asset.usage
+          : 'question_image',
+        mimeType: isNonEmptyString(asset.mimeType) ? asset.mimeType : null,
+        path: isNonEmptyString(asset.path) ? asset.path : `media/${String(asset.assetId)}`,
+      };
+    })
+    .filter(Boolean);
 }
 
 function cloneDraftForPersistence(draft) {
@@ -331,20 +356,6 @@ function cloneDraftForPersistence(draft) {
   }
 
   return JSON.parse(JSON.stringify(draft));
-}
-
-function downloadJson(payload, filename) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: 'application/json;charset=utf-8',
-  });
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = objectUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(objectUrl);
 }
 
 class EditorDraftSession {
@@ -1213,17 +1224,15 @@ class EditorDraftSession {
       }
     }
 
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Imported worksheet JSON must be an object.');
-    }
-
+    const mapped = mapLegacyJsonToPackageModel(parsed);
     const importedLocalId = createLocalId('imported');
     const importedRecord = {
       localId: importedLocalId,
-      worksheet: parsed,
+      worksheet: mapped.worksheet,
+      packageManifest: mapped.manifest,
       metadata: {
         localId: importedLocalId,
-        origin: 'imported_file',
+        origin: 'legacy_json_import',
         updatedAt: nowIso(),
       },
     };
@@ -1232,10 +1241,6 @@ class EditorDraftSession {
 
     if (options.convertToEditableDraft) {
       // Validate and extract blocks from parsed JSON
-      if (!Array.isArray(parsed.blocks) || parsed.blocks.length === 0) {
-        throw new Error('Imported worksheet must have a non-empty blocks array.');
-      }
-
       // Clear any pending autosave before replacing the draft
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
@@ -1244,14 +1249,17 @@ class EditorDraftSession {
         // For round-trip imports (exporting and re-importing), preserve metadata if present
         // Otherwise, use 'imported_file' as default origin
         const importedMetadata = {
-          createdAt: (isRecord(parsed.metadata) && parsed.metadata.createdAt) || nowIso(),
-          serverLink: (isRecord(parsed.metadata) && parsed.metadata.serverLink) || null,
+          createdAt: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.createdAt) || nowIso(),
+          serverLink: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.serverLink) || null,
+          importedFrom: 'legacy_json',
+          modelVersion: 'package-compatible-v1',
         };
 
         const draft = createDraftRecord({
-          title: parsed.title || 'Imported worksheet',
-          blocks: parsed.blocks,
-          origin: 'imported_file',
+          title: mapped.worksheet.title || 'Imported worksheet',
+          blocks: mapped.worksheet.blocks,
+          assets: [],
+          origin: 'legacy_json_import',
           metadata: importedMetadata,
         });
 
@@ -1275,6 +1283,85 @@ class EditorDraftSession {
     }
 
     return { importedRecord, draftRecord: null };
+  }
+
+  async importWorksheetPackageFile(file, options = {}) {
+    if (!file || typeof file.arrayBuffer !== 'function') {
+      throw new Error('A .zip worksheet package file is required.');
+    }
+
+    const parsedPackage = parseWorksheetPackage(await file.arrayBuffer());
+    const importedLocalId = createLocalId('imported');
+    const now = nowIso();
+    const importedRecord = {
+      localId: importedLocalId,
+      worksheet: parsedPackage.worksheet,
+      packageManifest: parsedPackage.manifest,
+      assets: parsedPackage.assets.map((asset) => ({
+        assetId: asset.assetId,
+        path: asset.path,
+        kind: asset.kind,
+        usage: asset.usage,
+        mimeType: asset.mimeType || null,
+      })),
+      metadata: {
+        localId: importedLocalId,
+        origin: 'imported_package',
+        updatedAt: now,
+      },
+    };
+
+    await this.storage.importedWorksheets.put(importedRecord);
+
+    for (const asset of parsedPackage.assets) {
+      if (!this.storage.localAssets?.put) continue;
+      await this.storage.localAssets.put({
+        localId: asset.assetId,
+        binary: asset.binary,
+        metadata: {
+          localId: asset.assetId,
+          origin: 'imported_package',
+          updatedAt: now,
+          mimeType: asset.mimeType || null,
+        },
+      });
+    }
+
+    if (!options.convertToEditableDraft) {
+      return { importedRecord, draftRecord: null };
+    }
+
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = null;
+    this.state.autosavePending = false;
+
+    const draft = createDraftRecord({
+      title: parsedPackage.worksheet.title || 'Imported worksheet',
+      blocks: parsedPackage.worksheet.blocks,
+      assets: parsedPackage.assets.map((asset) => ({
+        assetId: asset.assetId,
+        path: asset.path,
+        kind: asset.kind,
+        usage: asset.usage,
+        mimeType: asset.mimeType || null,
+      })),
+      origin: 'imported_package',
+      metadata: {
+        createdAt: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.createdAt) || now,
+        serverLink: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.serverLink) || null,
+        importedFrom: 'package_zip',
+        modelVersion: 'package-compatible-v1',
+      },
+    });
+
+    this.state.draft = draft;
+    this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
+    this.state.draftRevision += 1;
+    this.state.lastImportedAt = nowIso();
+    this.validateCurrentDraft();
+    await this.autosave();
+    this.persistRestoreMetadata();
+    return { importedRecord, draftRecord: this.state.draft };
   }
 
   async saveNow() {
@@ -1326,22 +1413,40 @@ class EditorDraftSession {
     return snapshot;
   }
 
-  exportCurrentDraftToFile() {
+  async exportCurrentDraftToPackageFile() {
     if (!this.state.draft) {
       throw new Error('No active draft to export.');
     }
 
     const timestampToken = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `worksheet-draft-${this.state.draft.localId}-${timestampToken}.json`;
-    
-    // Export only the public schema, exclude internal fields like contractDraft and contractValidation
-    const exportPayload = {
-      title: this.state.draft.title,
-      blocks: this.state.draft.blocks,
-      metadata: this.state.draft.metadata,
+    const filename = `worksheet-package-${this.state.draft.localId}-${timestampToken}.zip`;
+    const assets = new Map();
+    const draftAssets = normalizeDraftAssets(this.state.draft.assets);
+    for (const asset of draftAssets) {
+      if (!this.storage.localAssets?.get) continue;
+      const stored = await this.storage.localAssets.get(asset.assetId);
+      if (stored?.binary) {
+        assets.set(asset.assetId, { binary: stored.binary });
+      }
+    }
+    const packagedDraft = {
+      ...this.state.draft,
+      assets: draftAssets,
+      metadata: {
+        ...this.state.draft.metadata,
+        modelVersion: 'package-compatible-v1',
+      },
     };
-    
-    downloadJson(exportPayload, filename);
+    const { bytes } = createWorksheetPackageFromDraft(packagedDraft, assets);
+    const blob = new Blob([bytes], { type: 'application/zip' });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
     this.state.lastExportedAt = nowIso();
     return filename;
   }
@@ -1501,7 +1606,7 @@ function renderEditorShell(session) {
   blockKind.className = 'control';
   const importFileInput = document.createElement('input');
   importFileInput.type = 'file';
-  importFileInput.accept = 'application/json,.json';
+  importFileInput.accept = 'application/zip,.zip,application/json,.json';
   importFileInput.style.display = 'none';
   const titleInput = document.createElement('input');
   titleInput.placeholder = 'Worksheet title';
@@ -1635,10 +1740,10 @@ function renderEditorShell(session) {
   openViewerBtn.textContent = 'Open in Viewer (same tab)';
   const importBtn = document.createElement('button');
   importBtn.type = 'button';
-  importBtn.textContent = 'Import draft JSON file';
+  importBtn.textContent = 'Import package (.zip) / legacy JSON';
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
-  exportBtn.textContent = 'Export draft JSON';
+  exportBtn.textContent = 'Export package (.zip)';
   const localPublishBtn = document.createElement('button');
   localPublishBtn.type = 'button';
   localPublishBtn.textContent = 'Generate publish payload (debug)';
@@ -2183,13 +2288,18 @@ function renderEditorShell(session) {
   importFileInput.addEventListener('change', async () => {
     const [file] = importFileInput.files || [];
     if (!file) return;
-    const fileText = await file.text();
-    await session.importWorksheetJson(fileText, { convertToEditableDraft: true });
+    const isZipFile = file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip';
+    if (isZipFile) {
+      await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
+    } else {
+      const fileText = await file.text();
+      await session.importWorksheetJson(fileText, { convertToEditableDraft: true });
+    }
     importFileInput.value = '';
     updateSummary();
   });
-  exportBtn.addEventListener('click', () => {
-    session.exportCurrentDraftToFile();
+  exportBtn.addEventListener('click', async () => {
+    await session.exportCurrentDraftToPackageFile();
     updateSummary();
   });
   localPublishBtn.addEventListener('click', async () => {

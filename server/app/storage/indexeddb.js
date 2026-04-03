@@ -1,10 +1,11 @@
 const DB_NAME = 'worksheetLauncherStorage';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORE_NAMES = {
   localDrafts: 'localDrafts',
   importedWorksheets: 'importedWorksheets',
   localAttempts: 'localAttempts',
+  localAssets: 'localAssets',
 };
 
 const REQUIRED_METADATA_FIELDS = ['localId', 'origin', 'updatedAt'];
@@ -172,9 +173,15 @@ function createStorageApi() {
     listLocalAttempts: () => listRecords(STORE_NAMES.localAttempts),
     deleteLocalAttempt: (localId) => deleteRecord(STORE_NAMES.localAttempts, localId),
 
+    putLocalAsset: (record) => putRecord(STORE_NAMES.localAssets, record),
+    getLocalAsset: (localId) => getRecord(STORE_NAMES.localAssets, localId),
+    listLocalAssets: () => listRecords(STORE_NAMES.localAssets),
+    deleteLocalAsset: (localId) => deleteRecord(STORE_NAMES.localAssets, localId),
+
     clearLocalDrafts: () => clearStore(STORE_NAMES.localDrafts),
     clearImportedWorksheets: () => clearStore(STORE_NAMES.importedWorksheets),
     clearLocalAttempts: () => clearStore(STORE_NAMES.localAttempts),
+    clearLocalAssets: () => clearStore(STORE_NAMES.localAssets),
   };
 }
 

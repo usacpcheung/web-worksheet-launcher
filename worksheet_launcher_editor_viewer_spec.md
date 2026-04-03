@@ -93,6 +93,7 @@ Rules:
 - Import/export must work without login.
 - Importing published content always creates/updates a local draft copy; published package remains immutable.
 - Raw worksheet JSON import/export may remain as transitional compatibility, but package format is the preferred direction.
+- Phase A package-groundwork details (manifest/content/media shape, asset IDs, local asset storage, JSON-compat mapping) are defined in `docs/local-package-format-phase-a.md`.
 
 ## 8) Protected backend API scaffolding (normative)
 

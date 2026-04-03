@@ -11,8 +11,26 @@ async function loadEditorModule() {
   const rewrittenSource = rewriteModuleSourceForTests(source, [
     {
       name: 'replace editor dependency imports with test doubles',
-      pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*/,
-      replacement: 'const editorStorage = {};\nconst SharedAuthGate = class {};\n',
+      pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*mapLegacyJsonToPackageModel,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
+      replacement: `const editorStorage = {};
+const SharedAuthGate = class {};
+const createWorksheetPackageFromDraft = () => ({ bytes: new Uint8Array([1, 2, 3]) });
+const mapLegacyJsonToPackageModel = (input) => {
+  if (!input || typeof input !== 'object' || !Array.isArray(input.blocks) || input.blocks.length === 0) {
+    throw new Error('Imported worksheet must have a non-empty blocks array.');
+  }
+  return {
+    worksheet: {
+      title: String(input.title || 'Imported worksheet'),
+      blocks: input.blocks,
+      metadata: input.metadata || {},
+    },
+    manifest: { format: 'worksheet-package', packageVersion: 1, assets: [] },
+    assets: [],
+  };
+};
+const parseWorksheetPackage = () => ({ manifest: {}, worksheet: { title: 'Pkg', blocks: [] }, assets: [] });
+`,
     },
     {
       name: 'replace dynamic contracts loader with deterministic test stub',
@@ -221,6 +239,20 @@ test('importWorksheetJson throws clear parse error for invalid JSON text', async
   await assert.rejects(
     () => session.importWorksheetJson('{not-valid-json', {}),
     /Imported worksheet JSON could not be parsed/
+  );
+});
+
+test('importWorksheetJson rejects legacy JSON without blocks array', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(
+    () => session.importWorksheetJson({ title: 'bad legacy' }, {}),
+    /non-empty blocks array/
   );
 });
 
