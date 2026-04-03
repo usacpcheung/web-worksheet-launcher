@@ -98,30 +98,19 @@ function decodeBase64Url(input) {
   return atob(padded);
 }
 
-function parseJsonInput(rawValue) {
+function maybeParseEncodedJson(rawValue) {
   if (!rawValue) return null;
-
-  if (typeof rawValue !== 'string') {
-    return rawValue;
-  }
 
   try {
     return JSON.parse(rawValue);
   } catch {
-    return null;
-  }
-}
-
-function maybeParseEncodedJson(rawValue) {
-  if (!rawValue) return null;
-
-  const direct = parseJsonInput(rawValue);
-  if (direct) {
-    return direct;
+    // Continue to base64url decode path.
   }
 
   try {
-    return parseJsonInput(decodeBase64Url(rawValue));
+    const decoded = decodeBase64Url(rawValue);
+    if (!decoded) return null;
+    return JSON.parse(decoded);
   } catch {
     return null;
   }
@@ -1145,7 +1134,7 @@ class ViewerAttemptSession {
     const viewerPayloadParam = parseLaunchParamJson(params, 'viewerPayload', VIEWER_BOOT_ERROR_CODES.VIEWER_PAYLOAD_PARSE_FAILED);
     const inlinePayload = viewerPayloadParam.present
       ? viewerPayloadParam.value
-      : (typeof window !== 'undefined' ? parseJsonInput(window.__VIEWER_PAYLOAD__) : null);
+      : null;
 
     if (inlinePayload) {
       return {

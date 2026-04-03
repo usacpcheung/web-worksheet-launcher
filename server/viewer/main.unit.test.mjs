@@ -1058,6 +1058,33 @@ test('bootstrap with no launch params errors with NO_CONTENT_SOURCE when resume 
   await assert.rejects(() => session.bootstrap(), (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE);
 });
 
+test('bootstrap ignores window.__VIEWER_PAYLOAD__ when query launch params are missing', async () => {
+  const mod = await loadViewerModule({
+    window: {
+      __VIEWER_PAYLOAD__: JSON.stringify({
+        worksheetId: 'legacy_ws',
+        snapshotId: 'legacy_snap',
+        blocks: [{ blockId: 'legacy_q1', kind: 'question', position: 0, prompt: { text: 'Legacy' }, responseConfig: {} }],
+      }),
+      location: {
+        search: '',
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({
+    attempts: {
+      get: async () => null,
+      put: async (value) => value,
+    },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await assert.rejects(() => session.bootstrap(), (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE);
+});
+
 test('bootstrap prefers localDraftId preview over resume flag session', async () => {
   const mod = await loadViewerModule({
     window: {
