@@ -5,6 +5,7 @@ import {
   mapLegacyJsonToPackageModel,
   parseWorksheetPackage,
 } from './worksheet-package.js';
+import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
 
 const app = document.getElementById('app');
 
@@ -32,6 +33,95 @@ function isRecord(value) {
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function normalizeMediaUsage(usage) {
+  return usage === 'option_audio' ? 'option_audio' : usage === 'question_audio' ? 'question_audio' : 'question_image';
+}
+
+function normalizeMediaRefs(mediaRefs, allowedUsage = null) {
+  const refs = Array.isArray(mediaRefs) ? mediaRefs : [];
+  return refs
+    .map((ref) => {
+      if (!isRecord(ref) || !isNonEmptyString(ref.assetId)) return null;
+      const usage = normalizeMediaUsage(ref.usage);
+      if (allowedUsage && usage !== allowedUsage) return null;
+      return { assetId: String(ref.assetId), usage };
+    })
+    .filter(Boolean);
+}
+
+function getSingleMediaRef(mediaRefs, usage) {
+  const refs = normalizeMediaRefs(mediaRefs, usage);
+  return refs[0] || null;
+}
+
+function setSingleMediaRef(mediaRefs, usage, assetId) {
+  const existing = normalizeMediaRefs(mediaRefs).filter((ref) => ref.usage !== usage);
+  if (!assetId) return existing;
+  return [...existing, { assetId, usage }];
+}
+
+function removeSingleMediaRef(mediaRefs, usage) {
+  return normalizeMediaRefs(mediaRefs).filter((ref) => ref.usage !== usage);
+}
+
+function extFromName(name = '') {
+  const match = String(name).toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match ? match[1] : '';
+}
+
+function fileLooksLikeType(file, mimeTypes, extensions) {
+  const type = String(file?.type || '').toLowerCase();
+  const ext = extFromName(file?.name || '');
+  return mimeTypes.includes(type) || extensions.includes(ext);
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function normalizeAssetPath(assetId, fileName = '', fallbackExt = '') {
+  const base = String(assetId).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const ext = extFromName(fileName) || fallbackExt;
+  return `media/${base}${ext ? `.${ext}` : ''}`;
+}
+
+function validateMediaFile(file, kind) {
+  if (!file) return { ok: false, message: 'Please choose a file first.' };
+  const isImage = kind === 'image';
+  const mimeTypes = isImage ? IMAGE_MIME_TYPES : AUDIO_MIME_TYPES;
+  const extensions = isImage ? IMAGE_EXTENSIONS : AUDIO_EXTENSIONS;
+  const maxBytes = isImage ? MEDIA_LIMITS.imageMaxBytes : MEDIA_LIMITS.audioMaxBytes;
+  if (!fileLooksLikeType(file, mimeTypes, extensions)) {
+    return {
+      ok: false,
+      message: isImage
+        ? 'Unsupported image type. Allowed: .png, .jpg, .jpeg, .webp.'
+        : 'Unsupported audio type. Allowed: .mp3.',
+    };
+  }
+  if (!Number.isFinite(file.size) || file.size <= 0) {
+    return { ok: false, message: 'File appears empty or unreadable.' };
+  }
+  if (file.size > maxBytes) {
+    return {
+      ok: false,
+      message: `${isImage ? 'Image' : 'Audio'} is too large. Limit is ${formatBytes(maxBytes)}.`,
+    };
+  }
+  return { ok: true, message: null };
+}
+
+async function toUint8ArrayFromFile(file) {
+  if (!file || typeof file.arrayBuffer !== 'function') {
+    throw new Error('Unable to read selected file.');
+  }
+  const buffer = await file.arrayBuffer();
+  return new Uint8Array(buffer);
 }
 
 async function loadContracts() {
@@ -75,10 +165,10 @@ function normalizeResponseOption(option, fallback = '') {
     const id = isNonEmptyString(option.id) ? String(option.id) : createLocalId('opt');
     const value = String(option.value ?? option.label ?? fallback);
     const label = String(option.label ?? option.value ?? fallback);
-    return { id, value, label };
+    return { id, value, label, mediaRefs: normalizeMediaRefs(option.mediaRefs, 'option_audio') };
   }
   const normalized = String(option ?? fallback);
-  return { id: createLocalId('opt'), value: normalized, label: normalized };
+  return { id: createLocalId('opt'), value: normalized, label: normalized, mediaRefs: [] };
 }
 
 function getOptionValueForAnswerKey(option) {
@@ -297,6 +387,7 @@ function normalizeBlocks(blocks) {
         ...promptSource,
         text: String(promptSource.text || ''),
         format: promptSource.format || 'plain_text',
+        mediaRefs: normalizeMediaRefs(promptSource.mediaRefs),
       };
       normalized.responseConfig = normalizeQuestionResponseConfig(source.responseConfig);
       return normalized;
@@ -384,6 +475,7 @@ class EditorDraftSession {
       recoveryMessage: null,
       lastProtectedAction: null,
       isPristineDraft: false,
+      mediaFeedback: null,
     };
 
     this.autosaveTimer = null;
@@ -419,6 +511,7 @@ class EditorDraftSession {
             prompt: {
               text: String(block?.prompt?.text || ''),
               format: block?.prompt?.format || 'plain_text',
+              mediaRefs: normalizeMediaRefs(block?.prompt?.mediaRefs),
             },
             responseConfig: isRecord(block.responseConfig)
               ? normalizeQuestionResponseConfig(block.responseConfig, { forContract: true })
@@ -587,6 +680,213 @@ class EditorDraftSession {
     });
 
     this.touchDraft();
+  }
+
+
+  setMediaFeedback(message) {
+    this.state.mediaFeedback = message || null;
+    this.notifyStateChange();
+  }
+
+  clearMediaFeedback() {
+    this.state.mediaFeedback = null;
+  }
+
+  findBlock(blockId) {
+    return this.state.draft?.blocks?.find((block) => block.blockId === blockId) || null;
+  }
+
+  findAsset(assetId) {
+    return normalizeDraftAssets(this.state.draft?.assets || []).find((asset) => asset.assetId === assetId) || null;
+  }
+
+  async createLocalAssetRecord(file, usage, kind) {
+    const assetId = createLocalId('asset');
+    const bytes = await toUint8ArrayFromFile(file);
+    const extFallback = kind === 'audio' ? 'mp3' : 'bin';
+    const asset = {
+      assetId,
+      kind,
+      usage,
+      mimeType: file.type || (kind === 'audio' ? 'audio/mpeg' : null),
+      path: normalizeAssetPath(assetId, file.name, extFallback),
+    };
+    if (this.storage.localAssets?.put) {
+      await this.storage.localAssets.put({
+        localId: assetId,
+        binary: bytes,
+        metadata: {
+          localId: assetId,
+          origin: 'local_upload',
+          updatedAt: nowIso(),
+          mimeType: asset.mimeType,
+        },
+      });
+    }
+    return asset;
+  }
+
+  async attachQuestionMedia(blockId, usage, file, options = {}) {
+    if (!this.state.draft || !blockId) return { ok: false, reason: 'missing-draft' };
+    const kind = usage === 'question_image' ? 'image' : 'audio';
+    const validation = validateMediaFile(file, kind);
+    if (!validation.ok) {
+      this.setMediaFeedback(validation.message);
+      return { ok: false, reason: 'validation', message: validation.message };
+    }
+    const target = this.findBlock(blockId);
+    if (!target || target.kind !== 'question') return { ok: false, reason: 'missing-question' };
+
+    const currentRef = getSingleMediaRef(target.prompt?.mediaRefs, usage);
+    if (currentRef && options.confirmReplace !== true) {
+      return { ok: false, reason: 'confirm-replace-required', existingAssetId: currentRef.assetId };
+    }
+
+    const newAsset = await this.createLocalAssetRecord(file, usage, kind);
+    let replacedAssetId = null;
+
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const existingRef = getSingleMediaRef(block.prompt?.mediaRefs, usage);
+      replacedAssetId = existingRef?.assetId || null;
+      return {
+        ...block,
+        prompt: {
+          ...(isRecord(block.prompt) ? block.prompt : {}),
+          mediaRefs: setSingleMediaRef(block.prompt?.mediaRefs, usage, newAsset.assetId),
+        },
+      };
+    });
+
+    const existingAssets = normalizeDraftAssets(this.state.draft.assets);
+    const filtered = existingAssets.filter((asset) => asset.assetId !== replacedAssetId);
+    filtered.push(newAsset);
+    this.state.draft.assets = filtered;
+
+    this.clearMediaFeedback();
+    this.touchDraft();
+    return { ok: true, assetId: newAsset.assetId, replacedAssetId };
+  }
+
+  removeQuestionMedia(blockId, usage, options = {}) {
+    if (!this.state.draft || !blockId) return { ok: false, reason: 'missing-draft' };
+    const target = this.findBlock(blockId);
+    if (!target || target.kind !== 'question') return { ok: false, reason: 'missing-question' };
+    const currentRef = getSingleMediaRef(target.prompt?.mediaRefs, usage);
+    if (!currentRef) {
+      this.setMediaFeedback('No media attachment found to remove.');
+      return { ok: false, reason: 'missing-media' };
+    }
+    if (options.confirmRemove !== true) {
+      return { ok: false, reason: 'confirm-remove-required', existingAssetId: currentRef.assetId };
+    }
+
+    const removedAssetId = currentRef.assetId;
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      return {
+        ...block,
+        prompt: {
+          ...(isRecord(block.prompt) ? block.prompt : {}),
+          mediaRefs: removeSingleMediaRef(block.prompt?.mediaRefs, usage),
+        },
+      };
+    });
+    this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets).filter((asset) => asset.assetId !== removedAssetId);
+    this.clearMediaFeedback();
+    this.touchDraft();
+    return { ok: true, removedAssetId };
+  }
+
+  async attachOptionAudio(blockId, optionId, file, options = {}) {
+    if (!this.state.draft || !blockId || !optionId) return { ok: false, reason: 'missing-input' };
+    const validation = validateMediaFile(file, 'audio');
+    if (!validation.ok) {
+      this.setMediaFeedback(validation.message);
+      return { ok: false, reason: 'validation', message: validation.message };
+    }
+    const block = this.findBlock(blockId);
+    if (!block || block.kind !== 'question') return { ok: false, reason: 'missing-question' };
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    if (responseConfig.inputType !== 'multiple_choice') return { ok: false, reason: 'not-multiple-choice' };
+    const existingOption = (responseConfig.options || []).map((option) => normalizeResponseOption(option)).find((o) => o.id === optionId);
+    if (!existingOption) return { ok: false, reason: 'missing-option' };
+    const currentRef = getSingleMediaRef(existingOption.mediaRefs, 'option_audio');
+    if (currentRef && options.confirmReplace !== true) {
+      return { ok: false, reason: 'confirm-replace-required', existingAssetId: currentRef.assetId };
+    }
+
+    const newAsset = await this.createLocalAssetRecord(file, 'option_audio', 'audio');
+    let replacedAssetId = null;
+    this.state.draft.blocks = this.state.draft.blocks.map((candidate) => {
+      if (candidate.blockId !== blockId || candidate.kind !== 'question') return candidate;
+      const cfg = normalizeQuestionResponseConfig(candidate.responseConfig);
+      const nextOptions = (cfg.options || []).map((option) => {
+        const normalized = normalizeResponseOption(option);
+        if (normalized.id !== optionId) return normalized;
+        const existingRef = getSingleMediaRef(normalized.mediaRefs, 'option_audio');
+        replacedAssetId = existingRef?.assetId || null;
+        return {
+          ...normalized,
+          mediaRefs: setSingleMediaRef(normalized.mediaRefs, 'option_audio', newAsset.assetId),
+        };
+      });
+      return {
+        ...candidate,
+        responseConfig: normalizeQuestionResponseConfig({ ...cfg, options: nextOptions }),
+      };
+    });
+
+    const existingAssets = normalizeDraftAssets(this.state.draft.assets);
+    const filtered = existingAssets.filter((asset) => asset.assetId !== replacedAssetId);
+    filtered.push(newAsset);
+    this.state.draft.assets = filtered;
+
+    this.clearMediaFeedback();
+    this.touchDraft();
+    return { ok: true, assetId: newAsset.assetId, replacedAssetId };
+  }
+
+  removeOptionAudio(blockId, optionId, options = {}) {
+    if (!this.state.draft || !blockId || !optionId) return { ok: false, reason: 'missing-input' };
+    const block = this.findBlock(blockId);
+    if (!block || block.kind !== 'question') return { ok: false, reason: 'missing-question' };
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    if (responseConfig.inputType !== 'multiple_choice') return { ok: false, reason: 'not-multiple-choice' };
+    const existingOption = (responseConfig.options || []).map((option) => normalizeResponseOption(option)).find((o) => o.id === optionId);
+    if (!existingOption) return { ok: false, reason: 'missing-option' };
+    const currentRef = getSingleMediaRef(existingOption.mediaRefs, 'option_audio');
+    if (!currentRef) {
+      this.setMediaFeedback('No option audio attachment found to remove.');
+      return { ok: false, reason: 'missing-media' };
+    }
+    if (options.confirmRemove !== true) {
+      return { ok: false, reason: 'confirm-remove-required', existingAssetId: currentRef.assetId };
+    }
+
+    this.state.draft.blocks = this.state.draft.blocks.map((candidate) => {
+      if (candidate.blockId !== blockId || candidate.kind !== 'question') return candidate;
+      const cfg = normalizeQuestionResponseConfig(candidate.responseConfig);
+      const nextOptions = (cfg.options || []).map((option) => {
+        const normalized = normalizeResponseOption(option);
+        if (normalized.id !== optionId) return normalized;
+        return {
+          ...normalized,
+          mediaRefs: removeSingleMediaRef(normalized.mediaRefs, 'option_audio'),
+        };
+      });
+      return {
+        ...candidate,
+        responseConfig: normalizeQuestionResponseConfig({ ...cfg, options: nextOptions }),
+      };
+    });
+
+    this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets)
+      .filter((asset) => asset.assetId !== currentRef.assetId);
+
+    this.clearMediaFeedback();
+    this.touchDraft();
+    return { ok: true, removedAssetId: currentRef.assetId };
   }
 
   updateQuestionInputType(blockId, inputType) {
@@ -1313,19 +1613,50 @@ class EditorDraftSession {
 
     await this.storage.importedWorksheets.put(importedRecord);
 
+    const assetIdRemap = new Map();
     for (const asset of parsedPackage.assets) {
+      let targetId = asset.assetId;
+      if (this.storage.localAssets?.get) {
+        const existing = await this.storage.localAssets.get(targetId);
+        if (existing) {
+          targetId = createLocalId('asset_import');
+        }
+      }
+      assetIdRemap.set(asset.assetId, targetId);
       if (!this.storage.localAssets?.put) continue;
       await this.storage.localAssets.put({
-        localId: asset.assetId,
+        localId: targetId,
         binary: asset.binary,
         metadata: {
-          localId: asset.assetId,
+          localId: targetId,
           origin: 'imported_package',
           updatedAt: now,
           mimeType: asset.mimeType || null,
         },
       });
     }
+
+    const remapMediaRefs = (mediaRefs) => normalizeMediaRefs(mediaRefs).map((ref) => ({
+      ...ref,
+      assetId: assetIdRemap.get(ref.assetId) || ref.assetId,
+    }));
+
+    const remappedBlocks = normalizeBlocks(parsedPackage.worksheet.blocks).map((block) => {
+      if (block.kind !== 'question') return block;
+      const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      const options = (responseConfig.options || []).map((option) => {
+        const normalized = normalizeResponseOption(option);
+        return { ...normalized, mediaRefs: remapMediaRefs(normalized.mediaRefs) };
+      });
+      return {
+        ...block,
+        prompt: {
+          ...(isRecord(block.prompt) ? block.prompt : {}),
+          mediaRefs: remapMediaRefs(block?.prompt?.mediaRefs),
+        },
+        responseConfig: normalizeQuestionResponseConfig({ ...responseConfig, options }),
+      };
+    });
 
     if (!options.convertToEditableDraft) {
       return { importedRecord, draftRecord: null };
@@ -1337,14 +1668,17 @@ class EditorDraftSession {
 
     const draft = createDraftRecord({
       title: parsedPackage.worksheet.title || 'Imported worksheet',
-      blocks: parsedPackage.worksheet.blocks,
-      assets: parsedPackage.assets.map((asset) => ({
-        assetId: asset.assetId,
-        path: asset.path,
-        kind: asset.kind,
-        usage: asset.usage,
-        mimeType: asset.mimeType || null,
-      })),
+      blocks: remappedBlocks,
+      assets: parsedPackage.assets.map((asset) => {
+        const remappedAssetId = assetIdRemap.get(asset.assetId) || asset.assetId;
+        return {
+          assetId: remappedAssetId,
+          path: normalizeAssetPath(remappedAssetId, asset.path, asset.kind === 'audio' ? 'mp3' : 'bin'),
+          kind: asset.kind,
+          usage: asset.usage,
+          mimeType: asset.mimeType || null,
+        };
+      }),
       origin: 'imported_package',
       metadata: {
         createdAt: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.createdAt) || now,
@@ -1719,6 +2053,22 @@ function renderEditorShell(session) {
   questionNumberDecimalPlacesAllowedError.className = 'control-error';
   const questionCorrectAnswerNumberError = document.createElement('p');
   questionCorrectAnswerNumberError.className = 'control-error';
+  const mediaFeedback = document.createElement('p');
+  mediaFeedback.className = 'control-error';
+
+  const questionImageInput = document.createElement('input');
+  questionImageInput.type = 'file';
+  questionImageInput.accept = '.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp';
+  questionImageInput.style.display = 'none';
+  const questionAudioInput = document.createElement('input');
+  questionAudioInput.type = 'file';
+  questionAudioInput.accept = '.mp3,audio/mpeg';
+  questionAudioInput.style.display = 'none';
+  const optionAudioInput = document.createElement('input');
+  optionAudioInput.type = 'file';
+  optionAudioInput.accept = '.mp3,audio/mpeg';
+  optionAudioInput.style.display = 'none';
+  let pendingOptionAudioTarget = null;
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
@@ -1985,6 +2335,68 @@ function renderEditorShell(session) {
     blockEditor.placeholder = 'Question prompt';
     rightPanel.append(promptLabel, blockEditor);
 
+    const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
+    const currentQuestionImageRef = getSingleMediaRef(promptMediaRefs, 'question_image');
+    const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
+
+    const questionImageRow = document.createElement('div');
+    questionImageRow.className = 'button-row';
+    const questionImageLabel = document.createElement('label');
+    questionImageLabel.textContent = currentQuestionImageRef
+      ? `Question image attached (${currentQuestionImageRef.assetId})`
+      : 'Question image: none attached';
+    const attachImageBtn = document.createElement('button');
+    attachImageBtn.type = 'button';
+    attachImageBtn.textContent = currentQuestionImageRef ? 'Replace image…' : 'Attach image…';
+    const removeImageBtn = document.createElement('button');
+    removeImageBtn.type = 'button';
+    removeImageBtn.textContent = 'Remove image';
+    removeImageBtn.disabled = !currentQuestionImageRef;
+    attachImageBtn.addEventListener('click', () => {
+      questionImageInput.dataset.blockId = selectedBlock.blockId;
+      questionImageInput.value = '';
+      questionImageInput.click();
+    });
+    removeImageBtn.addEventListener('click', () => {
+      const confirmed = window.confirm('Remove the current question image attachment?');
+      const result = session.removeQuestionMedia(selectedBlock.blockId, 'question_image', { confirmRemove: confirmed });
+      if (!result.ok && result.reason !== 'confirm-remove-required') {
+        updateSummary();
+      } else if (result.ok) {
+        updateSummary();
+      }
+    });
+    questionImageRow.append(attachImageBtn, removeImageBtn);
+    rightPanel.append(questionImageLabel, questionImageRow);
+
+    const questionAudioRow = document.createElement('div');
+    questionAudioRow.className = 'button-row';
+    const questionAudioLabel = document.createElement('label');
+    questionAudioLabel.textContent = currentQuestionAudioRef
+      ? `Question audio attached (${currentQuestionAudioRef.assetId})`
+      : 'Question audio: none attached';
+    const attachQuestionAudioBtn = document.createElement('button');
+    attachQuestionAudioBtn.type = 'button';
+    attachQuestionAudioBtn.textContent = currentQuestionAudioRef ? 'Replace audio…' : 'Attach audio…';
+    const removeQuestionAudioBtn = document.createElement('button');
+    removeQuestionAudioBtn.type = 'button';
+    removeQuestionAudioBtn.textContent = 'Remove audio';
+    removeQuestionAudioBtn.disabled = !currentQuestionAudioRef;
+    attachQuestionAudioBtn.addEventListener('click', () => {
+      questionAudioInput.dataset.blockId = selectedBlock.blockId;
+      questionAudioInput.value = '';
+      questionAudioInput.click();
+    });
+    removeQuestionAudioBtn.addEventListener('click', () => {
+      const confirmed = window.confirm('Remove the current question audio attachment?');
+      const result = session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: confirmed });
+      if (result.ok || result.reason !== 'confirm-remove-required') {
+        updateSummary();
+      }
+    });
+    questionAudioRow.append(attachQuestionAudioBtn, removeQuestionAudioBtn);
+    rightPanel.append(questionAudioLabel, questionAudioRow, mediaFeedback);
+
     const inputTypeLabel = document.createElement('label');
     inputTypeLabel.textContent = 'Answer input type';
     inputTypeLabel.htmlFor = 'editor-question-input-type';
@@ -2141,6 +2553,27 @@ function renderEditorShell(session) {
         optionInput.addEventListener('input', () => {
           session.updateQuestionOptionAtIndex(selectedBlock.blockId, optionIndex, optionInput.value);
         });
+        const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
+        const optionAudioBtn = document.createElement('button');
+        optionAudioBtn.type = 'button';
+        optionAudioBtn.textContent = optionAudioRef ? '🎵 Replace' : '🎵 Attach';
+        optionAudioBtn.title = optionAudioRef ? 'Replace option audio' : 'Attach option audio';
+        optionAudioBtn.addEventListener('click', () => {
+          pendingOptionAudioTarget = { blockId: selectedBlock.blockId, optionId };
+          optionAudioInput.value = '';
+          optionAudioInput.click();
+        });
+        const removeOptionAudioBtn = document.createElement('button');
+        removeOptionAudioBtn.type = 'button';
+        removeOptionAudioBtn.textContent = 'Remove 🎵';
+        removeOptionAudioBtn.disabled = !optionAudioRef;
+        removeOptionAudioBtn.addEventListener('click', () => {
+          const confirmed = window.confirm(`Remove audio from option ${optionIndex + 1}?`);
+          const result = session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: confirmed });
+          if (result.ok || result.reason !== 'confirm-remove-required') {
+            updateSummary();
+          }
+        });
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'icon-btn danger';
@@ -2151,7 +2584,7 @@ function renderEditorShell(session) {
           session.removeQuestionOption(selectedBlock.blockId, optionIndex);
           updateSummary();
         });
-        row.append(correctToggle, optionInput, removeBtn);
+        row.append(correctToggle, optionInput, optionAudioBtn, removeOptionAudioBtn, removeBtn);
         questionOptionsList.appendChild(row);
       });
       rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
@@ -2188,6 +2621,7 @@ function renderEditorShell(session) {
     validationEl.title = validationIssues > 0 ? validationTooltip.join('\n') : '';
     localDraftIdValue.textContent = session.state.draft?.localId || 'n/a';
     statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'}`;
+    mediaFeedback.textContent = session.state.mediaFeedback || '';
   };
 
   session.setOnStateChange(() => {
@@ -2282,6 +2716,52 @@ function renderEditorShell(session) {
     session.addQuestionOption(session.state.selectedBlockId);
     updateSummary();
   });
+  questionImageInput.addEventListener('change', async () => {
+    const [file] = questionImageInput.files || [];
+    const blockId = questionImageInput.dataset.blockId;
+    if (!file || !blockId) return;
+    const currentBlock = session.findBlock(blockId);
+    const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_image'));
+    const confirmed = !hasExisting || window.confirm('Replace existing question image?');
+    const result = await session.attachQuestionMedia(blockId, 'question_image', file, { confirmReplace: confirmed });
+    if (result.reason === 'confirm-replace-required') {
+      session.setMediaFeedback('Image replacement canceled.');
+    }
+    questionImageInput.value = '';
+    updateSummary();
+  });
+  questionAudioInput.addEventListener('change', async () => {
+    const [file] = questionAudioInput.files || [];
+    const blockId = questionAudioInput.dataset.blockId;
+    if (!file || !blockId) return;
+    const currentBlock = session.findBlock(blockId);
+    const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_audio'));
+    const confirmed = !hasExisting || window.confirm('Replace existing question audio?');
+    const result = await session.attachQuestionMedia(blockId, 'question_audio', file, { confirmReplace: confirmed });
+    if (result.reason === 'confirm-replace-required') {
+      session.setMediaFeedback('Audio replacement canceled.');
+    }
+    questionAudioInput.value = '';
+    updateSummary();
+  });
+  optionAudioInput.addEventListener('change', async () => {
+    const [file] = optionAudioInput.files || [];
+    if (!file || !pendingOptionAudioTarget) return;
+    const { blockId, optionId } = pendingOptionAudioTarget;
+    pendingOptionAudioTarget = null;
+    const block = session.findBlock(blockId);
+    const config = normalizeQuestionResponseConfig(block?.responseConfig);
+    const option = (config.options || []).map((item) => normalizeResponseOption(item)).find((item) => item.id === optionId);
+    const hasExisting = Boolean(getSingleMediaRef(option?.mediaRefs, 'option_audio'));
+    const confirmed = !hasExisting || window.confirm('Replace existing option audio?');
+    const result = await session.attachOptionAudio(blockId, optionId, file, { confirmReplace: confirmed });
+    if (result.reason === 'confirm-replace-required') {
+      session.setMediaFeedback('Option audio replacement canceled.');
+    }
+    optionAudioInput.value = '';
+    updateSummary();
+  });
+
   importBtn.addEventListener('click', () => {
     importFileInput.click();
   });
@@ -2332,7 +2812,7 @@ function renderEditorShell(session) {
   }
   protectedActionsColumn.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn);
   moreActions.append(protectedActionsColumn);
-  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput);
+  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput, questionImageInput, questionAudioInput, optionAudioInput);
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);

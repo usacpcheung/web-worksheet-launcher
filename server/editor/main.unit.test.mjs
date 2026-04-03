@@ -33,6 +33,16 @@ const parseWorksheetPackage = () => ({ manifest: {}, worksheet: { title: 'Pkg', 
 `,
     },
     {
+      name: 'replace media config import with deterministic constants',
+      pattern: /import\s*\{\s*MEDIA_LIMITS,\s*IMAGE_MIME_TYPES,\s*IMAGE_EXTENSIONS,\s*AUDIO_MIME_TYPES,\s*AUDIO_EXTENSIONS\s*\}\s*from\s*['"]\.\/media-config\.js['"];\s*/,
+      replacement: `const MEDIA_LIMITS = { imageMaxBytes: 8 * 1024 * 1024, audioMaxBytes: 5 * 1024 * 1024 };
+const IMAGE_MIME_TYPES = ['image/png','image/jpeg','image/webp'];
+const IMAGE_EXTENSIONS = ['png','jpg','jpeg','webp'];
+const AUDIO_MIME_TYPES = ['audio/mpeg','audio/mp3'];
+const AUDIO_EXTENSIONS = ['mp3'];
+`,
+    },
+    {
       name: 'replace dynamic contracts loader with deterministic test stub',
       pattern: /async function loadContracts\(\)\s*\{[\s\S]*?\n\}\s*\nfunction createEmptyQuestionBlock/,
       replacement: `async function loadContracts() {
@@ -1068,4 +1078,127 @@ test('number validation helper returns no errors for valid constraints', async (
     decimalPlacesAllowed: null,
     correctAnswer: null,
   });
+});
+
+function createFakeFile({ name, type, size = 4, bytes = [1, 2, 3, 4] }) {
+  const data = new Uint8Array(bytes);
+  return {
+    name,
+    type,
+    size,
+    async arrayBuffer() {
+      return data.buffer.slice(0);
+    },
+  };
+}
+
+function createSessionWithQuestion(mod, responseConfig = { inputType: 'text' }) {
+  const assetStore = new Map();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: {
+      get: async (id) => assetStore.get(id) || null,
+      put: async (record) => {
+        assetStore.set(record.localId, record);
+        return record;
+      },
+    },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_media',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Prompt', format: 'plain_text' },
+      responseConfig,
+    }],
+  });
+  return { session, assetStore };
+}
+
+test('attach/replace/remove question image with confirmation behavior', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod);
+
+  const first = await session.attachQuestionMedia('q1', 'question_image', createFakeFile({ name: 'pic.png', type: 'image/png' }));
+  assert.equal(first.ok, true);
+
+  const replaceNeedsConfirm = await session.attachQuestionMedia(
+    'q1',
+    'question_image',
+    createFakeFile({ name: 'next.png', type: 'image/png' }),
+    { confirmReplace: false }
+  );
+  assert.equal(replaceNeedsConfirm.reason, 'confirm-replace-required');
+
+  const replaced = await session.attachQuestionMedia(
+    'q1',
+    'question_image',
+    createFakeFile({ name: 'next.png', type: 'image/png' }),
+    { confirmReplace: true }
+  );
+  assert.equal(replaced.ok, true);
+
+  const removeNeedsConfirm = session.removeQuestionMedia('q1', 'question_image', { confirmRemove: false });
+  assert.equal(removeNeedsConfirm.reason, 'confirm-remove-required');
+  const removed = session.removeQuestionMedia('q1', 'question_image', { confirmRemove: true });
+  assert.equal(removed.ok, true);
+});
+
+test('rejects invalid and oversized question image files', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod);
+
+  const badType = await session.attachQuestionMedia('q1', 'question_image', createFakeFile({ name: 'pic.gif', type: 'image/gif' }));
+  assert.equal(badType.reason, 'validation');
+
+  const tooBig = await session.attachQuestionMedia(
+    'q1',
+    'question_image',
+    createFakeFile({ name: 'pic.png', type: 'image/png', size: 9 * 1024 * 1024 })
+  );
+  assert.equal(tooBig.reason, 'validation');
+});
+
+test('attach/replace/remove question mp3 and validate type/size', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod);
+
+  const attached = await session.attachQuestionMedia('q1', 'question_audio', createFakeFile({ name: 'q.mp3', type: 'audio/mpeg' }));
+  assert.equal(attached.ok, true);
+
+  const replaceNeedsConfirm = await session.attachQuestionMedia('q1', 'question_audio', createFakeFile({ name: 'q2.mp3', type: 'audio/mpeg' }), { confirmReplace: false });
+  assert.equal(replaceNeedsConfirm.reason, 'confirm-replace-required');
+  const replaced = await session.attachQuestionMedia('q1', 'question_audio', createFakeFile({ name: 'q2.mp3', type: 'audio/mpeg' }), { confirmReplace: true });
+  assert.equal(replaced.ok, true);
+
+  const removed = session.removeQuestionMedia('q1', 'question_audio', { confirmRemove: true });
+  assert.equal(removed.ok, true);
+
+  const badType = await session.attachQuestionMedia('q1', 'question_audio', createFakeFile({ name: 'q.wav', type: 'audio/wav' }));
+  assert.equal(badType.reason, 'validation');
+  const tooBig = await session.attachQuestionMedia('q1', 'question_audio', createFakeFile({ name: 'q.mp3', type: 'audio/mpeg', size: 6 * 1024 * 1024 }));
+  assert.equal(tooBig.reason, 'validation');
+});
+
+test('attach/replace/remove option mp3', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod, {
+    inputType: 'multiple_choice',
+    options: [{ id: 'o1', value: 'A', label: 'A' }],
+  });
+
+  const attached = await session.attachOptionAudio('q1', 'o1', createFakeFile({ name: 'opt.mp3', type: 'audio/mpeg' }));
+  assert.equal(attached.ok, true);
+
+  const replaceNeedsConfirm = await session.attachOptionAudio('q1', 'o1', createFakeFile({ name: 'opt2.mp3', type: 'audio/mpeg' }), { confirmReplace: false });
+  assert.equal(replaceNeedsConfirm.reason, 'confirm-replace-required');
+  const replaced = await session.attachOptionAudio('q1', 'o1', createFakeFile({ name: 'opt2.mp3', type: 'audio/mpeg' }), { confirmReplace: true });
+  assert.equal(replaced.ok, true);
+
+  const removed = session.removeOptionAudio('q1', 'o1', { confirmRemove: true });
+  assert.equal(removed.ok, true);
 });
