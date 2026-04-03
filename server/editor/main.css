@@ -369,6 +369,14 @@ textarea.control {
   background: #f8fafc;
 }
 
+.media-action-btn:disabled {
+  opacity: 0.45;
+  color: #98a2b3;
+  background: #f8fafc;
+  border-color: #d0d5dd;
+  cursor: not-allowed;
+}
+
 .media-action-btn__icon {
   font-size: 1rem;
   line-height: 1;
