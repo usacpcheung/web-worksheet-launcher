@@ -54,6 +54,7 @@ function createEmptyQuestionBlock(position) {
 }
 
 const TEXT_INPUT_TYPES = new Set(['text']);
+const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice']);
 
 function mapOptionsTextToResponseOptions(rawText) {
   if (!rawText) return [];
@@ -446,6 +447,11 @@ class EditorDraftSession {
       if (block.kind === 'question') {
         if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
         if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
+        if (!CANONICAL_RESPONSE_INPUT_TYPES.has(block.responseConfig?.inputType)) {
+          errors.push(
+            `draft.blocks[${index}].responseConfig.inputType must be one of: text, number, boolean, multiple_choice`
+          );
+        }
         if (block.responseConfig?.inputType === 'multiple_choice') {
           const duplicateOptionValues = getDuplicateOptionValues(block.responseConfig.options);
           if (duplicateOptionValues.length > 0) {
@@ -2287,18 +2293,12 @@ export {
 function normalizeQuestionResponseConfig(responseConfig, options = {}) {
   const forContract = options.forContract === true;
   const source = isRecord(responseConfig) ? { ...responseConfig } : {};
-  const legacyInputType = source.inputType || 'text';
-  const inputType = legacyInputType === 'plain_text' || legacyInputType === 'short_text'
-    ? 'text'
-    : legacyInputType === 'single_choice'
-      ? 'multiple_choice'
-      : legacyInputType;
+  const inputType = source.inputType == null ? 'text' : source.inputType;
 
   const normalized = {
     ...source,
     inputType,
   };
-  delete normalized.step;
 
   if (inputType === 'text') {
     normalized.maxLength = Number.isFinite(source.maxLength) ? Number(source.maxLength) : 200;

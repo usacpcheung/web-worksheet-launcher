@@ -25,11 +25,11 @@ The editor + viewer runtime now uses these canonical `responseConfig` input type
 - `boolean`
 - `multiple_choice`
 
-### Backward compatibility rules (required on load/normalize)
+### Strict responseConfig inputType acceptance
 
-- `plain_text` and `short_text` must normalize to `text`.
-- `single_choice` must normalize to `multiple_choice` with `selectionMode: "single"`.
-- Existing `options: [{ value, label }]` payloads must be preserved.
+- Loader/normalization paths accept only canonical `inputType` values: `text`, `number`, `boolean`, `multiple_choice`.
+- Legacy aliases (`plain_text`, `short_text`, `single_choice`) are not coerced and must fail schema validation.
+- Number-input legacy `step` compatibility normalization is removed; consumers must rely on canonical `numberRules` + `min`/`max` fields only.
 
 ### Canonical responseConfig examples
 
