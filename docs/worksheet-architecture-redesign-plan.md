@@ -13,7 +13,7 @@ This redesign aligns the product around three core object types:
 
 The system direction is **package-first / hybrid**, not full inline payload as the default runtime path:
 
-- Viewer should primarily open by reference (especially `publishedPackageId`).
+- Viewer should primarily open by reference (especially `publishedPackageId`, which is the canonical published identity in target direction).
 - Inline `viewerPayload` is retained only for compatibility/debug paths and is no longer preferred as the main launch route.
 - Local-first behavior remains primary for editing and preview.
 
@@ -290,7 +290,7 @@ Recommended conceptual tables (names illustrative):
 
 ## 10) Open decisions for repo owner confirmation
 
-1. Should `publishedPackageId` fully replace `snapshotId` in external contracts, or coexist with deprecation timeline?
+1. Transitional API alias policy: what deprecation timeline should map legacy `snapshotId` fields to canonical `publishedPackageId`?
 2. Should `packageFamilyId` be introduced at MVP, or deferred until branching UX requires it?
 3. Cache validation strategy for published packages: strict hash match only, or hash + ETag flow?
 4. Guest attempt policy defaults for published packages (allowed vs auth-only by default)?
