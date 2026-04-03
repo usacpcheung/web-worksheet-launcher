@@ -2307,6 +2307,21 @@ function renderEditorShell(session) {
       : null;
     const normalizedInputType = normalizedResponseConfig?.inputType || 'text';
     const normalizedSelectionMode = normalizedResponseConfig?.selectionMode || '';
+    const normalizedPromptMediaRefs = selectedBlock.kind === 'question'
+      ? JSON.stringify(normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs).map((ref) => [
+        String(ref?.usage ?? ''),
+        String(ref?.assetId ?? ''),
+      ]))
+      : '[]';
+    const normalizedOptionMediaRefs = selectedBlock.kind === 'question'
+      ? JSON.stringify((normalizedResponseConfig?.options || []).map((opt) => {
+        const normalized = normalizeResponseOption(opt);
+        return [
+          String(normalized.id ?? ''),
+          ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
+        ];
+      }))
+      : '[]';
     const normalizedCorrectAnswer = (() => {
       if (!normalizedResponseConfig || normalizedInputType !== 'multiple_choice') {
         return '';
@@ -2331,10 +2346,12 @@ function renderEditorShell(session) {
       normalizedResponseConfig?.displayMode || '',
       normalizedSelectionMode,
       normalizedResponseConfig?.shuffleOptions ? '1' : '0',
+      normalizedPromptMediaRefs,
       JSON.stringify((normalizedResponseConfig?.options || []).map((opt) => [
         String(opt?.value ?? ''),
         String(opt?.label ?? ''),
       ])),
+      normalizedOptionMediaRefs,
       normalizedCorrectAnswer,
     ].join(':');
   };

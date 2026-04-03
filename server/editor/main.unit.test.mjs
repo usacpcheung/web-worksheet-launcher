@@ -287,6 +287,14 @@ test('detail signature includes normalized multiple_choice correctAnswer to prev
   assert.equal(source.includes('normalizedCorrectAnswer,'), true);
 });
 
+test('detail signature includes media refs so media attach/remove rerenders immediately', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('const normalizedPromptMediaRefs = selectedBlock.kind === \'question\''), true);
+  assert.equal(source.includes('const normalizedOptionMediaRefs = selectedBlock.kind === \'question\''), true);
+  assert.equal(source.includes('normalizedPromptMediaRefs,'), true);
+  assert.equal(source.includes('normalizedOptionMediaRefs,'), true);
+});
+
 test('localDraftId render path avoids innerHTML interpolation for untrusted ids', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('localDraftIdEl.innerHTML'), false);
