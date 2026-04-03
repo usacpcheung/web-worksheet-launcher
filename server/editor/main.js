@@ -36,7 +36,10 @@ function isNonEmptyString(value) {
 }
 
 function normalizeMediaUsage(usage) {
-  return usage === 'option_audio' ? 'option_audio' : usage === 'question_audio' ? 'question_audio' : 'question_image';
+  if (usage === 'option_audio') return 'option_audio';
+  if (usage === 'question_audio') return 'question_audio';
+  if (usage === 'question_image') return 'question_image';
+  return null;
 }
 
 function normalizeMediaRefs(mediaRefs, allowedUsage = null) {
@@ -45,6 +48,7 @@ function normalizeMediaRefs(mediaRefs, allowedUsage = null) {
     .map((ref) => {
       if (!isRecord(ref) || !isNonEmptyString(ref.assetId)) return null;
       const usage = normalizeMediaUsage(ref.usage);
+      if (!usage) return null;
       if (allowedUsage && usage !== allowedUsage) return null;
       return { assetId: String(ref.assetId), usage };
     })
@@ -73,8 +77,11 @@ function extFromName(name = '') {
 
 function fileLooksLikeType(file, mimeTypes, extensions) {
   const type = String(file?.type || '').toLowerCase();
+  if (type) {
+    return mimeTypes.includes(type);
+  }
   const ext = extFromName(file?.name || '');
-  return mimeTypes.includes(type) || extensions.includes(ext);
+  return extensions.includes(ext);
 }
 
 function formatBytes(bytes) {
@@ -82,6 +89,21 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getAssetExtensionFallback(kind, mimeType) {
+  const normalizedMime = typeof mimeType === 'string' ? mimeType.toLowerCase() : '';
+  if (kind === 'image') {
+    if (normalizedMime === 'image/png') return 'png';
+    if (normalizedMime === 'image/jpeg' || normalizedMime === 'image/jpg') return 'jpg';
+    if (normalizedMime === 'image/webp') return 'webp';
+    return 'png';
+  }
+  if (kind === 'audio') {
+    if (normalizedMime === 'audio/mpeg' || normalizedMime === 'audio/mp3') return 'mp3';
+    return 'mp3';
+  }
+  return 'bin';
 }
 
 function normalizeAssetPath(assetId, fileName = '', fallbackExt = '') {
@@ -703,12 +725,13 @@ class EditorDraftSession {
   async createLocalAssetRecord(file, usage, kind) {
     const assetId = createLocalId('asset');
     const bytes = await toUint8ArrayFromFile(file);
-    const extFallback = kind === 'audio' ? 'mp3' : 'bin';
+    const mimeType = file.type || (kind === 'audio' ? 'audio/mpeg' : null);
+    const extFallback = getAssetExtensionFallback(kind, mimeType);
     const asset = {
       assetId,
       kind,
       usage,
-      mimeType: file.type || (kind === 'audio' ? 'audio/mpeg' : null),
+      mimeType,
       path: normalizeAssetPath(assetId, file.name, extFallback),
     };
     if (this.storage.localAssets?.put) {
@@ -742,13 +765,13 @@ class EditorDraftSession {
       return { ok: false, reason: 'confirm-replace-required', existingAssetId: currentRef.assetId };
     }
 
+    const priorRefsForUsage = normalizeMediaRefs(target.prompt?.mediaRefs, usage);
+    const replacedAssetIds = priorRefsForUsage.map((ref) => ref.assetId);
+
     const newAsset = await this.createLocalAssetRecord(file, usage, kind);
-    let replacedAssetId = null;
 
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
-      const existingRef = getSingleMediaRef(block.prompt?.mediaRefs, usage);
-      replacedAssetId = existingRef?.assetId || null;
       return {
         ...block,
         prompt: {
@@ -758,17 +781,22 @@ class EditorDraftSession {
       };
     });
 
+    const replacedSet = new Set(replacedAssetIds);
     const existingAssets = normalizeDraftAssets(this.state.draft.assets);
-    const filtered = existingAssets.filter((asset) => asset.assetId !== replacedAssetId);
+    const filtered = existingAssets.filter((asset) => !replacedSet.has(asset.assetId));
     filtered.push(newAsset);
     this.state.draft.assets = filtered;
 
+    if (this.storage.localAssets?.remove && replacedAssetIds.length > 0) {
+      await Promise.all(replacedAssetIds.map((id) => this.storage.localAssets.remove(id)));
+    }
+
     this.clearMediaFeedback();
     this.touchDraft();
-    return { ok: true, assetId: newAsset.assetId, replacedAssetId };
+    return { ok: true, assetId: newAsset.assetId, replacedAssetId: replacedAssetIds[0] || null };
   }
 
-  removeQuestionMedia(blockId, usage, options = {}) {
+  async removeQuestionMedia(blockId, usage, options = {}) {
     if (!this.state.draft || !blockId) return { ok: false, reason: 'missing-draft' };
     const target = this.findBlock(blockId);
     if (!target || target.kind !== 'question') return { ok: false, reason: 'missing-question' };
@@ -781,7 +809,10 @@ class EditorDraftSession {
       return { ok: false, reason: 'confirm-remove-required', existingAssetId: currentRef.assetId };
     }
 
-    const removedAssetId = currentRef.assetId;
+    const refsForUsage = normalizeMediaRefs(target.prompt?.mediaRefs, usage);
+    const removedAssetIds = refsForUsage.map((ref) => ref.assetId);
+    const removedAssetId = removedAssetIds[0];
+
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
       return {
@@ -792,7 +823,14 @@ class EditorDraftSession {
         },
       };
     });
-    this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets).filter((asset) => asset.assetId !== removedAssetId);
+
+    const removedSet = new Set(removedAssetIds);
+    this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets).filter((asset) => !removedSet.has(asset.assetId));
+
+    if (this.storage.localAssets?.remove && removedAssetIds.length > 0) {
+      await Promise.all(removedAssetIds.map((id) => this.storage.localAssets.remove(id)));
+    }
+
     this.clearMediaFeedback();
     this.touchDraft();
     return { ok: true, removedAssetId };
@@ -816,16 +854,16 @@ class EditorDraftSession {
       return { ok: false, reason: 'confirm-replace-required', existingAssetId: currentRef.assetId };
     }
 
+    const priorRefsForUsage = normalizeMediaRefs(existingOption.mediaRefs, 'option_audio');
+    const replacedAssetIds = priorRefsForUsage.map((ref) => ref.assetId);
+
     const newAsset = await this.createLocalAssetRecord(file, 'option_audio', 'audio');
-    let replacedAssetId = null;
     this.state.draft.blocks = this.state.draft.blocks.map((candidate) => {
       if (candidate.blockId !== blockId || candidate.kind !== 'question') return candidate;
       const cfg = normalizeQuestionResponseConfig(candidate.responseConfig);
       const nextOptions = (cfg.options || []).map((option) => {
         const normalized = normalizeResponseOption(option);
         if (normalized.id !== optionId) return normalized;
-        const existingRef = getSingleMediaRef(normalized.mediaRefs, 'option_audio');
-        replacedAssetId = existingRef?.assetId || null;
         return {
           ...normalized,
           mediaRefs: setSingleMediaRef(normalized.mediaRefs, 'option_audio', newAsset.assetId),
@@ -837,17 +875,22 @@ class EditorDraftSession {
       };
     });
 
+    const replacedSet = new Set(replacedAssetIds);
     const existingAssets = normalizeDraftAssets(this.state.draft.assets);
-    const filtered = existingAssets.filter((asset) => asset.assetId !== replacedAssetId);
+    const filtered = existingAssets.filter((asset) => !replacedSet.has(asset.assetId));
     filtered.push(newAsset);
     this.state.draft.assets = filtered;
 
+    if (this.storage.localAssets?.remove && replacedAssetIds.length > 0) {
+      await Promise.all(replacedAssetIds.map((id) => this.storage.localAssets.remove(id)));
+    }
+
     this.clearMediaFeedback();
     this.touchDraft();
-    return { ok: true, assetId: newAsset.assetId, replacedAssetId };
+    return { ok: true, assetId: newAsset.assetId, replacedAssetId: replacedAssetIds[0] || null };
   }
 
-  removeOptionAudio(blockId, optionId, options = {}) {
+  async removeOptionAudio(blockId, optionId, options = {}) {
     if (!this.state.draft || !blockId || !optionId) return { ok: false, reason: 'missing-input' };
     const block = this.findBlock(blockId);
     if (!block || block.kind !== 'question') return { ok: false, reason: 'missing-question' };
@@ -863,6 +906,10 @@ class EditorDraftSession {
     if (options.confirmRemove !== true) {
       return { ok: false, reason: 'confirm-remove-required', existingAssetId: currentRef.assetId };
     }
+
+    const refsForUsage = normalizeMediaRefs(existingOption.mediaRefs, 'option_audio');
+    const removedAssetIds = refsForUsage.map((ref) => ref.assetId);
+    const removedAssetId = removedAssetIds[0];
 
     this.state.draft.blocks = this.state.draft.blocks.map((candidate) => {
       if (candidate.blockId !== blockId || candidate.kind !== 'question') return candidate;
@@ -881,12 +928,17 @@ class EditorDraftSession {
       };
     });
 
+    const removedSet = new Set(removedAssetIds);
     this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets)
-      .filter((asset) => asset.assetId !== currentRef.assetId);
+      .filter((asset) => !removedSet.has(asset.assetId));
+
+    if (this.storage.localAssets?.remove && removedAssetIds.length > 0) {
+      await Promise.all(removedAssetIds.map((id) => this.storage.localAssets.remove(id)));
+    }
 
     this.clearMediaFeedback();
     this.touchDraft();
-    return { ok: true, removedAssetId: currentRef.assetId };
+    return { ok: true, removedAssetId };
   }
 
   updateQuestionInputType(blockId, inputType) {

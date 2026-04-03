@@ -1094,6 +1094,7 @@ function createFakeFile({ name, type, size = 4, bytes = [1, 2, 3, 4] }) {
 
 function createSessionWithQuestion(mod, responseConfig = { inputType: 'text' }) {
   const assetStore = new Map();
+  const removedIds = [];
   const session = new mod.EditorDraftSession({
     drafts: { get: async () => null, put: async (v) => v },
     importedWorksheets: { put: async () => {} },
@@ -1102,6 +1103,10 @@ function createSessionWithQuestion(mod, responseConfig = { inputType: 'text' }) 
       put: async (record) => {
         assetStore.set(record.localId, record);
         return record;
+      },
+      remove: async (id) => {
+        removedIds.push(id);
+        assetStore.delete(id);
       },
     },
     resumeFlags: { get: () => null, set: () => {} },
@@ -1116,15 +1121,16 @@ function createSessionWithQuestion(mod, responseConfig = { inputType: 'text' }) 
       responseConfig,
     }],
   });
-  return { session, assetStore };
+  return { session, assetStore, removedIds };
 }
 
 test('attach/replace/remove question image with confirmation behavior', async () => {
   const mod = await loadEditorModule();
-  const { session } = createSessionWithQuestion(mod);
+  const { session, assetStore, removedIds } = createSessionWithQuestion(mod);
 
   const first = await session.attachQuestionMedia('q1', 'question_image', createFakeFile({ name: 'pic.png', type: 'image/png' }));
   assert.equal(first.ok, true);
+  assert.equal(assetStore.has(first.assetId), true);
 
   const replaceNeedsConfirm = await session.attachQuestionMedia(
     'q1',
@@ -1141,11 +1147,16 @@ test('attach/replace/remove question image with confirmation behavior', async ()
     { confirmReplace: true }
   );
   assert.equal(replaced.ok, true);
+  assert.equal(removedIds.includes(first.assetId), true, 'replaced binary should be deleted from localAssets');
+  assert.equal(assetStore.has(first.assetId), false, 'replaced binary should be gone from store');
+  assert.equal(assetStore.has(replaced.assetId), true, 'new binary should be in store');
 
-  const removeNeedsConfirm = session.removeQuestionMedia('q1', 'question_image', { confirmRemove: false });
+  const removeNeedsConfirm = await session.removeQuestionMedia('q1', 'question_image', { confirmRemove: false });
   assert.equal(removeNeedsConfirm.reason, 'confirm-remove-required');
-  const removed = session.removeQuestionMedia('q1', 'question_image', { confirmRemove: true });
+  const removed = await session.removeQuestionMedia('q1', 'question_image', { confirmRemove: true });
   assert.equal(removed.ok, true);
+  assert.equal(removedIds.includes(replaced.assetId), true, 'removed binary should be deleted from localAssets');
+  assert.equal(assetStore.has(replaced.assetId), false, 'removed binary should be gone from store');
 });
 
 test('rejects invalid and oversized question image files', async () => {
@@ -1165,7 +1176,7 @@ test('rejects invalid and oversized question image files', async () => {
 
 test('attach/replace/remove question mp3 and validate type/size', async () => {
   const mod = await loadEditorModule();
-  const { session } = createSessionWithQuestion(mod);
+  const { session, removedIds } = createSessionWithQuestion(mod);
 
   const attached = await session.attachQuestionMedia('q1', 'question_audio', createFakeFile({ name: 'q.mp3', type: 'audio/mpeg' }));
   assert.equal(attached.ok, true);
@@ -1174,9 +1185,11 @@ test('attach/replace/remove question mp3 and validate type/size', async () => {
   assert.equal(replaceNeedsConfirm.reason, 'confirm-replace-required');
   const replaced = await session.attachQuestionMedia('q1', 'question_audio', createFakeFile({ name: 'q2.mp3', type: 'audio/mpeg' }), { confirmReplace: true });
   assert.equal(replaced.ok, true);
+  assert.equal(removedIds.includes(attached.assetId), true, 'replaced binary should be deleted from localAssets');
 
-  const removed = session.removeQuestionMedia('q1', 'question_audio', { confirmRemove: true });
+  const removed = await session.removeQuestionMedia('q1', 'question_audio', { confirmRemove: true });
   assert.equal(removed.ok, true);
+  assert.equal(removedIds.includes(replaced.assetId), true, 'removed binary should be deleted from localAssets');
 
   const badType = await session.attachQuestionMedia('q1', 'question_audio', createFakeFile({ name: 'q.wav', type: 'audio/wav' }));
   assert.equal(badType.reason, 'validation');
@@ -1186,7 +1199,7 @@ test('attach/replace/remove question mp3 and validate type/size', async () => {
 
 test('attach/replace/remove option mp3', async () => {
   const mod = await loadEditorModule();
-  const { session } = createSessionWithQuestion(mod, {
+  const { session, removedIds } = createSessionWithQuestion(mod, {
     inputType: 'multiple_choice',
     options: [{ id: 'o1', value: 'A', label: 'A' }],
   });
@@ -1198,7 +1211,9 @@ test('attach/replace/remove option mp3', async () => {
   assert.equal(replaceNeedsConfirm.reason, 'confirm-replace-required');
   const replaced = await session.attachOptionAudio('q1', 'o1', createFakeFile({ name: 'opt2.mp3', type: 'audio/mpeg' }), { confirmReplace: true });
   assert.equal(replaced.ok, true);
+  assert.equal(removedIds.includes(attached.assetId), true, 'replaced option binary should be deleted from localAssets');
 
-  const removed = session.removeOptionAudio('q1', 'o1', { confirmRemove: true });
+  const removed = await session.removeOptionAudio('q1', 'o1', { confirmRemove: true });
   assert.equal(removed.ok, true);
+  assert.equal(removedIds.includes(replaced.assetId), true, 'removed option binary should be deleted from localAssets');
 });
