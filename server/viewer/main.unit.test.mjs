@@ -1347,12 +1347,8 @@ test('computeResumeStartBlockIndex prioritizes lastActiveBlockId then first unan
   }, {}), 0);
 });
 
-test('tryResumeAttempt supports legacy schema by falling back to stored viewerPayload and localStorage student name', async () => {
-  const mod = await loadViewerModule({
-    window: {
-      localStorage: { getItem: (key) => (key === 'viewer:studentName' ? 'Legacy Name' : null) },
-    },
-  });
+test('tryResumeAttempt supports legacy schema by falling back to stored viewerPayload and metadata student name', async () => {
+  const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
     attempts: {
       get: async () => ({
@@ -1363,7 +1359,7 @@ test('tryResumeAttempt supports legacy schema by falling back to stored viewerPa
           blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
         },
         answers: { q1: { value: 'legacy answer' } },
-        metadata: { origin: 'local_source' },
+        metadata: { origin: 'local_source', studentName: 'Legacy Name' },
       }),
     },
     drafts: { get: async () => null },

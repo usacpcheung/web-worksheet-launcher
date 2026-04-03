@@ -9,7 +9,6 @@ const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
 
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
-const LEGACY_STUDENT_NAME_KEY = 'viewer:studentName';
 const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
 let activeViewerShellAbortController = null;
@@ -746,13 +745,6 @@ function pickAttemptStudentName(attemptRecord) {
     ? attemptRecord.metadata.studentName.trim()
     : '';
   if (metadata) return metadata;
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      return String(window.localStorage.getItem(LEGACY_STUDENT_NAME_KEY) || '').trim();
-    }
-  } catch {
-    return '';
-  }
   return '';
 }
 
@@ -1839,13 +1831,6 @@ function renderViewerShell(session) {
     event.preventDefault();
     studentName = learnerNameInput.value.trim();
     session.state.studentName = studentName;
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        window.localStorage.setItem(LEGACY_STUDENT_NAME_KEY, studentName);
-      }
-    } catch {
-      // Ignore localStorage failures in restricted contexts.
-    }
     renderUI();
     learnerNameInput.focus();
   });
