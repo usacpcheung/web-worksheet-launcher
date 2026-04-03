@@ -82,12 +82,13 @@ function normalizeAssetManifestList(assetIndex) {
   const list = Array.isArray(assetIndex) ? assetIndex : [];
   return list
     .map((asset) => {
-      if (!isRecord(asset) || typeof asset.assetId !== 'string' || typeof asset.path !== 'string') {
-        return null;
-      }
+      if (!isRecord(asset)) return null;
+      if (typeof asset.assetId !== 'string' || !asset.assetId.trim()) return null;
+      const path = typeof asset.path === 'string' ? asset.path : null;
+      if (path == null || !path.startsWith('media/') || path.includes('..') || path.includes('\\')) return null;
       return {
         assetId: String(asset.assetId),
-        path: String(asset.path),
+        path,
         kind: normalizeAssetKind(asset.kind),
         usage: normalizeAssetUsage(asset.usage),
         mimeType: typeof asset.mimeType === 'string' ? asset.mimeType : null,
@@ -174,8 +175,17 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
 
 function parseWorksheetPackage(arrayBuffer) {
   const files = parseStoredZip(arrayBuffer);
-  const manifestText = decodeUtf8(files.get('manifest.json'));
-  const worksheetText = decodeUtf8(files.get('content/worksheet.json'));
+
+  const manifestEntry = files.get('manifest.json');
+  if (manifestEntry == null) {
+    throw new Error('Invalid worksheet package: missing required file manifest.json');
+  }
+  const worksheetEntry = files.get('content/worksheet.json');
+  if (worksheetEntry == null) {
+    throw new Error('Invalid worksheet package: missing required file content/worksheet.json');
+  }
+  const manifestText = decodeUtf8(manifestEntry);
+  const worksheetText = decodeUtf8(worksheetEntry);
 
   let manifest;
   let worksheet;
@@ -195,9 +205,33 @@ function parseWorksheetPackage(arrayBuffer) {
   }
 
   const assets = normalizeAssetManifestList(manifest.assets);
+
+  const seenAssetIds = new Set();
+  const seenPaths = new Set();
   assets.forEach((asset) => {
+    if (seenAssetIds.has(asset.assetId)) {
+      throw new Error(`Package manifest has duplicate assetId: ${asset.assetId}`);
+    }
+    seenAssetIds.add(asset.assetId);
+
+    if (seenPaths.has(asset.path)) {
+      throw new Error(`Package manifest has duplicate asset path: ${asset.path}`);
+    }
+    seenPaths.add(asset.path);
+
     if (!files.has(asset.path)) {
       throw new Error(`Package asset is missing file: ${asset.path}`);
+    }
+
+    const fileData = files.get(asset.path);
+    if (asset.byteLength !== null && fileData.length !== asset.byteLength) {
+      throw new Error(`Package asset byteLength mismatch for ${asset.path}: expected ${asset.byteLength}, got ${fileData.length}`);
+    }
+    if (asset.crc32 !== null) {
+      const actualCrc = crc32(fileData).toString(16).padStart(8, '0');
+      if (actualCrc !== asset.crc32) {
+        throw new Error(`Package asset CRC32 mismatch for ${asset.path}: expected ${asset.crc32}, got ${actualCrc}`);
+      }
     }
   });
 

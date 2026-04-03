@@ -65,12 +65,15 @@ function createStoredZip(entries) {
   if (!Array.isArray(entries) || entries.length === 0) {
     throw new Error('ZIP export requires at least one entry.');
   }
+  if (entries.length > 65535) {
+    throw new Error('ZIP export supports at most 65535 entries.');
+  }
 
   const localChunks = [];
   const centralChunks = [];
   let offset = 0;
 
-  entries.forEach((entry, index) => {
+  entries.forEach((entry) => {
     const path = normalizePath(String(entry.path || ''));
     const nameBytes = textEncoder.encode(path);
     const data = toUint8Array(entry.data);
@@ -116,10 +119,6 @@ function createStoredZip(entries) {
 
     centralChunks.push(centralHeader);
     offset += localHeader.length + data.length;
-
-    if (index > 65535) {
-      throw new Error('ZIP export supports at most 65535 entries.');
-    }
   });
 
   const centralDirectory = concatUint8Arrays(centralChunks);
@@ -206,6 +205,9 @@ function parseStoredZip(arrayBuffer) {
       throw new Error(`ZIP CRC mismatch for ${fileName}.`);
     }
 
+    if (files.has(fileName)) {
+      throw new Error(`Invalid ZIP: duplicate entry name "${fileName}".`);
+    }
     files.set(fileName, data);
     pointer = nameEnd + extraLength + commentLength;
   }
