@@ -83,7 +83,7 @@ test('resolveImportedWorksheetPayload falls back when snapshot mapping fails', a
           kind: 'question',
           position: 0,
           prompt: { text: 'Q1' },
-          responseConfig: {},
+          responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' },
         },
       ],
     },
@@ -126,32 +126,22 @@ test('normalizeViewerPayload tolerates malformed blocks and coerces unknown kind
   assert.equal(payload.blocks[2].kind, 'content');
 });
 
-test('normalizeViewerBlock migrates legacy single_choice to multiple_choice', async () => {
+test('normalizeViewerBlock rejects legacy single_choice inputType', async () => {
   const mod = await loadViewerModule();
-  const normalized = mod.normalizeViewerBlock({
-    blockId: 'q1',
-    kind: 'question',
-    position: 0,
-    prompt: { text: 'Choose one' },
-    responseConfig: {
-      inputType: 'single_choice',
-      selectionMode: 'multi',
-      options: [
-        { value: 'a', label: 'A' },
-        { value: 'b' },
-        'c',
-        null,
-      ],
-    },
-  }, 0);
-
-  assert.equal(normalized.responseConfig.inputType, 'multiple_choice');
-  assert.equal(normalized.responseConfig.selectionMode, 'single');
-  assert.deepEqual(normalized.responseConfig.options, [
-    { value: 'a', label: 'A' },
-    { value: 'b', label: 'b' },
-    { value: 'c', label: 'c' },
-  ]);
+  assert.throws(
+    () => mod.normalizeViewerBlock({
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Choose one' },
+      responseConfig: {
+        inputType: 'single_choice',
+        selectionMode: 'multi',
+        options: [{ value: 'a', label: 'A' }],
+      },
+    }, 0),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.INVALID_VIEWER_PAYLOAD
+  );
 });
 
 test('normalizeViewerBlock does not emit text-only responseConfig fields for non-text input types', async () => {
@@ -180,25 +170,24 @@ test('normalizeViewerBlock does not emit text-only responseConfig fields for non
   assert.equal(Object.hasOwn(multi.responseConfig, 'displayMode'), false);
 });
 
-test('normalizeViewerBlock migrates plain_text/short_text to text with defaults', async () => {
+test('normalizeViewerBlock rejects legacy plain_text/short_text input types', async () => {
   const mod = await loadViewerModule();
-  const plain = mod.normalizeViewerBlock({
-    kind: 'question',
-    prompt: { text: 'Q1' },
-    responseConfig: { inputType: 'plain_text' },
-  }, 0);
-  const short = mod.normalizeViewerBlock({
-    kind: 'question',
-    prompt: { text: 'Q2' },
-    responseConfig: { inputType: 'short_text', maxLength: 80, displayMode: 'single_line' },
-  }, 1);
-
-  assert.equal(plain.responseConfig.inputType, 'text');
-  assert.equal(plain.responseConfig.maxLength, 200);
-  assert.equal(plain.responseConfig.displayMode, 'multi_line');
-  assert.equal(short.responseConfig.inputType, 'text');
-  assert.equal(short.responseConfig.maxLength, 80);
-  assert.equal(short.responseConfig.displayMode, 'single_line');
+  assert.throws(
+    () => mod.normalizeViewerBlock({
+      kind: 'question',
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'plain_text' },
+    }, 0),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.INVALID_VIEWER_PAYLOAD
+  );
+  assert.throws(
+    () => mod.normalizeViewerBlock({
+      kind: 'question',
+      prompt: { text: 'Q2' },
+      responseConfig: { inputType: 'short_text', maxLength: 80, displayMode: 'single_line' },
+    }, 1),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.INVALID_VIEWER_PAYLOAD
+  );
 });
 
 test('normalizeViewerBlock preserves correctAnswer for gradeable question types', async () => {
@@ -631,7 +620,7 @@ test('completeLocalAttempt clears pending autosave timer before immediate autosa
   session.state.viewerPayload = {
     worksheetId: 'ws',
     snapshotId: 'snap',
-    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
   };
 
   let timerFired = false;
@@ -668,7 +657,7 @@ test('completeLocalAttempt is idempotent while finalize is in progress', async (
   session.state.viewerPayload = {
     worksheetId: 'ws',
     snapshotId: 'snap',
-    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
   };
   session.autosave = async () => {
     autosaveCalls += 1;
@@ -754,7 +743,7 @@ test('completeLocalAttempt failure reverts status and allows retry to succeed', 
   session.state.viewerPayload = {
     worksheetId: 'ws',
     snapshotId: 'snap',
-    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
   };
   session.autosave = async () => {
     saveAttempts += 1;
@@ -863,7 +852,7 @@ test('viewer autosave emits state transitions and clears pending state without e
   session.state.viewerPayload = {
     worksheetId: 'ws',
     snapshotId: 'snap',
-    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
   };
   session.state.attemptRevision = 1;
 
@@ -951,7 +940,7 @@ test('viewer autosave keeps newest save status when older save finishes later', 
   session.state.viewerPayload = {
     worksheetId: 'ws',
     snapshotId: 'snap',
-    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
   };
   session.state.attemptRevision = 1;
   const save1 = session.autosave();
@@ -987,7 +976,7 @@ test('viewer save error clears after subsequent successful save', async () => {
   session.state.viewerPayload = {
     worksheetId: 'ws',
     snapshotId: 'snap',
-    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
   };
   session.state.attemptRevision = 1;
 
@@ -1017,7 +1006,7 @@ test('bootstrap with no launch params resumes attempt from resume flag localId',
           viewerPayload: {
             worksheetId: 'flag_ws',
             snapshotId: 'flag_snap',
-            blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Resume me' }, responseConfig: {} }],
+            blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Resume me' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
           },
           answers: { q1: { value: 'saved answer' } },
           metadata: { origin: 'resume_flag' },
@@ -1064,7 +1053,7 @@ test('bootstrap ignores window.__VIEWER_PAYLOAD__ when query launch params are m
       __VIEWER_PAYLOAD__: JSON.stringify({
         worksheetId: 'legacy_ws',
         snapshotId: 'legacy_snap',
-        blocks: [{ blockId: 'legacy_q1', kind: 'question', position: 0, prompt: { text: 'Legacy' }, responseConfig: {} }],
+        blocks: [{ blockId: 'legacy_q1', kind: 'question', position: 0, prompt: { text: 'Legacy' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
       }),
       location: {
         search: '',
@@ -1104,7 +1093,7 @@ test('bootstrap prefers localDraftId preview over resume flag session', async ()
           viewerPayload: {
             worksheetId: 'old_ws',
             snapshotId: 'old_snap',
-            blocks: [{ blockId: 'q_old', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: {} }],
+            blocks: [{ blockId: 'q_old', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
           },
           answers: {},
           metadata: { origin: 'resume_flag' },
@@ -1118,7 +1107,7 @@ test('bootstrap prefers localDraftId preview over resume flag session', async ()
         return {
           localId: 'draft_latest',
           title: 'Latest draft',
-          blocks: [{ blockId: 'q_new', kind: 'question', position: 0, prompt: { text: 'New' }, responseConfig: {} }],
+          blocks: [{ blockId: 'q_new', kind: 'question', position: 0, prompt: { text: 'New' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
         };
       },
     },
@@ -1155,7 +1144,7 @@ test('bootstrap resumes explicit localAttemptId before loading draft sources', a
           viewerPayload: {
             worksheetId: 'explicit_ws',
             snapshotId: 'explicit_snap',
-            blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Resume me' }, responseConfig: {} }],
+            blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Resume me' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
           },
           answers: { q1: { value: 'saved' } },
           metadata: { origin: 'local_attempt' },
@@ -1189,7 +1178,7 @@ test('tryResumeAttempt reconstructs payload from source metadata and overlays ma
         viewerPayload: {
           worksheetId: 'legacy_ws',
           snapshotId: 'legacy_snap',
-          blocks: [{ blockId: 'legacy_q', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: {} }],
+          blocks: [{ blockId: 'legacy_q', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
         },
         answers: {
           q1: { value: 'answer-1' },
@@ -1203,8 +1192,8 @@ test('tryResumeAttempt reconstructs payload from source metadata and overlays ma
         localId: 'draft_1',
         title: 'Fresh draft',
         blocks: [
-          { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} },
-          { blockId: 'q2', kind: 'question', position: 1, prompt: { text: 'Q2' }, responseConfig: {} },
+          { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } },
+          { blockId: 'q2', kind: 'question', position: 1, prompt: { text: 'Q2' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } },
         ],
       }),
     },
@@ -1236,7 +1225,7 @@ test('bootstrap hard-fails when explicit localAttemptId cannot resume even with 
         viewerPayload: {
           worksheetId: 'stale_ws',
           snapshotId: 'stale_snap',
-          blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: {} }],
+          blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Old' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
         },
         answers: { q1: { value: 'stale answer' } },
         metadata: { origin: 'local_attempt', sourceDraftUpdatedAt: '2026-03-31T09:00:00.000Z' },
@@ -1248,7 +1237,7 @@ test('bootstrap hard-fails when explicit localAttemptId cannot resume even with 
         localId: 'draft_latest',
         title: 'Latest draft',
         metadata: { updatedAt: '2026-03-31T10:00:00.000Z' },
-        blocks: [{ blockId: 'q_new', kind: 'question', position: 0, prompt: { text: 'New' }, responseConfig: {} }],
+        blocks: [{ blockId: 'q_new', kind: 'question', position: 0, prompt: { text: 'New' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
       }),
     },
     importedWorksheets: { get: async () => null },
@@ -1289,7 +1278,7 @@ test('createLocalAttemptState persists sourceDraftUpdatedAt in attempt metadata'
   const payload = mod.normalizeViewerPayload({
     worksheetId: 'ws_1',
     snapshotId: 'snap_1',
-    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
   });
   const attempt = session.createLocalAttemptState(payload, 'local_draft_preview', {
     sourceDraftUpdatedAt: '2026-03-31T11:00:00.000Z',
@@ -1314,7 +1303,7 @@ test('autosave persists new attempt linkage fields', async () => {
   session.state.viewerPayload = {
     worksheetId: 'ws_1',
     snapshotId: 'snap_1',
-    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
   };
   session.state.sourceType = 'imported_worksheet';
   session.state.sourceImportedWorksheetId = 'imported_1';
@@ -1360,7 +1349,7 @@ test('tryResumeAttempt supports legacy schema by falling back to stored viewerPa
         viewerPayload: {
           worksheetId: 'ws_legacy',
           snapshotId: 'snap_legacy',
-          blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+          blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
         },
         answers: { q1: { value: 'legacy answer' } },
         metadata: { origin: 'local_source' },
@@ -1487,22 +1476,6 @@ test('getNumberInputErrorMessage reports range and rule errors without coercion'
     normalizedValue: 4.5,
   });
 });
-
-test('getNumberInputErrorMessage ignores legacy step config', async () => {
-  const mod = await loadViewerModule();
-  const responseConfig = { min: 0, max: 10, step: 0.5 };
-
-  assert.deepEqual(mod.getNumberInputErrorMessage('1.3', responseConfig), {
-    message: '',
-    normalizedValue: 1.3,
-  });
-  assert.deepEqual(mod.getNumberInputErrorMessage('2.5', responseConfig), {
-    message: '',
-    normalizedValue: 2.5,
-  });
-});
-
-
 
 test('renderCurrentBlockCard signature includes grading-derived fields and guarded check feedback rendering', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
@@ -1739,7 +1712,7 @@ test('bootstrapViewer auto-resumes in-progress attempt from resume flag on bare 
     viewerPayload: {
       worksheetId: 'ws_1',
       snapshotId: 'snap_1',
-      blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+      blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
     },
     answers: {},
   };
@@ -2047,7 +2020,7 @@ test('applyAttemptState and resume paths clear stale checkResult values', async 
     viewerPayload: {
       worksheetId: 'ws_1',
       snapshotId: 'snap_1',
-      blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+      blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
     },
     answers: {},
     metadata: { origin: 'inline_payload', localId: 'attempt_resume_1', updatedAt: '2026-04-01T00:00:00.000Z' },
@@ -2081,7 +2054,7 @@ test('autosave payload does not persist transient checkResult', async () => {
   session.state.viewerPayload = {
     worksheetId: 'ws_1',
     snapshotId: 'snap_1',
-    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text', maxLength: 200, displayMode: 'multi_line' } }],
   };
   session.state.checkResult = { correctCount: 1, totalQuestions: 1 };
   session.state.attemptRevision = 1;

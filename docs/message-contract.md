@@ -25,11 +25,12 @@ The editor + viewer runtime now uses these canonical `responseConfig` input type
 - `boolean`
 - `multiple_choice`
 
-### Backward compatibility rules (required on load/normalize)
+### Strict inputType acceptance (required)
 
-- `plain_text` and `short_text` must normalize to `text`.
-- `single_choice` must normalize to `multiple_choice` with `selectionMode: "single"`.
-- Existing `options: [{ value, label }]` payloads must be preserved.
+- `responseConfig.inputType` must be one of: `text`, `number`, `boolean`, `multiple_choice`.
+- Legacy aliases (`plain_text`, `short_text`, `single_choice`) are not normalized and must be rejected as invalid payloads.
+- Missing or unknown `responseConfig.inputType` values must fail validation.
+- Existing `options: [{ value, label }]` payloads are still preserved for `multiple_choice`.
 
 ### Canonical responseConfig examples
 
@@ -75,6 +76,7 @@ The editor + viewer runtime now uses these canonical `responseConfig` input type
 - `allowSigned: false` rejects prefixed signed inputs (`+` and `-`) during input-format validation.
 - `min`/`max` are numeric validation controls in viewer answer handling:
   - values outside `min` and/or `max` are rejected with an inline error (no silent clamping)
+- Legacy `step` compatibility handling is removed from normalization behavior; `step` is not part of the canonical schema contract.
 
 `number` answer-key (`correctAnswer`) validity constraints:
 

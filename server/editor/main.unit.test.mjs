@@ -70,7 +70,7 @@ function getOptionIdByValue(options = [], value) {
   return (Array.isArray(options) ? options : []).find((option) => option.value === value)?.id || null;
 }
 
-test('normalizeBlocks preserves question responseConfig and extra fields', async () => {
+test('normalizeBlocks preserves canonical question responseConfig and extra fields', async () => {
   const mod = await loadEditorModule();
   const blocks = mod.normalizeBlocks([
     {
@@ -78,7 +78,7 @@ test('normalizeBlocks preserves question responseConfig and extra fields', async
       kind: 'question',
       position: 0,
       prompt: { text: 'Question?', format: 'markdown' },
-      responseConfig: { inputType: 'plain_text', maxLength: 42, displayMode: 'single_line' },
+      responseConfig: { inputType: 'text', maxLength: 42, displayMode: 'single_line' },
       extraField: 'keep-me',
     },
   ]);
@@ -360,7 +360,7 @@ test('text response normalization removes stale numeric constraints', async () =
   });
 });
 
-test('normalizeBlocks migrates single_choice to multiple_choice and preserves options', async () => {
+test('normalizeBlocks keeps unsupported responseConfig.inputType for deterministic validation failures', async () => {
   const mod = await loadEditorModule();
   const blocks = mod.normalizeBlocks([
     {
@@ -374,9 +374,7 @@ test('normalizeBlocks migrates single_choice to multiple_choice and preserves op
       },
     },
   ]);
-  assert.equal(blocks[0].responseConfig.inputType, 'multiple_choice');
-  assert.equal(blocks[0].responseConfig.selectionMode, 'single');
-  assert.deepEqual(stripOptionIds(blocks[0].responseConfig.options), [{ value: 'a', label: 'A' }]);
+  assert.equal(blocks[0].responseConfig.inputType, 'single_choice');
 });
 
 test('normalizeBlocks keeps only type-compatible correctAnswer values', async () => {
@@ -619,13 +617,11 @@ test('question number config and multiple choice settings update through helpers
   session.updateQuestionInputType(block.blockId, 'number');
   session.updateQuestionNumberConfig(block.blockId, 'min', '1');
   session.updateQuestionNumberConfig(block.blockId, 'max', '10');
-  session.updateQuestionNumberConfig(block.blockId, 'step', '0.5');
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.deepEqual(
     { min: updated.responseConfig.min, max: updated.responseConfig.max },
     { min: 1, max: 10 }
   );
-  assert.equal(Object.hasOwn(updated.responseConfig, 'step'), false);
 
   session.updateQuestionInputType(block.blockId, 'multiple_choice');
   session.updateQuestionSelectionMode(block.blockId, 'multi');
@@ -636,6 +632,37 @@ test('question number config and multiple choice settings update through helpers
   assert.equal(updated.responseConfig.selectionMode, 'multi');
   assert.equal(updated.responseConfig.shuffleOptions, true);
   assert.deepEqual(stripOptionIds(updated.responseConfig.options), [{ value: 'A', label: 'A' }, { value: 'B', label: 'B' }]);
+});
+
+test('validateCurrentDraft rejects unsupported question inputType values', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_invalid_input_type');
+  const block = session.createBlock('question');
+  session.updateBlockContent(block.blockId, 'Choose?');
+
+  session.state.draft.blocks = session.state.draft.blocks.map((entry) => (
+    entry.blockId === block.blockId
+      ? {
+        ...entry,
+        responseConfig: {
+          inputType: 'single_choice',
+          options: [{ value: 'a', label: 'A' }],
+        },
+      }
+      : entry
+  ));
+
+  const validation = session.validateCurrentDraft();
+  assert.equal(validation.valid, false);
+  assert.equal(
+    validation.errors.some((message) => message.includes('responseConfig.inputType must be one of')),
+    true
+  );
 });
 
 test('number rules authoring persists and prunes conflicting correctAnswer', async () => {

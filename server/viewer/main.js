@@ -13,6 +13,7 @@ const LEGACY_STUDENT_NAME_KEY = 'viewer:studentName';
 const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
 let activeViewerShellAbortController = null;
+const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice']);
 
 
 const VIEWER_BOOT_ERROR_CODES = Object.freeze({
@@ -145,12 +146,14 @@ function normalizeViewerBlock(block, index) {
 
   if (base.kind === 'question') {
     const responseConfigSource = isRecord(safeBlock.responseConfig) ? safeBlock.responseConfig : {};
-    const legacyInputType = responseConfigSource.inputType || 'text';
-    const inputType = legacyInputType === 'plain_text' || legacyInputType === 'short_text'
-      ? 'text'
-      : legacyInputType === 'single_choice'
-        ? 'multiple_choice'
-        : legacyInputType;
+    const inputType = responseConfigSource.inputType;
+    if (!CANONICAL_RESPONSE_INPUT_TYPES.has(inputType)) {
+      const blockRef = isRecord(block) && typeof block.blockId === 'string' ? block.blockId : `index ${index}`;
+      throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.INVALID_VIEWER_PAYLOAD, {
+        userMessage: 'The worksheet contains an unsupported question input type.',
+        technicalMessage: `Unsupported inputType "${String(inputType)}" for question block ${blockRef}.`,
+      });
+    }
     const normalizedResponseConfig = {
       inputType,
     };
@@ -175,11 +178,9 @@ function normalizeViewerBlock(block, index) {
     }
 
     if (inputType === 'multiple_choice') {
-      normalizedResponseConfig.selectionMode = legacyInputType === 'single_choice'
-        ? 'single'
-        : responseConfigSource.selectionMode === 'multi'
-          ? 'multi'
-          : 'single';
+      normalizedResponseConfig.selectionMode = responseConfigSource.selectionMode === 'multi'
+        ? 'multi'
+        : 'single';
       normalizedResponseConfig.shuffleOptions = Boolean(responseConfigSource.shuffleOptions);
       normalizedResponseConfig.options = Array.isArray(responseConfigSource.options)
         ? responseConfigSource.options
