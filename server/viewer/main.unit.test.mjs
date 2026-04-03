@@ -150,6 +150,27 @@ test('normalizeViewerBlock preserves non-canonical single_choice inputType witho
   assert.equal(Object.hasOwn(normalized.responseConfig, 'options'), false);
 });
 
+test('normalizeViewerBlock preserves non-string inputType without coercing to text', async () => {
+  const mod = await loadViewerModule();
+  const withNumber = mod.normalizeViewerBlock({
+    blockId: 'q2',
+    kind: 'question',
+    position: 0,
+    prompt: { text: 'Bad type?' },
+    responseConfig: { inputType: 123 },
+  }, 0);
+  assert.equal(withNumber.responseConfig.inputType, 123);
+
+  const withObject = mod.normalizeViewerBlock({
+    blockId: 'q3',
+    kind: 'question',
+    position: 0,
+    prompt: { text: 'Bad type object?' },
+    responseConfig: { inputType: {} },
+  }, 0);
+  assert.equal(typeof withObject.responseConfig.inputType, 'object');
+});
+
 test('normalizeViewerBlock does not emit text-only responseConfig fields for non-text input types', async () => {
   const mod = await loadViewerModule();
   const number = mod.normalizeViewerBlock({

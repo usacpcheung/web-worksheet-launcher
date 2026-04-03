@@ -2293,7 +2293,7 @@ export {
 function normalizeQuestionResponseConfig(responseConfig, options = {}) {
   const forContract = options.forContract === true;
   const source = isRecord(responseConfig) ? { ...responseConfig } : {};
-  const inputType = typeof source.inputType === 'string' ? source.inputType : 'text';
+  const inputType = source.inputType == null ? 'text' : source.inputType;
 
   const normalized = {
     ...source,

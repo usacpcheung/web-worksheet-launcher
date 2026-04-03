@@ -144,9 +144,9 @@ function normalizeViewerBlock(block, index) {
 
   if (base.kind === 'question') {
     const responseConfigSource = isRecord(safeBlock.responseConfig) ? safeBlock.responseConfig : {};
-    const inputType = typeof responseConfigSource.inputType === 'string'
-      ? responseConfigSource.inputType
-      : 'text';
+    const inputType = responseConfigSource.inputType == null
+      ? 'text'
+      : responseConfigSource.inputType;
     const normalizedResponseConfig = {
       inputType,
     };

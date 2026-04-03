@@ -140,6 +140,46 @@ test('validateCurrentDraft flags non-canonical responseConfig.inputType values',
   );
 });
 
+test('validateCurrentDraft flags non-string responseConfig.inputType values', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  for (const badInputType of [123, {}, [], true]) {
+    session.state.draft = {
+      draftWorksheetId: 'draft_non_string_input_type',
+      localId: 'draft_non_string_input_type',
+      title: 'Non-string inputType draft',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Bad inputType?' },
+          responseConfig: { inputType: badInputType },
+        },
+      ],
+    };
+
+    const validation = session.validateCurrentDraft();
+    assert.equal(
+      validation.valid,
+      false,
+      `expected invalid for inputType: ${JSON.stringify(badInputType)}`
+    );
+    assert.equal(
+      validation.errors.includes(
+        'draft.blocks[0].responseConfig.inputType must be one of: text, number, boolean, multiple_choice'
+      ),
+      true,
+      `expected canonical inputType error for inputType: ${JSON.stringify(badInputType)}`
+    );
+  }
+});
+
 test('persistRestoreMetadata preserves explicit empty hash and zero-like scroll token', async () => {
   const mod = await loadEditorModule();
   let saved = null;
