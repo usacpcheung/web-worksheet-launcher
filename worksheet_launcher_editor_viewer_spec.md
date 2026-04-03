@@ -24,6 +24,17 @@ The later-phase implementation target is a **mainly JavaScript client-side appli
 
 This specification intentionally keeps v1 small and implementation-friendly while clarifying that Phase 1 itself is contracts/scaffolding only.
 
+## Architecture direction update (2026-04-03)
+
+This spec is updated to align with the package-first/hybrid direction:
+
+- **Drafts are the only editable object** in the editor.
+- **Published packages are immutable** and opened canonically by `publishedPackageId`.
+- **Attempts are source-bound** to exact source identity/version.
+- **Inline `viewerPayload` is compatibility-only**, not the preferred main viewer route.
+- **No-parameter `/viewer/` launch shows a start screen** with a resume option instead of hard auto-resume.
+- “Sync draft” terminology is replaced with **Upload draft for later edit** (cross-device continuation/recovery, not real-time collaboration sync).
+
 ---
 
 ## Existing Project Direction
@@ -73,7 +84,7 @@ Normative route rules:
 | --- | --- | --- | --- |
 | Local autosave/import/export (editor) | No | Continue entirely local (IndexedDB/file APIs). | No login prompt. Preserve draft and UI state as-is. |
 | Rewrite / T2A | On demand | Keep user in local editor state; do not execute service call while signed out. | Prompt: “Sign in to use Rewrite/T2A.” Persist draft + restore intent, redirect to auth, then restore state and replay intent if still valid. |
-| Sync draft to server | On demand | Keep draft local and mark as not-synced. | Prompt: “Sign in to sync this draft.” Persist draft + selected draft ID + pending sync intent, then restore and run sync after login. |
+| Upload draft for later edit | On demand | Keep draft local and mark as not-uploaded. | Prompt: “Sign in to upload this draft for later edit.” Persist draft + selected draft ID + pending upload intent, then restore and run upload after login. |
 | Publish (guest/signed-out attempt) | Yes | No publish action while signed out; local draft remains editable/exportable. | Prompt: “Sign in required to publish.” Persist draft + publish intent + route/UI selection, restore after login, then re-validate publishability before submit. |
 | Viewer local attempt | No | Continue local answer capture/autosave only. | No login prompt. Preserve local attempt state and resume locally after reload. |
 | Viewer server-backed autosave / cross-device resume | Yes | Continue local attempt only if user declines login; do not call protected sync APIs. | Prompt: “Sign in to sync progress across devices.” Persist local attempt + resume target + pending sync intent, restore viewer state after login, then attach/sync attempt. |
@@ -88,8 +99,8 @@ Normative auth-trigger rules:
 
 Numbered flow:
 1. User is on `/editor/` signed out with local draft in progress.
-2. User clicks a protected action (`Rewrite`, `T2A`, `Sync draft`, or `Publish`).
-3. App blocks protected API call pre-auth and records pending intent (`resumeRewriteAfterLogin`, `resumeT2AAfterLogin`, `resumeDraftSyncAfterLogin`, or `resumePublishAfterLogin`).
+2. User clicks a protected action (`Rewrite`, `T2A`, `Upload draft for later edit`, or `Publish`).
+3. App blocks protected API call pre-auth and records pending intent (`resumeRewriteAfterLogin`, `resumeT2AAfterLogin`, `resumeDraftUploadAfterLogin`, or `resumePublishAfterLogin`).
 4. App persists local restore bundle:
    - current `localDraftId`
    - draft payload in IndexedDB

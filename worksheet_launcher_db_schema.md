@@ -26,6 +26,8 @@ This schema is designed for:
 
 It is intentionally minimal for v1.
 
+> **Redesign note (2026-04-03):** The architecture direction is moving toward package-first/hybrid contracts where immutable published content is canonically identified by `publishedPackageId`. In this schema draft, existing `snapshot` terminology maps conceptually to immutable published package artifacts. See `docs/worksheet-architecture-redesign-plan.md` for the proposed uploaded-draft/published-package/attempt model and phased migration direction.
+
 ---
 
 ## Design Principles
