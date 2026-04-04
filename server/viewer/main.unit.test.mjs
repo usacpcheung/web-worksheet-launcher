@@ -2116,7 +2116,16 @@ test('renderViewerStartPanel resume card prefers metadata.updatedAt when updated
   const panel = appRoot.children[0];
   const resumeCard = panel.children.find((child) => child.className === 'viewer-resume-card');
   const resumeMeta = resumeCard.children.find((child) => child.className === 'muted');
-  assert.equal(resumeMeta.textContent, 'Attempt attempt_resume_meta · 2026-04-02 03:04:05Z');
+  const expected = new Date('2026-04-02T03:04:05.000Z').toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  assert.equal(resumeMeta.textContent, `Attempt attempt_resume_meta · ${expected}`);
 });
 
 test('renderViewerStartPanel resume card strips fractional seconds in display timestamp', { concurrency: false }, async () => {
@@ -2139,7 +2148,16 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
   const panel = appRoot.children[0];
   const resumeCard = panel.children.find((child) => child.className === 'viewer-resume-card');
   const resumeMeta = resumeCard.children.find((child) => child.className === 'muted');
-  assert.equal(resumeMeta.textContent, 'Attempt attempt_resume_ms · 2026-04-02 03:04:05Z');
+  const expected = new Date('2026-04-02T03:04:05.123Z').toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  assert.equal(resumeMeta.textContent, `Attempt attempt_resume_ms · ${expected}`);
 });
 
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
@@ -2670,7 +2688,7 @@ test('viewer playback enforces one active audio at a time', async () => {
 test('viewer no-param bootstrap renders start panel with explicit resume controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("textContent = 'Resume attempt';"), true);
-  assert.equal(source.includes("textContent = 'Start fresh';"), true);
+  assert.equal(source.includes("textContent = 'Start fresh';"), false);
   assert.equal(source.includes("textContent = 'Discard saved attempt';"), true);
   assert.equal(source.includes('renderViewerStartPanel(session, {'), true);
 });

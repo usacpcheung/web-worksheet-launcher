@@ -90,7 +90,15 @@ function formatTimestampForDisplay(timestamp) {
   if (Number.isNaN(parsed.getTime())) {
     return timestamp;
   }
-  return parsed.toISOString().replace('T', ' ').replace(/\.\d+Z$/, 'Z');
+  return parsed.toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
 }
 
 function createLocalId(prefix = 'local') {
@@ -3008,7 +3016,6 @@ function renderViewerStartPanel(session, options = {}) {
   description.textContent = 'Import a worksheet package (.zip) to start a local attempt, or resume a previous local attempt.';
   const resumeAttempt = options.resumeAttempt || null;
   const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
-  const onStartFresh = typeof options.onStartFresh === 'function' ? options.onStartFresh : null;
   const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
   const importPackageBtn = document.createElement('button');
   importPackageBtn.type = 'button';
@@ -3052,13 +3059,6 @@ function renderViewerStartPanel(session, options = {}) {
       errorMessage.textContent = '';
       if (onResumeAttempt) await onResumeAttempt();
     });
-    const startFreshBtn = document.createElement('button');
-    startFreshBtn.type = 'button';
-    startFreshBtn.textContent = 'Start fresh';
-    startFreshBtn.addEventListener('click', async () => {
-      errorMessage.textContent = '';
-      if (onStartFresh) await onStartFresh();
-    });
     const discardBtn = document.createElement('button');
     discardBtn.type = 'button';
     discardBtn.textContent = 'Discard saved attempt';
@@ -3066,7 +3066,7 @@ function renderViewerStartPanel(session, options = {}) {
       errorMessage.textContent = '';
       if (onDiscardResume) await onDiscardResume();
     });
-    resumeActions.append(resumeBtn, startFreshBtn, discardBtn);
+    resumeActions.append(resumeBtn, discardBtn);
     resumeCard.append(resumeTitle, resumeMeta, resumeActions);
   }
 
