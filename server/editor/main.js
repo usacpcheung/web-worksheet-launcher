@@ -848,7 +848,10 @@ class EditorDraftSession {
     const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
     if (responseConfig.inputType !== 'multiple_choice') return { ok: false, reason: 'not-multiple-choice' };
     const existingOption = (responseConfig.options || []).map((option) => normalizeResponseOption(option)).find((o) => o.id === optionId);
-    if (!existingOption) return { ok: false, reason: 'missing-option' };
+    if (!existingOption) {
+      this.setMediaFeedback('Enter option text or click Add option before attaching audio.');
+      return { ok: false, reason: 'missing-option' };
+    }
     const currentRef = getSingleMediaRef(existingOption.mediaRefs, 'option_audio');
     if (currentRef && options.confirmReplace !== true) {
       return { ok: false, reason: 'confirm-replace-required', existingAssetId: currentRef.assetId };
@@ -2548,6 +2551,7 @@ function renderEditorShell(session) {
       const optionList = normalizedOptions.length > 0
         ? normalizedOptions
         : [{ id: createLocalId('opt'), value: '', label: '' }];
+      const persistedOptionIds = new Set(normalizedOptions.map((option) => String(option?.id || '')));
       const isMultiSelect = normalizedResponseConfig.selectionMode === 'multi';
       const selectedOptionIds = new Set(Array.isArray(normalizedResponseConfig.correctAnswerOptionIds)
         ? normalizedResponseConfig.correctAnswerOptionIds.map((optionId) => String(optionId))
@@ -2573,6 +2577,7 @@ function renderEditorShell(session) {
       optionList.forEach((option, optionIndex) => {
         const optionId = String(option?.id || '');
         const optionValue = String(option?.value ?? '');
+        const isPersistedOption = persistedOptionIds.has(optionId);
         const row = document.createElement('div');
         row.className = 'option-row';
 
@@ -2631,8 +2636,16 @@ function renderEditorShell(session) {
         optionAudioBtn.type = 'button';
         optionAudioBtn.className = 'media-action-btn';
         optionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${optionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
-        optionAudioBtn.title = optionAudioRef ? 'Replace option audio' : 'Attach option audio';
+        optionAudioBtn.title = isPersistedOption
+          ? optionAudioRef ? 'Replace option audio' : 'Attach option audio'
+          : 'Enter option text or click Add option before attaching audio';
+        optionAudioBtn.disabled = !isPersistedOption;
         optionAudioBtn.addEventListener('click', () => {
+          if (!isPersistedOption) {
+            session.setMediaFeedback('Enter option text or click Add option before attaching audio.');
+            updateSummary();
+            return;
+          }
           pendingOptionAudioTarget = { blockId: selectedBlock.blockId, optionId };
           optionAudioInput.value = '';
           optionAudioInput.click();
@@ -2641,7 +2654,7 @@ function renderEditorShell(session) {
         removeOptionAudioBtn.type = 'button';
         removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove';
         removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
-        removeOptionAudioBtn.disabled = !optionAudioRef;
+        removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
         removeOptionAudioBtn.addEventListener('click', () => {
           const confirmed = window.confirm(`Remove audio from option ${optionIndex + 1}?`);
           const result = session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: confirmed });
@@ -2660,6 +2673,12 @@ function renderEditorShell(session) {
           updateSummary();
         });
         row.append(correctToggle, optionInput, optionAudioBtn, removeOptionAudioBtn, removeBtn);
+        if (!isPersistedOption) {
+          const optionAudioHint = document.createElement('span');
+          optionAudioHint.className = 'muted';
+          optionAudioHint.textContent = 'Enter option text or click Add option before attaching audio.';
+          row.appendChild(optionAudioHint);
+        }
         questionOptionsList.appendChild(row);
       });
       rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);

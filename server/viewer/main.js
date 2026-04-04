@@ -119,6 +119,18 @@ function isRecord(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function normalizeOptionMediaRefs(mediaRefs) {
+  if (!Array.isArray(mediaRefs)) return [];
+  return mediaRefs
+    .map((ref) => {
+      if (!isRecord(ref)) return null;
+      if (ref.usage !== 'option_audio') return null;
+      if (typeof ref.assetId !== 'string' || !ref.assetId.trim()) return null;
+      return { usage: 'option_audio', assetId: String(ref.assetId) };
+    })
+    .filter(Boolean);
+}
+
 function isSnapshotLikeWorksheet(value) {
   return (
     isRecord(value)
@@ -185,11 +197,12 @@ function normalizeViewerBlock(block, index) {
               return {
                 value: String(value),
                 label: String(label),
+                mediaRefs: normalizeOptionMediaRefs(option.mediaRefs),
               };
             }
 
             const normalizedOption = String(option);
-            return { value: normalizedOption, label: normalizedOption };
+            return { value: normalizedOption, label: normalizedOption, mediaRefs: [] };
           })
         : [];
     }
@@ -460,10 +473,22 @@ function createChoiceButtonGroup({
     prefix.className = 'choice-button-group__prefix';
     prefix.textContent = getChoicePrefix(optionIndex);
 
+    const labelWrap = document.createElement('span');
+    labelWrap.className = 'choice-button-group__label-wrap';
+
     const labelText = document.createElement('span');
     labelText.className = 'choice-button-group__label';
     labelText.textContent = String(opt.label ?? opt.value ?? '');
-    button.append(prefix, labelText);
+    labelWrap.appendChild(labelText);
+
+    const optionAudioRef = normalizeOptionMediaRefs(opt?.mediaRefs)[0] || null;
+    if (optionAudioRef) {
+      const mediaMeta = document.createElement('span');
+      mediaMeta.className = 'choice-button-group__meta';
+      mediaMeta.textContent = `Audio attached (${optionAudioRef.assetId})`;
+      labelWrap.appendChild(mediaMeta);
+    }
+    button.append(prefix, labelWrap);
 
     button.addEventListener('click', () => {
       const currentValue = session.state.answers?.[block.blockId]?.value;
@@ -2794,6 +2819,7 @@ export {
   getBooleanSelectionState,
   applyBooleanGroupState,
   getChoicePrefix,
+  createChoiceButtonGroup,
   applyChoiceButtonGroupState,
   computeNextChoiceValue,
   deterministicShuffle,

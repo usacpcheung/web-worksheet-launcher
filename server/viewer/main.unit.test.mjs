@@ -59,7 +59,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -203,6 +203,92 @@ test('normalizeViewerBlock does not emit text-only responseConfig fields for non
   assert.equal(Object.hasOwn(bool.responseConfig, 'displayMode'), false);
   assert.equal(Object.hasOwn(multi.responseConfig, 'maxLength'), false);
   assert.equal(Object.hasOwn(multi.responseConfig, 'displayMode'), false);
+});
+
+test('normalizeViewerBlock preserves option_audio media refs for multiple-choice options', async () => {
+  const mod = await loadViewerModule();
+  const block = mod.normalizeViewerBlock({
+    kind: 'question',
+    prompt: { text: 'Pick one' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      options: [
+        {
+          value: 'a',
+          label: 'A',
+          mediaRefs: [
+            { usage: 'option_audio', assetId: 'asset_opt_1' },
+            { usage: 'question_audio', assetId: 'ignored' },
+          ],
+        },
+        { value: 'b', label: 'B', mediaRefs: [{ usage: 'option_audio', assetId: '' }] },
+      ],
+    },
+  }, 0);
+
+  assert.deepEqual(block.responseConfig.options[0].mediaRefs, [{ usage: 'option_audio', assetId: 'asset_opt_1' }]);
+  assert.deepEqual(block.responseConfig.options[1].mediaRefs, []);
+});
+
+function createMockDocument() {
+  class MockElement {
+    constructor(tagName) {
+      this.tagName = String(tagName || '').toUpperCase();
+      this.children = [];
+      this.attributes = {};
+      this.dataset = {};
+      this.className = '';
+      this.textContent = '';
+      this.id = '';
+      this.disabled = false;
+      this.tabIndex = 0;
+      this.classList = { toggle: () => {} };
+    }
+    append(...nodes) {
+      nodes.forEach((node) => this.appendChild(node));
+    }
+    appendChild(node) {
+      this.children.push(node);
+      return node;
+    }
+    setAttribute(name, value) {
+      this.attributes[name] = value;
+    }
+    addEventListener() {}
+  }
+  return {
+    getElementById: () => null,
+    createElement: (tag) => new MockElement(tag),
+  };
+}
+
+test('createChoiceButtonGroup renders option-audio indicator only when option_audio mediaRef exists', async () => {
+  const mod = await loadViewerModule({
+    document: createMockDocument(),
+  });
+  const session = { state: { answers: {} }, setAnswer: () => {} };
+  const group = mod.createChoiceButtonGroup({
+    block: {
+      blockId: 'q1',
+      responseConfig: { selectionMode: 'single' },
+    },
+    labelId: 'label_q1',
+    controlId: 'control_q1',
+    optionSource: [
+      { value: 'a', label: 'A', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_opt_1' }] },
+      { value: 'b', label: 'B', mediaRefs: [] },
+    ],
+    session,
+    updateSummary: () => {},
+  });
+
+  const firstButton = group.children[0];
+  const secondButton = group.children[1];
+  const firstMeta = firstButton.children[1].children.find((node) => node.className === 'choice-button-group__meta');
+  const secondMeta = secondButton.children[1].children.find((node) => node.className === 'choice-button-group__meta');
+
+  assert.equal(firstMeta?.textContent, 'Audio attached (asset_opt_1)');
+  assert.equal(secondMeta, undefined);
 });
 
 test('normalizeViewerBlock preserves non-canonical plain_text/short_text inputType values', async () => {
