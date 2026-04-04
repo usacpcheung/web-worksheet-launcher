@@ -3,6 +3,7 @@ import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
 import { normalizeNumberRules, validateNumberInputFormat } from '../app/contracts/number-input-validator.js';
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
+import { mapLegacyJsonToPackageModel, parseWorksheetPackage } from '../editor/worksheet-package.js';
 
 const app = document.getElementById('app');
 const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
@@ -79,6 +80,17 @@ function parseLaunchParamJson(params, key, parseErrorCode) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function formatTimestampForDisplay(timestamp) {
+  if (typeof timestamp !== 'string' || !timestamp.trim()) {
+    return 'unknown time';
+  }
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp;
+  }
+  return parsed.toISOString().replace('T', ' ').replace('.000Z', 'Z');
 }
 
 function createLocalId(prefix = 'local') {
@@ -1682,11 +1694,37 @@ class ViewerAttemptSession {
   }
 
   async startImportedWorksheetFromJsonText(rawJson) {
-    let worksheet;
+    let parsedWorksheet;
     try {
-      worksheet = JSON.parse(rawJson);
+      parsedWorksheet = JSON.parse(rawJson);
     } catch (error) {
       throw new Error(`Unable to parse worksheet JSON. ${error?.message || String(error)}`);
+    }
+
+    let mappedPackage;
+    try {
+      mappedPackage = mapLegacyJsonToPackageModel(parsedWorksheet);
+    } catch (error) {
+      throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
+    }
+
+    return this.startImportedWorksheetFromPackageModel(mappedPackage);
+  }
+
+  async startImportedWorksheetFromPackageFile(fileOrBytes) {
+    let packageModel;
+    try {
+      packageModel = parseWorksheetPackage(fileOrBytes);
+    } catch (error) {
+      throw new Error(`Unable to import worksheet package. ${error?.message || String(error)}`);
+    }
+    return this.startImportedWorksheetFromPackageModel(packageModel);
+  }
+
+  async startImportedWorksheetFromPackageModel(packageModel) {
+    const worksheet = packageModel?.worksheet;
+    if (!worksheet || typeof worksheet !== 'object') {
+      throw new Error('Imported worksheet package is missing worksheet content.');
     }
 
     const importedRecord = {
@@ -1709,7 +1747,9 @@ class ViewerAttemptSession {
     try {
       const payload = resolveImportedWorksheetPayload(importedRecord);
       await this.validateViewerPayload(payload);
-      const attempt = this.createLocalAttemptState(payload, 'imported_worksheet');
+      const attempt = this.createLocalAttemptState(payload, 'imported_worksheet', {
+        sourceImportedWorksheetId: importedRecord.localId,
+      });
       attempt.checkResult = null;
       this.applyAttemptState(attempt, { markDirty: true });
       this.persistResumeMetadata();
@@ -2921,19 +2961,32 @@ function renderViewerStartPanel(session, options = {}) {
   heading.textContent = 'Start Viewer';
   const description = document.createElement('p');
   description.className = 'muted';
-  description.textContent = 'Import worksheet JSON to launch a local attempt preview, or resume a previous local attempt.';
+  description.textContent = 'Import a worksheet package (.zip) to start a local attempt, or use legacy JSON import for compatibility.';
   const resumeAttempt = options.resumeAttempt || null;
   const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
   const onStartFresh = typeof options.onStartFresh === 'function' ? options.onStartFresh : null;
   const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
-  const importBtn = document.createElement('button');
-  importBtn.type = 'button';
-  importBtn.textContent = 'Import worksheet JSON';
+  const importPackageBtn = document.createElement('button');
+  importPackageBtn.type = 'button';
+  importPackageBtn.textContent = 'Import worksheet package (.zip)';
 
-  const fileInput = document.createElement('input');
-  fileInput.type = 'file';
-  fileInput.accept = 'application/json,.json';
-  fileInput.hidden = true;
+  const importJsonBtn = document.createElement('button');
+  importJsonBtn.type = 'button';
+  importJsonBtn.textContent = 'Import legacy JSON';
+
+  const importActions = document.createElement('div');
+  importActions.className = 'viewer-start-actions';
+  importActions.append(importPackageBtn, importJsonBtn);
+
+  const packageFileInput = document.createElement('input');
+  packageFileInput.type = 'file';
+  packageFileInput.accept = 'application/zip,.zip';
+  packageFileInput.hidden = true;
+
+  const jsonFileInput = document.createElement('input');
+  jsonFileInput.type = 'file';
+  jsonFileInput.accept = 'application/json,.json';
+  jsonFileInput.hidden = true;
 
   const errorMessage = document.createElement('p');
   errorMessage.className = 'viewer-start-error';
@@ -2949,7 +3002,12 @@ function renderViewerStartPanel(session, options = {}) {
     resumeTitle.textContent = 'Resumable local attempt found';
     const resumeMeta = document.createElement('p');
     resumeMeta.className = 'muted';
-    resumeMeta.textContent = `Attempt ${resumeAttempt.localId || 'unknown'} · ${resumeAttempt.updatedAt || 'unknown time'}`;
+    const resumeUpdatedAt =
+      resumeAttempt.metadata?.updatedAt
+      || resumeAttempt.lastSavedAt
+      || resumeAttempt.startedAt
+      || null;
+    resumeMeta.textContent = `Attempt ${resumeAttempt.localId || 'unknown'} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
     const resumeActions = document.createElement('div');
     resumeActions.className = 'viewer-start-actions';
     const resumeBtn = document.createElement('button');
@@ -2977,13 +3035,39 @@ function renderViewerStartPanel(session, options = {}) {
     resumeCard.append(resumeTitle, resumeMeta, resumeActions);
   }
 
-  importBtn.addEventListener('click', () => {
+  importPackageBtn.addEventListener('click', () => {
     errorMessage.textContent = '';
-    fileInput.click();
+    packageFileInput.click();
   });
 
-  fileInput.addEventListener('change', async () => {
-    const selected = fileInput.files?.[0];
+  importJsonBtn.addEventListener('click', () => {
+    errorMessage.textContent = '';
+    jsonFileInput.click();
+  });
+
+  packageFileInput.addEventListener('change', async () => {
+    const selected = packageFileInput.files?.[0];
+    if (!selected) return;
+
+    try {
+      const bytes = await selected.arrayBuffer();
+      await session.startImportedWorksheetFromPackageFile(bytes);
+      if (session.state.localAttemptId) {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+        window.history.replaceState({}, '', nextUrl);
+      }
+      renderViewerShell(session);
+      window.viewerSession = session;
+    } catch (error) {
+      errorMessage.textContent = error?.message || 'Unable to import worksheet package.';
+    } finally {
+      packageFileInput.value = '';
+    }
+  });
+
+  jsonFileInput.addEventListener('change', async () => {
+    const selected = jsonFileInput.files?.[0];
     if (!selected) return;
 
     try {
@@ -2997,9 +3081,9 @@ function renderViewerStartPanel(session, options = {}) {
       renderViewerShell(session);
       window.viewerSession = session;
     } catch (error) {
-      errorMessage.textContent = error?.message || 'Unable to import worksheet JSON.';
+      errorMessage.textContent = error?.message || 'Unable to import legacy worksheet JSON.';
     } finally {
-      fileInput.value = '';
+      jsonFileInput.value = '';
     }
   });
 
@@ -3007,7 +3091,7 @@ function renderViewerStartPanel(session, options = {}) {
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  panel.append(importBtn, fileInput, errorMessage);
+  panel.append(importActions, packageFileInput, jsonFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
