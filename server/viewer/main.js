@@ -3,6 +3,7 @@ import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
 import { normalizeNumberRules, validateNumberInputFormat } from '../app/contracts/number-input-validator.js';
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
+import { mapLegacyJsonToPackageModel, parseWorksheetPackage } from '../editor/worksheet-package.js';
 
 const app = document.getElementById('app');
 const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
@@ -36,7 +37,7 @@ class ViewerBootError extends Error {
       ? options.recoveryActions
       : [
         'Reopen the viewer from a valid worksheet link.',
-        'Import worksheet JSON again from the start panel.',
+        'Import a worksheet package again from the start panel.',
         'Go back and launch viewer again.',
       ];
     this.cause = options.cause;
@@ -79,6 +80,25 @@ function parseLaunchParamJson(params, key, parseErrorCode) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function formatTimestampForDisplay(timestamp) {
+  if (typeof timestamp !== 'string' || !timestamp.trim()) {
+    return 'unknown time';
+  }
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp;
+  }
+  return parsed.toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
 }
 
 function createLocalId(prefix = 'local') {
@@ -1682,17 +1702,45 @@ class ViewerAttemptSession {
   }
 
   async startImportedWorksheetFromJsonText(rawJson) {
-    let worksheet;
+    let parsedWorksheet;
     try {
-      worksheet = JSON.parse(rawJson);
+      parsedWorksheet = JSON.parse(rawJson);
     } catch (error) {
       throw new Error(`Unable to parse worksheet JSON. ${error?.message || String(error)}`);
     }
 
+    let mappedPackage;
+    try {
+      mappedPackage = mapLegacyJsonToPackageModel(parsedWorksheet);
+    } catch (error) {
+      throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
+    }
+
+    return this.startImportedWorksheetFromPackageModel(mappedPackage);
+  }
+
+  async startImportedWorksheetFromPackageFile(fileOrBytes) {
+    let packageModel;
+    try {
+      packageModel = parseWorksheetPackage(fileOrBytes);
+    } catch (error) {
+      throw new Error(`Unable to import worksheet package. ${error?.message || String(error)}`);
+    }
+    return this.startImportedWorksheetFromPackageModel(packageModel);
+  }
+
+  async startImportedWorksheetFromPackageModel(packageModel) {
+    const worksheet = packageModel?.worksheet;
+    if (!worksheet || typeof worksheet !== 'object') {
+      throw new Error('Imported worksheet package is missing worksheet content.');
+    }
+    const importedAt = nowIso();
+    const packageAssets = Array.isArray(packageModel?.assets) ? packageModel.assets : [];
+
     const importedRecord = {
       localId: createLocalId('imported'),
       worksheet,
-      importedAt: nowIso(),
+      importedAt,
     };
     importedRecord.metadata = {
       localId: importedRecord.localId,
@@ -1700,21 +1748,65 @@ class ViewerAttemptSession {
       updatedAt: importedRecord.importedAt,
     };
 
+    const payload = resolveImportedWorksheetPayload(importedRecord);
+    await this.validateViewerPayload(payload);
+
+    const persistedAssetIds = [];
     try {
       await this.storage.importedWorksheets.put(importedRecord);
+
+      if (packageAssets.length > 0 && this.storage.localAssets?.put) {
+        try {
+          for (const asset of packageAssets) {
+            if (!asset || typeof asset !== 'object' || typeof asset.assetId !== 'string' || !asset.assetId.trim()) {
+              continue;
+            }
+            if (!(asset.binary instanceof Uint8Array) || asset.binary.byteLength === 0) {
+              continue;
+            }
+            await this.storage.localAssets.put({
+              localId: asset.assetId,
+              binary: asset.binary,
+              metadata: {
+                localId: asset.assetId,
+                origin: 'imported_package_asset',
+                updatedAt: importedAt,
+                kind: asset.kind || null,
+                usage: asset.usage || null,
+                mimeType: asset.mimeType || null,
+                path: asset.path || null,
+              },
+            });
+            persistedAssetIds.push(asset.assetId);
+          }
+        } catch (error) {
+          throw new Error(`Failed to save imported package assets. ${error?.message || String(error)}`);
+        }
+      }
     } catch (error) {
+      await Promise.all(
+        persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {}))
+      );
+      await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
+      if (String(error?.message || '').startsWith('Failed to save imported package assets.')) {
+        throw error;
+      }
       throw new Error(`Failed to save imported worksheet. ${error?.message || String(error)}`);
     }
 
     try {
-      const payload = resolveImportedWorksheetPayload(importedRecord);
-      await this.validateViewerPayload(payload);
-      const attempt = this.createLocalAttemptState(payload, 'imported_worksheet');
+      const attempt = this.createLocalAttemptState(payload, 'imported_worksheet', {
+        sourceImportedWorksheetId: importedRecord.localId,
+      });
       attempt.checkResult = null;
       this.applyAttemptState(attempt, { markDirty: true });
       this.persistResumeMetadata();
       return this.state;
     } catch (error) {
+      await Promise.all(
+        persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {}))
+      );
+      await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
       throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
     }
   }
@@ -2921,19 +3013,23 @@ function renderViewerStartPanel(session, options = {}) {
   heading.textContent = 'Start Viewer';
   const description = document.createElement('p');
   description.className = 'muted';
-  description.textContent = 'Import worksheet JSON to launch a local attempt preview, or resume a previous local attempt.';
+  description.textContent = 'Import a worksheet package (.zip) to start a local attempt, or resume a previous local attempt.';
   const resumeAttempt = options.resumeAttempt || null;
   const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
-  const onStartFresh = typeof options.onStartFresh === 'function' ? options.onStartFresh : null;
   const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
-  const importBtn = document.createElement('button');
-  importBtn.type = 'button';
-  importBtn.textContent = 'Import worksheet JSON';
+  const importPackageBtn = document.createElement('button');
+  importPackageBtn.type = 'button';
+  importPackageBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  importPackageBtn.textContent = 'Import worksheet package (.zip)';
 
-  const fileInput = document.createElement('input');
-  fileInput.type = 'file';
-  fileInput.accept = 'application/json,.json';
-  fileInput.hidden = true;
+  const importActions = document.createElement('div');
+  importActions.className = 'viewer-start-actions';
+  importActions.append(importPackageBtn);
+
+  const packageFileInput = document.createElement('input');
+  packageFileInput.type = 'file';
+  packageFileInput.accept = 'application/zip,.zip';
+  packageFileInput.hidden = true;
 
   const errorMessage = document.createElement('p');
   errorMessage.className = 'viewer-start-error';
@@ -2949,46 +3045,46 @@ function renderViewerStartPanel(session, options = {}) {
     resumeTitle.textContent = 'Resumable local attempt found';
     const resumeMeta = document.createElement('p');
     resumeMeta.className = 'muted';
-    resumeMeta.textContent = `Attempt ${resumeAttempt.localId || 'unknown'} · ${resumeAttempt.updatedAt || 'unknown time'}`;
+    const resumeUpdatedAt =
+      resumeAttempt.metadata?.updatedAt
+      || resumeAttempt.lastSavedAt
+      || resumeAttempt.startedAt
+      || null;
+    resumeMeta.textContent = `Attempt ${resumeAttempt.localId || 'unknown'} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
     const resumeActions = document.createElement('div');
     resumeActions.className = 'viewer-start-actions';
     const resumeBtn = document.createElement('button');
     resumeBtn.type = 'button';
+    resumeBtn.className = 'viewer-start-btn viewer-start-btn--primary';
     resumeBtn.textContent = 'Resume attempt';
     resumeBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
       if (onResumeAttempt) await onResumeAttempt();
     });
-    const startFreshBtn = document.createElement('button');
-    startFreshBtn.type = 'button';
-    startFreshBtn.textContent = 'Start fresh';
-    startFreshBtn.addEventListener('click', async () => {
-      errorMessage.textContent = '';
-      if (onStartFresh) await onStartFresh();
-    });
     const discardBtn = document.createElement('button');
     discardBtn.type = 'button';
-    discardBtn.textContent = 'Discard saved attempt';
+    discardBtn.className = 'viewer-start-btn';
+    discardBtn.textContent = 'Discard attempt';
     discardBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
       if (onDiscardResume) await onDiscardResume();
     });
-    resumeActions.append(resumeBtn, startFreshBtn, discardBtn);
+    resumeActions.append(resumeBtn, discardBtn);
     resumeCard.append(resumeTitle, resumeMeta, resumeActions);
   }
 
-  importBtn.addEventListener('click', () => {
+  importPackageBtn.addEventListener('click', () => {
     errorMessage.textContent = '';
-    fileInput.click();
+    packageFileInput.click();
   });
 
-  fileInput.addEventListener('change', async () => {
-    const selected = fileInput.files?.[0];
+  packageFileInput.addEventListener('change', async () => {
+    const selected = packageFileInput.files?.[0];
     if (!selected) return;
 
     try {
-      const rawJson = await selected.text();
-      await session.startImportedWorksheetFromJsonText(rawJson);
+      const bytes = await selected.arrayBuffer();
+      await session.startImportedWorksheetFromPackageFile(bytes);
       if (session.state.localAttemptId) {
         const nextUrl = new URL(window.location.href);
         nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
@@ -2997,9 +3093,9 @@ function renderViewerStartPanel(session, options = {}) {
       renderViewerShell(session);
       window.viewerSession = session;
     } catch (error) {
-      errorMessage.textContent = error?.message || 'Unable to import worksheet JSON.';
+      errorMessage.textContent = error?.message || 'Unable to import worksheet package.';
     } finally {
-      fileInput.value = '';
+      packageFileInput.value = '';
     }
   });
 
@@ -3007,7 +3103,7 @@ function renderViewerStartPanel(session, options = {}) {
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  panel.append(importBtn, fileInput, errorMessage);
+  panel.append(importActions, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);

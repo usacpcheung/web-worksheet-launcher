@@ -28,18 +28,23 @@ body {
 
 .viewer-start-panel {
   background: #fff;
-  border: 1px solid #d6d9e0;
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgb(16 24 40 / 8%);
-  padding: 18px;
+  border: 1px solid #dce2ea;
+  border-radius: 18px;
+  box-shadow: 0 8px 24px rgb(16 24 40 / 8%);
+  padding: 26px 28px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-width: 640px;
+  gap: 14px;
+  max-width: 780px;
+  width: min(100%, 780px);
+  margin: 0 auto;
 }
 
 .viewer-start-panel h1 {
   margin: 0;
+  font-size: clamp(2rem, 1.8rem + 1vw, 2.7rem);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
 }
 
 .viewer-start-error {
@@ -50,16 +55,102 @@ body {
 }
 
 .viewer-resume-card {
-  border: 1px solid #d0d5dd;
-  border-radius: 10px;
-  padding: 12px;
-  background: #f8fafc;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.viewer-resume-card h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.1;
+}
+
+.viewer-start-panel .muted {
+  font-size: 0.98rem;
+}
+
+.viewer-resume-card .muted {
+  margin-top: 10px;
+  margin-bottom: 0;
 }
 
 .viewer-start-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+}
+
+.viewer-start-btn {
+  min-height: 52px;
+  border-radius: 18px;
+  padding: 0 22px;
+  border: 1px solid #c9d7ec;
+  background: #eef4ff;
+  color: #2d4f82;
+  font-weight: 600;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    transform 120ms ease,
+    box-shadow 150ms ease;
+}
+
+.viewer-start-panel > .viewer-start-actions .viewer-start-btn {
+  width: 100%;
+}
+
+.viewer-resume-card .viewer-start-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.viewer-resume-card .viewer-start-btn {
+  width: 100%;
+}
+
+.viewer-start-btn:hover:not(:disabled) {
+  background: #e4edfc;
+  border-color: #b6cae8;
+  color: #264571;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgb(64 88 132 / 12%);
+}
+
+.viewer-start-btn:focus-visible {
+  outline: 2px solid #5b8fff;
+  outline-offset: 2px;
+}
+
+.viewer-start-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.viewer-start-btn--primary {
+  background: #cfe0ff;
+  border-color: #b4cdf6;
+  color: #0656b3;
+}
+
+.viewer-start-btn--primary:hover:not(:disabled) {
+  background: #bfd6ff;
+  border-color: #9fc3fb;
+  color: #044a98;
+}
+
+@media (max-width: 640px) {
+  .viewer-resume-card .viewer-start-actions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .viewer-header,

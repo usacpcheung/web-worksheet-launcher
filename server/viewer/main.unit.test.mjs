@@ -39,6 +39,13 @@ async function loadViewerModule(overrides = {}) {
       return { ok: true, normalizedValue: Number(text), kind };
     }),
     SharedAuthGate: overrides.SharedAuthGate || class {},
+    mapLegacyJsonToPackageModel: overrides.mapLegacyJsonToPackageModel || ((value) => {
+      if (!value || typeof value !== 'object' || !Array.isArray(value.blocks) || value.blocks.length === 0) {
+        throw new Error('Imported worksheet must have a non-empty blocks array.');
+      }
+      return { worksheet: value };
+    }),
+    parseWorksheetPackage: overrides.parseWorksheetPackage || (() => ({ worksheet: { title: 'Imported package', blocks: [] } })),
     validateViewerPayloadSchema: overrides.validateViewerPayloadSchema || (() => ({ valid: true, errors: [] })),
     renderViewerShell: overrides.renderViewerShell || (() => {}),
     document: overrides.document || { getElementById: () => null },
@@ -47,9 +54,34 @@ async function loadViewerModule(overrides = {}) {
 
   const rewrittenSource = rewriteModuleSourceForTests(source, [
     {
-      name: 'replace viewer dependency imports with test bag bindings',
-      pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*mapSnapshotToViewerPayload\s*\}\s*from\s*['"]\.\.\/app\/contracts\/mappers\.js['"];\s*import\s*\{\s*validateViewerPayloadSchema\s*\}\s*from\s*['"]\.\.\/app\/contracts\/validators\.js['"];\s*import\s*\{\s*normalizeNumberRules\s*,\s*validateNumberInputFormat\s*\}\s*from\s*['"]\.\.\/app\/contracts\/number-input-validator\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*/,
-      replacement: `const __testBag = globalThis.${bagName};\nconst viewerStorage = __testBag.viewerStorage;\nconst mapSnapshotToViewerPayload = __testBag.mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = __testBag.validateViewerPayloadSchema;\nconst normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;\nconst SharedAuthGate = __testBag.SharedAuthGate;\n`,
+      name: 'replace viewerStorage import with test bag binding',
+      pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];/,
+      replacement: `const __testBag = globalThis.${bagName};\nconst viewerStorage = __testBag.viewerStorage;`,
+    },
+    {
+      name: 'replace mapSnapshotToViewerPayload import with test bag binding',
+      pattern: /import\s*\{\s*mapSnapshotToViewerPayload\s*\}\s*from\s*['"]\.\.\/app\/contracts\/mappers\.js['"];/,
+      replacement: 'const mapSnapshotToViewerPayload = __testBag.mapSnapshotToViewerPayload;',
+    },
+    {
+      name: 'replace validateViewerPayloadSchema import with test bag binding',
+      pattern: /import\s*\{\s*validateViewerPayloadSchema\s*\}\s*from\s*['"]\.\.\/app\/contracts\/validators\.js['"];/,
+      replacement: 'const validateViewerPayloadSchema = __testBag.validateViewerPayloadSchema;',
+    },
+    {
+      name: 'replace number validator imports with test bag bindings',
+      pattern: /import\s*\{\s*normalizeNumberRules\s*,\s*validateNumberInputFormat\s*\}\s*from\s*['"]\.\.\/app\/contracts\/number-input-validator\.js['"];/,
+      replacement: 'const normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;',
+    },
+    {
+      name: 'replace SharedAuthGate import with test bag binding',
+      pattern: /import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];/,
+      replacement: 'const SharedAuthGate = __testBag.SharedAuthGate;',
+    },
+    {
+      name: 'replace worksheet package imports with test bag bindings',
+      pattern: /import\s*\{\s*mapLegacyJsonToPackageModel\s*,\s*parseWorksheetPackage\s*\}\s*from\s*['"]\.\.\/editor\/worksheet-package\.js['"];/,
+      replacement: 'const mapLegacyJsonToPackageModel = __testBag.mapLegacyJsonToPackageModel;\nconst parseWorksheetPackage = __testBag.parseWorksheetPackage;',
     },
     {
       name: 'reroute renderViewerShell side effect',
@@ -934,6 +966,133 @@ test('startImportedWorksheetFromJsonText creates fresh attempt from imported wor
   assert.equal(session.state.viewerPayload.blocks.length, 1);
 });
 
+test('startImportedWorksheetFromPackageFile creates fresh attempt from worksheet package bytes', async () => {
+  const mod = await loadViewerModule({
+    parseWorksheetPackage: () => ({
+      worksheet: {
+        title: 'Package worksheet',
+        blocks: [
+          { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'From package' }, responseConfig: { inputType: 'text' } },
+        ],
+      },
+    }),
+  });
+  const importedRecords = [];
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: {
+      put: async (record) => {
+        importedRecords.push(record);
+        return record;
+      },
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  await session.startImportedWorksheetFromPackageFile(new ArrayBuffer(0));
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(importedRecords.length, 1);
+  assert.equal(session.state.sourceType, 'imported_worksheet');
+  assert.equal(session.state.sourceImportedWorksheetId, importedRecords[0].localId);
+  assert.equal(session.state.viewerPayload.title, 'Package worksheet');
+});
+
+test('startImportedWorksheetFromPackageFile persists packaged assets into localAssets store', async () => {
+  const mod = await loadViewerModule({
+    parseWorksheetPackage: () => ({
+      worksheet: {
+        title: 'Package worksheet with media',
+        blocks: [
+          {
+            blockId: 'q1',
+            kind: 'question',
+            position: 0,
+            prompt: { text: 'Listen', mediaRefs: [{ usage: 'question_audio', assetId: 'asset_audio_1' }] },
+            responseConfig: { inputType: 'text' },
+          },
+        ],
+      },
+      assets: [
+        {
+          assetId: 'asset_audio_1',
+          usage: 'question_audio',
+          kind: 'audio',
+          mimeType: 'audio/mpeg',
+          path: 'media/asset_audio_1.mp3',
+          binary: new Uint8Array([1, 2, 3]),
+        },
+      ],
+    }),
+  });
+  const persistedAssets = [];
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    drafts: { get: async () => null },
+    localAssets: {
+      put: async (record) => {
+        persistedAssets.push(record);
+        return record;
+      },
+    },
+    importedWorksheets: { put: async (record) => record },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  await session.startImportedWorksheetFromPackageFile(new ArrayBuffer(0));
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(persistedAssets.length, 1);
+  assert.equal(persistedAssets[0].localId, 'asset_audio_1');
+  assert.deepEqual(Array.from(persistedAssets[0].binary), [1, 2, 3]);
+  assert.equal(persistedAssets[0].metadata.origin, 'imported_package_asset');
+  assert.equal(persistedAssets[0].metadata.mimeType, 'audio/mpeg');
+});
+
+test('startImportedWorksheetFromPackageFile does not persist assets when payload validation fails', async () => {
+  const mod = await loadViewerModule({
+    validateViewerPayloadSchema: () => ({ valid: false, errors: ['bad payload'] }),
+    parseWorksheetPackage: () => ({
+      worksheet: {
+        title: 'Invalid worksheet with media',
+        blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }],
+      },
+      assets: [{ assetId: 'asset_bad_1', binary: new Uint8Array([9, 9, 9]), usage: 'question_audio', kind: 'audio' }],
+    }),
+  });
+
+  let importedPutCalls = 0;
+  let assetPutCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    drafts: { get: async () => null },
+    localAssets: {
+      put: async (record) => {
+        assetPutCalls += 1;
+        return record;
+      },
+      remove: async () => {},
+    },
+    importedWorksheets: {
+      put: async (record) => {
+        importedPutCalls += 1;
+        return record;
+      },
+      remove: async () => {},
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  await assert.rejects(
+    () => session.startImportedWorksheetFromPackageFile(new ArrayBuffer(0)),
+    /Viewer payload validation failed: bad payload/
+  );
+
+  assert.equal(importedPutCalls, 0);
+  assert.equal(assetPutCalls, 0);
+});
+
 test('startImportedWorksheetFromJsonText returns friendly parse/schema errors', async () => {
   const mod = await loadViewerModule();
   let putCalls = 0;
@@ -959,7 +1118,26 @@ test('startImportedWorksheetFromJsonText returns friendly parse/schema errors', 
     () => session.startImportedWorksheetFromJsonText(JSON.stringify({ title: 'Invalid worksheet', blocks: [] })),
     /Imported worksheet is invalid\./
   );
-  assert.equal(putCalls, 1);
+  assert.equal(putCalls, 0);
+});
+
+test('startImportedWorksheetFromPackageFile returns friendly invalid-package errors', async () => {
+  const mod = await loadViewerModule({
+    parseWorksheetPackage: () => {
+      throw new Error('missing required file manifest.json');
+    },
+  });
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { put: async (record) => record },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  await assert.rejects(
+    () => session.startImportedWorksheetFromPackageFile(new Uint8Array([1, 2, 3])),
+    /Unable to import worksheet package\. missing required file manifest\.json/
+  );
 });
 
 test('viewer autosave emits state transitions and clears pending state without extra clicks', async () => {
@@ -1875,13 +2053,16 @@ test('bootstrapViewer on bare /viewer/ opens start panel with explicit resume ac
   assert.equal(hasResumeButton, true);
 });
 
-test('renderViewerStartPanel import flow updates URL with localAttemptId via replaceState', { concurrency: false }, async () => {
+test('renderViewerStartPanel package import flow updates URL with localAttemptId via replaceState', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const replaceCalls = [];
   const session = {
     state: { localAttemptId: null },
-    startImportedWorksheetFromJsonText: async () => {
+    startImportedWorksheetFromPackageFile: async () => {
       session.state.localAttemptId = 'attempt_new';
+    },
+    startImportedWorksheetFromJsonText: async () => {
+      throw new Error('json path should not run in this test');
     },
   };
 
@@ -1903,14 +2084,80 @@ test('renderViewerStartPanel import flow updates URL with localAttemptId via rep
   });
   mod.renderViewerStartPanel(session);
 
-  const fileInput = appRoot.children[0].children.find((child) => child.tagName === 'INPUT');
-  fileInput.files = [{ text: async () => '{"ok":true}' }];
+  const fileInput = appRoot.children[0].children.find((child) => child.tagName === 'INPUT' && child.accept.includes('.zip'));
+  fileInput.files = [{ arrayBuffer: async () => new ArrayBuffer(0) }];
   await fileInput.dispatch('change');
 
   assert.equal(replaceCalls.length, 1);
   const [, , nextUrl] = replaceCalls[0];
   assert.equal(String(nextUrl).includes('localAttemptId=attempt_new'), true);
   assert.equal(String(nextUrl).includes('auth=1'), true);
+});
+
+test('renderViewerStartPanel resume card prefers metadata.updatedAt when updatedAt is absent', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  mod.renderViewerStartPanel({ state: {} }, {
+    resumeAttempt: {
+      localId: 'attempt_resume_meta',
+      metadata: { updatedAt: '2026-04-02T03:04:05.000Z' },
+      lastSavedAt: '2026-01-01T01:01:01.000Z',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    },
+  });
+
+  const panel = appRoot.children[0];
+  const resumeCard = panel.children.find((child) => child.className === 'viewer-resume-card');
+  const resumeMeta = resumeCard.children.find((child) => child.className === 'muted');
+  const expected = new Date('2026-04-02T03:04:05.000Z').toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  assert.equal(resumeMeta.textContent, `Attempt attempt_resume_meta · ${expected}`);
+});
+
+test('renderViewerStartPanel resume card strips fractional seconds in display timestamp', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  mod.renderViewerStartPanel({ state: {} }, {
+    resumeAttempt: {
+      localId: 'attempt_resume_ms',
+      metadata: { updatedAt: '2026-04-02T03:04:05.123Z' },
+    },
+  });
+
+  const panel = appRoot.children[0];
+  const resumeCard = panel.children.find((child) => child.className === 'viewer-resume-card');
+  const resumeMeta = resumeCard.children.find((child) => child.className === 'muted');
+  const expected = new Date('2026-04-02T03:04:05.123Z').toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  assert.equal(resumeMeta.textContent, `Attempt attempt_resume_ms · ${expected}`);
 });
 
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
@@ -2441,8 +2688,8 @@ test('viewer playback enforces one active audio at a time', async () => {
 test('viewer no-param bootstrap renders start panel with explicit resume controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("textContent = 'Resume attempt';"), true);
-  assert.equal(source.includes("textContent = 'Start fresh';"), true);
-  assert.equal(source.includes("textContent = 'Discard saved attempt';"), true);
+  assert.equal(source.includes("textContent = 'Start fresh';"), false);
+  assert.equal(source.includes("textContent = 'Discard attempt';"), true);
   assert.equal(source.includes('renderViewerStartPanel(session, {'), true);
 });
 
