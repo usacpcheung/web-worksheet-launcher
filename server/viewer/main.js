@@ -131,6 +131,86 @@ function normalizeOptionMediaRefs(mediaRefs) {
     .filter(Boolean);
 }
 
+function normalizePromptMediaRefs(mediaRefs) {
+  if (!Array.isArray(mediaRefs)) return [];
+  return mediaRefs
+    .map((ref) => {
+      if (!isRecord(ref)) return null;
+      if (ref.usage !== 'question_image' && ref.usage !== 'question_audio') return null;
+      if (typeof ref.assetId !== 'string' || !ref.assetId.trim()) return null;
+      return { usage: ref.usage, assetId: String(ref.assetId) };
+    })
+    .filter(Boolean);
+}
+
+function computeStableHash(input) {
+  const text = typeof input === 'string' ? input : JSON.stringify(input);
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `h_${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function getSourceIdentity(sourceType, options = {}) {
+  if (sourceType === 'local_draft' || sourceType === 'local_draft_preview') {
+    return options.sourceLocalDraftId ? `draft:${options.sourceLocalDraftId}` : 'draft:unknown';
+  }
+  if (sourceType === 'imported_worksheet') {
+    return options.sourceImportedWorksheetId ? `imported:${options.sourceImportedWorksheetId}` : 'imported:unknown';
+  }
+  if (sourceType === 'snapshot_derived') {
+    return options.snapshotId ? `snapshot:${options.snapshotId}` : 'snapshot:unknown';
+  }
+  if (sourceType === 'inline_payload') {
+    return options.snapshotId ? `inline:${options.snapshotId}` : 'inline:unknown';
+  }
+  return `${sourceType || 'unknown'}:${options.worksheetId || 'unknown'}`;
+}
+
+function computeViewerPayloadFingerprint(payload) {
+  const normalized = normalizeViewerPayload(payload, payload?.title || 'Local worksheet');
+  const projection = {
+    worksheetId: normalized.worksheetId || null,
+    snapshotId: normalized.snapshotId || null,
+    title: normalized.title || '',
+    blocks: (normalized.blocks || []).map((block) => ({
+      blockId: block.blockId,
+      kind: block.kind,
+      position: block.position,
+      prompt: block.prompt
+        ? {
+          text: block.prompt.text || '',
+          format: block.prompt.format || 'plain_text',
+          mediaRefs: normalizePromptMediaRefs(block.prompt.mediaRefs),
+        }
+        : null,
+      content: block.content
+        ? {
+          text: block.content.text || '',
+          format: block.content.format || 'plain_text',
+        }
+        : null,
+      responseConfig: isRecord(block.responseConfig)
+        ? {
+          inputType: block.responseConfig.inputType || 'text',
+          selectionMode: block.responseConfig.selectionMode || null,
+          options: Array.isArray(block.responseConfig.options)
+            ? block.responseConfig.options.map((option, index) => ({
+              id: option?.id || `opt_${index}`,
+              value: String(option?.value ?? option?.label ?? ''),
+              label: String(option?.label ?? option?.value ?? ''),
+              mediaRefs: normalizeOptionMediaRefs(option?.mediaRefs),
+            }))
+            : [],
+        }
+        : null,
+    })),
+  };
+  return computeStableHash(projection);
+}
+
 function isSnapshotLikeWorksheet(value) {
   return (
     isRecord(value)
@@ -195,6 +275,9 @@ function normalizeViewerBlock(block, index) {
               const value = option.value ?? option.label ?? '';
               const label = option.label ?? option.value ?? '';
               return {
+                id: typeof option.id === 'string' && option.id.trim()
+                  ? String(option.id)
+                  : `opt_${index}_${computeStableHash(`${value}:${label}`)}`,
                 value: String(value),
                 label: String(label),
                 mediaRefs: normalizeOptionMediaRefs(option.mediaRefs),
@@ -202,7 +285,12 @@ function normalizeViewerBlock(block, index) {
             }
 
             const normalizedOption = String(option);
-            return { value: normalizedOption, label: normalizedOption, mediaRefs: [] };
+            return {
+              id: `opt_${index}_${computeStableHash(normalizedOption)}`,
+              value: normalizedOption,
+              label: normalizedOption,
+              mediaRefs: [],
+            };
           })
         : [];
     }
@@ -235,6 +323,7 @@ function normalizeViewerBlock(block, index) {
       prompt: {
         text: String(safeBlock?.prompt?.text || ''),
         format: safeBlock?.prompt?.format || 'plain_text',
+        mediaRefs: normalizePromptMediaRefs(safeBlock?.prompt?.mediaRefs),
       },
       responseConfig: normalizedResponseConfig,
     };
@@ -443,6 +532,7 @@ function createChoiceButtonGroup({
   optionSource,
   session,
   updateSummary,
+  reportMediaFeedback,
 }) {
   const selectionMode = block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
   const validValues = optionSource.map((option) => String(option.value ?? option.label ?? ''));
@@ -455,12 +545,14 @@ function createChoiceButtonGroup({
     container.setAttribute('role', 'group');
   }
   optionSource.forEach((opt, optionIndex) => {
+    const row = document.createElement('div');
+    row.className = 'choice-button-group__row';
     const value = String(opt.value ?? opt.label ?? '');
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'choice-button-group__item';
     button.dataset.choiceValue = value;
-    button.id = `${controlId}-${optionIndex}`;
+    button.id = `${controlId}-${String(opt?.id || optionIndex)}`;
     if (selectionMode === 'single') {
       button.setAttribute('role', 'radio');
       button.setAttribute('aria-checked', 'false');
@@ -482,12 +574,6 @@ function createChoiceButtonGroup({
     labelWrap.appendChild(labelText);
 
     const optionAudioRef = normalizeOptionMediaRefs(opt?.mediaRefs)[0] || null;
-    if (optionAudioRef) {
-      const mediaMeta = document.createElement('span');
-      mediaMeta.className = 'choice-button-group__meta';
-      mediaMeta.textContent = `Audio attached (${optionAudioRef.assetId})`;
-      labelWrap.appendChild(mediaMeta);
-    }
     button.append(prefix, labelWrap);
 
     button.addEventListener('click', () => {
@@ -501,7 +587,27 @@ function createChoiceButtonGroup({
       session.setAnswer(block.blockId, nextValue);
       updateSummary();
     });
-    container.appendChild(button);
+    row.appendChild(button);
+
+    if (optionAudioRef) {
+      const optionAudioBtn = document.createElement('button');
+      optionAudioBtn.type = 'button';
+      optionAudioBtn.className = 'choice-audio-btn';
+      optionAudioBtn.textContent = 'Play option audio';
+      optionAudioBtn.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const result = await session.playAssetAudio(optionAudioRef.assetId);
+        if (!result.ok) {
+          reportMediaFeedback(result.message || 'Unable to play option audio.');
+        } else {
+          reportMediaFeedback(`Playing option audio (${optionAudioRef.assetId}).`);
+        }
+      });
+      row.appendChild(optionAudioBtn);
+    }
+
+    container.appendChild(row);
   });
 
   if (selectionMode === 'single') {
@@ -963,6 +1069,8 @@ class ViewerAttemptSession {
       lastManualSaveAt: null,
       source: 'unknown',
       sourceType: 'unknown',
+      sourceId: null,
+      sourceFingerprint: null,
       sourceLocalDraftId: null,
       sourceImportedWorksheetId: null,
       sourceDraftUpdatedAt: null,
@@ -981,6 +1089,8 @@ class ViewerAttemptSession {
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
     this.onStateChange = null;
+    this.activeAudio = null;
+    this.activeAudioObjectUrl = null;
   }
 
   setOnStateChange(handler) {
@@ -990,6 +1100,56 @@ class ViewerAttemptSession {
   notifyStateChange() {
     if (typeof this.onStateChange === 'function') {
       this.onStateChange(this.state);
+    }
+  }
+
+  stopActiveAudio() {
+    if (this.activeAudio) {
+      try {
+        this.activeAudio.pause();
+      } catch {
+        // no-op
+      }
+      this.activeAudio.src = '';
+      this.activeAudio = null;
+    }
+    if (this.activeAudioObjectUrl) {
+      URL.revokeObjectURL(this.activeAudioObjectUrl);
+      this.activeAudioObjectUrl = null;
+    }
+  }
+
+  async playAssetAudio(assetId) {
+    if (!assetId) {
+      return { ok: false, message: 'Audio is not attached to this item.' };
+    }
+    const asset = await this.storage.localAssets?.get?.(assetId);
+    if (!asset?.binary) {
+      return { ok: false, message: `Audio asset is missing (${assetId}).` };
+    }
+
+    this.stopActiveAudio();
+    const mimeType = asset?.metadata?.mimeType || 'audio/mpeg';
+    const objectUrl = URL.createObjectURL(new Blob([asset.binary], { type: mimeType }));
+    const audio = new Audio(objectUrl);
+    this.activeAudio = audio;
+    this.activeAudioObjectUrl = objectUrl;
+    audio.addEventListener('ended', () => {
+      if (this.activeAudio === audio) {
+        this.stopActiveAudio();
+      }
+    });
+    audio.addEventListener('error', () => {
+      if (this.activeAudio === audio) {
+        this.stopActiveAudio();
+      }
+    });
+    try {
+      await audio.play();
+      return { ok: true };
+    } catch {
+      this.stopActiveAudio();
+      return { ok: false, message: 'Audio playback failed. File may be blocked or corrupt.' };
     }
   }
 
@@ -1095,6 +1255,20 @@ class ViewerAttemptSession {
       }
       const normalizedPayload = normalizeViewerPayload(payloadSource, payloadSource?.title || 'Resumed worksheet');
       await this.validateViewerPayload(normalizedPayload);
+      const expectedSourceId = attemptRecord.sourceId || attemptRecord.metadata?.sourceId || null;
+      const expectedFingerprint = attemptRecord.sourceFingerprint || attemptRecord.metadata?.sourceFingerprint || null;
+      const actualSourceId = getSourceIdentity(attemptRecord.sourceType || attemptRecord.metadata?.origin || 'unknown', {
+        sourceLocalDraftId: attemptRecord.sourceLocalDraftId || attemptRecord.metadata?.sourceLocalDraftId || null,
+        sourceImportedWorksheetId:
+          attemptRecord.sourceImportedWorksheetId || attemptRecord.metadata?.sourceImportedWorksheetId || null,
+        worksheetId: normalizedPayload?.worksheetId || null,
+        snapshotId: normalizedPayload?.snapshotId || null,
+      });
+      const actualFingerprint = computeViewerPayloadFingerprint(normalizedPayload);
+      if ((expectedSourceId && expectedSourceId !== actualSourceId) || (expectedFingerprint && expectedFingerprint !== actualFingerprint)) {
+        this.setRecoveryMessage('Saved attempt no longer matches this worksheet source. Start a new attempt.');
+        return false;
+      }
       const mergedAnswers = overlayAnswersOnViewerPayload(normalizedPayload, attemptRecord.answers || {});
       const studentName = pickAttemptStudentName(attemptRecord);
       const resumeStartIndex = computeResumeStartBlockIndex(normalizedPayload, mergedAnswers, attemptRecord);
@@ -1225,6 +1399,14 @@ class ViewerAttemptSession {
     const startedAt = nowIso();
     const sourceDraftUpdatedAt = options.sourceDraftUpdatedAt || null;
 
+    const sourceId = getSourceIdentity(source || 'inline_payload', {
+      sourceLocalDraftId: options.sourceLocalDraftId || null,
+      sourceImportedWorksheetId: options.sourceImportedWorksheetId || null,
+      worksheetId: viewerPayload?.worksheetId || null,
+      snapshotId: viewerPayload?.snapshotId || null,
+    });
+    const sourceFingerprint = computeViewerPayloadFingerprint(viewerPayload);
+
     return {
       localId: localAttemptId,
       localAttemptId,
@@ -1233,6 +1415,8 @@ class ViewerAttemptSession {
       worksheetId: viewerPayload?.worksheetId || null,
       snapshotId: viewerPayload?.snapshotId || null,
       sourceType: source || 'inline_payload',
+      sourceId,
+      sourceFingerprint,
       sourceLocalDraftId: options.sourceLocalDraftId || null,
       sourceImportedWorksheetId: options.sourceImportedWorksheetId || null,
       lastActiveBlockId: viewerPayload?.blocks?.[0]?.blockId || null,
@@ -1247,6 +1431,8 @@ class ViewerAttemptSession {
       metadata: {
         localId: localAttemptId,
         origin: source || 'local_source',
+        sourceId,
+        sourceFingerprint,
         sourceLocalDraftId: options.sourceLocalDraftId || null,
         sourceImportedWorksheetId: options.sourceImportedWorksheetId || null,
         studentName: options.studentName || '',
@@ -1266,6 +1452,8 @@ class ViewerAttemptSession {
     this.state.completedAt = attemptRecord.completedAt || attemptRecord.submittedAt || null;
     this.state.source = attemptRecord.metadata?.origin || 'local_source';
     this.state.sourceType = attemptRecord.sourceType || this.state.source;
+    this.state.sourceId = attemptRecord.sourceId || null;
+    this.state.sourceFingerprint = attemptRecord.sourceFingerprint || null;
     this.state.sourceLocalDraftId = attemptRecord.sourceLocalDraftId || attemptRecord.metadata?.sourceLocalDraftId || null;
     this.state.sourceImportedWorksheetId =
       attemptRecord.sourceImportedWorksheetId || attemptRecord.metadata?.sourceImportedWorksheetId || null;
@@ -1399,6 +1587,8 @@ class ViewerAttemptSession {
       worksheetId: this.state.viewerPayload?.worksheetId || null,
       snapshotId: this.state.viewerPayload?.snapshotId || null,
       sourceType: this.state.sourceType || this.state.source || 'inline_payload',
+      sourceId: this.state.sourceId || null,
+      sourceFingerprint: this.state.sourceFingerprint || null,
       sourceLocalDraftId: this.state.sourceLocalDraftId || null,
       sourceImportedWorksheetId: this.state.sourceImportedWorksheetId || null,
       lastActiveBlockId: this.state.lastActiveBlockId || null,
@@ -1415,6 +1605,8 @@ class ViewerAttemptSession {
         origin: this.state.sourceType || this.state.source || 'inline_payload',
         sourceLocalDraftId: this.state.sourceLocalDraftId || null,
         sourceImportedWorksheetId: this.state.sourceImportedWorksheetId || null,
+        sourceId: this.state.sourceId || null,
+        sourceFingerprint: this.state.sourceFingerprint || null,
         studentName: this.state.studentName || '',
         sourceDraftUpdatedAt: this.state.sourceDraftUpdatedAt || null,
         updatedAt,
@@ -1565,6 +1757,15 @@ class ViewerAttemptSession {
       snapshotId: this.state.viewerPayload?.snapshotId || null,
       updatedAt: nowIso(),
     });
+  }
+
+  async discardAttempt(localAttemptId) {
+    if (!localAttemptId) return;
+    await this.storage.attempts.remove(localAttemptId);
+    const flagged = this.storage.resumeFlags.get(RESUME_FLAG_KEY);
+    if (flagged?.localId === localAttemptId) {
+      this.storage.resumeFlags.clear(RESUME_FLAG_KEY);
+    }
   }
 }
 
@@ -2151,7 +2352,12 @@ function renderViewerShell(session) {
       inputType: currentBlock?.responseConfig?.inputType || null,
       maxLength: currentBlock?.responseConfig?.maxLength || null,
       options: Array.isArray(currentBlock?.responseConfig?.options)
-        ? currentBlock.responseConfig.options.map((opt) => [opt?.value ?? '', opt?.label ?? ''])
+        ? currentBlock.responseConfig.options.map((opt) => [
+          opt?.id ?? '',
+          opt?.value ?? '',
+          opt?.label ?? '',
+          JSON.stringify(normalizeOptionMediaRefs(opt?.mediaRefs)),
+        ])
         : [],
       hasGlobalCheckResult,
       currentBlockIsCheckable,
@@ -2181,6 +2387,60 @@ function renderViewerShell(session) {
       const controlId = `answer-${block.blockId}`;
       label.id = `${controlId}-label`;
       label.textContent = block.prompt?.text || 'Question';
+      const mediaFeedback = document.createElement('p');
+      mediaFeedback.className = 'viewer-media-feedback';
+      mediaFeedback.setAttribute('role', 'status');
+      mediaFeedback.setAttribute('aria-live', 'polite');
+      const setMediaFeedback = (message) => {
+        mediaFeedback.textContent = message || '';
+      };
+
+      const promptMediaRefs = normalizePromptMediaRefs(block.prompt?.mediaRefs);
+      const questionImageRef = promptMediaRefs.find((ref) => ref.usage === 'question_image') || null;
+      const questionAudioRef = promptMediaRefs.find((ref) => ref.usage === 'question_audio') || null;
+
+      if (questionImageRef?.assetId) {
+        const imageWrap = document.createElement('div');
+        imageWrap.className = 'viewer-question-image-wrap';
+        const imageEl = document.createElement('img');
+        imageEl.className = 'viewer-question-image';
+        imageEl.alt = 'Question image';
+        imageWrap.appendChild(imageEl);
+        card.append(label, imageWrap);
+        session.storage.localAssets?.get?.(questionImageRef.assetId).then((asset) => {
+          if (!asset?.binary) {
+            setMediaFeedback(`Question image is missing (${questionImageRef.assetId}).`);
+            return;
+          }
+          const mimeType = asset?.metadata?.mimeType || 'image/png';
+          const objectUrl = URL.createObjectURL(new Blob([asset.binary], { type: mimeType }));
+          imageEl.onload = () => URL.revokeObjectURL(objectUrl);
+          imageEl.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            setMediaFeedback('Question image could not be rendered (file may be corrupt).');
+            imageWrap.remove();
+          };
+          imageEl.src = objectUrl;
+        }).catch(() => {
+          setMediaFeedback('Question image could not be loaded.');
+        });
+      }
+
+      if (questionAudioRef?.assetId) {
+        const questionAudioBtn = document.createElement('button');
+        questionAudioBtn.type = 'button';
+        questionAudioBtn.className = 'choice-audio-btn';
+        questionAudioBtn.textContent = 'Play question audio';
+        questionAudioBtn.addEventListener('click', async () => {
+          const result = await session.playAssetAudio(questionAudioRef.assetId);
+          if (!result.ok) {
+            setMediaFeedback(result.message || 'Unable to play question audio.');
+          } else {
+            setMediaFeedback(`Playing question audio (${questionAudioRef.assetId}).`);
+          }
+        });
+        card.append(questionAudioBtn);
+      }
 
       let checkBanner = null;
       let checkReveal = null;
@@ -2393,6 +2653,7 @@ function renderViewerShell(session) {
           optionSource,
           session,
           updateSummary: () => renderUI(),
+          reportMediaFeedback: setMediaFeedback,
         });
       } else {
         control = document.createElement('textarea');
@@ -2426,17 +2687,17 @@ function renderViewerShell(session) {
           counter: textCounter,
           status: textStatus,
         });
-        card.append(label);
+        if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
           card.append(checkBanner, checkReveal);
         }
-        card.append(helper, control, textCounter, textStatus, inputError);
+        card.append(helper, control, mediaFeedback, textCounter, textStatus, inputError);
       } else {
-        card.append(label);
+        if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
           card.append(checkBanner, checkReveal);
         }
-        card.append(helper, control, inputError);
+        card.append(helper, control, mediaFeedback, inputError);
       }
       blockList.appendChild(card);
   };
@@ -2658,7 +2919,11 @@ function renderViewerStartPanel(session, options = {}) {
   heading.textContent = 'Start Viewer';
   const description = document.createElement('p');
   description.className = 'muted';
-  description.textContent = 'Import worksheet JSON to launch a local attempt preview.';
+  description.textContent = 'Import worksheet JSON to launch a local attempt preview, or resume a previous local attempt.';
+  const resumeAttempt = options.resumeAttempt || null;
+  const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
+  const onStartFresh = typeof options.onStartFresh === 'function' ? options.onStartFresh : null;
+  const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
   const importBtn = document.createElement('button');
   importBtn.type = 'button';
   importBtn.textContent = 'Import worksheet JSON';
@@ -2673,6 +2938,42 @@ function renderViewerStartPanel(session, options = {}) {
   errorMessage.textContent = startWarningMessage || '';
   errorMessage.setAttribute('role', 'status');
   errorMessage.setAttribute('aria-live', 'polite');
+
+  if (resumeAttempt) {
+    const resumeCard = document.createElement('div');
+    resumeCard.className = 'viewer-resume-card';
+    const resumeTitle = document.createElement('h2');
+    resumeTitle.textContent = 'Resumable local attempt found';
+    const resumeMeta = document.createElement('p');
+    resumeMeta.className = 'muted';
+    resumeMeta.textContent = `Attempt ${resumeAttempt.localId || 'unknown'} · ${resumeAttempt.updatedAt || 'unknown time'}`;
+    const resumeActions = document.createElement('div');
+    resumeActions.className = 'viewer-start-actions';
+    const resumeBtn = document.createElement('button');
+    resumeBtn.type = 'button';
+    resumeBtn.textContent = 'Resume attempt';
+    resumeBtn.addEventListener('click', async () => {
+      errorMessage.textContent = '';
+      if (onResumeAttempt) await onResumeAttempt();
+    });
+    const startFreshBtn = document.createElement('button');
+    startFreshBtn.type = 'button';
+    startFreshBtn.textContent = 'Start fresh';
+    startFreshBtn.addEventListener('click', async () => {
+      errorMessage.textContent = '';
+      if (onStartFresh) await onStartFresh();
+    });
+    const discardBtn = document.createElement('button');
+    discardBtn.type = 'button';
+    discardBtn.textContent = 'Discard saved attempt';
+    discardBtn.addEventListener('click', async () => {
+      errorMessage.textContent = '';
+      if (onDiscardResume) await onDiscardResume();
+    });
+    resumeActions.append(resumeBtn, startFreshBtn, discardBtn);
+    resumeCard.append(resumeTitle, resumeMeta, resumeActions);
+    panel.append(resumeCard);
+  }
 
   importBtn.addEventListener('click', () => {
     errorMessage.textContent = '';
@@ -2743,18 +3044,33 @@ async function bootstrapViewer() {
 
   if (!hasLaunchIntent) {
     const flaggedAttempt = session.storage.resumeFlags.get(RESUME_FLAG_KEY);
-    if (flaggedAttempt?.localId) {
-      const resumed = await session.tryResumeAttempt(flaggedAttempt.localId);
-      if (resumed) {
+    const resumeAttempt = flaggedAttempt?.localId
+      ? await session.storage.attempts.get(flaggedAttempt.localId)
+      : null;
+    renderViewerStartPanel(session, {
+      warningMessage: session.state.recoveryMessage,
+      resumeAttempt: resumeAttempt || null,
+      onResumeAttempt: async () => {
+        if (!resumeAttempt?.localId) return;
+        const resumed = await session.tryResumeAttempt(resumeAttempt.localId);
+        if (!resumed) {
+          renderViewerStartPanel(session, {
+            warningMessage: session.state.recoveryMessage || `We couldn't restore your previous session.`,
+          });
+          return;
+        }
         renderViewerShell(session);
         window.viewerSession = session;
-        return;
-      }
-      session.setRecoveryMessage(
-        `We couldn't restore your previous session. Please import the worksheet JSON to continue.`
-      );
-    }
-    renderViewerStartPanel(session, { warningMessage: session.state.recoveryMessage });
+      },
+      onStartFresh: async () => {
+        renderViewerStartPanel(session, { warningMessage: null });
+      },
+      onDiscardResume: async () => {
+        if (!resumeAttempt?.localId) return;
+        await session.discardAttempt(resumeAttempt.localId);
+        renderViewerStartPanel(session, { warningMessage: 'Saved local attempt discarded.' });
+      },
+    });
     return;
   }
 

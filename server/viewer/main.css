@@ -49,6 +49,19 @@ body {
   font-size: 0.92rem;
 }
 
+.viewer-resume-card {
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.viewer-start-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .viewer-header,
 .viewer-section {
   border-radius: 0;
@@ -251,6 +264,41 @@ body {
   color: #b42318;
   font-size: 0.9rem;
   min-height: 1.2em;
+}
+
+.viewer-media-feedback {
+  margin: 0;
+  min-height: 1.2em;
+  color: #b42318;
+  font-size: 0.9rem;
+}
+
+.viewer-question-image-wrap {
+  margin-top: 10px;
+}
+
+.viewer-question-image {
+  display: block;
+  width: min(560px, 100%);
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.choice-button-group__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.choice-audio-btn {
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  padding: 0 12px;
 }
 
 .text-counter {

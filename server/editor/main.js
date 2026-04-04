@@ -70,6 +70,17 @@ function removeSingleMediaRef(mediaRefs, usage) {
   return normalizeMediaRefs(mediaRefs).filter((ref) => ref.usage !== usage);
 }
 
+function collectQuestionAssetIds(block) {
+  if (!isRecord(block) || block.kind !== 'question') return [];
+  const ids = new Set();
+  normalizeMediaRefs(block?.prompt?.mediaRefs).forEach((ref) => ids.add(ref.assetId));
+  const options = Array.isArray(block?.responseConfig?.options) ? block.responseConfig.options : [];
+  options.forEach((option) => {
+    normalizeMediaRefs(option?.mediaRefs, 'option_audio').forEach((ref) => ids.add(ref.assetId));
+  });
+  return Array.from(ids);
+}
+
 function extFromName(name = '') {
   const match = String(name).toLowerCase().match(/\.([a-z0-9]+)$/);
   return match ? match[1] : '';
@@ -1450,6 +1461,7 @@ class EditorDraftSession {
 
   removeQuestionOption(blockId, index) {
     if (!this.state.draft || !blockId || !Number.isInteger(index) || index < 0) return;
+    const removedAssetIds = [];
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
       const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
@@ -1457,6 +1469,9 @@ class EditorDraftSession {
       const options = Array.isArray(responseConfig.options)
         ? responseConfig.options.map((option) => normalizeResponseOption(option))
         : [];
+      if (options[index]) {
+        normalizeMediaRefs(options[index]?.mediaRefs, 'option_audio').forEach((ref) => removedAssetIds.push(ref.assetId));
+      }
       options.splice(index, 1);
       return {
         ...block,
@@ -1466,6 +1481,9 @@ class EditorDraftSession {
         }),
       };
     });
+    if (removedAssetIds.length > 0) {
+      this.pruneAssetLinks(removedAssetIds);
+    }
     this.touchDraft();
   }
 
@@ -1497,6 +1515,8 @@ class EditorDraftSession {
 
   deleteBlock(blockId) {
     if (!this.state.draft || !blockId) return;
+    const removedBlock = this.state.draft.blocks.find((block) => block.blockId === blockId) || null;
+    const removedAssetIds = collectQuestionAssetIds(removedBlock);
     this.transientQuestionBlockIds.delete(blockId);
     const nextBlocks = this.state.draft.blocks
       .filter((block) => block.blockId !== blockId)
@@ -1512,10 +1532,25 @@ class EditorDraftSession {
     }
 
     this.state.draft.blocks = nextBlocks;
+    if (removedAssetIds.length > 0) {
+      this.pruneAssetLinks(removedAssetIds);
+    }
     if (!nextBlocks.some((block) => block.blockId === this.state.selectedBlockId)) {
       this.state.selectedBlockId = nextBlocks[0].blockId;
     }
     this.touchDraft();
+  }
+
+  pruneAssetLinks(assetIds = []) {
+    if (!this.state.draft || !Array.isArray(this.state.draft.assets)) return;
+    const removeSet = new Set(assetIds.filter((id) => typeof id === 'string' && id));
+    if (removeSet.size === 0) return;
+    this.state.draft.assets = this.state.draft.assets.filter((asset) => !removeSet.has(asset?.assetId));
+    if (this.storage.localAssets?.remove) {
+      removeSet.forEach((assetId) => {
+        this.storage.localAssets.remove(assetId).catch(() => {});
+      });
+    }
   }
 
   setSelectedBlockKind(kind) {

@@ -262,7 +262,7 @@ function createMockDocument() {
   };
 }
 
-test('createChoiceButtonGroup renders option-audio indicator only when option_audio mediaRef exists', async () => {
+test('createChoiceButtonGroup renders option-audio play buttons only when option_audio mediaRef exists', async () => {
   const mod = await loadViewerModule({
     document: createMockDocument(),
   });
@@ -282,13 +282,13 @@ test('createChoiceButtonGroup renders option-audio indicator only when option_au
     updateSummary: () => {},
   });
 
-  const firstButton = group.children[0];
-  const secondButton = group.children[1];
-  const firstMeta = firstButton.children[1].children.find((node) => node.className === 'choice-button-group__meta');
-  const secondMeta = secondButton.children[1].children.find((node) => node.className === 'choice-button-group__meta');
+  const firstRow = group.children[0];
+  const secondRow = group.children[1];
+  const firstAudioButton = firstRow.children.find((node) => node.className === 'choice-audio-btn');
+  const secondAudioButton = secondRow.children.find((node) => node.className === 'choice-audio-btn');
 
-  assert.equal(firstMeta?.textContent, 'Audio attached (asset_opt_1)');
-  assert.equal(secondMeta, undefined);
+  assert.equal(firstAudioButton?.textContent, 'Play option audio');
+  assert.equal(secondAudioButton, undefined);
 });
 
 test('normalizeViewerBlock preserves non-canonical plain_text/short_text inputType values', async () => {
@@ -1836,7 +1836,7 @@ function createFakeDom() {
   return { document, appRoot, bottomBarRoot };
 }
 
-test('bootstrapViewer auto-resumes in-progress attempt from resume flag on bare /viewer/', { concurrency: false }, async () => {
+test('bootstrapViewer on bare /viewer/ opens start panel with explicit resume action instead of auto-resume', { concurrency: false }, async () => {
   const { document } = createFakeDom();
   let renderedSession = null;
   const attemptRecord = {
@@ -1869,7 +1869,10 @@ test('bootstrapViewer auto-resumes in-progress attempt from resume flag on bare 
 
   await mod.bootstrapViewer();
 
-  assert.equal(renderedSession?.state?.localAttemptId, 'attempt_resume');
+  assert.equal(renderedSession, null);
+  const panel = document.getElementById('app').children[0];
+  const hasResumeButton = panel.children.some((child) => child.className === 'viewer-resume-card');
+  assert.equal(hasResumeButton, true);
 });
 
 test('renderViewerStartPanel import flow updates URL with localAttemptId via replaceState', { concurrency: false }, async () => {
@@ -1910,7 +1913,7 @@ test('renderViewerStartPanel import flow updates URL with localAttemptId via rep
   assert.equal(String(nextUrl).includes('auth=1'), true);
 });
 
-test('bootstrapViewer falls back to start panel with warning when resume flag record is invalid', { concurrency: false }, async () => {
+test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({
     document,
@@ -1933,7 +1936,7 @@ test('bootstrapViewer falls back to start panel with warning when resume flag re
 
   const panel = appRoot.children[0];
   const statusNode = panel.children.find((child) => child.className === 'viewer-start-error');
-  assert.match(statusNode.textContent, /couldn't restore your previous session/i);
+  assert.equal(statusNode.textContent, '');
 });
 
 
@@ -2381,4 +2384,71 @@ test('viewer stylesheet defines neutral ungraded check banner styles', async () 
   const source = await fs.readFile(path.resolve('server/viewer/main.css'), 'utf8');
   assert.equal(source.includes('.viewer-check-banner.is-ungraded {'), true);
   assert.equal(source.includes('.viewer-check-banner.is-ungraded .viewer-check-banner__icon {'), true);
+});
+
+test('normalizeViewerBlock preserves prompt question media refs and option ids', async () => {
+  const mod = await loadViewerModule();
+  const normalized = mod.normalizeViewerBlock({
+    blockId: 'q1',
+    kind: 'question',
+    position: 0,
+    prompt: {
+      text: 'With media',
+      mediaRefs: [
+        { usage: 'question_image', assetId: 'img_1' },
+        { usage: 'question_audio', assetId: 'aud_1' },
+      ],
+    },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      options: [{ id: 'o1', value: 'A', label: 'A' }, { value: 'B', label: 'B' }],
+    },
+  }, 0);
+  assert.deepEqual(normalized.prompt.mediaRefs, [
+    { usage: 'question_image', assetId: 'img_1' },
+    { usage: 'question_audio', assetId: 'aud_1' },
+  ]);
+  assert.equal(normalized.responseConfig.options[0].id, 'o1');
+  assert.equal(typeof normalized.responseConfig.options[1].id, 'string');
+});
+
+test('viewer playback enforces one active audio at a time', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    localAssets: { get: async () => ({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } }) },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  const instances = [];
+  globalThis.URL = { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} };
+  globalThis.Audio = class {
+    constructor() {
+      this.paused = false;
+      instances.push(this);
+    }
+    addEventListener() {}
+    async play() {}
+    pause() { this.paused = true; }
+    set src(_value) {}
+  };
+  const first = await session.playAssetAudio('a1');
+  const second = await session.playAssetAudio('a2');
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(instances.length, 2);
+  assert.equal(instances[0].paused, true);
+});
+
+test('viewer no-param bootstrap renders start panel with explicit resume controls', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("textContent = 'Resume attempt';"), true);
+  assert.equal(source.includes("textContent = 'Start fresh';"), true);
+  assert.equal(source.includes("textContent = 'Discard saved attempt';"), true);
+  assert.equal(source.includes('renderViewerStartPanel(session, {'), true);
+});
+
+test('viewer source binding blocks resume when source fingerprint or identity drifts', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('expectedSourceId && expectedSourceId !== actualSourceId'), true);
+  assert.equal(source.includes('expectedFingerprint && expectedFingerprint !== actualFingerprint'), true);
+  assert.equal(source.includes('Saved attempt no longer matches this worksheet source. Start a new attempt.'), true);
 });
