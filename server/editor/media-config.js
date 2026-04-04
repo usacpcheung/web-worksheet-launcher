@@ -5,7 +5,7 @@ const MEDIA_LIMITS = Object.freeze({
   audioMaxBytes: 5 * MB,
 });
 
-const IMAGE_MIME_TYPES = Object.freeze(['image/png', 'image/jpeg', 'image/webp']);
+const IMAGE_MIME_TYPES = Object.freeze(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
 const IMAGE_EXTENSIONS = Object.freeze(['png', 'jpg', 'jpeg', 'webp']);
 const AUDIO_MIME_TYPES = Object.freeze(['audio/mpeg', 'audio/mp3']);
 const AUDIO_EXTENSIONS = Object.freeze(['mp3']);

@@ -36,7 +36,7 @@ const parseWorksheetPackage = () => ({ manifest: {}, worksheet: { title: 'Pkg', 
       name: 'replace media config import with deterministic constants',
       pattern: /import\s*\{\s*MEDIA_LIMITS,\s*IMAGE_MIME_TYPES,\s*IMAGE_EXTENSIONS,\s*AUDIO_MIME_TYPES,\s*AUDIO_EXTENSIONS\s*\}\s*from\s*['"]\.\/media-config\.js['"];\s*/,
       replacement: `const MEDIA_LIMITS = { imageMaxBytes: 8 * 1024 * 1024, audioMaxBytes: 5 * 1024 * 1024 };
-const IMAGE_MIME_TYPES = ['image/png','image/jpeg','image/webp'];
+const IMAGE_MIME_TYPES = ['image/png','image/jpeg','image/jpg','image/webp'];
 const IMAGE_EXTENSIONS = ['png','jpg','jpeg','webp'];
 const AUDIO_MIME_TYPES = ['audio/mpeg','audio/mp3'];
 const AUDIO_EXTENSIONS = ['mp3'];

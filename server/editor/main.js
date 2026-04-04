@@ -2469,9 +2469,9 @@ function renderEditorShell(session) {
       questionImageInput.value = '';
       questionImageInput.click();
     });
-    removeImageBtn.addEventListener('click', () => {
+    removeImageBtn.addEventListener('click', async () => {
       const confirmed = window.confirm('Remove the current question image attachment?');
-      const result = session.removeQuestionMedia(selectedBlock.blockId, 'question_image', { confirmRemove: confirmed });
+      const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_image', { confirmRemove: confirmed });
       if (!result.ok && result.reason !== 'confirm-remove-required') {
         updateSummary();
       } else if (result.ok) {
@@ -2501,9 +2501,9 @@ function renderEditorShell(session) {
       questionAudioInput.value = '';
       questionAudioInput.click();
     });
-    removeQuestionAudioBtn.addEventListener('click', () => {
+    removeQuestionAudioBtn.addEventListener('click', async () => {
       const confirmed = window.confirm('Remove the current question audio attachment?');
-      const result = session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: confirmed });
+      const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: confirmed });
       if (result.ok || result.reason !== 'confirm-remove-required') {
         updateSummary();
       }
@@ -2707,9 +2707,9 @@ function renderEditorShell(session) {
         removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove option-actions-menu__item';
         removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
         removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
-        removeOptionAudioBtn.addEventListener('click', () => {
+        removeOptionAudioBtn.addEventListener('click', async () => {
           const confirmed = window.confirm(`Remove audio from option ${optionIndex + 1}?`);
-          const result = session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: confirmed });
+          const result = await session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: confirmed });
           if (result.ok || result.reason !== 'confirm-remove-required') {
             updateSummary();
           }
