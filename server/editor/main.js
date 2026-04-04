@@ -795,22 +795,31 @@ class EditorDraftSession {
   }
 
   async openAssetImage(assetId) {
+    const previewWindow = window.open('', '_blank', 'noopener');
+    if (!previewWindow) {
+      this.setMediaFeedback('Image preview was blocked. Allow pop-ups and try again.');
+      return { ok: false, reason: 'blocked' };
+    }
+    try {
+      previewWindow.document.title = 'Loading image preview…';
+      previewWindow.document.body.textContent = 'Loading image preview…';
+    } catch (error) {
+      // Ignore cross-browser document access quirks for newly opened windows.
+    }
+
     const record = await this.getLocalAssetRecord(assetId);
     if (!record) {
+      previewWindow.close();
       this.setMediaFeedback('Unable to load attached image for preview.');
       return { ok: false, reason: 'missing-asset' };
     }
     const objectUrl = this.createObjectUrlForAsset(record, 'image/png');
     if (!objectUrl) {
+      previewWindow.close();
       this.setMediaFeedback('Unable to load attached image for preview.');
       return { ok: false, reason: 'missing-binary' };
     }
-    const previewWindow = window.open(objectUrl, '_blank', 'noopener');
-    if (!previewWindow) {
-      URL.revokeObjectURL(objectUrl);
-      this.setMediaFeedback('Image preview was blocked. Allow pop-ups and try again.');
-      return { ok: false, reason: 'blocked' };
-    }
+    previewWindow.location.replace(objectUrl);
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     this.clearMediaFeedback();
     this.notifyStateChange();
