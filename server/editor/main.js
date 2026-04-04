@@ -81,6 +81,15 @@ function collectQuestionAssetIds(block) {
   return Array.from(ids);
 }
 
+function collectDraftQuestionAssetIds(draft) {
+  if (!isRecord(draft) || !Array.isArray(draft.blocks)) return new Set();
+  const ids = new Set();
+  draft.blocks.forEach((block) => {
+    collectQuestionAssetIds(block).forEach((assetId) => ids.add(assetId));
+  });
+  return ids;
+}
+
 function extFromName(name = '') {
   const match = String(name).toLowerCase().match(/\.([a-z0-9]+)$/);
   return match ? match[1] : '';
@@ -1545,9 +1554,12 @@ class EditorDraftSession {
     if (!this.state.draft || !Array.isArray(this.state.draft.assets)) return;
     const removeSet = new Set(assetIds.filter((id) => typeof id === 'string' && id));
     if (removeSet.size === 0) return;
-    this.state.draft.assets = this.state.draft.assets.filter((asset) => !removeSet.has(asset?.assetId));
+    const referencedAssetIds = collectDraftQuestionAssetIds(this.state.draft);
+    const removableIds = new Set(Array.from(removeSet).filter((assetId) => !referencedAssetIds.has(assetId)));
+    if (removableIds.size === 0) return;
+    this.state.draft.assets = this.state.draft.assets.filter((asset) => !removableIds.has(asset?.assetId));
     if (this.storage.localAssets?.remove) {
-      removeSet.forEach((assetId) => {
+      removableIds.forEach((assetId) => {
         this.storage.localAssets.remove(assetId).catch(() => {});
       });
     }

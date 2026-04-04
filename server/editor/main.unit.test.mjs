@@ -1538,6 +1538,43 @@ test('deleteBlock prunes linked question and option media assets', async () => {
   assert.deepEqual(removed.sort(), ['asset_opt_audio', 'asset_q_audio']);
 });
 
+test('deleteBlock preserves assets still referenced by remaining questions', async () => {
+  const mod = await loadEditorModule();
+  const removed = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async (id) => { removed.push(id); } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_cleanup_shared',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_audio', assetId: 'asset_shared_audio' }] },
+        responseConfig: { inputType: 'text' },
+      },
+      {
+        blockId: 'q2',
+        kind: 'question',
+        position: 1,
+        prompt: { text: 'Q2', mediaRefs: [{ usage: 'question_audio', assetId: 'asset_shared_audio' }] },
+        responseConfig: { inputType: 'text' },
+      },
+    ],
+    assets: [{ assetId: 'asset_shared_audio' }, { assetId: 'asset_keep' }],
+  };
+  session.state.selectedBlockId = 'q1';
+
+  session.deleteBlock('q1');
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_shared_audio'), true);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep'), true);
+  assert.deepEqual(removed, []);
+});
+
 test('removeQuestionOption prunes option audio asset link', async () => {
   const mod = await loadEditorModule();
   const removed = [];
@@ -1568,4 +1605,39 @@ test('removeQuestionOption prunes option audio asset link', async () => {
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_opt_audio'), false);
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep'), true);
   assert.deepEqual(removed, ['asset_opt_audio']);
+});
+
+test('removeQuestionOption preserves shared option audio used by another option', async () => {
+  const mod = await loadEditorModule();
+  const removed = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async (id) => { removed.push(id); } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_cleanup_opt_shared',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [
+            { id: 'o1', value: 'A', label: 'A', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_shared_opt_audio' }] },
+            { id: 'o2', value: 'B', label: 'B', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_shared_opt_audio' }] },
+          ],
+        },
+      },
+    ],
+    assets: [{ assetId: 'asset_shared_opt_audio' }, { assetId: 'asset_keep' }],
+  };
+
+  session.removeQuestionOption('q1', 0);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_shared_opt_audio'), true);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep'), true);
+  assert.deepEqual(removed, []);
 });
