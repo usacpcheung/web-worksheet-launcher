@@ -2685,6 +2685,88 @@ test('viewer playback enforces one active audio at a time', async () => {
   assert.equal(instances[0].paused, true);
 });
 
+test('viewer playback lifecycle hooks report start, ended, error, and interruption', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    localAssets: { get: async () => ({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } }) },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  const urls = [];
+  globalThis.URL = {
+    createObjectURL: () => {
+      const url = `blob:test:${urls.length}`;
+      urls.push(url);
+      return url;
+    },
+    revokeObjectURL: () => {},
+  };
+
+  const instances = [];
+  globalThis.Audio = class {
+    constructor() {
+      this.listeners = new Map();
+      instances.push(this);
+    }
+    addEventListener(type, handler) {
+      this.listeners.set(type, handler);
+    }
+    async play() {}
+    pause() { this.paused = true; }
+    set src(_value) {}
+    emit(type) {
+      this.listeners.get(type)?.();
+    }
+  };
+
+  let started = 0;
+  let ended = 0;
+  let errored = 0;
+  let interrupted = 0;
+
+  const first = await session.playAssetAudio('a1', {
+    onStart: () => { started += 1; },
+    onEnded: () => { ended += 1; },
+    onError: () => { errored += 1; },
+    onInterrupted: () => { interrupted += 1; },
+  });
+  assert.equal(first.ok, true);
+  assert.equal(started, 1);
+
+  instances[0].emit('ended');
+  assert.equal(ended, 1);
+
+  const second = await session.playAssetAudio('a2', {
+    onStart: () => { started += 1; },
+    onEnded: () => { ended += 1; },
+    onError: () => { errored += 1; },
+    onInterrupted: () => { interrupted += 1; },
+  });
+  assert.equal(second.ok, true);
+  instances[1].emit('error');
+  assert.equal(errored, 1);
+
+  const third = await session.playAssetAudio('a3', {
+    onStart: () => { started += 1; },
+    onEnded: () => { ended += 1; },
+    onError: () => { errored += 1; },
+    onInterrupted: () => { interrupted += 1; },
+  });
+  assert.equal(third.ok, true);
+  const fourth = await session.playAssetAudio('a4');
+  assert.equal(fourth.ok, true);
+  assert.equal(interrupted, 1);
+});
+
+test('question prompt audio handler toggles disable state and does not persist success text', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("if (questionAudioBtn.disabled) return;"), true);
+  assert.equal(source.includes("questionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("onEnded: () => {\n            questionAudioBtn.disabled = false;"), true);
+  assert.equal(source.includes("onError: () => {\n            questionAudioBtn.disabled = false;"), true);
+  assert.equal(source.includes("setMediaFeedback(`Playing question audio (${questionAudioRef.assetId}).`);"), false);
+});
+
 test('viewer no-param bootstrap renders start panel with explicit resume controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("textContent = 'Resume attempt';"), true);

@@ -366,6 +366,8 @@ body {
 
 .viewer-question-image-wrap {
   margin-top: 10px;
+  display: flex;
+  justify-content: center;
 }
 
 .viewer-question-image {
@@ -373,9 +375,6 @@ body {
   width: min(560px, 100%);
   max-height: 320px;
   object-fit: contain;
-  border: 1px solid #d0d5dd;
-  border-radius: 8px;
-  background: #fff;
 }
 
 .choice-button-group__row {
@@ -464,6 +463,18 @@ body {
   justify-content: flex-start;
 }
 
+.question-card__prompt-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.question-card__prompt-text {
+  min-width: 0;
+  flex: 1;
+}
+
 .question-card label {
   font-size: clamp(1.2rem, 1.08rem + 0.65vw, 1.65rem);
   line-height: 1.38;
@@ -471,6 +482,22 @@ body {
   margin-bottom: 2px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.question-card__prompt-audio-btn {
+  min-width: 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 0.95rem;
+  line-height: 1;
+  flex: 0 0 auto;
 }
 
 .block-stepper {
@@ -897,6 +924,8 @@ input[type='text']::placeholder {
 }
 
 .question-card:has(.text-counter-status) > label,
+.question-card:has(.text-counter-status) > .question-card__prompt-row,
+.question-card:has(.text-counter-status) > .viewer-question-image-wrap,
 .question-card:has(.text-counter-status) > .muted,
 .question-card:has(.text-counter-status) > textarea,
 .question-card:has(.text-counter-status) > input,
