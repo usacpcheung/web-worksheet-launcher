@@ -2759,6 +2759,56 @@ test('viewer playback lifecycle hooks report start, ended, error, and interrupti
   assert.equal(interrupted, 1);
 });
 
+test('viewer playback race condition: last request wins when fetches resolve out of order', async () => {
+  const mod = await loadViewerModule();
+
+  let resolve1, resolve2;
+  const asset = { binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } };
+  let callCount = 0;
+  const session = new mod.ViewerAttemptSession({
+    localAssets: {
+      get: async () => {
+        callCount++;
+        if (callCount === 1) {
+          return new Promise(r => { resolve1 = () => r(asset); });
+        }
+        return new Promise(r => { resolve2 = () => r(asset); });
+      },
+    },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  const instances = [];
+  globalThis.URL = { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} };
+  globalThis.Audio = class {
+    constructor() {
+      this.paused = false;
+      instances.push(this);
+    }
+    addEventListener() {}
+    async play() {}
+    pause() { this.paused = true; }
+    set src(_value) {}
+  };
+
+  // Start both requests concurrently without awaiting
+  const p1 = session.playAssetAudio('a1');
+  const p2 = session.playAssetAudio('a2');
+
+  // Resolve the second fetch first (out of order), then the first
+  resolve2();
+  await new Promise(r => setTimeout(r, 0));
+  resolve1();
+
+  const [r1, r2] = await Promise.all([p1, p2]);
+
+  // The first request should be superseded by the second
+  assert.equal(r1.ok, false);
+  assert.equal(r2.ok, true);
+  // Only one audio instance should play
+  assert.equal(instances.length, 1);
+});
+
 test('question prompt audio handler toggles disable state and does not persist success text', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("if (questionAudioBtn.disabled) return;"), true);
@@ -2773,7 +2823,8 @@ test('choice option audio handler matches icon-button lifecycle behavior', async
   assert.equal(source.includes("optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';"), true);
   assert.equal(source.includes("optionAudioBtn.textContent = '🔊';"), true);
   assert.equal(source.includes("if (optionAudioBtn.disabled) return;"), true);
-  assert.equal(source.includes("onStart: () => {\n            optionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("optionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("onStart: () => {\n            optionAudioBtn.disabled = true;"), false);
   assert.equal(source.includes("onEnded: () => {\n            optionAudioBtn.disabled = false;"), true);
   assert.equal(source.includes("reportMediaFeedback(`Playing option audio (${optionAudioRef.assetId}).`);"), false);
 });

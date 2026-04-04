@@ -620,10 +620,10 @@ function createChoiceButtonGroup({
         event.preventDefault();
         event.stopPropagation();
         if (optionAudioBtn.disabled) return;
+        optionAudioBtn.disabled = true;
 
         const result = await session.playAssetAudio(optionAudioRef.assetId, {
           onStart: () => {
-            optionAudioBtn.disabled = true;
             if (typeof reportMediaFeedback === 'function') {
               reportMediaFeedback('');
             }
@@ -1136,6 +1136,7 @@ class ViewerAttemptSession {
     this.activeAudio = null;
     this.activeAudioObjectUrl = null;
     this.activeAudioPlayback = null;
+    this._playRequestId = 0;
   }
 
   setOnStateChange(handler) {
@@ -1190,7 +1191,11 @@ class ViewerAttemptSession {
     if (!assetId) {
       return { ok: false, message: 'Audio is not attached to this item.' };
     }
+    const requestId = ++this._playRequestId;
     const asset = await this.storage.localAssets?.get?.(assetId);
+    if (requestId !== this._playRequestId) {
+      return { ok: false, message: 'Audio request superseded.' };
+    }
     if (!asset?.binary) {
       return { ok: false, message: `Audio asset is missing (${assetId}).` };
     }
@@ -2557,10 +2562,10 @@ function renderViewerShell(session) {
       questionAudioBtn.textContent = '🔊';
       questionAudioBtn.addEventListener('click', async () => {
         if (questionAudioBtn.disabled) return;
+        questionAudioBtn.disabled = true;
 
         const result = await session.playAssetAudio(questionAudioRef.assetId, {
           onStart: () => {
-            questionAudioBtn.disabled = true;
             setMediaFeedback('');
           },
           onEnded: () => {
