@@ -293,6 +293,7 @@ textarea.control {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .option-correct-toggle {
@@ -346,6 +347,12 @@ textarea.control {
 
 .option-row .control {
   flex: 1;
+  min-width: 220px;
+}
+
+.option-row__meta {
+  flex-basis: 100%;
+  margin-left: 46px;
 }
 
 .media-action-btn {
@@ -383,6 +390,47 @@ textarea.control {
   width: 16px;
   text-align: center;
   opacity: 0.7;
+}
+
+.option-actions-menu {
+  position: relative;
+}
+
+.option-actions-menu[open] {
+  z-index: 2;
+}
+
+.option-actions-menu__toggle {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.option-actions-menu__toggle::-webkit-details-marker {
+  display: none;
+}
+
+.option-actions-menu__list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.14);
+}
+
+.option-actions-menu__item {
+  width: 100%;
+  justify-content: flex-start;
 }
 
 .option-add-btn {

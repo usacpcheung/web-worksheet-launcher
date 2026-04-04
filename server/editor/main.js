@@ -2632,9 +2632,21 @@ function renderEditorShell(session) {
           session.updateQuestionOptionAtIndex(selectedBlock.blockId, optionIndex, optionInput.value);
         });
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
+        const optionActionsMenu = document.createElement('details');
+        optionActionsMenu.className = 'option-actions-menu';
+        const optionActionsToggle = document.createElement('summary');
+        optionActionsToggle.className = 'icon-btn option-actions-menu__toggle';
+        optionActionsToggle.setAttribute('role', 'button');
+        optionActionsToggle.setAttribute('aria-label', `More actions for option ${optionIndex + 1}`);
+        optionActionsToggle.title = 'More actions';
+        optionActionsToggle.textContent = '⋯';
+        optionActionsMenu.appendChild(optionActionsToggle);
+        const optionActionsList = document.createElement('div');
+        optionActionsList.className = 'option-actions-menu__list';
+
         const optionAudioBtn = document.createElement('button');
         optionAudioBtn.type = 'button';
-        optionAudioBtn.className = 'media-action-btn';
+        optionAudioBtn.className = 'media-action-btn option-actions-menu__item';
         optionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${optionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
         optionAudioBtn.title = isPersistedOption
           ? optionAudioRef ? 'Replace option audio' : 'Attach option audio'
@@ -2647,12 +2659,13 @@ function renderEditorShell(session) {
             return;
           }
           pendingOptionAudioTarget = { blockId: selectedBlock.blockId, optionId };
+          optionActionsMenu.open = false;
           optionAudioInput.value = '';
           optionAudioInput.click();
         });
         const removeOptionAudioBtn = document.createElement('button');
         removeOptionAudioBtn.type = 'button';
-        removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove';
+        removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove option-actions-menu__item';
         removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
         removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
         removeOptionAudioBtn.addEventListener('click', () => {
@@ -2661,7 +2674,10 @@ function renderEditorShell(session) {
           if (result.ok || result.reason !== 'confirm-remove-required') {
             updateSummary();
           }
+          optionActionsMenu.open = false;
         });
+        optionActionsList.append(optionAudioBtn, removeOptionAudioBtn);
+        optionActionsMenu.appendChild(optionActionsList);
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'icon-btn danger';
@@ -2672,12 +2688,18 @@ function renderEditorShell(session) {
           session.removeQuestionOption(selectedBlock.blockId, optionIndex);
           updateSummary();
         });
-        row.append(correctToggle, optionInput, optionAudioBtn, removeOptionAudioBtn, removeBtn);
+        row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);
         if (!isPersistedOption) {
           const optionAudioHint = document.createElement('span');
-          optionAudioHint.className = 'muted';
+          optionAudioHint.className = 'muted option-row__meta';
           optionAudioHint.textContent = 'Enter option text or click Add option before attaching audio.';
           row.appendChild(optionAudioHint);
+        }
+        if (optionAudioRef) {
+          const optionAudioAttached = document.createElement('span');
+          optionAudioAttached.className = 'muted option-row__meta';
+          optionAudioAttached.textContent = `Option audio attached (${optionAudioRef.assetId})`;
+          row.appendChild(optionAudioAttached);
         }
         questionOptionsList.appendChild(row);
       });
