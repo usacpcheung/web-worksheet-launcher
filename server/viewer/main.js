@@ -552,7 +552,7 @@ function createChoiceButtonGroup({
     button.type = 'button';
     button.className = 'choice-button-group__item';
     button.dataset.choiceValue = value;
-    button.id = `${controlId}-${String(opt?.id || optionIndex)}`;
+    button.id = `${controlId}-${String(opt?.id || optionIndex).replace(/[^A-Za-z0-9_-]/g, '_')}`;
     if (selectionMode === 'single') {
       button.setAttribute('role', 'radio');
       button.setAttribute('aria-checked', 'false');
@@ -598,10 +598,12 @@ function createChoiceButtonGroup({
         event.preventDefault();
         event.stopPropagation();
         const result = await session.playAssetAudio(optionAudioRef.assetId);
-        if (!result.ok) {
-          reportMediaFeedback(result.message || 'Unable to play option audio.');
-        } else {
-          reportMediaFeedback(`Playing option audio (${optionAudioRef.assetId}).`);
+        if (typeof reportMediaFeedback === 'function') {
+          if (!result.ok) {
+            reportMediaFeedback(result.message || 'Unable to play option audio.');
+          } else {
+            reportMediaFeedback(`Playing option audio (${optionAudioRef.assetId}).`);
+          }
         }
       });
       row.appendChild(optionAudioBtn);
@@ -2939,8 +2941,9 @@ function renderViewerStartPanel(session, options = {}) {
   errorMessage.setAttribute('role', 'status');
   errorMessage.setAttribute('aria-live', 'polite');
 
+  let resumeCard = null;
   if (resumeAttempt) {
-    const resumeCard = document.createElement('div');
+    resumeCard = document.createElement('div');
     resumeCard.className = 'viewer-resume-card';
     const resumeTitle = document.createElement('h2');
     resumeTitle.textContent = 'Resumable local attempt found';
@@ -2972,7 +2975,6 @@ function renderViewerStartPanel(session, options = {}) {
     });
     resumeActions.append(resumeBtn, startFreshBtn, discardBtn);
     resumeCard.append(resumeTitle, resumeMeta, resumeActions);
-    panel.append(resumeCard);
   }
 
   importBtn.addEventListener('click', () => {
@@ -3001,7 +3003,11 @@ function renderViewerStartPanel(session, options = {}) {
     }
   });
 
-  panel.append(heading, description, importBtn, fileInput, errorMessage);
+  panel.append(heading, description);
+  if (resumeAttempt) {
+    panel.append(resumeCard);
+  }
+  panel.append(importBtn, fileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
@@ -3047,15 +3053,15 @@ async function bootstrapViewer() {
     const resumeAttempt = flaggedAttempt?.localId
       ? await session.storage.attempts.get(flaggedAttempt.localId)
       : null;
-    renderViewerStartPanel(session, {
-      warningMessage: session.state.recoveryMessage,
-      resumeAttempt: resumeAttempt || null,
+    const startPanelHandlers = {
       onResumeAttempt: async () => {
         if (!resumeAttempt?.localId) return;
         const resumed = await session.tryResumeAttempt(resumeAttempt.localId);
         if (!resumed) {
           renderViewerStartPanel(session, {
             warningMessage: session.state.recoveryMessage || `We couldn't restore your previous session.`,
+            resumeAttempt: resumeAttempt || null,
+            ...startPanelHandlers,
           });
           return;
         }
@@ -3070,6 +3076,11 @@ async function bootstrapViewer() {
         await session.discardAttempt(resumeAttempt.localId);
         renderViewerStartPanel(session, { warningMessage: 'Saved local attempt discarded.' });
       },
+    };
+    renderViewerStartPanel(session, {
+      warningMessage: session.state.recoveryMessage,
+      resumeAttempt: resumeAttempt || null,
+      ...startPanelHandlers,
     });
     return;
   }
