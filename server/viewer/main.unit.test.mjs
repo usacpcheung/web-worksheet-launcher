@@ -2763,16 +2763,16 @@ test('viewer playback race condition: last request wins when fetches resolve out
   const mod = await loadViewerModule();
 
   let resolve1, resolve2;
-  const asset = { binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } };
+  const makeAsset = () => ({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } });
   let callCount = 0;
   const session = new mod.ViewerAttemptSession({
     localAssets: {
       get: async () => {
         callCount++;
         if (callCount === 1) {
-          return new Promise(r => { resolve1 = () => r(asset); });
+          return new Promise(r => { resolve1 = () => r(makeAsset()); });
         }
-        return new Promise(r => { resolve2 = () => r(asset); });
+        return new Promise(r => { resolve2 = () => r(makeAsset()); });
       },
     },
     resumeFlags: { get: () => null, set: () => {} },
@@ -2795,9 +2795,10 @@ test('viewer playback race condition: last request wins when fetches resolve out
   const p1 = session.playAssetAudio('a1');
   const p2 = session.playAssetAudio('a2');
 
-  // Resolve the second fetch first (out of order), then the first
+  // Resolve the second fetch first (out of order), then the first.
+  // setImmediate ensures all queued microtasks from resolve2 drain before resolve1 fires.
   resolve2();
-  await new Promise(r => setTimeout(r, 0));
+  await new Promise(r => setImmediate(r));
   resolve1();
 
   const [r1, r2] = await Promise.all([p1, p2]);
