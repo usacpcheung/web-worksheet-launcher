@@ -749,6 +749,10 @@ class EditorDraftSession {
       // no-op
     }
     this.previewAudio = null;
+    if (this.previewAudioUrl) {
+      URL.revokeObjectURL(this.previewAudioUrl);
+      this.previewAudioUrl = null;
+    }
   }
 
   async playAssetAudio(assetId) {
@@ -766,19 +770,21 @@ class EditorDraftSession {
     this.stopPreviewAudio();
     const audio = new Audio(objectUrl);
     this.previewAudio = audio;
+    this.previewAudioUrl = objectUrl;
     audio.addEventListener('ended', () => {
       URL.revokeObjectURL(objectUrl);
       if (this.previewAudio === audio) {
         this.previewAudio = null;
+        this.previewAudioUrl = null;
       }
     }, { once: true });
     audio.addEventListener('error', () => {
       URL.revokeObjectURL(objectUrl);
       if (this.previewAudio === audio) {
         this.previewAudio = null;
+        this.previewAudioUrl = null;
       }
       this.setMediaFeedback('Unable to play attached audio.');
-      this.notifyStateChange();
     }, { once: true });
 
     try {
@@ -789,16 +795,22 @@ class EditorDraftSession {
     } catch (error) {
       URL.revokeObjectURL(objectUrl);
       this.previewAudio = null;
+      this.previewAudioUrl = null;
       this.setMediaFeedback('Audio playback was blocked. Try again.');
       return { ok: false, reason: 'playback-failed' };
     }
   }
 
   async openAssetImage(assetId) {
-    const previewWindow = window.open('', '_blank', 'noopener');
+    const previewWindow = window.open('', '_blank', 'noopener,noreferrer');
     if (!previewWindow) {
       this.setMediaFeedback('Image preview was blocked. Allow pop-ups and try again.');
       return { ok: false, reason: 'blocked' };
+    }
+    try {
+      previewWindow.opener = null;
+    } catch (error) {
+      // Ignore cross-browser quirks when hardening the newly opened window.
     }
     try {
       previewWindow.document.title = 'Loading image preview…';

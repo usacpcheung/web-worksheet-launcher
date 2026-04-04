@@ -1262,3 +1262,244 @@ test('attach option audio on non-persisted option returns missing-option with he
   assert.equal(result.reason, 'missing-option');
   assert.equal(session.state.mediaFeedback, 'Enter option text or click Add option before attaching audio.');
 });
+
+// ─── preview helper tests ────────────────────────────────────────────────────
+
+test('getLocalAssetRecord returns record from storage', async () => {
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_1', { localId: 'asset_1', binary: new Uint8Array([1, 2]), metadata: { mimeType: 'audio/mpeg' } });
+  const record = await session.getLocalAssetRecord('asset_1');
+  assert.ok(record);
+  assert.equal(record.localId, 'asset_1');
+});
+
+test('getLocalAssetRecord returns null for missing asset', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod);
+  const record = await session.getLocalAssetRecord('no_such_id');
+  assert.equal(record, null);
+});
+
+test('getLocalAssetRecord returns null for falsy assetId', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod);
+  assert.equal(await session.getLocalAssetRecord(null), null);
+  assert.equal(await session.getLocalAssetRecord(''), null);
+});
+
+test('createObjectUrlForAsset returns null when binary is missing', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod);
+  const objectUrls = [];
+  const origCreate = URL.createObjectURL;
+  URL.createObjectURL = (blob) => { const u = `blob:test/${objectUrls.length}`; objectUrls.push(u); return u; };
+  try {
+    assert.equal(session.createObjectUrlForAsset(null), null);
+    assert.equal(session.createObjectUrlForAsset({ metadata: {} }), null);
+    assert.equal(objectUrls.length, 0);
+  } finally {
+    URL.createObjectURL = origCreate;
+  }
+});
+
+test('createObjectUrlForAsset creates an object URL for a record with binary', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod);
+  const objectUrls = [];
+  const origCreate = URL.createObjectURL;
+  URL.createObjectURL = (blob) => { const u = `blob:test/${objectUrls.length}`; objectUrls.push(u); return u; };
+  try {
+    const url = session.createObjectUrlForAsset({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } });
+    assert.equal(typeof url, 'string');
+    assert.ok(url.startsWith('blob:'));
+    assert.equal(objectUrls.length, 1);
+  } finally {
+    URL.createObjectURL = origCreate;
+  }
+});
+
+test('playAssetAudio returns missing-asset when record not in storage', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod);
+  const result = await session.playAssetAudio('no_such_id');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'missing-asset');
+  assert.equal(session.state.mediaFeedback, 'Unable to load attached audio for preview.');
+});
+
+test('playAssetAudio returns missing-binary when record has no binary', async () => {
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_1', { localId: 'asset_1', metadata: { mimeType: 'audio/mpeg' } });
+  const objectUrls = [];
+  const origCreate = URL.createObjectURL;
+  URL.createObjectURL = () => { const u = `blob:test/${objectUrls.length}`; objectUrls.push(u); return u; };
+  try {
+    const result = await session.playAssetAudio('asset_1');
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'missing-binary');
+  } finally {
+    URL.createObjectURL = origCreate;
+  }
+});
+
+test('playAssetAudio returns playback-failed and revokes URL when play() rejects', async () => {
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_1', { localId: 'asset_1', binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } });
+
+  const revokedUrls = [];
+  const origCreate = URL.createObjectURL;
+  const origRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = () => 'blob:test/audio1';
+  URL.revokeObjectURL = (u) => revokedUrls.push(u);
+
+  const origAudio = globalThis.Audio;
+  globalThis.Audio = class {
+    constructor(src) { this.src = src; }
+    play() { return Promise.reject(new Error('NotAllowedError')); }
+    pause() {}
+    addEventListener() {}
+  };
+  try {
+    const result = await session.playAssetAudio('asset_1');
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'playback-failed');
+    assert.ok(revokedUrls.includes('blob:test/audio1'), 'URL should be revoked on playback failure');
+    assert.equal(session.previewAudio, null);
+    assert.equal(session.previewAudioUrl, null);
+    assert.equal(session.state.mediaFeedback, 'Audio playback was blocked. Try again.');
+  } finally {
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+    globalThis.Audio = origAudio;
+  }
+});
+
+test('playAssetAudio succeeds and clears media feedback', async () => {
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_1', { localId: 'asset_1', binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } });
+  session.state.mediaFeedback = 'old message';
+
+  const origCreate = URL.createObjectURL;
+  URL.createObjectURL = () => 'blob:test/audio2';
+  const origAudio = globalThis.Audio;
+  const listeners = {};
+  globalThis.Audio = class {
+    constructor(src) { this.src = src; }
+    play() { return Promise.resolve(); }
+    pause() {}
+    addEventListener(type, fn) { listeners[type] = fn; }
+  };
+  try {
+    const result = await session.playAssetAudio('asset_1');
+    assert.equal(result.ok, true);
+    assert.equal(session.state.mediaFeedback, null);
+    assert.equal(session.previewAudioUrl, 'blob:test/audio2');
+  } finally {
+    URL.createObjectURL = origCreate;
+    globalThis.Audio = origAudio;
+  }
+});
+
+test('stopPreviewAudio revokes object URL for current preview', async () => {
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_1', { localId: 'asset_1', binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } });
+
+  const revokedUrls = [];
+  const origCreate = URL.createObjectURL;
+  const origRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = () => 'blob:test/audio3';
+  URL.revokeObjectURL = (u) => revokedUrls.push(u);
+  const origAudio = globalThis.Audio;
+  globalThis.Audio = class {
+    constructor() {}
+    play() { return Promise.resolve(); }
+    pause() {}
+    addEventListener() {}
+  };
+  try {
+    await session.playAssetAudio('asset_1');
+    assert.ok(session.previewAudio, 'audio should be set after play');
+    assert.equal(session.previewAudioUrl, 'blob:test/audio3');
+    session.stopPreviewAudio();
+    assert.equal(session.previewAudio, null);
+    assert.equal(session.previewAudioUrl, null);
+    assert.ok(revokedUrls.includes('blob:test/audio3'), 'URL should be revoked by stopPreviewAudio');
+  } finally {
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+    globalThis.Audio = origAudio;
+  }
+});
+
+test('openAssetImage returns blocked when window.open returns null', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod);
+  const origOpen = globalThis.window.open;
+  globalThis.window.open = () => null;
+  try {
+    const result = await session.openAssetImage('asset_1');
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'blocked');
+    assert.equal(session.state.mediaFeedback, 'Image preview was blocked. Allow pop-ups and try again.');
+  } finally {
+    globalThis.window.open = origOpen;
+  }
+});
+
+test('openAssetImage returns missing-asset when asset not in storage', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod);
+  let closed = false;
+  globalThis.window.open = () => ({
+    close() { closed = true; },
+    set opener(_) {},
+    document: { get title() { return ''; }, set title(_) {}, body: { set textContent(_) {} } },
+    location: { replace() {} },
+  });
+  try {
+    const result = await session.openAssetImage('no_such_id');
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'missing-asset');
+    assert.equal(closed, true);
+  } finally {
+    delete globalThis.window.open;
+  }
+});
+
+test('openAssetImage navigates new window to object URL on success', async () => {
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_img', { localId: 'asset_img', binary: new Uint8Array([255, 0]), metadata: { mimeType: 'image/png' } });
+
+  const origCreate = URL.createObjectURL;
+  const revokedUrls = [];
+  const origRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = () => 'blob:test/image1';
+  URL.revokeObjectURL = (u) => revokedUrls.push(u);
+
+  let navigatedTo = null;
+  globalThis.window.open = () => ({
+    set opener(_) {},
+    document: { get title() { return ''; }, set title(_) {}, body: { set textContent(_) {} } },
+    location: { replace(url) { navigatedTo = url; } },
+  });
+  const origSetTimeout = globalThis.window.setTimeout;
+  globalThis.window.setTimeout = (fn) => fn();
+  try {
+    const result = await session.openAssetImage('asset_img');
+    assert.equal(result.ok, true);
+    assert.equal(navigatedTo, 'blob:test/image1');
+    assert.ok(revokedUrls.includes('blob:test/image1'), 'URL should be revoked via setTimeout');
+    assert.equal(session.state.mediaFeedback, null);
+  } finally {
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+    delete globalThis.window.open;
+    globalThis.window.setTimeout = origSetTimeout;
+  }
+});
