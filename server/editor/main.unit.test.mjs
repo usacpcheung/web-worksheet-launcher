@@ -311,6 +311,14 @@ test('multiple-choice option row collapses audio actions into a more-menu and sh
   assert.equal(source.includes('Option audio attached ('), true);
 });
 
+test('multiple-choice option action state rerenders while typing when option ids/media refs change and restores caret', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('const computeOptionActionSignature = (selectedBlock) => {'), true);
+  assert.equal(source.includes('nextOptionActionSignature === optionActionSignature'), true);
+  assert.equal(source.includes("optionInput.dataset.optionIndex = String(optionIndex);"), true);
+  assert.equal(source.includes('replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);'), true);
+});
+
 test('localDraftId render path avoids innerHTML interpolation for untrusted ids', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('localDraftIdEl.innerHTML'), false);

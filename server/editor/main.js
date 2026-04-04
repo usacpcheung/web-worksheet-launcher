@@ -2170,6 +2170,7 @@ function renderEditorShell(session) {
   const protectedActionsColumn = document.createElement('div');
   protectedActionsColumn.className = 'action-column';
   let detailSignature = null;
+  let optionActionSignature = null;
 
   const updateNumberValidationFeedback = (selectedBlock) => {
     const clearFieldError = (input, errorNode) => {
@@ -2359,17 +2360,53 @@ function renderEditorShell(session) {
     ].join(':');
   };
 
+  const computeOptionActionSignature = (selectedBlock) => {
+    if (!selectedBlock || selectedBlock.kind !== 'question') {
+      return 'none';
+    }
+    const normalizedResponseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
+    if (normalizedResponseConfig.inputType !== 'multiple_choice') {
+      return `${selectedBlock.blockId}:non-multiple-choice`;
+    }
+    return JSON.stringify((normalizedResponseConfig.options || []).map((option, index) => {
+      const normalized = normalizeResponseOption(option, `option_${index}`);
+      return [
+        String(normalized.id ?? ''),
+        ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
+      ];
+    }));
+  };
+
   const renderDetailEditor = ({ force = false } = {}) => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
+    const activeOptionInput = (
+      typeof HTMLInputElement !== 'undefined' &&
+      document.activeElement instanceof HTMLInputElement &&
+      document.activeElement.dataset.optionInput === '1' &&
+      questionOptionsList.contains(document.activeElement)
+    )
+      ? document.activeElement
+      : null;
+    const activeOptionInputIndex = activeOptionInput
+      ? Number.parseInt(activeOptionInput.dataset.optionIndex || '', 10)
+      : Number.NaN;
+    const activeOptionSelectionStart = activeOptionInput && Number.isInteger(activeOptionInput.selectionStart)
+      ? activeOptionInput.selectionStart
+      : null;
+    const activeOptionSelectionEnd = activeOptionInput && Number.isInteger(activeOptionInput.selectionEnd)
+      ? activeOptionInput.selectionEnd
+      : null;
     const isOptionInputActive =
       typeof HTMLInputElement !== 'undefined' &&
       document.activeElement instanceof HTMLInputElement &&
       document.activeElement.dataset.optionInput === '1';
+    const nextOptionActionSignature = computeOptionActionSignature(selectedBlock);
     if (
       !force &&
       isOptionInputActive &&
       selectedBlock?.responseConfig?.inputType === 'multiple_choice' &&
-      questionOptionsList.contains(document.activeElement)
+      questionOptionsList.contains(document.activeElement) &&
+      nextOptionActionSignature === optionActionSignature
     ) {
       return;
     }
@@ -2378,6 +2415,7 @@ function renderEditorShell(session) {
       return;
     }
     detailSignature = nextSignature;
+    optionActionSignature = nextOptionActionSignature;
     rightPanel.innerHTML = '';
     rightPanel.append(rightHeading, statusRow);
     if (!selectedBlock) {
@@ -2625,6 +2663,7 @@ function renderEditorShell(session) {
         const optionInput = document.createElement('input');
         optionInput.type = 'text';
         optionInput.dataset.optionInput = '1';
+        optionInput.dataset.optionIndex = String(optionIndex);
         optionInput.className = 'control';
         optionInput.placeholder = `Option ${optionIndex + 1}`;
         optionInput.value = String(option?.label ?? option?.value ?? '');
@@ -2703,6 +2742,15 @@ function renderEditorShell(session) {
         }
         questionOptionsList.appendChild(row);
       });
+      if (Number.isInteger(activeOptionInputIndex)) {
+        const replacementOptionInput = questionOptionsList.querySelector(`input[data-option-input="1"][data-option-index="${activeOptionInputIndex}"]`);
+        if (replacementOptionInput instanceof HTMLInputElement) {
+          replacementOptionInput.focus();
+          if (activeOptionSelectionStart !== null && activeOptionSelectionEnd !== null) {
+            replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);
+          }
+        }
+      }
       rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
     }
   };
