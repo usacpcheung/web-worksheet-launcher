@@ -295,6 +295,31 @@ test('detail signature includes media refs so media attach/remove rerenders imme
   assert.equal(source.includes('normalizedOptionMediaRefs,'), true);
 });
 
+test('multiple-choice option audio controls gate placeholder options with helper feedback', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('const persistedOptionIds = new Set(normalizedOptions.map((option) => String(option?.id || \'\')));'), true);
+  assert.equal(source.includes('const isPersistedOption = persistedOptionIds.has(optionId);'), true);
+  assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption;"), true);
+  assert.equal(source.includes("Enter option text or click Add option before attaching audio."), true);
+});
+
+test('multiple-choice option row collapses audio actions into a more-menu and shows attached asset id', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("optionActionsMenu.className = 'option-actions-menu';"), true);
+  assert.equal(source.includes("optionActionsToggle.textContent = '⋯';"), true);
+  assert.equal(source.includes('row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);'), true);
+  assert.equal(source.includes('Option audio attached ('), true);
+});
+
+test('multiple-choice option action state rerenders while typing when option ids/media refs change and restores caret', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('const computeOptionActionSignature = (selectedBlock) => {'), true);
+  assert.equal(source.includes('nextOptionActionSignature === optionActionSignature'), true);
+  assert.equal(source.includes("optionInput.dataset.optionIndex = String(optionIndex);"), true);
+  assert.equal(source.includes('queueMicrotask(() => {'), true);
+  assert.equal(source.includes('replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);'), true);
+});
+
 test('localDraftId render path avoids innerHTML interpolation for untrusted ids', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('localDraftIdEl.innerHTML'), false);
@@ -1224,4 +1249,16 @@ test('attach/replace/remove option mp3', async () => {
   const removed = await session.removeOptionAudio('q1', 'o1', { confirmRemove: true });
   assert.equal(removed.ok, true);
   assert.equal(removedIds.includes(replaced.assetId), true, 'removed option binary should be deleted from localAssets');
+});
+
+test('attach option audio on non-persisted option returns missing-option with helper feedback', async () => {
+  const mod = await loadEditorModule();
+  const { session } = createSessionWithQuestion(mod, {
+    inputType: 'multiple_choice',
+    options: [],
+  });
+
+  const result = await session.attachOptionAudio('q1', 'placeholder_opt', createFakeFile({ name: 'opt.mp3', type: 'audio/mpeg' }));
+  assert.equal(result.reason, 'missing-option');
+  assert.equal(session.state.mediaFeedback, 'Enter option text or click Add option before attaching audio.');
 });

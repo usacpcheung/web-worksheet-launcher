@@ -848,7 +848,10 @@ class EditorDraftSession {
     const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
     if (responseConfig.inputType !== 'multiple_choice') return { ok: false, reason: 'not-multiple-choice' };
     const existingOption = (responseConfig.options || []).map((option) => normalizeResponseOption(option)).find((o) => o.id === optionId);
-    if (!existingOption) return { ok: false, reason: 'missing-option' };
+    if (!existingOption) {
+      this.setMediaFeedback('Enter option text or click Add option before attaching audio.');
+      return { ok: false, reason: 'missing-option' };
+    }
     const currentRef = getSingleMediaRef(existingOption.mediaRefs, 'option_audio');
     if (currentRef && options.confirmReplace !== true) {
       return { ok: false, reason: 'confirm-replace-required', existingAssetId: currentRef.assetId };
@@ -2167,6 +2170,7 @@ function renderEditorShell(session) {
   const protectedActionsColumn = document.createElement('div');
   protectedActionsColumn.className = 'action-column';
   let detailSignature = null;
+  let optionActionSignature = null;
 
   const updateNumberValidationFeedback = (selectedBlock) => {
     const clearFieldError = (input, errorNode) => {
@@ -2356,17 +2360,53 @@ function renderEditorShell(session) {
     ].join(':');
   };
 
+  const computeOptionActionSignature = (selectedBlock) => {
+    if (!selectedBlock || selectedBlock.kind !== 'question') {
+      return 'none';
+    }
+    const normalizedResponseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
+    if (normalizedResponseConfig.inputType !== 'multiple_choice') {
+      return `${selectedBlock.blockId}:non-multiple-choice`;
+    }
+    return JSON.stringify((normalizedResponseConfig.options || []).map((option, index) => {
+      const normalized = normalizeResponseOption(option, `option_${index}`);
+      return [
+        String(normalized.id ?? ''),
+        ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
+      ];
+    }));
+  };
+
   const renderDetailEditor = ({ force = false } = {}) => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
+    const activeOptionInput = (
+      typeof HTMLInputElement !== 'undefined' &&
+      document.activeElement instanceof HTMLInputElement &&
+      document.activeElement.dataset.optionInput === '1' &&
+      questionOptionsList.contains(document.activeElement)
+    )
+      ? document.activeElement
+      : null;
+    const activeOptionInputIndex = activeOptionInput
+      ? Number.parseInt(activeOptionInput.dataset.optionIndex || '', 10)
+      : Number.NaN;
+    const activeOptionSelectionStart = activeOptionInput && Number.isInteger(activeOptionInput.selectionStart)
+      ? activeOptionInput.selectionStart
+      : null;
+    const activeOptionSelectionEnd = activeOptionInput && Number.isInteger(activeOptionInput.selectionEnd)
+      ? activeOptionInput.selectionEnd
+      : null;
     const isOptionInputActive =
       typeof HTMLInputElement !== 'undefined' &&
       document.activeElement instanceof HTMLInputElement &&
       document.activeElement.dataset.optionInput === '1';
+    const nextOptionActionSignature = computeOptionActionSignature(selectedBlock);
     if (
       !force &&
       isOptionInputActive &&
       selectedBlock?.responseConfig?.inputType === 'multiple_choice' &&
-      questionOptionsList.contains(document.activeElement)
+      questionOptionsList.contains(document.activeElement) &&
+      nextOptionActionSignature === optionActionSignature
     ) {
       return;
     }
@@ -2375,6 +2415,7 @@ function renderEditorShell(session) {
       return;
     }
     detailSignature = nextSignature;
+    optionActionSignature = nextOptionActionSignature;
     rightPanel.innerHTML = '';
     rightPanel.append(rightHeading, statusRow);
     if (!selectedBlock) {
@@ -2548,6 +2589,7 @@ function renderEditorShell(session) {
       const optionList = normalizedOptions.length > 0
         ? normalizedOptions
         : [{ id: createLocalId('opt'), value: '', label: '' }];
+      const persistedOptionIds = new Set(normalizedOptions.map((option) => String(option?.id || '')));
       const isMultiSelect = normalizedResponseConfig.selectionMode === 'multi';
       const selectedOptionIds = new Set(Array.isArray(normalizedResponseConfig.correctAnswerOptionIds)
         ? normalizedResponseConfig.correctAnswerOptionIds.map((optionId) => String(optionId))
@@ -2573,6 +2615,7 @@ function renderEditorShell(session) {
       optionList.forEach((option, optionIndex) => {
         const optionId = String(option?.id || '');
         const optionValue = String(option?.value ?? '');
+        const isPersistedOption = persistedOptionIds.has(optionId);
         const row = document.createElement('div');
         row.className = 'option-row';
 
@@ -2620,6 +2663,7 @@ function renderEditorShell(session) {
         const optionInput = document.createElement('input');
         optionInput.type = 'text';
         optionInput.dataset.optionInput = '1';
+        optionInput.dataset.optionIndex = String(optionIndex);
         optionInput.className = 'control';
         optionInput.placeholder = `Option ${optionIndex + 1}`;
         optionInput.value = String(option?.label ?? option?.value ?? '');
@@ -2627,28 +2671,52 @@ function renderEditorShell(session) {
           session.updateQuestionOptionAtIndex(selectedBlock.blockId, optionIndex, optionInput.value);
         });
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
+        const optionActionsMenu = document.createElement('details');
+        optionActionsMenu.className = 'option-actions-menu';
+        const optionActionsToggle = document.createElement('summary');
+        optionActionsToggle.className = 'icon-btn option-actions-menu__toggle';
+        optionActionsToggle.setAttribute('role', 'button');
+        optionActionsToggle.setAttribute('aria-label', `More actions for option ${optionIndex + 1}`);
+        optionActionsToggle.title = 'More actions';
+        optionActionsToggle.textContent = '⋯';
+        optionActionsMenu.appendChild(optionActionsToggle);
+        const optionActionsList = document.createElement('div');
+        optionActionsList.className = 'option-actions-menu__list';
+
         const optionAudioBtn = document.createElement('button');
         optionAudioBtn.type = 'button';
-        optionAudioBtn.className = 'media-action-btn';
+        optionAudioBtn.className = 'media-action-btn option-actions-menu__item';
         optionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${optionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
-        optionAudioBtn.title = optionAudioRef ? 'Replace option audio' : 'Attach option audio';
+        optionAudioBtn.title = isPersistedOption
+          ? optionAudioRef ? 'Replace option audio' : 'Attach option audio'
+          : 'Enter option text or click Add option before attaching audio';
+        optionAudioBtn.disabled = !isPersistedOption;
         optionAudioBtn.addEventListener('click', () => {
+          if (!isPersistedOption) {
+            session.setMediaFeedback('Enter option text or click Add option before attaching audio.');
+            updateSummary();
+            return;
+          }
           pendingOptionAudioTarget = { blockId: selectedBlock.blockId, optionId };
+          optionActionsMenu.open = false;
           optionAudioInput.value = '';
           optionAudioInput.click();
         });
         const removeOptionAudioBtn = document.createElement('button');
         removeOptionAudioBtn.type = 'button';
-        removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove';
+        removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove option-actions-menu__item';
         removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
-        removeOptionAudioBtn.disabled = !optionAudioRef;
+        removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
         removeOptionAudioBtn.addEventListener('click', () => {
           const confirmed = window.confirm(`Remove audio from option ${optionIndex + 1}?`);
           const result = session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: confirmed });
           if (result.ok || result.reason !== 'confirm-remove-required') {
             updateSummary();
           }
+          optionActionsMenu.open = false;
         });
+        optionActionsList.append(optionAudioBtn, removeOptionAudioBtn);
+        optionActionsMenu.appendChild(optionActionsList);
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'icon-btn danger';
@@ -2659,10 +2727,33 @@ function renderEditorShell(session) {
           session.removeQuestionOption(selectedBlock.blockId, optionIndex);
           updateSummary();
         });
-        row.append(correctToggle, optionInput, optionAudioBtn, removeOptionAudioBtn, removeBtn);
+        row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);
+        if (!isPersistedOption) {
+          const optionAudioHint = document.createElement('span');
+          optionAudioHint.className = 'muted option-row__meta';
+          optionAudioHint.textContent = 'Enter option text or click Add option before attaching audio.';
+          row.appendChild(optionAudioHint);
+        }
+        if (optionAudioRef) {
+          const optionAudioAttached = document.createElement('span');
+          optionAudioAttached.className = 'muted option-row__meta';
+          optionAudioAttached.textContent = `Option audio attached (${optionAudioRef.assetId})`;
+          row.appendChild(optionAudioAttached);
+        }
         questionOptionsList.appendChild(row);
       });
       rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
+      if (Number.isInteger(activeOptionInputIndex)) {
+        const replacementOptionInput = questionOptionsList.querySelector(`input[data-option-input="1"][data-option-index="${activeOptionInputIndex}"]`);
+        if (replacementOptionInput instanceof HTMLInputElement) {
+          queueMicrotask(() => {
+            replacementOptionInput.focus();
+            if (activeOptionSelectionStart !== null && activeOptionSelectionEnd !== null) {
+              replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);
+            }
+          });
+        }
+      }
     }
   };
 

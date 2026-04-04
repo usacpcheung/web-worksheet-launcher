@@ -699,6 +699,21 @@ button {
   flex: 1;
 }
 
+.choice-button-group__label-wrap {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.choice-button-group__meta {
+  font-size: 0.8rem;
+  color: #667085;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
 textarea {
   resize: vertical;
   min-height: 170px;
