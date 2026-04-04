@@ -36,6 +36,8 @@ body {
   flex-direction: column;
   gap: 14px;
   max-width: 780px;
+  width: min(100%, 780px);
+  margin: 0 auto;
 }
 
 .viewer-start-panel h1 {
@@ -53,10 +55,10 @@ body {
 }
 
 .viewer-resume-card {
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  padding: 18px 20px;
-  background: #f9fbff;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
 }
 
 .viewer-resume-card h2 {
@@ -79,6 +81,7 @@ body {
   gap: 10px;
   flex-wrap: wrap;
   align-items: center;
+  width: 100%;
 }
 
 .viewer-start-btn {
@@ -95,6 +98,20 @@ body {
     color 150ms ease,
     transform 120ms ease,
     box-shadow 150ms ease;
+}
+
+.viewer-start-panel > .viewer-start-actions .viewer-start-btn {
+  width: 100%;
+}
+
+.viewer-resume-card .viewer-start-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.viewer-resume-card .viewer-start-btn {
+  width: 100%;
 }
 
 .viewer-start-btn:hover:not(:disabled) {
@@ -127,6 +144,12 @@ body {
   background: #bfd6ff;
   border-color: #9fc3fb;
   color: #044a98;
+}
+
+@media (max-width: 640px) {
+  .viewer-resume-card .viewer-start-actions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .viewer-header,

@@ -2689,7 +2689,7 @@ test('viewer no-param bootstrap renders start panel with explicit resume control
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("textContent = 'Resume attempt';"), true);
   assert.equal(source.includes("textContent = 'Start fresh';"), false);
-  assert.equal(source.includes("textContent = 'Discard saved attempt';"), true);
+  assert.equal(source.includes("textContent = 'Discard attempt';"), true);
   assert.equal(source.includes('renderViewerStartPanel(session, {'), true);
 });
 

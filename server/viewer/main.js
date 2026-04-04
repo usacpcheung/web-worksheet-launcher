@@ -3064,7 +3064,7 @@ function renderViewerStartPanel(session, options = {}) {
     const discardBtn = document.createElement('button');
     discardBtn.type = 'button';
     discardBtn.className = 'viewer-start-btn';
-    discardBtn.textContent = 'Discard saved attempt';
+    discardBtn.textContent = 'Discard attempt';
     discardBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
       if (onDiscardResume) await onDiscardResume();
