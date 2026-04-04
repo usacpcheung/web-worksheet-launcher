@@ -54,9 +54,34 @@ async function loadViewerModule(overrides = {}) {
 
   const rewrittenSource = rewriteModuleSourceForTests(source, [
     {
-      name: 'replace viewer dependency imports with test bag bindings',
-      pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*mapSnapshotToViewerPayload\s*\}\s*from\s*['"]\.\.\/app\/contracts\/mappers\.js['"];\s*import\s*\{\s*validateViewerPayloadSchema\s*\}\s*from\s*['"]\.\.\/app\/contracts\/validators\.js['"];\s*import\s*\{\s*normalizeNumberRules\s*,\s*validateNumberInputFormat\s*\}\s*from\s*['"]\.\.\/app\/contracts\/number-input-validator\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*mapLegacyJsonToPackageModel\s*,\s*parseWorksheetPackage\s*\}\s*from\s*['"]\.\.\/editor\/worksheet-package\.js['"];\s*/,
-      replacement: `const __testBag = globalThis.${bagName};\nconst viewerStorage = __testBag.viewerStorage;\nconst mapSnapshotToViewerPayload = __testBag.mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = __testBag.validateViewerPayloadSchema;\nconst normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;\nconst SharedAuthGate = __testBag.SharedAuthGate;\nconst mapLegacyJsonToPackageModel = __testBag.mapLegacyJsonToPackageModel;\nconst parseWorksheetPackage = __testBag.parseWorksheetPackage;\n`,
+      name: 'replace viewerStorage import with test bag binding',
+      pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];/,
+      replacement: `const __testBag = globalThis.${bagName};\nconst viewerStorage = __testBag.viewerStorage;`,
+    },
+    {
+      name: 'replace mapSnapshotToViewerPayload import with test bag binding',
+      pattern: /import\s*\{\s*mapSnapshotToViewerPayload\s*\}\s*from\s*['"]\.\.\/app\/contracts\/mappers\.js['"];/,
+      replacement: 'const mapSnapshotToViewerPayload = __testBag.mapSnapshotToViewerPayload;',
+    },
+    {
+      name: 'replace validateViewerPayloadSchema import with test bag binding',
+      pattern: /import\s*\{\s*validateViewerPayloadSchema\s*\}\s*from\s*['"]\.\.\/app\/contracts\/validators\.js['"];/,
+      replacement: 'const validateViewerPayloadSchema = __testBag.validateViewerPayloadSchema;',
+    },
+    {
+      name: 'replace number validator imports with test bag bindings',
+      pattern: /import\s*\{\s*normalizeNumberRules\s*,\s*validateNumberInputFormat\s*\}\s*from\s*['"]\.\.\/app\/contracts\/number-input-validator\.js['"];/,
+      replacement: 'const normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;',
+    },
+    {
+      name: 'replace SharedAuthGate import with test bag binding',
+      pattern: /import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];/,
+      replacement: 'const SharedAuthGate = __testBag.SharedAuthGate;',
+    },
+    {
+      name: 'replace worksheet package imports with test bag bindings',
+      pattern: /import\s*\{\s*mapLegacyJsonToPackageModel\s*,\s*parseWorksheetPackage\s*\}\s*from\s*['"]\.\.\/editor\/worksheet-package\.js['"];/,
+      replacement: 'const mapLegacyJsonToPackageModel = __testBag.mapLegacyJsonToPackageModel;\nconst parseWorksheetPackage = __testBag.parseWorksheetPackage;',
     },
     {
       name: 'reroute renderViewerShell side effect',
@@ -1023,6 +1048,49 @@ test('startImportedWorksheetFromPackageFile persists packaged assets into localA
   assert.deepEqual(Array.from(persistedAssets[0].binary), [1, 2, 3]);
   assert.equal(persistedAssets[0].metadata.origin, 'imported_package_asset');
   assert.equal(persistedAssets[0].metadata.mimeType, 'audio/mpeg');
+});
+
+test('startImportedWorksheetFromPackageFile does not persist assets when payload validation fails', async () => {
+  const mod = await loadViewerModule({
+    validateViewerPayloadSchema: () => ({ valid: false, errors: ['bad payload'] }),
+    parseWorksheetPackage: () => ({
+      worksheet: {
+        title: 'Invalid worksheet with media',
+        blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }],
+      },
+      assets: [{ assetId: 'asset_bad_1', binary: new Uint8Array([9, 9, 9]), usage: 'question_audio', kind: 'audio' }],
+    }),
+  });
+
+  let importedPutCalls = 0;
+  let assetPutCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    drafts: { get: async () => null },
+    localAssets: {
+      put: async (record) => {
+        assetPutCalls += 1;
+        return record;
+      },
+      remove: async () => {},
+    },
+    importedWorksheets: {
+      put: async (record) => {
+        importedPutCalls += 1;
+        return record;
+      },
+      remove: async () => {},
+    },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  await assert.rejects(
+    () => session.startImportedWorksheetFromPackageFile(new ArrayBuffer(0)),
+    /Viewer payload validation failed: bad payload/
+  );
+
+  assert.equal(importedPutCalls, 0);
+  assert.equal(assetPutCalls, 0);
 });
 
 test('startImportedWorksheetFromJsonText returns friendly parse/schema errors', async () => {
@@ -2049,6 +2117,29 @@ test('renderViewerStartPanel resume card prefers metadata.updatedAt when updated
   const resumeCard = panel.children.find((child) => child.className === 'viewer-resume-card');
   const resumeMeta = resumeCard.children.find((child) => child.className === 'muted');
   assert.equal(resumeMeta.textContent, 'Attempt attempt_resume_meta · 2026-04-02 03:04:05Z');
+});
+
+test('renderViewerStartPanel resume card strips fractional seconds in display timestamp', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  mod.renderViewerStartPanel({ state: {} }, {
+    resumeAttempt: {
+      localId: 'attempt_resume_ms',
+      metadata: { updatedAt: '2026-04-02T03:04:05.123Z' },
+    },
+  });
+
+  const panel = appRoot.children[0];
+  const resumeCard = panel.children.find((child) => child.className === 'viewer-resume-card');
+  const resumeMeta = resumeCard.children.find((child) => child.className === 'muted');
+  assert.equal(resumeMeta.textContent, 'Attempt attempt_resume_ms · 2026-04-02 03:04:05Z');
 });
 
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {

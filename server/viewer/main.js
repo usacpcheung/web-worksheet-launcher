@@ -90,7 +90,7 @@ function formatTimestampForDisplay(timestamp) {
   if (Number.isNaN(parsed.getTime())) {
     return timestamp;
   }
-  return parsed.toISOString().replace('T', ' ').replace('.000Z', 'Z');
+  return parsed.toISOString().replace('T', ' ').replace(/\.\d+Z$/, 'Z');
 }
 
 function createLocalId(prefix = 'local') {
@@ -1727,35 +1727,7 @@ class ViewerAttemptSession {
       throw new Error('Imported worksheet package is missing worksheet content.');
     }
     const importedAt = nowIso();
-
     const packageAssets = Array.isArray(packageModel?.assets) ? packageModel.assets : [];
-    if (packageAssets.length > 0 && this.storage.localAssets?.put) {
-      try {
-        await Promise.all(packageAssets.map((asset) => {
-          if (!asset || typeof asset !== 'object' || typeof asset.assetId !== 'string' || !asset.assetId.trim()) {
-            return Promise.resolve(null);
-          }
-          if (!(asset.binary instanceof Uint8Array) || asset.binary.byteLength === 0) {
-            return Promise.resolve(null);
-          }
-          return this.storage.localAssets.put({
-            localId: asset.assetId,
-            binary: asset.binary,
-            metadata: {
-              localId: asset.assetId,
-              origin: 'imported_package_asset',
-              updatedAt: importedAt,
-              kind: asset.kind || null,
-              usage: asset.usage || null,
-              mimeType: asset.mimeType || null,
-              path: asset.path || null,
-            },
-          });
-        }));
-      } catch (error) {
-        throw new Error(`Failed to save imported package assets. ${error?.message || String(error)}`);
-      }
-    }
 
     const importedRecord = {
       localId: createLocalId('imported'),
@@ -1768,15 +1740,53 @@ class ViewerAttemptSession {
       updatedAt: importedRecord.importedAt,
     };
 
+    const payload = resolveImportedWorksheetPayload(importedRecord);
+    await this.validateViewerPayload(payload);
+
+    const persistedAssetIds = [];
     try {
       await this.storage.importedWorksheets.put(importedRecord);
+
+      if (packageAssets.length > 0 && this.storage.localAssets?.put) {
+        try {
+          for (const asset of packageAssets) {
+            if (!asset || typeof asset !== 'object' || typeof asset.assetId !== 'string' || !asset.assetId.trim()) {
+              continue;
+            }
+            if (!(asset.binary instanceof Uint8Array) || asset.binary.byteLength === 0) {
+              continue;
+            }
+            await this.storage.localAssets.put({
+              localId: asset.assetId,
+              binary: asset.binary,
+              metadata: {
+                localId: asset.assetId,
+                origin: 'imported_package_asset',
+                updatedAt: importedAt,
+                kind: asset.kind || null,
+                usage: asset.usage || null,
+                mimeType: asset.mimeType || null,
+                path: asset.path || null,
+              },
+            });
+            persistedAssetIds.push(asset.assetId);
+          }
+        } catch (error) {
+          throw new Error(`Failed to save imported package assets. ${error?.message || String(error)}`);
+        }
+      }
     } catch (error) {
+      await Promise.all(
+        persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {}))
+      );
+      await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
+      if (String(error?.message || '').startsWith('Failed to save imported package assets.')) {
+        throw error;
+      }
       throw new Error(`Failed to save imported worksheet. ${error?.message || String(error)}`);
     }
 
     try {
-      const payload = resolveImportedWorksheetPayload(importedRecord);
-      await this.validateViewerPayload(payload);
       const attempt = this.createLocalAttemptState(payload, 'imported_worksheet', {
         sourceImportedWorksheetId: importedRecord.localId,
       });
@@ -1785,6 +1795,10 @@ class ViewerAttemptSession {
       this.persistResumeMetadata();
       return this.state;
     } catch (error) {
+      await Promise.all(
+        persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {}))
+      );
+      await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
       throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
     }
   }
