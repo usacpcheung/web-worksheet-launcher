@@ -316,6 +316,7 @@ test('multiple-choice option action state rerenders while typing when option ids
   assert.equal(source.includes('const computeOptionActionSignature = (selectedBlock) => {'), true);
   assert.equal(source.includes('nextOptionActionSignature === optionActionSignature'), true);
   assert.equal(source.includes("optionInput.dataset.optionIndex = String(optionIndex);"), true);
+  assert.equal(source.includes('queueMicrotask(() => {'), true);
   assert.equal(source.includes('replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);'), true);
 });
 

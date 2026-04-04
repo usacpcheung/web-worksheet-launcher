@@ -2742,16 +2742,18 @@ function renderEditorShell(session) {
         }
         questionOptionsList.appendChild(row);
       });
+      rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
       if (Number.isInteger(activeOptionInputIndex)) {
         const replacementOptionInput = questionOptionsList.querySelector(`input[data-option-input="1"][data-option-index="${activeOptionInputIndex}"]`);
         if (replacementOptionInput instanceof HTMLInputElement) {
-          replacementOptionInput.focus();
-          if (activeOptionSelectionStart !== null && activeOptionSelectionEnd !== null) {
-            replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);
-          }
+          queueMicrotask(() => {
+            replacementOptionInput.focus();
+            if (activeOptionSelectionStart !== null && activeOptionSelectionEnd !== null) {
+              replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);
+            }
+          });
         }
       }
-      rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
     }
   };
 
