@@ -37,7 +37,7 @@ class ViewerBootError extends Error {
       ? options.recoveryActions
       : [
         'Reopen the viewer from a valid worksheet link.',
-        'Import worksheet JSON again from the start panel.',
+        'Import a worksheet package again from the start panel.',
         'Go back and launch viewer again.',
       ];
     this.cause = options.cause;
@@ -2961,7 +2961,7 @@ function renderViewerStartPanel(session, options = {}) {
   heading.textContent = 'Start Viewer';
   const description = document.createElement('p');
   description.className = 'muted';
-  description.textContent = 'Import a worksheet package (.zip) to start a local attempt, or use legacy JSON import for compatibility.';
+  description.textContent = 'Import a worksheet package (.zip) to start a local attempt, or resume a previous local attempt.';
   const resumeAttempt = options.resumeAttempt || null;
   const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
   const onStartFresh = typeof options.onStartFresh === 'function' ? options.onStartFresh : null;
@@ -2970,23 +2970,14 @@ function renderViewerStartPanel(session, options = {}) {
   importPackageBtn.type = 'button';
   importPackageBtn.textContent = 'Import worksheet package (.zip)';
 
-  const importJsonBtn = document.createElement('button');
-  importJsonBtn.type = 'button';
-  importJsonBtn.textContent = 'Import legacy JSON';
-
   const importActions = document.createElement('div');
   importActions.className = 'viewer-start-actions';
-  importActions.append(importPackageBtn, importJsonBtn);
+  importActions.append(importPackageBtn);
 
   const packageFileInput = document.createElement('input');
   packageFileInput.type = 'file';
   packageFileInput.accept = 'application/zip,.zip';
   packageFileInput.hidden = true;
-
-  const jsonFileInput = document.createElement('input');
-  jsonFileInput.type = 'file';
-  jsonFileInput.accept = 'application/json,.json';
-  jsonFileInput.hidden = true;
 
   const errorMessage = document.createElement('p');
   errorMessage.className = 'viewer-start-error';
@@ -3040,11 +3031,6 @@ function renderViewerStartPanel(session, options = {}) {
     packageFileInput.click();
   });
 
-  importJsonBtn.addEventListener('click', () => {
-    errorMessage.textContent = '';
-    jsonFileInput.click();
-  });
-
   packageFileInput.addEventListener('change', async () => {
     const selected = packageFileInput.files?.[0];
     if (!selected) return;
@@ -3066,32 +3052,11 @@ function renderViewerStartPanel(session, options = {}) {
     }
   });
 
-  jsonFileInput.addEventListener('change', async () => {
-    const selected = jsonFileInput.files?.[0];
-    if (!selected) return;
-
-    try {
-      const rawJson = await selected.text();
-      await session.startImportedWorksheetFromJsonText(rawJson);
-      if (session.state.localAttemptId) {
-        const nextUrl = new URL(window.location.href);
-        nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
-        window.history.replaceState({}, '', nextUrl);
-      }
-      renderViewerShell(session);
-      window.viewerSession = session;
-    } catch (error) {
-      errorMessage.textContent = error?.message || 'Unable to import legacy worksheet JSON.';
-    } finally {
-      jsonFileInput.value = '';
-    }
-  });
-
   panel.append(heading, description);
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  panel.append(importActions, packageFileInput, jsonFileInput, errorMessage);
+  panel.append(importActions, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
