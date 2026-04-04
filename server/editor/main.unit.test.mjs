@@ -306,7 +306,7 @@ test('multiple-choice option audio controls gate placeholder options with helper
 test('multiple-choice option row collapses audio actions into a more-menu and shows attached asset id', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("optionActionsMenu.className = 'option-actions-menu';"), true);
-  assert.equal(source.includes("optionActionsToggle.textContent = 'More ▾';"), true);
+  assert.equal(source.includes("optionActionsToggle.textContent = '⋯';"), true);
   assert.equal(source.includes('row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);'), true);
   assert.equal(source.includes('Option audio attached ('), true);
 });

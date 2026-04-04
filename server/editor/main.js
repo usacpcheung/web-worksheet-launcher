@@ -2639,7 +2639,7 @@ function renderEditorShell(session) {
         optionActionsToggle.setAttribute('role', 'button');
         optionActionsToggle.setAttribute('aria-label', `More actions for option ${optionIndex + 1}`);
         optionActionsToggle.title = 'More actions';
-        optionActionsToggle.textContent = 'More ▾';
+        optionActionsToggle.textContent = '⋯';
         optionActionsMenu.appendChild(optionActionsToggle);
         const optionActionsList = document.createElement('div');
         optionActionsList.className = 'option-actions-menu__list';
