@@ -504,6 +504,7 @@ class EditorDraftSession {
     this.inFlightSaveCount = 0;
     this.onStateChange = null;
     this.transientQuestionBlockIds = new Set();
+    this.previewAudio = null;
   }
 
   setOnStateChange(handler) {
@@ -720,6 +721,121 @@ class EditorDraftSession {
 
   findAsset(assetId) {
     return normalizeDraftAssets(this.state.draft?.assets || []).find((asset) => asset.assetId === assetId) || null;
+  }
+
+  async getLocalAssetRecord(assetId) {
+    if (!assetId || !this.storage.localAssets?.get) return null;
+    try {
+      return await this.storage.localAssets.get(assetId);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  createObjectUrlForAsset(assetRecord, fallbackMimeType = 'application/octet-stream') {
+    const binary = assetRecord?.binary;
+    if (!binary) return null;
+    const bytes = binary instanceof Uint8Array ? binary : new Uint8Array(binary);
+    const blob = new Blob([bytes], { type: assetRecord?.metadata?.mimeType || fallbackMimeType });
+    return URL.createObjectURL(blob);
+  }
+
+  stopPreviewAudio() {
+    if (!this.previewAudio) return;
+    try {
+      this.previewAudio.pause();
+      this.previewAudio.src = '';
+    } catch (error) {
+      // no-op
+    }
+    this.previewAudio = null;
+    if (this.previewAudioUrl) {
+      URL.revokeObjectURL(this.previewAudioUrl);
+      this.previewAudioUrl = null;
+    }
+  }
+
+  async playAssetAudio(assetId) {
+    const record = await this.getLocalAssetRecord(assetId);
+    if (!record) {
+      this.setMediaFeedback('Unable to load attached audio for preview.');
+      return { ok: false, reason: 'missing-asset' };
+    }
+    const objectUrl = this.createObjectUrlForAsset(record, 'audio/mpeg');
+    if (!objectUrl) {
+      this.setMediaFeedback('Unable to load attached audio for preview.');
+      return { ok: false, reason: 'missing-binary' };
+    }
+
+    this.stopPreviewAudio();
+    const audio = new Audio(objectUrl);
+    this.previewAudio = audio;
+    this.previewAudioUrl = objectUrl;
+    audio.addEventListener('ended', () => {
+      URL.revokeObjectURL(objectUrl);
+      if (this.previewAudio === audio) {
+        this.previewAudio = null;
+        this.previewAudioUrl = null;
+      }
+    }, { once: true });
+    audio.addEventListener('error', () => {
+      URL.revokeObjectURL(objectUrl);
+      if (this.previewAudio === audio) {
+        this.previewAudio = null;
+        this.previewAudioUrl = null;
+      }
+      this.setMediaFeedback('Unable to play attached audio.');
+    }, { once: true });
+
+    try {
+      await audio.play();
+      this.clearMediaFeedback();
+      this.notifyStateChange();
+      return { ok: true };
+    } catch (error) {
+      URL.revokeObjectURL(objectUrl);
+      this.previewAudio = null;
+      this.previewAudioUrl = null;
+      this.setMediaFeedback('Audio playback was blocked. Try again.');
+      return { ok: false, reason: 'playback-failed' };
+    }
+  }
+
+  async openAssetImage(assetId) {
+    const previewWindow = window.open('', '_blank', 'noopener,noreferrer');
+    if (!previewWindow) {
+      this.setMediaFeedback('Image preview was blocked. Allow pop-ups and try again.');
+      return { ok: false, reason: 'blocked' };
+    }
+    try {
+      previewWindow.opener = null;
+    } catch (error) {
+      // Ignore cross-browser quirks when hardening the newly opened window.
+    }
+    try {
+      previewWindow.document.title = 'Loading image preview…';
+      previewWindow.document.body.textContent = 'Loading image preview…';
+    } catch (error) {
+      // Ignore cross-browser document access quirks for newly opened windows.
+    }
+
+    const record = await this.getLocalAssetRecord(assetId);
+    if (!record) {
+      previewWindow.close();
+      this.setMediaFeedback('Unable to load attached image for preview.');
+      return { ok: false, reason: 'missing-asset' };
+    }
+    const objectUrl = this.createObjectUrlForAsset(record, 'image/png');
+    if (!objectUrl) {
+      previewWindow.close();
+      this.setMediaFeedback('Unable to load attached image for preview.');
+      return { ok: false, reason: 'missing-binary' };
+    }
+    previewWindow.location.replace(objectUrl);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    this.clearMediaFeedback();
+    this.notifyStateChange();
+    return { ok: true };
   }
 
   async createLocalAssetRecord(file, usage, kind) {
@@ -2464,6 +2580,11 @@ function renderEditorShell(session) {
     removeImageBtn.className = 'media-action-btn media-action-btn--remove';
     removeImageBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">🖼</span><span>Remove image</span>';
     removeImageBtn.disabled = !currentQuestionImageRef;
+    const viewImageBtn = document.createElement('button');
+    viewImageBtn.type = 'button';
+    viewImageBtn.className = 'media-action-btn';
+    viewImageBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">👁</span><span>View image</span>';
+    viewImageBtn.disabled = !currentQuestionImageRef;
     attachImageBtn.addEventListener('click', () => {
       questionImageInput.dataset.blockId = selectedBlock.blockId;
       questionImageInput.value = '';
@@ -2478,7 +2599,12 @@ function renderEditorShell(session) {
         updateSummary();
       }
     });
-    questionImageRow.append(attachImageBtn, removeImageBtn);
+    viewImageBtn.addEventListener('click', async () => {
+      if (!currentQuestionImageRef?.assetId) return;
+      await session.openAssetImage(currentQuestionImageRef.assetId);
+      updateSummary();
+    });
+    questionImageRow.append(attachImageBtn, viewImageBtn, removeImageBtn);
     rightPanel.append(questionImageLabel, questionImageRow);
 
     const questionAudioRow = document.createElement('div');
@@ -2496,6 +2622,11 @@ function renderEditorShell(session) {
     removeQuestionAudioBtn.className = 'media-action-btn media-action-btn--remove';
     removeQuestionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
     removeQuestionAudioBtn.disabled = !currentQuestionAudioRef;
+    const playQuestionAudioBtn = document.createElement('button');
+    playQuestionAudioBtn.type = 'button';
+    playQuestionAudioBtn.className = 'media-action-btn';
+    playQuestionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
+    playQuestionAudioBtn.disabled = !currentQuestionAudioRef;
     attachQuestionAudioBtn.addEventListener('click', () => {
       questionAudioInput.dataset.blockId = selectedBlock.blockId;
       questionAudioInput.value = '';
@@ -2508,7 +2639,12 @@ function renderEditorShell(session) {
         updateSummary();
       }
     });
-    questionAudioRow.append(attachQuestionAudioBtn, removeQuestionAudioBtn);
+    playQuestionAudioBtn.addEventListener('click', async () => {
+      if (!currentQuestionAudioRef?.assetId) return;
+      await session.playAssetAudio(currentQuestionAudioRef.assetId);
+      updateSummary();
+    });
+    questionAudioRow.append(attachQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
     rightPanel.append(questionAudioLabel, questionAudioRow, mediaFeedback);
 
     const inputTypeLabel = document.createElement('label');
@@ -2715,7 +2851,18 @@ function renderEditorShell(session) {
           }
           optionActionsMenu.open = false;
         });
-        optionActionsList.append(optionAudioBtn, removeOptionAudioBtn);
+        const playOptionAudioBtn = document.createElement('button');
+        playOptionAudioBtn.type = 'button';
+        playOptionAudioBtn.className = 'media-action-btn option-actions-menu__item';
+        playOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
+        playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
+        playOptionAudioBtn.addEventListener('click', async () => {
+          if (!optionAudioRef?.assetId) return;
+          await session.playAssetAudio(optionAudioRef.assetId);
+          optionActionsMenu.open = false;
+          updateSummary();
+        });
+        optionActionsList.append(optionAudioBtn, playOptionAudioBtn, removeOptionAudioBtn);
         optionActionsMenu.appendChild(optionActionsList);
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
