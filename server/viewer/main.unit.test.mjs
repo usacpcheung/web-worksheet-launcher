@@ -316,10 +316,11 @@ test('createChoiceButtonGroup renders option-audio play buttons only when option
 
   const firstRow = group.children[0];
   const secondRow = group.children[1];
-  const firstAudioButton = firstRow.children.find((node) => node.className === 'choice-audio-btn');
-  const secondAudioButton = secondRow.children.find((node) => node.className === 'choice-audio-btn');
+  const firstAudioButton = firstRow.children.find((node) => String(node.className || '').includes('choice-audio-btn'));
+  const secondAudioButton = secondRow.children.find((node) => String(node.className || '').includes('choice-audio-btn'));
 
-  assert.equal(firstAudioButton?.textContent, 'Play option audio');
+  assert.equal(firstAudioButton?.textContent, '🔊');
+  assert.equal(String(firstAudioButton?.className || '').includes('question-card__prompt-audio-btn'), true);
   assert.equal(secondAudioButton, undefined);
 });
 
@@ -2765,6 +2766,16 @@ test('question prompt audio handler toggles disable state and does not persist s
   assert.equal(source.includes("onEnded: () => {\n            questionAudioBtn.disabled = false;"), true);
   assert.equal(source.includes("onError: () => {\n            questionAudioBtn.disabled = false;"), true);
   assert.equal(source.includes("setMediaFeedback(`Playing question audio (${questionAudioRef.assetId}).`);"), false);
+});
+
+test('choice option audio handler matches icon-button lifecycle behavior', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';"), true);
+  assert.equal(source.includes("optionAudioBtn.textContent = '🔊';"), true);
+  assert.equal(source.includes("if (optionAudioBtn.disabled) return;"), true);
+  assert.equal(source.includes("onStart: () => {\n            optionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("onEnded: () => {\n            optionAudioBtn.disabled = false;"), true);
+  assert.equal(source.includes("reportMediaFeedback(`Playing option audio (${optionAudioRef.assetId}).`);"), false);
 });
 
 test('viewer no-param bootstrap renders start panel with explicit resume controls', async () => {

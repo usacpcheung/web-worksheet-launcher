@@ -612,17 +612,39 @@ function createChoiceButtonGroup({
     if (optionAudioRef) {
       const optionAudioBtn = document.createElement('button');
       optionAudioBtn.type = 'button';
-      optionAudioBtn.className = 'choice-audio-btn';
-      optionAudioBtn.textContent = 'Play option audio';
+      optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';
+      optionAudioBtn.textContent = '🔊';
+      optionAudioBtn.setAttribute('aria-label', 'Play option audio');
+      optionAudioBtn.title = 'Play option audio';
       optionAudioBtn.addEventListener('click', async (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const result = await session.playAssetAudio(optionAudioRef.assetId);
+        if (optionAudioBtn.disabled) return;
+
+        const result = await session.playAssetAudio(optionAudioRef.assetId, {
+          onStart: () => {
+            optionAudioBtn.disabled = true;
+            if (typeof reportMediaFeedback === 'function') {
+              reportMediaFeedback('');
+            }
+          },
+          onEnded: () => {
+            optionAudioBtn.disabled = false;
+            if (typeof reportMediaFeedback === 'function') {
+              reportMediaFeedback('');
+            }
+          },
+          onError: () => {
+            optionAudioBtn.disabled = false;
+          },
+          onInterrupted: () => {
+            optionAudioBtn.disabled = false;
+          },
+        });
         if (typeof reportMediaFeedback === 'function') {
           if (!result.ok) {
+            optionAudioBtn.disabled = false;
             reportMediaFeedback(result.message || 'Unable to play option audio.');
-          } else {
-            reportMediaFeedback(`Playing option audio (${optionAudioRef.assetId}).`);
           }
         }
       });

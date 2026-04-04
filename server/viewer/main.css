@@ -384,11 +384,8 @@ body {
 }
 
 .choice-audio-btn {
-  min-height: 38px;
-  border-radius: 10px;
-  border: 1px solid #d0d5dd;
-  background: #fff;
-  padding: 0 12px;
+  min-height: 32px;
+  padding: 0;
 }
 
 .text-counter {
