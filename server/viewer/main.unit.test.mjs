@@ -974,6 +974,57 @@ test('startImportedWorksheetFromPackageFile creates fresh attempt from worksheet
   assert.equal(session.state.viewerPayload.title, 'Package worksheet');
 });
 
+test('startImportedWorksheetFromPackageFile persists packaged assets into localAssets store', async () => {
+  const mod = await loadViewerModule({
+    parseWorksheetPackage: () => ({
+      worksheet: {
+        title: 'Package worksheet with media',
+        blocks: [
+          {
+            blockId: 'q1',
+            kind: 'question',
+            position: 0,
+            prompt: { text: 'Listen', mediaRefs: [{ usage: 'question_audio', assetId: 'asset_audio_1' }] },
+            responseConfig: { inputType: 'text' },
+          },
+        ],
+      },
+      assets: [
+        {
+          assetId: 'asset_audio_1',
+          usage: 'question_audio',
+          kind: 'audio',
+          mimeType: 'audio/mpeg',
+          path: 'media/asset_audio_1.mp3',
+          binary: new Uint8Array([1, 2, 3]),
+        },
+      ],
+    }),
+  });
+  const persistedAssets = [];
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => value },
+    drafts: { get: async () => null },
+    localAssets: {
+      put: async (record) => {
+        persistedAssets.push(record);
+        return record;
+      },
+    },
+    importedWorksheets: { put: async (record) => record },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  await session.startImportedWorksheetFromPackageFile(new ArrayBuffer(0));
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(persistedAssets.length, 1);
+  assert.equal(persistedAssets[0].localId, 'asset_audio_1');
+  assert.deepEqual(Array.from(persistedAssets[0].binary), [1, 2, 3]);
+  assert.equal(persistedAssets[0].metadata.origin, 'imported_package_asset');
+  assert.equal(persistedAssets[0].metadata.mimeType, 'audio/mpeg');
+});
+
 test('startImportedWorksheetFromJsonText returns friendly parse/schema errors', async () => {
   const mod = await loadViewerModule();
   let putCalls = 0;

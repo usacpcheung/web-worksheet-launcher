@@ -1726,11 +1726,41 @@ class ViewerAttemptSession {
     if (!worksheet || typeof worksheet !== 'object') {
       throw new Error('Imported worksheet package is missing worksheet content.');
     }
+    const importedAt = nowIso();
+
+    const packageAssets = Array.isArray(packageModel?.assets) ? packageModel.assets : [];
+    if (packageAssets.length > 0 && this.storage.localAssets?.put) {
+      try {
+        await Promise.all(packageAssets.map((asset) => {
+          if (!asset || typeof asset !== 'object' || typeof asset.assetId !== 'string' || !asset.assetId.trim()) {
+            return Promise.resolve(null);
+          }
+          if (!(asset.binary instanceof Uint8Array) || asset.binary.byteLength === 0) {
+            return Promise.resolve(null);
+          }
+          return this.storage.localAssets.put({
+            localId: asset.assetId,
+            binary: asset.binary,
+            metadata: {
+              localId: asset.assetId,
+              origin: 'imported_package_asset',
+              updatedAt: importedAt,
+              kind: asset.kind || null,
+              usage: asset.usage || null,
+              mimeType: asset.mimeType || null,
+              path: asset.path || null,
+            },
+          });
+        }));
+      } catch (error) {
+        throw new Error(`Failed to save imported package assets. ${error?.message || String(error)}`);
+      }
+    }
 
     const importedRecord = {
       localId: createLocalId('imported'),
       worksheet,
-      importedAt: nowIso(),
+      importedAt,
     };
     importedRecord.metadata = {
       localId: importedRecord.localId,
