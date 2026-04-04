@@ -348,6 +348,43 @@ textarea.control {
   flex: 1;
 }
 
+.media-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.media-action-btn:hover:not(:disabled),
+.media-action-btn:focus-visible:not(:disabled) {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+.media-action-btn--remove:not(:disabled) {
+  color: #667085;
+  background: #f8fafc;
+}
+
+.media-action-btn:disabled {
+  opacity: 0.45;
+  color: #98a2b3;
+  background: #f8fafc;
+  border-color: #d0d5dd;
+  cursor: not-allowed;
+}
+
+.media-action-btn__icon {
+  font-size: 1rem;
+  line-height: 1;
+  width: 16px;
+  text-align: center;
+  opacity: 0.7;
+}
+
 .option-add-btn {
   width: fit-content;
   background: #fff;

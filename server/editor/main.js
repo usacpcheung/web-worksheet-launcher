@@ -2307,6 +2307,21 @@ function renderEditorShell(session) {
       : null;
     const normalizedInputType = normalizedResponseConfig?.inputType || 'text';
     const normalizedSelectionMode = normalizedResponseConfig?.selectionMode || '';
+    const normalizedPromptMediaRefs = selectedBlock.kind === 'question'
+      ? JSON.stringify(normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs).map((ref) => [
+        String(ref?.usage ?? ''),
+        String(ref?.assetId ?? ''),
+      ]))
+      : '[]';
+    const normalizedOptionMediaRefs = selectedBlock.kind === 'question'
+      ? JSON.stringify((normalizedResponseConfig?.options || []).map((opt) => {
+        const normalized = normalizeResponseOption(opt);
+        return [
+          String(normalized.id ?? ''),
+          ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
+        ];
+      }))
+      : '[]';
     const normalizedCorrectAnswer = (() => {
       if (!normalizedResponseConfig || normalizedInputType !== 'multiple_choice') {
         return '';
@@ -2331,10 +2346,12 @@ function renderEditorShell(session) {
       normalizedResponseConfig?.displayMode || '',
       normalizedSelectionMode,
       normalizedResponseConfig?.shuffleOptions ? '1' : '0',
+      normalizedPromptMediaRefs,
       JSON.stringify((normalizedResponseConfig?.options || []).map((opt) => [
         String(opt?.value ?? ''),
         String(opt?.label ?? ''),
       ])),
+      normalizedOptionMediaRefs,
       normalizedCorrectAnswer,
     ].join(':');
   };
@@ -2399,23 +2416,25 @@ function renderEditorShell(session) {
       : 'Question image: none attached';
     const attachImageBtn = document.createElement('button');
     attachImageBtn.type = 'button';
-    attachImageBtn.textContent = currentQuestionImageRef ? 'Replace image…' : 'Attach image…';
+    attachImageBtn.className = 'media-action-btn';
+    attachImageBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">🖼</span><span>${currentQuestionImageRef ? 'Replace image…' : 'Attach image…'}</span>`;
     const removeImageBtn = document.createElement('button');
     removeImageBtn.type = 'button';
-    removeImageBtn.textContent = 'Remove image';
+    removeImageBtn.className = 'media-action-btn media-action-btn--remove';
+    removeImageBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">🖼</span><span>Remove image</span>';
     removeImageBtn.disabled = !currentQuestionImageRef;
     attachImageBtn.addEventListener('click', () => {
       questionImageInput.dataset.blockId = selectedBlock.blockId;
       questionImageInput.value = '';
       questionImageInput.click();
     });
-    removeImageBtn.addEventListener('click', () => {
+    removeImageBtn.addEventListener('click', async () => {
       const confirmed = window.confirm('Remove the current question image attachment?');
-      const result = session.removeQuestionMedia(selectedBlock.blockId, 'question_image', { confirmRemove: confirmed });
+      const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_image', { confirmRemove: confirmed });
       if (!result.ok && result.reason !== 'confirm-remove-required') {
-        updateSummary();
+        updateSummary({ forceDetailRender: true });
       } else if (result.ok) {
-        updateSummary();
+        updateSummary({ forceDetailRender: true });
       }
     });
     questionImageRow.append(attachImageBtn, removeImageBtn);
@@ -2429,21 +2448,23 @@ function renderEditorShell(session) {
       : 'Question audio: none attached';
     const attachQuestionAudioBtn = document.createElement('button');
     attachQuestionAudioBtn.type = 'button';
-    attachQuestionAudioBtn.textContent = currentQuestionAudioRef ? 'Replace audio…' : 'Attach audio…';
+    attachQuestionAudioBtn.className = 'media-action-btn';
+    attachQuestionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${currentQuestionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
     const removeQuestionAudioBtn = document.createElement('button');
     removeQuestionAudioBtn.type = 'button';
-    removeQuestionAudioBtn.textContent = 'Remove audio';
+    removeQuestionAudioBtn.className = 'media-action-btn media-action-btn--remove';
+    removeQuestionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
     removeQuestionAudioBtn.disabled = !currentQuestionAudioRef;
     attachQuestionAudioBtn.addEventListener('click', () => {
       questionAudioInput.dataset.blockId = selectedBlock.blockId;
       questionAudioInput.value = '';
       questionAudioInput.click();
     });
-    removeQuestionAudioBtn.addEventListener('click', () => {
+    removeQuestionAudioBtn.addEventListener('click', async () => {
       const confirmed = window.confirm('Remove the current question audio attachment?');
-      const result = session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: confirmed });
+      const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: confirmed });
       if (result.ok || result.reason !== 'confirm-remove-required') {
-        updateSummary();
+        updateSummary({ forceDetailRender: true });
       }
     });
     questionAudioRow.append(attachQuestionAudioBtn, removeQuestionAudioBtn);
@@ -2608,7 +2629,8 @@ function renderEditorShell(session) {
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
         const optionAudioBtn = document.createElement('button');
         optionAudioBtn.type = 'button';
-        optionAudioBtn.textContent = optionAudioRef ? '🎵 Replace' : '🎵 Attach';
+        optionAudioBtn.className = 'media-action-btn';
+        optionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${optionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
         optionAudioBtn.title = optionAudioRef ? 'Replace option audio' : 'Attach option audio';
         optionAudioBtn.addEventListener('click', () => {
           pendingOptionAudioTarget = { blockId: selectedBlock.blockId, optionId };
@@ -2617,13 +2639,14 @@ function renderEditorShell(session) {
         });
         const removeOptionAudioBtn = document.createElement('button');
         removeOptionAudioBtn.type = 'button';
-        removeOptionAudioBtn.textContent = 'Remove 🎵';
+        removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove';
+        removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
         removeOptionAudioBtn.disabled = !optionAudioRef;
-        removeOptionAudioBtn.addEventListener('click', () => {
+        removeOptionAudioBtn.addEventListener('click', async () => {
           const confirmed = window.confirm(`Remove audio from option ${optionIndex + 1}?`);
-          const result = session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: confirmed });
+          const result = await session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: confirmed });
           if (result.ok || result.reason !== 'confirm-remove-required') {
-            updateSummary();
+            updateSummary({ forceDetailRender: true });
           }
         });
         const removeBtn = document.createElement('button');
@@ -2643,11 +2666,11 @@ function renderEditorShell(session) {
     }
   };
 
-  const updateSummary = () => {
+  const updateSummary = ({ forceDetailRender = false } = {}) => {
     session.validateCurrentDraft();
     syncFormControls();
     renderBlockList();
-    renderDetailEditor();
+    renderDetailEditor({ force: forceDetailRender });
 
     const saveState = session.state.lastPersistenceError
       ? 'Save error'
@@ -2780,7 +2803,7 @@ function renderEditorShell(session) {
       session.setMediaFeedback('Image replacement canceled.');
     }
     questionImageInput.value = '';
-    updateSummary();
+    updateSummary({ forceDetailRender: true });
   });
   questionAudioInput.addEventListener('change', async () => {
     const [file] = questionAudioInput.files || [];
@@ -2794,7 +2817,7 @@ function renderEditorShell(session) {
       session.setMediaFeedback('Audio replacement canceled.');
     }
     questionAudioInput.value = '';
-    updateSummary();
+    updateSummary({ forceDetailRender: true });
   });
   optionAudioInput.addEventListener('change', async () => {
     const [file] = optionAudioInput.files || [];
@@ -2811,7 +2834,7 @@ function renderEditorShell(session) {
       session.setMediaFeedback('Option audio replacement canceled.');
     }
     optionAudioInput.value = '';
-    updateSummary();
+    updateSummary({ forceDetailRender: true });
   });
 
   importBtn.addEventListener('click', () => {
