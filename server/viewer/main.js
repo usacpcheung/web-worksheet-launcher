@@ -3019,6 +3019,7 @@ function renderViewerStartPanel(session, options = {}) {
   const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
   const importPackageBtn = document.createElement('button');
   importPackageBtn.type = 'button';
+  importPackageBtn.className = 'viewer-start-btn viewer-start-btn--primary';
   importPackageBtn.textContent = 'Import worksheet package (.zip)';
 
   const importActions = document.createElement('div');
@@ -3054,6 +3055,7 @@ function renderViewerStartPanel(session, options = {}) {
     resumeActions.className = 'viewer-start-actions';
     const resumeBtn = document.createElement('button');
     resumeBtn.type = 'button';
+    resumeBtn.className = 'viewer-start-btn viewer-start-btn--primary';
     resumeBtn.textContent = 'Resume attempt';
     resumeBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
@@ -3061,7 +3063,8 @@ function renderViewerStartPanel(session, options = {}) {
     });
     const discardBtn = document.createElement('button');
     discardBtn.type = 'button';
-    discardBtn.textContent = 'Discard saved attempt';
+    discardBtn.className = 'viewer-start-btn';
+    discardBtn.textContent = 'Discard attempt';
     discardBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
       if (onDiscardResume) await onDiscardResume();
