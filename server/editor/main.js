@@ -11,6 +11,7 @@ const app = document.getElementById('app');
 
 const AUTOSAVE_MS = 1000;
 const DEFAULT_MODE = 'edit';
+const UNDO_STACK_LIMIT = 20;
 const RESUME_FLAG_KEY = 'editor:lastSession';
 const DEFAULT_PUBLISHER_ID = 'local_editor';
 let contractsPromise;
@@ -524,6 +525,7 @@ class EditorDraftSession {
     this.inFlightSaveCount = 0;
     this.onStateChange = null;
     this.transientQuestionBlockIds = new Set();
+    this.undoStack = [];
     this.previewAudio = null;
   }
 
@@ -681,9 +683,37 @@ class EditorDraftSession {
 
     this.state.draftRevision = 1;
     this.state.lastSavedRevision = existing ? 1 : 0;
+    this.undoStack = [];
     this.validateCurrentDraft();
     this.persistRestoreMetadata();
     return this.state.draft;
+  }
+
+  pushUndoSnapshot() {
+    if (!this.state.draft) return;
+    this.undoStack.push({
+      draft: cloneDraftForPersistence(this.state.draft),
+      selectedBlockId: this.state.selectedBlockId,
+      transientQuestionBlockIds: Array.from(this.transientQuestionBlockIds),
+    });
+    if (this.undoStack.length > UNDO_STACK_LIMIT) {
+      this.undoStack.splice(0, this.undoStack.length - UNDO_STACK_LIMIT);
+    }
+  }
+
+  canUndo() {
+    return this.undoStack.length > 0;
+  }
+
+  undo() {
+    if (!this.state.draft || this.undoStack.length === 0) return false;
+    const previous = this.undoStack.pop();
+    if (!previous?.draft) return false;
+    this.state.draft = cloneDraftForPersistence(previous.draft);
+    this.state.selectedBlockId = previous.selectedBlockId || this.state.draft.blocks?.[0]?.blockId || null;
+    this.transientQuestionBlockIds = new Set(previous.transientQuestionBlockIds || []);
+    this.touchDraft();
+    return true;
   }
 
   updateTitle(nextTitle) {
@@ -1122,6 +1152,26 @@ class EditorDraftSession {
     this.touchDraft();
   }
 
+  requestQuestionInputTypeChange(blockId, inputType, confirmHandler = null) {
+    if (!this.state.draft || !blockId) return false;
+    const block = this.findBlock(blockId);
+    if (!block || block.kind !== 'question') return false;
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    const nextInputType = ['text', 'number', 'boolean', 'multiple_choice'].includes(inputType) ? inputType : 'text';
+    const hasOptionsToLose = responseConfig.inputType === 'multiple_choice'
+      && nextInputType !== 'multiple_choice'
+      && Array.isArray(responseConfig.options)
+      && responseConfig.options.length > 0;
+    if (hasOptionsToLose) {
+      const confirmed = typeof confirmHandler === 'function'
+        ? confirmHandler('Switching input type will remove all existing options. Continue?')
+        : window.confirm('Switching input type will remove all existing options. Continue?');
+      if (!confirmed) return false;
+    }
+    this.updateQuestionInputType(blockId, inputType);
+    return true;
+  }
+
   updateQuestionMaxLength(blockId, maxLength) {
     if (!this.state.draft || !blockId) return;
     const parsed = Number.parseInt(maxLength, 10);
@@ -1470,6 +1520,7 @@ class EditorDraftSession {
 
   removeQuestionOption(blockId, index) {
     if (!this.state.draft || !blockId || !Number.isInteger(index) || index < 0) return;
+    this.pushUndoSnapshot();
     const removedAssetIds = [];
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
@@ -1494,6 +1545,27 @@ class EditorDraftSession {
       this.pruneAssetLinks(removedAssetIds);
     }
     this.touchDraft();
+  }
+
+  requestRemoveQuestionOption(blockId, index, confirmHandler = null) {
+    if (!this.state.draft || !blockId || !Number.isInteger(index) || index < 0) return false;
+    const block = this.findBlock(blockId);
+    if (!block || block.kind !== 'question') return false;
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    const options = Array.isArray(responseConfig.options)
+      ? responseConfig.options.map((option) => normalizeResponseOption(option))
+      : [];
+    const option = options[index];
+    if (!option) return false;
+    const hasLabel = String(option.label ?? option.value ?? '').trim().length > 0;
+    if (hasLabel) {
+      const confirmed = typeof confirmHandler === 'function'
+        ? confirmHandler(`Delete option ${index + 1}?`)
+        : window.confirm(`Delete option ${index + 1}?`);
+      if (!confirmed) return false;
+    }
+    this.removeQuestionOption(blockId, index);
+    return true;
   }
 
   createBlock(kind = 'content') {
@@ -1542,6 +1614,7 @@ class EditorDraftSession {
 
   deleteBlock(blockId) {
     if (!this.state.draft || !blockId) return;
+    this.pushUndoSnapshot();
     const removedBlock = this.state.draft.blocks.find((block) => block.blockId === blockId) || null;
     const removedAssetIds = collectQuestionAssetIds(removedBlock);
     this.transientQuestionBlockIds.delete(blockId);
@@ -1566,6 +1639,21 @@ class EditorDraftSession {
       this.state.selectedBlockId = nextBlocks[0].blockId;
     }
     this.touchDraft();
+  }
+
+  requestDeleteBlock(blockId, confirmHandler = null) {
+    if (!this.state.draft || !blockId) return false;
+    const block = this.findBlock(blockId);
+    if (!block) return false;
+    const needsConfirmation = block.kind === 'question' && String(block?.prompt?.text || '').trim().length > 0;
+    if (needsConfirmation) {
+      const confirmed = typeof confirmHandler === 'function'
+        ? confirmHandler('Delete this question block?')
+        : window.confirm('Delete this question block?');
+      if (!confirmed) return false;
+    }
+    this.deleteBlock(blockId);
+    return true;
   }
 
   pruneAssetLinks(assetIds = []) {
@@ -2165,6 +2253,35 @@ function renderEditorShell(session) {
 
   const statusRow = document.createElement('p');
   statusRow.className = 'muted';
+  let activeToast = null;
+  let activeToastTimer = null;
+  const clearToast = () => {
+    if (activeToastTimer !== null) {
+      window.clearTimeout(activeToastTimer);
+      activeToastTimer = null;
+    }
+    if (activeToast) {
+      activeToast.remove();
+      activeToast = null;
+    }
+  };
+  const showToast = (message, durationMs = 3000) => {
+    if (!message) return;
+    clearToast();
+    const host = document.getElementById('editor-toast-container') || document.body;
+    const toast = document.createElement('div');
+    toast.className = 'editor-toast';
+    toast.textContent = String(message);
+    host.appendChild(toast);
+    activeToast = toast;
+    activeToastTimer = window.setTimeout(() => {
+      if (activeToast === toast) {
+        activeToast = null;
+      }
+      toast.remove();
+      activeToastTimer = null;
+    }, Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 3000);
+  };
   const moreActions = document.createElement('details');
   moreActions.className = 'editor-more-actions';
   const moreActionsSummary = document.createElement('summary');
@@ -2315,6 +2432,9 @@ function renderEditorShell(session) {
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.textContent = 'Save Now';
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.textContent = 'Undo';
   const addContentBtn = document.createElement('button');
   addContentBtn.type = 'button';
   addContentBtn.textContent = 'Add Content';
@@ -2503,7 +2623,10 @@ function renderEditorShell(session) {
       deleteBtn.textContent = '🗑';
       deleteBtn.addEventListener('click', (event) => {
         event.stopPropagation();
-        session.deleteBlock(block.blockId);
+        const deleted = session.requestDeleteBlock(block.blockId);
+        if (deleted) {
+          showToast('Block deleted. Press Ctrl+Z to undo.');
+        }
         updateSummary();
       });
       actions.append(moveUpBtn, moveDownBtn, deleteBtn);
@@ -2966,7 +3089,10 @@ function renderEditorShell(session) {
         removeBtn.setAttribute('aria-label', `Delete option ${optionIndex + 1}`);
         removeBtn.textContent = '🗑';
         removeBtn.addEventListener('click', () => {
-          session.removeQuestionOption(selectedBlock.blockId, optionIndex);
+          const removed = session.requestRemoveQuestionOption(selectedBlock.blockId, optionIndex);
+          if (removed) {
+            showToast('Option deleted. Press Ctrl+Z to undo.');
+          }
           updateSummary();
         });
         row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);
@@ -3030,6 +3156,8 @@ function renderEditorShell(session) {
     localDraftIdValue.textContent = session.state.draft?.localId || 'n/a';
     statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'}`;
     mediaFeedback.textContent = session.state.mediaFeedback || '';
+    undoBtn.hidden = !session.canUndo();
+    undoBtn.disabled = !session.canUndo();
   };
 
   session.setOnStateChange(() => {
@@ -3050,6 +3178,14 @@ function renderEditorShell(session) {
   });
   saveBtn.addEventListener('click', async () => {
     await session.saveNow();
+    if (!session.state.lastPersistenceError) {
+      showToast('Draft saved.');
+    }
+    updateSummary();
+  });
+  undoBtn.addEventListener('click', () => {
+    clearToast();
+    session.undo();
     updateSummary();
   });
   addContentBtn.addEventListener('click', () => {
@@ -3070,7 +3206,33 @@ function renderEditorShell(session) {
     window.location.assign(viewerUrl);
   });
   questionInputType.addEventListener('change', () => {
-    session.updateQuestionInputType(session.state.selectedBlockId, questionInputType.value);
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
+    const previousResponseConfig = normalizeQuestionResponseConfig(selectedBlock?.responseConfig);
+    const willClearOptions = previousResponseConfig.inputType === 'multiple_choice'
+      && questionInputType.value !== 'multiple_choice'
+      && Array.isArray(previousResponseConfig.options)
+      && previousResponseConfig.options.length > 0;
+    const changed = session.requestQuestionInputTypeChange(session.state.selectedBlockId, questionInputType.value);
+    if (!changed) {
+      const responseConfig = normalizeQuestionResponseConfig(previousResponseConfig);
+      questionInputType.value = responseConfig.inputType || 'text';
+    } else if (willClearOptions) {
+      showToast('Type changed — options cleared.');
+    }
+    updateSummary();
+  });
+  document.addEventListener('keydown', (event) => {
+    const isUndoShortcut = (event.ctrlKey || event.metaKey) && !event.shiftKey && String(event.key).toLowerCase() === 'z';
+    if (!isUndoShortcut) return;
+    const activeElement = document.activeElement;
+    const isEditable = activeElement instanceof HTMLInputElement
+      || activeElement instanceof HTMLTextAreaElement
+      || activeElement?.isContentEditable;
+    if (isEditable) return;
+    if (!session.canUndo()) return;
+    event.preventDefault();
+    clearToast();
+    session.undo();
     updateSummary();
   });
   questionMaxLength.addEventListener('input', () => {
@@ -3214,7 +3376,7 @@ function renderEditorShell(session) {
   addContentBtn.textContent = '+ Add Content';
   addQuestionBtn.textContent = '+ Add Question';
   controlsRow.append(addContentBtn, addQuestionBtn);
-  metaRow.append(saveBtn, exportBtn, importBtn, openViewerBtn);
+  metaRow.append(saveBtn, undoBtn, exportBtn, importBtn, openViewerBtn);
   if (isDebugMode) {
     moreActions.append(localPublishHint, localPublishBtn);
   }

@@ -1152,6 +1152,157 @@ test('multiple choice option helpers add, update, and remove options', async () 
   assert.deepEqual(stripOptionIds(updated.responseConfig.options), [{ value: 'Second', label: 'Second' }]);
 });
 
+test('undo restores deleted block and selectedBlockId', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_undo_block_delete');
+  clearTimeout(session.autosaveTimer);
+
+  session.state.draft.blocks = [
+    { blockId: 'a', kind: 'content', position: 0, content: { text: 'A', format: 'plain_text' } },
+    { blockId: 'b', kind: 'content', position: 1, content: { text: 'B', format: 'plain_text' } },
+    { blockId: 'c', kind: 'content', position: 2, content: { text: 'C', format: 'plain_text' } },
+  ];
+  session.state.selectedBlockId = 'b';
+
+  session.deleteBlock('b');
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['a', 'c']);
+  assert.equal(session.state.selectedBlockId, 'a');
+  assert.equal(session.canUndo(), true);
+
+  const didUndo = session.undo();
+  assert.equal(didUndo, true);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['a', 'b', 'c']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2]);
+  assert.equal(session.state.selectedBlockId, 'b');
+});
+
+test('undo restores removed multiple-choice option and correctAnswer', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_undo_remove_option');
+  clearTimeout(session.autosaveTimer);
+
+  session.state.draft.blocks = [
+    {
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Pick all', format: 'plain_text' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        selectionMode: 'multi',
+        options: [
+          { id: 'o1', value: 'A', label: 'A' },
+          { id: 'o2', value: 'B', label: 'B' },
+        ],
+        correctAnswer: ['A', 'B'],
+      },
+    },
+  ];
+  session.state.selectedBlockId = 'q1';
+
+  session.removeQuestionOption('q1', 0);
+  let updated = session.state.draft.blocks.find((block) => block.blockId === 'q1');
+  assert.deepEqual(stripOptionIds(updated.responseConfig.options), [{ value: 'B', label: 'B' }]);
+  assert.deepEqual(updated.responseConfig.correctAnswer, ['B']);
+
+  const didUndo = session.undo();
+  assert.equal(didUndo, true);
+  updated = session.state.draft.blocks.find((block) => block.blockId === 'q1');
+  assert.deepEqual(stripOptionIds(updated.responseConfig.options), [{ value: 'A', label: 'A' }, { value: 'B', label: 'B' }]);
+  assert.deepEqual(updated.responseConfig.correctAnswer, ['A', 'B']);
+});
+
+test('undo stack is capped at 20 snapshots', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_undo_cap');
+  clearTimeout(session.autosaveTimer);
+  const block = session.createBlock('question');
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionOptionsFromText(block.blockId, 'A\nB');
+
+  for (let index = 0; index < 25; index += 1) {
+    session.removeQuestionOption(block.blockId, 0);
+    session.undo();
+  }
+
+  assert.equal(session.undoStack.length <= 20, true);
+});
+
+test('undo is a no-op when stack is empty', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_undo_empty');
+  clearTimeout(session.autosaveTimer);
+  const before = structuredClone(session.state.draft);
+  const selectedBefore = session.state.selectedBlockId;
+  const revisionBefore = session.state.draftRevision;
+
+  const didUndo = session.undo();
+
+  assert.equal(didUndo, false);
+  assert.deepEqual(session.state.draft, before);
+  assert.equal(session.state.selectedBlockId, selectedBefore);
+  assert.equal(session.state.draftRevision, revisionBefore);
+});
+
+test('requestDeleteBlock keeps state unchanged when confirmation is canceled', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_confirm_delete_block');
+  clearTimeout(session.autosaveTimer);
+  const questionBlock = session.createBlock('question');
+  session.updateBlockContent(questionBlock.blockId, 'Non-empty question');
+  const beforeDraft = structuredClone(session.state.draft);
+  const beforeSelected = session.state.selectedBlockId;
+  const beforeRevision = session.state.draftRevision;
+
+  const result = session.requestDeleteBlock(questionBlock.blockId, () => false);
+
+  assert.equal(result, false);
+  assert.deepEqual(session.state.draft, beforeDraft);
+  assert.equal(session.state.selectedBlockId, beforeSelected);
+  assert.equal(session.state.draftRevision, beforeRevision);
+});
+
+test('requestRemoveQuestionOption keeps state unchanged when labeled option deletion is canceled', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_confirm_remove_option');
+  clearTimeout(session.autosaveTimer);
+  const block = session.createBlock('question');
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionOptionsFromText(block.blockId, 'First\nSecond');
+  const beforeDraft = structuredClone(session.state.draft);
+  const beforeRevision = session.state.draftRevision;
+
+  const result = session.requestRemoveQuestionOption(block.blockId, 0, () => false);
+
+  assert.equal(result, false);
+  assert.deepEqual(session.state.draft, beforeDraft);
+  assert.equal(session.state.draftRevision, beforeRevision);
+});
+
+test('requestQuestionInputTypeChange keeps state unchanged when option-loss confirmation is canceled', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_confirm_input_type_switch');
+  clearTimeout(session.autosaveTimer);
+  const block = session.createBlock('question');
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionOptionsFromText(block.blockId, 'A\nB');
+  const beforeDraft = structuredClone(session.state.draft);
+  const beforeRevision = session.state.draftRevision;
+
+  const result = session.requestQuestionInputTypeChange(block.blockId, 'text', () => false);
+
+  assert.equal(result, false);
+  assert.deepEqual(session.state.draft, beforeDraft);
+  assert.equal(session.state.draftRevision, beforeRevision);
+});
+
 test('typing first visible option persists when options array starts empty', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({
