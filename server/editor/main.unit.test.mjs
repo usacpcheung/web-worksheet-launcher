@@ -598,6 +598,27 @@ test('reorderBlockByDelta no-ops for out-of-bounds moves and preserves fields/se
   });
 });
 
+test('reorderBlockByDelta follows position order when array order diverges', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_reorder_position_canonical');
+  clearTimeout(session.autosaveTimer);
+
+  // Intentionally divergent array order vs. position order:
+  // array: [b(1), c(2), a(0)] but visible/render order should be [a, b, c].
+  session.state.draft.blocks = [
+    { blockId: 'b', kind: 'content', position: 1, content: { text: 'B', format: 'plain_text' } },
+    { blockId: 'c', kind: 'content', position: 2, content: { text: 'C', format: 'plain_text' } },
+    { blockId: 'a', kind: 'content', position: 0, content: { text: 'A', format: 'plain_text' } },
+  ];
+
+  session.reorderBlockByDelta('b', 1);
+
+  // Moving "b" down in visible order [a, b, c] should become [a, c, b].
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['a', 'c', 'b']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2]);
+});
+
 test('autosave/export/preview reorder paths remain position-driven without contract changes', async () => {
   const mod = await loadEditorModule();
   let persistedSnapshot = null;

@@ -1525,7 +1525,9 @@ class EditorDraftSession {
   reorderBlockByDelta(blockId, delta) {
     if (!this.state.draft || !blockId) return;
     if (delta !== -1 && delta !== 1) return;
-    const blocks = Array.isArray(this.state.draft.blocks) ? this.state.draft.blocks : [];
+    const blocks = (Array.isArray(this.state.draft.blocks) ? this.state.draft.blocks : [])
+      .slice()
+      .sort((a, b) => a.position - b.position);
     const currentIndex = blocks.findIndex((block) => block.blockId === blockId);
     if (currentIndex < 0) return;
     const targetIndex = currentIndex + delta;
