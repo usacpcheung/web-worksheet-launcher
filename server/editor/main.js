@@ -2528,6 +2528,7 @@ function renderEditorShell(session) {
   function showConfirmDialog({
     title,
     entityLabel,
+    descriptionText,
     removalItems = [],
     confirmLabel = 'Delete',
   }) {
@@ -2549,7 +2550,9 @@ function renderEditorShell(session) {
     dialog.setAttribute('aria-labelledby', titleId);
     const description = document.createElement('p');
     description.className = 'confirm-modal__description';
-    description.textContent = `You are deleting ${entityLabel}.`;
+    description.textContent = isNonEmptyString(descriptionText)
+      ? descriptionText
+      : `You are deleting ${entityLabel}.`;
     const detailsHeading = document.createElement('p');
     detailsHeading.className = 'confirm-modal__details-heading';
     detailsHeading.textContent = 'This will remove:';
@@ -2612,7 +2615,7 @@ function renderEditorShell(session) {
     cancelBtn.addEventListener('click', () => closeActiveConfirmDialog(false));
     deleteBtn.addEventListener('click', () => closeActiveConfirmDialog(true));
 
-    deleteBtn.focus();
+    cancelBtn.focus();
 
     return new Promise((resolve) => {
       activeConfirmDialog = {
@@ -3470,6 +3473,7 @@ function renderEditorShell(session) {
       const confirmed = await showConfirmDialog({
         title: 'Switching answer type will remove data',
         entityLabel: 'this question type',
+        descriptionText: `You are switching from ${outcome.impact.fromType} to ${outcome.impact.toType}.`,
         removalItems: details,
         confirmLabel: 'Switch and Remove',
       });

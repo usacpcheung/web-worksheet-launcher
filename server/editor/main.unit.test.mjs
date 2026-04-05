@@ -524,7 +524,15 @@ test('question input type change flow routes destructive switches through in-app
   assert.equal(source.includes("reason === 'confirm-switch-required'"), true);
   assert.equal(source.includes("title: 'Switching answer type will remove data'"), true);
   assert.equal(source.includes("confirmLabel: 'Switch and Remove'"), true);
+  assert.equal(source.includes('descriptionText: `You are switching from ${outcome.impact.fromType} to ${outcome.impact.toType}.`'), true);
   assert.equal(source.includes('await showConfirmDialog({'), true);
+});
+
+test('confirm modal uses configurable description copy and defaults initial focus to cancel', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('descriptionText,'), true);
+  assert.equal(source.includes('description.textContent = isNonEmptyString(descriptionText)'), true);
+  assert.equal(source.includes('cancelBtn.focus();'), true);
 });
 
 test('non-destructive type switch does not require confirmation', async () => {
