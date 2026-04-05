@@ -2461,14 +2461,14 @@ function renderEditorShell(session) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'block-select';
+      const displayIndex = index + 1;
       const previewSource = block.kind === 'question' ? block?.prompt?.text : block?.content?.text;
       const preview = String(previewSource || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
-      button.textContent = `${block.position + 1}. ${block.kind} — ${preview}`;
+      button.textContent = `${displayIndex}. ${block.kind} — ${preview}`;
       button.addEventListener('click', () => {
         session.selectBlock(block.blockId);
         updateSummary();
       });
-      const displayIndex = index + 1;
       const actions = document.createElement('div');
       actions.className = 'block-item-actions';
       const moveUpBtn = document.createElement('button');
@@ -2499,7 +2499,7 @@ function renderEditorShell(session) {
       deleteBtn.type = 'button';
       deleteBtn.className = 'icon-btn danger';
       deleteBtn.title = 'Delete this block';
-      deleteBtn.setAttribute('aria-label', `Delete block ${block.position + 1}`);
+      deleteBtn.setAttribute('aria-label', `Delete block ${displayIndex}`);
       deleteBtn.textContent = '🗑';
       deleteBtn.addEventListener('click', (event) => {
         event.stopPropagation();

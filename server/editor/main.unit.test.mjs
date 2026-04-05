@@ -14,7 +14,10 @@ async function loadEditorModule() {
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*mapLegacyJsonToPackageModel,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
       replacement: `const editorStorage = {};
 const SharedAuthGate = class {};
-const createWorksheetPackageFromDraft = () => ({ bytes: new Uint8Array([1, 2, 3]) });
+const createWorksheetPackageFromDraft = (draft, assets) => {
+  globalThis.__lastCreateWorksheetPackageCall = { draft, assets };
+  return { bytes: new Uint8Array([1, 2, 3]) };
+};
 const mapLegacyJsonToPackageModel = (input) => {
   if (!input || typeof input !== 'object' || !Array.isArray(input.blocks) || input.blocks.length === 0) {
     throw new Error('Imported worksheet must have a non-empty blocks array.');
@@ -111,12 +114,22 @@ function createSessionForTests() {
 }
 
 function toBlockFieldsWithoutPosition(block) {
-  return {
+  const snapshot = {
     blockId: block.blockId,
     kind: block.kind,
     prompt: block.prompt,
     content: block.content,
     responseConfig: block.responseConfig,
+  };
+  if (typeof structuredClone === 'function') {
+    return structuredClone(snapshot);
+  }
+  return {
+    blockId: snapshot.blockId,
+    kind: snapshot.kind,
+    prompt: snapshot.prompt ? JSON.parse(JSON.stringify(snapshot.prompt)) : snapshot.prompt,
+    content: snapshot.content ? JSON.parse(JSON.stringify(snapshot.content)) : snapshot.content,
+    responseConfig: snapshot.responseConfig ? JSON.parse(JSON.stringify(snapshot.responseConfig)) : snapshot.responseConfig,
   };
 }
 
@@ -619,7 +632,7 @@ test('reorderBlockByDelta follows position order when array order diverges', asy
   assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2]);
 });
 
-test('autosave/export/preview reorder paths remain position-driven without contract changes', async () => {
+test('autosave/export/preview reorder paths remain position-driven without brittle source checks', async () => {
   const mod = await loadEditorModule();
   let persistedSnapshot = null;
   const session = new mod.EditorDraftSession({
@@ -654,12 +667,50 @@ test('autosave/export/preview reorder paths remain position-driven without contr
   assert.deepEqual(persistedSnapshot.contractDraft.blocks.map((block) => block.position), [0, 1, 2]);
   assert.deepEqual(persistedSnapshot.contractDraft.blocks.map((block) => block.blockId), ['b', 'a', 'c']);
 
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);"), true);
-  assert.equal(source.includes('const packagedDraft = {'), true);
-  assert.equal(source.includes('...this.state.draft,'), true);
-  assert.equal(source.includes('createWorksheetPackageFromDraft(packagedDraft, assets);'), true);
-  assert.equal(source.includes('buildViewerUrlFromCurrentLocation(window.location.href, localDraftId, draftUpdatedAt)'), true);
+  const url = mod.buildViewerUrlFromCurrentLocation(
+    'https://example.test/server/editor/index.html',
+    'draft_reorder_autosave',
+    '2026-04-05T00:00:00.000Z'
+  );
+  assert.equal(
+    url.toString(),
+    'https://example.test/server/viewer/?localDraftId=draft_reorder_autosave&preview=1&draftUpdatedAt=2026-04-05T00%3A00%3A00.000Z'
+  );
+
+  const originalDocument = globalThis.document;
+  const originalUrl = globalThis.URL;
+  const originalBlob = globalThis.Blob;
+  const anchor = { clickCalled: false, removeCalled: false, click() { this.clickCalled = true; }, remove() { this.removeCalled = true; } };
+  globalThis.URL = {
+    createObjectURL: () => 'blob:test-export',
+    revokeObjectURL: () => {},
+  };
+  globalThis.document = {
+    ...originalDocument,
+    body: { appendChild: () => {} },
+    createElement: () => anchor,
+  };
+  globalThis.Blob = originalBlob;
+
+  try {
+    const filename = await session.exportCurrentDraftToPackageFile();
+    assert.equal(filename.includes('worksheet-package-draft_reorder_autosave-'), true);
+    assert.equal(anchor.clickCalled, true);
+    assert.equal(anchor.removeCalled, true);
+    assert.deepEqual(
+      globalThis.__lastCreateWorksheetPackageCall?.draft?.blocks?.map((block) => block.blockId),
+      ['b', 'a', 'c']
+    );
+    assert.deepEqual(
+      globalThis.__lastCreateWorksheetPackageCall?.draft?.blocks?.map((block) => block.position),
+      [0, 1, 2]
+    );
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.URL = originalUrl;
+    globalThis.Blob = originalBlob;
+    delete globalThis.__lastCreateWorksheetPackageCall;
+  }
 });
 
 test('text response normalization removes stale numeric constraints', async () => {
