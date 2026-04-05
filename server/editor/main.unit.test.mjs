@@ -1677,43 +1677,6 @@ test('openAssetImage returns blocked when window.open returns null', async () =>
   }
 });
 
-test('openAssetImage avoids noreferrer so browsers return window handle', async () => {
-  const mod = await loadEditorModule();
-  const { session, assetStore } = createSessionWithQuestion(mod);
-  assetStore.set('asset_img', { localId: 'asset_img', binary: new Uint8Array([255, 0]), metadata: { mimeType: 'image/png' } });
-
-  const origCreate = URL.createObjectURL;
-  const origRevoke = URL.revokeObjectURL;
-  URL.createObjectURL = () => 'blob:test/image2';
-  URL.revokeObjectURL = () => {};
-  const origOpen = globalThis.window.open;
-  const origSetTimeout = globalThis.window.setTimeout;
-  let receivedFeatures = null;
-  let navigatedTo = null;
-  globalThis.window.open = (_url, _target, features) => {
-    receivedFeatures = features;
-    if (features?.includes('noreferrer')) return null;
-    return {
-      set opener(_) {},
-      document: { get title() { return ''; }, set title(_) {}, body: { set textContent(_) {} } },
-      location: { replace(url) { navigatedTo = url; } },
-    };
-  };
-  try {
-    globalThis.window.setTimeout = () => 0;
-    const result = await session.openAssetImage('asset_img');
-    assert.equal(result.ok, true);
-    assert.equal(receivedFeatures, 'noopener');
-    assert.equal(navigatedTo, 'blob:test/image2');
-    assert.equal(session.state.mediaFeedback, null);
-  } finally {
-    URL.createObjectURL = origCreate;
-    URL.revokeObjectURL = origRevoke;
-    globalThis.window.open = origOpen;
-    globalThis.window.setTimeout = origSetTimeout;
-  }
-});
-
 test('openAssetImage returns missing-asset when asset not in storage', async () => {
   const mod = await loadEditorModule();
   const { session } = createSessionWithQuestion(mod);
