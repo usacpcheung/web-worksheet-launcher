@@ -2474,7 +2474,7 @@ function renderEditorShell(session) {
       moveUpBtn.className = 'icon-btn';
       moveUpBtn.title = `Move block ${displayIndex} up`;
       moveUpBtn.setAttribute('aria-label', `Move block ${displayIndex} up`);
-      moveUpBtn.textContent = '↑';
+      moveUpBtn.textContent = '▲';
       moveUpBtn.disabled = isFirst;
       moveUpBtn.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -2486,7 +2486,7 @@ function renderEditorShell(session) {
       moveDownBtn.className = 'icon-btn';
       moveDownBtn.title = `Move block ${displayIndex} down`;
       moveDownBtn.setAttribute('aria-label', `Move block ${displayIndex} down`);
-      moveDownBtn.textContent = '↓';
+      moveDownBtn.textContent = '▼';
       moveDownBtn.disabled = isLast;
       moveDownBtn.addEventListener('click', (event) => {
         event.stopPropagation();

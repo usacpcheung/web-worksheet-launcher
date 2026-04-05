@@ -98,7 +98,7 @@ body {
 
 .editor-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(560px, 1fr);
+  grid-template-columns: minmax(322px, 414px) minmax(560px, 1fr);
   gap: 16px;
 }
 
