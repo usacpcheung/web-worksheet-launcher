@@ -822,7 +822,7 @@ class EditorDraftSession {
   }
 
   async openAssetImage(assetId) {
-    const previewWindow = window.open('', '_blank', 'noopener,noreferrer');
+    const previewWindow = window.open('', '_blank', 'noopener');
     if (!previewWindow) {
       this.setMediaFeedback('Image preview was blocked. Allow pop-ups and try again.');
       return { ok: false, reason: 'blocked' };
