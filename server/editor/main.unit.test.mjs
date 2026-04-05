@@ -1961,6 +1961,81 @@ test('deleteBlock prunes linked question and option media assets', async () => {
   assert.deepEqual(removed.sort(), ['asset_opt_audio', 'asset_q_audio']);
 });
 
+test('deleteBlockWithPolicy directly deletes empty block', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_empty_block_delete',
+    blocks: [
+      {
+        blockId: 'c1',
+        kind: 'content',
+        position: 0,
+        content: { text: '   ', format: 'plain_text' },
+      },
+      {
+        blockId: 'c2',
+        kind: 'content',
+        position: 1,
+        content: { text: 'keep', format: 'plain_text' },
+      },
+    ],
+    assets: [],
+  };
+  session.state.selectedBlockId = 'c1';
+
+  const result = session.deleteBlockWithPolicy('c1');
+  assert.equal(result.ok, true);
+  assert.equal(result.policy.mode, 'safe_direct_delete');
+  assert.equal(session.state.draft.blocks.some((block) => block.blockId === 'c1'), false);
+});
+
+test('deleteBlockWithPolicy requires confirm when block has content/assets and confirm deletes', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_risky_block_delete',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Prompt text', mediaRefs: [{ usage: 'question_audio', assetId: 'asset_q_audio' }] },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [{ id: 'o1', value: 'A', label: 'A' }],
+        },
+      },
+      {
+        blockId: 'c2',
+        kind: 'content',
+        position: 1,
+        content: { text: 'keep', format: 'plain_text' },
+      },
+    ],
+    assets: [{ assetId: 'asset_q_audio' }],
+  };
+  session.state.selectedBlockId = 'q1';
+
+  const gated = session.deleteBlockWithPolicy('q1');
+  assert.equal(gated.ok, false);
+  assert.equal(gated.reason, 'confirm-delete-required');
+  assert.equal(gated.policy.mode, 'confirm_delete');
+  assert.equal(session.state.draft.blocks.some((block) => block.blockId === 'q1'), true, 'cancel/no-confirm should leave block untouched');
+
+  const confirmed = session.deleteBlockWithPolicy('q1', { confirmDelete: true });
+  assert.equal(confirmed.ok, true);
+  assert.equal(session.state.draft.blocks.some((block) => block.blockId === 'q1'), false, 'confirm should delete block');
+});
+
 test('deleteBlock preserves assets still referenced by remaining questions', async () => {
   const mod = await loadEditorModule();
   const removed = [];
@@ -2063,4 +2138,75 @@ test('removeQuestionOption preserves shared option audio used by another option'
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_shared_opt_audio'), true);
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep'), true);
   assert.deepEqual(removed, []);
+});
+
+test('removeQuestionOptionWithPolicy directly deletes empty option', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_empty_option_delete',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [{ id: 'o1', value: '', label: '' }, { id: 'o2', value: 'B', label: 'B' }],
+        },
+      },
+    ],
+    assets: [],
+  };
+
+  const result = session.removeQuestionOptionWithPolicy('q1', 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.policy.mode, 'safe_direct_delete');
+  const options = session.state.draft.blocks[0].responseConfig.options;
+  assert.equal(options.length, 1);
+  assert.equal(options[0].id, 'o2');
+});
+
+test('removeQuestionOptionWithPolicy requires confirm; cancel leaves option and confirm deletes', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_risky_option_delete',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [
+            { id: 'o1', value: 'A', label: 'A', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_opt_audio' }] },
+            { id: 'o2', value: 'B', label: 'B' },
+          ],
+        },
+      },
+    ],
+    assets: [{ assetId: 'asset_opt_audio' }],
+  };
+
+  const gated = session.removeQuestionOptionWithPolicy('q1', 0);
+  assert.equal(gated.ok, false);
+  assert.equal(gated.reason, 'confirm-delete-required');
+  assert.equal(gated.policy.mode, 'confirm_delete');
+  assert.equal(session.state.draft.blocks[0].responseConfig.options.length, 2, 'cancel/no-confirm should leave option untouched');
+
+  const confirmed = session.removeQuestionOptionWithPolicy('q1', 0, { confirmDelete: true });
+  assert.equal(confirmed.ok, true);
+  assert.equal(session.state.draft.blocks[0].responseConfig.options.length, 1, 'confirm should delete option');
+  assert.equal(session.state.draft.blocks[0].responseConfig.options[0].id, 'o2');
 });
