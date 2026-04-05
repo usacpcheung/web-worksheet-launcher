@@ -525,6 +525,9 @@ class EditorDraftSession {
     this.onStateChange = null;
     this.transientQuestionBlockIds = new Set();
     this.previewAudio = null;
+    this.previewAudioUrl = null;
+    this.previewAudioPlayback = null;
+    this._previewPlayRequestId = 0;
   }
 
   setOnStateChange(handler) {
@@ -760,23 +763,53 @@ class EditorDraftSession {
     return URL.createObjectURL(blob);
   }
 
-  stopPreviewAudio() {
-    if (!this.previewAudio) return;
-    try {
-      this.previewAudio.pause();
-      this.previewAudio.src = '';
-    } catch (error) {
-      // no-op
+  finalizePreviewAudio(reason = 'interrupted') {
+    const playback = this.previewAudioPlayback;
+    if (!playback || playback.finalized) return;
+    playback.finalized = true;
+
+    const { audio, objectUrl, hooks } = playback;
+    if (audio) {
+      if (reason === 'interrupted') {
+        try {
+          audio.pause();
+        } catch (error) {
+          // no-op
+        }
+      }
+      audio.src = '';
     }
-    this.previewAudio = null;
-    if (this.previewAudioUrl) {
-      URL.revokeObjectURL(this.previewAudioUrl);
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
+
+    if (this.previewAudio === audio) {
+      this.previewAudio = null;
+    }
+    if (this.previewAudioUrl === objectUrl) {
       this.previewAudioUrl = null;
+    }
+    this.previewAudioPlayback = null;
+
+    if (reason === 'ended') {
+      hooks?.onEnded?.();
+    } else if (reason === 'error') {
+      hooks?.onError?.();
+    } else {
+      hooks?.onInterrupted?.();
     }
   }
 
-  async playAssetAudio(assetId) {
+  stopPreviewAudio(reason = 'interrupted') {
+    this.finalizePreviewAudio(reason);
+  }
+
+  async playAssetAudio(assetId, hooks = {}) {
+    const requestId = ++this._previewPlayRequestId;
     const record = await this.getLocalAssetRecord(assetId);
+    if (requestId !== this._previewPlayRequestId) {
+      return { ok: false, reason: 'superseded' };
+    }
     if (!record) {
       this.setMediaFeedback('Unable to load attached audio for preview.');
       return { ok: false, reason: 'missing-asset' };
@@ -791,31 +824,31 @@ class EditorDraftSession {
     const audio = new Audio(objectUrl);
     this.previewAudio = audio;
     this.previewAudioUrl = objectUrl;
+    this.previewAudioPlayback = { audio, objectUrl, hooks, finalized: false };
     audio.addEventListener('ended', () => {
-      URL.revokeObjectURL(objectUrl);
-      if (this.previewAudio === audio) {
-        this.previewAudio = null;
-        this.previewAudioUrl = null;
-      }
+      if (this.previewAudio !== audio) return;
+      this.finalizePreviewAudio('ended');
     }, { once: true });
     audio.addEventListener('error', () => {
-      URL.revokeObjectURL(objectUrl);
-      if (this.previewAudio === audio) {
-        this.previewAudio = null;
-        this.previewAudioUrl = null;
-      }
+      if (this.previewAudio !== audio) return;
       this.setMediaFeedback('Unable to play attached audio.');
+      this.finalizePreviewAudio('error');
     }, { once: true });
 
     try {
       await audio.play();
+      if (this.previewAudio !== audio) {
+        return { ok: false, reason: 'superseded' };
+      }
+      hooks?.onStart?.();
       this.clearMediaFeedback();
       this.notifyStateChange();
       return { ok: true };
     } catch (error) {
-      URL.revokeObjectURL(objectUrl);
-      this.previewAudio = null;
-      this.previewAudioUrl = null;
+      if (this.previewAudio !== audio) {
+        return { ok: false, reason: 'superseded' };
+      }
+      this.finalizePreviewAudio('error');
       this.setMediaFeedback('Audio playback was blocked. Try again.');
       return { ok: false, reason: 'playback-failed' };
     }
@@ -2777,8 +2810,22 @@ function renderEditorShell(session) {
       }
     });
     playQuestionAudioBtn.addEventListener('click', async () => {
-      if (!currentQuestionAudioRef?.assetId) return;
-      await session.playAssetAudio(currentQuestionAudioRef.assetId);
+      if (!currentQuestionAudioRef?.assetId || playQuestionAudioBtn.disabled) return;
+      playQuestionAudioBtn.disabled = true;
+      const result = await session.playAssetAudio(currentQuestionAudioRef.assetId, {
+        onEnded: () => {
+          playQuestionAudioBtn.disabled = false;
+        },
+        onError: () => {
+          playQuestionAudioBtn.disabled = false;
+        },
+        onInterrupted: () => {
+          playQuestionAudioBtn.disabled = false;
+        },
+      });
+      if (!result.ok) {
+        playQuestionAudioBtn.disabled = false;
+      }
       updateSummary();
     });
     questionAudioRow.append(attachQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
@@ -2994,8 +3041,22 @@ function renderEditorShell(session) {
         playOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
         playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
         playOptionAudioBtn.addEventListener('click', async () => {
-          if (!optionAudioRef?.assetId) return;
-          await session.playAssetAudio(optionAudioRef.assetId);
+          if (!optionAudioRef?.assetId || playOptionAudioBtn.disabled) return;
+          playOptionAudioBtn.disabled = true;
+          const result = await session.playAssetAudio(optionAudioRef.assetId, {
+            onEnded: () => {
+              playOptionAudioBtn.disabled = false;
+            },
+            onError: () => {
+              playOptionAudioBtn.disabled = false;
+            },
+            onInterrupted: () => {
+              playOptionAudioBtn.disabled = false;
+            },
+          });
+          if (!result.ok) {
+            playOptionAudioBtn.disabled = false;
+          }
           optionActionsMenu.open = false;
           updateSummary();
         });
