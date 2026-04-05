@@ -102,6 +102,24 @@ function getOptionIdByValue(options = [], value) {
   return (Array.isArray(options) ? options : []).find((option) => option.value === value)?.id || null;
 }
 
+function createSessionForTests() {
+  return {
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  };
+}
+
+function toBlockFieldsWithoutPosition(block) {
+  return {
+    blockId: block.blockId,
+    kind: block.kind,
+    prompt: block.prompt,
+    content: block.content,
+    responseConfig: block.responseConfig,
+  };
+}
+
 test('normalizeBlocks preserves canonical question responseConfig and extra fields', async () => {
   const mod = await loadEditorModule();
   const blocks = mod.normalizeBlocks([
@@ -485,6 +503,142 @@ test('question field updates map inputType, maxLength, and options through draft
   assert.equal(updated.responseConfig.inputType, 'text');
   assert.equal(updated.responseConfig.maxLength, 25);
   assert.equal(updated.responseConfig.options, undefined);
+});
+
+test('reorderBlockByDelta moves middle block up/down and normalizes positions to 0..n-1', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_reorder_middle');
+  clearTimeout(session.autosaveTimer);
+
+  const blockA = {
+    blockId: 'blk_a',
+    kind: 'content',
+    position: 0,
+    content: { text: 'Intro', format: 'plain_text' },
+  };
+  const blockB = {
+    blockId: 'blk_b',
+    kind: 'question',
+    position: 1,
+    prompt: { text: 'Question B?', format: 'plain_text', mediaRefs: [{ assetId: 'asset_q', usage: 'question_audio' }] },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'single',
+      options: [
+        { id: 'opt_1', value: 'One', label: 'One', mediaRefs: [{ assetId: 'asset_opt', usage: 'option_audio' }] },
+        { id: 'opt_2', value: 'Two', label: 'Two', mediaRefs: [] },
+      ],
+      correctAnswer: 'opt_1',
+    },
+  };
+  const blockC = {
+    blockId: 'blk_c',
+    kind: 'content',
+    position: 2,
+    content: { text: 'Outro', format: 'markdown' },
+  };
+
+  session.state.draft.blocks = [blockA, blockB, blockC];
+  session.state.selectedBlockId = 'blk_b';
+  const beforeById = new Map(session.state.draft.blocks.map((block) => [block.blockId, toBlockFieldsWithoutPosition(block)]));
+
+  session.reorderBlockByDelta('blk_b', -1);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['blk_b', 'blk_a', 'blk_c']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2]);
+  assert.equal(session.state.selectedBlockId, 'blk_b');
+  session.state.draft.blocks.forEach((block, index) => {
+    assert.equal(block.position, index);
+  });
+  session.state.draft.blocks.forEach((block) => {
+    assert.deepEqual(toBlockFieldsWithoutPosition(block), beforeById.get(block.blockId));
+  });
+
+  session.reorderBlockByDelta('blk_b', 1);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['blk_a', 'blk_b', 'blk_c']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2]);
+  assert.equal(session.state.selectedBlockId, 'blk_b');
+  session.state.draft.blocks.forEach((block, index) => {
+    assert.equal(block.position, index);
+  });
+  session.state.draft.blocks.forEach((block) => {
+    assert.deepEqual(toBlockFieldsWithoutPosition(block), beforeById.get(block.blockId));
+  });
+});
+
+test('reorderBlockByDelta no-ops for out-of-bounds moves and preserves fields/selection', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_reorder_bounds');
+  clearTimeout(session.autosaveTimer);
+
+  session.state.draft.blocks = [
+    { blockId: 'first', kind: 'content', position: 0, content: { text: 'First', format: 'plain_text' } },
+    {
+      blockId: 'middle',
+      kind: 'question',
+      position: 1,
+      prompt: { text: 'Middle?', format: 'plain_text', mediaRefs: [{ assetId: 'asset_m', usage: 'question_image' }] },
+      responseConfig: { inputType: 'text', maxLength: 120, displayMode: 'multi_line' },
+    },
+    { blockId: 'last', kind: 'content', position: 2, content: { text: 'Last', format: 'plain_text' } },
+  ];
+  session.state.selectedBlockId = 'middle';
+  const snapshot = session.state.draft.blocks.map((block) => structuredClone(block));
+  const revisionBefore = session.state.draftRevision;
+
+  session.reorderBlockByDelta('first', -1);
+  session.reorderBlockByDelta('last', 1);
+
+  assert.deepEqual(session.state.draft.blocks, snapshot);
+  assert.equal(session.state.selectedBlockId, 'middle');
+  assert.equal(session.state.draftRevision, revisionBefore);
+  session.state.draft.blocks.forEach((block, index) => {
+    assert.equal(block.position, index);
+  });
+});
+
+test('autosave/export/preview reorder paths remain position-driven without contract changes', async () => {
+  const mod = await loadEditorModule();
+  let persistedSnapshot = null;
+  const session = new mod.EditorDraftSession({
+    drafts: {
+      get: async () => null,
+      put: async (value) => {
+        persistedSnapshot = value;
+        return value;
+      },
+    },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_reorder_autosave');
+  clearTimeout(session.autosaveTimer);
+  session.state.draft.blocks = [
+    { blockId: 'a', kind: 'content', position: 0, content: { text: 'A', format: 'plain_text' } },
+    { blockId: 'b', kind: 'content', position: 1, content: { text: 'B', format: 'plain_text' } },
+    { blockId: 'c', kind: 'content', position: 2, content: { text: 'C', format: 'plain_text' } },
+  ];
+
+  session.reorderBlockByDelta('b', -1);
+  await session.autosave();
+
+  assert.ok(persistedSnapshot, 'autosave should persist a snapshot');
+  assert.deepEqual(persistedSnapshot.blocks.map((block) => block.blockId), ['b', 'a', 'c']);
+  assert.deepEqual(persistedSnapshot.blocks.map((block) => block.position), [0, 1, 2]);
+  persistedSnapshot.blocks.forEach((block, index) => {
+    assert.equal(block.position, index);
+  });
+  assert.deepEqual(persistedSnapshot.contractDraft.blocks.map((block) => block.position), [0, 1, 2]);
+  assert.deepEqual(persistedSnapshot.contractDraft.blocks.map((block) => block.blockId), ['b', 'a', 'c']);
+
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);"), true);
+  assert.equal(source.includes('const packagedDraft = {'), true);
+  assert.equal(source.includes('...this.state.draft,'), true);
+  assert.equal(source.includes('createWorksheetPackageFromDraft(packagedDraft, assets);'), true);
+  assert.equal(source.includes('buildViewerUrlFromCurrentLocation(window.location.href, localDraftId, draftUpdatedAt)'), true);
 });
 
 test('text response normalization removes stale numeric constraints', async () => {

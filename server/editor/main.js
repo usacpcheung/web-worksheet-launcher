@@ -1522,6 +1522,22 @@ class EditorDraftSession {
     return block;
   }
 
+  reorderBlockByDelta(blockId, delta) {
+    if (!this.state.draft || !blockId) return;
+    if (delta !== -1 && delta !== 1) return;
+    const blocks = Array.isArray(this.state.draft.blocks) ? this.state.draft.blocks : [];
+    const currentIndex = blocks.findIndex((block) => block.blockId === blockId);
+    if (currentIndex < 0) return;
+    const targetIndex = currentIndex + delta;
+    if (targetIndex < 0 || targetIndex >= blocks.length) return;
+
+    const nextBlocks = blocks.slice();
+    const [movedBlock] = nextBlocks.splice(currentIndex, 1);
+    nextBlocks.splice(targetIndex, 0, movedBlock);
+    this.state.draft.blocks = nextBlocks.map((block, index) => ({ ...block, position: index }));
+    this.touchDraft();
+  }
+
   deleteBlock(blockId) {
     if (!this.state.draft || !blockId) return;
     const removedBlock = this.state.draft.blocks.find((block) => block.blockId === blockId) || null;
@@ -2433,7 +2449,9 @@ function renderEditorShell(session) {
   const renderBlockList = () => {
     blockList.innerHTML = '';
     const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);
-    blocks.forEach((block) => {
+    blocks.forEach((block, index) => {
+      const isFirst = index === 0;
+      const isLast = index === blocks.length - 1;
       const item = document.createElement('li');
       item.className = `block-item ${block.blockId === session.state.selectedBlockId ? 'selected' : ''}`;
       const row = document.createElement('div');
@@ -2448,6 +2466,33 @@ function renderEditorShell(session) {
         session.selectBlock(block.blockId);
         updateSummary();
       });
+      const displayIndex = index + 1;
+      const actions = document.createElement('div');
+      actions.className = 'block-item-actions';
+      const moveUpBtn = document.createElement('button');
+      moveUpBtn.type = 'button';
+      moveUpBtn.className = 'icon-btn';
+      moveUpBtn.title = `Move block ${displayIndex} up`;
+      moveUpBtn.setAttribute('aria-label', `Move block ${displayIndex} up`);
+      moveUpBtn.textContent = '↑';
+      moveUpBtn.disabled = isFirst;
+      moveUpBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        session.reorderBlockByDelta(block.blockId, -1);
+        updateSummary();
+      });
+      const moveDownBtn = document.createElement('button');
+      moveDownBtn.type = 'button';
+      moveDownBtn.className = 'icon-btn';
+      moveDownBtn.title = `Move block ${displayIndex} down`;
+      moveDownBtn.setAttribute('aria-label', `Move block ${displayIndex} down`);
+      moveDownBtn.textContent = '↓';
+      moveDownBtn.disabled = isLast;
+      moveDownBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        session.reorderBlockByDelta(block.blockId, 1);
+        updateSummary();
+      });
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'icon-btn danger';
@@ -2459,7 +2504,8 @@ function renderEditorShell(session) {
         session.deleteBlock(block.blockId);
         updateSummary();
       });
-      row.append(button, deleteBtn);
+      actions.append(moveUpBtn, moveDownBtn, deleteBtn);
+      row.append(button, actions);
       item.appendChild(row);
       blockList.appendChild(item);
     });
