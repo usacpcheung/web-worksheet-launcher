@@ -1677,6 +1677,49 @@ test('openAssetImage returns blocked when window.open returns null', async () =>
   }
 });
 
+test('openAssetImage omits noopener/noreferrer features so browsers return window handle', async () => {
+  // Per spec (and Chrome 88+), window.open returns null when noopener or
+  // noreferrer is in the features string, even though a tab still opens.
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_img', { localId: 'asset_img', binary: new Uint8Array([255, 0]), metadata: { mimeType: 'image/png' } });
+
+  const origCreate = URL.createObjectURL;
+  const origRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = () => 'blob:test/image2';
+  URL.revokeObjectURL = () => {};
+  const origOpen = globalThis.window.open;
+  const origSetTimeout = globalThis.window.setTimeout;
+  let receivedFeatures = null;
+  let navigatedTo = null;
+  globalThis.window.open = (_url, _target, features) => {
+    receivedFeatures = features ?? null;
+    // Simulate spec behaviour: return null when noopener or noreferrer present.
+    if (features?.includes('noreferrer') || features?.includes('noopener')) return null;
+    return {
+      set opener(_) {},
+      document: { get title() { return ''; }, set title(_) {}, body: { set textContent(_) {} } },
+      location: { replace(url) { navigatedTo = url; } },
+    };
+  };
+  try {
+    globalThis.window.setTimeout = () => 0;
+    const result = await session.openAssetImage('asset_img');
+    assert.equal(result.ok, true, 'should succeed without noopener/noreferrer features');
+    assert.ok(
+      !receivedFeatures?.includes('noreferrer') && !receivedFeatures?.includes('noopener'),
+      `features must not contain noopener or noreferrer, got: ${receivedFeatures}`
+    );
+    assert.equal(navigatedTo, 'blob:test/image2');
+    assert.equal(session.state.mediaFeedback, null);
+  } finally {
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+    globalThis.window.open = origOpen;
+    globalThis.window.setTimeout = origSetTimeout;
+  }
+});
+
 test('openAssetImage returns missing-asset when asset not in storage', async () => {
   const mod = await loadEditorModule();
   const { session } = createSessionWithQuestion(mod);
@@ -1721,6 +1764,57 @@ test('openAssetImage navigates new window to object URL on success', async () =>
     assert.equal(result.ok, true);
     assert.equal(navigatedTo, 'blob:test/image1');
     assert.ok(revokedUrls.includes('blob:test/image1'), 'URL should be revoked via setTimeout');
+    assert.equal(session.state.mediaFeedback, null);
+  } finally {
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+    delete globalThis.window.open;
+    globalThis.window.setTimeout = origSetTimeout;
+  }
+});
+
+test('openAssetImage falls back to in-window img render when location.replace throws', async () => {
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_img', { localId: 'asset_img', binary: new Uint8Array([255, 0]), metadata: { mimeType: 'image/png' } });
+
+  const origCreate = URL.createObjectURL;
+  const origRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = () => 'blob:test/image-fallback';
+  URL.revokeObjectURL = () => {};
+
+  let appendedSrc = null;
+  globalThis.window.open = () => {
+    const body = {
+      innerHTML: '',
+      style: {},
+      appendChild(node) {
+        appendedSrc = node?.src || null;
+      },
+    };
+    return {
+      set opener(_) {},
+      document: {
+        title: '',
+        body,
+        createElement() {
+          return { src: '', alt: '', style: {} };
+        },
+      },
+      location: {
+        replace() {
+          throw new Error('navigation blocked');
+        },
+      },
+      close() {},
+    };
+  };
+  const origSetTimeout = globalThis.window.setTimeout;
+  globalThis.window.setTimeout = (fn) => fn();
+  try {
+    const result = await session.openAssetImage('asset_img');
+    assert.equal(result.ok, true);
+    assert.equal(appendedSrc, 'blob:test/image-fallback');
     assert.equal(session.state.mediaFeedback, null);
   } finally {
     URL.createObjectURL = origCreate;
