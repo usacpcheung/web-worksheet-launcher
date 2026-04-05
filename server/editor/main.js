@@ -822,7 +822,10 @@ class EditorDraftSession {
   }
 
   async openAssetImage(assetId) {
-    const previewWindow = window.open('', '_blank', 'noopener');
+    // Do NOT pass 'noopener' or 'noreferrer' in the features string: per spec
+    // (and Chrome 88+) window.open returns null when those flags are set, even
+    // though the tab still opens. We instead manually null out .opener below.
+    const previewWindow = window.open('', '_blank');
     if (!previewWindow) {
       this.setMediaFeedback('Image preview was blocked. Allow pop-ups and try again.');
       return { ok: false, reason: 'blocked' };
@@ -845,13 +848,52 @@ class EditorDraftSession {
       this.setMediaFeedback('Unable to load attached image for preview.');
       return { ok: false, reason: 'missing-asset' };
     }
-    const objectUrl = this.createObjectUrlForAsset(record, 'image/png');
+    const draftAsset = this.findAsset(assetId);
+    const fallbackImageMimeType = draftAsset?.mimeType || 'image/png';
+    const objectUrl = this.createObjectUrlForAsset(record, fallbackImageMimeType);
     if (!objectUrl) {
       previewWindow.close();
       this.setMediaFeedback('Unable to load attached image for preview.');
       return { ok: false, reason: 'missing-binary' };
     }
-    previewWindow.location.replace(objectUrl);
+
+    let didNavigate = false;
+    try {
+      previewWindow.location.replace(objectUrl);
+      didNavigate = true;
+    } catch (error) {
+      // Some browsers can block direct navigation on a noopener handle.
+    }
+
+    if (!didNavigate) {
+      try {
+        const doc = previewWindow.document;
+        if (doc?.body && typeof doc.createElement === 'function') {
+          doc.title = 'Image preview';
+          doc.body.innerHTML = '';
+          const image = doc.createElement('img');
+          image.src = objectUrl;
+          image.alt = 'Attached image preview';
+          image.style.maxWidth = '100%';
+          image.style.height = 'auto';
+          image.style.display = 'block';
+          doc.body.style.margin = '0';
+          doc.body.style.padding = '12px';
+          doc.body.appendChild(image);
+          didNavigate = true;
+        }
+      } catch (error) {
+        // Ignore and fail with a user-facing feedback message below.
+      }
+    }
+
+    if (!didNavigate) {
+      previewWindow.close();
+      this.setMediaFeedback('Unable to open attached image for preview.');
+      URL.revokeObjectURL(objectUrl);
+      return { ok: false, reason: 'navigation-failed' };
+    }
+
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     this.clearMediaFeedback();
     this.notifyStateChange();
