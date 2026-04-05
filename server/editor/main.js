@@ -125,6 +125,32 @@ function getOptionDeletePolicy(option) {
   };
 }
 
+function getSwitchImpact(fromType, toType, questionState) {
+  const normalizedFromType = CANONICAL_RESPONSE_INPUT_TYPES.has(fromType) ? fromType : 'text';
+  const normalizedToType = CANONICAL_RESPONSE_INPUT_TYPES.has(toType) ? toType : 'text';
+  const responseConfig = normalizeQuestionResponseConfig(questionState?.responseConfig);
+  const normalizedOptions = Array.isArray(responseConfig.options)
+    ? responseConfig.options.map((option) => normalizeResponseOption(option))
+    : [];
+  const shouldRemoveOptions = normalizedFromType === 'multiple_choice' && normalizedToType !== 'multiple_choice';
+  const optionCountToRemove = shouldRemoveOptions ? normalizedOptions.length : 0;
+  const optionAttachmentCountToRemove = shouldRemoveOptions
+    ? normalizedOptions.reduce((count, option) => count + normalizeMediaRefs(option.mediaRefs, 'option_audio').length, 0)
+    : 0;
+  const hasOptionTextLoss = shouldRemoveOptions
+    ? normalizedOptions.some((option) => hasTypedText(option.label) || hasTypedText(option.value))
+    : false;
+  const hasMeaningfulDataLoss = hasOptionTextLoss || optionAttachmentCountToRemove > 0;
+  return {
+    fromType: normalizedFromType,
+    toType: normalizedToType,
+    optionCountToRemove,
+    optionAttachmentCountToRemove,
+    hasOptionTextLoss,
+    hasMeaningfulDataLoss,
+  };
+}
+
 function extFromName(name = '') {
   const match = String(name).toLowerCase().match(/\.([a-z0-9]+)$/);
   return match ? match[1] : '';
@@ -1230,6 +1256,43 @@ class EditorDraftSession {
       };
     });
     this.touchDraft();
+  }
+
+  getQuestionInputTypeSwitchImpact(blockId, nextInputType) {
+    if (!this.state.draft || !blockId) {
+      return getSwitchImpact('text', nextInputType, null);
+    }
+    const block = this.state.draft.blocks.find((candidate) => candidate.blockId === blockId);
+    if (!block || block.kind !== 'question') {
+      return getSwitchImpact('text', nextInputType, null);
+    }
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    return getSwitchImpact(responseConfig.inputType, nextInputType, block);
+  }
+
+  switchQuestionInputTypeWithImpactPolicy(blockId, nextInputType, options = {}) {
+    if (!this.state.draft || !blockId) {
+      return { ok: false, reason: 'invalid-question-target' };
+    }
+    const block = this.state.draft.blocks.find((candidate) => candidate.blockId === blockId);
+    if (!block || block.kind !== 'question') {
+      return { ok: false, reason: 'invalid-question-target' };
+    }
+    const impact = this.getQuestionInputTypeSwitchImpact(blockId, nextInputType);
+    if (impact.hasMeaningfulDataLoss && options.confirmSwitch !== true) {
+      return { ok: false, reason: 'confirm-switch-required', impact };
+    }
+    const removedAssetIds = impact.fromType === 'multiple_choice' && impact.toType !== 'multiple_choice'
+      ? (Array.isArray(normalizeQuestionResponseConfig(block.responseConfig).options)
+        ? normalizeQuestionResponseConfig(block.responseConfig).options
+          .flatMap((option) => normalizeMediaRefs(option?.mediaRefs, 'option_audio').map((ref) => ref.assetId))
+        : [])
+      : [];
+    this.updateQuestionInputType(blockId, nextInputType);
+    if (removedAssetIds.length > 0) {
+      this.pruneAssetLinks(removedAssetIds);
+    }
+    return { ok: true, impact };
   }
 
   updateQuestionMaxLength(blockId, maxLength) {
@@ -3390,8 +3453,33 @@ function renderEditorShell(session) {
     const viewerUrl = buildViewerUrlFromCurrentLocation(window.location.href, localDraftId, draftUpdatedAt);
     window.location.assign(viewerUrl);
   });
-  questionInputType.addEventListener('change', () => {
-    session.updateQuestionInputType(session.state.selectedBlockId, questionInputType.value);
+  questionInputType.addEventListener('change', async () => {
+    const selectedBlockId = session.state.selectedBlockId;
+    if (!selectedBlockId) return;
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlockId);
+    const currentInputType = normalizeQuestionResponseConfig(selectedBlock?.responseConfig).inputType || 'text';
+    const outcome = session.switchQuestionInputTypeWithImpactPolicy(selectedBlockId, questionInputType.value);
+    if (!outcome.ok && outcome.reason === 'confirm-switch-required') {
+      const details = [
+        `${outcome.impact.optionCountToRemove} option${outcome.impact.optionCountToRemove === 1 ? '' : 's'} will be removed.`,
+        `${outcome.impact.optionAttachmentCountToRemove} option attachment${outcome.impact.optionAttachmentCountToRemove === 1 ? '' : 's'} (audio/files) will be removed.`,
+      ];
+      if (outcome.impact.hasOptionTextLoss) {
+        details.push('User-entered option text/values will be removed.');
+      }
+      const confirmed = await showConfirmDialog({
+        title: 'Switching answer type will remove data',
+        entityLabel: 'this question type',
+        removalItems: details,
+        confirmLabel: 'Switch and Remove',
+      });
+      if (!confirmed) {
+        questionInputType.value = currentInputType;
+        updateSummary();
+        return;
+      }
+      session.switchQuestionInputTypeWithImpactPolicy(selectedBlockId, questionInputType.value, { confirmSwitch: true });
+    }
     updateSummary();
   });
   questionMaxLength.addEventListener('input', () => {

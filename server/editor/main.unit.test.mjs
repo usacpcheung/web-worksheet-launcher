@@ -518,6 +518,131 @@ test('question field updates map inputType, maxLength, and options through draft
   assert.equal(updated.responseConfig.options, undefined);
 });
 
+test('question input type change flow routes destructive switches through in-app confirm modal', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("questionInputType.addEventListener('change', async () => {"), true);
+  assert.equal(source.includes("reason === 'confirm-switch-required'"), true);
+  assert.equal(source.includes("title: 'Switching answer type will remove data'"), true);
+  assert.equal(source.includes("confirmLabel: 'Switch and Remove'"), true);
+  assert.equal(source.includes('await showConfirmDialog({'), true);
+});
+
+test('non-destructive type switch does not require confirmation', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = {
+    localId: 'draft_type_switch_non_destructive',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [{ id: 'o1', value: '', label: '' }],
+        },
+      },
+    ],
+    assets: [],
+  };
+
+  const impact = session.getQuestionInputTypeSwitchImpact('q1', 'text');
+  assert.equal(impact.optionCountToRemove, 1);
+  assert.equal(impact.optionAttachmentCountToRemove, 0);
+  assert.equal(impact.hasOptionTextLoss, false);
+  assert.equal(impact.hasMeaningfulDataLoss, false);
+
+  const result = session.switchQuestionInputTypeWithImpactPolicy('q1', 'text');
+  assert.equal(result.ok, true);
+  const updated = session.state.draft.blocks[0];
+  assert.equal(updated.responseConfig.inputType, 'text');
+  assert.equal(updated.responseConfig.options, undefined);
+});
+
+test('destructive type switch requires confirm and cancel path preserves data', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = {
+    localId: 'draft_type_switch_cancel',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [{ id: 'o1', value: 'Alpha', label: 'Alpha' }],
+        },
+      },
+    ],
+    assets: [],
+  };
+
+  const result = session.switchQuestionInputTypeWithImpactPolicy('q1', 'text');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'confirm-switch-required');
+  assert.equal(result.impact.optionCountToRemove, 1);
+  assert.equal(result.impact.hasOptionTextLoss, true);
+  assert.equal(session.state.draft.blocks[0].responseConfig.inputType, 'multiple_choice');
+  assert.equal(session.state.draft.blocks[0].responseConfig.options.length, 1);
+});
+
+test('confirming destructive type switch removes targeted option data and attachments only', async () => {
+  const mod = await loadEditorModule();
+  const removed = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async (id) => { removed.push(id); } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_type_switch_confirm',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q1' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [
+            { id: 'o1', value: 'A', label: 'A', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_remove' }] },
+          ],
+        },
+      },
+      {
+        blockId: 'q2',
+        kind: 'question',
+        position: 1,
+        prompt: { text: 'Q2' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [
+            { id: 'o2', value: 'B', label: 'B', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_keep_shared' }] },
+          ],
+        },
+      },
+    ],
+    assets: [{ assetId: 'asset_remove' }, { assetId: 'asset_keep_shared' }, { assetId: 'asset_keep_unused' }],
+  };
+
+  const blocked = session.switchQuestionInputTypeWithImpactPolicy('q1', 'text');
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, 'confirm-switch-required');
+
+  const confirmed = session.switchQuestionInputTypeWithImpactPolicy('q1', 'text', { confirmSwitch: true });
+  assert.equal(confirmed.ok, true);
+  assert.equal(session.state.draft.blocks[0].responseConfig.inputType, 'text');
+  assert.equal(session.state.draft.blocks[0].responseConfig.options, undefined);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_remove'), false);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep_shared'), true);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep_unused'), true);
+  assert.deepEqual(removed, ['asset_remove']);
+});
+
 test('reorderBlockByDelta moves middle block up/down and normalizes positions to 0..n-1', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());
