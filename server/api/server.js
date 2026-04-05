@@ -1,0 +1,190 @@
+import http from 'node:http';
+import fs from 'node:fs/promises';
+import { loadConfig } from './config.js';
+import { requireAuthenticatedIdentity, AuthError } from './auth.js';
+import { createPool } from './db/pool.js';
+import { PackageArtifactStore } from './storage/package-artifact-store.js';
+import { PackageService } from './services/package-service.js';
+
+function json(res, statusCode, payload) {
+  res.statusCode = statusCode;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(payload));
+}
+
+function ok(data) {
+  return { ok: true, data };
+}
+
+function fail(code, message, details = null) {
+  return {
+    ok: false,
+    error: {
+      code,
+      message,
+      ...(details ? { details } : {}),
+    },
+  };
+}
+
+async function readRequestBody(req, maxBytes = 30 * 1024 * 1024) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += part.length;
+    if (total > maxBytes) {
+      throw new Error('Request body too large.');
+    }
+    chunks.push(part);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function readJsonBody(req) {
+  const bytes = await readRequestBody(req);
+  if (!bytes.length) return {};
+  return JSON.parse(bytes.toString('utf8'));
+}
+
+function parseRoute(url) {
+  const trimmed = url.pathname.replace(/\/+$/, '') || '/';
+  const segments = trimmed.split('/').filter(Boolean);
+  return { trimmed, segments };
+}
+
+export async function createApiServer() {
+  const config = loadConfig();
+  await fs.mkdir(config.storageRoot, { recursive: true });
+
+  const db = createPool(config);
+  const artifactStore = new PackageArtifactStore({ storageRoot: config.storageRoot });
+  const service = new PackageService({ db, artifactStore, config });
+
+  const server = http.createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url || '/', 'http://localhost');
+      const { segments } = parseRoute(url);
+
+      if (req.method === 'GET' && url.pathname === '/healthz') {
+        return json(res, 200, ok({ status: 'ok' }));
+      }
+
+      const identity = requireAuthenticatedIdentity(req, config.authHeaders);
+
+      if (req.method === 'POST' && url.pathname === '/api/v1/drafts/upload') {
+        const contentType = String(req.headers['content-type'] || '').toLowerCase();
+        if (!contentType.includes('application/zip')) {
+          return json(res, 415, fail('UNSUPPORTED_MEDIA_TYPE', 'Upload draft requires Content-Type: application/zip'));
+        }
+        const zipBytes = await readRequestBody(req);
+        const title = url.searchParams.get('title') || '';
+        const subject = url.searchParams.get('subject') || '';
+        const result = await service.uploadDraft({ identity, title, subject, zipBytes });
+        if (!result.ok) {
+          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+        }
+        return json(res, result.statusCode, ok(result.data));
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/v1/drafts') {
+        const rows = await service.listOwnDrafts(identity);
+        return json(res, 200, ok({ items: rows }));
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/v1/published') {
+        const payload = await readJsonBody(req);
+        if (!payload.uploadedDraftId) {
+          return json(
+            res,
+            400,
+            fail('INVALID_REQUEST', 'publish requires uploadedDraftId in JSON body for this phase foundation.')
+          );
+        }
+
+        const result = await service.publishFromDraft({ identity, uploadedDraftId: payload.uploadedDraftId });
+        if (!result.ok) {
+          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+        }
+        return json(res, result.statusCode, ok(result.data));
+      }
+
+      if (req.method === 'GET' && segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'published' && segments[3]) {
+        const publishedPackageId = segments[3];
+        const row = await service.loadPublishedPackage(publishedPackageId);
+        if (!row) {
+          return json(res, 404, fail('PUBLISHED_PACKAGE_NOT_FOUND', 'Published package was not found.'));
+        }
+
+        if (segments[4] === 'artifact') {
+          const zipBytes = await artifactStore.readArtifact(row.artifact_path);
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/zip');
+          res.setHeader('content-length', String(zipBytes.byteLength));
+          res.end(zipBytes);
+          return;
+        }
+
+        return json(res, 200, ok({
+          publishedPackageId: row.published_package_id,
+          ownerSub: row.owner_sub,
+          title: row.title,
+          subject: row.subject,
+          artifactSha256: row.artifact_sha256,
+          artifactSizeBytes: row.artifact_size_bytes,
+          publishedAt: row.published_at,
+        }));
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/v1/published') {
+        const rows = await service.listPublished({
+          query: url.searchParams.get('q') || '',
+          subject: url.searchParams.get('subject') || '',
+          limit: url.searchParams.get('limit') || '',
+          offset: url.searchParams.get('offset') || '',
+        });
+
+        return json(res, 200, ok({ items: rows }));
+      }
+
+      return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+    } catch (error) {
+      if (error instanceof AuthError) {
+        return json(res, error.statusCode, fail(error.code, error.message));
+      }
+      if (error instanceof SyntaxError) {
+        return json(res, 400, fail('INVALID_JSON', 'Malformed JSON body.'));
+      }
+      return json(res, 500, fail('INTERNAL_ERROR', error.message || 'Unexpected server error.'));
+    }
+  });
+
+  return {
+    config,
+    server,
+    async close() {
+      await db.end();
+      await new Promise((resolve, reject) => {
+        server.close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+    },
+  };
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  createApiServer()
+    .then(({ server, config }) => {
+      server.listen(config.port, () => {
+        // eslint-disable-next-line no-console
+        console.log(`API listening on http://127.0.0.1:${config.port}`);
+      });
+    })
+    .catch((error) => {
+      // eslint-disable-next-line no-console
+      console.error(error);
+      process.exitCode = 1;
+    });
+}

@@ -1,0 +1,14 @@
+{
+  "name": "web-worksheet-launcher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bash -lc 'node --test $(rg --files -g \"**/*.unit.test.mjs\" server | tr \"\\n\" \" \")'",
+    "migrate": "node server/api/db/migrate.js",
+    "start:api": "node server/api/server.js"
+  },
+  "dependencies": {
+    "pg": "^8.16.0"
+  }
+}

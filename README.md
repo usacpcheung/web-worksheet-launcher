@@ -73,3 +73,20 @@ Lifecycle hooks (optional):
 - `onResult(payload)`
 
 In v1, launcher behavior remains one-question mode only.
+
+## Phase D server foundation (upload/publish/load/browse)
+
+A first server-backed API foundation is available under `server/api/` with PostgreSQL metadata + filesystem ZIP artifact storage.
+
+- Config and env validation: `server/api/config.js` and `.env.example`
+- Migration bootstrap: `server/api/db/migrate.js`, SQL in `server/api/db/migrations/`
+- API runtime: `server/api/server.js`
+- Detailed phase notes: `docs/phase-d-server-foundation.md`
+
+Quick start:
+
+```bash
+npm install
+npm run migrate
+npm run start:api
+```
