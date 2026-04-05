@@ -316,10 +316,11 @@ test('createChoiceButtonGroup renders option-audio play buttons only when option
 
   const firstRow = group.children[0];
   const secondRow = group.children[1];
-  const firstAudioButton = firstRow.children.find((node) => node.className === 'choice-audio-btn');
-  const secondAudioButton = secondRow.children.find((node) => node.className === 'choice-audio-btn');
+  const firstAudioButton = firstRow.children.find((node) => String(node.className || '').includes('choice-audio-btn'));
+  const secondAudioButton = secondRow.children.find((node) => String(node.className || '').includes('choice-audio-btn'));
 
-  assert.equal(firstAudioButton?.textContent, 'Play option audio');
+  assert.equal(firstAudioButton?.textContent, '🔊');
+  assert.equal(String(firstAudioButton?.className || '').includes('question-card__prompt-audio-btn'), true);
   assert.equal(secondAudioButton, undefined);
 });
 
@@ -2683,6 +2684,150 @@ test('viewer playback enforces one active audio at a time', async () => {
   assert.equal(second.ok, true);
   assert.equal(instances.length, 2);
   assert.equal(instances[0].paused, true);
+});
+
+test('viewer playback lifecycle hooks report start, ended, error, and interruption', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    localAssets: { get: async () => ({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } }) },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  const urls = [];
+  globalThis.URL = {
+    createObjectURL: () => {
+      const url = `blob:test:${urls.length}`;
+      urls.push(url);
+      return url;
+    },
+    revokeObjectURL: () => {},
+  };
+
+  const instances = [];
+  globalThis.Audio = class {
+    constructor() {
+      this.listeners = new Map();
+      instances.push(this);
+    }
+    addEventListener(type, handler) {
+      this.listeners.set(type, handler);
+    }
+    async play() {}
+    pause() { this.paused = true; }
+    set src(_value) {}
+    emit(type) {
+      this.listeners.get(type)?.();
+    }
+  };
+
+  let started = 0;
+  let ended = 0;
+  let errored = 0;
+  let interrupted = 0;
+
+  const first = await session.playAssetAudio('a1', {
+    onStart: () => { started += 1; },
+    onEnded: () => { ended += 1; },
+    onError: () => { errored += 1; },
+    onInterrupted: () => { interrupted += 1; },
+  });
+  assert.equal(first.ok, true);
+  assert.equal(started, 1);
+
+  instances[0].emit('ended');
+  assert.equal(ended, 1);
+
+  const second = await session.playAssetAudio('a2', {
+    onStart: () => { started += 1; },
+    onEnded: () => { ended += 1; },
+    onError: () => { errored += 1; },
+    onInterrupted: () => { interrupted += 1; },
+  });
+  assert.equal(second.ok, true);
+  instances[1].emit('error');
+  assert.equal(errored, 1);
+
+  const third = await session.playAssetAudio('a3', {
+    onStart: () => { started += 1; },
+    onEnded: () => { ended += 1; },
+    onError: () => { errored += 1; },
+    onInterrupted: () => { interrupted += 1; },
+  });
+  assert.equal(third.ok, true);
+  const fourth = await session.playAssetAudio('a4');
+  assert.equal(fourth.ok, true);
+  assert.equal(interrupted, 1);
+});
+
+test('viewer playback race condition: last request wins when fetches resolve out of order', async () => {
+  const mod = await loadViewerModule();
+
+  let resolve1, resolve2;
+  const makeAsset = () => ({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } });
+  let callCount = 0;
+  const session = new mod.ViewerAttemptSession({
+    localAssets: {
+      get: async () => {
+        callCount++;
+        if (callCount === 1) {
+          return new Promise(r => { resolve1 = () => r(makeAsset()); });
+        }
+        return new Promise(r => { resolve2 = () => r(makeAsset()); });
+      },
+    },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  const instances = [];
+  globalThis.URL = { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} };
+  globalThis.Audio = class {
+    constructor() {
+      this.paused = false;
+      instances.push(this);
+    }
+    addEventListener() {}
+    async play() {}
+    pause() { this.paused = true; }
+    set src(_value) {}
+  };
+
+  // Start both requests concurrently without awaiting
+  const p1 = session.playAssetAudio('a1');
+  const p2 = session.playAssetAudio('a2');
+
+  // Resolve the second fetch first (out of order), then the first.
+  // setImmediate ensures all queued microtasks from resolve2 drain before resolve1 fires.
+  resolve2();
+  await new Promise(r => setImmediate(r));
+  resolve1();
+
+  const [r1, r2] = await Promise.all([p1, p2]);
+
+  // The first request should be superseded by the second
+  assert.equal(r1.ok, false);
+  assert.equal(r2.ok, true);
+  // Only one audio instance should play
+  assert.equal(instances.length, 1);
+});
+
+test('question prompt audio handler toggles disable state and does not persist success text', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("if (questionAudioBtn.disabled) return;"), true);
+  assert.equal(source.includes("questionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("onEnded: () => {\n            questionAudioBtn.disabled = false;"), true);
+  assert.equal(source.includes("onError: () => {\n            questionAudioBtn.disabled = false;"), true);
+  assert.equal(source.includes("setMediaFeedback(`Playing question audio (${questionAudioRef.assetId}).`);"), false);
+});
+
+test('choice option audio handler matches icon-button lifecycle behavior', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';"), true);
+  assert.equal(source.includes("optionAudioBtn.textContent = '🔊';"), true);
+  assert.equal(source.includes("if (optionAudioBtn.disabled) return;"), true);
+  assert.equal(source.includes("optionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("onStart: () => {\n            optionAudioBtn.disabled = true;"), false);
+  assert.equal(source.includes("onEnded: () => {\n            optionAudioBtn.disabled = false;"), true);
+  assert.equal(source.includes("reportMediaFeedback(`Playing option audio (${optionAudioRef.assetId}).`);"), false);
 });
 
 test('viewer no-param bootstrap renders start panel with explicit resume controls', async () => {

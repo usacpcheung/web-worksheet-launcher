@@ -612,17 +612,39 @@ function createChoiceButtonGroup({
     if (optionAudioRef) {
       const optionAudioBtn = document.createElement('button');
       optionAudioBtn.type = 'button';
-      optionAudioBtn.className = 'choice-audio-btn';
-      optionAudioBtn.textContent = 'Play option audio';
+      optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';
+      optionAudioBtn.textContent = '🔊';
+      optionAudioBtn.setAttribute('aria-label', 'Play option audio');
+      optionAudioBtn.title = 'Play option audio';
       optionAudioBtn.addEventListener('click', async (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const result = await session.playAssetAudio(optionAudioRef.assetId);
+        if (optionAudioBtn.disabled) return;
+        optionAudioBtn.disabled = true;
+
+        const result = await session.playAssetAudio(optionAudioRef.assetId, {
+          onStart: () => {
+            if (typeof reportMediaFeedback === 'function') {
+              reportMediaFeedback('');
+            }
+          },
+          onEnded: () => {
+            optionAudioBtn.disabled = false;
+            if (typeof reportMediaFeedback === 'function') {
+              reportMediaFeedback('');
+            }
+          },
+          onError: () => {
+            optionAudioBtn.disabled = false;
+          },
+          onInterrupted: () => {
+            optionAudioBtn.disabled = false;
+          },
+        });
         if (typeof reportMediaFeedback === 'function') {
           if (!result.ok) {
+            optionAudioBtn.disabled = false;
             reportMediaFeedback(result.message || 'Unable to play option audio.');
-          } else {
-            reportMediaFeedback(`Playing option audio (${optionAudioRef.assetId}).`);
           }
         }
       });
@@ -1113,6 +1135,8 @@ class ViewerAttemptSession {
     this.onStateChange = null;
     this.activeAudio = null;
     this.activeAudioObjectUrl = null;
+    this.activeAudioPlayback = null;
+    this._playRequestId = 0;
   }
 
   setOnStateChange(handler) {
@@ -1125,27 +1149,53 @@ class ViewerAttemptSession {
     }
   }
 
-  stopActiveAudio() {
-    if (this.activeAudio) {
-      try {
-        this.activeAudio.pause();
-      } catch {
-        // no-op
+  finalizeActiveAudio(reason = 'interrupted') {
+    const playback = this.activeAudioPlayback;
+    if (!playback || playback.finalized) return;
+    playback.finalized = true;
+    this.activeAudioPlayback = null;
+
+    const { audio, objectUrl, hooks } = playback;
+    if (audio) {
+      if (reason === 'interrupted') {
+        try {
+          audio.pause();
+        } catch {
+          // no-op
+        }
       }
-      this.activeAudio.src = '';
-      this.activeAudio = null;
+      audio.src = '';
     }
-    if (this.activeAudioObjectUrl) {
-      URL.revokeObjectURL(this.activeAudioObjectUrl);
-      this.activeAudioObjectUrl = null;
+
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
+
+    this.activeAudio = null;
+    this.activeAudioObjectUrl = null;
+
+    if (reason === 'ended') {
+      hooks?.onEnded?.();
+    } else if (reason === 'error') {
+      hooks?.onError?.();
+    } else if (reason === 'interrupted') {
+      hooks?.onInterrupted?.();
     }
   }
 
-  async playAssetAudio(assetId) {
+  stopActiveAudio(reason = 'interrupted') {
+    this.finalizeActiveAudio(reason);
+  }
+
+  async playAssetAudio(assetId, hooks = {}) {
     if (!assetId) {
       return { ok: false, message: 'Audio is not attached to this item.' };
     }
+    const requestId = ++this._playRequestId;
     const asset = await this.storage.localAssets?.get?.(assetId);
+    if (requestId !== this._playRequestId) {
+      return { ok: false, message: 'Audio request superseded.' };
+    }
     if (!asset?.binary) {
       return { ok: false, message: `Audio asset is missing (${assetId}).` };
     }
@@ -1154,23 +1204,25 @@ class ViewerAttemptSession {
     const mimeType = asset?.metadata?.mimeType || 'audio/mpeg';
     const objectUrl = URL.createObjectURL(new Blob([asset.binary], { type: mimeType }));
     const audio = new Audio(objectUrl);
+    this.activeAudioPlayback = { audio, objectUrl, hooks, finalized: false };
     this.activeAudio = audio;
     this.activeAudioObjectUrl = objectUrl;
     audio.addEventListener('ended', () => {
       if (this.activeAudio === audio) {
-        this.stopActiveAudio();
+        this.stopActiveAudio('ended');
       }
     });
     audio.addEventListener('error', () => {
       if (this.activeAudio === audio) {
-        this.stopActiveAudio();
+        this.stopActiveAudio('error');
       }
     });
     try {
       await audio.play();
+      hooks?.onStart?.();
       return { ok: true };
     } catch {
-      this.stopActiveAudio();
+      this.stopActiveAudio('error');
       return { ok: false, message: 'Audio playback failed. File may be blocked or corrupt.' };
     }
   }
@@ -2476,65 +2528,91 @@ function renderViewerShell(session) {
     const block = currentBlock;
     const card = document.createElement('article');
     card.className = 'question-card viewer-card-transition';
-      const label = document.createElement('label');
-      const inputType = block.responseConfig?.inputType || 'text';
-      const controlId = `answer-${block.blockId}`;
-      label.id = `${controlId}-label`;
-      label.textContent = block.prompt?.text || 'Question';
-      const mediaFeedback = document.createElement('p');
-      mediaFeedback.className = 'viewer-media-feedback';
-      mediaFeedback.setAttribute('role', 'status');
-      mediaFeedback.setAttribute('aria-live', 'polite');
-      const setMediaFeedback = (message) => {
-        mediaFeedback.textContent = message || '';
-      };
+    const label = document.createElement('label');
+    const inputType = block.responseConfig?.inputType || 'text';
+    const controlId = `answer-${block.blockId}`;
+    label.id = `${controlId}-label`;
+    label.textContent = block.prompt?.text || 'Question';
+    const mediaFeedback = document.createElement('p');
+    mediaFeedback.className = 'viewer-media-feedback';
+    mediaFeedback.setAttribute('role', 'status');
+    mediaFeedback.setAttribute('aria-live', 'polite');
+    const setMediaFeedback = (message) => {
+      mediaFeedback.textContent = message || '';
+    };
 
-      const promptMediaRefs = normalizePromptMediaRefs(block.prompt?.mediaRefs);
-      const questionImageRef = promptMediaRefs.find((ref) => ref.usage === 'question_image') || null;
-      const questionAudioRef = promptMediaRefs.find((ref) => ref.usage === 'question_audio') || null;
+    const promptMediaRefs = normalizePromptMediaRefs(block.prompt?.mediaRefs);
+    const questionImageRef = promptMediaRefs.find((ref) => ref.usage === 'question_image') || null;
+    const questionAudioRef = promptMediaRefs.find((ref) => ref.usage === 'question_audio') || null;
 
-      if (questionImageRef?.assetId) {
-        const imageWrap = document.createElement('div');
-        imageWrap.className = 'viewer-question-image-wrap';
-        const imageEl = document.createElement('img');
-        imageEl.className = 'viewer-question-image';
-        imageEl.alt = 'Question image';
-        imageWrap.appendChild(imageEl);
-        card.append(label, imageWrap);
-        session.storage.localAssets?.get?.(questionImageRef.assetId).then((asset) => {
-          if (!asset?.binary) {
-            setMediaFeedback(`Question image is missing (${questionImageRef.assetId}).`);
-            return;
-          }
-          const mimeType = asset?.metadata?.mimeType || 'image/png';
-          const objectUrl = URL.createObjectURL(new Blob([asset.binary], { type: mimeType }));
-          imageEl.onload = () => URL.revokeObjectURL(objectUrl);
-          imageEl.onerror = () => {
-            URL.revokeObjectURL(objectUrl);
-            setMediaFeedback('Question image could not be rendered (file may be corrupt).');
-            imageWrap.remove();
-          };
-          imageEl.src = objectUrl;
-        }).catch(() => {
-          setMediaFeedback('Question image could not be loaded.');
+    const promptRow = document.createElement('div');
+    promptRow.className = 'question-card__prompt-row';
+    const promptTextWrap = document.createElement('div');
+    promptTextWrap.className = 'question-card__prompt-text';
+    promptTextWrap.append(label);
+    promptRow.append(promptTextWrap);
+    card.append(promptRow);
+
+    if (questionAudioRef?.assetId) {
+      const questionAudioBtn = document.createElement('button');
+      questionAudioBtn.type = 'button';
+      questionAudioBtn.className = 'question-card__prompt-audio-btn';
+      questionAudioBtn.setAttribute('aria-label', 'Play question audio');
+      questionAudioBtn.title = 'Play question audio';
+      questionAudioBtn.textContent = '🔊';
+      questionAudioBtn.addEventListener('click', async () => {
+        if (questionAudioBtn.disabled) return;
+        questionAudioBtn.disabled = true;
+
+        const result = await session.playAssetAudio(questionAudioRef.assetId, {
+          onStart: () => {
+            setMediaFeedback('');
+          },
+          onEnded: () => {
+            questionAudioBtn.disabled = false;
+            setMediaFeedback('');
+          },
+          onError: () => {
+            questionAudioBtn.disabled = false;
+          },
+          onInterrupted: () => {
+            questionAudioBtn.disabled = false;
+          },
         });
-      }
+        if (!result.ok) {
+          questionAudioBtn.disabled = false;
+          setMediaFeedback(result.message || 'Unable to play question audio.');
+        }
+      });
+      promptRow.append(questionAudioBtn);
+    }
 
-      if (questionAudioRef?.assetId) {
-        const questionAudioBtn = document.createElement('button');
-        questionAudioBtn.type = 'button';
-        questionAudioBtn.className = 'choice-audio-btn';
-        questionAudioBtn.textContent = 'Play question audio';
-        questionAudioBtn.addEventListener('click', async () => {
-          const result = await session.playAssetAudio(questionAudioRef.assetId);
-          if (!result.ok) {
-            setMediaFeedback(result.message || 'Unable to play question audio.');
-          } else {
-            setMediaFeedback(`Playing question audio (${questionAudioRef.assetId}).`);
-          }
-        });
-        card.append(questionAudioBtn);
-      }
+    if (questionImageRef?.assetId) {
+      const imageWrap = document.createElement('div');
+      imageWrap.className = 'viewer-question-image-wrap';
+      const imageEl = document.createElement('img');
+      imageEl.className = 'viewer-question-image';
+      imageEl.alt = 'Question image';
+      imageWrap.appendChild(imageEl);
+      card.append(imageWrap);
+      session.storage.localAssets?.get?.(questionImageRef.assetId).then((asset) => {
+        if (!asset?.binary) {
+          setMediaFeedback(`Question image is missing (${questionImageRef.assetId}).`);
+          return;
+        }
+        const mimeType = asset?.metadata?.mimeType || 'image/png';
+        const objectUrl = URL.createObjectURL(new Blob([asset.binary], { type: mimeType }));
+        imageEl.onload = () => URL.revokeObjectURL(objectUrl);
+        imageEl.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          setMediaFeedback('Question image could not be rendered (file may be corrupt).');
+          imageWrap.remove();
+        };
+        imageEl.src = objectUrl;
+      }).catch(() => {
+        setMediaFeedback('Question image could not be loaded.');
+      });
+    }
 
       let checkBanner = null;
       let checkReveal = null;
