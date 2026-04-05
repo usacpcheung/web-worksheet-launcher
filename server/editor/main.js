@@ -90,6 +90,67 @@ function collectDraftQuestionAssetIds(draft) {
   return ids;
 }
 
+function hasTypedText(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function getBlockDeletePolicy(block) {
+  if (!isRecord(block)) {
+    return { mode: 'safe_direct_delete', hasTypedContent: false, hasAssets: false };
+  }
+  const promptText = String(block?.prompt?.text || '');
+  const contentText = String(block?.content?.text || '');
+  const options = Array.isArray(block?.responseConfig?.options) ? block.responseConfig.options : [];
+  const hasOptionText = options.some((option) => {
+    const normalized = normalizeResponseOption(option);
+    return hasTypedText(normalized.label) || hasTypedText(normalized.value);
+  });
+  const hasTypedContent = hasTypedText(promptText) || hasTypedText(contentText) || hasOptionText;
+  const hasAssets = collectQuestionAssetIds(block).length > 0;
+  return {
+    mode: hasTypedContent || hasAssets ? 'confirm_delete' : 'safe_direct_delete',
+    hasTypedContent,
+    hasAssets,
+  };
+}
+
+function getOptionDeletePolicy(option) {
+  const normalized = normalizeResponseOption(option);
+  const hasTypedContent = hasTypedText(normalized.label) || hasTypedText(normalized.value);
+  const hasAssets = normalizeMediaRefs(normalized.mediaRefs, 'option_audio').length > 0;
+  return {
+    mode: hasTypedContent || hasAssets ? 'confirm_delete' : 'safe_direct_delete',
+    hasTypedContent,
+    hasAssets,
+  };
+}
+
+function getSwitchImpact(fromType, toType, questionState) {
+  const normalizedFromType = CANONICAL_RESPONSE_INPUT_TYPES.has(fromType) ? fromType : 'text';
+  const normalizedToType = CANONICAL_RESPONSE_INPUT_TYPES.has(toType) ? toType : 'text';
+  const responseConfig = normalizeQuestionResponseConfig(questionState?.responseConfig);
+  const normalizedOptions = Array.isArray(responseConfig.options)
+    ? responseConfig.options.map((option) => normalizeResponseOption(option))
+    : [];
+  const shouldRemoveOptions = normalizedFromType === 'multiple_choice' && normalizedToType !== 'multiple_choice';
+  const optionCountToRemove = shouldRemoveOptions ? normalizedOptions.length : 0;
+  const optionAttachmentCountToRemove = shouldRemoveOptions
+    ? normalizedOptions.reduce((count, option) => count + normalizeMediaRefs(option.mediaRefs, 'option_audio').length, 0)
+    : 0;
+  const hasOptionTextLoss = shouldRemoveOptions
+    ? normalizedOptions.some((option) => hasTypedText(option.label) || hasTypedText(option.value))
+    : false;
+  const hasMeaningfulDataLoss = hasOptionTextLoss || optionAttachmentCountToRemove > 0;
+  return {
+    fromType: normalizedFromType,
+    toType: normalizedToType,
+    optionCountToRemove,
+    optionAttachmentCountToRemove,
+    hasOptionTextLoss,
+    hasMeaningfulDataLoss,
+  };
+}
+
 function extFromName(name = '') {
   const match = String(name).toLowerCase().match(/\.([a-z0-9]+)$/);
   return match ? match[1] : '';
@@ -525,6 +586,9 @@ class EditorDraftSession {
     this.onStateChange = null;
     this.transientQuestionBlockIds = new Set();
     this.previewAudio = null;
+    this.previewAudioUrl = null;
+    this.previewAudioPlayback = null;
+    this._previewPlayRequestId = 0;
   }
 
   setOnStateChange(handler) {
@@ -760,23 +824,53 @@ class EditorDraftSession {
     return URL.createObjectURL(blob);
   }
 
-  stopPreviewAudio() {
-    if (!this.previewAudio) return;
-    try {
-      this.previewAudio.pause();
-      this.previewAudio.src = '';
-    } catch (error) {
-      // no-op
+  finalizePreviewAudio(reason = 'interrupted') {
+    const playback = this.previewAudioPlayback;
+    if (!playback || playback.finalized) return;
+    playback.finalized = true;
+
+    const { audio, objectUrl, hooks } = playback;
+    if (audio) {
+      if (reason === 'interrupted') {
+        try {
+          audio.pause();
+        } catch (error) {
+          // no-op
+        }
+      }
+      audio.src = '';
     }
-    this.previewAudio = null;
-    if (this.previewAudioUrl) {
-      URL.revokeObjectURL(this.previewAudioUrl);
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
+
+    if (this.previewAudio === audio) {
+      this.previewAudio = null;
+    }
+    if (this.previewAudioUrl === objectUrl) {
       this.previewAudioUrl = null;
+    }
+    this.previewAudioPlayback = null;
+
+    if (reason === 'ended') {
+      hooks?.onEnded?.();
+    } else if (reason === 'error') {
+      hooks?.onError?.();
+    } else {
+      hooks?.onInterrupted?.();
     }
   }
 
-  async playAssetAudio(assetId) {
+  stopPreviewAudio(reason = 'interrupted') {
+    this.finalizePreviewAudio(reason);
+  }
+
+  async playAssetAudio(assetId, hooks = {}) {
+    const requestId = ++this._previewPlayRequestId;
     const record = await this.getLocalAssetRecord(assetId);
+    if (requestId !== this._previewPlayRequestId) {
+      return { ok: false, reason: 'superseded' };
+    }
     if (!record) {
       this.setMediaFeedback('Unable to load attached audio for preview.');
       return { ok: false, reason: 'missing-asset' };
@@ -791,38 +885,41 @@ class EditorDraftSession {
     const audio = new Audio(objectUrl);
     this.previewAudio = audio;
     this.previewAudioUrl = objectUrl;
+    this.previewAudioPlayback = { audio, objectUrl, hooks, finalized: false };
     audio.addEventListener('ended', () => {
-      URL.revokeObjectURL(objectUrl);
-      if (this.previewAudio === audio) {
-        this.previewAudio = null;
-        this.previewAudioUrl = null;
-      }
+      if (this.previewAudio !== audio) return;
+      this.finalizePreviewAudio('ended');
     }, { once: true });
     audio.addEventListener('error', () => {
-      URL.revokeObjectURL(objectUrl);
-      if (this.previewAudio === audio) {
-        this.previewAudio = null;
-        this.previewAudioUrl = null;
-      }
+      if (this.previewAudio !== audio) return;
       this.setMediaFeedback('Unable to play attached audio.');
+      this.finalizePreviewAudio('error');
     }, { once: true });
 
     try {
       await audio.play();
+      if (this.previewAudio !== audio) {
+        return { ok: false, reason: 'superseded' };
+      }
+      hooks?.onStart?.();
       this.clearMediaFeedback();
       this.notifyStateChange();
       return { ok: true };
     } catch (error) {
-      URL.revokeObjectURL(objectUrl);
-      this.previewAudio = null;
-      this.previewAudioUrl = null;
+      if (this.previewAudio !== audio) {
+        return { ok: false, reason: 'superseded' };
+      }
+      this.finalizePreviewAudio('error');
       this.setMediaFeedback('Audio playback was blocked. Try again.');
       return { ok: false, reason: 'playback-failed' };
     }
   }
 
   async openAssetImage(assetId) {
-    const previewWindow = window.open('', '_blank', 'noopener,noreferrer');
+    // Do NOT pass 'noopener' or 'noreferrer' in the features string: per spec
+    // (and Chrome 88+) window.open returns null when those flags are set, even
+    // though the tab still opens. We instead manually null out .opener below.
+    const previewWindow = window.open('', '_blank');
     if (!previewWindow) {
       this.setMediaFeedback('Image preview was blocked. Allow pop-ups and try again.');
       return { ok: false, reason: 'blocked' };
@@ -845,13 +942,52 @@ class EditorDraftSession {
       this.setMediaFeedback('Unable to load attached image for preview.');
       return { ok: false, reason: 'missing-asset' };
     }
-    const objectUrl = this.createObjectUrlForAsset(record, 'image/png');
+    const draftAsset = this.findAsset(assetId);
+    const fallbackImageMimeType = draftAsset?.mimeType || 'image/png';
+    const objectUrl = this.createObjectUrlForAsset(record, fallbackImageMimeType);
     if (!objectUrl) {
       previewWindow.close();
       this.setMediaFeedback('Unable to load attached image for preview.');
       return { ok: false, reason: 'missing-binary' };
     }
-    previewWindow.location.replace(objectUrl);
+
+    let didNavigate = false;
+    try {
+      previewWindow.location.replace(objectUrl);
+      didNavigate = true;
+    } catch (error) {
+      // Some browsers can block direct navigation on a noopener handle.
+    }
+
+    if (!didNavigate) {
+      try {
+        const doc = previewWindow.document;
+        if (doc?.body && typeof doc.createElement === 'function') {
+          doc.title = 'Image preview';
+          doc.body.innerHTML = '';
+          const image = doc.createElement('img');
+          image.src = objectUrl;
+          image.alt = 'Attached image preview';
+          image.style.maxWidth = '100%';
+          image.style.height = 'auto';
+          image.style.display = 'block';
+          doc.body.style.margin = '0';
+          doc.body.style.padding = '12px';
+          doc.body.appendChild(image);
+          didNavigate = true;
+        }
+      } catch (error) {
+        // Ignore and fail with a user-facing feedback message below.
+      }
+    }
+
+    if (!didNavigate) {
+      previewWindow.close();
+      this.setMediaFeedback('Unable to open attached image for preview.');
+      URL.revokeObjectURL(objectUrl);
+      return { ok: false, reason: 'navigation-failed' };
+    }
+
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     this.clearMediaFeedback();
     this.notifyStateChange();
@@ -1120,6 +1256,43 @@ class EditorDraftSession {
       };
     });
     this.touchDraft();
+  }
+
+  getQuestionInputTypeSwitchImpact(blockId, nextInputType) {
+    if (!this.state.draft || !blockId) {
+      return getSwitchImpact('text', nextInputType, null);
+    }
+    const block = this.state.draft.blocks.find((candidate) => candidate.blockId === blockId);
+    if (!block || block.kind !== 'question') {
+      return getSwitchImpact('text', nextInputType, null);
+    }
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    return getSwitchImpact(responseConfig.inputType, nextInputType, block);
+  }
+
+  switchQuestionInputTypeWithImpactPolicy(blockId, nextInputType, options = {}) {
+    if (!this.state.draft || !blockId) {
+      return { ok: false, reason: 'invalid-question-target' };
+    }
+    const block = this.state.draft.blocks.find((candidate) => candidate.blockId === blockId);
+    if (!block || block.kind !== 'question') {
+      return { ok: false, reason: 'invalid-question-target' };
+    }
+    const impact = this.getQuestionInputTypeSwitchImpact(blockId, nextInputType);
+    if (impact.hasMeaningfulDataLoss && options.confirmSwitch !== true) {
+      return { ok: false, reason: 'confirm-switch-required', impact };
+    }
+    const removedAssetIds = impact.fromType === 'multiple_choice' && impact.toType !== 'multiple_choice'
+      ? (Array.isArray(normalizeQuestionResponseConfig(block.responseConfig).options)
+        ? normalizeQuestionResponseConfig(block.responseConfig).options
+          .flatMap((option) => normalizeMediaRefs(option?.mediaRefs, 'option_audio').map((ref) => ref.assetId))
+        : [])
+      : [];
+    this.updateQuestionInputType(blockId, nextInputType);
+    if (removedAssetIds.length > 0) {
+      this.pruneAssetLinks(removedAssetIds);
+    }
+    return { ok: true, impact };
   }
 
   updateQuestionMaxLength(blockId, maxLength) {
@@ -1496,6 +1669,27 @@ class EditorDraftSession {
     this.touchDraft();
   }
 
+  removeQuestionOptionWithPolicy(blockId, index, options = {}) {
+    if (!this.state.draft || !blockId || !Number.isInteger(index) || index < 0) {
+      return { ok: false, reason: 'invalid-option-target' };
+    }
+    const block = this.state.draft.blocks.find((candidate) => candidate.blockId === blockId);
+    if (!block || block.kind !== 'question') {
+      return { ok: false, reason: 'invalid-option-target' };
+    }
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    const option = Array.isArray(responseConfig.options) ? responseConfig.options[index] : null;
+    if (!option) {
+      return { ok: false, reason: 'invalid-option-target' };
+    }
+    const policy = getOptionDeletePolicy(option);
+    if (policy.mode === 'confirm_delete' && options.confirmDelete !== true) {
+      return { ok: false, reason: 'confirm-delete-required', policy };
+    }
+    this.removeQuestionOption(blockId, index);
+    return { ok: true, policy };
+  }
+
   createBlock(kind = 'content') {
     if (!this.state.draft) return null;
 
@@ -1520,6 +1714,24 @@ class EditorDraftSession {
     this.state.selectedBlockId = block.blockId;
     this.touchDraft();
     return block;
+  }
+
+  reorderBlockByDelta(blockId, delta) {
+    if (!this.state.draft || !blockId) return;
+    if (delta !== -1 && delta !== 1) return;
+    const blocks = (Array.isArray(this.state.draft.blocks) ? this.state.draft.blocks : [])
+      .slice()
+      .sort((a, b) => a.position - b.position);
+    const currentIndex = blocks.findIndex((block) => block.blockId === blockId);
+    if (currentIndex < 0) return;
+    const targetIndex = currentIndex + delta;
+    if (targetIndex < 0 || targetIndex >= blocks.length) return;
+
+    const nextBlocks = blocks.slice();
+    const [movedBlock] = nextBlocks.splice(currentIndex, 1);
+    nextBlocks.splice(targetIndex, 0, movedBlock);
+    this.state.draft.blocks = nextBlocks.map((block, index) => ({ ...block, position: index }));
+    this.touchDraft();
   }
 
   deleteBlock(blockId) {
@@ -1548,6 +1760,22 @@ class EditorDraftSession {
       this.state.selectedBlockId = nextBlocks[0].blockId;
     }
     this.touchDraft();
+  }
+
+  deleteBlockWithPolicy(blockId, options = {}) {
+    if (!this.state.draft || !blockId) {
+      return { ok: false, reason: 'invalid-block-target' };
+    }
+    const block = this.state.draft.blocks.find((candidate) => candidate.blockId === blockId);
+    if (!block) {
+      return { ok: false, reason: 'invalid-block-target' };
+    }
+    const policy = getBlockDeletePolicy(block);
+    if (policy.mode === 'confirm_delete' && options.confirmDelete !== true) {
+      return { ok: false, reason: 'confirm-delete-required', policy };
+    }
+    this.deleteBlock(blockId);
+    return { ok: true, policy };
   }
 
   pruneAssetLinks(assetIds = []) {
@@ -2287,6 +2515,121 @@ function renderEditorShell(session) {
   optionAudioInput.accept = '.mp3,audio/mpeg';
   optionAudioInput.style.display = 'none';
   let pendingOptionAudioTarget = null;
+  let activeConfirmDialog = null;
+
+  function closeActiveConfirmDialog(confirmed = false) {
+    const dialog = activeConfirmDialog;
+    if (!dialog) return;
+    dialog.cleanup();
+    activeConfirmDialog = null;
+    dialog.resolve(Boolean(confirmed));
+  }
+
+  function showConfirmDialog({
+    title,
+    entityLabel,
+    descriptionText,
+    removalItems = [],
+    confirmLabel = 'Delete',
+  }) {
+    if (activeConfirmDialog) {
+      closeActiveConfirmDialog(false);
+    }
+    const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay';
+    overlay.setAttribute('role', 'presentation');
+    const dialog = document.createElement('section');
+    dialog.className = 'confirm-modal';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    const titleId = `confirm-modal-title-${createLocalId('dlg')}`;
+    heading.id = titleId;
+    heading.textContent = title;
+    dialog.setAttribute('aria-labelledby', titleId);
+    const description = document.createElement('p');
+    description.className = 'confirm-modal__description';
+    description.textContent = isNonEmptyString(descriptionText)
+      ? descriptionText
+      : `You are deleting ${entityLabel}.`;
+    const detailsHeading = document.createElement('p');
+    detailsHeading.className = 'confirm-modal__details-heading';
+    detailsHeading.textContent = 'This will remove:';
+    const detailsList = document.createElement('ul');
+    detailsList.className = 'confirm-modal__details-list';
+    removalItems.forEach((item) => {
+      const line = document.createElement('li');
+      line.textContent = item;
+      detailsList.appendChild(line);
+    });
+    const warning = document.createElement('p');
+    warning.className = 'confirm-modal__warning';
+    warning.textContent = 'This action is irreversible. Undo is not available.';
+    const actionRow = document.createElement('div');
+    actionRow.className = 'confirm-modal__actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'confirm-modal__btn';
+    cancelBtn.textContent = 'Cancel';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+    deleteBtn.textContent = confirmLabel;
+    actionRow.append(cancelBtn, deleteBtn);
+    dialog.append(heading, description, detailsHeading, detailsList, warning, actionRow);
+    overlay.appendChild(dialog);
+    shell.appendChild(overlay);
+
+    const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+    const getFocusable = () => Array.from(dialog.querySelectorAll(focusableSelector))
+      .filter((candidate) => !candidate.hasAttribute('disabled'));
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeActiveConfirmDialog(false);
+        return;
+      }
+      if (event.key === 'Enter' && document.activeElement === cancelBtn) {
+        event.preventDefault();
+        closeActiveConfirmDialog(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) return;
+      const currentIndex = focusable.indexOf(document.activeElement);
+      if (event.shiftKey) {
+        if (currentIndex <= 0) {
+          event.preventDefault();
+          focusable[focusable.length - 1].focus();
+        }
+        return;
+      }
+      if (currentIndex === focusable.length - 1) {
+        event.preventDefault();
+        focusable[0].focus();
+      }
+    };
+    dialog.addEventListener('keydown', onKeyDown);
+    cancelBtn.addEventListener('click', () => closeActiveConfirmDialog(false));
+    deleteBtn.addEventListener('click', () => closeActiveConfirmDialog(true));
+
+    cancelBtn.focus();
+
+    return new Promise((resolve) => {
+      activeConfirmDialog = {
+        resolve,
+        cleanup: () => {
+          dialog.removeEventListener('keydown', onKeyDown);
+          overlay.remove();
+          if (previousActive && typeof previousActive.focus === 'function') {
+            previousActive.focus();
+          }
+        },
+      };
+    });
+  }
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
@@ -2433,7 +2776,9 @@ function renderEditorShell(session) {
   const renderBlockList = () => {
     blockList.innerHTML = '';
     const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);
-    blocks.forEach((block) => {
+    blocks.forEach((block, index) => {
+      const isFirst = index === 0;
+      const isLast = index === blocks.length - 1;
       const item = document.createElement('li');
       item.className = `block-item ${block.blockId === session.state.selectedBlockId ? 'selected' : ''}`;
       const row = document.createElement('div');
@@ -2441,25 +2786,70 @@ function renderEditorShell(session) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'block-select';
+      const displayIndex = index + 1;
       const previewSource = block.kind === 'question' ? block?.prompt?.text : block?.content?.text;
       const preview = String(previewSource || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
-      button.textContent = `${block.position + 1}. ${block.kind} — ${preview}`;
+      button.textContent = `${displayIndex}. ${block.kind} — ${preview}`;
       button.addEventListener('click', () => {
         session.selectBlock(block.blockId);
+        updateSummary();
+      });
+      const actions = document.createElement('div');
+      actions.className = 'block-item-actions';
+      const moveUpBtn = document.createElement('button');
+      moveUpBtn.type = 'button';
+      moveUpBtn.className = 'icon-btn';
+      moveUpBtn.title = `Move block ${displayIndex} up`;
+      moveUpBtn.setAttribute('aria-label', `Move block ${displayIndex} up`);
+      moveUpBtn.textContent = '▲';
+      moveUpBtn.disabled = isFirst;
+      moveUpBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        session.reorderBlockByDelta(block.blockId, -1);
+        updateSummary();
+      });
+      const moveDownBtn = document.createElement('button');
+      moveDownBtn.type = 'button';
+      moveDownBtn.className = 'icon-btn';
+      moveDownBtn.title = `Move block ${displayIndex} down`;
+      moveDownBtn.setAttribute('aria-label', `Move block ${displayIndex} down`);
+      moveDownBtn.textContent = '▼';
+      moveDownBtn.disabled = isLast;
+      moveDownBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        session.reorderBlockByDelta(block.blockId, 1);
         updateSummary();
       });
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'icon-btn danger';
       deleteBtn.title = 'Delete this block';
-      deleteBtn.setAttribute('aria-label', `Delete block ${block.position + 1}`);
+      deleteBtn.setAttribute('aria-label', `Delete block ${displayIndex}`);
       deleteBtn.textContent = '🗑';
-      deleteBtn.addEventListener('click', (event) => {
+      deleteBtn.addEventListener('click', async (event) => {
         event.stopPropagation();
-        session.deleteBlock(block.blockId);
+        const outcome = session.deleteBlockWithPolicy(block.blockId);
+        if (!outcome.ok && outcome.reason === 'confirm-delete-required') {
+          const removalItems = [];
+          if (outcome.policy.hasTypedContent) {
+            removalItems.push('Block text and any question prompt or option values.');
+          }
+          if (outcome.policy.hasAssets) {
+            removalItems.push('Any linked image/audio files and related asset metadata.');
+          }
+          const confirmed = await showConfirmDialog({
+            title: `Delete block ${displayIndex}?`,
+            entityLabel: `block ${displayIndex}`,
+            removalItems,
+            confirmLabel: 'Delete block',
+          });
+          if (!confirmed) return;
+          session.deleteBlockWithPolicy(block.blockId, { confirmDelete: true });
+        }
         updateSummary();
       });
-      row.append(button, deleteBtn);
+      actions.append(moveUpBtn, moveDownBtn, deleteBtn);
+      row.append(button, actions);
       item.appendChild(row);
       blockList.appendChild(item);
     });
@@ -2687,8 +3077,22 @@ function renderEditorShell(session) {
       }
     });
     playQuestionAudioBtn.addEventListener('click', async () => {
-      if (!currentQuestionAudioRef?.assetId) return;
-      await session.playAssetAudio(currentQuestionAudioRef.assetId);
+      if (!currentQuestionAudioRef?.assetId || playQuestionAudioBtn.disabled) return;
+      playQuestionAudioBtn.disabled = true;
+      const result = await session.playAssetAudio(currentQuestionAudioRef.assetId, {
+        onEnded: () => {
+          playQuestionAudioBtn.disabled = false;
+        },
+        onError: () => {
+          playQuestionAudioBtn.disabled = false;
+        },
+        onInterrupted: () => {
+          playQuestionAudioBtn.disabled = false;
+        },
+      });
+      if (!result.ok) {
+        playQuestionAudioBtn.disabled = false;
+      }
       updateSummary();
     });
     questionAudioRow.append(attachQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
@@ -2904,8 +3308,22 @@ function renderEditorShell(session) {
         playOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
         playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
         playOptionAudioBtn.addEventListener('click', async () => {
-          if (!optionAudioRef?.assetId) return;
-          await session.playAssetAudio(optionAudioRef.assetId);
+          if (!optionAudioRef?.assetId || playOptionAudioBtn.disabled) return;
+          playOptionAudioBtn.disabled = true;
+          const result = await session.playAssetAudio(optionAudioRef.assetId, {
+            onEnded: () => {
+              playOptionAudioBtn.disabled = false;
+            },
+            onError: () => {
+              playOptionAudioBtn.disabled = false;
+            },
+            onInterrupted: () => {
+              playOptionAudioBtn.disabled = false;
+            },
+          });
+          if (!result.ok) {
+            playOptionAudioBtn.disabled = false;
+          }
           optionActionsMenu.open = false;
           updateSummary();
         });
@@ -2917,8 +3335,25 @@ function renderEditorShell(session) {
         removeBtn.title = 'Delete this option';
         removeBtn.setAttribute('aria-label', `Delete option ${optionIndex + 1}`);
         removeBtn.textContent = '🗑';
-        removeBtn.addEventListener('click', () => {
-          session.removeQuestionOption(selectedBlock.blockId, optionIndex);
+        removeBtn.addEventListener('click', async () => {
+          const outcome = session.removeQuestionOptionWithPolicy(selectedBlock.blockId, optionIndex);
+          if (!outcome.ok && outcome.reason === 'confirm-delete-required') {
+            const removalItems = [];
+            if (outcome.policy.hasTypedContent) {
+              removalItems.push('Option value/text used in answers.');
+            }
+            if (outcome.policy.hasAssets) {
+              removalItems.push('Option audio file and attachment metadata.');
+            }
+            const confirmed = await showConfirmDialog({
+              title: `Delete option ${optionIndex + 1}?`,
+              entityLabel: `option ${optionIndex + 1}`,
+              removalItems,
+              confirmLabel: 'Delete option',
+            });
+            if (!confirmed) return;
+            session.removeQuestionOptionWithPolicy(selectedBlock.blockId, optionIndex, { confirmDelete: true });
+          }
           updateSummary();
         });
         row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);
@@ -3021,8 +3456,34 @@ function renderEditorShell(session) {
     const viewerUrl = buildViewerUrlFromCurrentLocation(window.location.href, localDraftId, draftUpdatedAt);
     window.location.assign(viewerUrl);
   });
-  questionInputType.addEventListener('change', () => {
-    session.updateQuestionInputType(session.state.selectedBlockId, questionInputType.value);
+  questionInputType.addEventListener('change', async () => {
+    const selectedBlockId = session.state.selectedBlockId;
+    if (!selectedBlockId) return;
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlockId);
+    const currentInputType = normalizeQuestionResponseConfig(selectedBlock?.responseConfig).inputType || 'text';
+    const outcome = session.switchQuestionInputTypeWithImpactPolicy(selectedBlockId, questionInputType.value);
+    if (!outcome.ok && outcome.reason === 'confirm-switch-required') {
+      const details = [
+        `${outcome.impact.optionCountToRemove} option${outcome.impact.optionCountToRemove === 1 ? '' : 's'} will be removed.`,
+        `${outcome.impact.optionAttachmentCountToRemove} option attachment${outcome.impact.optionAttachmentCountToRemove === 1 ? '' : 's'} (audio/files) will be removed.`,
+      ];
+      if (outcome.impact.hasOptionTextLoss) {
+        details.push('User-entered option text/values will be removed.');
+      }
+      const confirmed = await showConfirmDialog({
+        title: 'Switching answer type will remove data',
+        entityLabel: 'this question type',
+        descriptionText: `You are switching from ${outcome.impact.fromType} to ${outcome.impact.toType}.`,
+        removalItems: details,
+        confirmLabel: 'Switch and Remove',
+      });
+      if (!confirmed) {
+        questionInputType.value = currentInputType;
+        updateSummary();
+        return;
+      }
+      session.switchQuestionInputTypeWithImpactPolicy(selectedBlockId, questionInputType.value, { confirmSwitch: true });
+    }
     updateSummary();
   });
   questionMaxLength.addEventListener('input', () => {

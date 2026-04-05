@@ -970,7 +970,11 @@ function getInputHelperText(inputType, responseConfig = {}) {
     return `Enter integer/decimal only (fractions like 2/3 are not supported).${suffix}`;
   }
   if (inputType === 'boolean') return 'Choose True / False.';
-  if (inputType === 'multiple_choice') return 'Choose one or more options.';
+  if (inputType === 'multiple_choice') {
+    return responseConfig?.selectionMode === 'multi'
+      ? 'Choose one or more options.'
+      : 'Choose one option only.';
+  }
   return 'Text response.';
 }
 

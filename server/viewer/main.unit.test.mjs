@@ -1734,7 +1734,15 @@ test('getInputHelperText maps input types to guidance', async () => {
     mod.getInputHelperText('number', { min: 1, max: 5 }),
     'Enter integer/decimal only (fractions like 2/3 are not supported). Range: minimum 1, maximum 5.'
   );
-  assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one or more options.');
+  assert.equal(
+    mod.getInputHelperText('multiple_choice', { selectionMode: 'single' }),
+    'Choose one option only.'
+  );
+  assert.equal(
+    mod.getInputHelperText('multiple_choice', { selectionMode: 'multi' }),
+    'Choose one or more options.'
+  );
+  assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one option only.');
   assert.equal(mod.getInputHelperText('boolean'), 'Choose True / False.');
   assert.equal(mod.getInputHelperText('text'), 'Text response.');
 });

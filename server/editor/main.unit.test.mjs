@@ -14,7 +14,10 @@ async function loadEditorModule() {
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*mapLegacyJsonToPackageModel,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
       replacement: `const editorStorage = {};
 const SharedAuthGate = class {};
-const createWorksheetPackageFromDraft = () => ({ bytes: new Uint8Array([1, 2, 3]) });
+const createWorksheetPackageFromDraft = (draft, assets) => {
+  globalThis.__lastCreateWorksheetPackageCall = { draft, assets };
+  return { bytes: new Uint8Array([1, 2, 3]) };
+};
 const mapLegacyJsonToPackageModel = (input) => {
   if (!input || typeof input !== 'object' || !Array.isArray(input.blocks) || input.blocks.length === 0) {
     throw new Error('Imported worksheet must have a non-empty blocks array.');
@@ -100,6 +103,34 @@ function stripOptionIds(options = []) {
 
 function getOptionIdByValue(options = [], value) {
   return (Array.isArray(options) ? options : []).find((option) => option.value === value)?.id || null;
+}
+
+function createSessionForTests() {
+  return {
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  };
+}
+
+function toBlockFieldsWithoutPosition(block) {
+  const snapshot = {
+    blockId: block.blockId,
+    kind: block.kind,
+    prompt: block.prompt,
+    content: block.content,
+    responseConfig: block.responseConfig,
+  };
+  if (typeof structuredClone === 'function') {
+    return structuredClone(snapshot);
+  }
+  return {
+    blockId: snapshot.blockId,
+    kind: snapshot.kind,
+    prompt: snapshot.prompt ? JSON.parse(JSON.stringify(snapshot.prompt)) : snapshot.prompt,
+    content: snapshot.content ? JSON.parse(JSON.stringify(snapshot.content)) : snapshot.content,
+    responseConfig: snapshot.responseConfig ? JSON.parse(JSON.stringify(snapshot.responseConfig)) : snapshot.responseConfig,
+  };
 }
 
 test('normalizeBlocks preserves canonical question responseConfig and extra fields', async () => {
@@ -485,6 +516,334 @@ test('question field updates map inputType, maxLength, and options through draft
   assert.equal(updated.responseConfig.inputType, 'text');
   assert.equal(updated.responseConfig.maxLength, 25);
   assert.equal(updated.responseConfig.options, undefined);
+});
+
+test('question input type change flow routes destructive switches through in-app confirm modal', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("questionInputType.addEventListener('change', async () => {"), true);
+  assert.equal(source.includes("reason === 'confirm-switch-required'"), true);
+  assert.equal(source.includes("title: 'Switching answer type will remove data'"), true);
+  assert.equal(source.includes("confirmLabel: 'Switch and Remove'"), true);
+  assert.equal(source.includes('descriptionText: `You are switching from ${outcome.impact.fromType} to ${outcome.impact.toType}.`'), true);
+  assert.equal(source.includes('await showConfirmDialog({'), true);
+});
+
+test('confirm modal uses configurable description copy and defaults initial focus to cancel', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('descriptionText,'), true);
+  assert.equal(source.includes('description.textContent = isNonEmptyString(descriptionText)'), true);
+  assert.equal(source.includes('cancelBtn.focus();'), true);
+});
+
+test('non-destructive type switch does not require confirmation', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = {
+    localId: 'draft_type_switch_non_destructive',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [{ id: 'o1', value: '', label: '' }],
+        },
+      },
+    ],
+    assets: [],
+  };
+
+  const impact = session.getQuestionInputTypeSwitchImpact('q1', 'text');
+  assert.equal(impact.optionCountToRemove, 1);
+  assert.equal(impact.optionAttachmentCountToRemove, 0);
+  assert.equal(impact.hasOptionTextLoss, false);
+  assert.equal(impact.hasMeaningfulDataLoss, false);
+
+  const result = session.switchQuestionInputTypeWithImpactPolicy('q1', 'text');
+  assert.equal(result.ok, true);
+  const updated = session.state.draft.blocks[0];
+  assert.equal(updated.responseConfig.inputType, 'text');
+  assert.equal(updated.responseConfig.options, undefined);
+});
+
+test('destructive type switch requires confirm and cancel path preserves data', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = {
+    localId: 'draft_type_switch_cancel',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [{ id: 'o1', value: 'Alpha', label: 'Alpha' }],
+        },
+      },
+    ],
+    assets: [],
+  };
+
+  const result = session.switchQuestionInputTypeWithImpactPolicy('q1', 'text');
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'confirm-switch-required');
+  assert.equal(result.impact.optionCountToRemove, 1);
+  assert.equal(result.impact.hasOptionTextLoss, true);
+  assert.equal(session.state.draft.blocks[0].responseConfig.inputType, 'multiple_choice');
+  assert.equal(session.state.draft.blocks[0].responseConfig.options.length, 1);
+});
+
+test('confirming destructive type switch removes targeted option data and attachments only', async () => {
+  const mod = await loadEditorModule();
+  const removed = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async (id) => { removed.push(id); } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_type_switch_confirm',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q1' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [
+            { id: 'o1', value: 'A', label: 'A', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_remove' }] },
+          ],
+        },
+      },
+      {
+        blockId: 'q2',
+        kind: 'question',
+        position: 1,
+        prompt: { text: 'Q2' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [
+            { id: 'o2', value: 'B', label: 'B', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_keep_shared' }] },
+          ],
+        },
+      },
+    ],
+    assets: [{ assetId: 'asset_remove' }, { assetId: 'asset_keep_shared' }, { assetId: 'asset_keep_unused' }],
+  };
+
+  const blocked = session.switchQuestionInputTypeWithImpactPolicy('q1', 'text');
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, 'confirm-switch-required');
+
+  const confirmed = session.switchQuestionInputTypeWithImpactPolicy('q1', 'text', { confirmSwitch: true });
+  assert.equal(confirmed.ok, true);
+  assert.equal(session.state.draft.blocks[0].responseConfig.inputType, 'text');
+  assert.equal(session.state.draft.blocks[0].responseConfig.options, undefined);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_remove'), false);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep_shared'), true);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep_unused'), true);
+  assert.deepEqual(removed, ['asset_remove']);
+});
+
+test('reorderBlockByDelta moves middle block up/down and normalizes positions to 0..n-1', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_reorder_middle');
+  clearTimeout(session.autosaveTimer);
+
+  const blockA = {
+    blockId: 'blk_a',
+    kind: 'content',
+    position: 0,
+    content: { text: 'Intro', format: 'plain_text' },
+  };
+  const blockB = {
+    blockId: 'blk_b',
+    kind: 'question',
+    position: 1,
+    prompt: { text: 'Question B?', format: 'plain_text', mediaRefs: [{ assetId: 'asset_q', usage: 'question_audio' }] },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      selectionMode: 'single',
+      options: [
+        { id: 'opt_1', value: 'One', label: 'One', mediaRefs: [{ assetId: 'asset_opt', usage: 'option_audio' }] },
+        { id: 'opt_2', value: 'Two', label: 'Two', mediaRefs: [] },
+      ],
+      correctAnswer: 'opt_1',
+    },
+  };
+  const blockC = {
+    blockId: 'blk_c',
+    kind: 'content',
+    position: 2,
+    content: { text: 'Outro', format: 'markdown' },
+  };
+
+  session.state.draft.blocks = [blockA, blockB, blockC];
+  session.state.selectedBlockId = 'blk_b';
+  const beforeById = new Map(session.state.draft.blocks.map((block) => [block.blockId, toBlockFieldsWithoutPosition(block)]));
+
+  session.reorderBlockByDelta('blk_b', -1);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['blk_b', 'blk_a', 'blk_c']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2]);
+  assert.equal(session.state.selectedBlockId, 'blk_b');
+  session.state.draft.blocks.forEach((block, index) => {
+    assert.equal(block.position, index);
+  });
+  session.state.draft.blocks.forEach((block) => {
+    assert.deepEqual(toBlockFieldsWithoutPosition(block), beforeById.get(block.blockId));
+  });
+
+  session.reorderBlockByDelta('blk_b', 1);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['blk_a', 'blk_b', 'blk_c']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2]);
+  assert.equal(session.state.selectedBlockId, 'blk_b');
+  session.state.draft.blocks.forEach((block, index) => {
+    assert.equal(block.position, index);
+  });
+  session.state.draft.blocks.forEach((block) => {
+    assert.deepEqual(toBlockFieldsWithoutPosition(block), beforeById.get(block.blockId));
+  });
+});
+
+test('reorderBlockByDelta no-ops for out-of-bounds moves and preserves fields/selection', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_reorder_bounds');
+  clearTimeout(session.autosaveTimer);
+
+  session.state.draft.blocks = [
+    { blockId: 'first', kind: 'content', position: 0, content: { text: 'First', format: 'plain_text' } },
+    {
+      blockId: 'middle',
+      kind: 'question',
+      position: 1,
+      prompt: { text: 'Middle?', format: 'plain_text', mediaRefs: [{ assetId: 'asset_m', usage: 'question_image' }] },
+      responseConfig: { inputType: 'text', maxLength: 120, displayMode: 'multi_line' },
+    },
+    { blockId: 'last', kind: 'content', position: 2, content: { text: 'Last', format: 'plain_text' } },
+  ];
+  session.state.selectedBlockId = 'middle';
+  const snapshot = session.state.draft.blocks.map((block) => structuredClone(block));
+  const revisionBefore = session.state.draftRevision;
+
+  session.reorderBlockByDelta('first', -1);
+  session.reorderBlockByDelta('last', 1);
+
+  assert.deepEqual(session.state.draft.blocks, snapshot);
+  assert.equal(session.state.selectedBlockId, 'middle');
+  assert.equal(session.state.draftRevision, revisionBefore);
+  session.state.draft.blocks.forEach((block, index) => {
+    assert.equal(block.position, index);
+  });
+});
+
+test('reorderBlockByDelta follows position order when array order diverges', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_reorder_position_canonical');
+  clearTimeout(session.autosaveTimer);
+
+  // Intentionally divergent array order vs. position order:
+  // array: [b(1), c(2), a(0)] but visible/render order should be [a, b, c].
+  session.state.draft.blocks = [
+    { blockId: 'b', kind: 'content', position: 1, content: { text: 'B', format: 'plain_text' } },
+    { blockId: 'c', kind: 'content', position: 2, content: { text: 'C', format: 'plain_text' } },
+    { blockId: 'a', kind: 'content', position: 0, content: { text: 'A', format: 'plain_text' } },
+  ];
+
+  session.reorderBlockByDelta('b', 1);
+
+  // Moving "b" down in visible order [a, b, c] should become [a, c, b].
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['a', 'c', 'b']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2]);
+});
+
+test('autosave/export/preview reorder paths remain position-driven without brittle source checks', async () => {
+  const mod = await loadEditorModule();
+  let persistedSnapshot = null;
+  const session = new mod.EditorDraftSession({
+    drafts: {
+      get: async () => null,
+      put: async (value) => {
+        persistedSnapshot = value;
+        return value;
+      },
+    },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_reorder_autosave');
+  clearTimeout(session.autosaveTimer);
+  session.state.draft.blocks = [
+    { blockId: 'a', kind: 'content', position: 0, content: { text: 'A', format: 'plain_text' } },
+    { blockId: 'b', kind: 'content', position: 1, content: { text: 'B', format: 'plain_text' } },
+    { blockId: 'c', kind: 'content', position: 2, content: { text: 'C', format: 'plain_text' } },
+  ];
+
+  session.reorderBlockByDelta('b', -1);
+  await session.autosave();
+
+  assert.ok(persistedSnapshot, 'autosave should persist a snapshot');
+  assert.deepEqual(persistedSnapshot.blocks.map((block) => block.blockId), ['b', 'a', 'c']);
+  assert.deepEqual(persistedSnapshot.blocks.map((block) => block.position), [0, 1, 2]);
+  persistedSnapshot.blocks.forEach((block, index) => {
+    assert.equal(block.position, index);
+  });
+  assert.deepEqual(persistedSnapshot.contractDraft.blocks.map((block) => block.position), [0, 1, 2]);
+  assert.deepEqual(persistedSnapshot.contractDraft.blocks.map((block) => block.blockId), ['b', 'a', 'c']);
+
+  const url = mod.buildViewerUrlFromCurrentLocation(
+    'https://example.test/server/editor/index.html',
+    'draft_reorder_autosave',
+    '2026-04-05T00:00:00.000Z'
+  );
+  assert.equal(
+    url.toString(),
+    'https://example.test/server/viewer/?localDraftId=draft_reorder_autosave&preview=1&draftUpdatedAt=2026-04-05T00%3A00%3A00.000Z'
+  );
+
+  const originalDocument = globalThis.document;
+  const originalUrl = globalThis.URL;
+  const originalBlob = globalThis.Blob;
+  const anchor = { clickCalled: false, removeCalled: false, click() { this.clickCalled = true; }, remove() { this.removeCalled = true; } };
+  globalThis.URL = {
+    createObjectURL: () => 'blob:test-export',
+    revokeObjectURL: () => {},
+  };
+  globalThis.document = {
+    ...originalDocument,
+    body: { appendChild: () => {} },
+    createElement: () => anchor,
+  };
+  globalThis.Blob = originalBlob;
+
+  try {
+    const filename = await session.exportCurrentDraftToPackageFile();
+    assert.equal(filename.includes('worksheet-package-draft_reorder_autosave-'), true);
+    assert.equal(anchor.clickCalled, true);
+    assert.equal(anchor.removeCalled, true);
+    assert.deepEqual(
+      globalThis.__lastCreateWorksheetPackageCall?.draft?.blocks?.map((block) => block.blockId),
+      ['b', 'a', 'c']
+    );
+    assert.deepEqual(
+      globalThis.__lastCreateWorksheetPackageCall?.draft?.blocks?.map((block) => block.position),
+      [0, 1, 2]
+    );
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.URL = originalUrl;
+    globalThis.Blob = originalBlob;
+    delete globalThis.__lastCreateWorksheetPackageCall;
+  }
 });
 
 test('text response normalization removes stale numeric constraints', async () => {
@@ -1404,6 +1763,109 @@ test('playAssetAudio succeeds and clears media feedback', async () => {
   }
 });
 
+test('playAssetAudio ignores stale error events from interrupted audio when switching clips', async () => {
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_1', { localId: 'asset_1', binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } });
+  assetStore.set('asset_2', { localId: 'asset_2', binary: new Uint8Array([4, 5, 6]), metadata: { mimeType: 'audio/mpeg' } });
+  session.state.mediaFeedback = null;
+
+  const origCreate = URL.createObjectURL;
+  URL.createObjectURL = (() => {
+    let i = 0;
+    return () => `blob:test/audio-switch-${++i}`;
+  })();
+
+  const origAudio = globalThis.Audio;
+  const audioInstances = [];
+  globalThis.Audio = class {
+    constructor(src) {
+      this.src = src;
+      this.listeners = {};
+      this.playCallCount = 0;
+      audioInstances.push(this);
+    }
+    play() {
+      this.playCallCount += 1;
+      return Promise.resolve();
+    }
+    pause() {
+      this.listeners.error?.();
+    }
+    addEventListener(type, fn) {
+      this.listeners[type] = fn;
+    }
+  };
+
+  try {
+    const first = await session.playAssetAudio('asset_1');
+    assert.equal(first.ok, true);
+
+    const second = await session.playAssetAudio('asset_2');
+    assert.equal(second.ok, true, 'new audio should start on first click after interrupting previous playback');
+    assert.equal(session.state.mediaFeedback, null, 'stale interrupted-audio errors should not persist');
+    assert.equal(audioInstances.length, 2);
+    assert.equal(audioInstances[1].playCallCount, 1);
+  } finally {
+    URL.createObjectURL = origCreate;
+    globalThis.Audio = origAudio;
+  }
+});
+
+test('playAssetAudio treats out-of-order asset loads as superseded instead of cancelling newer playback', async () => {
+  const mod = await loadEditorModule();
+
+  let resolveFirstGet;
+  const firstGetPromise = new Promise((resolve) => {
+    resolveFirstGet = resolve;
+  });
+  const localAssets = {
+    get: async (id) => {
+      if (id === 'asset_slow') {
+        return firstGetPromise;
+      }
+      if (id === 'asset_fast') {
+        return { localId: id, binary: new Uint8Array([7, 8, 9]), metadata: { mimeType: 'audio/mpeg' } };
+      }
+      return null;
+    },
+  };
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets,
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  const origCreate = URL.createObjectURL;
+  URL.createObjectURL = (() => {
+    let i = 0;
+    return () => `blob:test/audio-race-${++i}`;
+  })();
+  const origAudio = globalThis.Audio;
+  globalThis.Audio = class {
+    constructor(src) { this.src = src; }
+    play() { return Promise.resolve(); }
+    pause() {}
+    addEventListener() {}
+  };
+
+  try {
+    const slowPromise = session.playAssetAudio('asset_slow');
+    const fastResult = await session.playAssetAudio('asset_fast');
+    assert.equal(fastResult.ok, true);
+
+    resolveFirstGet({ localId: 'asset_slow', binary: new Uint8Array([1, 1, 1]), metadata: { mimeType: 'audio/mpeg' } });
+    const slowResult = await slowPromise;
+    assert.equal(slowResult.ok, false);
+    assert.equal(slowResult.reason, 'superseded');
+    assert.equal(session.state.mediaFeedback, null);
+  } finally {
+    URL.createObjectURL = origCreate;
+    globalThis.Audio = origAudio;
+  }
+});
+
 test('stopPreviewAudio revokes object URL for current preview', async () => {
   const mod = await loadEditorModule();
   const { session, assetStore } = createSessionWithQuestion(mod);
@@ -1448,6 +1910,49 @@ test('openAssetImage returns blocked when window.open returns null', async () =>
     assert.equal(session.state.mediaFeedback, 'Image preview was blocked. Allow pop-ups and try again.');
   } finally {
     globalThis.window.open = origOpen;
+  }
+});
+
+test('openAssetImage omits noopener/noreferrer features so browsers return window handle', async () => {
+  // Per spec (and Chrome 88+), window.open returns null when noopener or
+  // noreferrer is in the features string, even though a tab still opens.
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_img', { localId: 'asset_img', binary: new Uint8Array([255, 0]), metadata: { mimeType: 'image/png' } });
+
+  const origCreate = URL.createObjectURL;
+  const origRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = () => 'blob:test/image2';
+  URL.revokeObjectURL = () => {};
+  const origOpen = globalThis.window.open;
+  const origSetTimeout = globalThis.window.setTimeout;
+  let receivedFeatures = null;
+  let navigatedTo = null;
+  globalThis.window.open = (_url, _target, features) => {
+    receivedFeatures = features ?? null;
+    // Simulate spec behaviour: return null when noopener or noreferrer present.
+    if (features?.includes('noreferrer') || features?.includes('noopener')) return null;
+    return {
+      set opener(_) {},
+      document: { get title() { return ''; }, set title(_) {}, body: { set textContent(_) {} } },
+      location: { replace(url) { navigatedTo = url; } },
+    };
+  };
+  try {
+    globalThis.window.setTimeout = () => 0;
+    const result = await session.openAssetImage('asset_img');
+    assert.equal(result.ok, true, 'should succeed without noopener/noreferrer features');
+    assert.ok(
+      !receivedFeatures?.includes('noreferrer') && !receivedFeatures?.includes('noopener'),
+      `features must not contain noopener or noreferrer, got: ${receivedFeatures}`
+    );
+    assert.equal(navigatedTo, 'blob:test/image2');
+    assert.equal(session.state.mediaFeedback, null);
+  } finally {
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+    globalThis.window.open = origOpen;
+    globalThis.window.setTimeout = origSetTimeout;
   }
 });
 
@@ -1504,6 +2009,57 @@ test('openAssetImage navigates new window to object URL on success', async () =>
   }
 });
 
+test('openAssetImage falls back to in-window img render when location.replace throws', async () => {
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_img', { localId: 'asset_img', binary: new Uint8Array([255, 0]), metadata: { mimeType: 'image/png' } });
+
+  const origCreate = URL.createObjectURL;
+  const origRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = () => 'blob:test/image-fallback';
+  URL.revokeObjectURL = () => {};
+
+  let appendedSrc = null;
+  globalThis.window.open = () => {
+    const body = {
+      innerHTML: '',
+      style: {},
+      appendChild(node) {
+        appendedSrc = node?.src || null;
+      },
+    };
+    return {
+      set opener(_) {},
+      document: {
+        title: '',
+        body,
+        createElement() {
+          return { src: '', alt: '', style: {} };
+        },
+      },
+      location: {
+        replace() {
+          throw new Error('navigation blocked');
+        },
+      },
+      close() {},
+    };
+  };
+  const origSetTimeout = globalThis.window.setTimeout;
+  globalThis.window.setTimeout = (fn) => fn();
+  try {
+    const result = await session.openAssetImage('asset_img');
+    assert.equal(result.ok, true);
+    assert.equal(appendedSrc, 'blob:test/image-fallback');
+    assert.equal(session.state.mediaFeedback, null);
+  } finally {
+    URL.createObjectURL = origCreate;
+    URL.revokeObjectURL = origRevoke;
+    delete globalThis.window.open;
+    globalThis.window.setTimeout = origSetTimeout;
+  }
+});
+
 test('deleteBlock prunes linked question and option media assets', async () => {
   const mod = await loadEditorModule();
   const removed = [];
@@ -1536,6 +2092,81 @@ test('deleteBlock prunes linked question and option media assets', async () => {
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_opt_audio'), false);
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep'), true);
   assert.deepEqual(removed.sort(), ['asset_opt_audio', 'asset_q_audio']);
+});
+
+test('deleteBlockWithPolicy directly deletes empty block', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_empty_block_delete',
+    blocks: [
+      {
+        blockId: 'c1',
+        kind: 'content',
+        position: 0,
+        content: { text: '   ', format: 'plain_text' },
+      },
+      {
+        blockId: 'c2',
+        kind: 'content',
+        position: 1,
+        content: { text: 'keep', format: 'plain_text' },
+      },
+    ],
+    assets: [],
+  };
+  session.state.selectedBlockId = 'c1';
+
+  const result = session.deleteBlockWithPolicy('c1');
+  assert.equal(result.ok, true);
+  assert.equal(result.policy.mode, 'safe_direct_delete');
+  assert.equal(session.state.draft.blocks.some((block) => block.blockId === 'c1'), false);
+});
+
+test('deleteBlockWithPolicy requires confirm when block has content/assets and confirm deletes', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_risky_block_delete',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Prompt text', mediaRefs: [{ usage: 'question_audio', assetId: 'asset_q_audio' }] },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [{ id: 'o1', value: 'A', label: 'A' }],
+        },
+      },
+      {
+        blockId: 'c2',
+        kind: 'content',
+        position: 1,
+        content: { text: 'keep', format: 'plain_text' },
+      },
+    ],
+    assets: [{ assetId: 'asset_q_audio' }],
+  };
+  session.state.selectedBlockId = 'q1';
+
+  const gated = session.deleteBlockWithPolicy('q1');
+  assert.equal(gated.ok, false);
+  assert.equal(gated.reason, 'confirm-delete-required');
+  assert.equal(gated.policy.mode, 'confirm_delete');
+  assert.equal(session.state.draft.blocks.some((block) => block.blockId === 'q1'), true, 'cancel/no-confirm should leave block untouched');
+
+  const confirmed = session.deleteBlockWithPolicy('q1', { confirmDelete: true });
+  assert.equal(confirmed.ok, true);
+  assert.equal(session.state.draft.blocks.some((block) => block.blockId === 'q1'), false, 'confirm should delete block');
 });
 
 test('deleteBlock preserves assets still referenced by remaining questions', async () => {
@@ -1640,4 +2271,75 @@ test('removeQuestionOption preserves shared option audio used by another option'
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_shared_opt_audio'), true);
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep'), true);
   assert.deepEqual(removed, []);
+});
+
+test('removeQuestionOptionWithPolicy directly deletes empty option', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_empty_option_delete',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [{ id: 'o1', value: '', label: '' }, { id: 'o2', value: 'B', label: 'B' }],
+        },
+      },
+    ],
+    assets: [],
+  };
+
+  const result = session.removeQuestionOptionWithPolicy('q1', 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.policy.mode, 'safe_direct_delete');
+  const options = session.state.draft.blocks[0].responseConfig.options;
+  assert.equal(options.length, 1);
+  assert.equal(options[0].id, 'o2');
+});
+
+test('removeQuestionOptionWithPolicy requires confirm; cancel leaves option and confirm deletes', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_risky_option_delete',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          options: [
+            { id: 'o1', value: 'A', label: 'A', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_opt_audio' }] },
+            { id: 'o2', value: 'B', label: 'B' },
+          ],
+        },
+      },
+    ],
+    assets: [{ assetId: 'asset_opt_audio' }],
+  };
+
+  const gated = session.removeQuestionOptionWithPolicy('q1', 0);
+  assert.equal(gated.ok, false);
+  assert.equal(gated.reason, 'confirm-delete-required');
+  assert.equal(gated.policy.mode, 'confirm_delete');
+  assert.equal(session.state.draft.blocks[0].responseConfig.options.length, 2, 'cancel/no-confirm should leave option untouched');
+
+  const confirmed = session.removeQuestionOptionWithPolicy('q1', 0, { confirmDelete: true });
+  assert.equal(confirmed.ok, true);
+  assert.equal(session.state.draft.blocks[0].responseConfig.options.length, 1, 'confirm should delete option');
+  assert.equal(session.state.draft.blocks[0].responseConfig.options[0].id, 'o2');
 });
