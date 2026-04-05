@@ -3,12 +3,17 @@ import assert from 'node:assert/strict';
 import { PackageService } from './package-service.js';
 
 function createFakeDb({ draftCount = 0 } = {}) {
-  const state = { draftCount };
+  const state = { draftCount, queries: [] };
 
   return {
+    state,
     async connect() {
       return {
         async query(sql) {
+          state.queries.push(sql);
+          if (sql.includes('SELECT pg_advisory_xact_lock(hashtext($1))')) {
+            return { rows: [{ pg_advisory_xact_lock: '' }], rowCount: 1 };
+          }
           if (sql.includes('COUNT(*)::int AS count FROM uploaded_drafts')) {
             return { rows: [{ count: state.draftCount }], rowCount: 1 };
           }
@@ -23,7 +28,7 @@ function createFakeDb({ draftCount = 0 } = {}) {
   };
 }
 
-test('uploadDraft returns slot-limit error when 3 uploaded drafts already exist', async () => {
+test('uploadDraft acquires per-owner advisory lock before counting slots', async () => {
   const db = createFakeDb({ draftCount: 3 });
   const artifactStore = {
     async storeArtifact() {
@@ -51,4 +56,10 @@ test('uploadDraft returns slot-limit error when 3 uploaded drafts already exist'
   assert.equal(result.ok, false);
   assert.equal(result.statusCode, 409);
   assert.equal(result.error.code, 'DRAFT_SLOT_LIMIT_REACHED');
+
+  const lockQueryIndex = db.state.queries.findIndex((sql) => sql.includes('pg_advisory_xact_lock'));
+  const countQueryIndex = db.state.queries.findIndex((sql) => sql.includes('COUNT(*)::int AS count FROM uploaded_drafts'));
+  assert.notEqual(lockQueryIndex, -1);
+  assert.notEqual(countQueryIndex, -1);
+  assert.equal(lockQueryIndex < countQueryIndex, true);
 });

@@ -5,18 +5,6 @@ function normalizeText(value, fallback = '') {
   return normalized || fallback;
 }
 
-function parseLimit(value, fallback, max) {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
-  return Math.min(parsed, max);
-}
-
-function parseOffset(value) {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0) return 0;
-  return parsed;
-}
-
 export class PackageService {
   constructor({ db, artifactStore, config }) {
     this.db = db;
@@ -29,6 +17,7 @@ export class PackageService {
 
     try {
       await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
       const countRes = await client.query('SELECT COUNT(*)::int AS count FROM uploaded_drafts WHERE owner_sub = $1', [
         identity.sub,
       ]);
@@ -201,9 +190,9 @@ export class PackageService {
     }
 
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-    values.push(parseLimit(limit, this.config.browsePageLimitDefault, this.config.browsePageLimitMax));
+    values.push(limit);
     const limitPlaceholder = `$${values.length}`;
-    values.push(parseOffset(offset));
+    values.push(offset);
     const offsetPlaceholder = `$${values.length}`;
 
     const sql = `SELECT published_package_id, title, subject, owner_sub, artifact_sha256, artifact_size_bytes, published_at

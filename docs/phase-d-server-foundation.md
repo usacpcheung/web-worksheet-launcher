@@ -186,3 +186,11 @@ npm install
 npm run migrate
 npm run start:api
 ```
+
+
+## Phase D hardening update (atomic slots + UUID validation)
+
+- Draft slot cap enforcement is serialized per `owner_sub` using `pg_advisory_xact_lock(hashtext(owner_sub))` inside the upload transaction before slot counting and insert.
+- Publish now validates `uploadedDraftId` UUID format before any database query and returns a 400 `INVALID_UPLOADED_DRAFT_ID` client error when invalid.
+- Published metadata/artifact routes validate `publishedPackageId` UUID format before DB lookup and return 400 `INVALID_PUBLISHED_PACKAGE_ID` when invalid.
+- Published browse query params now return explicit 400 `INVALID_QUERY_PARAM` errors for invalid `limit`/`offset` values.

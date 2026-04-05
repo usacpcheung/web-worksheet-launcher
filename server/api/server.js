@@ -2,9 +2,9 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import { loadConfig } from './config.js';
 import { requireAuthenticatedIdentity, AuthError } from './auth.js';
-import { createPool } from './db/pool.js';
 import { PackageArtifactStore } from './storage/package-artifact-store.js';
 import { PackageService } from './services/package-service.js';
+import { assertUuid, parseOptionalPositiveInt } from './validation.js';
 
 function json(res, statusCode, payload) {
   res.statusCode = statusCode;
@@ -50,18 +50,15 @@ async function readJsonBody(req) {
 function parseRoute(url) {
   const trimmed = url.pathname.replace(/\/+$/, '') || '/';
   const segments = trimmed.split('/').filter(Boolean);
-  return { trimmed, segments };
+  return { segments };
 }
 
-export async function createApiServer() {
-  const config = loadConfig();
-  await fs.mkdir(config.storageRoot, { recursive: true });
+function isNotFoundSegments(segments) {
+  return !(segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'published' && segments[3]);
+}
 
-  const db = createPool(config);
-  const artifactStore = new PackageArtifactStore({ storageRoot: config.storageRoot });
-  const service = new PackageService({ db, artifactStore, config });
-
-  const server = http.createServer(async (req, res) => {
+export function createRequestHandler({ service, artifactStore, config }) {
+  return async function requestHandler(req, res) {
     try {
       const url = new URL(req.url || '/', 'http://localhost');
       const { segments } = parseRoute(url);
@@ -102,16 +99,32 @@ export async function createApiServer() {
           );
         }
 
-        const result = await service.publishFromDraft({ identity, uploadedDraftId: payload.uploadedDraftId });
+        const validatedUploadedDraftId = assertUuid(payload.uploadedDraftId, {
+          code: 'INVALID_UPLOADED_DRAFT_ID',
+          message: 'uploadedDraftId must be a valid UUID.',
+        });
+        if (!validatedUploadedDraftId.ok) {
+          return json(res, 400, fail(validatedUploadedDraftId.error.code, validatedUploadedDraftId.error.message));
+        }
+
+        const result = await service.publishFromDraft({ identity, uploadedDraftId: validatedUploadedDraftId.value });
         if (!result.ok) {
           return json(res, result.statusCode, fail(result.error.code, result.error.message));
         }
         return json(res, result.statusCode, ok(result.data));
       }
 
-      if (req.method === 'GET' && segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'published' && segments[3]) {
+      if (req.method === 'GET' && !isNotFoundSegments(segments)) {
         const publishedPackageId = segments[3];
-        const row = await service.loadPublishedPackage(publishedPackageId);
+        const validatedPublishedPackageId = assertUuid(publishedPackageId, {
+          code: 'INVALID_PUBLISHED_PACKAGE_ID',
+          message: 'publishedPackageId must be a valid UUID.',
+        });
+        if (!validatedPublishedPackageId.ok) {
+          return json(res, 400, fail(validatedPublishedPackageId.error.code, validatedPublishedPackageId.error.message));
+        }
+
+        const row = await service.loadPublishedPackage(validatedPublishedPackageId.value);
         if (!row) {
           return json(res, 404, fail('PUBLISHED_PACKAGE_NOT_FOUND', 'Published package was not found.'));
         }
@@ -125,23 +138,45 @@ export async function createApiServer() {
           return;
         }
 
-        return json(res, 200, ok({
-          publishedPackageId: row.published_package_id,
-          ownerSub: row.owner_sub,
-          title: row.title,
-          subject: row.subject,
-          artifactSha256: row.artifact_sha256,
-          artifactSizeBytes: row.artifact_size_bytes,
-          publishedAt: row.published_at,
-        }));
+        return json(
+          res,
+          200,
+          ok({
+            publishedPackageId: row.published_package_id,
+            ownerSub: row.owner_sub,
+            title: row.title,
+            subject: row.subject,
+            artifactSha256: row.artifact_sha256,
+            artifactSizeBytes: row.artifact_size_bytes,
+            publishedAt: row.published_at,
+          })
+        );
       }
 
       if (req.method === 'GET' && url.pathname === '/api/v1/published') {
+        const parsedLimit = parseOptionalPositiveInt(url.searchParams.get('limit'), {
+          field: 'limit',
+          max: config.browsePageLimitMax,
+          defaultValue: config.browsePageLimitDefault,
+        });
+        if (!parsedLimit.ok) {
+          return json(res, 400, fail(parsedLimit.error.code, parsedLimit.error.message));
+        }
+
+        const parsedOffset = parseOptionalPositiveInt(url.searchParams.get('offset'), {
+          field: 'offset',
+          max: Number.MAX_SAFE_INTEGER,
+          defaultValue: 0,
+        });
+        if (!parsedOffset.ok) {
+          return json(res, 400, fail(parsedOffset.error.code, parsedOffset.error.message));
+        }
+
         const rows = await service.listPublished({
           query: url.searchParams.get('q') || '',
           subject: url.searchParams.get('subject') || '',
-          limit: url.searchParams.get('limit') || '',
-          offset: url.searchParams.get('offset') || '',
+          limit: parsedLimit.value,
+          offset: parsedOffset.value,
         });
 
         return json(res, 200, ok({ items: rows }));
@@ -157,7 +192,22 @@ export async function createApiServer() {
       }
       return json(res, 500, fail('INTERNAL_ERROR', error.message || 'Unexpected server error.'));
     }
-  });
+  };
+}
+
+export async function createApiServer(overrides = {}) {
+  const config = overrides.config || loadConfig();
+  await fs.mkdir(config.storageRoot, { recursive: true });
+
+  let db = overrides.db;
+  if (!db) {
+    const { createPool } = await import('./db/pool.js');
+    db = createPool(config);
+  }
+  const artifactStore = overrides.artifactStore || new PackageArtifactStore({ storageRoot: config.storageRoot });
+  const service = overrides.service || new PackageService({ db, artifactStore, config });
+
+  const server = http.createServer(createRequestHandler({ service, artifactStore, config }));
 
   return {
     config,
