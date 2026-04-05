@@ -527,6 +527,7 @@ class EditorDraftSession {
     this.previewAudio = null;
     this.previewAudioUrl = null;
     this.previewAudioPlayback = null;
+    this._previewPlayRequestId = 0;
   }
 
   setOnStateChange(handler) {
@@ -804,7 +805,11 @@ class EditorDraftSession {
   }
 
   async playAssetAudio(assetId, hooks = {}) {
+    const requestId = ++this._previewPlayRequestId;
     const record = await this.getLocalAssetRecord(assetId);
+    if (requestId !== this._previewPlayRequestId) {
+      return { ok: false, reason: 'superseded' };
+    }
     if (!record) {
       this.setMediaFeedback('Unable to load attached audio for preview.');
       return { ok: false, reason: 'missing-asset' };
@@ -821,20 +826,28 @@ class EditorDraftSession {
     this.previewAudioUrl = objectUrl;
     this.previewAudioPlayback = { audio, objectUrl, hooks, finalized: false };
     audio.addEventListener('ended', () => {
+      if (this.previewAudio !== audio) return;
       this.finalizePreviewAudio('ended');
     }, { once: true });
     audio.addEventListener('error', () => {
+      if (this.previewAudio !== audio) return;
       this.setMediaFeedback('Unable to play attached audio.');
       this.finalizePreviewAudio('error');
     }, { once: true });
 
     try {
       await audio.play();
+      if (this.previewAudio !== audio) {
+        return { ok: false, reason: 'superseded' };
+      }
       hooks?.onStart?.();
       this.clearMediaFeedback();
       this.notifyStateChange();
       return { ok: true };
     } catch (error) {
+      if (this.previewAudio !== audio) {
+        return { ok: false, reason: 'superseded' };
+      }
       this.finalizePreviewAudio('error');
       this.setMediaFeedback('Audio playback was blocked. Try again.');
       return { ok: false, reason: 'playback-failed' };

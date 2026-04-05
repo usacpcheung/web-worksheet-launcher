@@ -1630,6 +1630,109 @@ test('playAssetAudio succeeds and clears media feedback', async () => {
   }
 });
 
+test('playAssetAudio ignores stale error events from interrupted audio when switching clips', async () => {
+  const mod = await loadEditorModule();
+  const { session, assetStore } = createSessionWithQuestion(mod);
+  assetStore.set('asset_1', { localId: 'asset_1', binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } });
+  assetStore.set('asset_2', { localId: 'asset_2', binary: new Uint8Array([4, 5, 6]), metadata: { mimeType: 'audio/mpeg' } });
+  session.state.mediaFeedback = null;
+
+  const origCreate = URL.createObjectURL;
+  URL.createObjectURL = (() => {
+    let i = 0;
+    return () => `blob:test/audio-switch-${++i}`;
+  })();
+
+  const origAudio = globalThis.Audio;
+  const audioInstances = [];
+  globalThis.Audio = class {
+    constructor(src) {
+      this.src = src;
+      this.listeners = {};
+      this.playCallCount = 0;
+      audioInstances.push(this);
+    }
+    play() {
+      this.playCallCount += 1;
+      return Promise.resolve();
+    }
+    pause() {
+      this.listeners.error?.();
+    }
+    addEventListener(type, fn) {
+      this.listeners[type] = fn;
+    }
+  };
+
+  try {
+    const first = await session.playAssetAudio('asset_1');
+    assert.equal(first.ok, true);
+
+    const second = await session.playAssetAudio('asset_2');
+    assert.equal(second.ok, true, 'new audio should start on first click after interrupting previous playback');
+    assert.equal(session.state.mediaFeedback, null, 'stale interrupted-audio errors should not persist');
+    assert.equal(audioInstances.length, 2);
+    assert.equal(audioInstances[1].playCallCount, 1);
+  } finally {
+    URL.createObjectURL = origCreate;
+    globalThis.Audio = origAudio;
+  }
+});
+
+test('playAssetAudio treats out-of-order asset loads as superseded instead of cancelling newer playback', async () => {
+  const mod = await loadEditorModule();
+
+  let resolveFirstGet;
+  const firstGetPromise = new Promise((resolve) => {
+    resolveFirstGet = resolve;
+  });
+  const localAssets = {
+    get: async (id) => {
+      if (id === 'asset_slow') {
+        return firstGetPromise;
+      }
+      if (id === 'asset_fast') {
+        return { localId: id, binary: new Uint8Array([7, 8, 9]), metadata: { mimeType: 'audio/mpeg' } };
+      }
+      return null;
+    },
+  };
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets,
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  const origCreate = URL.createObjectURL;
+  URL.createObjectURL = (() => {
+    let i = 0;
+    return () => `blob:test/audio-race-${++i}`;
+  })();
+  const origAudio = globalThis.Audio;
+  globalThis.Audio = class {
+    constructor(src) { this.src = src; }
+    play() { return Promise.resolve(); }
+    pause() {}
+    addEventListener() {}
+  };
+
+  try {
+    const slowPromise = session.playAssetAudio('asset_slow');
+    const fastResult = await session.playAssetAudio('asset_fast');
+    assert.equal(fastResult.ok, true);
+
+    resolveFirstGet({ localId: 'asset_slow', binary: new Uint8Array([1, 1, 1]), metadata: { mimeType: 'audio/mpeg' } });
+    const slowResult = await slowPromise;
+    assert.equal(slowResult.ok, false);
+    assert.equal(slowResult.reason, 'superseded');
+    assert.equal(session.state.mediaFeedback, null);
+  } finally {
+    URL.createObjectURL = origCreate;
+    globalThis.Audio = origAudio;
+  }
+});
+
 test('stopPreviewAudio revokes object URL for current preview', async () => {
   const mod = await loadEditorModule();
   const { session, assetStore } = createSessionWithQuestion(mod);
