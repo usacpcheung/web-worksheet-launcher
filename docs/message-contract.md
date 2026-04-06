@@ -7,6 +7,8 @@
 
 > **Change log note (2026-03-24):** Reconciled Phase 1 scope wording across documentation after conflicting statements were identified. Phase 1 is now consistently documented as **contracts/scaffolding only** so implementation language is deferred to later phases.
 >
+> **Change log note (2026-04-06):** Canonical public server API prefix for app-side session/draft endpoints is `/api/worksheet-launcher/v1/*` (proxied to internal Node `/api/v1/*`). This does not change popup launch query or popup `postMessage` schemas defined in this document.
+>
 > **Scope authority:** Canonical Phase 1 scope statement lives in this file under **Section 6) Phase boundary** and is referenced by companion docs.
 
 This document defines the bounded popup launch-query contract and postMessage contract between:

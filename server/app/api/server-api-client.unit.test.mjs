@@ -16,8 +16,44 @@ test('createServerApiClient uses production public base path by default', async 
   globalThis.fetch = async () => mockJsonResponse(200, { ok: true, data: { ready: true } });
 
   const client = createServerApiClient();
-  assert.equal(client.publicApiBase, '/api/worksheet-launcher');
+  assert.equal(client.publicApiBase, '/api/worksheet-launcher/v1');
   await client.getSession();
+});
+
+test('getSession builds canonical public API URL', async () => {
+  globalThis.window = {
+    location: {
+      origin: 'https://example.test',
+      search: '',
+    },
+  };
+  let requestedUrl = null;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return mockJsonResponse(200, { ok: true, data: { ready: true } });
+  };
+
+  const client = createServerApiClient();
+  await client.getSession();
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/session');
+});
+
+test('listUploadedDrafts builds canonical public API URL', async () => {
+  globalThis.window = {
+    location: {
+      origin: 'https://example.test',
+      search: '',
+    },
+  };
+  let requestedUrl = null;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return mockJsonResponse(200, { ok: true, data: [] });
+  };
+
+  const client = createServerApiClient();
+  await client.listUploadedDrafts();
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/drafts');
 });
 
 test('getSession returns structured AUTH_REQUIRED for html auth redirect-like responses', async () => {

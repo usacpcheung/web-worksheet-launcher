@@ -25,7 +25,7 @@ Out of scope (still deferred):
 
 - App runs behind Apache on Ubuntu VPS.
 - Apache performs OIDC and forwards trusted identity headers.
-- Public Apache API path and internal Node API path may differ by deployment; this phase keeps Node routes under `/api/v1/*` and expects Apache rewrite/proxy mapping to preserve those semantics externally.
+- Public Apache API path and internal Node API path may differ by deployment; canonical public prefix is `/api/worksheet-launcher/v1/*` and Node routes remain `/api/v1/*`.
 - Protected API endpoints require `X-OIDC-Sub` (default header key configured via `AUTH_HEADER_SUB`).
 - Optional metadata headers:
   - `X-OIDC-Email`
@@ -43,6 +43,16 @@ If required identity headers are missing, protected endpoints return:
   }
 }
 ```
+
+### Reverse-proxy path mapping (canonical external examples)
+
+- Canonical external prefix: `/api/worksheet-launcher/v1/*`
+- Internal Node API prefix: `/api/v1/*`
+
+Example external → internal mapping:
+
+- `GET /api/worksheet-launcher/v1/session` → `GET /api/v1/session`
+- `GET /api/worksheet-launcher/v1/drafts` → `GET /api/v1/drafts`
 
 ## Config/env foundation
 

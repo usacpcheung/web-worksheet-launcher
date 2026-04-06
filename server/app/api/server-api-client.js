@@ -1,4 +1,4 @@
-const DEFAULT_PUBLIC_API_BASE = '/api/worksheet-launcher';
+const DEFAULT_PUBLIC_API_BASE = '/api/worksheet-launcher/v1';
 
 function buildPublicApiBase(options = {}) {
   const fromOverride = options.apiBase || null;
@@ -202,16 +202,16 @@ function createServerApiClient(options = {}) {
   return {
     publicApiBase,
     getSessionSignInUrl() {
-      return buildUrl('/api/v1/session');
+      return buildUrl('/session');
     },
     getSession() {
-      return requestJson('/api/v1/session');
+      return requestJson('/session');
     },
     listUploadedDrafts() {
-      return requestJson('/api/v1/drafts');
+      return requestJson('/drafts');
     },
     uploadDraftPackage(zipBytes, metadata = {}) {
-      return uploadZip('/api/v1/drafts/upload', zipBytes, {
+      return uploadZip('/drafts/upload', zipBytes, {
         query: {
           title: metadata.title || '',
           subject: metadata.subject || '',
@@ -219,19 +219,19 @@ function createServerApiClient(options = {}) {
       });
     },
     fetchUploadedDraftArtifact(uploadedDraftId) {
-      return requestZip(`/api/v1/drafts/${uploadedDraftId}/artifact`);
+      return requestZip(`/drafts/${uploadedDraftId}/artifact`);
     },
     publishFromUploadedDraft(uploadedDraftId) {
-      return requestJson('/api/v1/published', {
+      return requestJson('/published', {
         method: 'POST',
         body: { uploadedDraftId },
       });
     },
     listPublishedPackages(query = {}) {
-      return requestJson('/api/v1/published', { query });
+      return requestJson('/published', { query });
     },
     fetchPublishedPackageArtifact(publishedPackageId) {
-      return requestZip(`/api/v1/published/${publishedPackageId}/artifact`);
+      return requestZip(`/published/${publishedPackageId}/artifact`);
     },
   };
 }
