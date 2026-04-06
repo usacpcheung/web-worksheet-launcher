@@ -59,6 +59,8 @@ Optional env variables:
 
 Reference file: `.env.example`.
 
+For local/dev commands (`npm run migrate`, `npm run start:api`), `.env` is auto-loaded from the repository root via `server/api/config.js` using `dotenv` with `override: false` (shell/system-provided env vars keep precedence).
+
 ## PostgreSQL schema and migration path
 
 Migration bootstrap is implemented with SQL files under `server/api/db/migrations/` and runner `server/api/db/migrate.js`.

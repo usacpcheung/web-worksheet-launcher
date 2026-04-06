@@ -1,4 +1,15 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, '../..');
+
+dotenv.config({
+  path: path.join(repoRoot, '.env'),
+  override: false,
+});
 
 function requireNonEmpty(name, raw) {
   if (typeof raw !== 'string' || raw.trim().length === 0) {

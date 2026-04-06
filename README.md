@@ -87,6 +87,10 @@ Quick start:
 
 ```bash
 npm install
+cp .env.example .env
+# edit .env with DATABASE_URL + STORAGE_ROOT for your machine
 npm run migrate
 npm run start:api
 ```
+
+`server/api/config.js` now auto-loads a repo-root `.env` file for local development via `dotenv` (without overriding variables that are already present in the process environment).
