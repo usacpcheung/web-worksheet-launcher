@@ -1,7 +1,13 @@
 # Worksheet Editor/Viewer/Server Architecture Redesign (Package-First Hybrid)
 
 Date: 2026-04-03  
-Status: Planning/design (docs-first; no runtime implementation in this change)
+Status: Living architecture direction (partially implemented; keep aligned with current repo reality)
+
+Implementation checkpoint (2026-04-06):
+- Local-first editor/viewer runtime is active under `server/editor/` and `server/viewer/`.
+- Server foundation APIs are implemented under `server/api/` for upload/publish/load/browse.
+- Apache-forwarded OIDC headers are the current API auth boundary.
+- Attempt sync/upload remains deferred; attempts are still local-first in current implementation.
 
 ## 1) Target architecture summary
 

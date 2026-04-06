@@ -250,7 +250,7 @@ These aliases are transitional and should be documented as deprecated when used.
 
 - Load from explicit source references listed in Section 4.
 - Render question blocks and capture answers with canonical response types.
-- Support local autosave and server-backed attempt autosave.
+- Support local autosave. Server-backed attempt autosave remains a later-phase extension; attempts are local-only in the current implementation phase.
 - Keep submit/resume logic source-bound and immutable-source-safe.
 
 ## 11) Publish and attempt invariants
@@ -279,3 +279,21 @@ This document does not change popup launch/postMessage transport. Popup compatib
 4. upload draft for later edit
 5. publish package flow
 6. source-bound attempts
+
+## 12) Phase D implementation baseline (2026-04-05)
+
+Implemented backend foundation (server-side) now exists for:
+
+- `POST /api/v1/drafts/upload` (authenticated ZIP upload, max 3 owner slots)
+- `GET /api/v1/drafts` (owner-private list)
+- `POST /api/v1/published` (publish immutable package from uploaded draft id)
+- `GET /api/v1/published/:publishedPackageId` (metadata load)
+- `GET /api/v1/published/:publishedPackageId/artifact` (ZIP bytes)
+- `GET /api/v1/published` (basic authenticated browse/search by title/subject)
+
+Operational notes:
+
+- Authentication identity source is Apache-forwarded OIDC headers; required canonical owner key is `X-OIDC-Sub`.
+- Metadata is in PostgreSQL and canonical package bytes remain filesystem ZIP artifacts.
+- Attempts remain local-only in this phase.
+- Local editor/viewer flow remains local-first; this phase adds backend capability but does not replace local behavior.

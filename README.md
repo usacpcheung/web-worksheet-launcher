@@ -73,3 +73,31 @@ Lifecycle hooks (optional):
 - `onResult(payload)`
 
 In v1, launcher behavior remains one-question mode only.
+
+## Phase D server foundation (upload/publish/load/browse)
+
+A first server-backed API foundation is available under `server/api/` with PostgreSQL metadata + filesystem ZIP artifact storage.
+
+- Config and env validation: `server/api/config.js` and `.env.example`
+- Migration bootstrap: `server/api/db/migrate.js`, SQL in `server/api/db/migrations/`
+- API runtime: `server/api/server.js`
+- Detailed phase notes: `docs/phase-d-server-foundation.md`
+
+Quick start:
+
+```bash
+npm install
+cp .env.example .env
+# edit .env with DATABASE_URL + STORAGE_ROOT for your machine
+npm run migrate
+npm run start:api
+```
+
+`server/api/config.js` now auto-loads a repo-root `.env` file for local development via `dotenv` (without overriding variables that are already present in the process environment).
+
+## Runtime layer map (current state)
+
+- `server/editor/` and `server/viewer/`: local-first runtime apps (draft editing, package import/export, local attempts).
+- `server/api/`: Node API foundation for server-backed draft upload/publish/load/browse.
+- `server/app/contracts/`: shared local payload validators/mappers (includes transitional snapshot naming for compatibility).
+- `server/app/auth/`: shared client-side auth-return gate used by editor/viewer protected-action stubs while API integrations are still being wired directly.

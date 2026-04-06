@@ -1,6 +1,11 @@
 # Worksheet contract modules
 
-This folder contains Phase 1 contract/scaffolding utilities for the draft → snapshot → viewer → attempt model boundaries described in `docs/adr-phase1-worksheet-model.md`.
+This folder contains local contract/compatibility utilities used by editor/viewer for draft → snapshot → viewer → attempt model boundaries described in `docs/adr-phase1-worksheet-model.md`.
+
+Terminology note:
+- The utilities here still use `snapshot`/`worksheetId` naming for compatibility with existing local editor/viewer payload shapes.
+- Current architecture direction is package-centered (`publishedPackageId`) for server-backed published content.
+- Treat this folder as transitional client-side compatibility code, not the source of truth for server API identity fields.
 
 ## Modules
 

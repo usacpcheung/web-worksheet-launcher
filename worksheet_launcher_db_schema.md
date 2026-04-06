@@ -299,3 +299,24 @@ If a transitional adapter is required:
 2. Whether `package_family_id` is required at MVP or deferred.
 3. Hash strategy details (`sha256` only vs hash + ETag metadata).
 4. Exact media binary storage backend (DB pointer only in this spec).
+
+## 10) Phase D implemented baseline (2026-04-05)
+
+The initial implementation in `server/api/db/migrations/001_phase_d_server_foundation.sql` intentionally ships a smaller subset:
+
+- Implemented now:
+  - `uploaded_drafts`
+  - `published_packages`
+  - `schema_migrations`
+- Deferred for later phases:
+  - `attempts`
+  - richer publication index table (Phase D uses simple title/subject indexes directly on `published_packages`)
+  - media/lineage event tables
+
+Phase D storage model details:
+
+- Database stores metadata + ownership + hash/size + filesystem path references.
+- Canonical worksheet bytes are ZIP artifacts on filesystem (not DB blobs).
+- Ownership key remains `owner_sub` (OIDC `sub`).
+
+- Search indexing hardening: migration `002_published_search_trgm.sql` adds `pg_trgm` GIN indexes for `LIKE '%term%'` browse queries over title/subject.

@@ -2,3 +2,8 @@ reference/*
 !reference/.gitkeep
 !reference/README.md
 .vscode/
+.env
+.env.*
+!.env.example
+
+node_modules/

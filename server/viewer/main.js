@@ -2026,7 +2026,7 @@ function renderViewerShell(session) {
   syncResumeBtn.type = 'button';
   syncResumeBtn.className = 'viewer-utility-menu__item';
   syncResumeBtn.setAttribute('role', 'menuitem');
-  syncResumeBtn.textContent = 'Sync/Resume (Sign-in required)';
+  syncResumeBtn.textContent = 'Server Resume (Sign-in required)';
 
   const rewriteAssistBtn = document.createElement('button');
   rewriteAssistBtn.type = 'button';
@@ -3010,7 +3010,7 @@ function renderViewerShell(session) {
   });
   syncResumeBtn.addEventListener('click', async () => {
     closeUtilityMenu({ returnFocus: true });
-    await session.triggerProtectedAction('resumeAttemptSyncAfterLogin');
+    await session.triggerProtectedAction('resumeAttemptServerResumeAfterLogin');
     renderUI();
   });
 

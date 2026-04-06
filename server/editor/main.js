@@ -2669,7 +2669,7 @@ function renderEditorShell(session) {
   t2aBtn.textContent = 'T2A (Sign-in required)';
   const syncDraftBtn = document.createElement('button');
   syncDraftBtn.type = 'button';
-  syncDraftBtn.textContent = 'Sync Draft (Sign-in required)';
+  syncDraftBtn.textContent = 'Upload Draft (Sign-in required)';
   const publishBtn = document.createElement('button');
   publishBtn.type = 'button';
   publishBtn.textContent = 'Publish (Sign-in required)';
@@ -3616,7 +3616,7 @@ function renderEditorShell(session) {
     updateSummary();
   });
   syncDraftBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeDraftSyncAfterLogin');
+    await session.triggerProtectedAction('resumeDraftUploadAfterLogin');
     updateSummary();
   });
   publishBtn.addEventListener('click', async () => {
