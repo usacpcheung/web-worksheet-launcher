@@ -250,7 +250,7 @@ These aliases are transitional and should be documented as deprecated when used.
 
 - Load from explicit source references listed in Section 4.
 - Render question blocks and capture answers with canonical response types.
-- Support local autosave and server-backed attempt autosave.
+- Support local autosave. Server-backed attempt autosave remains a later-phase extension; attempts are local-only in the current implementation phase.
 - Keep submit/resume logic source-bound and immutable-source-safe.
 
 ## 11) Publish and attempt invariants
