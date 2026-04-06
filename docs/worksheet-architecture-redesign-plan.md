@@ -7,6 +7,7 @@ Implementation checkpoint (2026-04-06):
 - Local-first editor/viewer runtime is active under `server/editor/` and `server/viewer/`.
 - Server foundation APIs are implemented under `server/api/` for upload/publish/load/browse.
 - Runtime session-ready gate is active via `GET /api/v1/session`; server-only actions are disabled until ready.
+- Browser-facing OIDC popup callback flow is active via `/worksheet_launcher/app/login/popup.html`, while `/api/worksheet-launcher/v1/session` remains the background readiness endpoint.
 - Apache-forwarded OIDC headers are the current API auth boundary.
 - Attempt sync/upload remains deferred; attempts are still local-first in current implementation.
 

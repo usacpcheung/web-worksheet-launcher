@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Worksheet Launcher sign-in complete</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      margin: 2rem;
+      color: #0f172a;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Sign-in completed.</h1>
+    <p id="status">You can close this window.</p>
+  </main>
+  <script>
+    (function notifyOpener() {
+      const params = new URLSearchParams(window.location.search);
+      const source = params.get('source') || 'generic';
+      const payload = {
+        type: 'worksheet-launcher-auth-complete',
+        source,
+      };
+
+      if (window.opener && !window.opener.closed) {
+        try {
+          window.opener.postMessage(payload, window.location.origin);
+          const statusEl = document.getElementById('status');
+          if (statusEl) {
+            statusEl.textContent = 'Sign-in completed. Closing window…';
+          }
+          window.close();
+          return;
+        } catch {
+          // Continue to visible fallback message.
+        }
+      }
+
+      const statusEl = document.getElementById('status');
+      if (statusEl) {
+        statusEl.textContent = 'Sign-in completed. You can close this window.';
+      }
+    }());
+  </script>
+</body>
+</html>
