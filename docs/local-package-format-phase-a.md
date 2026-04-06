@@ -2,13 +2,16 @@
 
 Status: implemented groundwork for local-first editor import/export.
 
+> Current-state note (2026-04-06): this Phase A document is historical for local package behavior.
+> Server-backed upload/publish/browse foundations now exist under `server/api/` (see `docs/phase-d-server-foundation.md`).
+
 ## Goals in this phase
 
 - Make ZIP package export the primary local export path.
 - Keep legacy JSON import as a compatibility path only.
 - Introduce package-compatible worksheet + asset model for local drafts.
 - Store imported package assets in browser local storage (`localAssets` IndexedDB store).
-- Keep publish/upload actions auth-gated stubs (no real server publish/upload in Phase A).
+- Keep local-first editor/viewer behavior independent from server availability.
 
 ## Package structure (v1)
 
@@ -108,8 +111,6 @@ Invalid/unsafe legacy JSON is rejected with explicit errors.
 
 ## Deferred items (intentionally out of scope in Phase A)
 
-- Real server publish implementation.
-- Real upload-draft-for-later-edit implementation.
-- Published-package search/browse APIs.
+- Full editor/viewer wiring to real server upload/publish/browse APIs.
 - Full T2A overwrite/pipeline for option audio generation.
 - Advanced offline/service worker/cache workflows.

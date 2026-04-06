@@ -23,6 +23,7 @@ Out of scope (still deferred):
 
 - App runs behind Apache on Ubuntu VPS.
 - Apache performs OIDC and forwards trusted identity headers.
+- Public Apache API path and internal Node API path may differ by deployment; this phase keeps Node routes under `/api/v1/*` and expects Apache rewrite/proxy mapping to preserve those semantics externally.
 - Protected API endpoints require `X-OIDC-Sub` (default header key configured via `AUTH_HEADER_SUB`).
 - Optional metadata headers:
   - `X-OIDC-Email`

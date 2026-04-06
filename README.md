@@ -94,3 +94,10 @@ npm run start:api
 ```
 
 `server/api/config.js` now auto-loads a repo-root `.env` file for local development via `dotenv` (without overriding variables that are already present in the process environment).
+
+## Runtime layer map (current state)
+
+- `server/editor/` and `server/viewer/`: local-first runtime apps (draft editing, package import/export, local attempts).
+- `server/api/`: Node API foundation for server-backed draft upload/publish/load/browse.
+- `server/app/contracts/`: shared local payload validators/mappers (includes transitional snapshot naming for compatibility).
+- `server/app/auth/`: shared client-side auth-return gate used by editor/viewer protected-action stubs while API integrations are still being wired directly.
