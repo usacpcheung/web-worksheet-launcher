@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
-  let source = await fs.readFile(filePath, 'utf8');
+  const source = await fs.readFile(filePath, 'utf8');
   const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
 
   globalThis[bagName] = {
@@ -44,21 +45,28 @@ async function loadViewerModule(overrides = {}) {
     window: overrides.window || {},
   };
 
-  source = source.replace(
-    "import { viewerStorage } from './storage/index.js';\nimport { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';\nimport { validateViewerPayloadSchema } from '../app/contracts/validators.js';\nimport { normalizeNumberRules, validateNumberInputFormat } from '../app/contracts/number-input-validator.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
-    `const __testBag = globalThis.${bagName};\nconst viewerStorage = __testBag.viewerStorage;\nconst mapSnapshotToViewerPayload = __testBag.mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = __testBag.validateViewerPayloadSchema;\nconst normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;\nconst SharedAuthGate = __testBag.SharedAuthGate;\n`
-  );
-  source = source.replace(/renderViewerShell\(session\);/g, '__testBag.renderViewerShell(session);');
-
-  source = source.replace(
-    /bootstrapViewer\(\)\.catch\([\s\S]*?\);\n\nexport \{[\s\S]*?\};/,
-    'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };'
-  );
+  const rewrittenSource = rewriteModuleSourceForTests(source, [
+    {
+      name: 'replace viewer dependency imports with test bag bindings',
+      pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*mapSnapshotToViewerPayload\s*\}\s*from\s*['"]\.\.\/app\/contracts\/mappers\.js['"];\s*import\s*\{\s*validateViewerPayloadSchema\s*\}\s*from\s*['"]\.\.\/app\/contracts\/validators\.js['"];\s*import\s*\{\s*normalizeNumberRules\s*,\s*validateNumberInputFormat\s*\}\s*from\s*['"]\.\.\/app\/contracts\/number-input-validator\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*/,
+      replacement: `const __testBag = globalThis.${bagName};\nconst viewerStorage = __testBag.viewerStorage;\nconst mapSnapshotToViewerPayload = __testBag.mapSnapshotToViewerPayload;\nconst validateViewerPayloadSchema = __testBag.validateViewerPayloadSchema;\nconst normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;\nconst SharedAuthGate = __testBag.SharedAuthGate;\n`,
+    },
+    {
+      name: 'reroute renderViewerShell side effect',
+      pattern: /renderViewerShell\(\s*session\s*\);/g,
+      replacement: '__testBag.renderViewerShell(session);',
+    },
+    {
+      name: 'replace bootstrap invocation with explicit test exports',
+      pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+    },
+  ]);
 
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(source)}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource)}`;
   return import(dataUrl);
 }
 

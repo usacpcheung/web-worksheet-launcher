@@ -2,19 +2,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  let source = await fs.readFile(filePath, 'utf8');
+  const source = await fs.readFile(filePath, 'utf8');
 
-  source = source.replace(
-    "import { editorStorage } from './storage/index.js';\nimport { SharedAuthGate } from '../app/auth/shared-auth-gate.js';\n",
-    'const editorStorage = {};\nconst SharedAuthGate = class {};\n'
-  );
-
-  source = source.replace(
-    /async function loadContracts\(\) \{[\s\S]*?\n\}\n\nfunction createEmptyQuestionBlock/,
-    `async function loadContracts() {
+  const rewrittenSource = rewriteModuleSourceForTests(source, [
+    {
+      name: 'replace editor dependency imports with test doubles',
+      pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*/,
+      replacement: 'const editorStorage = {};\nconst SharedAuthGate = class {};\n',
+    },
+    {
+      name: 'replace dynamic contracts loader with deterministic test stub',
+      pattern: /async function loadContracts\(\)\s*\{[\s\S]*?\n\}\s*\nfunction createEmptyQuestionBlock/,
+      replacement: `async function loadContracts() {
   return {
     validateDraftSchema(draft) {
       const errors = [];
@@ -38,13 +41,14 @@ async function loadEditorModule() {
   };
 }
 
-function createEmptyQuestionBlock`
-  );
-
-  source = source.replace(
-    /bootstrapEditor\(\)\.catch\([\s\S]*?\);\n\nexport \{[^}]+\};/,
-    'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors };'
-  );
+function createEmptyQuestionBlock`,
+    },
+    {
+      name: 'replace bootstrap invocation with explicit test exports',
+      pattern: /bootstrapEditor\(\)\.catch\([\s\S]*?\);\s*export\s*\{[^}]+\};/,
+      replacement: 'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors };',
+    },
+  ]);
 
   globalThis.document = {
     getElementById: () => null,
@@ -55,7 +59,7 @@ function createEmptyQuestionBlock`
     scrollY: 150,
   };
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(source)}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource)}`;
   return import(dataUrl);
 }
 
