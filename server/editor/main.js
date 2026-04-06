@@ -2251,10 +2251,15 @@ class EditorDraftSession {
     return createWorksheetPackageFromDraft(packagedDraft, assets).bytes;
   }
 
-  beginServerSignIn() {
-    window.open(this.apiClient.getSessionSignInUrl(), '_blank', 'noopener');
-    this.state.serverActionMessage = 'Complete sign-in in the opened tab, then click Retry session.';
+  async beginServerSignIn() {
+    this.state.serverActionMessage = 'Redirecting to sign-in…';
     this.notifyStateChange();
+    const result = await this.triggerProtectedAction('resumeServerSessionAfterLogin');
+    if (result?.status === 'blocked_no_local_id') {
+      this.state.serverActionMessage = 'Unable to start sign-in recovery because no local draft is active.';
+      this.notifyStateChange();
+    }
+    return result;
   }
 
   async refreshServerSession() {
@@ -2411,6 +2416,13 @@ class EditorDraftSession {
   async replayProtectedAction(intent) {
     this.state.lastProtectedAction = intent.actionId;
     this.setRecoveryMessage(null);
+    if (intent.actionId === 'resumeServerSessionAfterLogin') {
+      await this.refreshServerSession();
+      if (this.state.serverSession.status === 'ready') {
+        await this.loadUploadedDrafts();
+      }
+      return;
+    }
   }
 
   async triggerProtectedAction(actionId) {
@@ -2798,7 +2810,7 @@ function renderEditorShell(session) {
   signInBtn.textContent = 'Sign in for server features';
   const retrySessionBtn = document.createElement('button');
   retrySessionBtn.type = 'button';
-  retrySessionBtn.textContent = 'Retry session';
+  retrySessionBtn.textContent = 'Refresh session';
   const loadUploadedDraftsBtn = document.createElement('button');
   loadUploadedDraftsBtn.type = 'button';
   loadUploadedDraftsBtn.textContent = 'Refresh Uploaded Drafts';
@@ -3799,8 +3811,8 @@ function renderEditorShell(session) {
     await session.publishCurrentDraftToServer();
     updateSummary();
   });
-  signInBtn.addEventListener('click', () => {
-    session.beginServerSignIn();
+  signInBtn.addEventListener('click', async () => {
+    await session.beginServerSignIn();
     updateSummary();
   });
   retrySessionBtn.addEventListener('click', async () => {
@@ -3879,10 +3891,13 @@ async function bootstrapEditor() {
   });
 
   session.authGate = authGate;
-  await authGate.restoreAfterAuthReturn();
+  const authRestoreResult = await authGate.restoreAfterAuthReturn();
   await session.refreshServerSession();
   if (session.state.serverSession.status === 'ready') {
     await session.loadUploadedDrafts();
+    if (authRestoreResult?.status === 'replayed' && !session.state.serverActionMessage) {
+      session.state.serverActionMessage = 'Signed in. Server session refreshed.';
+    }
   }
 
   session.persistRestoreMetadata();
