@@ -32,3 +32,12 @@ test('requireAuthenticatedIdentity throws when sub header missing', () => {
     (error) => error instanceof AuthError && error.code === 'AUTH_REQUIRED'
   );
 });
+
+test('requireAuthenticatedIdentity error message uses configured header name', () => {
+  const req = { headers: {} };
+
+  assert.throws(
+    () => requireAuthenticatedIdentity(req, { sub: 'x-forwarded-custom-sub', email: 'x-email', name: 'x-name' }),
+    (error) => error instanceof AuthError && error.message === 'Missing required header: X-Forwarded-Custom-Sub'
+  );
+});

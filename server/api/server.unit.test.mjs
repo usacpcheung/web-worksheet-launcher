@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createApiServer } from './server.js';
 
-async function withServer({ service = {}, artifactStore = {} }, fn) {
+async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }, fn) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-server-test-'));
   const api = await createApiServer({
     config: {
-      storageRoot: './var/test-package-storage',
+      nodeEnv,
+      storageRoot: tempDir,
       authHeaders: {
         sub: 'x-oidc-sub',
         email: 'x-oidc-email',
@@ -46,9 +51,10 @@ async function withServer({ service = {}, artifactStore = {} }, fn) {
   const baseUrl = `http://127.0.0.1:${addr.port}`;
 
   try {
-    await fn(baseUrl);
+    await fn(baseUrl, tempDir);
   } finally {
     await api.close();
+    await fs.rm(tempDir, { recursive: true, force: true });
   }
 }
 
@@ -124,7 +130,6 @@ test('GET /api/v1/published/:id/artifact rejects malformed publishedPackageId wi
   });
 });
 
-
 test('GET /api/v1/published rejects invalid limit query with 400', async () => {
   await withServer({}, async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/v1/published?limit=abc`, {
@@ -136,4 +141,41 @@ test('GET /api/v1/published rejects invalid limit query with 400', async () => {
     assert.equal(payload.ok, false);
     assert.equal(payload.error.code, 'INVALID_QUERY_PARAM');
   });
+});
+
+test('GET /api/v1/published/:id/extra returns 404 for unknown subroute', async () => {
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/published/550e8400-e29b-41d4-a716-446655440000/extra`, {
+      headers: authHeaders,
+    });
+
+    assert.equal(res.status, 404);
+    const payload = await res.json();
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'NOT_FOUND');
+  });
+});
+
+test('INTERNAL_ERROR hides sensitive message outside development', async () => {
+  await withServer(
+    {
+      service: {
+        async listOwnDrafts() {
+          throw new Error('sensitive-db-details');
+        },
+      },
+      nodeEnv: 'production',
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/drafts`, {
+        headers: authHeaders,
+      });
+
+      assert.equal(res.status, 500);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'INTERNAL_ERROR');
+      assert.equal(payload.error.message, 'Unexpected server error.');
+    }
+  );
 });

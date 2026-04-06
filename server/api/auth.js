@@ -5,6 +5,13 @@ function readHeader(req, headerName) {
   return null;
 }
 
+function toCanonicalHeaderName(headerName) {
+  return String(headerName || '')
+    .split('-')
+    .map((segment) => (segment ? segment[0].toUpperCase() + segment.slice(1).toLowerCase() : segment))
+    .join('-');
+}
+
 export class AuthError extends Error {
   constructor(message = 'Missing required authenticated identity header.') {
     super(message);
@@ -15,9 +22,10 @@ export class AuthError extends Error {
 }
 
 export function requireAuthenticatedIdentity(req, authHeaders) {
-  const sub = readHeader(req, authHeaders.sub)?.trim();
+  const subHeader = authHeaders.sub;
+  const sub = readHeader(req, subHeader)?.trim();
   if (!sub) {
-    throw new AuthError('Missing required header: X-OIDC-Sub');
+    throw new AuthError(`Missing required header: ${toCanonicalHeaderName(subHeader)}`);
   }
 
   const email = readHeader(req, authHeaders.email)?.trim() || null;

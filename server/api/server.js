@@ -4,7 +4,7 @@ import { loadConfig } from './config.js';
 import { requireAuthenticatedIdentity, AuthError } from './auth.js';
 import { PackageArtifactStore } from './storage/package-artifact-store.js';
 import { PackageService } from './services/package-service.js';
-import { assertUuid, parseOptionalPositiveInt } from './validation.js';
+import { assertUuid, parseOptionalNonNegativeInt } from './validation.js';
 
 function json(res, statusCode, payload) {
   res.statusCode = statusCode;
@@ -53,8 +53,8 @@ function parseRoute(url) {
   return { segments };
 }
 
-function isNotFoundSegments(segments) {
-  return !(segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'published' && segments[3]);
+function isPublishedDetailRoute(segments) {
+  return segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'published' && !!segments[3];
 }
 
 export function createRequestHandler({ service, artifactStore, config }) {
@@ -114,7 +114,40 @@ export function createRequestHandler({ service, artifactStore, config }) {
         return json(res, result.statusCode, ok(result.data));
       }
 
-      if (req.method === 'GET' && !isNotFoundSegments(segments)) {
+      if (req.method === 'GET' && url.pathname === '/api/v1/published') {
+        const parsedLimit = parseOptionalNonNegativeInt(url.searchParams.get('limit'), {
+          field: 'limit',
+          max: config.browsePageLimitMax,
+          defaultValue: config.browsePageLimitDefault,
+        });
+        if (!parsedLimit.ok) {
+          return json(res, 400, fail(parsedLimit.error.code, parsedLimit.error.message));
+        }
+
+        const parsedOffset = parseOptionalNonNegativeInt(url.searchParams.get('offset'), {
+          field: 'offset',
+          max: Number.MAX_SAFE_INTEGER,
+          defaultValue: 0,
+        });
+        if (!parsedOffset.ok) {
+          return json(res, 400, fail(parsedOffset.error.code, parsedOffset.error.message));
+        }
+
+        const rows = await service.listPublished({
+          query: url.searchParams.get('q') || '',
+          subject: url.searchParams.get('subject') || '',
+          limit: parsedLimit.value,
+          offset: parsedOffset.value,
+        });
+
+        return json(res, 200, ok({ items: rows }));
+      }
+
+      if (req.method === 'GET' && isPublishedDetailRoute(segments)) {
+        if (!(segments.length === 4 || (segments.length === 5 && segments[4] === 'artifact'))) {
+          return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        }
+
         const publishedPackageId = segments[3];
         const validatedPublishedPackageId = assertUuid(publishedPackageId, {
           code: 'INVALID_PUBLISHED_PACKAGE_ID',
@@ -153,35 +186,6 @@ export function createRequestHandler({ service, artifactStore, config }) {
         );
       }
 
-      if (req.method === 'GET' && url.pathname === '/api/v1/published') {
-        const parsedLimit = parseOptionalPositiveInt(url.searchParams.get('limit'), {
-          field: 'limit',
-          max: config.browsePageLimitMax,
-          defaultValue: config.browsePageLimitDefault,
-        });
-        if (!parsedLimit.ok) {
-          return json(res, 400, fail(parsedLimit.error.code, parsedLimit.error.message));
-        }
-
-        const parsedOffset = parseOptionalPositiveInt(url.searchParams.get('offset'), {
-          field: 'offset',
-          max: Number.MAX_SAFE_INTEGER,
-          defaultValue: 0,
-        });
-        if (!parsedOffset.ok) {
-          return json(res, 400, fail(parsedOffset.error.code, parsedOffset.error.message));
-        }
-
-        const rows = await service.listPublished({
-          query: url.searchParams.get('q') || '',
-          subject: url.searchParams.get('subject') || '',
-          limit: parsedLimit.value,
-          offset: parsedOffset.value,
-        });
-
-        return json(res, 200, ok({ items: rows }));
-      }
-
       return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
     } catch (error) {
       if (error instanceof AuthError) {
@@ -190,7 +194,10 @@ export function createRequestHandler({ service, artifactStore, config }) {
       if (error instanceof SyntaxError) {
         return json(res, 400, fail('INVALID_JSON', 'Malformed JSON body.'));
       }
-      return json(res, 500, fail('INTERNAL_ERROR', error.message || 'Unexpected server error.'));
+      // eslint-disable-next-line no-console
+      console.error(error);
+      const message = config.nodeEnv === 'development' ? error.message || 'Unexpected server error.' : 'Unexpected server error.';
+      return json(res, 500, fail('INTERNAL_ERROR', message));
     }
   };
 }

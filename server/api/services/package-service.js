@@ -1,8 +1,20 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
 
 function normalizeText(value, fallback = '') {
   const normalized = String(value || '').trim();
   return normalized || fallback;
+}
+
+async function deleteArtifactIfPresent(artifact) {
+  if (!artifact?.absolutePath) return;
+  try {
+    await fs.unlink(artifact.absolutePath);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+  }
 }
 
 export class PackageService {
@@ -14,6 +26,7 @@ export class PackageService {
 
   async uploadDraft({ identity, title, subject, zipBytes }) {
     const client = await this.db.connect();
+    let artifact = null;
 
     try {
       await client.query('BEGIN');
@@ -34,7 +47,7 @@ export class PackageService {
       }
 
       const uploadedDraftId = crypto.randomUUID();
-      const artifact = await this.artifactStore.storeArtifact({
+      artifact = await this.artifactStore.storeArtifact({
         ownerSub: identity.sub,
         bucket: 'drafts',
         artifactId: uploadedDraftId,
@@ -68,9 +81,11 @@ export class PackageService {
       );
 
       await client.query('COMMIT');
+      artifact = null;
       return { ok: true, statusCode: 201, data: row.rows[0] };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
+      await deleteArtifactIfPresent(artifact);
       throw error;
     } finally {
       client.release();
@@ -91,6 +106,7 @@ export class PackageService {
 
   async publishFromDraft({ identity, uploadedDraftId }) {
     const client = await this.db.connect();
+    let artifact = null;
 
     try {
       await client.query('BEGIN');
@@ -116,7 +132,7 @@ export class PackageService {
       const draft = draftRes.rows[0];
       const bytes = await this.artifactStore.readArtifact(draft.artifact_path);
       const publishedPackageId = crypto.randomUUID();
-      const artifact = await this.artifactStore.storeArtifact({
+      artifact = await this.artifactStore.storeArtifact({
         ownerSub: identity.sub,
         bucket: 'published',
         artifactId: publishedPackageId,
@@ -152,9 +168,11 @@ export class PackageService {
       );
 
       await client.query('COMMIT');
+      artifact = null;
       return { ok: true, statusCode: 201, data: publishedRes.rows[0] };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
+      await deleteArtifactIfPresent(artifact);
       throw error;
     } finally {
       client.release();

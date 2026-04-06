@@ -318,3 +318,5 @@ Phase D storage model details:
 - Database stores metadata + ownership + hash/size + filesystem path references.
 - Canonical worksheet bytes are ZIP artifacts on filesystem (not DB blobs).
 - Ownership key remains `owner_sub` (OIDC `sub`).
+
+- Search indexing hardening: migration `002_published_search_trgm.sql` adds `pg_trgm` GIN indexes for `LIKE '%term%'` browse queries over title/subject.

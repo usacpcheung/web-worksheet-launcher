@@ -17,7 +17,7 @@ export function assertUuid(value, { code, message }) {
   return { ok: true, value: value.trim() };
 }
 
-export function parseOptionalPositiveInt(raw, { field, max, defaultValue }) {
+export function parseOptionalNonNegativeInt(raw, { field, max, defaultValue }) {
   if (raw === null || raw === undefined || raw === '') {
     return { ok: true, value: defaultValue };
   }

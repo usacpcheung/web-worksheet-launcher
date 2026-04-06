@@ -194,3 +194,8 @@ npm run start:api
 - Publish now validates `uploadedDraftId` UUID format before any database query and returns a 400 `INVALID_UPLOADED_DRAFT_ID` client error when invalid.
 - Published metadata/artifact routes validate `publishedPackageId` UUID format before DB lookup and return 400 `INVALID_PUBLISHED_PACKAGE_ID` when invalid.
 - Published browse query params now return explicit 400 `INVALID_QUERY_PARAM` errors for invalid `limit`/`offset` values.
+
+- Draft and publish flows now delete filesystem artifacts on transaction failure to avoid orphaned ZIP accumulation.
+- Published detail route strictness: only `/api/v1/published/:publishedPackageId` and `/api/v1/published/:publishedPackageId/artifact` are valid; unknown nested subroutes return 404.
+- Production/internal-error behavior now returns a generic 500 message while logging full server error details.
+- Migration `002_published_search_trgm.sql` adds `pg_trgm` GIN indexes on `lower(title)` / `lower(subject)` for efficient `%term%` search semantics.

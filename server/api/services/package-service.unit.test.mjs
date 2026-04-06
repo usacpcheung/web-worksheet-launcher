@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { PackageService } from './package-service.js';
 
-function createFakeDb({ draftCount = 0 } = {}) {
+function createFakeDb({ draftCount = 0, failInsert = false, draftExists = true } = {}) {
   const state = { draftCount, queries: [] };
 
   return {
@@ -17,6 +20,31 @@ function createFakeDb({ draftCount = 0 } = {}) {
           if (sql.includes('COUNT(*)::int AS count FROM uploaded_drafts')) {
             return { rows: [{ count: state.draftCount }], rowCount: 1 };
           }
+          if (sql.includes('SELECT uploaded_draft_id')) {
+            if (draftExists) {
+              return {
+                rowCount: 1,
+                rows: [
+                  {
+                    uploaded_draft_id: 'u',
+                    owner_sub: 'oidc-sub',
+                    title: 'T',
+                    subject: 'S',
+                    artifact_path: 'drafts/a.zip',
+                    artifact_sha256: 'sha',
+                    artifact_size_bytes: 1,
+                  },
+                ],
+              };
+            }
+            return { rowCount: 0, rows: [] };
+          }
+          if (sql.includes('INSERT INTO uploaded_drafts') || sql.includes('INSERT INTO published_packages')) {
+            if (failInsert) {
+              throw new Error('insert failed');
+            }
+            return { rowCount: 1, rows: [{}] };
+          }
           if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
             return { rows: [], rowCount: 0 };
           }
@@ -28,15 +56,8 @@ function createFakeDb({ draftCount = 0 } = {}) {
   };
 }
 
-test('uploadDraft acquires per-owner advisory lock before counting slots', async () => {
-  const db = createFakeDb({ draftCount: 3 });
-  const artifactStore = {
-    async storeArtifact() {
-      throw new Error('storeArtifact should not be called for slot-limit path');
-    },
-  };
-
-  const service = new PackageService({
+function createService({ db, artifactStore }) {
+  return new PackageService({
     db,
     artifactStore,
     config: {
@@ -45,6 +66,17 @@ test('uploadDraft acquires per-owner advisory lock before counting slots', async
       browsePageLimitMax: 100,
     },
   });
+}
+
+test('uploadDraft acquires per-owner advisory lock before counting slots', async () => {
+  const db = createFakeDb({ draftCount: 3 });
+  const artifactStore = {
+    async storeArtifact() {
+      throw new Error('storeArtifact should not be called for slot-limit path');
+    },
+  };
+
+  const service = createService({ db, artifactStore });
 
   const result = await service.uploadDraft({
     identity: { sub: 'oidc-sub' },
@@ -62,4 +94,59 @@ test('uploadDraft acquires per-owner advisory lock before counting slots', async
   assert.notEqual(lockQueryIndex, -1);
   assert.notEqual(countQueryIndex, -1);
   assert.equal(lockQueryIndex < countQueryIndex, true);
+});
+
+test('uploadDraft removes artifact file when DB insert fails', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-upload-cleanup-'));
+  const artifactPath = path.join(tempDir, 'artifact.zip');
+  await fs.writeFile(artifactPath, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+
+  const db = createFakeDb({ draftCount: 0, failInsert: true });
+  const artifactStore = {
+    async storeArtifact() {
+      return { artifactPath: 'drafts/a.zip', absolutePath: artifactPath, artifactSha256: 'sha', artifactSizeBytes: 4 };
+    },
+  };
+
+  const service = createService({ db, artifactStore });
+
+  await assert.rejects(
+    () =>
+      service.uploadDraft({
+        identity: { sub: 'oidc-sub' },
+        title: 'Title',
+        subject: 'Math',
+        zipBytes: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+      }),
+    /insert failed/
+  );
+
+  await assert.rejects(() => fs.access(artifactPath));
+  await fs.rm(tempDir, { recursive: true, force: true });
+});
+
+test('publishFromDraft removes artifact file when DB insert fails', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-publish-cleanup-'));
+  const artifactPath = path.join(tempDir, 'published.zip');
+  await fs.writeFile(artifactPath, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+
+  const db = createFakeDb({ failInsert: true });
+  const artifactStore = {
+    async readArtifact() {
+      return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+    },
+    async storeArtifact() {
+      return { artifactPath: 'published/a.zip', absolutePath: artifactPath, artifactSha256: 'sha', artifactSizeBytes: 4 };
+    },
+  };
+
+  const service = createService({ db, artifactStore });
+
+  await assert.rejects(
+    () => service.publishFromDraft({ identity: { sub: 'oidc-sub' }, uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000' }),
+    /insert failed/
+  );
+
+  await assert.rejects(() => fs.access(artifactPath));
+  await fs.rm(tempDir, { recursive: true, force: true });
 });

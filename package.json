@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "bash -lc 'node --test $(rg --files -g \"**/*.unit.test.mjs\" server | tr \"\\n\" \" \")'",
+    "test": "node --test server",
     "migrate": "node server/api/db/migrate.js",
     "start:api": "node server/api/server.js"
   },
