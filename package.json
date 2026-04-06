@@ -9,6 +9,7 @@
     "start:api": "node server/api/server.js"
   },
   "dependencies": {
-    "pg": "^8.16.0"
+    "pg": "^8.16.0",
+    "dotenv": "^16.4.5"
   }
 }
