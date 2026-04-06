@@ -173,38 +173,49 @@ Contract expectations for viewer/server integration:
 - This is expected behavior (not a launch/runtime error condition).
 - For high-stakes grading, evaluate answers server-side and avoid shipping authoritative answer keys in client payloads.
 
-## Viewer launch failure semantics and precedence (deterministic contract)
+## Viewer launch semantics (package-first/hybrid direction)
 
-Viewer launch for `/viewer/` follows strict intent precedence and failure handling:
+Viewer launch for `/viewer/` follows explicit source intent with typed failure handling.
 
-1. `localAttemptId` (resume existing local attempt)
-2. `viewerPayload` (inline payload)
-3. `snapshot` (snapshot-derived payload)
-4. `importedWorksheetId` (imported worksheet lookup)
-5. `localDraftId` (draft lookup; includes preview mode when paired with `preview=1`)
+Preferred source paths:
+
+1. `localAttemptId` (resume exact existing attempt)
+2. `publishedPackageId` (open immutable published package by reference)
+3. `importedWorksheetId` (open imported local package)
+4. `localDraftId` with `preview=1` (explicit editor preview; optional `draftUpdatedAt`)
+5. `viewerPayload` / `snapshot` (legacy compatibility path; no longer preferred as main route)
+
+Transitional terminology note:
+- `publishedPackageId` is the canonical published-viewer reference in the redesign direction.
+- `snapshot`/`snapshotId` wording in viewer launch docs is compatibility-only terminology and should be treated as transitional alias language.
 
 Deterministic behavior requirements:
 
-- **No explicit query launch params present** (`localAttemptId`, `localDraftId`, `importedWorksheetId`, `viewerPayload`, `snapshot`) must render the viewer start/import UX only **unless** a persisted resume flag indicates a concrete prior attempt to restore.
-- **Persisted resume flag auto-resume** (with no explicit query launch params) is treated as an explicit resume of that prior attempt, not as synthesized content; if the referenced attempt cannot be restored, the viewer must fall back to the start/import UX with a typed recovery message.
-- **Any explicit query launch param present** must either:
-  - load valid viewer content, or
+- **No explicit source params present** must render a viewer start screen (not direct auto-resume).
+- If resumable local attempt metadata exists, start screen must present a prominent **Resume** option, but user choice is still required.
+- **Any explicit source param present** must either:
+  - load the requested source, or
   - fail as a typed fatal launch error in viewer UI.
-- Viewer must **never synthesize new worksheet content** as a fallback when explicit launch intent or resume/restore behavior fails.
+- Viewer must **never synthesize unrelated worksheet content** as fallback when explicit launch intent fails.
 
 Explicit-parameter fatal error rules:
 
-- `localAttemptId`: if the explicit resume target is missing/corrupt/unreadable, launch fails fatally (no source fallback).
-- `viewerPayload` / `snapshot`: if present but unparseable, launch fails with parse-specific fatal error.
-- `localDraftId` / `importedWorksheetId`: if record lookup fails, launch fails with typed not-found fatal error.
-- Any payload schema validation failure for explicit launch parameters **other than** `localAttemptId` is a typed invalid-payload fatal error (for example, `INVALID_VIEWER_PAYLOAD` in viewer UI).
-- For explicit `localAttemptId` resumes, any resume failure (including payload schema validation failures inside the stored attempt payload) surfaces as a `LOCAL_ATTEMPT_RESUME_FAILED` fatal error with no source fallback.
+- `localAttemptId`: missing/corrupt/unreadable resume target is fatal (`LOCAL_ATTEMPT_RESUME_FAILED` class error).
+- `publishedPackageId`: unresolved package lookup or validation mismatch is fatal (`PUBLISHED_PACKAGE_NOT_FOUND` / `PUBLISHED_PACKAGE_INVALID` class errors).
+- `localDraftId` with `preview=1`: missing draft or invalid preview payload is fatal (`LOCAL_DRAFT_PREVIEW_FAILED` class errors).
+- `importedWorksheetId`: lookup failure is fatal (`IMPORTED_WORKSHEET_NOT_FOUND` class errors).
+- `viewerPayload` / `snapshot`: parse/schema failures are fatal (`INVALID_VIEWER_PAYLOAD` class errors).
+
+Published package cache behavior:
+
+- For explicit `publishedPackageId`, viewer should prefer a valid local cached copy of the same ID.
+- If no valid cache exists, viewer fetches from server and stores cache metadata for subsequent opens.
 
 Auth-return behavior (`authReturn=1`):
 
 - If auth-return restore succeeds with restorable state, viewer continues.
-- If auth-return restore does not recover state **and** no real content intent params are present, viewer renders start/import UX with recovery guidance.
-- If real content intent params are present, normal explicit launch validation/fatal semantics above apply.
+- If restore fails and no explicit source params are present, viewer returns to start screen with recovery guidance.
+- If explicit source params are present, standard explicit launch validation/fatal semantics apply.
 
 ## 1) Launch query contract
 
