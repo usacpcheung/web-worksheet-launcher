@@ -13,6 +13,7 @@ function buildReturnUrl(currentUrl) {
 function cleanupAuthReturnUrlParams() {
   const cleanUrl = new URL(window.location.href);
   cleanUrl.searchParams.delete(AUTH_RETURN_PARAM);
+  cleanUrl.searchParams.delete('intent');
   window.history.replaceState({}, '', cleanUrl.toString());
 }
 

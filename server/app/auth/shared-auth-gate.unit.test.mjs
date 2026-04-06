@@ -197,7 +197,7 @@ test('restoreAfterAuthReturn returns not_authenticated and cleans URL params', a
     resumeUi: { status: 'in_progress' },
   });
 
-  const { replaceCalls } = createWindowStub('https://example.test/viewer/?authReturn=1');
+  const { replaceCalls } = createWindowStub('https://example.test/viewer/?authReturn=1&intent=resumeAttemptSyncAfterLogin');
 
   const gate = new SharedAuthGate({
     appArea: 'viewer',
@@ -223,6 +223,7 @@ test('restoreAfterAuthReturn returns not_authenticated and cleans URL params', a
   assert.equal(replaceCalls.length, 1);
   const nextUrl = replaceCalls[0][2];
   assert.equal(nextUrl.includes('authReturn='), false);
+  assert.equal(nextUrl.includes('intent='), false);
 });
 
 test('restoreAfterAuthReturn missing_local_id clears pending and cleans URL params', async () => {
@@ -262,7 +263,7 @@ test('restoreAfterAuthReturn restore_failed clears pending and cleans URL params
     resumeFlagKey: 'viewer:lastSession',
   });
 
-  const { replaceCalls } = createWindowStub('https://example.test/viewer/?auth=1&authReturn=1');
+  const { replaceCalls } = createWindowStub('https://example.test/viewer/?auth=1&authReturn=1&intent=resumeAttemptSyncAfterLogin');
 
   const gate = new SharedAuthGate({
     appArea: 'viewer',
@@ -279,6 +280,7 @@ test('restoreAfterAuthReturn restore_failed clears pending and cleans URL params
   assert.equal(replaceCalls.length, 1);
   const nextUrl = replaceCalls[0][2];
   assert.equal(nextUrl.includes('authReturn='), false);
+  assert.equal(nextUrl.includes('intent='), false);
 });
 
 test('restoreAfterAuthReturn intent_invalid clears pending and cleans URL params', async () => {
