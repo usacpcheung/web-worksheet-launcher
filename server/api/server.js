@@ -57,6 +57,10 @@ function isPublishedDetailRoute(segments) {
   return segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'published' && !!segments[3];
 }
 
+function isDraftDetailRoute(segments) {
+  return segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'drafts' && !!segments[3];
+}
+
 export function createRequestHandler({ service, artifactStore, config }) {
   return async function requestHandler(req, res) {
     try {
@@ -68,6 +72,21 @@ export function createRequestHandler({ service, artifactStore, config }) {
       }
 
       const identity = requireAuthenticatedIdentity(req, config.authHeaders);
+
+      if (req.method === 'GET' && url.pathname === '/api/v1/session') {
+        return json(
+          res,
+          200,
+          ok({
+            ready: true,
+            user: {
+              sub: identity.sub,
+              email: identity.email,
+              name: identity.name,
+            },
+          })
+        );
+      }
 
       if (req.method === 'POST' && url.pathname === '/api/v1/drafts/upload') {
         const contentType = String(req.headers['content-type'] || '').toLowerCase();
@@ -87,6 +106,36 @@ export function createRequestHandler({ service, artifactStore, config }) {
       if (req.method === 'GET' && url.pathname === '/api/v1/drafts') {
         const rows = await service.listOwnDrafts(identity);
         return json(res, 200, ok({ items: rows }));
+      }
+
+      if (req.method === 'GET' && isDraftDetailRoute(segments)) {
+        if (!(segments.length === 5 && segments[4] === 'artifact')) {
+          return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        }
+
+        const uploadedDraftId = segments[3];
+        const validatedUploadedDraftId = assertUuid(uploadedDraftId, {
+          code: 'INVALID_UPLOADED_DRAFT_ID',
+          message: 'uploadedDraftId must be a valid UUID.',
+        });
+        if (!validatedUploadedDraftId.ok) {
+          return json(res, 400, fail(validatedUploadedDraftId.error.code, validatedUploadedDraftId.error.message));
+        }
+
+        const draft = await service.loadOwnDraftArtifact({
+          identity,
+          uploadedDraftId: validatedUploadedDraftId.value,
+        });
+        if (!draft) {
+          return json(res, 404, fail('UPLOADED_DRAFT_NOT_FOUND', 'Uploaded draft was not found for this owner.'));
+        }
+
+        const zipBytes = await artifactStore.readArtifact(draft.artifact_path);
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/zip');
+        res.setHeader('content-length', String(zipBytes.byteLength));
+        res.end(zipBytes);
+        return;
       }
 
       if (req.method === 'POST' && url.pathname === '/api/v1/published') {

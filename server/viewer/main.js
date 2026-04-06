@@ -4,6 +4,7 @@ import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
 import { normalizeNumberRules, validateNumberInputFormat } from '../app/contracts/number-input-validator.js';
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 import { mapLegacyJsonToPackageModel, parseWorksheetPackage } from '../editor/worksheet-package.js';
+import { createServerApiClient } from '../app/api/server-api-client.js';
 
 const app = document.getElementById('app');
 const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
@@ -1100,8 +1101,9 @@ function resolveImportedWorksheetPayload(importedRecord) {
 }
 
 class ViewerAttemptSession {
-  constructor(storage) {
+  constructor(storage, options = {}) {
     this.storage = storage;
+    this.apiClient = options.apiClient || createServerApiClient();
     this.state = {
       localAttemptId: null,
       viewerPayload: null,
@@ -1132,6 +1134,15 @@ class ViewerAttemptSession {
       recoveryMessage: null,
       checkResult: null,
       lastProtectedAction: null,
+      serverSession: {
+        status: 'checking',
+        user: null,
+        error: null,
+      },
+      serverActionMessage: null,
+      publishedPackages: [],
+      publishedQuery: '',
+      isLoadingPublishedPackages: false,
     };
 
     this.autosaveTimer = null;
@@ -1892,6 +1903,68 @@ class ViewerAttemptSession {
         localAttemptId: this.state.localAttemptId || null,
       },
     });
+  }
+
+  beginServerSignIn() {
+    window.open(this.apiClient.getSessionSignInUrl(), '_blank', 'noopener');
+    this.state.serverActionMessage = 'Complete sign-in in the opened tab, then retry session.';
+    this.notifyStateChange();
+  }
+
+  async refreshServerSession() {
+    this.state.serverSession = {
+      status: 'checking',
+      user: null,
+      error: null,
+    };
+    this.notifyStateChange();
+    const result = await this.apiClient.getSession();
+    if (!result.ok) {
+      this.state.serverSession = {
+        status: 'not_ready',
+        user: null,
+        error: result.error.message,
+      };
+      this.notifyStateChange();
+      return result;
+    }
+    this.state.serverSession = {
+      status: 'ready',
+      user: result.data?.user || null,
+      error: null,
+    };
+    this.notifyStateChange();
+    return result;
+  }
+
+  async browsePublishedPackages(query = '') {
+    this.state.isLoadingPublishedPackages = true;
+    this.state.publishedQuery = query;
+    this.notifyStateChange();
+    const result = await this.apiClient.listPublishedPackages({ q: query || '', limit: 20, offset: 0 });
+    this.state.isLoadingPublishedPackages = false;
+    if (!result.ok) {
+      this.state.serverActionMessage = result.error.message;
+      this.notifyStateChange();
+      return result;
+    }
+    this.state.publishedPackages = Array.isArray(result.data?.items) ? result.data.items : [];
+    this.state.serverActionMessage = null;
+    this.notifyStateChange();
+    return result;
+  }
+
+  async startFromPublishedPackage(publishedPackageId) {
+    const artifact = await this.apiClient.fetchPublishedPackageArtifact(publishedPackageId);
+    if (!artifact.ok) {
+      this.state.serverActionMessage = artifact.error.message;
+      this.notifyStateChange();
+      return artifact;
+    }
+    const started = await this.startImportedWorksheetFromPackageFile(artifact.data);
+    this.state.serverActionMessage = `Imported published package ${publishedPackageId} into local viewer runtime.`;
+    this.notifyStateChange();
+    return { ok: true, data: started };
   }
 
   persistResumeMetadata() {
@@ -3107,6 +3180,30 @@ function renderViewerStartPanel(session, options = {}) {
   const importActions = document.createElement('div');
   importActions.className = 'viewer-start-actions';
   importActions.append(importPackageBtn);
+  const serverActions = document.createElement('div');
+  serverActions.className = 'viewer-start-actions';
+  const signInBtn = document.createElement('button');
+  signInBtn.type = 'button';
+  signInBtn.className = 'viewer-start-btn';
+  signInBtn.textContent = 'Sign in for server features';
+  const retrySessionBtn = document.createElement('button');
+  retrySessionBtn.type = 'button';
+  retrySessionBtn.className = 'viewer-start-btn';
+  retrySessionBtn.textContent = 'Retry session';
+  const browseBtn = document.createElement('button');
+  browseBtn.type = 'button';
+  browseBtn.className = 'viewer-start-btn';
+  browseBtn.textContent = 'Browse published packages';
+  const searchInput = document.createElement('input');
+  searchInput.type = 'search';
+  searchInput.placeholder = 'Search published title';
+  searchInput.className = 'viewer-details-form__input';
+  const sessionStatus = document.createElement('p');
+  sessionStatus.className = 'muted';
+  const serverStatus = document.createElement('p');
+  serverStatus.className = 'muted';
+  const publishedList = document.createElement('div');
+  publishedList.className = 'muted';
 
   const packageFileInput = document.createElement('input');
   packageFileInput.type = 'file';
@@ -3181,14 +3278,89 @@ function renderViewerStartPanel(session, options = {}) {
     }
   });
 
+  signInBtn.addEventListener('click', () => {
+    session.beginServerSignIn();
+    renderServerControls();
+  });
+  retrySessionBtn.addEventListener('click', async () => {
+    await session.refreshServerSession();
+    if (session.state.serverSession.status === 'ready') {
+      await session.browsePublishedPackages(searchInput.value.trim());
+    }
+    renderServerControls();
+  });
+  browseBtn.addEventListener('click', async () => {
+    await session.browsePublishedPackages(searchInput.value.trim());
+    renderServerControls();
+  });
+
+  async function openPublishedPackage(publishedPackageId) {
+    const result = await session.startFromPublishedPackage(publishedPackageId);
+    if (!result.ok) {
+      renderServerControls();
+      return;
+    }
+    if (session.state.localAttemptId) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+      window.history.replaceState({}, '', nextUrl);
+    }
+    renderViewerShell(session);
+    window.viewerSession = session;
+  }
+
+  function renderServerControls() {
+    const sessionState = session.state.serverSession?.status || 'checking';
+    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
+    if (sessionState === 'ready') {
+      sessionStatus.textContent = `Server session: ready (${userLabel})`;
+    } else if (sessionState === 'checking') {
+      sessionStatus.textContent = 'Server session: checking…';
+    } else {
+      sessionStatus.textContent = `Server session: not ready. ${session.state.serverSession?.error || 'Sign in for server features.'}`;
+    }
+    signInBtn.hidden = sessionState === 'ready';
+    browseBtn.disabled = sessionState !== 'ready';
+    retrySessionBtn.disabled = sessionState === 'checking';
+    serverStatus.textContent = session.state.serverActionMessage || '';
+    publishedList.innerHTML = '';
+    const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];
+    if (publishedItems.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = session.state.isLoadingPublishedPackages ? 'Loading published packages…' : 'No published packages loaded.';
+      publishedList.appendChild(empty);
+      return;
+    }
+    publishedItems.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'viewer-start-actions';
+      const meta = document.createElement('span');
+      meta.className = 'muted';
+      meta.textContent = `${item.title || 'Untitled'} · ${item.published_package_id}`;
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'viewer-start-btn';
+      openBtn.textContent = 'Open package';
+      openBtn.disabled = sessionState !== 'ready';
+      openBtn.addEventListener('click', async () => {
+        await openPublishedPackage(item.published_package_id);
+      });
+      row.append(meta, openBtn);
+      publishedList.appendChild(row);
+    });
+  }
+
   panel.append(heading, description);
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  panel.append(importActions, packageFileInput, errorMessage);
+  serverActions.append(signInBtn, retrySessionBtn, browseBtn);
+  panel.append(importActions, sessionStatus, serverActions, searchInput, publishedList, serverStatus, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
+  renderServerControls();
 }
 
 async function bootstrapViewer() {
@@ -3215,6 +3387,10 @@ async function bootstrapViewer() {
   });
 
   session.authGate = authGate;
+  await session.refreshServerSession();
+  if (session.state.serverSession.status === 'ready') {
+    await session.browsePublishedPackages('');
+  }
 
   const params = new URLSearchParams(window.location.search);
   const hasAuthReturn = params.get('authReturn') === '1';

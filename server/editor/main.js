@@ -1,5 +1,6 @@
 import { editorStorage } from './storage/index.js';
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
+import { createServerApiClient } from '../app/api/server-api-client.js';
 import {
   createWorksheetPackageFromDraft,
   mapLegacyJsonToPackageModel,
@@ -553,8 +554,9 @@ function cloneDraftForPersistence(draft) {
 }
 
 class EditorDraftSession {
-  constructor(storage) {
+  constructor(storage, options = {}) {
     this.storage = storage;
+    this.apiClient = options.apiClient || createServerApiClient();
     this.state = {
       draft: null,
       selectedBlockId: null,
@@ -579,6 +581,17 @@ class EditorDraftSession {
       lastProtectedAction: null,
       isPristineDraft: false,
       mediaFeedback: null,
+      serverSession: {
+        status: 'checking',
+        user: null,
+        error: null,
+      },
+      serverActionMessage: null,
+      lastUploadedDraft: null,
+      lastPublishedPackage: null,
+      uploadedDrafts: [],
+      isLoadingUploadedDrafts: false,
+      publishedBrowseQuery: '',
     };
 
     this.autosaveTimer = null;
@@ -2200,6 +2213,24 @@ class EditorDraftSession {
 
     const timestampToken = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `worksheet-package-${this.state.draft.localId}-${timestampToken}.zip`;
+    const bytes = await this.buildCurrentDraftPackageZipBytes();
+    const blob = new Blob([bytes], { type: 'application/zip' });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    this.state.lastExportedAt = nowIso();
+    return filename;
+  }
+
+  async buildCurrentDraftPackageZipBytes() {
+    if (!this.state.draft) {
+      throw new Error('No active draft to export.');
+    }
     const assets = new Map();
     const draftAssets = normalizeDraftAssets(this.state.draft.assets);
     for (const asset of draftAssets) {
@@ -2217,18 +2248,107 @@ class EditorDraftSession {
         modelVersion: 'package-compatible-v1',
       },
     };
-    const { bytes } = createWorksheetPackageFromDraft(packagedDraft, assets);
-    const blob = new Blob([bytes], { type: 'application/zip' });
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(objectUrl);
-    this.state.lastExportedAt = nowIso();
-    return filename;
+    return createWorksheetPackageFromDraft(packagedDraft, assets).bytes;
+  }
+
+  beginServerSignIn() {
+    window.open(this.apiClient.getSessionSignInUrl(), '_blank', 'noopener');
+    this.state.serverActionMessage = 'Complete sign-in in the opened tab, then click Retry session.';
+    this.notifyStateChange();
+  }
+
+  async refreshServerSession() {
+    this.state.serverSession = {
+      status: 'checking',
+      user: null,
+      error: null,
+    };
+    this.notifyStateChange();
+
+    const result = await this.apiClient.getSession();
+    if (!result.ok) {
+      this.state.serverSession = {
+        status: 'not_ready',
+        user: null,
+        error: result.error.message,
+      };
+      this.notifyStateChange();
+      return result;
+    }
+
+    this.state.serverSession = {
+      status: 'ready',
+      user: result.data?.user || null,
+      error: null,
+    };
+    this.notifyStateChange();
+    return result;
+  }
+
+  async uploadCurrentDraftToServer() {
+    const zipBytes = await this.buildCurrentDraftPackageZipBytes();
+    const result = await this.apiClient.uploadDraftPackage(zipBytes, {
+      title: this.state.draft?.title || '',
+      subject: this.state.draft?.metadata?.subject || '',
+    });
+    if (!result.ok) {
+      this.state.serverActionMessage = result.error.message;
+      this.notifyStateChange();
+      return result;
+    }
+    this.state.lastUploadedDraft = result.data;
+    this.state.serverActionMessage = `Uploaded draft ${result.data.uploaded_draft_id}.`;
+    await this.loadUploadedDrafts();
+    this.notifyStateChange();
+    return result;
+  }
+
+  async publishCurrentDraftToServer() {
+    const uploadResult = await this.uploadCurrentDraftToServer();
+    if (!uploadResult.ok) {
+      return uploadResult;
+    }
+    const publishResult = await this.apiClient.publishFromUploadedDraft(uploadResult.data.uploaded_draft_id);
+    if (!publishResult.ok) {
+      this.state.serverActionMessage = publishResult.error.message;
+      this.notifyStateChange();
+      return publishResult;
+    }
+    this.state.lastPublishedPackage = publishResult.data;
+    this.state.serverActionMessage = `Published package ${publishResult.data.published_package_id}.`;
+    this.notifyStateChange();
+    return publishResult;
+  }
+
+  async loadUploadedDrafts() {
+    this.state.isLoadingUploadedDrafts = true;
+    this.notifyStateChange();
+    const result = await this.apiClient.listUploadedDrafts();
+    this.state.isLoadingUploadedDrafts = false;
+    if (!result.ok) {
+      this.state.serverActionMessage = result.error.message;
+      this.notifyStateChange();
+      return result;
+    }
+    this.state.uploadedDrafts = Array.isArray(result.data?.items) ? result.data.items : [];
+    this.notifyStateChange();
+    return result;
+  }
+
+  async reopenUploadedDraftAsLocalCopy(uploadedDraftId) {
+    const artifact = await this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId);
+    if (!artifact.ok) {
+      this.state.serverActionMessage = artifact.error.message;
+      this.notifyStateChange();
+      return artifact;
+    }
+    const imported = await this.importWorksheetPackageFile(
+      new File([artifact.data], `uploaded-draft-${uploadedDraftId}.zip`, { type: 'application/zip' }),
+      { convertToEditableDraft: true }
+    );
+    this.state.serverActionMessage = `Opened uploaded draft ${uploadedDraftId} as a new local draft copy.`;
+    this.notifyStateChange();
+    return { ok: true, data: imported };
   }
 
   touchDraft() {
@@ -2669,10 +2789,25 @@ function renderEditorShell(session) {
   t2aBtn.textContent = 'T2A (Sign-in required)';
   const syncDraftBtn = document.createElement('button');
   syncDraftBtn.type = 'button';
-  syncDraftBtn.textContent = 'Upload Draft (Sign-in required)';
+  syncDraftBtn.textContent = 'Upload Draft';
   const publishBtn = document.createElement('button');
   publishBtn.type = 'button';
-  publishBtn.textContent = 'Publish (Sign-in required)';
+  publishBtn.textContent = 'Publish';
+  const signInBtn = document.createElement('button');
+  signInBtn.type = 'button';
+  signInBtn.textContent = 'Sign in for server features';
+  const retrySessionBtn = document.createElement('button');
+  retrySessionBtn.type = 'button';
+  retrySessionBtn.textContent = 'Retry session';
+  const loadUploadedDraftsBtn = document.createElement('button');
+  loadUploadedDraftsBtn.type = 'button';
+  loadUploadedDraftsBtn.textContent = 'Refresh Uploaded Drafts';
+  const serverSessionStatus = document.createElement('p');
+  serverSessionStatus.className = 'muted';
+  const serverActionStatus = document.createElement('p');
+  serverActionStatus.className = 'muted';
+  const uploadedDraftList = document.createElement('div');
+  uploadedDraftList.className = 'muted';
   const protectedActionsColumn = document.createElement('div');
   protectedActionsColumn.className = 'action-column';
   let detailSignature = null;
@@ -3417,6 +3552,47 @@ function renderEditorShell(session) {
     localDraftIdValue.textContent = session.state.draft?.localId || 'n/a';
     statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'}`;
     mediaFeedback.textContent = session.state.mediaFeedback || '';
+    const sessionStatus = session.state.serverSession?.status || 'checking';
+    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
+    if (sessionStatus === 'ready') {
+      serverSessionStatus.textContent = `Server session: ready (${userLabel})`;
+    } else if (sessionStatus === 'checking') {
+      serverSessionStatus.textContent = 'Server session: checking…';
+    } else {
+      serverSessionStatus.textContent = `Server session: not ready. ${session.state.serverSession?.error || 'Sign in for server features.'}`;
+    }
+    serverActionStatus.textContent = session.state.serverActionMessage || '';
+    const serverReady = sessionStatus === 'ready';
+    syncDraftBtn.disabled = !serverReady;
+    publishBtn.disabled = !serverReady;
+    loadUploadedDraftsBtn.disabled = !serverReady;
+    signInBtn.hidden = serverReady;
+    retrySessionBtn.disabled = sessionStatus === 'checking';
+    uploadedDraftList.innerHTML = '';
+    if (session.state.uploadedDrafts.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = session.state.isLoadingUploadedDrafts ? 'Loading uploaded drafts…' : 'No uploaded drafts yet.';
+      uploadedDraftList.appendChild(empty);
+    } else {
+      session.state.uploadedDrafts.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'button-row';
+        const meta = document.createElement('span');
+        meta.className = 'muted';
+        meta.textContent = `${item.title || 'Untitled'} · ${item.uploaded_draft_id}`;
+        const openBtn = document.createElement('button');
+        openBtn.type = 'button';
+        openBtn.textContent = 'Open as local copy';
+        openBtn.disabled = !serverReady;
+        openBtn.addEventListener('click', async () => {
+          await session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
+          updateSummary();
+        });
+        row.append(meta, openBtn);
+        uploadedDraftList.appendChild(row);
+      });
+    }
   };
 
   session.setOnStateChange(() => {
@@ -3616,11 +3792,26 @@ function renderEditorShell(session) {
     updateSummary();
   });
   syncDraftBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeDraftUploadAfterLogin');
+    await session.uploadCurrentDraftToServer();
     updateSummary();
   });
   publishBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumePublishAfterLogin');
+    await session.publishCurrentDraftToServer();
+    updateSummary();
+  });
+  signInBtn.addEventListener('click', () => {
+    session.beginServerSignIn();
+    updateSummary();
+  });
+  retrySessionBtn.addEventListener('click', async () => {
+    await session.refreshServerSession();
+    if (session.state.serverSession.status === 'ready') {
+      await session.loadUploadedDrafts();
+    }
+    updateSummary();
+  });
+  loadUploadedDraftsBtn.addEventListener('click', async () => {
+    await session.loadUploadedDrafts();
     updateSummary();
   });
 
@@ -3631,7 +3822,18 @@ function renderEditorShell(session) {
   if (isDebugMode) {
     moreActions.append(localPublishHint, localPublishBtn);
   }
-  protectedActionsColumn.append(syncDraftBtn, publishBtn, rewriteBtn, t2aBtn);
+  protectedActionsColumn.append(
+    serverSessionStatus,
+    signInBtn,
+    retrySessionBtn,
+    syncDraftBtn,
+    publishBtn,
+    loadUploadedDraftsBtn,
+    uploadedDraftList,
+    serverActionStatus,
+    rewriteBtn,
+    t2aBtn
+  );
   moreActions.append(protectedActionsColumn);
   leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput, questionImageInput, questionAudioInput, optionAudioInput);
   rightPanel.append(rightHeading, statusRow);
@@ -3678,6 +3880,10 @@ async function bootstrapEditor() {
 
   session.authGate = authGate;
   await authGate.restoreAfterAuthReturn();
+  await session.refreshServerSession();
+  if (session.state.serverSession.status === 'ready') {
+    await session.loadUploadedDrafts();
+  }
 
   session.persistRestoreMetadata();
 
