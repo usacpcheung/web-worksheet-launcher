@@ -10,6 +10,8 @@ const app = document.getElementById('app');
 const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
 
 const AUTOSAVE_MS = 1000;
+const AUTH_POPUP_FALLBACK_POLL_MS = 1000;
+const AUTH_POPUP_FALLBACK_TIMEOUT_MS = 15000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
@@ -1153,6 +1155,9 @@ class ViewerAttemptSession {
     this.activeAudioPlayback = null;
     this._playRequestId = 0;
     this._authPopupMessageListener = null;
+    this._authPopupWindow = null;
+    this._authPopupFallbackTimer = null;
+    this._authPopupFallbackRefreshInFlight = false;
   }
 
   setOnStateChange(handler) {
@@ -1908,9 +1913,70 @@ class ViewerAttemptSession {
 
   beginServerSignIn() {
     this.registerAuthPopupMessageListener();
-    window.open(this.apiClient.getSessionSignInUrl({ source: 'viewer' }), '_blank', 'noopener');
-    this.state.serverActionMessage = 'Complete sign-in in the popup. Session will refresh automatically.';
+    const authPopup = window.open(
+      this.apiClient.getSessionSignInUrl({ source: 'viewer' }),
+      'worksheet_launcher_auth_popup_viewer',
+      'width=520,height=720,left=160,top=120,resizable=yes,scrollbars=yes',
+    );
+    this.state.serverActionMessage = authPopup
+      ? 'Complete sign-in in the popup. Session will refresh automatically.'
+      : 'Sign-in popup was blocked. Allow popups for this site, then try again.';
     this.notifyStateChange();
+    this.startAuthPopupFallbackPolling(authPopup);
+  }
+
+  startAuthPopupFallbackPolling(authPopup) {
+    this.stopAuthPopupFallbackPolling();
+    if (!authPopup) return;
+
+    this._authPopupWindow = authPopup;
+    const startedAt = Date.now();
+    this._authPopupFallbackTimer = window.setInterval(() => {
+      this.pollForMissedAuthCallback(startedAt).catch(() => {
+        // Keep fallback polling best-effort; callback path remains primary.
+      });
+    }, AUTH_POPUP_FALLBACK_POLL_MS);
+  }
+
+  stopAuthPopupFallbackPolling() {
+    if (this._authPopupFallbackTimer) {
+      window.clearInterval(this._authPopupFallbackTimer);
+    }
+    this._authPopupFallbackTimer = null;
+    this._authPopupWindow = null;
+    this._authPopupFallbackRefreshInFlight = false;
+  }
+
+  async pollForMissedAuthCallback(startedAt) {
+    if (this.state.serverSession.status === 'ready') {
+      this.stopAuthPopupFallbackPolling();
+      return;
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= AUTH_POPUP_FALLBACK_TIMEOUT_MS) {
+      this.stopAuthPopupFallbackPolling();
+      return;
+    }
+
+    const popupClosed = !this._authPopupWindow || this._authPopupWindow.closed;
+    const shouldProbeSession = popupClosed || elapsedMs >= AUTH_POPUP_FALLBACK_POLL_MS * 3;
+    if (!shouldProbeSession || this._authPopupFallbackRefreshInFlight) {
+      return;
+    }
+
+    this._authPopupFallbackRefreshInFlight = true;
+    try {
+      const result = await this.refreshServerSession();
+      if (result.ok && this.state.serverSession.status === 'ready') {
+        await this.browsePublishedPackages(this.state.publishedQuery || '');
+        this.state.serverActionMessage = null;
+        this.notifyStateChange();
+        this.stopAuthPopupFallbackPolling();
+      }
+    } finally {
+      this._authPopupFallbackRefreshInFlight = false;
+    }
   }
 
   registerAuthPopupMessageListener() {
@@ -1931,6 +1997,7 @@ class ViewerAttemptSession {
     if (!event || event.origin !== expectedOrigin) return false;
     if (!isRecord(event.data)) return false;
     if (event.data.type !== 'worksheet-launcher-auth-complete') return false;
+    this.stopAuthPopupFallbackPolling();
 
     this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
     this.notifyStateChange();
