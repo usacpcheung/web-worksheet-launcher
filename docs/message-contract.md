@@ -18,6 +18,33 @@ This document defines the bounded popup launch-query contract and postMessage co
 
 Companion editor/viewer route + auth contract (later-phase runtime surfaces) is defined in `worksheet_launcher_editor_viewer_spec.md` under **Route + Auth Contract (Normative)**.
 
+## Editor/Viewer OIDC popup callback contract (server session gating)
+
+This runtime callback contract is separate from the Phase 1 parent↔popup worksheet payload contract below.
+
+- Popup page path: `/worksheet_launcher/app/login/popup.html` (same-origin with editor/viewer).
+- Popup page is browser-facing OIDC entry/callback surface.
+- JSON session endpoint remains background-only: `GET /api/worksheet-launcher/v1/session`.
+
+Popup callback message shape:
+
+```json
+{
+  "type": "worksheet-launcher-auth-complete",
+  "source": "editor"
+}
+```
+
+`source` may be `editor`, `viewer`, or `generic`.
+
+Validation requirements in opener (editor/viewer):
+
+- Must enforce `event.origin === window.location.origin`.
+- Must enforce `event.data.type === "worksheet-launcher-auth-complete"`.
+- Must ignore malformed or unexpected message payloads.
+
+After validating the message, opener must re-check session readiness via `GET /api/worksheet-launcher/v1/session`.
+
 ## Editor/Viewer response schema normalization (local draft/snapshot/viewer payloads)
 
 The editor + viewer runtime now uses these canonical `responseConfig` input types for question blocks:

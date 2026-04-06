@@ -101,3 +101,24 @@ npm run start:api
 - `server/api/`: Node API foundation for server-backed draft upload/publish/load/browse.
 - `server/app/contracts/`: shared local payload validators/mappers (includes transitional snapshot naming for compatibility).
 - `server/app/auth/`: shared client-side auth-return gate used by editor/viewer protected-action stubs while API integrations are still being wired directly.
+
+## OIDC popup sign-in flow (editor/viewer server features)
+
+- Public external API prefix: `/api/worksheet-launcher/v1/*`
+- Internal Node API prefix: `/api/v1/*`
+- Reverse proxy mapping: `/api/worksheet-launcher/` -> `http://127.0.0.1:8787/api/`
+
+Therefore:
+
+- external `/api/worksheet-launcher/v1/session`
+- maps to internal `/api/v1/session`
+- never compose `/api/worksheet-launcher/api/v1/session`
+
+Sign-in UX flow:
+
+1. Editor/viewer opens `/worksheet_launcher/app/login/popup.html`.
+2. Apache OIDC protects `/worksheet_launcher/app/login/` and handles login.
+3. Popup posts `worksheet-launcher-auth-complete` back to opener and attempts to close itself.
+4. Editor/viewer re-checks `GET /api/worksheet-launcher/v1/session` and updates server-feature UI automatically.
+
+The popup login HTML is intentionally isolated under `server/app/login/` so Apache can protect only that path and avoid accidentally protecting shared runtime JS folders (for example `server/app/auth/` or `server/app/api/`).

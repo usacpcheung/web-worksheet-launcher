@@ -38,6 +38,22 @@ test('getSession builds canonical public API URL', async () => {
   assert.equal(requestedUrl, '/api/worksheet-launcher/v1/session');
 });
 
+test('getSessionSignInUrl builds popup login path under app/login', async () => {
+  globalThis.window = {
+    location: {
+      origin: 'https://example.test',
+      search: '',
+    },
+  };
+
+  const client = createServerApiClient();
+  assert.equal(client.getSessionSignInUrl(), '/worksheet_launcher/app/login/popup.html');
+  assert.equal(
+    client.getSessionSignInUrl({ source: 'editor' }),
+    '/worksheet_launcher/app/login/popup.html?source=editor'
+  );
+});
+
 test('listUploadedDrafts builds canonical public API URL', async () => {
   globalThis.window = {
     location: {

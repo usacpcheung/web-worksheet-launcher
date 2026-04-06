@@ -16,7 +16,6 @@ Implemented in this phase:
 
 Out of scope (still deferred):
 
-- App-side OIDC login/session flow.
 - Attempt upload/sync.
 - Advanced search/indexing.
 - Full UI wiring for slot management and publish browser.
@@ -53,6 +52,12 @@ Example external → internal mapping:
 
 - `GET /api/worksheet-launcher/v1/session` → `GET /api/v1/session`
 - `GET /api/worksheet-launcher/v1/drafts` → `GET /api/v1/drafts`
+
+Important composition rule:
+
+- Never compose `/api/worksheet-launcher/api/v1/...`.
+- The external prefix already maps `/api/worksheet-launcher/` to internal `/api/`.
+- Correct external session URL is `/api/worksheet-launcher/v1/session`.
 
 ## Config/env foundation
 
@@ -199,6 +204,69 @@ Behavior:
 
 - Protected by the same upstream OIDC header model as other `/api/v1/*` routes.
 - Returns authenticated identity payload for frontend session-ready gating.
+
+## Browser popup sign-in flow (editor/viewer)
+
+The JSON session endpoint is now a background readiness API, not a browser landing page for human sign-in UX.
+
+- Browser-facing sign-in popup page: `/worksheet_launcher/app/login/popup.html`
+- Expected Apache protected location: `/worksheet_launcher/app/login/`
+- Session readiness API remains: `/api/worksheet-launcher/v1/session` (proxied to internal `/api/v1/session`)
+
+Flow:
+
+1. Editor/viewer opens `/worksheet_launcher/app/login/popup.html`.
+2. Apache OIDC challenge/login runs on that page.
+3. Popup page posts `worksheet-launcher-auth-complete` to `window.opener` with `targetOrigin = window.location.origin`.
+4. Popup attempts `window.close()`.
+5. Editor/viewer validates `event.origin` and `event.data.type`, then re-checks `GET /api/worksheet-launcher/v1/session`.
+6. If ready, server-gated UI updates automatically (no manual hard refresh required).
+
+### Apache OIDC / reverse proxy example (sanitized placeholders)
+
+```apache
+# ---- OIDC (Google login) ----
+OIDCProviderMetadataURL https://accounts.google.com/.well-known/openid-configuration
+OIDCClientID YOUR_GOOGLE_CLIENT_ID
+OIDCClientSecret XXXX
+OIDCRedirectURI https://YOUR_DOMAIN/oidc/callback
+OIDCCryptoPassphrase XXXX
+
+OIDCScope "openid email profile"
+OIDCRemoteUserClaim email
+OIDCClaimPrefix "OIDC_CLAIM_"
+
+# ---- Worksheet Launcher API (OIDC protected) ----
+<Location "/api/worksheet-launcher/">
+  AuthType openid-connect
+  Require valid-user
+
+  RequestHeader unset X-OIDC-Sub
+  RequestHeader unset X-OIDC-Email
+  RequestHeader unset X-OIDC-Name
+
+  RequestHeader set X-OIDC-Sub "%{OIDC_CLAIM_sub}e" env=OIDC_CLAIM_sub
+  RequestHeader set X-OIDC-Email "%{OIDC_CLAIM_email}e" env=OIDC_CLAIM_email
+  RequestHeader set X-OIDC-Name "%{OIDC_CLAIM_name}e" env=OIDC_CLAIM_name
+</Location>
+
+# ---- Popup login page only (OIDC protected) ----
+<Location "/worksheet_launcher/app/login/">
+  AuthType openid-connect
+  Require valid-user
+</Location>
+
+# ---- Reverse proxy mapping ----
+ProxyPass /api/worksheet-launcher/ http://127.0.0.1:8787/api/
+ProxyPassReverse /api/worksheet-launcher/ http://127.0.0.1:8787/api/
+
+# ---- Static aliases ----
+Alias /worksheet_launcher/editor/ /opt/web-worksheet-launcher/server/editor/
+Alias /worksheet_launcher/viewer/ /opt/web-worksheet-launcher/server/viewer/
+Alias /worksheet_launcher/app/    /opt/web-worksheet-launcher/server/app/
+```
+
+Keep `/worksheet_launcher/app/login/` isolated for OIDC protection so shared runtime assets under `/worksheet_launcher/app/auth/`, `/worksheet_launcher/app/api/`, etc. remain publicly loadable unless explicitly required otherwise.
 
 ## Local-first compatibility
 

@@ -1,4 +1,5 @@
 const DEFAULT_PUBLIC_API_BASE = '/api/worksheet-launcher/v1';
+const DEFAULT_SIGN_IN_POPUP_PATH = '/worksheet_launcher/app/login/popup.html';
 
 function buildPublicApiBase(options = {}) {
   const fromOverride = options.apiBase || null;
@@ -95,6 +96,18 @@ function createServerApiClient(options = {}) {
   function buildUrl(path, query = null) {
     const normalizedPath = String(path || '').startsWith('/') ? String(path) : `/${path}`;
     const base = `${publicApiBase}${normalizedPath}`;
+    if (!query || Object.keys(query).length === 0) return base;
+    const url = new URL(base, window.location.origin);
+    Object.entries(query).forEach(([key, value]) => {
+      if (value === null || value === undefined || value === '') return;
+      url.searchParams.set(key, String(value));
+    });
+    return `${url.pathname}${url.search}`;
+  }
+
+  function buildAppUrl(path, query = null) {
+    const normalizedPath = String(path || '').startsWith('/') ? String(path) : `/${path}`;
+    const base = normalizedPath;
     if (!query || Object.keys(query).length === 0) return base;
     const url = new URL(base, window.location.origin);
     Object.entries(query).forEach(([key, value]) => {
@@ -201,8 +214,11 @@ function createServerApiClient(options = {}) {
 
   return {
     publicApiBase,
-    getSessionSignInUrl() {
-      return buildUrl('/session');
+    getSessionSignInUrl(context = {}) {
+      const source = typeof context.source === 'string' && context.source.trim()
+        ? context.source.trim()
+        : null;
+      return buildAppUrl(DEFAULT_SIGN_IN_POPUP_PATH, source ? { source } : null);
     },
     getSession() {
       return requestJson('/session');

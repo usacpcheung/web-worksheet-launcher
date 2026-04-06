@@ -15,7 +15,7 @@ async function loadEditorModule() {
       replacement: `const editorStorage = {};
 const SharedAuthGate = class {};
 const createServerApiClient = () => ({
-  getSessionSignInUrl: () => '/api/worksheet-launcher/api/v1/session',
+  getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
   getSession: async () => ({ ok: false, error: { message: 'auth required' } }),
   listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
   uploadDraftPackage: async () => ({ ok: false, error: { message: 'not configured' } }),
@@ -94,7 +94,7 @@ function createEmptyQuestionBlock`,
     activeElement: null,
   };
   globalThis.window = {
-    location: { hash: '#fallback' },
+    location: { hash: '#fallback', origin: 'https://example.test' },
     scrollY: 150,
   };
 
@@ -140,6 +140,50 @@ function toBlockFieldsWithoutPosition(block) {
     responseConfig: snapshot.responseConfig ? JSON.parse(JSON.stringify(snapshot.responseConfig)) : snapshot.responseConfig,
   };
 }
+
+test('handleAuthCompleteMessage refreshes session and uploads list when message is valid', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+
+  const handled = await session.handleAuthCompleteMessage({
+    origin: 'https://example.test',
+    data: { type: 'worksheet-launcher-auth-complete', source: 'editor' },
+  });
+
+  assert.equal(handled, true);
+  assert.equal(session.state.serverSession.status, 'ready');
+  assert.deepEqual(session.state.uploadedDrafts, []);
+});
+
+test('handleAuthCompleteMessage ignores wrong-origin and malformed messages', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+
+  const wrongOrigin = await session.handleAuthCompleteMessage({
+    origin: 'https://malicious.test',
+    data: { type: 'worksheet-launcher-auth-complete' },
+  });
+  const wrongShape = await session.handleAuthCompleteMessage({
+    origin: 'https://example.test',
+    data: { type: 'not-auth-complete' },
+  });
+
+  assert.equal(wrongOrigin, false);
+  assert.equal(wrongShape, false);
+  assert.equal(session.state.serverSession.status, 'checking');
+});
 
 test('normalizeBlocks preserves canonical question responseConfig and extra fields', async () => {
   const mod = await loadEditorModule();

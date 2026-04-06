@@ -602,6 +602,7 @@ class EditorDraftSession {
     this.previewAudioUrl = null;
     this.previewAudioPlayback = null;
     this._previewPlayRequestId = 0;
+    this._authPopupMessageListener = null;
   }
 
   setOnStateChange(handler) {
@@ -2252,9 +2253,45 @@ class EditorDraftSession {
   }
 
   beginServerSignIn() {
-    window.open(this.apiClient.getSessionSignInUrl(), '_blank', 'noopener');
-    this.state.serverActionMessage = 'Complete sign-in in the opened tab, then click Retry session.';
+    this.registerAuthPopupMessageListener();
+    window.open(this.apiClient.getSessionSignInUrl({ source: 'editor' }), '_blank', 'noopener');
+    this.state.serverActionMessage = 'Complete sign-in in the popup. Session will refresh automatically.';
     this.notifyStateChange();
+  }
+
+  registerAuthPopupMessageListener() {
+    if (this._authPopupMessageListener || typeof window?.addEventListener !== 'function') {
+      return;
+    }
+    this._authPopupMessageListener = (event) => {
+      this.handleAuthCompleteMessage(event).catch((error) => {
+        this.state.serverActionMessage = error?.message || 'Sign-in callback handling failed.';
+        this.notifyStateChange();
+      });
+    };
+    window.addEventListener('message', this._authPopupMessageListener);
+  }
+
+  async handleAuthCompleteMessage(event) {
+    const expectedOrigin = window?.location?.origin || '';
+    if (!event || event.origin !== expectedOrigin) return false;
+    if (!isRecord(event.data)) return false;
+    if (event.data.type !== 'worksheet-launcher-auth-complete') return false;
+
+    this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
+    this.notifyStateChange();
+
+    const result = await this.refreshServerSession();
+    if (result.ok && this.state.serverSession.status === 'ready') {
+      await this.loadUploadedDrafts();
+      this.state.serverActionMessage = null;
+      this.notifyStateChange();
+      return true;
+    }
+
+    this.state.serverActionMessage = result.error?.message || 'Sign-in completed, but session is still not ready.';
+    this.notifyStateChange();
+    return false;
   }
 
   async refreshServerSession() {
@@ -3880,6 +3917,7 @@ async function bootstrapEditor() {
 
   session.authGate = authGate;
   await authGate.restoreAfterAuthReturn();
+  session.registerAuthPopupMessageListener();
   await session.refreshServerSession();
   if (session.state.serverSession.status === 'ready') {
     await session.loadUploadedDrafts();

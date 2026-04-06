@@ -40,7 +40,7 @@ async function loadViewerModule(overrides = {}) {
     }),
     SharedAuthGate: overrides.SharedAuthGate || class {},
     createServerApiClient: overrides.createServerApiClient || (() => ({
-      getSessionSignInUrl: () => '/api/worksheet-launcher/api/v1/session',
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
       getSession: async () => ({ ok: false, error: { message: 'auth required' } }),
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
       fetchPublishedPackageArtifact: async () => ({ ok: false, error: { message: 'not configured' } }),
@@ -142,6 +142,54 @@ test('resolveImportedWorksheetPayload falls back when snapshot mapping fails', a
 
   assert.equal(payload.title, 'Imported worksheet');
   assert.equal(payload.blocks.length, 1);
+});
+
+test('viewer handleAuthCompleteMessage refreshes session and re-browses packages on valid message', async () => {
+  const mod = await loadViewerModule({
+    window: { location: { origin: 'https://example.test' } },
+  });
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+
+  const handled = await session.handleAuthCompleteMessage({
+    origin: 'https://example.test',
+    data: { type: 'worksheet-launcher-auth-complete', source: 'viewer' },
+  });
+
+  assert.equal(handled, true);
+  assert.equal(session.state.serverSession.status, 'ready');
+  assert.deepEqual(session.state.publishedPackages, []);
+});
+
+test('viewer handleAuthCompleteMessage ignores wrong-origin and malformed messages', async () => {
+  const mod = await loadViewerModule({
+    window: { location: { origin: 'https://example.test' } },
+  });
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+
+  const wrongOrigin = await session.handleAuthCompleteMessage({
+    origin: 'https://malicious.test',
+    data: { type: 'worksheet-launcher-auth-complete' },
+  });
+  const wrongShape = await session.handleAuthCompleteMessage({
+    origin: 'https://example.test',
+    data: { type: 'not-auth-complete' },
+  });
+
+  assert.equal(wrongOrigin, false);
+  assert.equal(wrongShape, false);
+  assert.equal(session.state.serverSession.status, 'checking');
 });
 
 test('resolveImportedWorksheetPayload does not treat draftWorksheetId-only payload as snapshot', async () => {
