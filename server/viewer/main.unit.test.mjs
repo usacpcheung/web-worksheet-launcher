@@ -192,6 +192,46 @@ test('viewer handleAuthCompleteMessage ignores wrong-origin and malformed messag
   assert.equal(session.state.serverSession.status, 'checking');
 });
 
+test('viewer beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
+  const intervalCallbacks = [];
+  const clearedIntervals = [];
+  const authPopup = { closed: false };
+  const mod = await loadViewerModule({
+    window: {
+      location: { origin: 'https://example.test' },
+      open: () => authPopup,
+      addEventListener: () => {},
+      setInterval: (callback) => {
+        intervalCallbacks.push(callback);
+        return intervalCallbacks.length;
+      },
+      clearInterval: (id) => {
+        clearedIntervals.push(id);
+      },
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+
+  session.beginServerSignIn();
+  assert.equal(session._authPopupWindow, authPopup);
+  assert.equal(intervalCallbacks.length, 1);
+
+  authPopup.closed = true;
+  intervalCallbacks[0]();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(session.state.serverSession.status, 'ready');
+  assert.equal(session.state.serverActionMessage, null);
+  assert.equal(clearedIntervals.length > 0, true);
+});
+
 test('resolveImportedWorksheetPayload does not treat draftWorksheetId-only payload as snapshot', async () => {
   const mod = await loadViewerModule({
     mapSnapshotToViewerPayload: () => {
