@@ -39,6 +39,12 @@ async function loadViewerModule(overrides = {}) {
       return { ok: true, normalizedValue: Number(text), kind };
     }),
     SharedAuthGate: overrides.SharedAuthGate || class {},
+    createServerApiClient: overrides.createServerApiClient || (() => ({
+      getSessionSignInUrl: () => '/api/worksheet-launcher/api/v1/session',
+      getSession: async () => ({ ok: false, error: { message: 'auth required' } }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+      fetchPublishedPackageArtifact: async () => ({ ok: false, error: { message: 'not configured' } }),
+    })),
     mapLegacyJsonToPackageModel: overrides.mapLegacyJsonToPackageModel || ((value) => {
       if (!value || typeof value !== 'object' || !Array.isArray(value.blocks) || value.blocks.length === 0) {
         throw new Error('Imported worksheet must have a non-empty blocks array.');
@@ -82,6 +88,11 @@ async function loadViewerModule(overrides = {}) {
       name: 'replace worksheet package imports with test bag bindings',
       pattern: /import\s*\{\s*mapLegacyJsonToPackageModel\s*,\s*parseWorksheetPackage\s*\}\s*from\s*['"]\.\.\/editor\/worksheet-package\.js['"];/,
       replacement: 'const mapLegacyJsonToPackageModel = __testBag.mapLegacyJsonToPackageModel;\nconst parseWorksheetPackage = __testBag.parseWorksheetPackage;',
+    },
+    {
+      name: 'replace createServerApiClient import with test bag binding',
+      pattern: /import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];/,
+      replacement: 'const createServerApiClient = __testBag.createServerApiClient;',
     },
     {
       name: 'reroute renderViewerShell side effect',
@@ -342,6 +353,13 @@ test('normalizeViewerBlock preserves non-canonical plain_text/short_text inputTy
   assert.equal(Object.hasOwn(plain.responseConfig, 'maxLength'), false);
   assert.equal(Object.hasOwn(short.responseConfig, 'maxLength'), false);
   assert.equal(Object.hasOwn(short.responseConfig, 'displayMode'), false);
+});
+
+test('viewer start panel includes session-ready published browse integration', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('await session.refreshServerSession();'), true);
+  assert.equal(source.includes('await session.browsePublishedPackages'), true);
+  assert.equal(source.includes('await session.startFromPublishedPackage'), true);
 });
 
 test('normalizeViewerBlock preserves correctAnswer for gradeable question types', async () => {

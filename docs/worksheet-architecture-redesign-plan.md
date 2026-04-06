@@ -6,6 +6,7 @@ Status: Living architecture direction (partially implemented; keep aligned with 
 Implementation checkpoint (2026-04-06):
 - Local-first editor/viewer runtime is active under `server/editor/` and `server/viewer/`.
 - Server foundation APIs are implemented under `server/api/` for upload/publish/load/browse.
+- Runtime session-ready gate is active via `GET /api/v1/session`; server-only actions are disabled until ready.
 - Apache-forwarded OIDC headers are the current API auth boundary.
 - Attempt sync/upload remains deferred; attempts are still local-first in current implementation.
 
@@ -39,6 +40,7 @@ Drafts are local-first and editable. Canonical fields:
 - `schemaVersion`
 - `uploadState`
 - `publishState`
+- `serverSession` (`checking` | `ready` | `not_ready`) for server-feature UI gating
 
 Normative rules:
 
@@ -72,6 +74,7 @@ Lineage rules:
 - Publish always creates a new immutable package and new `publishedPackageId`.
 - IDs are never reused.
 - Re-import from published always forks into a new local draft lineage branch.
+- Reopen/import from uploaded server drafts also forks into a new local draft copy.
 
 ### 2.3 Published package model (immutable)
 

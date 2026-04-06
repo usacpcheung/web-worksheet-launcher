@@ -104,6 +104,20 @@ export class PackageService {
     return result.rows;
   }
 
+  async loadOwnDraftArtifact({ identity, uploadedDraftId }) {
+    const result = await this.db.query(
+      `SELECT uploaded_draft_id, owner_sub, artifact_path
+       FROM uploaded_drafts
+       WHERE uploaded_draft_id = $1 AND owner_sub = $2`,
+      [uploadedDraftId, identity.sub]
+    );
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+    return result.rows[0];
+  }
+
   async publishFromDraft({ identity, uploadedDraftId }) {
     const client = await this.db.connect();
     let artifact = null;

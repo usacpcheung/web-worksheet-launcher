@@ -11,6 +11,8 @@ Implemented in this phase:
 - Load published package metadata by `publishedPackageId`.
 - Download published package ZIP artifact by `publishedPackageId`.
 - Basic authenticated browse/search of published packages.
+- Protected lightweight session check endpoint (`GET /api/v1/session`).
+- Uploaded draft artifact download for editor reopen flow (`GET /api/v1/drafts/:uploadedDraftId/artifact`).
 
 Out of scope (still deferred):
 
@@ -137,6 +139,13 @@ Slot cap response: `409` with `DRAFT_SLOT_LIMIT_REACHED`.
 
 - Returns drafts for current `owner_sub` only.
 
+### 2b) Download owner uploaded draft ZIP by id
+
+`GET /api/v1/drafts/:uploadedDraftId/artifact`
+
+- Returns `application/zip` bytes for the authenticated owner only.
+- Supports editor “reopen uploaded draft as local copy” workflow.
+
 ### 3) Publish immutable package
 
 `POST /api/v1/published`
@@ -173,6 +182,13 @@ Behavior:
 - Search scope: published packages only.
 - Query currently applies case-insensitive `LIKE` on title and subject.
 - Sorted by most recent `published_at DESC`.
+
+### 7) Lightweight session check
+
+`GET /api/v1/session`
+
+- Protected by the same upstream OIDC header model as other `/api/v1/*` routes.
+- Returns authenticated identity payload for frontend session-ready gating.
 
 ## Local-first compatibility
 

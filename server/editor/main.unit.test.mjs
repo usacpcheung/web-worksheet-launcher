@@ -11,9 +11,17 @@ async function loadEditorModule() {
   const rewrittenSource = rewriteModuleSourceForTests(source, [
     {
       name: 'replace editor dependency imports with test doubles',
-      pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*mapLegacyJsonToPackageModel,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
+      pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*mapLegacyJsonToPackageModel,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
       replacement: `const editorStorage = {};
 const SharedAuthGate = class {};
+const createServerApiClient = () => ({
+  getSessionSignInUrl: () => '/api/worksheet-launcher/api/v1/session',
+  getSession: async () => ({ ok: false, error: { message: 'auth required' } }),
+  listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+  uploadDraftPackage: async () => ({ ok: false, error: { message: 'not configured' } }),
+  fetchUploadedDraftArtifact: async () => ({ ok: false, error: { message: 'not configured' } }),
+  publishFromUploadedDraft: async () => ({ ok: false, error: { message: 'not configured' } }),
+});
 const createWorksheetPackageFromDraft = (draft, assets) => {
   globalThis.__lastCreateWorksheetPackageCall = { draft, assets };
   return { bytes: new Uint8Array([1, 2, 3]) };
@@ -316,6 +324,15 @@ test('detail signature includes normalized multiple_choice correctAnswer to prev
   assert.equal(source.includes("normalizedSelectionMode === 'single'"), true);
   assert.equal(source.includes("normalizedSelectionMode === 'multi'"), true);
   assert.equal(source.includes('normalizedCorrectAnswer,'), true);
+});
+
+test('editor uses live server upload/publish integration instead of protected-intent wrappers', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("session.triggerProtectedAction('resumeDraftUploadAfterLogin')"), false);
+  assert.equal(source.includes("session.triggerProtectedAction('resumePublishAfterLogin')"), false);
+  assert.equal(source.includes('await session.uploadCurrentDraftToServer();'), true);
+  assert.equal(source.includes('await session.publishCurrentDraftToServer();'), true);
+  assert.equal(source.includes('await session.refreshServerSession();'), true);
 });
 
 test('detail signature includes media refs so media attach/remove rerenders immediately', async () => {

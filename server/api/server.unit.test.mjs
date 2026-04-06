@@ -30,6 +30,9 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
       async publishFromDraft() {
         return { ok: true, statusCode: 201, data: {} };
       },
+      async loadOwnDraftArtifact() {
+        return null;
+      },
       async loadPublishedPackage() {
         return null;
       },
@@ -59,6 +62,30 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
 }
 
 const authHeaders = { 'x-oidc-sub': 'user-sub' };
+
+test('GET /api/v1/session returns ready identity payload', async () => {
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/session`, {
+      headers: {
+        ...authHeaders,
+        'x-oidc-email': 'user@example.com',
+        'x-oidc-name': 'User Name',
+      },
+    });
+
+    assert.equal(res.status, 200);
+    const payload = await res.json();
+    assert.equal(payload.ok, true);
+    assert.deepEqual(payload.data, {
+      ready: true,
+      user: {
+        sub: 'user-sub',
+        email: 'user@example.com',
+        name: 'User Name',
+      },
+    });
+  });
+});
 
 test('POST /api/v1/published rejects malformed uploadedDraftId with 400', async () => {
   let called = false;
@@ -141,6 +168,45 @@ test('GET /api/v1/published rejects invalid limit query with 400', async () => {
     assert.equal(payload.ok, false);
     assert.equal(payload.error.code, 'INVALID_QUERY_PARAM');
   });
+});
+
+test('GET /api/v1/drafts/:id/artifact rejects malformed uploadedDraftId with 400', async () => {
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/drafts/not-a-uuid/artifact`, {
+      headers: authHeaders,
+    });
+    assert.equal(res.status, 400);
+    const payload = await res.json();
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'INVALID_UPLOADED_DRAFT_ID');
+  });
+});
+
+test('GET /api/v1/drafts/:id/artifact returns ZIP bytes for owner draft', async () => {
+  await withServer(
+    {
+      service: {
+        async loadOwnDraftArtifact() {
+          return { artifact_path: 'drafts/user-sub/abc.zip' };
+        },
+      },
+      artifactStore: {
+        async readArtifact(artifactPath) {
+          assert.equal(artifactPath, 'drafts/user-sub/abc.zip');
+          return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/drafts/550e8400-e29b-41d4-a716-446655440000/artifact`, {
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'application/zip');
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      assert.deepEqual(Array.from(bytes), [0x50, 0x4b, 0x03, 0x04]);
+    }
+  );
 });
 
 test('GET /api/v1/published/:id/extra returns 404 for unknown subroute', async () => {
