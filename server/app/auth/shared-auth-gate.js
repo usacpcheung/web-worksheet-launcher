@@ -4,17 +4,15 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function buildReturnUrl(currentUrl, actionId) {
+function buildReturnUrl(currentUrl) {
   const url = new URL(currentUrl.href);
   url.searchParams.set(AUTH_RETURN_PARAM, '1');
-  url.searchParams.set('intent', actionId);
   return url.toString();
 }
 
 function cleanupAuthReturnUrlParams() {
   const cleanUrl = new URL(window.location.href);
   cleanUrl.searchParams.delete(AUTH_RETURN_PARAM);
-  cleanUrl.searchParams.delete('intent');
   window.history.replaceState({}, '', cleanUrl.toString());
 }
 
@@ -83,7 +81,7 @@ class SharedAuthGate {
       updatedAt: nowIso(),
     });
 
-    const redirectTo = buildReturnUrl(new URL(window.location.href), intent.actionId);
+    const redirectTo = buildReturnUrl(new URL(window.location.href));
 
     if (typeof this.options.redirectToAuth === 'function') {
       this.options.redirectToAuth({ redirectTo, intent });

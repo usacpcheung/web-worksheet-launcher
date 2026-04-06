@@ -77,10 +77,6 @@ function clearPendingIntent() {
   localStorage.removeItem(STORAGE_KEYS.pendingIntent);
 }
 
-function clearAllStorageMarkers() {
-  localStorage.removeItem(STORAGE_KEYS.resumeFlags);
-  localStorage.removeItem(STORAGE_KEYS.pendingIntent);
-}
 
 export {
   STORAGE_KEYS,
@@ -90,5 +86,4 @@ export {
   setPendingIntent,
   getPendingIntent,
   clearPendingIntent,
-  clearAllStorageMarkers,
 };
