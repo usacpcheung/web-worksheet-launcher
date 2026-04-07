@@ -11,12 +11,51 @@
       color: #0f172a;
       line-height: 1.4;
     }
+
+    .actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .button-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #1d4ed8;
+      border-radius: 0.375rem;
+      padding: 0.5rem 0.875rem;
+      color: #1d4ed8;
+      background: #dbeafe;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    button {
+      border: 1px solid #475569;
+      border-radius: 0.375rem;
+      padding: 0.5rem 0.875rem;
+      color: #0f172a;
+      background: #f8fafc;
+      font: inherit;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
   <main>
     <h1>Sign-in completed.</h1>
-    <p id="status">You can close this window.</p>
+    <p id="status">Checking session readiness…</p>
+    <div id="actions" class="actions hidden">
+      <a class="button-link" href="/worksheet_launcher/app/login/">Continue sign-in</a>
+      <button id="retry-session-check" type="button">Retry session check</button>
+    </div>
   </main>
   <script>
     (function notifyOpener() {
@@ -26,25 +65,73 @@
         type: 'worksheet-launcher-auth-complete',
         source,
       };
+      const statusEl = document.getElementById('status');
+      const actionsEl = document.getElementById('actions');
+      const retryButton = document.getElementById('retry-session-check');
 
-      if (window.opener && !window.opener.closed) {
-        try {
-          window.opener.postMessage(payload, window.location.origin);
-          const statusEl = document.getElementById('status');
-          if (statusEl) {
-            statusEl.textContent = 'Sign-in completed. Closing window…';
-          }
-          window.close();
-          return;
-        } catch {
-          // Continue to visible fallback message.
+      function showNotReadyState() {
+        if (statusEl) {
+          statusEl.textContent = 'Session is not ready yet. Continue sign-in or retry the session check.';
+        }
+        if (actionsEl) {
+          actionsEl.classList.remove('hidden');
         }
       }
 
-      const statusEl = document.getElementById('status');
-      if (statusEl) {
-        statusEl.textContent = 'Sign-in completed. You can close this window.';
+      async function isSessionReady() {
+        try {
+          const response = await fetch('/api/worksheet-launcher/v1/session', {
+            credentials: 'include',
+          });
+          if (!response.ok) {
+            return false;
+          }
+          const body = await response.json();
+          return Boolean(body && body.ok === true);
+        } catch {
+          return false;
+        }
       }
+
+      async function maybePostSuccess() {
+        if (statusEl) {
+          statusEl.textContent = 'Checking session readiness…';
+        }
+
+        const sessionReady = await isSessionReady();
+        if (!sessionReady) {
+          showNotReadyState();
+          return;
+        }
+
+        if (window.opener && !window.opener.closed) {
+          try {
+            window.opener.postMessage(payload, window.location.origin);
+            if (statusEl) {
+              statusEl.textContent = 'Sign-in completed. Closing window…';
+            }
+            if (actionsEl) {
+              actionsEl.classList.add('hidden');
+            }
+            window.close();
+            return;
+          } catch {
+            // Continue to visible fallback message.
+          }
+        }
+
+        if (statusEl) {
+          statusEl.textContent = 'Sign-in completed. You can close this window.';
+        }
+      }
+
+      if (retryButton) {
+        retryButton.addEventListener('click', function retrySessionCheck() {
+          maybePostSuccess();
+        });
+      }
+
+      maybePostSuccess();
     }());
   </script>
 </body>
