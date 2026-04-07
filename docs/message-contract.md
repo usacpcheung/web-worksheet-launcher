@@ -45,6 +45,13 @@ Validation requirements in opener (editor/viewer):
 
 After validating the message, opener must re-check session readiness via `GET /api/worksheet-launcher/v1/session`.
 
+Runtime UX expectations for editor/viewer auth gating:
+
+- Popup callback message remains the primary completion path.
+- Any missed-callback fallback polling must be bounded and silent (must not repeatedly force visible `checking` UI state).
+- Auth-required server actions must perform a silent preflight session check before API work.
+- If preflight is not ready, the action is blocked and UI should prompt normal re-authentication via **Sign in** (no normal-user “Retry session” flow).
+
 ## Editor/Viewer response schema normalization (local draft/snapshot/viewer payloads)
 
 The editor + viewer runtime now uses these canonical `responseConfig` input types for question blocks:

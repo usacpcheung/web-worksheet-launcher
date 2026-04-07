@@ -24,10 +24,10 @@ test('popup login page checks session readiness before closing', async () => {
   assert.equal(source.includes('window.close();'), true);
 });
 
-test('popup login page contains fallback actions when session is not ready', async () => {
+test('popup login page fallback keeps only continue sign-in action when session is not ready', async () => {
   const source = await readPopupSource();
   assert.equal(source.includes('Continue sign-in'), true);
   assert.equal(source.includes('/worksheet_launcher/app/login/'), true);
-  assert.equal(source.includes('Retry session check'), true);
-  assert.equal(source.includes('Session is not ready yet. Continue sign-in or retry the session check.'), true);
+  assert.equal(source.includes('Retry session check'), false);
+  assert.equal(source.includes('Session is not ready yet. Continue sign-in in this window.'), true);
 });

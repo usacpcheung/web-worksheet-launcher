@@ -2334,9 +2334,9 @@ class EditorDraftSession {
 
     this._authPopupFallbackRefreshInFlight = true;
     try {
-      const result = await this.refreshServerSession();
+      const result = await this.probeServerSessionSilently();
       if (result.ok && this.state.serverSession.status === 'ready') {
-        await this.loadUploadedDrafts();
+        await this.loadUploadedDrafts({ preflight: false });
         this.state.serverActionMessage = null;
         this.notifyStateChange();
         this.stopAuthPopupFallbackPolling();
@@ -2371,7 +2371,7 @@ class EditorDraftSession {
 
     const result = await this.refreshServerSession();
     if (result.ok && this.state.serverSession.status === 'ready') {
-      await this.loadUploadedDrafts();
+      await this.loadUploadedDrafts({ preflight: false });
       this.state.serverActionMessage = null;
       this.notifyStateChange();
       return true;
@@ -2389,7 +2389,10 @@ class EditorDraftSession {
       error: null,
     };
     this.notifyStateChange();
+    return this.probeServerSessionSilently();
+  }
 
+  async probeServerSessionSilently() {
     const result = await this.apiClient.getSession();
     if (!result.ok) {
       this.state.serverSession = {
@@ -2400,7 +2403,6 @@ class EditorDraftSession {
       this.notifyStateChange();
       return result;
     }
-
     this.state.serverSession = {
       status: 'ready',
       user: result.data?.user || null,
@@ -2410,7 +2412,24 @@ class EditorDraftSession {
     return result;
   }
 
-  async uploadCurrentDraftToServer() {
+  async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.') {
+    const result = await this.probeServerSessionSilently();
+    if (result.ok && this.state.serverSession.status === 'ready') {
+      return { ok: true, result };
+    }
+    const authMessage = result.error?.requiresSignIn
+      ? 'Sign-in session expired. Please sign in again.'
+      : (result.error?.message || notReadyMessage);
+    this.state.serverActionMessage = authMessage;
+    this.notifyStateChange();
+    return { ok: false, result };
+  }
+
+  async uploadCurrentDraftToServer(options = {}) {
+    if (options.preflight !== false) {
+      const sessionReady = await this.ensureServerSessionReady();
+      if (!sessionReady.ok) return sessionReady.result;
+    }
     const zipBytes = await this.buildCurrentDraftPackageZipBytes();
     const result = await this.apiClient.uploadDraftPackage(zipBytes, {
       title: this.state.draft?.title || '',
@@ -2423,13 +2442,15 @@ class EditorDraftSession {
     }
     this.state.lastUploadedDraft = result.data;
     this.state.serverActionMessage = `Uploaded draft ${result.data.uploaded_draft_id}.`;
-    await this.loadUploadedDrafts();
+    await this.loadUploadedDrafts({ preflight: false });
     this.notifyStateChange();
     return result;
   }
 
   async publishCurrentDraftToServer() {
-    const uploadResult = await this.uploadCurrentDraftToServer();
+    const sessionReady = await this.ensureServerSessionReady();
+    if (!sessionReady.ok) return sessionReady.result;
+    const uploadResult = await this.uploadCurrentDraftToServer({ preflight: false });
     if (!uploadResult.ok) {
       return uploadResult;
     }
@@ -2445,7 +2466,11 @@ class EditorDraftSession {
     return publishResult;
   }
 
-  async loadUploadedDrafts() {
+  async loadUploadedDrafts(options = {}) {
+    if (options.preflight !== false) {
+      const sessionReady = await this.ensureServerSessionReady();
+      if (!sessionReady.ok) return sessionReady.result;
+    }
     this.state.isLoadingUploadedDrafts = true;
     this.notifyStateChange();
     const result = await this.apiClient.listUploadedDrafts();
@@ -2461,6 +2486,8 @@ class EditorDraftSession {
   }
 
   async reopenUploadedDraftAsLocalCopy(uploadedDraftId) {
+    const sessionReady = await this.ensureServerSessionReady();
+    if (!sessionReady.ok) return sessionReady.result;
     const artifact = await this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId);
     if (!artifact.ok) {
       this.state.serverActionMessage = artifact.error.message;
@@ -2477,6 +2504,8 @@ class EditorDraftSession {
   }
 
   async deleteUploadedDraft(uploadedDraftId) {
+    const sessionReady = await this.ensureServerSessionReady();
+    if (!sessionReady.ok) return sessionReady.result;
     const result = await this.apiClient.deleteUploadedDraft(uploadedDraftId);
     if (!result.ok) {
       this.state.serverActionMessage = result.error.message;
@@ -2485,7 +2514,7 @@ class EditorDraftSession {
     }
     const successMessage = 'Uploaded draft deleted.';
     this.state.serverActionMessage = successMessage;
-    const refreshResult = await this.loadUploadedDrafts();
+    const refreshResult = await this.loadUploadedDrafts({ preflight: false });
     if (refreshResult && !refreshResult.ok) {
       const refreshMessage = refreshResult.error?.message || 'Uploaded drafts refresh failed.';
       this.state.serverActionMessage = `${successMessage} ${refreshMessage}`;
@@ -2942,9 +2971,6 @@ function renderEditorShell(session) {
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.textContent = 'Sign in for server features';
-  const retrySessionBtn = document.createElement('button');
-  retrySessionBtn.type = 'button';
-  retrySessionBtn.textContent = 'Retry session';
   const loadUploadedDraftsBtn = document.createElement('button');
   loadUploadedDraftsBtn.type = 'button';
   loadUploadedDraftsBtn.textContent = 'Refresh Uploaded Drafts';
@@ -3713,7 +3739,6 @@ function renderEditorShell(session) {
     publishBtn.disabled = !serverReady;
     loadUploadedDraftsBtn.disabled = !serverReady;
     signInBtn.hidden = serverReady;
-    retrySessionBtn.disabled = sessionStatus === 'checking';
     uploadedDraftList.innerHTML = '';
     if (session.state.uploadedDrafts.length === 0) {
       const empty = document.createElement('p');
@@ -3974,13 +3999,6 @@ function renderEditorShell(session) {
     session.beginServerSignIn();
     updateSummary();
   });
-  retrySessionBtn.addEventListener('click', async () => {
-    await session.refreshServerSession();
-    if (session.state.serverSession.status === 'ready') {
-      await session.loadUploadedDrafts();
-    }
-    updateSummary();
-  });
   loadUploadedDraftsBtn.addEventListener('click', async () => {
     await session.loadUploadedDrafts();
     updateSummary();
@@ -3996,7 +4014,6 @@ function renderEditorShell(session) {
   protectedActionsColumn.append(
     serverSessionStatus,
     signInBtn,
-    retrySessionBtn,
     syncDraftBtn,
     publishBtn,
     loadUploadedDraftsBtn,

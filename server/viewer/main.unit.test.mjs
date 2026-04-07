@@ -232,6 +232,93 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
   assert.equal(clearedIntervals.length > 0, true);
 });
 
+test('viewer silent session probe updates readiness without forcing visible checking state', async () => {
+  const statuses = [];
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSession: async () => ({ ok: false, error: { message: 'auth required', requiresSignIn: true } }),
+    },
+  });
+  session.state.serverSession = { status: 'ready', user: { email: 'learner@example.test' }, error: null };
+  session.setOnStateChange((state) => {
+    statuses.push(state.serverSession.status);
+  });
+
+  await session.probeServerSessionSilently();
+
+  assert.equal(statuses.includes('checking'), false);
+  assert.equal(session.state.serverSession.status, 'not_ready');
+});
+
+test('viewer popup fallback polling uses silent session probe path', async () => {
+  const intervalCallbacks = [];
+  const authPopup = { closed: true };
+  const mod = await loadViewerModule({
+    window: {
+      location: { origin: 'https://example.test' },
+      open: () => authPopup,
+      addEventListener: () => {},
+      setInterval: (callback) => {
+        intervalCallbacks.push(callback);
+        return 1;
+      },
+      clearInterval: () => {},
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  let silentProbeCalls = 0;
+  session.refreshServerSession = async () => {
+    throw new Error('fallback must not call visible refresh');
+  };
+  session.probeServerSessionSilently = async () => {
+    silentProbeCalls += 1;
+    session.state.serverSession = { status: 'ready', user: { email: 'learner@example.test' }, error: null };
+    return { ok: true, data: { user: { email: 'learner@example.test' } } };
+  };
+
+  session.beginServerSignIn();
+  intervalCallbacks[0]();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(silentProbeCalls > 0, true);
+});
+
+test('viewer browse action runs silent session preflight and blocks when session is not ready', async () => {
+  const calls = [];
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSession: async () => {
+        calls.push('getSession');
+        return { ok: false, error: { message: 'auth required', requiresSignIn: true } };
+      },
+      listPublishedPackages: async () => {
+        calls.push('listPublishedPackages');
+        return { ok: true, data: { items: [] } };
+      },
+    },
+  });
+
+  const result = await session.browsePublishedPackages('math');
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(calls, ['getSession']);
+  assert.equal(session.state.serverActionMessage, 'Sign-in session expired. Please sign in again.');
+});
+
+test('viewer start panel removes Retry session button from normal server controls', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("retrySessionBtn.textContent = 'Retry session';"), false);
+});
+
 test('resolveImportedWorksheetPayload does not treat draftWorksheetId-only payload as snapshot', async () => {
   const mod = await loadViewerModule({
     mapSnapshotToViewerPayload: () => {

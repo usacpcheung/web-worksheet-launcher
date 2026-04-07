@@ -121,4 +121,10 @@ Sign-in UX flow:
 3. Popup posts `worksheet-launcher-auth-complete` back to opener and attempts to close itself.
 4. Editor/viewer re-checks `GET /api/worksheet-launcher/v1/session` and updates server-feature UI automatically.
 
+Auth UX notes:
+
+- Popup callback is the primary success signal.
+- Any fallback session probing is silent + bounded (best-effort safety net for missed callback events).
+- Auth-required server actions do a silent preflight session check; if session is missing/expired, actions are blocked and users are prompted to sign in again.
+
 The popup login HTML is intentionally isolated under `server/app/login/` so Apache can protect only that path and avoid accidentally protecting shared runtime JS folders (for example `server/app/auth/` or `server/app/api/`).

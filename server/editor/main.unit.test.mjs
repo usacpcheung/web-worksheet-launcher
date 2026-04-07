@@ -227,6 +227,95 @@ test('beginServerSignIn stores popup handle and fallback polling can recover mis
   assert.equal(clearedIntervals.length > 0, true);
 });
 
+test('editor silent session probe updates readiness without forcing visible checking state', async () => {
+  const statuses = [];
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: false, error: { message: 'auth required', requiresSignIn: true } }),
+    },
+  });
+  session.state.serverSession = { status: 'ready', user: { email: 'teacher@example.test' }, error: null };
+  session.setOnStateChange((state) => {
+    statuses.push(state.serverSession.status);
+  });
+
+  await session.probeServerSessionSilently();
+
+  assert.equal(statuses.includes('checking'), false);
+  assert.equal(session.state.serverSession.status, 'not_ready');
+});
+
+test('editor popup fallback polling uses silent session probe path', async () => {
+  const intervalCallbacks = [];
+  const mod = await loadEditorModule();
+  const authPopup = { closed: true };
+  globalThis.window = {
+    location: { hash: '#fallback', origin: 'https://example.test' },
+    open: () => authPopup,
+    addEventListener: () => {},
+    setInterval: (callback) => {
+      intervalCallbacks.push(callback);
+      return 1;
+    },
+    clearInterval: () => {},
+  };
+
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+
+  let silentProbeCalls = 0;
+  session.refreshServerSession = async () => {
+    throw new Error('fallback must not call visible refresh');
+  };
+  session.probeServerSessionSilently = async () => {
+    silentProbeCalls += 1;
+    session.state.serverSession = { status: 'ready', user: { email: 'teacher@example.test' }, error: null };
+    return { ok: true, data: { user: { email: 'teacher@example.test' } } };
+  };
+
+  session.beginServerSignIn();
+  intervalCallbacks[0]();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(silentProbeCalls > 0, true);
+});
+
+test('editor upload action runs silent session preflight and blocks when session is not ready', async () => {
+  const calls = [];
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => {
+        calls.push('getSession');
+        return { ok: false, error: { message: 'auth required', requiresSignIn: true } };
+      },
+      uploadDraftPackage: async () => {
+        calls.push('uploadDraftPackage');
+        return { ok: true, data: { uploaded_draft_id: 'ud_1' } };
+      },
+    },
+  });
+  session.state.draft = { localId: 'd1', title: 'Draft', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const result = await session.uploadCurrentDraftToServer();
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(calls, ['getSession']);
+  assert.equal(session.state.serverActionMessage, 'Sign-in session expired. Please sign in again.');
+});
+
+test('editor shell removes Retry session button from normal server controls', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("retrySessionBtn.textContent = 'Retry session';"), false);
+});
+
 test('normalizeBlocks preserves canonical question responseConfig and extra fields', async () => {
   const mod = await loadEditorModule();
   const blocks = mod.normalizeBlocks([

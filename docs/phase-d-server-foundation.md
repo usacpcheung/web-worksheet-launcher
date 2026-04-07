@@ -230,7 +230,9 @@ Flow:
 3. Popup page posts `worksheet-launcher-auth-complete` to `window.opener` with `targetOrigin = window.location.origin`.
 4. Popup attempts `window.close()`.
 5. Editor/viewer validates `event.origin` and `event.data.type`, then re-checks `GET /api/worksheet-launcher/v1/session`.
-6. If ready, server-gated UI updates automatically (no manual hard refresh required).
+6. Popup callback is the primary success path; any fallback polling is bounded, best-effort, and silent (no repeated visible “checking” churn).
+7. Protected server actions run a silent preflight session check before API reads/writes and block with a sign-in prompt if session is missing/expired.
+8. If ready, server-gated UI updates automatically (no manual hard refresh required).
 
 ### Apache OIDC / reverse proxy example (sanitized placeholders)
 

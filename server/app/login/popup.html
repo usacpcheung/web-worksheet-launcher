@@ -54,7 +54,6 @@
     <p id="status">Checking session readiness…</p>
     <div id="actions" class="actions hidden">
       <a class="button-link" href="/worksheet_launcher/app/login/">Continue sign-in</a>
-      <button id="retry-session-check" type="button">Retry session check</button>
     </div>
   </main>
   <script>
@@ -67,11 +66,10 @@
       };
       const statusEl = document.getElementById('status');
       const actionsEl = document.getElementById('actions');
-      const retryButton = document.getElementById('retry-session-check');
 
       function showNotReadyState() {
         if (statusEl) {
-          statusEl.textContent = 'Session is not ready yet. Continue sign-in or retry the session check.';
+          statusEl.textContent = 'Session is not ready yet. Continue sign-in in this window.';
         }
         if (actionsEl) {
           actionsEl.classList.remove('hidden');
@@ -123,12 +121,6 @@
         if (statusEl) {
           statusEl.textContent = 'Sign-in completed. You can close this window.';
         }
-      }
-
-      if (retryButton) {
-        retryButton.addEventListener('click', function retrySessionCheck() {
-          maybePostSuccess();
-        });
       }
 
       maybePostSuccess();

@@ -1967,9 +1967,9 @@ class ViewerAttemptSession {
 
     this._authPopupFallbackRefreshInFlight = true;
     try {
-      const result = await this.refreshServerSession();
+      const result = await this.probeServerSessionSilently();
       if (result.ok && this.state.serverSession.status === 'ready') {
-        await this.browsePublishedPackages(this.state.publishedQuery || '');
+        await this.browsePublishedPackages(this.state.publishedQuery || '', { preflight: false });
         this.state.serverActionMessage = null;
         this.notifyStateChange();
         this.stopAuthPopupFallbackPolling();
@@ -2004,7 +2004,7 @@ class ViewerAttemptSession {
 
     const result = await this.refreshServerSession();
     if (result.ok && this.state.serverSession.status === 'ready') {
-      await this.browsePublishedPackages(this.state.publishedQuery || '');
+      await this.browsePublishedPackages(this.state.publishedQuery || '', { preflight: false });
       this.state.serverActionMessage = null;
       this.notifyStateChange();
       return true;
@@ -2022,6 +2022,10 @@ class ViewerAttemptSession {
       error: null,
     };
     this.notifyStateChange();
+    return this.probeServerSessionSilently();
+  }
+
+  async probeServerSessionSilently() {
     const result = await this.apiClient.getSession();
     if (!result.ok) {
       this.state.serverSession = {
@@ -2041,7 +2045,24 @@ class ViewerAttemptSession {
     return result;
   }
 
-  async browsePublishedPackages(query = '') {
+  async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.') {
+    const result = await this.probeServerSessionSilently();
+    if (result.ok && this.state.serverSession.status === 'ready') {
+      return { ok: true, result };
+    }
+    const authMessage = result.error?.requiresSignIn
+      ? 'Sign-in session expired. Please sign in again.'
+      : (result.error?.message || notReadyMessage);
+    this.state.serverActionMessage = authMessage;
+    this.notifyStateChange();
+    return { ok: false, result };
+  }
+
+  async browsePublishedPackages(query = '', options = {}) {
+    if (options.preflight !== false) {
+      const sessionReady = await this.ensureServerSessionReady();
+      if (!sessionReady.ok) return sessionReady.result;
+    }
     this.state.isLoadingPublishedPackages = true;
     this.state.publishedQuery = query;
     this.notifyStateChange();
@@ -2059,6 +2080,8 @@ class ViewerAttemptSession {
   }
 
   async startFromPublishedPackage(publishedPackageId) {
+    const sessionReady = await this.ensureServerSessionReady();
+    if (!sessionReady.ok) return sessionReady.result;
     const artifact = await this.apiClient.fetchPublishedPackageArtifact(publishedPackageId);
     if (!artifact.ok) {
       this.state.serverActionMessage = artifact.error.message;
@@ -3290,10 +3313,6 @@ function renderViewerStartPanel(session, options = {}) {
   signInBtn.type = 'button';
   signInBtn.className = 'viewer-start-btn';
   signInBtn.textContent = 'Sign in for server features';
-  const retrySessionBtn = document.createElement('button');
-  retrySessionBtn.type = 'button';
-  retrySessionBtn.className = 'viewer-start-btn';
-  retrySessionBtn.textContent = 'Retry session';
   const browseBtn = document.createElement('button');
   browseBtn.type = 'button';
   browseBtn.className = 'viewer-start-btn';
@@ -3386,13 +3405,6 @@ function renderViewerStartPanel(session, options = {}) {
     session.beginServerSignIn();
     renderServerControls();
   });
-  retrySessionBtn.addEventListener('click', async () => {
-    await session.refreshServerSession();
-    if (session.state.serverSession.status === 'ready') {
-      await session.browsePublishedPackages(searchInput.value.trim());
-    }
-    renderServerControls();
-  });
   browseBtn.addEventListener('click', async () => {
     await session.browsePublishedPackages(searchInput.value.trim());
     renderServerControls();
@@ -3425,7 +3437,6 @@ function renderViewerStartPanel(session, options = {}) {
     }
     signInBtn.hidden = sessionState === 'ready';
     browseBtn.disabled = sessionState !== 'ready';
-    retrySessionBtn.disabled = sessionState === 'checking';
     serverStatus.textContent = session.state.serverActionMessage || '';
     publishedList.innerHTML = '';
     const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];
@@ -3459,7 +3470,7 @@ function renderViewerStartPanel(session, options = {}) {
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  serverActions.append(signInBtn, retrySessionBtn, browseBtn);
+  serverActions.append(signInBtn, browseBtn);
   panel.append(importActions, sessionStatus, serverActions, searchInput, publishedList, serverStatus, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
