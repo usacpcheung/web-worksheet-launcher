@@ -17,6 +17,21 @@ async function deleteArtifactIfPresent(artifact) {
   }
 }
 
+async function deleteArtifactBestEffort({ artifactStore, artifactPath }) {
+  if (!artifactPath) return;
+  try {
+    await deleteArtifactIfPresent({
+      absolutePath: artifactStore.resolveAbsolutePath(artifactPath),
+    });
+  } catch (error) {
+    console.warn('Failed to cleanup deleted uploaded draft artifact.', {
+      artifactPath,
+      code: error?.code,
+      message: error?.message,
+    });
+  }
+}
+
 export class PackageService {
   constructor({ db, artifactStore, config }) {
     this.db = db;
@@ -144,8 +159,9 @@ export class PackageService {
       await client.query('COMMIT');
 
       const deletedDraft = deleted.rows[0];
-      await deleteArtifactIfPresent({
-        absolutePath: this.artifactStore.resolveAbsolutePath(deletedDraft.artifact_path),
+      await deleteArtifactBestEffort({
+        artifactStore: this.artifactStore,
+        artifactPath: deletedDraft.artifact_path,
       });
 
       return {

@@ -2517,11 +2517,30 @@ test('deleteUploadedDraft refreshes uploaded drafts list and leaves local draft 
   const result = await session.deleteUploadedDraft('old-draft-id');
 
   assert.equal(result.ok, true);
+  assert.equal(result.refreshResult.ok, true);
   assert.equal(listCalls.length, 1);
   assert.equal(session.state.uploadedDrafts.length, 1);
   assert.equal(session.state.uploadedDrafts[0].uploaded_draft_id, 'new-draft-id');
   assert.equal(session.state.draft.localId, 'local_draft_1');
   assert.equal(session.state.serverActionMessage, 'Uploaded draft deleted.');
+});
+
+test('deleteUploadedDraft preserves success message when refresh fails', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({ ok: false, error: { message: 'Unable to refresh uploaded drafts.' } }),
+      deleteUploadedDraft: async () => ({ ok: true, data: { uploaded_draft_id: 'old-draft-id', deleted: true } }),
+    },
+  });
+
+  const result = await session.deleteUploadedDraft('old-draft-id');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.refreshResult.ok, false);
+  assert.equal(session.state.serverActionMessage, 'Uploaded draft deleted. Unable to refresh uploaded drafts.');
 });
 
 test('toUploadedDraftDisplay includes fallback title and uploaded label', async () => {

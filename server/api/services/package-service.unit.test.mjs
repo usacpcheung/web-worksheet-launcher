@@ -208,3 +208,66 @@ test('deleteOwnDraft returns owner-scoped not found without touching artifacts',
   assert.equal(result.error.code, 'UPLOADED_DRAFT_NOT_FOUND');
   assert.equal(resolveCalled, false);
 });
+
+test('deleteOwnDraft succeeds when artifact cleanup path resolution fails', async () => {
+  const db = createFakeDb({ draftExists: true });
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  const service = createService({
+    db,
+    artifactStore: {
+      resolveAbsolutePath() {
+        throw new Error('resolve failed');
+      },
+    },
+  });
+
+  try {
+    const result = await service.deleteOwnDraft({
+      identity: { sub: 'oidc-sub' },
+      uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.statusCode, 200);
+    assert.equal(warnings.length, 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('deleteOwnDraft succeeds when artifact unlink fails with non-ENOENT error', async () => {
+  const db = createFakeDb({ draftExists: true });
+  const warnings = [];
+  const originalWarn = console.warn;
+  const originalUnlink = fs.unlink;
+  console.warn = (...args) => warnings.push(args);
+  fs.unlink = async () => {
+    const error = new Error('permission denied');
+    error.code = 'EACCES';
+    throw error;
+  };
+  const service = createService({
+    db,
+    artifactStore: {
+      resolveAbsolutePath() {
+        return '/tmp/draft.zip';
+      },
+    },
+  });
+
+  try {
+    const result = await service.deleteOwnDraft({
+      identity: { sub: 'oidc-sub' },
+      uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.statusCode, 200);
+    assert.equal(warnings.length, 1);
+  } finally {
+    fs.unlink = originalUnlink;
+    console.warn = originalWarn;
+  }
+});
