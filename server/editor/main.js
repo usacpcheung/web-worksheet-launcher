@@ -2483,10 +2483,18 @@ class EditorDraftSession {
       this.notifyStateChange();
       return result;
     }
-    this.state.serverActionMessage = 'Uploaded draft deleted.';
-    await this.loadUploadedDrafts();
+    const successMessage = 'Uploaded draft deleted.';
+    this.state.serverActionMessage = successMessage;
+    const refreshResult = await this.loadUploadedDrafts();
+    if (refreshResult && !refreshResult.ok) {
+      const refreshMessage = refreshResult.error?.message || 'Uploaded drafts refresh failed.';
+      this.state.serverActionMessage = `${successMessage} ${refreshMessage}`;
+    }
     this.notifyStateChange();
-    return result;
+    return {
+      ...result,
+      refreshResult,
+    };
   }
 
   touchDraft() {
