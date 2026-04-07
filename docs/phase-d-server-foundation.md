@@ -161,6 +161,16 @@ Slot cap response: `409` with `DRAFT_SLOT_LIMIT_REACHED`.
 - Returns `application/zip` bytes for the authenticated owner only.
 - Supports editor “reopen uploaded draft as local copy” workflow.
 
+### 2c) Delete owner uploaded draft by id
+
+`DELETE /api/v1/drafts/:uploadedDraftId`
+
+- Owner-scoped delete only (`uploaded_draft_id` + authenticated `owner_sub`).
+- Validates UUID format and returns `400 INVALID_UPLOADED_DRAFT_ID` for malformed ids.
+- Removes the uploaded draft database row and deletes the stored draft ZIP artifact.
+- Returns `404 UPLOADED_DRAFT_NOT_FOUND` when the draft does not exist for the current owner.
+- Deleting an uploaded draft immediately frees one draft slot (slot cap remains 3 per owner).
+
 ### 3) Publish immutable package
 
 `POST /api/v1/published`

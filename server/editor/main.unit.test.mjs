@@ -20,6 +20,7 @@ const createServerApiClient = () => ({
   listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
   uploadDraftPackage: async () => ({ ok: false, error: { message: 'not configured' } }),
   fetchUploadedDraftArtifact: async () => ({ ok: false, error: { message: 'not configured' } }),
+  deleteUploadedDraft: async () => ({ ok: false, error: { message: 'not configured' } }),
   publishFromUploadedDraft: async () => ({ ok: false, error: { message: 'not configured' } }),
 });
 const createWorksheetPackageFromDraft = (draft, assets) => {
@@ -85,7 +86,7 @@ function createEmptyQuestionBlock`,
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapEditor\(\)\.catch\([\s\S]*?\);\s*export\s*\{[^}]+\};/,
-      replacement: 'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors };',
+      replacement: 'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay };',
     },
   ]);
 
@@ -2444,4 +2445,110 @@ test('removeQuestionOptionWithPolicy requires confirm; cancel leaves option and 
   assert.equal(confirmed.ok, true);
   assert.equal(session.state.draft.blocks[0].responseConfig.options.length, 1, 'confirm should delete option');
   assert.equal(session.state.draft.blocks[0].responseConfig.options[0].id, 'o2');
+});
+
+test('formatUploadedDraftTimestamp uses local browser formatting and handles invalid timestamps', async () => {
+  const mod = await loadEditorModule();
+  const originalFormatter = Intl.DateTimeFormat;
+  const calls = [];
+
+  Intl.DateTimeFormat = function fakeDateTimeFormat(locale, options) {
+    calls.push({ locale, options });
+    return {
+      format(value) {
+        const iso = value instanceof Date ? value.toISOString() : String(value);
+        return `LOCAL(${iso})`;
+      },
+    };
+  };
+
+  try {
+    const formatted = mod.formatUploadedDraftTimestamp('2026-04-07T15:42:00.000Z');
+    assert.equal(formatted.startsWith('LOCAL('), true);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].options, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    assert.equal(mod.formatUploadedDraftTimestamp('not-a-date'), 'Unknown upload time');
+    assert.equal(mod.formatUploadedDraftTimestamp(''), 'Unknown upload time');
+  } finally {
+    Intl.DateTimeFormat = originalFormatter;
+  }
+});
+
+test('deleteUploadedDraft refreshes uploaded drafts list and leaves local draft intact', async () => {
+  const mod = await loadEditorModule();
+  const listCalls = [];
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => {
+        listCalls.push('list');
+        return {
+          ok: true,
+          data: {
+            items: [
+              {
+                uploaded_draft_id: 'new-draft-id',
+                title: 'Replacement draft',
+                created_at: '2026-04-07T15:42:00.000Z',
+              },
+            ],
+          },
+        };
+      },
+      deleteUploadedDraft: async (uploadedDraftId) => {
+        assert.equal(uploadedDraftId, 'old-draft-id');
+        return { ok: true, data: { uploaded_draft_id: uploadedDraftId, deleted: true } };
+      },
+    },
+  });
+
+  session.state.draft = { localId: 'local_draft_1', title: 'Keep local', blocks: [] };
+  session.state.uploadedDrafts = [
+    { uploaded_draft_id: 'old-draft-id', title: 'Old draft', created_at: '2026-04-06T10:00:00.000Z' },
+  ];
+
+  const result = await session.deleteUploadedDraft('old-draft-id');
+
+  assert.equal(result.ok, true);
+  assert.equal(listCalls.length, 1);
+  assert.equal(session.state.uploadedDrafts.length, 1);
+  assert.equal(session.state.uploadedDrafts[0].uploaded_draft_id, 'new-draft-id');
+  assert.equal(session.state.draft.localId, 'local_draft_1');
+  assert.equal(session.state.serverActionMessage, 'Uploaded draft deleted.');
+});
+
+test('toUploadedDraftDisplay includes fallback title and uploaded label', async () => {
+  const mod = await loadEditorModule();
+  const originalFormatter = Intl.DateTimeFormat;
+  Intl.DateTimeFormat = function fakeDateTimeFormat() {
+    return {
+      format() {
+        return 'Apr 7, 2026, 3:42 PM';
+      },
+    };
+  };
+  try {
+    const withTitle = mod.toUploadedDraftDisplay({
+      title: '  Algebra worksheet  ',
+      created_at: '2026-04-07T15:42:00.000Z',
+    });
+    assert.equal(withTitle.title, 'Algebra worksheet');
+    assert.equal(withTitle.uploadedLabel, 'Uploaded: Apr 7, 2026, 3:42 PM');
+
+    const untitled = mod.toUploadedDraftDisplay({
+      title: '',
+      created_at: '',
+    });
+    assert.equal(untitled.title, 'Untitled');
+    assert.equal(untitled.uploadedLabel, 'Uploaded: Unknown upload time');
+  } finally {
+    Intl.DateTimeFormat = originalFormatter;
+  }
 });

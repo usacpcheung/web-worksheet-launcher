@@ -237,6 +237,9 @@ function createServerApiClient(options = {}) {
     fetchUploadedDraftArtifact(uploadedDraftId) {
       return requestZip(`/drafts/${uploadedDraftId}/artifact`);
     },
+    deleteUploadedDraft(uploadedDraftId) {
+      return requestJson(`/drafts/${uploadedDraftId}`, { method: 'DELETE' });
+    },
     publishFromUploadedDraft(uploadedDraftId) {
       return requestJson('/published', {
         method: 'POST',

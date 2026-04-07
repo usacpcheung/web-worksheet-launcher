@@ -22,6 +22,27 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function formatUploadedDraftTimestamp(createdAt, locale = undefined) {
+  if (!isNonEmptyString(createdAt)) return 'Unknown upload time';
+  const parsed = new Date(createdAt);
+  if (Number.isNaN(parsed.getTime())) return 'Unknown upload time';
+  return new Intl.DateTimeFormat(locale, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(parsed);
+}
+
+function toUploadedDraftDisplay(item, locale = undefined) {
+  const title = isNonEmptyString(item?.title) ? item.title.trim() : 'Untitled';
+  return {
+    title,
+    uploadedLabel: `Uploaded: ${formatUploadedDraftTimestamp(item?.created_at, locale)}`,
+  };
+}
+
 function createLocalId(prefix = 'local') {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}_${crypto.randomUUID()}`;
@@ -2455,6 +2476,19 @@ class EditorDraftSession {
     return { ok: true, data: imported };
   }
 
+  async deleteUploadedDraft(uploadedDraftId) {
+    const result = await this.apiClient.deleteUploadedDraft(uploadedDraftId);
+    if (!result.ok) {
+      this.state.serverActionMessage = result.error.message;
+      this.notifyStateChange();
+      return result;
+    }
+    this.state.serverActionMessage = 'Uploaded draft deleted.';
+    await this.loadUploadedDrafts();
+    this.notifyStateChange();
+    return result;
+  }
+
   touchDraft() {
     if (!this.state.draft) return;
     this.state.isPristineDraft = false;
@@ -3680,11 +3714,18 @@ function renderEditorShell(session) {
       uploadedDraftList.appendChild(empty);
     } else {
       session.state.uploadedDrafts.forEach((item) => {
+        const display = toUploadedDraftDisplay(item);
         const row = document.createElement('div');
         row.className = 'button-row';
-        const meta = document.createElement('span');
-        meta.className = 'muted';
-        meta.textContent = `${item.title || 'Untitled'} · ${item.uploaded_draft_id}`;
+        const meta = document.createElement('div');
+        const titleLine = document.createElement('strong');
+        titleLine.textContent = display.title;
+        const uploadedAtLine = document.createElement('div');
+        uploadedAtLine.className = 'muted';
+        uploadedAtLine.textContent = display.uploadedLabel;
+        meta.append(titleLine, uploadedAtLine);
+        const actions = document.createElement('div');
+        actions.className = 'button-row';
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
         openBtn.textContent = 'Open as local copy';
@@ -3693,7 +3734,25 @@ function renderEditorShell(session) {
           await session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
           updateSummary();
         });
-        row.append(meta, openBtn);
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'danger';
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.disabled = !serverReady;
+        deleteBtn.addEventListener('click', async () => {
+          const confirmed = await showConfirmDialog({
+            title: 'Delete uploaded draft?',
+            entityLabel: isNonEmptyString(item.title) ? item.title.trim() : 'Untitled',
+            descriptionText: 'This will permanently remove this uploaded draft from server storage.',
+            removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
+            confirmLabel: 'Delete draft',
+          });
+          if (!confirmed) return;
+          await session.deleteUploadedDraft(item.uploaded_draft_id);
+          updateSummary();
+        });
+        actions.append(openBtn, deleteBtn);
+        row.append(meta, actions);
         uploadedDraftList.appendChild(row);
       });
     }
@@ -4011,6 +4070,8 @@ export {
   mapOptionsTextToResponseOptions,
   buildViewerUrlFromCurrentLocation,
   getNumberQuestionValidationErrors,
+  formatUploadedDraftTimestamp,
+  toUploadedDraftDisplay,
 };
 function normalizeQuestionResponseConfig(responseConfig, options = {}) {
   const forContract = options.forContract === true;

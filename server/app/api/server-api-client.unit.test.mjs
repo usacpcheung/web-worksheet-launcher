@@ -108,3 +108,25 @@ test('fetchPublishedPackageArtifact parses zip payload', async () => {
   assert.equal(result.ok, true);
   assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
 });
+
+test('deleteUploadedDraft sends DELETE to canonical drafts path', async () => {
+  globalThis.window = {
+    location: {
+      origin: 'https://example.test',
+      search: '',
+    },
+  };
+  let requestedUrl = null;
+  let requestedMethod = null;
+  globalThis.fetch = async (url, request = {}) => {
+    requestedUrl = url;
+    requestedMethod = request.method;
+    return mockJsonResponse(200, { ok: true, data: { deleted: true } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.deleteUploadedDraft('550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/drafts/550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(requestedMethod, 'DELETE');
+});

@@ -33,6 +33,9 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
       async loadOwnDraftArtifact() {
         return null;
       },
+      async deleteOwnDraft() {
+        return { ok: true, statusCode: 200, data: { uploaded_draft_id: 'x', deleted: true } };
+      },
       async loadPublishedPackage() {
         return null;
       },
@@ -205,6 +208,79 @@ test('GET /api/v1/drafts/:id/artifact returns ZIP bytes for owner draft', async 
       assert.equal(res.headers.get('content-type'), 'application/zip');
       const bytes = new Uint8Array(await res.arrayBuffer());
       assert.deepEqual(Array.from(bytes), [0x50, 0x4b, 0x03, 0x04]);
+    }
+  );
+});
+
+test('DELETE /api/v1/drafts/:id rejects malformed uploadedDraftId with 400', async () => {
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/drafts/not-a-uuid`, {
+      method: 'DELETE',
+      headers: authHeaders,
+    });
+    assert.equal(res.status, 400);
+    const payload = await res.json();
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'INVALID_UPLOADED_DRAFT_ID');
+  });
+});
+
+test('DELETE /api/v1/drafts/:id forwards owner-scoped delete and returns payload', async () => {
+  let received = null;
+  await withServer(
+    {
+      service: {
+        async deleteOwnDraft({ identity, uploadedDraftId }) {
+          received = { identity, uploadedDraftId };
+          return {
+            ok: true,
+            statusCode: 200,
+            data: { uploaded_draft_id: uploadedDraftId, deleted: true },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const uploadedDraftId = '550e8400-e29b-41d4-a716-446655440000';
+      const res = await fetch(`${baseUrl}/api/v1/drafts/${uploadedDraftId}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data, { uploaded_draft_id: uploadedDraftId, deleted: true });
+    }
+  );
+
+  assert.deepEqual(received, {
+    identity: { sub: 'user-sub', email: null, name: null },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+});
+
+test('DELETE /api/v1/drafts/:id returns owner-scoped not found from service', async () => {
+  await withServer(
+    {
+      service: {
+        async deleteOwnDraft() {
+          return {
+            ok: false,
+            statusCode: 404,
+            error: { code: 'UPLOADED_DRAFT_NOT_FOUND', message: 'Uploaded draft was not found for this owner.' },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/drafts/550e8400-e29b-41d4-a716-446655440000`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 404);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'UPLOADED_DRAFT_NOT_FOUND');
     }
   );
 });

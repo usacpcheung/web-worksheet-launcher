@@ -118,6 +118,52 @@ export class PackageService {
     return result.rows[0];
   }
 
+  async deleteOwnDraft({ identity, uploadedDraftId }) {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const deleted = await client.query(
+        `DELETE FROM uploaded_drafts
+         WHERE uploaded_draft_id = $1 AND owner_sub = $2
+         RETURNING uploaded_draft_id, artifact_path`,
+        [uploadedDraftId, identity.sub]
+      );
+
+      if (deleted.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 404,
+          error: {
+            code: 'UPLOADED_DRAFT_NOT_FOUND',
+            message: 'Uploaded draft was not found for this owner.',
+          },
+        };
+      }
+
+      await client.query('COMMIT');
+
+      const deletedDraft = deleted.rows[0];
+      await deleteArtifactIfPresent({
+        absolutePath: this.artifactStore.resolveAbsolutePath(deletedDraft.artifact_path),
+      });
+
+      return {
+        ok: true,
+        statusCode: 200,
+        data: {
+          uploaded_draft_id: deletedDraft.uploaded_draft_id,
+          deleted: true,
+        },
+      };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async publishFromDraft({ identity, uploadedDraftId }) {
     const client = await this.db.connect();
     let artifact = null;

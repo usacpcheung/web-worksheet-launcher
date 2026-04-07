@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { PackageService } from './package-service.js';
 
-function createFakeDb({ draftCount = 0, failInsert = false, draftExists = true } = {}) {
+function createFakeDb({ draftCount = 0, failInsert = false, draftExists = true, failDelete = false } = {}) {
   const state = { draftCount, queries: [] };
 
   return {
@@ -44,6 +44,15 @@ function createFakeDb({ draftCount = 0, failInsert = false, draftExists = true }
               throw new Error('insert failed');
             }
             return { rowCount: 1, rows: [{}] };
+          }
+          if (sql.includes('DELETE FROM uploaded_drafts')) {
+            if (failDelete) {
+              throw new Error('delete failed');
+            }
+            if (!draftExists) {
+              return { rowCount: 0, rows: [] };
+            }
+            return { rowCount: 1, rows: [{ uploaded_draft_id: 'u', artifact_path: 'drafts/a.zip' }] };
           }
           if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
             return { rows: [], rowCount: 0 };
@@ -149,4 +158,53 @@ test('publishFromDraft removes artifact file when DB insert fails', async () => 
 
   await assert.rejects(() => fs.access(artifactPath));
   await fs.rm(tempDir, { recursive: true, force: true });
+});
+
+test('deleteOwnDraft removes artifact file after deleting owner draft row', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-delete-cleanup-'));
+  const artifactPath = path.join(tempDir, 'draft.zip');
+  await fs.writeFile(artifactPath, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  const db = createFakeDb({ draftExists: true });
+  const service = createService({
+    db,
+    artifactStore: {
+      resolveAbsolutePath() {
+        return artifactPath;
+      },
+    },
+  });
+
+  const result = await service.deleteOwnDraft({
+    identity: { sub: 'oidc-sub' },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.statusCode, 200);
+  await assert.rejects(() => fs.access(artifactPath));
+  await fs.rm(tempDir, { recursive: true, force: true });
+});
+
+test('deleteOwnDraft returns owner-scoped not found without touching artifacts', async () => {
+  const db = createFakeDb({ draftExists: false });
+  let resolveCalled = false;
+  const service = createService({
+    db,
+    artifactStore: {
+      resolveAbsolutePath() {
+        resolveCalled = true;
+        return '/tmp/never-used';
+      },
+    },
+  });
+
+  const result = await service.deleteOwnDraft({
+    identity: { sub: 'oidc-sub' },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 404);
+  assert.equal(result.error.code, 'UPLOADED_DRAFT_NOT_FOUND');
+  assert.equal(resolveCalled, false);
 });
