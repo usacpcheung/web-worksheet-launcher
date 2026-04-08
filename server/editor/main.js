@@ -37,9 +37,11 @@ function formatUploadedDraftTimestamp(createdAt, locale = undefined) {
 
 function toUploadedDraftDisplay(item, locale = undefined) {
   const title = isNonEmptyString(item?.title) ? item.title.trim() : 'Untitled';
+  const isPublished = isNonEmptyString(item?.published_package_id);
   return {
     title,
     uploadedLabel: `Uploaded: ${formatUploadedDraftTimestamp(item?.created_at, locale)}`,
+    isPublished,
   };
 }
 
@@ -547,6 +549,7 @@ function createDraftRecord(overrides = {}) {
       serverLink: overrides.metadata?.serverLink || null,
       importedFrom: overrides.metadata?.importedFrom || null,
       modelVersion: overrides.metadata?.modelVersion || 'package-compatible-v1',
+      subject: String(overrides.metadata?.subject || ''),
     },
   };
 }
@@ -793,6 +796,15 @@ class EditorDraftSession {
   updateTitle(nextTitle) {
     if (!this.state.draft) return;
     this.state.draft.title = String(nextTitle || '');
+    this.touchDraft();
+  }
+
+  updateSubject(nextSubject) {
+    if (!this.state.draft) return;
+    this.state.draft.metadata = {
+      ...this.state.draft.metadata,
+      subject: String(nextSubject || ''),
+    };
     this.touchDraft();
   }
 
@@ -2039,6 +2051,7 @@ class EditorDraftSession {
           serverLink: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.serverLink) || null,
           importedFrom: 'legacy_json',
           modelVersion: 'package-compatible-v1',
+          subject: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.subject) || '',
         };
 
         const draft = createDraftRecord({
@@ -2171,6 +2184,7 @@ class EditorDraftSession {
         serverLink: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.serverLink) || null,
         importedFrom: 'package_zip',
         modelVersion: 'package-compatible-v1',
+        subject: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.subject) || '',
       },
     });
 
@@ -2447,14 +2461,13 @@ class EditorDraftSession {
     return result;
   }
 
-  async publishCurrentDraftToServer() {
+  async publishUploadedDraftToServer(uploadedDraftId, metadata = {}) {
     const sessionReady = await this.ensureServerSessionReady();
     if (!sessionReady.ok) return sessionReady.result;
-    const uploadResult = await this.uploadCurrentDraftToServer({ preflight: false });
-    if (!uploadResult.ok) {
-      return uploadResult;
-    }
-    const publishResult = await this.apiClient.publishFromUploadedDraft(uploadResult.data.uploaded_draft_id);
+    const publishResult = await this.apiClient.publishFromUploadedDraft(uploadedDraftId, {
+      title: metadata.title || '',
+      subject: metadata.subject || '',
+    });
     if (!publishResult.ok) {
       this.state.serverActionMessage = publishResult.error.message;
       this.notifyStateChange();
@@ -2462,6 +2475,7 @@ class EditorDraftSession {
     }
     this.state.lastPublishedPackage = publishResult.data;
     this.state.serverActionMessage = `Published package ${publishResult.data.published_package_id}.`;
+    await this.loadUploadedDrafts({ preflight: false });
     this.notifyStateChange();
     return publishResult;
   }
@@ -2683,9 +2697,31 @@ function renderEditorShell(session) {
   importFileInput.type = 'file';
   importFileInput.accept = 'application/zip,.zip,application/json,.json';
   importFileInput.style.display = 'none';
+  const metadataSection = document.createElement('section');
+  metadataSection.className = 'editor-metadata-section';
+  const metadataHeading = document.createElement('h3');
+  metadataHeading.textContent = 'Draft Metadata';
+  const titleField = document.createElement('div');
+  titleField.className = 'editor-field';
+  const titleLabel = document.createElement('label');
+  titleLabel.setAttribute('for', 'editor-title-input');
+  titleLabel.textContent = 'Worksheet Title';
   const titleInput = document.createElement('input');
+  titleInput.id = 'editor-title-input';
   titleInput.placeholder = 'Worksheet title';
   titleInput.className = 'control';
+  titleField.append(titleLabel, titleInput);
+  const subjectField = document.createElement('div');
+  subjectField.className = 'editor-field';
+  const subjectLabel = document.createElement('label');
+  subjectLabel.setAttribute('for', 'editor-subject-input');
+  subjectLabel.textContent = 'Subject';
+  const subjectInput = document.createElement('input');
+  subjectInput.id = 'editor-subject-input';
+  subjectInput.placeholder = 'Subject';
+  subjectInput.className = 'control';
+  subjectField.append(subjectLabel, subjectInput);
+  metadataSection.append(metadataHeading, titleField, subjectField);
   const blockEditor = document.createElement('textarea');
   blockEditor.id = 'editor-block-editor';
   blockEditor.rows = 8;
@@ -2925,6 +2961,202 @@ function renderEditorShell(session) {
       };
     });
   }
+
+  async function copyTextToClipboard(text) {
+    const value = String(text || '').trim();
+    if (!value) return false;
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+    return false;
+  }
+
+  function showPublishModal({ uploadedDraft }) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-modal-overlay';
+      const dialog = document.createElement('section');
+      dialog.className = 'confirm-modal';
+      const heading = document.createElement('h3');
+      heading.textContent = 'Publish uploaded draft';
+      const description = document.createElement('p');
+      description.className = 'confirm-modal__description';
+      description.textContent = 'Confirm the published package title and subject. This will not edit uploaded draft metadata.';
+      const publishTitleField = document.createElement('div');
+      publishTitleField.className = 'editor-field';
+      const publishTitleLabel = document.createElement('label');
+      publishTitleLabel.textContent = 'Published Title';
+      const publishTitleInput = document.createElement('input');
+      publishTitleInput.className = 'control';
+      publishTitleInput.value = String(uploadedDraft?.title || '');
+      publishTitleField.append(publishTitleLabel, publishTitleInput);
+      const publishSubjectField = document.createElement('div');
+      publishSubjectField.className = 'editor-field';
+      const publishSubjectLabel = document.createElement('label');
+      publishSubjectLabel.textContent = 'Published Subject';
+      const publishSubjectInput = document.createElement('input');
+      publishSubjectInput.className = 'control';
+      publishSubjectInput.value = String(uploadedDraft?.subject || '');
+      publishSubjectField.append(publishSubjectLabel, publishSubjectInput);
+      const actions = document.createElement('div');
+      actions.className = 'confirm-modal__actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'confirm-modal__btn';
+      cancelBtn.textContent = 'Cancel';
+      const confirmBtn = document.createElement('button');
+      confirmBtn.type = 'button';
+      confirmBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+      confirmBtn.textContent = 'Publish';
+      actions.append(cancelBtn, confirmBtn);
+      dialog.append(heading, description, publishTitleField, publishSubjectField, actions);
+      overlay.appendChild(dialog);
+      shell.appendChild(overlay);
+
+      const cleanup = () => overlay.remove();
+      cancelBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({ confirmed: false });
+      });
+      confirmBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({
+          confirmed: true,
+          title: publishTitleInput.value,
+          subject: publishSubjectInput.value,
+        });
+      });
+      publishTitleInput.focus();
+    });
+  }
+
+  async function runPublishedSearch() {
+    browsePublishedState = {
+      ...browsePublishedState,
+      loading: true,
+      error: null,
+    };
+    renderPublishedBrowserModal();
+    const result = await session.apiClient.listPublishedPackages({
+      title: browsePublishedState.title,
+      subject: browsePublishedState.subject,
+      owner: browsePublishedState.owner,
+      limit: 20,
+      offset: 0,
+    });
+    if (!result.ok) {
+      browsePublishedState = {
+        ...browsePublishedState,
+        loading: false,
+        error: result.error.message,
+      };
+      renderPublishedBrowserModal();
+      return;
+    }
+    browsePublishedState = {
+      ...browsePublishedState,
+      loading: false,
+      items: Array.isArray(result.data?.items) ? result.data.items : [],
+      error: null,
+    };
+    renderPublishedBrowserModal();
+  }
+
+  function renderPublishedBrowserModal() {
+    browsePublishedModalRoot.innerHTML = '';
+    if (!browsePublishedDialogOpen) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay';
+    const dialog = document.createElement('section');
+    dialog.className = 'confirm-modal browse-modal';
+    const heading = document.createElement('h3');
+    heading.textContent = 'Browse Published Packages';
+    const filterRow = document.createElement('div');
+    filterRow.className = 'button-row';
+    const titleFilter = document.createElement('input');
+    titleFilter.className = 'control';
+    titleFilter.placeholder = 'Filter by title';
+    titleFilter.value = browsePublishedState.title;
+    const subjectFilter = document.createElement('input');
+    subjectFilter.className = 'control';
+    subjectFilter.placeholder = 'Filter by subject';
+    subjectFilter.value = browsePublishedState.subject;
+    const ownerFilter = document.createElement('input');
+    ownerFilter.className = 'control';
+    ownerFilter.placeholder = 'Filter by owner';
+    ownerFilter.value = browsePublishedState.owner;
+    const searchBtn = document.createElement('button');
+    searchBtn.type = 'button';
+    searchBtn.textContent = 'Search';
+    searchBtn.disabled = browsePublishedState.loading;
+    filterRow.append(titleFilter, subjectFilter, ownerFilter, searchBtn);
+    const results = document.createElement('div');
+    results.className = 'browse-results';
+    if (browsePublishedState.error) {
+      const error = document.createElement('p');
+      error.className = 'control-error';
+      error.textContent = browsePublishedState.error;
+      results.appendChild(error);
+    } else if (browsePublishedState.loading) {
+      const loading = document.createElement('p');
+      loading.className = 'muted';
+      loading.textContent = 'Loading published packages…';
+      results.appendChild(loading);
+    } else if (browsePublishedState.items.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = 'No published packages found.';
+      results.appendChild(empty);
+    } else {
+      browsePublishedState.items.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'published-result-row';
+        row.innerHTML = `<strong>${item.title || 'Untitled'}</strong>
+          <div class="muted">Subject: ${item.subject || '—'} • Owner: ${item.owner_name || item.owner_sub || '—'}</div>
+          <div class="muted">Published: ${formatUploadedDraftTimestamp(item.published_at)} • ID: ${item.published_package_id}</div>`;
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.textContent = 'Copy Published ID';
+        copyBtn.addEventListener('click', async () => {
+          const copied = await copyTextToClipboard(item.published_package_id);
+          session.state.serverActionMessage = copied
+            ? `Copied published ID ${item.published_package_id}.`
+            : 'Clipboard copy is unavailable in this browser.';
+          session.notifyStateChange();
+        });
+        row.appendChild(copyBtn);
+        results.appendChild(row);
+      });
+    }
+    const actions = document.createElement('div');
+    actions.className = 'confirm-modal__actions';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'confirm-modal__btn';
+    closeBtn.textContent = 'Close';
+    actions.append(closeBtn);
+    dialog.append(heading, filterRow, results, actions);
+    overlay.appendChild(dialog);
+    browsePublishedModalRoot.appendChild(overlay);
+
+    const captureFilters = () => {
+      browsePublishedState = {
+        ...browsePublishedState,
+        title: titleFilter.value,
+        subject: subjectFilter.value,
+        owner: ownerFilter.value,
+      };
+    };
+    searchBtn.addEventListener('click', async () => {
+      captureFilters();
+      await runPublishedSearch();
+    });
+    closeBtn.addEventListener('click', () => {
+      browsePublishedDialogOpen = false;
+      renderPublishedBrowserModal();
+    });
+  }
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
@@ -2965,9 +3197,9 @@ function renderEditorShell(session) {
   const syncDraftBtn = document.createElement('button');
   syncDraftBtn.type = 'button';
   syncDraftBtn.textContent = 'Upload Draft';
-  const publishBtn = document.createElement('button');
-  publishBtn.type = 'button';
-  publishBtn.textContent = 'Publish';
+  const browsePublishedBtn = document.createElement('button');
+  browsePublishedBtn.type = 'button';
+  browsePublishedBtn.textContent = 'Browse Published Packages';
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.textContent = 'Sign in for server features';
@@ -2980,8 +3212,18 @@ function renderEditorShell(session) {
   serverActionStatus.className = 'muted';
   const uploadedDraftList = document.createElement('div');
   uploadedDraftList.className = 'muted';
+  const browsePublishedModalRoot = document.createElement('div');
   const protectedActionsColumn = document.createElement('div');
   protectedActionsColumn.className = 'action-column';
+  let browsePublishedState = {
+    title: '',
+    subject: '',
+    owner: '',
+    loading: false,
+    items: [],
+    error: null,
+  };
+  let browsePublishedDialogOpen = false;
   let detailSignature = null;
   let optionActionSignature = null;
 
@@ -3025,6 +3267,9 @@ function renderEditorShell(session) {
 
     if (activeElement !== titleInput) {
       titleInput.value = session.state.draft?.title || '';
+    }
+    if (activeElement !== subjectInput) {
+      subjectInput.value = session.state.draft?.metadata?.subject || '';
     }
     if (activeElement !== blockEditor) {
       blockEditor.value = selectedText;
@@ -3736,7 +3981,7 @@ function renderEditorShell(session) {
     serverActionStatus.textContent = session.state.serverActionMessage || '';
     const serverReady = sessionStatus === 'ready';
     syncDraftBtn.disabled = !serverReady;
-    publishBtn.disabled = !serverReady;
+    browsePublishedBtn.disabled = !serverReady;
     loadUploadedDraftsBtn.disabled = !serverReady;
     signInBtn.hidden = serverReady;
     uploadedDraftList.innerHTML = '';
@@ -3761,7 +4006,7 @@ function renderEditorShell(session) {
         actions.className = 'button-row';
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
-        openBtn.textContent = 'Open as local copy';
+        openBtn.textContent = 'Open';
         openBtn.disabled = !serverReady;
         openBtn.addEventListener('click', async () => {
           await session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
@@ -3773,10 +4018,14 @@ function renderEditorShell(session) {
         deleteBtn.textContent = 'Delete';
         deleteBtn.disabled = !serverReady;
         deleteBtn.addEventListener('click', async () => {
+          const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
+          const deleteDescription = publishedPackageId
+            ? 'This deletes the uploaded draft slot only. The published package will remain available by publishedPackageId.'
+            : 'This will permanently remove this uploaded draft from server storage.';
           const confirmed = await showConfirmDialog({
             title: 'Delete uploaded draft?',
             entityLabel: isNonEmptyString(item.title) ? item.title.trim() : 'Untitled',
-            descriptionText: 'This will permanently remove this uploaded draft from server storage.',
+            descriptionText: deleteDescription,
             removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
             confirmLabel: 'Delete draft',
           });
@@ -3784,7 +4033,54 @@ function renderEditorShell(session) {
           await session.deleteUploadedDraft(item.uploaded_draft_id);
           updateSummary();
         });
-        actions.append(openBtn, deleteBtn);
+        const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
+        if (publishedPackageId) {
+          const badge = document.createElement('span');
+          badge.className = 'editor-pill editor-pill--ok';
+          badge.textContent = 'Published';
+          meta.appendChild(badge);
+          const copyBtn = document.createElement('button');
+          copyBtn.type = 'button';
+          copyBtn.textContent = 'Copy Published ID';
+          copyBtn.disabled = !serverReady;
+          copyBtn.addEventListener('click', async () => {
+            const copied = await copyTextToClipboard(publishedPackageId);
+            session.state.serverActionMessage = copied
+              ? `Copied published ID ${publishedPackageId}.`
+              : 'Clipboard copy is unavailable in this browser.';
+            session.notifyStateChange();
+          });
+          const details = document.createElement('details');
+          const summary = document.createElement('summary');
+          summary.textContent = 'Published details';
+          const body = document.createElement('div');
+          body.className = 'muted';
+          body.innerHTML = `
+            <div>Published ID: ${publishedPackageId}</div>
+            <div>Title: ${item.published_title || item.title || 'Untitled'}</div>
+            <div>Subject: ${item.published_subject || ''}</div>
+            <div>Owner: ${item.published_owner_name || session.state.serverSession?.user?.name || 'Unknown'}</div>
+            <div>Published: ${formatUploadedDraftTimestamp(item.published_at)}</div>
+          `;
+          details.append(summary, body);
+          meta.appendChild(details);
+          actions.append(openBtn, copyBtn, deleteBtn);
+        } else {
+          const publishBtn = document.createElement('button');
+          publishBtn.type = 'button';
+          publishBtn.textContent = 'Publish';
+          publishBtn.disabled = !serverReady;
+          publishBtn.addEventListener('click', async () => {
+            const modal = await showPublishModal({ uploadedDraft: item });
+            if (!modal.confirmed) return;
+            await session.publishUploadedDraftToServer(item.uploaded_draft_id, {
+              title: modal.title,
+              subject: modal.subject,
+            });
+            updateSummary();
+          });
+          actions.append(openBtn, publishBtn, deleteBtn);
+        }
         row.append(meta, actions);
         uploadedDraftList.appendChild(row);
       });
@@ -3797,6 +4093,10 @@ function renderEditorShell(session) {
 
   titleInput.addEventListener('input', () => {
     session.updateTitle(titleInput.value);
+    updateSummary();
+  });
+  subjectInput.addEventListener('input', () => {
+    session.updateSubject(subjectInput.value);
     updateSummary();
   });
   blockKind.addEventListener('change', () => {
@@ -3991,9 +4291,10 @@ function renderEditorShell(session) {
     await session.uploadCurrentDraftToServer();
     updateSummary();
   });
-  publishBtn.addEventListener('click', async () => {
-    await session.publishCurrentDraftToServer();
-    updateSummary();
+  browsePublishedBtn.addEventListener('click', async () => {
+    browsePublishedDialogOpen = true;
+    renderPublishedBrowserModal();
+    await runPublishedSearch();
   });
   signInBtn.addEventListener('click', () => {
     session.beginServerSignIn();
@@ -4015,7 +4316,7 @@ function renderEditorShell(session) {
     serverSessionStatus,
     signInBtn,
     syncDraftBtn,
-    publishBtn,
+    browsePublishedBtn,
     loadUploadedDraftsBtn,
     uploadedDraftList,
     serverActionStatus,
@@ -4023,11 +4324,23 @@ function renderEditorShell(session) {
     t2aBtn
   );
   moreActions.append(protectedActionsColumn);
-  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput, questionImageInput, questionAudioInput, optionAudioInput);
+  leftPanel.append(
+    leftHeading,
+    metadataSection,
+    controlsRow,
+    blockList,
+    moreActions,
+    metaRow,
+    importFileInput,
+    questionImageInput,
+    questionAudioInput,
+    optionAudioInput
+  );
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);
   shell.append(topBar, layout);
+  shell.appendChild(browsePublishedModalRoot);
   app.innerHTML = '';
   app.append(shell);
   updateSummary();

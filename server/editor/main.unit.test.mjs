@@ -506,8 +506,57 @@ test('editor uses live server upload/publish integration instead of protected-in
   assert.equal(source.includes("session.triggerProtectedAction('resumeDraftUploadAfterLogin')"), false);
   assert.equal(source.includes("session.triggerProtectedAction('resumePublishAfterLogin')"), false);
   assert.equal(source.includes('await session.uploadCurrentDraftToServer();'), true);
-  assert.equal(source.includes('await session.publishCurrentDraftToServer();'), true);
+  assert.equal(source.includes('await session.publishUploadedDraftToServer('), true);
   assert.equal(source.includes('await session.refreshServerSession();'), true);
+});
+
+test('draft metadata subject is editable and stored in local draft metadata', async () => {
+  const mod = await loadEditorModule();
+  const draft = mod.createDraftRecord({ title: 'Worksheet' });
+  assert.equal(draft.metadata.subject, '');
+
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = draft;
+  session.updateSubject('Physics');
+  assert.equal(session.state.draft.metadata.subject, 'Physics');
+});
+
+test('publishUploadedDraftToServer forwards modal title/subject overrides and refreshes drafts', async () => {
+  const calls = [];
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      publishFromUploadedDraft: async (uploadedDraftId, metadata) => {
+        calls.push({ uploadedDraftId, metadata });
+        return { ok: true, data: { published_package_id: 'p1' } };
+      },
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+
+  const result = await session.publishUploadedDraftToServer('u1', {
+    title: 'Release title',
+    subject: 'Release subject',
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls[0], {
+    uploadedDraftId: 'u1',
+    metadata: { title: 'Release title', subject: 'Release subject' },
+  });
+});
+
+test('editor source removes global Publish button and adds labeled metadata and browse controls', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('await session.publishCurrentDraftToServer();'), false);
+  assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    publishBtn,'), false);
+  assert.equal(source.includes("metadataHeading.textContent = 'Draft Metadata';"), true);
+  assert.equal(source.includes("titleLabel.textContent = 'Worksheet Title';"), true);
+  assert.equal(source.includes("subjectLabel.textContent = 'Subject';"), true);
+  assert.equal(source.includes("browsePublishedBtn.textContent = 'Browse Published Packages';"), true);
+  assert.equal(source.includes("copyBtn.textContent = 'Copy Published ID';"), true);
+  assert.equal(source.includes("summary.textContent = 'Published details';"), true);
 });
 
 test('detail signature includes media refs so media attach/remove rerenders immediately', async () => {

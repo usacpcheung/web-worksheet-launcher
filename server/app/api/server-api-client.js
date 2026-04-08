@@ -240,10 +240,14 @@ function createServerApiClient(options = {}) {
     deleteUploadedDraft(uploadedDraftId) {
       return requestJson(`/drafts/${uploadedDraftId}`, { method: 'DELETE' });
     },
-    publishFromUploadedDraft(uploadedDraftId) {
+    publishFromUploadedDraft(uploadedDraftId, metadata = {}) {
       return requestJson('/published', {
         method: 'POST',
-        body: { uploadedDraftId },
+        body: {
+          uploadedDraftId,
+          title: metadata.title || '',
+          subject: metadata.subject || '',
+        },
       });
     },
     listPublishedPackages(query = {}) {

@@ -125,6 +125,21 @@ body {
   font-weight: 500;
 }
 
+.editor-metadata-section {
+  border: 1px solid #d6d9e0;
+  border-radius: 10px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #f8fafc;
+}
+
+.editor-metadata-section h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
 .block-list {
   list-style: none;
   padding: 0;
@@ -584,6 +599,27 @@ textarea.control {
   color: #7a271a;
   border-color: #eca8a2;
   background: #fee4e2;
+}
+
+.browse-modal {
+  width: min(900px, 92vw);
+}
+
+.browse-results {
+  max-height: 45vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.published-result-row {
+  border: 1px solid #d6d9e0;
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 @media (max-width: 1100px) {

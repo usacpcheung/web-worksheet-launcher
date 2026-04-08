@@ -121,6 +121,42 @@ test('POST /api/v1/published rejects malformed uploadedDraftId with 400', async 
   assert.equal(called, false);
 });
 
+test('POST /api/v1/published forwards title/subject overrides', async () => {
+  let received = null;
+  await withServer(
+    {
+      service: {
+        async publishFromDraft(payload) {
+          received = payload;
+          return { ok: true, statusCode: 201, data: { published_package_id: 'p1' } };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/published`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+          title: 'Release worksheet',
+          subject: 'Geometry',
+        }),
+      });
+      assert.equal(res.status, 201);
+    }
+  );
+
+  assert.deepEqual(received, {
+    identity: { sub: 'user-sub', email: null, name: null },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Release worksheet',
+    subject: 'Geometry',
+  });
+});
+
 test('GET /api/v1/published/:id rejects malformed publishedPackageId with 400', async () => {
   let called = false;
   await withServer(
@@ -170,6 +206,36 @@ test('GET /api/v1/published rejects invalid limit query with 400', async () => {
     const payload = await res.json();
     assert.equal(payload.ok, false);
     assert.equal(payload.error.code, 'INVALID_QUERY_PARAM');
+  });
+});
+
+test('GET /api/v1/published forwards title/subject/owner filters', async () => {
+  let received = null;
+  await withServer(
+    {
+      service: {
+        async listPublished(filters) {
+          received = filters;
+          return [];
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(
+        `${baseUrl}/api/v1/published?title=Algebra&subject=Math&owner=Teacher&limit=5&offset=2`,
+        { headers: authHeaders }
+      );
+      assert.equal(res.status, 200);
+    }
+  );
+
+  assert.deepEqual(received, {
+    query: '',
+    title: 'Algebra',
+    subject: 'Math',
+    owner: 'Teacher',
+    limit: 5,
+    offset: 2,
   });
 });
 
