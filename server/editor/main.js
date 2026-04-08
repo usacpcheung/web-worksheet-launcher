@@ -628,7 +628,7 @@ class EditorDraftSession {
     this._authPopupMessageListener = null;
     this._authPopupWindow = null;
     this._authPopupFallbackTimer = null;
-    this._authPopupFallbackRefreshInFlight = false;
+    this._authPopupFallbackProbeInFlight = false;
   }
 
   setOnStateChange(handler) {
@@ -2311,7 +2311,7 @@ class EditorDraftSession {
     }
     this._authPopupFallbackTimer = null;
     this._authPopupWindow = null;
-    this._authPopupFallbackRefreshInFlight = false;
+    this._authPopupFallbackProbeInFlight = false;
   }
 
   async pollForMissedAuthCallback(startedAt) {
@@ -2328,11 +2328,11 @@ class EditorDraftSession {
 
     const popupClosed = !this._authPopupWindow || this._authPopupWindow.closed;
     const shouldProbeSession = popupClosed || elapsedMs >= AUTH_POPUP_FALLBACK_POLL_MS * 3;
-    if (!shouldProbeSession || this._authPopupFallbackRefreshInFlight) {
+    if (!shouldProbeSession || this._authPopupFallbackProbeInFlight) {
       return;
     }
 
-    this._authPopupFallbackRefreshInFlight = true;
+    this._authPopupFallbackProbeInFlight = true;
     try {
       const result = await this.probeServerSessionSilently();
       if (result.ok && this.state.serverSession.status === 'ready') {
@@ -2342,7 +2342,7 @@ class EditorDraftSession {
         this.stopAuthPopupFallbackPolling();
       }
     } finally {
-      this._authPopupFallbackRefreshInFlight = false;
+      this._authPopupFallbackProbeInFlight = false;
     }
   }
 

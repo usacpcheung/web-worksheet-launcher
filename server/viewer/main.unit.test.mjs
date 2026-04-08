@@ -314,6 +314,22 @@ test('viewer browse action runs silent session preflight and blocks when session
   assert.equal(session.state.serverActionMessage, 'Sign-in session expired. Please sign in again.');
 });
 
+test('viewer browse action persists requested publishedQuery before preflight failure', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSession: async () => ({ ok: false, error: { message: 'auth required', requiresSignIn: true } }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.state.publishedQuery = 'previous-query';
+
+  const result = await session.browsePublishedPackages('new-query');
+
+  assert.equal(result.ok, false);
+  assert.equal(session.state.publishedQuery, 'new-query');
+});
+
 test('viewer start panel removes Retry session button from normal server controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("retrySessionBtn.textContent = 'Retry session';"), false);
