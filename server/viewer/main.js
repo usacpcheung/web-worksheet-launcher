@@ -1157,7 +1157,7 @@ class ViewerAttemptSession {
     this._authPopupMessageListener = null;
     this._authPopupWindow = null;
     this._authPopupFallbackTimer = null;
-    this._authPopupFallbackRefreshInFlight = false;
+    this._authPopupFallbackProbeInFlight = false;
   }
 
   setOnStateChange(handler) {
@@ -1944,7 +1944,7 @@ class ViewerAttemptSession {
     }
     this._authPopupFallbackTimer = null;
     this._authPopupWindow = null;
-    this._authPopupFallbackRefreshInFlight = false;
+    this._authPopupFallbackProbeInFlight = false;
   }
 
   async pollForMissedAuthCallback(startedAt) {
@@ -1961,11 +1961,11 @@ class ViewerAttemptSession {
 
     const popupClosed = !this._authPopupWindow || this._authPopupWindow.closed;
     const shouldProbeSession = popupClosed || elapsedMs >= AUTH_POPUP_FALLBACK_POLL_MS * 3;
-    if (!shouldProbeSession || this._authPopupFallbackRefreshInFlight) {
+    if (!shouldProbeSession || this._authPopupFallbackProbeInFlight) {
       return;
     }
 
-    this._authPopupFallbackRefreshInFlight = true;
+    this._authPopupFallbackProbeInFlight = true;
     try {
       const result = await this.probeServerSessionSilently();
       if (result.ok && this.state.serverSession.status === 'ready') {
@@ -1975,7 +1975,7 @@ class ViewerAttemptSession {
         this.stopAuthPopupFallbackPolling();
       }
     } finally {
-      this._authPopupFallbackRefreshInFlight = false;
+      this._authPopupFallbackProbeInFlight = false;
     }
   }
 
@@ -2059,14 +2059,20 @@ class ViewerAttemptSession {
   }
 
   async browsePublishedPackages(query = '', options = {}) {
+    const normalizedQuery = String(query ?? '');
+    const shouldNotifyQueryChange = this.state.publishedQuery !== normalizedQuery;
+    this.state.publishedQuery = normalizedQuery;
+    if (shouldNotifyQueryChange) {
+      this.notifyStateChange();
+    }
+
     if (options.preflight !== false) {
       const sessionReady = await this.ensureServerSessionReady();
       if (!sessionReady.ok) return sessionReady.result;
     }
     this.state.isLoadingPublishedPackages = true;
-    this.state.publishedQuery = query;
     this.notifyStateChange();
-    const result = await this.apiClient.listPublishedPackages({ q: query || '', limit: 20, offset: 0 });
+    const result = await this.apiClient.listPublishedPackages({ q: normalizedQuery || '', limit: 20, offset: 0 });
     this.state.isLoadingPublishedPackages = false;
     if (!result.ok) {
       this.state.serverActionMessage = result.error.message;
