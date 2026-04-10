@@ -47,6 +47,26 @@ test('requireAuthenticatedIdentity preserves mixed-script unicode name from base
   assert.equal(identity.name.includes('?'), false);
 });
 
+test('requireAuthenticatedIdentity falls back to plain name when base64 header is malformed', () => {
+  const req = {
+    headers: {
+      'x-oidc-sub': 'sub-123',
+      'x-oidc-email': 'user@example.com',
+      'x-oidc-name': 'Plain Header Name',
+      'x-oidc-name-b64': 'not-base64%%%$',
+    },
+  };
+
+  const identity = requireAuthenticatedIdentity(req, {
+    sub: 'x-oidc-sub',
+    email: 'x-oidc-email',
+    name: 'x-oidc-name',
+    nameB64: 'x-oidc-name-b64',
+  });
+
+  assert.equal(identity.name, 'Plain Header Name');
+});
+
 test('requireAuthenticatedIdentity throws when sub header missing', () => {
   const req = { headers: {} };
 

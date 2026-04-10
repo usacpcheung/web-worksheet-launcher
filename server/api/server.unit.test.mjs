@@ -111,6 +111,24 @@ test('/api/v1/session returns unchanged mixed-script unicode display name from b
   });
 });
 
+test('/api/v1/session falls back to plain name when base64 name header is malformed', async () => {
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/session`, {
+      headers: {
+        ...authHeaders,
+        'x-oidc-email': 'user@example.com',
+        'x-oidc-name': 'Plain Header Name',
+        'x-oidc-name-b64': 'not-base64%%%$',
+      },
+    });
+
+    assert.equal(res.status, 200);
+    const payload = await res.json();
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.user.name, 'Plain Header Name');
+  });
+});
+
 test('POST /api/v1/published rejects malformed uploadedDraftId with 400', async () => {
   let called = false;
   await withServer(

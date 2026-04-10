@@ -14,7 +14,27 @@ function toCanonicalHeaderName(headerName) {
 
 function decodeBase64Utf8(value) {
   try {
-    return Buffer.from(value, 'base64').toString('utf8');
+    const normalized = String(value || '')
+      .replace(/\s+/g, '')
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+    if (!normalized || normalized.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
+      return null;
+    }
+
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
+    const bytes = Buffer.from(padded, 'base64');
+    const inputSig = padded.replace(/=+$/, '');
+    const outputSig = bytes.toString('base64').replace(/=+$/, '');
+    if (outputSig !== inputSig) {
+      return null;
+    }
+
+    const decoded = bytes.toString('utf8');
+    if (!Buffer.from(decoded, 'utf8').equals(bytes)) {
+      return null;
+    }
+    return decoded;
   } catch {
     return null;
   }
