@@ -63,6 +63,7 @@ function createFakeDb({
                   title: 'Published Title',
                   subject: 'Published Subject',
                   source_uploaded_draft_id: 'u',
+                  owner_email: 'teacher@example.test',
                   owner_name: 'Teacher Name',
                 },
               ],
@@ -190,6 +191,7 @@ test('publishFromDraft returns existing published package for same uploaded draf
       title: 'Existing title',
       subject: 'Existing subject',
       source_uploaded_draft_id: 'u',
+      owner_email: 'teacher@example.test',
       owner_name: 'Teacher',
     },
   });
@@ -386,6 +388,7 @@ test('listOwnDrafts returns published-state metadata fields for uploaded draft r
               published_package_id: 'p1',
               published_title: 'Released Draft 1',
               published_subject: 'Algebra',
+              published_owner_email: 'teacher@example.test',
               published_owner_name: 'Teacher Name',
               published_at: '2026-04-07T15:42:00.000Z',
             },
@@ -399,5 +402,54 @@ test('listOwnDrafts returns published-state metadata fields for uploaded draft r
   const rows = await service.listOwnDrafts({ sub: 'oidc-sub' });
   assert.equal(rows.length, 1);
   assert.equal(rows[0].published_package_id, 'p1');
+  assert.equal(rows[0].published_owner_email, 'teacher@example.test');
   assert.equal(rows[0].published_owner_name, 'Teacher Name');
+});
+
+test('listPublished owner filter uses owner_email-compatible predicate ordering', async () => {
+  let capturedSql = '';
+  const service = createService({
+    db: {
+      async query(sql) {
+        capturedSql = sql;
+        return { rows: [] };
+      },
+    },
+    artifactStore: {},
+  });
+
+  await service.listPublished({
+    query: '',
+    title: '',
+    subject: '',
+    owner: 'teacher@example.test',
+    limit: 10,
+    offset: 0,
+  });
+
+  assert.equal(capturedSql.includes('(lower(owner_email) LIKE $1 OR lower(owner_name) LIKE $1)'), true);
+});
+
+test('listPublished free-text query checks owner_email in searchable fields', async () => {
+  let capturedSql = '';
+  const service = createService({
+    db: {
+      async query(sql) {
+        capturedSql = sql;
+        return { rows: [] };
+      },
+    },
+    artifactStore: {},
+  });
+
+  await service.listPublished({
+    query: 'teacher@example.test',
+    title: '',
+    subject: '',
+    owner: '',
+    limit: 10,
+    offset: 0,
+  });
+
+  assert.equal(capturedSql.includes('lower(owner_email) LIKE $1'), true);
 });

@@ -120,6 +120,7 @@ export class PackageService {
         p.published_package_id,
         p.title AS published_title,
         p.subject AS published_subject,
+        p.owner_email AS published_owner_email,
         p.owner_name AS published_owner_name,
         p.published_at
        FROM uploaded_drafts d
@@ -222,7 +223,7 @@ export class PackageService {
 
       const draft = draftRes.rows[0];
       const existingRes = await client.query(
-        `SELECT published_package_id, title, subject, artifact_sha256, artifact_size_bytes, published_at, source_uploaded_draft_id, owner_name
+        `SELECT published_package_id, title, subject, artifact_sha256, artifact_size_bytes, published_at, source_uploaded_draft_id, owner_email, owner_name
          FROM published_packages
          WHERE source_uploaded_draft_id = $1 AND owner_sub = $2
          ORDER BY published_at DESC
@@ -256,7 +257,7 @@ export class PackageService {
           artifact_sha256,
           artifact_size_bytes
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-        RETURNING published_package_id, title, subject, artifact_sha256, artifact_size_bytes, published_at, source_uploaded_draft_id, owner_name`,
+        RETURNING published_package_id, title, subject, artifact_sha256, artifact_size_bytes, published_at, source_uploaded_draft_id, owner_email, owner_name`,
         [
           publishedPackageId,
           identity.sub,
@@ -304,7 +305,7 @@ export class PackageService {
     if (query) {
       values.push(`%${query.toLowerCase()}%`);
       clauses.push(
-        `(lower(title) LIKE $${values.length} OR lower(subject) LIKE $${values.length} OR lower(owner_name) LIKE $${values.length})`
+        `(lower(title) LIKE $${values.length} OR lower(subject) LIKE $${values.length} OR lower(owner_email) LIKE $${values.length} OR lower(owner_name) LIKE $${values.length})`
       );
     }
 
@@ -320,7 +321,7 @@ export class PackageService {
 
     if (owner) {
       values.push(`%${owner.toLowerCase()}%`);
-      clauses.push(`lower(owner_name) LIKE $${values.length}`);
+      clauses.push(`(lower(owner_email) LIKE $${values.length} OR lower(owner_name) LIKE $${values.length})`);
     }
 
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -329,7 +330,7 @@ export class PackageService {
     values.push(offset);
     const offsetPlaceholder = `$${values.length}`;
 
-    const sql = `SELECT published_package_id, title, subject, owner_sub, owner_name, artifact_sha256, artifact_size_bytes, published_at
+    const sql = `SELECT published_package_id, title, subject, owner_sub, owner_email, owner_name, artifact_sha256, artifact_size_bytes, published_at
       FROM published_packages
       ${where}
       ORDER BY published_at DESC

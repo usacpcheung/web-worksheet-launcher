@@ -204,10 +204,12 @@ Behavior:
 
 ### 6) Basic published browse/search
 
-`GET /api/v1/published?q=<query>&title=<title>&subject=<subject>&owner=<ownerName>&limit=<n>&offset=<n>`
+`GET /api/v1/published?q=<query>&title=<title>&subject=<subject>&owner=<ownerEmail>&limit=<n>&offset=<n>`
 
 - Search scope: published packages only.
-- Query applies case-insensitive `LIKE` on title, subject, and owner name.
+- Query applies case-insensitive `LIKE` on title, subject, and owner email (with owner name compatibility during transition).
+- `owner` filter is email-primary (`owner_email`) with compatibility fallback to `owner_name`.
+- Response items include both `owner_email` (primary display) and `owner_name` (compatibility).
 - Sorted by most recent `published_at DESC`.
 
 ### 7) Lightweight session check

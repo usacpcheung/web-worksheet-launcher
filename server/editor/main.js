@@ -3125,7 +3125,7 @@ function renderEditorShell(session) {
     subjectFilter.value = browsePublishedState.subject;
     const ownerFilter = document.createElement('input');
     ownerFilter.className = 'control';
-    ownerFilter.placeholder = 'Filter by owner';
+    ownerFilter.placeholder = 'Filter by owner email';
     ownerFilter.value = browsePublishedState.owner;
     const searchBtn = document.createElement('button');
     searchBtn.type = 'button';
@@ -3157,7 +3157,7 @@ function renderEditorShell(session) {
         title.textContent = item.title || 'Untitled';
         const subjectOwner = document.createElement('div');
         subjectOwner.className = 'muted';
-        subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_name || item.owner_sub || '—'}`;
+        subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;
         const publishedMeta = document.createElement('div');
         publishedMeta.className = 'muted';
         publishedMeta.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)} • ID: ${item.published_package_id}`;
@@ -4109,7 +4109,7 @@ function renderEditorShell(session) {
           const publishedSubjectLine = document.createElement('div');
           publishedSubjectLine.textContent = `Subject: ${item.published_subject || ''}`;
           const publishedOwnerLine = document.createElement('div');
-          publishedOwnerLine.textContent = `Owner: ${item.published_owner_name || session.state.serverSession?.user?.name || 'Unknown'}`;
+          publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || session.state.serverSession?.user?.email || 'Unknown'}`;
           const publishedAtLine = document.createElement('div');
           publishedAtLine.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)}`;
           body.append(publishedIdLine, publishedTitleLine, publishedSubjectLine, publishedOwnerLine, publishedAtLine);
