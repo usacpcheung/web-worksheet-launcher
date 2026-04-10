@@ -53,7 +53,7 @@
     <h1>Sign-in completed.</h1>
     <p id="status">Checking session readiness…</p>
     <div id="actions" class="actions hidden">
-      <a class="button-link" href="/worksheet_launcher/app/login/">Continue sign-in</a>
+      <a id="retry-link" class="button-link" href="/worksheet_launcher/app/login/popup.html">Try sign-in again</a>
     </div>
   </main>
   <script>
@@ -64,8 +64,22 @@
         type: 'worksheet-launcher-auth-complete',
         source,
       };
+      const retryLinkEl = document.getElementById('retry-link');
+      const retryUrl = new URL('/worksheet_launcher/app/login/popup.html', window.location.origin);
+      if (params.has('source')) {
+        retryUrl.searchParams.set('source', source);
+      }
+      if (retryLinkEl) {
+        retryLinkEl.href = retryUrl.pathname + retryUrl.search;
+      }
       const statusEl = document.getElementById('status');
       const actionsEl = document.getElementById('actions');
+      const retryDelayMs = 1000;
+      const maxRetryDurationMs = 15000;
+
+      function sleep(ms) {
+        return new Promise((resolve) => window.setTimeout(resolve, ms));
+      }
 
       function showNotReadyState() {
         if (statusEl) {
@@ -93,10 +107,20 @@
 
       async function maybePostSuccess() {
         if (statusEl) {
-          statusEl.textContent = 'Checking session readiness…';
+          statusEl.textContent = 'Finalizing sign-in…';
         }
 
-        const sessionReady = await isSessionReady();
+        const retryDeadline = Date.now() + maxRetryDurationMs;
+        let sessionReady = false;
+
+        while (Date.now() <= retryDeadline) {
+          sessionReady = await isSessionReady();
+          if (sessionReady) {
+            break;
+          }
+          await sleep(retryDelayMs);
+        }
+
         if (!sessionReady) {
           showNotReadyState();
           return;
