@@ -37,11 +37,9 @@ function formatUploadedDraftTimestamp(createdAt, locale = undefined) {
 
 function toUploadedDraftDisplay(item, locale = undefined) {
   const title = isNonEmptyString(item?.title) ? item.title.trim() : 'Untitled';
-  const isPublished = isNonEmptyString(item?.published_package_id);
   return {
     title,
     uploadedLabel: `Uploaded: ${formatUploadedDraftTimestamp(item?.created_at, locale)}`,
-    isPublished,
   };
 }
 
@@ -2966,18 +2964,25 @@ function renderEditorShell(session) {
     const value = String(text || '').trim();
     if (!value) return false;
     if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-      return true;
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (_error) {
+        return false;
+      }
     }
     return false;
   }
 
   function showPublishModal({ uploadedDraft }) {
     return new Promise((resolve) => {
+      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const overlay = document.createElement('div');
       overlay.className = 'confirm-modal-overlay';
       const dialog = document.createElement('section');
       dialog.className = 'confirm-modal';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
       const heading = document.createElement('h3');
       heading.textContent = 'Publish uploaded draft';
       const description = document.createElement('p');
@@ -3014,7 +3019,43 @@ function renderEditorShell(session) {
       overlay.appendChild(dialog);
       shell.appendChild(overlay);
 
-      const cleanup = () => overlay.remove();
+      const getFocusable = () => [
+        publishTitleInput,
+        publishSubjectInput,
+        cancelBtn,
+        confirmBtn,
+      ].filter((node) => !node.disabled);
+      const cleanup = () => {
+        dialog.removeEventListener('keydown', onKeyDown);
+        overlay.remove();
+        if (previousActive && typeof previousActive.focus === 'function') {
+          previousActive.focus();
+        }
+      };
+      const onKeyDown = (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          cleanup();
+          resolve({ confirmed: false });
+          return;
+        }
+        if (event.key !== 'Tab') return;
+        const focusable = getFocusable();
+        if (focusable.length === 0) return;
+        const currentIndex = focusable.indexOf(document.activeElement);
+        if (event.shiftKey) {
+          if (currentIndex <= 0) {
+            event.preventDefault();
+            focusable[focusable.length - 1].focus();
+          }
+          return;
+        }
+        if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+          event.preventDefault();
+          focusable[0].focus();
+        }
+      };
+      dialog.addEventListener('keydown', onKeyDown);
       cancelBtn.addEventListener('click', () => {
         cleanup();
         resolve({ confirmed: false });
@@ -3112,9 +3153,15 @@ function renderEditorShell(session) {
       browsePublishedState.items.forEach((item) => {
         const row = document.createElement('div');
         row.className = 'published-result-row';
-        row.innerHTML = `<strong>${item.title || 'Untitled'}</strong>
-          <div class="muted">Subject: ${item.subject || '—'} • Owner: ${item.owner_name || item.owner_sub || '—'}</div>
-          <div class="muted">Published: ${formatUploadedDraftTimestamp(item.published_at)} • ID: ${item.published_package_id}</div>`;
+        const title = document.createElement('strong');
+        title.textContent = item.title || 'Untitled';
+        const subjectOwner = document.createElement('div');
+        subjectOwner.className = 'muted';
+        subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_name || item.owner_sub || '—'}`;
+        const publishedMeta = document.createElement('div');
+        publishedMeta.className = 'muted';
+        publishedMeta.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)} • ID: ${item.published_package_id}`;
+        row.append(title, subjectOwner, publishedMeta);
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
         copyBtn.textContent = 'Copy Published ID';
@@ -4020,7 +4067,7 @@ function renderEditorShell(session) {
         deleteBtn.addEventListener('click', async () => {
           const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
           const deleteDescription = publishedPackageId
-            ? 'This deletes the uploaded draft slot only. The published package will remain available by publishedPackageId.'
+            ? `This deletes the uploaded draft slot only. The published package will remain available by published package ID (${publishedPackageId}).`
             : 'This will permanently remove this uploaded draft from server storage.';
           const confirmed = await showConfirmDialog({
             title: 'Delete uploaded draft?',
@@ -4055,13 +4102,17 @@ function renderEditorShell(session) {
           summary.textContent = 'Published details';
           const body = document.createElement('div');
           body.className = 'muted';
-          body.innerHTML = `
-            <div>Published ID: ${publishedPackageId}</div>
-            <div>Title: ${item.published_title || item.title || 'Untitled'}</div>
-            <div>Subject: ${item.published_subject || ''}</div>
-            <div>Owner: ${item.published_owner_name || session.state.serverSession?.user?.name || 'Unknown'}</div>
-            <div>Published: ${formatUploadedDraftTimestamp(item.published_at)}</div>
-          `;
+          const publishedIdLine = document.createElement('div');
+          publishedIdLine.textContent = `Published ID: ${publishedPackageId}`;
+          const publishedTitleLine = document.createElement('div');
+          publishedTitleLine.textContent = `Title: ${item.published_title || item.title || 'Untitled'}`;
+          const publishedSubjectLine = document.createElement('div');
+          publishedSubjectLine.textContent = `Subject: ${item.published_subject || ''}`;
+          const publishedOwnerLine = document.createElement('div');
+          publishedOwnerLine.textContent = `Owner: ${item.published_owner_name || session.state.serverSession?.user?.name || 'Unknown'}`;
+          const publishedAtLine = document.createElement('div');
+          publishedAtLine.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)}`;
+          body.append(publishedIdLine, publishedTitleLine, publishedSubjectLine, publishedOwnerLine, publishedAtLine);
           details.append(summary, body);
           meta.appendChild(details);
           actions.append(openBtn, copyBtn, deleteBtn);
