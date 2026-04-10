@@ -74,6 +74,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
       const identity = requireAuthenticatedIdentity(req, config.authHeaders);
 
       if (req.method === 'GET' && url.pathname === '/api/v1/session') {
+        const displayName = identity.name || identity.email || identity.sub;
         return json(
           res,
           200,
@@ -82,7 +83,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
             user: {
               sub: identity.sub,
               email: identity.email,
-              name: identity.name,
+              name: displayName,
             },
           })
         );

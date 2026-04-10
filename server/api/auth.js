@@ -12,6 +12,14 @@ function toCanonicalHeaderName(headerName) {
     .join('-');
 }
 
+function decodeBase64Utf8(value) {
+  try {
+    return Buffer.from(value, 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
 export class AuthError extends Error {
   constructor(message = 'Missing required authenticated identity header.') {
     super(message);
@@ -29,7 +37,10 @@ export function requireAuthenticatedIdentity(req, authHeaders) {
   }
 
   const email = readHeader(req, authHeaders.email)?.trim() || null;
-  const name = readHeader(req, authHeaders.name)?.trim() || null;
+  const encodedName = readHeader(req, authHeaders.nameB64)?.trim() || null;
+  const decodedName = encodedName ? decodeBase64Utf8(encodedName)?.trim() || null : null;
+  const headerName = readHeader(req, authHeaders.name)?.trim() || null;
+  const name = decodedName || headerName;
 
   return { sub, email, name };
 }

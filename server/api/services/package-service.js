@@ -6,6 +6,10 @@ function normalizeText(value, fallback = '') {
   return normalized || fallback;
 }
 
+function resolveOwnerName(identity) {
+  return normalizeText(identity?.name, normalizeText(identity?.email, normalizeText(identity?.sub, '')));
+}
+
 async function deleteArtifactIfPresent(artifact) {
   if (!artifact?.absolutePath) return;
   try {
@@ -86,7 +90,7 @@ export class PackageService {
           uploadedDraftId,
           identity.sub,
           identity.email,
-          identity.name,
+          resolveOwnerName(identity),
           normalizeText(title, 'Untitled draft'),
           normalizeText(subject, ''),
           artifact.artifactPath,
@@ -261,7 +265,7 @@ export class PackageService {
           publishedPackageId,
           identity.sub,
           identity.email,
-          identity.name,
+          resolveOwnerName(identity),
           draft.uploaded_draft_id,
           normalizeText(title, draft.title),
           normalizeText(subject, draft.subject || ''),

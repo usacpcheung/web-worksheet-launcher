@@ -15,6 +15,7 @@ test('requireAuthenticatedIdentity reads trusted headers', () => {
     sub: 'x-oidc-sub',
     email: 'x-oidc-email',
     name: 'x-oidc-name',
+    nameB64: 'x-oidc-name-b64',
   });
 
   assert.deepEqual(identity, {
@@ -22,6 +23,28 @@ test('requireAuthenticatedIdentity reads trusted headers', () => {
     email: 'user@example.com',
     name: 'Example User',
   });
+});
+
+test('requireAuthenticatedIdentity preserves mixed-script unicode name from base64 header', () => {
+  const unicodeName = 'Cheung Chin Pang張';
+  const req = {
+    headers: {
+      'x-oidc-sub': 'sub-123',
+      'x-oidc-email': 'user@example.com',
+      'x-oidc-name': 'fallback-name',
+      'x-oidc-name-b64': Buffer.from(unicodeName, 'utf8').toString('base64'),
+    },
+  };
+
+  const identity = requireAuthenticatedIdentity(req, {
+    sub: 'x-oidc-sub',
+    email: 'x-oidc-email',
+    name: 'x-oidc-name',
+    nameB64: 'x-oidc-name-b64',
+  });
+
+  assert.equal(identity.name, unicodeName);
+  assert.equal(identity.name.includes('?'), false);
 });
 
 test('requireAuthenticatedIdentity throws when sub header missing', () => {

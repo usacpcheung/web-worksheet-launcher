@@ -15,6 +15,7 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
         sub: 'x-oidc-sub',
         email: 'x-oidc-email',
         name: 'x-oidc-name',
+        nameB64: 'x-oidc-name-b64',
       },
       browsePageLimitDefault: 20,
       browsePageLimitMax: 100,
@@ -87,6 +88,26 @@ test('GET /api/v1/session returns ready identity payload', async () => {
         name: 'User Name',
       },
     });
+  });
+});
+
+test('/api/v1/session returns unchanged mixed-script unicode display name from base64 header', async () => {
+  const unicodeName = 'Cheung Chin Pang張';
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/session`, {
+      headers: {
+        ...authHeaders,
+        'x-oidc-email': 'user@example.com',
+        'x-oidc-name': 'Fallback Name',
+        'x-oidc-name-b64': Buffer.from(unicodeName, 'utf8').toString('base64'),
+      },
+    });
+
+    assert.equal(res.status, 200);
+    const payload = await res.json();
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.user.name, unicodeName);
+    assert.equal(payload.data.user.name.includes('?'), false);
   });
 });
 

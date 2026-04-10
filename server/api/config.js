@@ -40,6 +40,7 @@ export function loadConfig(env = process.env) {
       sub: (env.AUTH_HEADER_SUB || 'x-oidc-sub').toLowerCase(),
       email: (env.AUTH_HEADER_EMAIL || 'x-oidc-email').toLowerCase(),
       name: (env.AUTH_HEADER_NAME || 'x-oidc-name').toLowerCase(),
+      nameB64: (env.AUTH_HEADER_NAME_B64 || 'x-oidc-name-b64').toLowerCase(),
     },
     draftSlotLimit: 3,
     browsePageLimitDefault: 20,
