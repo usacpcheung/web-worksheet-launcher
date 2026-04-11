@@ -3149,6 +3149,17 @@ function renderEditorShell(session) {
   }
 
   async function runPublishedSearch() {
+    const sessionReady = await session.ensureServerSessionReady();
+    if (!sessionReady.ok) {
+      browsePublishedState = {
+        ...browsePublishedState,
+        loading: false,
+        error: session.state.serverActionMessage || 'Sign in for server features, then retry this action.',
+        items: [],
+      };
+      renderPublishedBrowserModal();
+      return;
+    }
     browsePublishedState = {
       ...browsePublishedState,
       loading: true,
@@ -4490,6 +4501,11 @@ function renderEditorShell(session) {
     updateSummary();
   });
   browsePublishedBtn.addEventListener('click', async () => {
+    const sessionReady = await session.ensureServerSessionReady();
+    if (!sessionReady.ok) {
+      updateSummary();
+      return;
+    }
     browsePublishedDialogOpen = true;
     renderPublishedBrowserModal();
     await runPublishedSearch();
