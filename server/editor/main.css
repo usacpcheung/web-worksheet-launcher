@@ -343,7 +343,7 @@ textarea.control {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  flex: 1 1 260px;
+  flex: 0 0 auto;
 }
 
 .uploaded-draft-meta strong {
