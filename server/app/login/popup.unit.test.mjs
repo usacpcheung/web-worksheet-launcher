@@ -4,9 +4,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const popupHtmlPath = path.resolve('server/app/login/popup.html');
+const messageContractPath = path.resolve('docs/message-contract.md');
 
 async function readPopupSource() {
   return fs.readFile(popupHtmlPath, 'utf8');
+}
+
+async function readMessageContractSource() {
+  return fs.readFile(messageContractPath, 'utf8');
 }
 
 test('popup login page posts auth-complete message to opener and same-origin target', async () => {
@@ -49,4 +54,16 @@ test('popup login page keeps finalizing status during retries and only reveals f
         }`), true);
   assert.equal(source.includes('Session is not ready yet. Continue sign-in in this window.'), true);
   assert.equal(source.includes('while (Date.now() <= retryDeadline) {'), false);
+});
+
+test('message contract callback schema matches popup runtime payload fields', async () => {
+  const popupSource = await readPopupSource();
+  const contractSource = await readMessageContractSource();
+  assert.equal(contractSource.includes('"type": "worksheet-launcher-auth-complete"'), true);
+  assert.equal(contractSource.includes('"source": "editor"'), true);
+  assert.equal(contractSource.includes('`source` may be `editor`, `viewer`, or `generic`.'), true);
+  assert.equal(contractSource.includes('"authFlowId": "auth_flow_..."'), true);
+  assert.equal(popupSource.includes("type: 'worksheet-launcher-auth-complete'"), true);
+  assert.equal(popupSource.includes('source,'), true);
+  assert.equal(popupSource.includes('authFlowId,'), true);
 });

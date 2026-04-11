@@ -109,3 +109,64 @@ test('startAuthPopupFlow validates callback origin/type and resolves ready', asy
   assert.equal(sessionReadyCalled, 1);
   assert.equal(statusMessages.includes('Sign-in callback received. Verifying session…'), true);
 });
+
+test('startAuthPopupFlow ignores mismatched authFlowId and succeeds via fallback polling', async () => {
+  const win = createWindowStub();
+  let calls = 0;
+  const apiClient = {
+    getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html?source=test&authFlowId=flow_ok',
+    getSession: async () => {
+      calls += 1;
+      if (calls < 2) {
+        return { ok: false, error: { code: 'AUTH_REQUIRED', status: 401, requiresSignIn: true } };
+      }
+      return { ok: true, data: { user: { id: 'u_5' } } };
+    },
+  };
+
+  const flow = startAuthPopupFlow({
+    apiClient,
+    authFlowId: 'flow_ok',
+    pollIntervalMs: 10,
+    pollTimeoutMs: 250,
+  });
+
+  await win.sendMessage({
+    origin: 'https://example.test',
+    data: { type: 'worksheet-launcher-auth-complete', authFlowId: 'stale_flow' },
+  });
+
+  const result = await flow.promise;
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'ready');
+  assert.equal(calls >= 2, true);
+});
+
+test('startAuthPopupFlow times out when callback is missed and cleans up listener', async () => {
+  const win = createWindowStub();
+  let notReadyCalled = 0;
+  const apiClient = {
+    getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html?source=test&authFlowId=never_ready',
+    getSession: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401, requiresSignIn: true } }),
+  };
+
+  const flow = startAuthPopupFlow({
+    apiClient,
+    authFlowId: 'never_ready',
+    pollIntervalMs: 10,
+    pollTimeoutMs: 45,
+    onSessionNotReady: () => { notReadyCalled += 1; },
+  });
+
+  const result = await flow.promise;
+  assert.equal(result.ok, false);
+  assert.equal(result.timedOut, true);
+  assert.equal(result.status, 'not_ready');
+  assert.equal(notReadyCalled, 1);
+
+  await win.sendMessage({
+    origin: 'https://example.test',
+    data: { type: 'worksheet-launcher-auth-complete', authFlowId: 'never_ready' },
+  });
+  assert.equal(notReadyCalled, 1);
+});

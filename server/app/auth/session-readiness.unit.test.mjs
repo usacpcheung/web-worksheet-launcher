@@ -40,6 +40,26 @@ test('probeSession maps auth-required states to not_ready', async () => {
   }
 });
 
+test('probeSession normalizes non-auth and network failures to error status', async () => {
+  const apiClientNonAuth = {
+    getSession: async () => ({ ok: false, error: { status: 502, code: 'BAD_GATEWAY', message: 'Gateway error' } }),
+  };
+  const nonAuth = await probeSession({ apiClient: apiClientNonAuth, force: true });
+  assert.equal(nonAuth.ok, false);
+  assert.equal(nonAuth.status, 'error');
+  assert.equal(nonAuth.error?.code, 'BAD_GATEWAY');
+
+  const apiClientThrowing = {
+    getSession: async () => {
+      throw new Error('socket hang up');
+    },
+  };
+  const networkFailure = await probeSession({ apiClient: apiClientThrowing, force: true });
+  assert.equal(networkFailure.ok, false);
+  assert.equal(networkFailure.status, 'error');
+  assert.equal(String(networkFailure.error?.message || '').includes('socket hang up'), true);
+});
+
 test('probeSession caches and coalesces requests', async () => {
   let calls = 0;
   const apiClient = {
@@ -64,6 +84,25 @@ test('probeSession caches and coalesces requests', async () => {
   await new Promise((resolve) => setTimeout(resolve, PROBE_CACHE_TTL_MS + 30));
   await probeSession({ apiClient });
   assert.equal(calls, 2);
+});
+
+test('probeSession force=true bypasses warm cache TTL', async () => {
+  let calls = 0;
+  const apiClient = {
+    getSession: async () => {
+      calls += 1;
+      return { ok: true, data: { user: { id: `u_${calls}` } } };
+    },
+  };
+
+  const first = await probeSession({ apiClient });
+  const forced = await probeSession({ apiClient, force: true });
+
+  assert.equal(first.status, 'ready');
+  assert.equal(forced.status, 'ready');
+  assert.equal(calls, 2);
+  assert.equal(first.user?.id, 'u_1');
+  assert.equal(forced.user?.id, 'u_2');
 });
 
 test('waitForSessionReady polls until ready with attempts and elapsed time', async () => {
