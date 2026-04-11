@@ -743,6 +743,8 @@ textarea.control {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin-top: 10px;
+  margin-bottom: 12px;
 }
 
 .published-result-row {
