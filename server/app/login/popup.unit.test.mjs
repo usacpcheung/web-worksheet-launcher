@@ -19,13 +19,16 @@ test('popup login page posts auth-complete message to opener and same-origin tar
 
 test('popup login page checks session readiness with bounded retries before fallback', async () => {
   const source = await readPopupSource();
+  assert.equal(source.includes("import { waitForSessionReady } from '../auth/session-readiness.js';"), true);
+  assert.equal(source.includes("import { AUTH_POPUP_FLOW_DEFAULTS } from '../auth/auth-popup-flow.js';"), true);
   assert.equal(source.includes("fetch('/api/worksheet-launcher/v1/session', {"), true);
   assert.equal(source.includes("credentials: 'include'"), true);
-  assert.equal(source.includes('const retryDelayMs = 1000;'), true);
-  assert.equal(source.includes('const maxRetryDurationMs = 15000;'), true);
-  assert.equal(source.includes('while (Date.now() <= retryDeadline) {'), true);
-  assert.equal(source.includes('await sleep(retryDelayMs);'), true);
-  assert.equal(source.includes('if (!sessionReady) {'), true);
+  assert.equal(source.includes('const retryDelayMs = AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs;'), true);
+  assert.equal(source.includes('const maxRetryDurationMs = AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs;'), true);
+  assert.equal(source.includes('const waitResult = await waitForSessionReady({'), true);
+  assert.equal(source.includes('intervalMs: retryDelayMs,'), true);
+  assert.equal(source.includes('timeoutMs: maxRetryDurationMs,'), true);
+  assert.equal(source.includes('if (waitResult.status !== \'ready\') {'), true);
   assert.equal(source.includes('showNotReadyState();'), true);
   assert.equal(source.includes('window.close();'), true);
 });
@@ -39,10 +42,11 @@ test('popup login page keeps finalizing status during retries and only reveals f
   assert.equal(source.includes("if (params.has('authFlowId')) {"), true);
   assert.equal(source.includes("retryUrl.searchParams.set('authFlowId', authFlowId);"), true);
   assert.equal(source.includes("statusEl.textContent = 'Finalizing sign-in…';"), true);
-  assert.equal(source.includes('while (Date.now() <= retryDeadline) {'), true);
-  assert.equal(source.includes(`if (!sessionReady) {
+  assert.equal(source.includes('const waitResult = await waitForSessionReady({'), true);
+  assert.equal(source.includes(`if (waitResult.status !== 'ready') {
           showNotReadyState();
           return;
         }`), true);
   assert.equal(source.includes('Session is not ready yet. Continue sign-in in this window.'), true);
+  assert.equal(source.includes('while (Date.now() <= retryDeadline) {'), false);
 });
