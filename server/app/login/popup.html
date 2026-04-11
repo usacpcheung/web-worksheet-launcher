@@ -56,30 +56,34 @@
       <a id="retry-link" class="button-link" href="/worksheet_launcher/app/login/popup.html">Try sign-in again</a>
     </div>
   </main>
-  <script>
+  <script type="module">
+    import { waitForSessionReady } from '../auth/session-readiness.js';
+    import { AUTH_POPUP_FLOW_DEFAULTS } from '../auth/auth-popup-flow.js';
+
     (function notifyOpener() {
       const params = new URLSearchParams(window.location.search);
       const source = params.get('source') || 'generic';
+      const authFlowId = params.get('authFlowId') || '';
       const payload = {
         type: 'worksheet-launcher-auth-complete',
         source,
+        authFlowId,
       };
       const retryLinkEl = document.getElementById('retry-link');
       const retryUrl = new URL('/worksheet_launcher/app/login/popup.html', window.location.origin);
       if (params.has('source')) {
         retryUrl.searchParams.set('source', source);
       }
+      if (params.has('authFlowId')) {
+        retryUrl.searchParams.set('authFlowId', authFlowId);
+      }
       if (retryLinkEl) {
         retryLinkEl.href = retryUrl.pathname + retryUrl.search;
       }
       const statusEl = document.getElementById('status');
       const actionsEl = document.getElementById('actions');
-      const retryDelayMs = 1000;
-      const maxRetryDurationMs = 15000;
-
-      function sleep(ms) {
-        return new Promise((resolve) => window.setTimeout(resolve, ms));
-      }
+      const retryDelayMs = AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs;
+      const maxRetryDurationMs = AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs;
 
       function showNotReadyState() {
         if (statusEl) {
@@ -90,38 +94,43 @@
         }
       }
 
-      async function isSessionReady() {
-        try {
-          const response = await fetch('/api/worksheet-launcher/v1/session', {
-            credentials: 'include',
-          });
-          if (!response.ok) {
-            return false;
-          }
-          const body = await response.json();
-          return Boolean(body && body.ok === true);
-        } catch {
-          return false;
-        }
-      }
-
       async function maybePostSuccess() {
         if (statusEl) {
           statusEl.textContent = 'Finalizing sign-in…';
         }
 
-        const retryDeadline = Date.now() + maxRetryDurationMs;
-        let sessionReady = false;
+        const waitResult = await waitForSessionReady({
+          apiClient: {
+            getSession: async () => {
+              try {
+                const response = await fetch('/api/worksheet-launcher/v1/session', { credentials: 'include' });
+                if (!response.ok) {
+                  return {
+                    ok: false,
+                    error: {
+                      status: response.status,
+                      requiresSignIn: response.status === 401 || response.status === 403,
+                      message: 'Session is not ready yet.',
+                    },
+                  };
+                }
+                return response.json();
+              } catch {
+                return {
+                  ok: false,
+                  error: {
+                    code: 'SESSION_PROBE_FAILED',
+                    message: 'Session check request failed.',
+                  },
+                };
+              }
+            },
+          },
+          intervalMs: retryDelayMs,
+          timeoutMs: maxRetryDurationMs,
+        });
 
-        while (Date.now() <= retryDeadline) {
-          sessionReady = await isSessionReady();
-          if (sessionReady) {
-            break;
-          }
-          await sleep(retryDelayMs);
-        }
-
-        if (!sessionReady) {
+        if (waitResult.status !== 'ready') {
           showNotReadyState();
           return;
         }
