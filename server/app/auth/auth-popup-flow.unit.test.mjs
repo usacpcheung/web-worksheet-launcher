@@ -48,7 +48,7 @@ test('startAuthPopupFlow uses shared default poll settings', () => {
   assert.equal(AUTH_POPUP_FLOW_DEFAULTS.hardDeadlineMs, 60000);
 });
 
-test('startAuthPopupFlow reports popup blocked and returns not-ready/timed-out result', async () => {
+test('startAuthPopupFlow reports popup blocked and finalizes immediately', async () => {
   createWindowStub({ popupBlocked: true });
 
   let popupBlockedCalled = 0;
@@ -71,6 +71,57 @@ test('startAuthPopupFlow reports popup blocked and returns not-ready/timed-out r
   assert.equal(popupBlockedCalled, 1);
   assert.equal(notReadyCalled, 1);
   assert.equal(result.ok, false);
+  assert.equal(result.error?.code, 'AUTH_POPUP_BLOCKED');
+  assert.equal(result.timedOut, false);
+});
+
+test('startAuthPopupFlow allows hard deadline shorter than poll timeout', async () => {
+  createWindowStub();
+  const apiClient = {
+    getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html?source=test',
+    getSession: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401, requiresSignIn: true } }),
+  };
+
+  const flow = startAuthPopupFlow({
+    apiClient,
+    pollIntervalMs: 10,
+    pollTimeoutMs: 500,
+    hardDeadlineMs: 40,
+  });
+
+  const result = await flow.promise;
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, 'AUTH_POPUP_FLOW_HARD_DEADLINE');
+  assert.equal(result.elapsedMs, 40);
+});
+
+test('startAuthPopupFlow resolves promise after async callbacks complete', async () => {
+  const win = createWindowStub();
+  let callbackFinished = false;
+
+  const apiClient = {
+    getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html?source=test',
+    getSession: async () => ({ ok: true, data: { user: { id: 'u_async' } } }),
+  };
+
+  const flow = startAuthPopupFlow({
+    apiClient,
+    pollIntervalMs: 100,
+    pollTimeoutMs: 500,
+    onSessionReady: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      callbackFinished = true;
+    },
+  });
+
+  await win.sendMessage({
+    origin: 'https://example.test',
+    data: { type: 'worksheet-launcher-auth-complete' },
+  });
+
+  const result = await flow.promise;
+  assert.equal(result.ok, true);
+  assert.equal(callbackFinished, true);
 });
 
 test('startAuthPopupFlow validates callback origin/type and resolves ready', async () => {
