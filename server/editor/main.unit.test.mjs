@@ -2868,6 +2868,51 @@ test('loadUploadedDrafts preflight:false does not reuse an in-flight preflight:t
   assert.equal(session.state.uploadedDrafts[0].uploaded_draft_id, 'draft-1');
 });
 
+test('loadUploadedDrafts keeps loading state true until overlapping preflight and non-preflight refreshes finish', async () => {
+  const mod = await loadEditorModule();
+  let resolveEnsure;
+  let resolveList;
+  const ensureGate = new Promise((resolve) => {
+    resolveEnsure = resolve;
+  });
+  const listGate = new Promise((resolve) => {
+    resolveList = resolve;
+  });
+  const loadingStates = [];
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => {
+        await listGate;
+        return { ok: true, data: { items: [] } };
+      },
+    },
+  });
+  session.setOnStateChange((state) => {
+    loadingStates.push(state.isLoadingUploadedDrafts);
+  });
+  session.ensureServerSessionReady = async () => {
+    await ensureGate;
+    return { ok: true, result: { ok: true } };
+  };
+
+  const withPreflight = session.loadUploadedDrafts();
+  const withoutPreflight = session.loadUploadedDrafts({ preflight: false });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  resolveEnsure();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(session.state.isLoadingUploadedDrafts, true);
+
+  resolveList();
+  await Promise.all([withPreflight, withoutPreflight]);
+
+  assert.equal(session.state.isLoadingUploadedDrafts, false);
+  assert.equal(loadingStates.includes(true), true);
+  assert.equal(loadingStates[loadingStates.length - 1], false);
+});
+
 test('loadUploadedDrafts restores prior server action message after successful refresh', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests(), {
