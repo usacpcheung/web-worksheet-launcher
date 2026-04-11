@@ -614,7 +614,9 @@ class EditorDraftSession {
       lastUploadedDraft: null,
       lastPublishedPackage: null,
       uploadedDrafts: [],
+      isUploadingDraft: false,
       isLoadingUploadedDrafts: false,
+      publishingDraftIds: new Set(),
       publishedBrowseQuery: '',
     };
 
@@ -629,6 +631,7 @@ class EditorDraftSession {
     this._authPopupWindow = null;
     this._authPopupFlow = null;
     this._activeAuthFlowId = null;
+    this._loadUploadedDraftsPromise = null;
   }
 
   setOnStateChange(handler) {
@@ -2414,63 +2417,120 @@ class EditorDraftSession {
   }
 
   async uploadCurrentDraftToServer(options = {}) {
-    if (options.preflight !== false) {
-      const sessionReady = await this.ensureServerSessionReady();
-      if (!sessionReady.ok) return sessionReady.result;
+    if (this.state.isUploadingDraft) {
+      return {
+        ok: false,
+        skipped: true,
+        error: { message: 'Upload already in progress.' },
+      };
     }
-    const zipBytes = await this.buildCurrentDraftPackageZipBytes();
-    const result = await this.apiClient.uploadDraftPackage(zipBytes, {
-      title: this.state.draft?.title || '',
-      subject: this.state.draft?.metadata?.subject || '',
-    });
-    if (!result.ok) {
-      this.state.serverActionMessage = result.error.message;
+    this.state.isUploadingDraft = true;
+    this.state.serverActionMessage = 'Uploading…';
+    this.notifyStateChange();
+    try {
+      if (options.preflight !== false) {
+        const sessionReady = await this.ensureServerSessionReady();
+        if (!sessionReady.ok) return sessionReady.result;
+      }
+      const zipBytes = await this.buildCurrentDraftPackageZipBytes();
+      const result = await this.apiClient.uploadDraftPackage(zipBytes, {
+        title: this.state.draft?.title || '',
+        subject: this.state.draft?.metadata?.subject || '',
+      });
+      if (!result.ok) {
+        this.state.serverActionMessage = result.error.message;
+        this.notifyStateChange();
+        return result;
+      }
+      this.state.lastUploadedDraft = result.data;
+      this.state.serverActionMessage = `Uploaded draft ${result.data.uploaded_draft_id}.`;
+      await this.loadUploadedDrafts({ preflight: false });
       this.notifyStateChange();
       return result;
+    } finally {
+      this.state.isUploadingDraft = false;
+      this.notifyStateChange();
     }
-    this.state.lastUploadedDraft = result.data;
-    this.state.serverActionMessage = `Uploaded draft ${result.data.uploaded_draft_id}.`;
-    await this.loadUploadedDrafts({ preflight: false });
-    this.notifyStateChange();
-    return result;
   }
 
   async publishUploadedDraftToServer(uploadedDraftId, metadata = {}) {
-    const sessionReady = await this.ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-    const publishResult = await this.apiClient.publishFromUploadedDraft(uploadedDraftId, {
-      title: metadata.title || '',
-      subject: metadata.subject || '',
-    });
-    if (!publishResult.ok) {
-      this.state.serverActionMessage = publishResult.error.message;
+    const normalizedUploadedDraftId = String(uploadedDraftId || '').trim();
+    if (!normalizedUploadedDraftId) {
+      return { ok: false, error: { message: 'Uploaded draft ID is required.' } };
+    }
+    if (this.state.publishingDraftIds.has(normalizedUploadedDraftId)) {
+      return {
+        ok: false,
+        skipped: true,
+        error: { message: `Publish already in progress for uploaded draft ${normalizedUploadedDraftId}.` },
+      };
+    }
+    this.state.publishingDraftIds.add(normalizedUploadedDraftId);
+    this.state.serverActionMessage = 'Publishing…';
+    this.notifyStateChange();
+    try {
+      const sessionReady = await this.ensureServerSessionReady();
+      if (!sessionReady.ok) return sessionReady.result;
+      const publishResult = await this.apiClient.publishFromUploadedDraft(normalizedUploadedDraftId, {
+        title: metadata.title || '',
+        subject: metadata.subject || '',
+      });
+      if (!publishResult.ok) {
+        this.state.serverActionMessage = publishResult.error.message;
+        this.notifyStateChange();
+        return publishResult;
+      }
+      this.state.lastPublishedPackage = publishResult.data;
+      this.state.serverActionMessage = `Published package ${publishResult.data.published_package_id}.`;
+      await this.loadUploadedDrafts({ preflight: false });
       this.notifyStateChange();
       return publishResult;
+    } finally {
+      this.state.publishingDraftIds.delete(normalizedUploadedDraftId);
+      this.notifyStateChange();
     }
-    this.state.lastPublishedPackage = publishResult.data;
-    this.state.serverActionMessage = `Published package ${publishResult.data.published_package_id}.`;
-    await this.loadUploadedDrafts({ preflight: false });
-    this.notifyStateChange();
-    return publishResult;
   }
 
   async loadUploadedDrafts(options = {}) {
-    if (options.preflight !== false) {
-      const sessionReady = await this.ensureServerSessionReady();
-      if (!sessionReady.ok) return sessionReady.result;
+    if (this._loadUploadedDraftsPromise) {
+      return this._loadUploadedDraftsPromise;
     }
-    this.state.isLoadingUploadedDrafts = true;
-    this.notifyStateChange();
-    const result = await this.apiClient.listUploadedDrafts();
-    this.state.isLoadingUploadedDrafts = false;
-    if (!result.ok) {
-      this.state.serverActionMessage = result.error.message;
+
+    this._loadUploadedDraftsPromise = (async () => {
+      if (options.preflight !== false) {
+        const sessionReady = await this.ensureServerSessionReady();
+        if (!sessionReady.ok) return sessionReady.result;
+      }
+
+      const messageBeforeRefresh = this.state.serverActionMessage;
+      this.state.isLoadingUploadedDrafts = true;
+      this.state.serverActionMessage = 'Refreshing…';
       this.notifyStateChange();
-      return result;
+
+      try {
+        const result = await this.apiClient.listUploadedDrafts();
+        if (!result.ok) {
+          this.state.serverActionMessage = result.error.message;
+          this.notifyStateChange();
+          return result;
+        }
+
+        this.state.uploadedDrafts = Array.isArray(result.data?.items) ? result.data.items : [];
+        if (this.state.serverActionMessage === 'Refreshing…') {
+          this.state.serverActionMessage = messageBeforeRefresh;
+        }
+        this.notifyStateChange();
+        return result;
+      } finally {
+        this.state.isLoadingUploadedDrafts = false;
+        this.notifyStateChange();
+      }
+    })();
+    try {
+      return await this._loadUploadedDraftsPromise;
+    } finally {
+      this._loadUploadedDraftsPromise = null;
     }
-    this.state.uploadedDrafts = Array.isArray(result.data?.items) ? result.data.items : [];
-    this.notifyStateChange();
-    return result;
   }
 
   async reopenUploadedDraftAsLocalCopy(uploadedDraftId) {
@@ -2503,7 +2563,9 @@ class EditorDraftSession {
     const successMessage = 'Uploaded draft deleted.';
     this.state.serverActionMessage = successMessage;
     const refreshResult = await this.loadUploadedDrafts({ preflight: false });
-    if (refreshResult && !refreshResult.ok) {
+    if (refreshResult && refreshResult.ok) {
+      this.state.serverActionMessage = successMessage;
+    } else if (refreshResult && !refreshResult.ok) {
       const refreshMessage = refreshResult.error?.message || 'Uploaded drafts refresh failed.';
       this.state.serverActionMessage = `${successMessage} ${refreshMessage}`;
     }
@@ -3233,6 +3295,8 @@ function renderEditorShell(session) {
   serverSessionStatus.className = 'muted';
   const serverActionStatus = document.createElement('p');
   serverActionStatus.className = 'muted';
+  serverActionStatus.setAttribute('role', 'status');
+  serverActionStatus.setAttribute('aria-live', 'polite');
   const uploadedDraftList = document.createElement('div');
   uploadedDraftList.className = 'muted';
   const browsePublishedModalRoot = document.createElement('div');
@@ -4001,11 +4065,26 @@ function renderEditorShell(session) {
     } else {
       serverSessionStatus.textContent = `Server session: not ready. ${session.state.serverSession?.error || 'Sign in for server features.'}`;
     }
-    serverActionStatus.textContent = session.state.serverActionMessage || '';
+    const isUploadingDraft = session.state.isUploadingDraft;
+    const isRefreshingUploadedDrafts = session.state.isLoadingUploadedDrafts;
+    const activePublishCount = session.state.publishingDraftIds?.size || 0;
+    const hasServerActionInFlight = isUploadingDraft || isRefreshingUploadedDrafts || activePublishCount > 0;
+    if (isUploadingDraft) {
+      serverActionStatus.textContent = 'Uploading…';
+    } else if (activePublishCount > 0) {
+      serverActionStatus.textContent = activePublishCount === 1 ? 'Publishing…' : `Publishing ${activePublishCount} drafts…`;
+    } else if (isRefreshingUploadedDrafts) {
+      serverActionStatus.textContent = 'Refreshing…';
+    } else {
+      serverActionStatus.textContent = session.state.serverActionMessage || '';
+    }
+    serverActionStatus.setAttribute('aria-busy', hasServerActionInFlight ? 'true' : 'false');
     const serverReady = sessionStatus === 'ready';
-    syncDraftBtn.disabled = !serverReady;
+    syncDraftBtn.textContent = isUploadingDraft ? 'Uploading…' : 'Upload Draft';
+    syncDraftBtn.disabled = !serverReady || isUploadingDraft;
     browsePublishedBtn.disabled = !serverReady;
-    loadUploadedDraftsBtn.disabled = !serverReady;
+    loadUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? 'Refreshing…' : 'Refresh Uploaded Drafts';
+    loadUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;
     signInBtn.hidden = serverReady;
     uploadedDraftList.innerHTML = '';
     if (session.state.uploadedDrafts.length === 0) {
@@ -4017,18 +4096,47 @@ function renderEditorShell(session) {
       session.state.uploadedDrafts.forEach((item) => {
         const display = toUploadedDraftDisplay(item);
         const row = document.createElement('div');
-        row.className = 'button-row';
+        row.className = 'uploaded-draft-row';
         const meta = document.createElement('div');
+        meta.className = 'uploaded-draft-meta';
         const titleLine = document.createElement('strong');
         titleLine.textContent = display.title;
         const uploadedAtLine = document.createElement('div');
-        uploadedAtLine.className = 'muted';
+        uploadedAtLine.className = 'muted uploaded-draft-uploaded-at';
         uploadedAtLine.textContent = display.uploadedLabel;
         meta.append(titleLine, uploadedAtLine);
+        const detailsGroup = document.createElement('div');
+        detailsGroup.className = 'uploaded-draft-details-group';
+        const draftDetails = document.createElement('details');
+        draftDetails.className = 'uploaded-draft-details uploaded-draft-details--draft';
+        const draftSummary = document.createElement('summary');
+        draftSummary.textContent = 'Draft details';
+        const draftBody = document.createElement('div');
+        draftBody.className = 'muted uploaded-draft-details-body';
+        const draftOwner = item.owner_email
+          || item.owner_name
+          || item.owner_sub
+          || session.state.serverSession?.user?.email
+          || session.state.serverSession?.user?.sub
+          || 'Unknown';
+        const draftIdLine = document.createElement('div');
+        draftIdLine.textContent = `Uploaded draft ID: ${item.uploaded_draft_id || '—'}`;
+        const draftUploadedLine = document.createElement('div');
+        draftUploadedLine.textContent = `Uploaded: ${formatUploadedDraftTimestamp(item.created_at)}`;
+        const draftTitleLine = document.createElement('div');
+        draftTitleLine.textContent = `Title: ${item.title || 'Untitled'}`;
+        const draftSubjectLine = document.createElement('div');
+        draftSubjectLine.textContent = `Subject: ${item.subject || '—'}`;
+        const draftOwnerLine = document.createElement('div');
+        draftOwnerLine.textContent = `Owner: ${draftOwner}`;
+        draftBody.append(draftIdLine, draftUploadedLine, draftTitleLine, draftSubjectLine, draftOwnerLine);
+        draftDetails.append(draftSummary, draftBody);
+        detailsGroup.appendChild(draftDetails);
         const actions = document.createElement('div');
-        actions.className = 'button-row';
+        actions.className = 'uploaded-draft-actions';
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
+        openBtn.className = 'uploaded-draft-action uploaded-draft-action--secondary';
         openBtn.textContent = 'Open';
         openBtn.disabled = !serverReady;
         openBtn.addEventListener('click', async () => {
@@ -4037,7 +4145,7 @@ function renderEditorShell(session) {
         });
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
-        deleteBtn.className = 'danger';
+        deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
         deleteBtn.textContent = 'Delete';
         deleteBtn.disabled = !serverReady;
         deleteBtn.addEventListener('click', async () => {
@@ -4058,12 +4166,14 @@ function renderEditorShell(session) {
         });
         const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
         if (publishedPackageId) {
+          actions.classList.add('uploaded-draft-actions--published');
           const badge = document.createElement('span');
-          badge.className = 'editor-pill editor-pill--ok';
+          badge.className = 'editor-pill editor-pill--ok uploaded-draft-published-badge';
           badge.textContent = 'Published';
           meta.appendChild(badge);
           const copyBtn = document.createElement('button');
           copyBtn.type = 'button';
+          copyBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
           copyBtn.textContent = 'Copy Published ID';
           copyBtn.disabled = !serverReady;
           copyBtn.addEventListener('click', async () => {
@@ -4074,10 +4184,11 @@ function renderEditorShell(session) {
             session.notifyStateChange();
           });
           const details = document.createElement('details');
+          details.className = 'uploaded-draft-details uploaded-draft-details--published';
           const summary = document.createElement('summary');
           summary.textContent = 'Published details';
           const body = document.createElement('div');
-          body.className = 'muted';
+          body.className = 'muted uploaded-draft-details-body';
           const publishedIdLine = document.createElement('div');
           publishedIdLine.textContent = `Published ID: ${publishedPackageId}`;
           const publishedTitleLine = document.createElement('div');
@@ -4090,14 +4201,19 @@ function renderEditorShell(session) {
           publishedAtLine.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)}`;
           body.append(publishedIdLine, publishedTitleLine, publishedSubjectLine, publishedOwnerLine, publishedAtLine);
           details.append(summary, body);
-          meta.appendChild(details);
+          detailsGroup.appendChild(details);
+          meta.appendChild(detailsGroup);
           actions.append(openBtn, copyBtn, deleteBtn);
         } else {
+          actions.classList.add('uploaded-draft-actions--unpublished');
+          const isPublishing = session.state.publishingDraftIds.has(item.uploaded_draft_id);
           const publishBtn = document.createElement('button');
           publishBtn.type = 'button';
-          publishBtn.textContent = 'Publish';
-          publishBtn.disabled = !serverReady;
+          publishBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+          publishBtn.textContent = isPublishing ? 'Publishing…' : 'Publish';
+          publishBtn.disabled = !serverReady || isPublishing;
           publishBtn.addEventListener('click', async () => {
+            if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
             const modal = await showPublishModal({ uploadedDraft: item });
             if (!modal.confirmed) return;
             await session.publishUploadedDraftToServer(item.uploaded_draft_id, {
@@ -4106,6 +4222,7 @@ function renderEditorShell(session) {
             });
             updateSummary();
           });
+          meta.appendChild(detailsGroup);
           actions.append(openBtn, publishBtn, deleteBtn);
         }
         row.append(meta, actions);
