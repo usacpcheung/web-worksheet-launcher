@@ -3271,7 +3271,15 @@ function renderEditorShell(session) {
           if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
           const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);
           renderPublishedBrowserModal();
-          await reopenPromise;
+          const reopenResult = await reopenPromise;
+          if (reopenResult?.ok) {
+            browsePublishedDialogOpen = false;
+          } else {
+            browsePublishedState = {
+              ...browsePublishedState,
+              error: session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.',
+            };
+          }
           renderPublishedBrowserModal();
           updateSummary();
         });

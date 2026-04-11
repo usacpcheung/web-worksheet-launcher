@@ -682,7 +682,9 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? 'Opening…' : 'Open in Editor';"), true);
   assert.equal(source.includes('if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;'), true);
   assert.equal(source.includes('const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);'), true);
-  assert.equal(source.includes('renderPublishedBrowserModal();\n          await reopenPromise;\n          renderPublishedBrowserModal();'), true);
+  assert.equal(source.includes('const reopenResult = await reopenPromise;'), true);
+  assert.equal(source.includes('if (reopenResult?.ok) {\n            browsePublishedDialogOpen = false;'), true);
+  assert.equal(source.includes("error: session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.',"), true);
   assert.equal(source.includes("summary.textContent = 'Published details';"), true);
   assert.equal(
     source.includes("publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;"),
