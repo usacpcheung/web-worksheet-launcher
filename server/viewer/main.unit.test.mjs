@@ -39,6 +39,34 @@ async function loadViewerModule(overrides = {}) {
       return { ok: true, normalizedValue: Number(text), kind };
     }),
     SharedAuthGate: overrides.SharedAuthGate || class {},
+    probeSession: overrides.probeSession || (async ({ apiClient }) => {
+      const result = await apiClient.getSession();
+      if (result?.ok) return { ok: true, status: 'ready', user: result.data?.user || null, error: null };
+      return { ok: false, status: 'not_ready', user: null, error: result?.error || { message: 'auth required' } };
+    }),
+    AUTH_POPUP_FLOW_DEFAULTS: overrides.AUTH_POPUP_FLOW_DEFAULTS || { pollIntervalMs: 1000, pollTimeoutMs: 15000 },
+    startAuthPopupFlow: overrides.startAuthPopupFlow || ((options = {}) => {
+      const popupWindow = globalThis.window?.open?.(
+        options.apiClient.getSessionSignInUrl({ source: options.source, authFlowId: options.authFlowId }),
+        'worksheet_launcher_auth_popup_viewer',
+        'width=520,height=720,left=160,top=120,resizable=yes,scrollbars=yes'
+      );
+      if (!popupWindow) {
+        options.onPopupBlocked?.();
+        options.onSessionNotReady?.({ ok: false, status: 'not_ready', error: { message: 'blocked' } });
+        return { popupWindow: null, cancel: () => true, promise: Promise.resolve({ ok: false }) };
+      }
+      options.onStatusMessage?.('Complete sign-in in the popup. Session will refresh automatically.');
+      const timer = setTimeout(async () => {
+        const result = await globalThis[bagName].probeSession({ apiClient: options.apiClient, force: true });
+        if (result.ok) {
+          await options.onSessionReady?.(result);
+        } else {
+          options.onSessionNotReady?.(result);
+        }
+      }, 0);
+      return { popupWindow, cancel: () => { clearTimeout(timer); return true; }, promise: Promise.resolve({ ok: true }) };
+    }),
     createServerApiClient: overrides.createServerApiClient || (() => ({
       getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
       getSession: async () => ({ ok: false, error: { message: 'auth required' } }),
@@ -80,9 +108,9 @@ async function loadViewerModule(overrides = {}) {
       replacement: 'const normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;',
     },
     {
-      name: 'replace SharedAuthGate import with test bag binding',
-      pattern: /import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];/,
-      replacement: 'const SharedAuthGate = __testBag.SharedAuthGate;',
+      name: 'replace shared auth imports with test bag bindings',
+      pattern: /import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*probeSession\s*\}\s*from\s*['"]\.\.\/app\/auth\/session-readiness\.js['"];\s*import\s*\{\s*startAuthPopupFlow,\s*AUTH_POPUP_FLOW_DEFAULTS\s*\}\s*from\s*['"]\.\.\/app\/auth\/auth-popup-flow\.js['"];/,
+      replacement: 'const SharedAuthGate = __testBag.SharedAuthGate;\nconst probeSession = __testBag.probeSession;\nconst startAuthPopupFlow = __testBag.startAuthPopupFlow;\nconst AUTH_POPUP_FLOW_DEFAULTS = __testBag.AUTH_POPUP_FLOW_DEFAULTS;',
     },
     {
       name: 'replace worksheet package imports with test bag bindings',
@@ -144,76 +172,78 @@ test('resolveImportedWorksheetPayload falls back when snapshot mapping fails', a
   assert.equal(payload.blocks.length, 1);
 });
 
-test('viewer handleAuthCompleteMessage refreshes session and re-browses packages on valid message', async () => {
+test('viewer beginServerSignIn completes via shared popup flow and re-browses packages on ready session', async () => {
   const mod = await loadViewerModule({
-    window: { location: { origin: 'https://example.test' } },
+    window: { location: { origin: 'https://example.test' }, open: () => ({ closed: false }) },
   });
   const session = new mod.ViewerAttemptSession({}, {
     apiClient: {
-      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSessionSignInUrl: ({ source, authFlowId } = {}) => {
+        const params = new URLSearchParams();
+        if (source) params.set('source', source);
+        if (authFlowId) params.set('authFlowId', authFlowId);
+        const query = params.toString();
+        return query ? `/worksheet_launcher/app/login/popup.html?${query}` : '/worksheet_launcher/app/login/popup.html';
+      },
       getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
     },
   });
-
-  const handled = await session.handleAuthCompleteMessage({
-    origin: 'https://example.test',
-    data: { type: 'worksheet-launcher-auth-complete', source: 'viewer' },
-  });
-
-  assert.equal(handled, true);
+  session.beginServerSignIn();
+  await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(session.state.serverSession.status, 'ready');
   assert.deepEqual(session.state.publishedPackages, []);
 });
 
-test('viewer handleAuthCompleteMessage ignores wrong-origin and malformed messages', async () => {
+test('viewer beginServerSignIn shows popup blocked message when popup cannot open', async () => {
   const mod = await loadViewerModule({
-    window: { location: { origin: 'https://example.test' } },
+    window: {
+      location: { origin: 'https://example.test' },
+      open: () => null,
+    },
   });
   const session = new mod.ViewerAttemptSession({}, {
     apiClient: {
-      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSessionSignInUrl: ({ source, authFlowId } = {}) => {
+        const params = new URLSearchParams();
+        if (source) params.set('source', source);
+        if (authFlowId) params.set('authFlowId', authFlowId);
+        const query = params.toString();
+        return query ? `/worksheet_launcher/app/login/popup.html?${query}` : '/worksheet_launcher/app/login/popup.html';
+      },
       getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
     },
   });
-
-  const wrongOrigin = await session.handleAuthCompleteMessage({
-    origin: 'https://malicious.test',
-    data: { type: 'worksheet-launcher-auth-complete' },
-  });
-  const wrongShape = await session.handleAuthCompleteMessage({
-    origin: 'https://example.test',
-    data: { type: 'not-auth-complete' },
-  });
-
-  assert.equal(wrongOrigin, false);
-  assert.equal(wrongShape, false);
-  assert.equal(session.state.serverSession.status, 'checking');
+  session.beginServerSignIn();
+  assert.equal(
+    session.state.serverActionMessage,
+    'Sign-in popup was blocked. Allow popups for this site, then try again.'
+  );
 });
 
 test('viewer beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
-  const intervalCallbacks = [];
-  const clearedIntervals = [];
   const authPopup = { closed: false };
+  let openedPopupUrl = null;
   const mod = await loadViewerModule({
     window: {
       location: { origin: 'https://example.test' },
-      open: () => authPopup,
-      addEventListener: () => {},
-      setInterval: (callback) => {
-        intervalCallbacks.push(callback);
-        return intervalCallbacks.length;
-      },
-      clearInterval: (id) => {
-        clearedIntervals.push(id);
+      open: (url) => {
+        openedPopupUrl = url;
+        return authPopup;
       },
     },
   });
 
   const session = new mod.ViewerAttemptSession({}, {
     apiClient: {
-      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSessionSignInUrl: ({ source, authFlowId } = {}) => {
+        const params = new URLSearchParams();
+        if (source) params.set('source', source);
+        if (authFlowId) params.set('authFlowId', authFlowId);
+        const query = params.toString();
+        return query ? `/worksheet_launcher/app/login/popup.html?${query}` : '/worksheet_launcher/app/login/popup.html';
+      },
       getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
     },
@@ -221,15 +251,141 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
 
   session.beginServerSignIn();
   assert.equal(session._authPopupWindow, authPopup);
-  assert.equal(intervalCallbacks.length, 1);
-
-  authPopup.closed = true;
-  intervalCallbacks[0]();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(typeof session._activeAuthFlowId, 'string');
+  assert.equal(session._activeAuthFlowId.startsWith('auth_flow_'), true);
+  assert.equal(openedPopupUrl.includes('authFlowId='), true);
+  await new Promise((resolve) => setTimeout(resolve, 40));
 
   assert.equal(session.state.serverSession.status, 'ready');
   assert.equal(session.state.serverActionMessage, null);
-  assert.equal(clearedIntervals.length > 0, true);
+  assert.equal(session._activeAuthFlowId, null);
+});
+
+test('viewer silent session probe updates readiness without forcing visible checking state', async () => {
+  const statuses = [];
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSession: async () => ({ ok: false, error: { message: 'auth required', requiresSignIn: true } }),
+    },
+  });
+  session.state.serverSession = { status: 'ready', user: { email: 'learner@example.test' }, error: null };
+  session.setOnStateChange((state) => {
+    statuses.push(state.serverSession.status);
+  });
+
+  await session.probeServerSessionSilently();
+
+  assert.equal(statuses.includes('checking'), false);
+  assert.equal(session.state.serverSession.status, 'not_ready');
+});
+
+test('viewer popup fallback polling uses silent session probe path', async () => {
+  const authPopup = { closed: true };
+  const mod = await loadViewerModule({
+    window: {
+      location: { origin: 'https://example.test' },
+      open: () => authPopup,
+    },
+  });
+
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  let silentProbeCalls = 0;
+  session.refreshServerSession = async () => {
+    throw new Error('fallback must not call visible refresh');
+  };
+  session.probeServerSessionSilently = async () => {
+    silentProbeCalls += 1;
+    session.state.serverSession = { status: 'ready', user: { email: 'learner@example.test' }, error: null };
+    return { ok: true, data: { user: { email: 'learner@example.test' } } };
+  };
+
+  session.beginServerSignIn();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  assert.equal(silentProbeCalls > 0, true);
+});
+
+test('viewer browse action runs silent session preflight and blocks when session is not ready', async () => {
+  const calls = [];
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSession: async () => {
+        calls.push('getSession');
+        return { ok: false, error: { message: 'auth required', requiresSignIn: true } };
+      },
+      listPublishedPackages: async () => {
+        calls.push('listPublishedPackages');
+        return { ok: true, data: { items: [] } };
+      },
+    },
+  });
+
+  const result = await session.browsePublishedPackages('math');
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(calls, ['getSession']);
+  assert.equal(session.state.serverActionMessage, 'Sign-in session expired. Please sign in again.');
+});
+
+test('viewer browse preflight surfaces transient server/non-auth errors without expired-session copy', async () => {
+  const calls = [];
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSession: async () => {
+        calls.push('getSession');
+        return {
+          ok: false,
+          error: {
+            code: 'UNEXPECTED_NON_JSON_RESPONSE',
+            message: 'Server returned an unexpected non-JSON response.',
+            requiresSignIn: true,
+            status: 503,
+          },
+        };
+      },
+      listPublishedPackages: async () => {
+        calls.push('listPublishedPackages');
+        return { ok: true, data: { items: [] } };
+      },
+    },
+  });
+
+  const result = await session.browsePublishedPackages('math');
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(calls, ['getSession']);
+  assert.equal(session.state.serverActionMessage, 'Server returned an unexpected non-JSON response.');
+});
+
+
+test('viewer browse action persists requested publishedQuery before preflight failure', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSession: async () => ({ ok: false, error: { message: 'auth required', requiresSignIn: true } }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.state.publishedQuery = 'previous-query';
+
+  const result = await session.browsePublishedPackages('new-query');
+
+  assert.equal(result.ok, false);
+  assert.equal(session.state.publishedQuery, 'new-query');
+});
+
+test('viewer start panel removes Retry session button from normal server controls', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("retrySessionBtn.textContent = 'Retry session';"), false);
 });
 
 test('resolveImportedWorksheetPayload does not treat draftWorksheetId-only payload as snapshot', async () => {

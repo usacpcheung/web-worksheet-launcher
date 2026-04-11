@@ -52,6 +52,10 @@ test('getSessionSignInUrl builds popup login path under app/login', async () => 
     client.getSessionSignInUrl({ source: 'editor' }),
     '/worksheet_launcher/app/login/popup.html?source=editor'
   );
+  assert.equal(
+    client.getSessionSignInUrl({ source: 'editor', authFlowId: 'auth_flow_123' }),
+    '/worksheet_launcher/app/login/popup.html?source=editor&authFlowId=auth_flow_123'
+  );
 });
 
 test('listUploadedDrafts builds canonical public API URL', async () => {
@@ -107,4 +111,52 @@ test('fetchPublishedPackageArtifact parses zip payload', async () => {
   const result = await client.fetchPublishedPackageArtifact('abc');
   assert.equal(result.ok, true);
   assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
+});
+
+test('deleteUploadedDraft sends DELETE to canonical drafts path', async () => {
+  globalThis.window = {
+    location: {
+      origin: 'https://example.test',
+      search: '',
+    },
+  };
+  let requestedUrl = null;
+  let requestedMethod = null;
+  globalThis.fetch = async (url, request = {}) => {
+    requestedUrl = url;
+    requestedMethod = request.method;
+    return mockJsonResponse(200, { ok: true, data: { deleted: true } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.deleteUploadedDraft('550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/drafts/550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(requestedMethod, 'DELETE');
+});
+
+test('publishFromUploadedDraft sends uploadedDraftId with title and subject overrides', async () => {
+  globalThis.window = {
+    location: {
+      origin: 'https://example.test',
+      search: '',
+    },
+  };
+  let requestBody = null;
+  globalThis.fetch = async (_url, request = {}) => {
+    requestBody = request.body;
+    return mockJsonResponse(201, { ok: true, data: { published_package_id: 'p1' } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.publishFromUploadedDraft('550e8400-e29b-41d4-a716-446655440000', {
+    title: 'Published title',
+    subject: 'Algebra',
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(JSON.parse(requestBody), {
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Published title',
+    subject: 'Algebra',
+  });
 });

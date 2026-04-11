@@ -218,7 +218,13 @@ function createServerApiClient(options = {}) {
       const source = typeof context.source === 'string' && context.source.trim()
         ? context.source.trim()
         : null;
-      return buildAppUrl(DEFAULT_SIGN_IN_POPUP_PATH, source ? { source } : null);
+      const authFlowId = typeof context.authFlowId === 'string' && context.authFlowId.trim()
+        ? context.authFlowId.trim()
+        : null;
+      const query = {};
+      if (source) query.source = source;
+      if (authFlowId) query.authFlowId = authFlowId;
+      return buildAppUrl(DEFAULT_SIGN_IN_POPUP_PATH, Object.keys(query).length > 0 ? query : null);
     },
     getSession() {
       return requestJson('/session');
@@ -237,10 +243,17 @@ function createServerApiClient(options = {}) {
     fetchUploadedDraftArtifact(uploadedDraftId) {
       return requestZip(`/drafts/${uploadedDraftId}/artifact`);
     },
-    publishFromUploadedDraft(uploadedDraftId) {
+    deleteUploadedDraft(uploadedDraftId) {
+      return requestJson(`/drafts/${uploadedDraftId}`, { method: 'DELETE' });
+    },
+    publishFromUploadedDraft(uploadedDraftId, metadata = {}) {
       return requestJson('/published', {
         method: 'POST',
-        body: { uploadedDraftId },
+        body: {
+          uploadedDraftId,
+          title: metadata.title || '',
+          subject: metadata.subject || '',
+        },
       });
     },
     listPublishedPackages(query = {}) {

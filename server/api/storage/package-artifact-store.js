@@ -43,11 +43,16 @@ export class PackageArtifactStore {
   }
 
   async readArtifact(artifactPath) {
+    const normalized = this.resolveAbsolutePath(artifactPath);
+    return fs.readFile(normalized);
+  }
+
+  resolveAbsolutePath(artifactPath) {
     const absolutePath = path.join(this.storageRoot, artifactPath);
     const normalized = path.normalize(absolutePath);
     if (!normalized.startsWith(path.normalize(this.storageRoot + path.sep))) {
       throw new Error('Resolved path escapes storage root.');
     }
-    return fs.readFile(normalized);
+    return normalized;
   }
 }

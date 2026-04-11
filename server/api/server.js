@@ -108,6 +108,28 @@ export function createRequestHandler({ service, artifactStore, config }) {
         return json(res, 200, ok({ items: rows }));
       }
 
+      if (req.method === 'DELETE' && isDraftDetailRoute(segments)) {
+        if (segments.length !== 4) {
+          return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        }
+        const uploadedDraftId = segments[3];
+        const validatedUploadedDraftId = assertUuid(uploadedDraftId, {
+          code: 'INVALID_UPLOADED_DRAFT_ID',
+          message: 'uploadedDraftId must be a valid UUID.',
+        });
+        if (!validatedUploadedDraftId.ok) {
+          return json(res, 400, fail(validatedUploadedDraftId.error.code, validatedUploadedDraftId.error.message));
+        }
+        const result = await service.deleteOwnDraft({
+          identity,
+          uploadedDraftId: validatedUploadedDraftId.value,
+        });
+        if (!result.ok) {
+          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+        }
+        return json(res, result.statusCode, ok(result.data));
+      }
+
       if (req.method === 'GET' && isDraftDetailRoute(segments)) {
         if (!(segments.length === 5 && segments[4] === 'artifact')) {
           return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
@@ -156,7 +178,14 @@ export function createRequestHandler({ service, artifactStore, config }) {
           return json(res, 400, fail(validatedUploadedDraftId.error.code, validatedUploadedDraftId.error.message));
         }
 
-        const result = await service.publishFromDraft({ identity, uploadedDraftId: validatedUploadedDraftId.value });
+        const title = typeof payload.title === 'string' ? payload.title : '';
+        const subject = typeof payload.subject === 'string' ? payload.subject : '';
+        const result = await service.publishFromDraft({
+          identity,
+          uploadedDraftId: validatedUploadedDraftId.value,
+          title,
+          subject,
+        });
         if (!result.ok) {
           return json(res, result.statusCode, fail(result.error.code, result.error.message));
         }
@@ -184,7 +213,9 @@ export function createRequestHandler({ service, artifactStore, config }) {
 
         const rows = await service.listPublished({
           query: url.searchParams.get('q') || '',
+          title: url.searchParams.get('title') || '',
           subject: url.searchParams.get('subject') || '',
+          owner: url.searchParams.get('owner') || '',
           limit: parsedLimit.value,
           offset: parsedOffset.value,
         });
