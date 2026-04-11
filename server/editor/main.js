@@ -626,7 +626,6 @@ class EditorDraftSession {
     this.previewAudioUrl = null;
     this.previewAudioPlayback = null;
     this._previewPlayRequestId = 0;
-    this._authPopupMessageListener = null;
     this._authPopupWindow = null;
     this._authPopupFlow = null;
     this._activeAuthFlowId = null;
@@ -2341,6 +2340,11 @@ class EditorDraftSession {
       },
       onSessionNotReady: (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        if (result?.final === false && result?.waitingForCallback === true) {
+          this.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          this.notifyStateChange();
+          return;
+        }
         if (result?.error?.code === 'SESSION_WAIT_CANCELLED') {
           finalizeFlow();
           return;
@@ -4404,7 +4408,6 @@ async function bootstrapEditor() {
 
   session.authGate = authGate;
   await authGate.restoreAfterAuthReturn();
-  session.registerAuthPopupMessageListener();
   await session.refreshServerSession();
   if (session.state.serverSession.status === 'ready') {
     await session.loadUploadedDrafts();

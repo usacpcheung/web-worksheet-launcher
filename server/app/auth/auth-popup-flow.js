@@ -3,6 +3,7 @@ import { probeSession, waitForSessionReady } from './session-readiness.js';
 const AUTH_POPUP_FLOW_DEFAULTS = {
   pollIntervalMs: 1000,
   pollTimeoutMs: 15000,
+  hardDeadlineMs: 60000,
   messageType: 'worksheet-launcher-auth-complete',
 };
 
@@ -17,6 +18,15 @@ function normalizeMessageData(data) {
   return data;
 }
 
+
+async function invokeCallbackSafely(callback, payload, label) {
+  try {
+    await Promise.resolve(callback?.(payload));
+  } catch (error) {
+    console.error(`startAuthPopupFlow ${label} callback failed`, error);
+  }
+}
+
 function startAuthPopupFlow(options = {}) {
   const {
     apiClient,
@@ -28,6 +38,7 @@ function startAuthPopupFlow(options = {}) {
     authFlowId = null,
     pollIntervalMs = AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs,
     pollTimeoutMs = AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
+    hardDeadlineMs = AUTH_POPUP_FLOW_DEFAULTS.hardDeadlineMs,
     shouldContinue = null,
     onPopupBlocked = noop,
     onStatusMessage = noop,
@@ -46,16 +57,21 @@ function startAuthPopupFlow(options = {}) {
   let cancelled = false;
   let authPopupWindow = null;
   let removeMessageListener = null;
-  let resolveImmediateProbe = null;
+  let hardDeadlineTimer = null;
 
-  const immediateProbePromise = new Promise((resolve) => {
-    resolveImmediateProbe = resolve;
+  let resolveFlowPromise = null;
+  const flowPromise = new Promise((resolve) => {
+    resolveFlowPromise = resolve;
   });
 
   const cleanup = () => {
     if (removeMessageListener) {
       removeMessageListener();
       removeMessageListener = null;
+    }
+    if (hardDeadlineTimer) {
+      clearTimeout(hardDeadlineTimer);
+      hardDeadlineTimer = null;
     }
     authPopupWindow = null;
   };
@@ -67,8 +83,40 @@ function startAuthPopupFlow(options = {}) {
     return result;
   };
 
+  const finalize = async (result) => {
+    if (completed) return null;
+    const finalResult = done(result);
+    if (finalResult.ok && finalResult.status === 'ready') {
+      await invokeCallbackSafely(onSessionReady, finalResult, 'onSessionReady');
+    } else {
+      await invokeCallbackSafely(
+        onSessionNotReady,
+        { ...finalResult, waitingForCallback: false, final: true },
+        'onSessionNotReady'
+      );
+    }
+    resolveFlowPromise?.(finalResult);
+    return finalResult;
+  };
+
   const cancel = () => {
     cancelled = true;
+    void finalize({
+      ok: false,
+      status: 'cancelled',
+      user: null,
+      error: {
+        code: 'AUTH_POPUP_FLOW_CANCELLED',
+        message: 'Sign-in flow cancelled by caller.',
+      },
+      attempts: 0,
+      elapsedMs: 0,
+      timedOut: false,
+      cancelled: true,
+      lastProbe: null,
+      waitingForCallback: false,
+      final: true,
+    });
     return true;
   };
 
@@ -83,9 +131,47 @@ function startAuthPopupFlow(options = {}) {
   if (!authPopupWindow) {
     onPopupBlocked();
     onStatusMessage('Sign-in popup was blocked.');
-  } else {
-    onStatusMessage('Complete sign-in in the popup. Session will refresh automatically.');
+    void (async () => {
+      const probeResult = await probeSession({ apiClient, force: true });
+      if (probeResult.ok && probeResult.status === 'ready') {
+        await finalize({
+          ...probeResult,
+          attempts: 1,
+          elapsedMs: 0,
+          timedOut: false,
+          cancelled: false,
+          lastProbe: probeResult,
+          waitingForCallback: false,
+          final: true,
+        });
+        return;
+      }
+
+      await finalize({
+        ...probeResult,
+        status: 'not_ready',
+        error: {
+          code: 'AUTH_POPUP_BLOCKED',
+          message: 'Unable to open sign-in popup window. Check popup blocker settings.',
+        },
+        attempts: 1,
+        elapsedMs: 0,
+        timedOut: false,
+        cancelled: false,
+        lastProbe: probeResult,
+        waitingForCallback: false,
+        final: true,
+      });
+    })();
+
+    return {
+      popupWindow: authPopupWindow,
+      cancel,
+      promise: flowPromise,
+    };
   }
+
+  onStatusMessage('Complete sign-in in the popup. Session will refresh automatically.');
 
   const messageListener = async (event) => {
     if (completed || cancelled) return;
@@ -98,7 +184,7 @@ function startAuthPopupFlow(options = {}) {
 
     onStatusMessage('Sign-in callback received. Verifying session…');
     const probeResult = await probeSession({ apiClient, force: true });
-    resolveImmediateProbe({
+    await finalize({
       ...probeResult,
       attempts: 1,
       elapsedMs: 0,
@@ -121,6 +207,30 @@ function startAuthPopupFlow(options = {}) {
     return true;
   };
 
+  const normalizedHardDeadlineMs = Math.max(0, Number(hardDeadlineMs) || 0);
+  if (normalizedHardDeadlineMs > 0) {
+    hardDeadlineTimer = setTimeout(() => {
+      if (completed || cancelled) return;
+      onStatusMessage('Sign-in is still pending and exceeded the maximum wait window.');
+      void finalize({
+        ok: false,
+        status: 'not_ready',
+        user: null,
+        error: {
+          code: 'AUTH_POPUP_FLOW_HARD_DEADLINE',
+          message: 'Session did not become ready before the maximum wait deadline.',
+        },
+        attempts: 0,
+        elapsedMs: normalizedHardDeadlineMs,
+        timedOut: true,
+        cancelled: false,
+        lastProbe: null,
+        waitingForCallback: false,
+        final: true,
+      });
+    }, normalizedHardDeadlineMs);
+  }
+
   const pollingPromise = waitForSessionReady({
     apiClient,
     intervalMs: pollIntervalMs,
@@ -128,18 +238,47 @@ function startAuthPopupFlow(options = {}) {
     shouldContinue: sharedShouldContinue,
   });
 
-  const flowPromise = Promise.race([immediateProbePromise, pollingPromise])
-    .then((result) => {
-      const finalResult = done(result);
-      if (finalResult.ok && finalResult.status === 'ready') {
-        onSessionReady(finalResult);
-      } else {
-        onSessionNotReady(finalResult);
+  pollingPromise
+    .then(async (result) => {
+      if (completed || cancelled) return;
+
+      if (result.ok && result.status === 'ready') {
+        await finalize(result);
+        return;
       }
-      return finalResult;
+
+      if (result.cancelled || cancelled) {
+        await finalize({
+          ...result,
+          waitingForCallback: false,
+          final: true,
+        });
+        return;
+      }
+
+      const popupOpen = authPopupWindow && authPopupWindow.closed !== true;
+      const canWaitForCallback = Boolean(popupOpen);
+
+      const isTimedOutAuthNotReady = result.timedOut && result.status === 'not_ready';
+      if (isTimedOutAuthNotReady && canWaitForCallback) {
+        onStatusMessage('Sign-in check timed out, still waiting for popup callback…');
+        await invokeCallbackSafely(
+          onSessionNotReady,
+          { ...result, waitingForCallback: true, final: false },
+          'onSessionNotReady'
+        );
+        return;
+      }
+
+      await finalize({
+        ...result,
+        waitingForCallback: false,
+        final: true,
+      });
     })
     .catch((error) => {
-      const finalResult = done({
+      if (completed || cancelled) return;
+      void finalize({
         ok: false,
         status: 'error',
         user: null,
@@ -152,9 +291,9 @@ function startAuthPopupFlow(options = {}) {
         timedOut: false,
         cancelled,
         lastProbe: null,
+        waitingForCallback: false,
+        final: true,
       });
-      onSessionNotReady(finalResult);
-      return finalResult;
     });
 
   return {

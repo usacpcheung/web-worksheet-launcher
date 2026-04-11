@@ -45,9 +45,10 @@ test.beforeEach(() => {
 test('startAuthPopupFlow uses shared default poll settings', () => {
   assert.equal(AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs, 1000);
   assert.equal(AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs, 15000);
+  assert.equal(AUTH_POPUP_FLOW_DEFAULTS.hardDeadlineMs, 60000);
 });
 
-test('startAuthPopupFlow reports popup blocked and returns not-ready/timed-out result', async () => {
+test('startAuthPopupFlow reports popup blocked and finalizes immediately', async () => {
   createWindowStub({ popupBlocked: true });
 
   let popupBlockedCalled = 0;
@@ -70,6 +71,57 @@ test('startAuthPopupFlow reports popup blocked and returns not-ready/timed-out r
   assert.equal(popupBlockedCalled, 1);
   assert.equal(notReadyCalled, 1);
   assert.equal(result.ok, false);
+  assert.equal(result.error?.code, 'AUTH_POPUP_BLOCKED');
+  assert.equal(result.timedOut, false);
+});
+
+test('startAuthPopupFlow allows hard deadline shorter than poll timeout', async () => {
+  createWindowStub();
+  const apiClient = {
+    getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html?source=test',
+    getSession: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401, requiresSignIn: true } }),
+  };
+
+  const flow = startAuthPopupFlow({
+    apiClient,
+    pollIntervalMs: 10,
+    pollTimeoutMs: 500,
+    hardDeadlineMs: 40,
+  });
+
+  const result = await flow.promise;
+  assert.equal(result.ok, false);
+  assert.equal(result.error?.code, 'AUTH_POPUP_FLOW_HARD_DEADLINE');
+  assert.equal(result.elapsedMs, 40);
+});
+
+test('startAuthPopupFlow resolves promise after async callbacks complete', async () => {
+  const win = createWindowStub();
+  let callbackFinished = false;
+
+  const apiClient = {
+    getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html?source=test',
+    getSession: async () => ({ ok: true, data: { user: { id: 'u_async' } } }),
+  };
+
+  const flow = startAuthPopupFlow({
+    apiClient,
+    pollIntervalMs: 100,
+    pollTimeoutMs: 500,
+    onSessionReady: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      callbackFinished = true;
+    },
+  });
+
+  await win.sendMessage({
+    origin: 'https://example.test',
+    data: { type: 'worksheet-launcher-auth-complete' },
+  });
+
+  const result = await flow.promise;
+  assert.equal(result.ok, true);
+  assert.equal(callbackFinished, true);
 });
 
 test('startAuthPopupFlow validates callback origin/type and resolves ready', async () => {
@@ -142,9 +194,79 @@ test('startAuthPopupFlow ignores mismatched authFlowId and succeeds via fallback
   assert.equal(calls >= 2, true);
 });
 
-test('startAuthPopupFlow times out when callback is missed and cleans up listener', async () => {
+
+test('startAuthPopupFlow treats poll timeout as soft when popup remains open and resolves ready on late callback', async () => {
   const win = createWindowStub();
-  let notReadyCalled = 0;
+  let shouldReturnReady = false;
+  const notReadyStates = [];
+
+  const apiClient = {
+    getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html?source=test&authFlowId=late_ready',
+    getSession: async () => {
+      if (!shouldReturnReady) {
+        return { ok: false, error: { code: 'AUTH_REQUIRED', status: 401, requiresSignIn: true } };
+      }
+      return { ok: true, data: { user: { id: 'u_late' } } };
+    },
+  };
+
+  const flow = startAuthPopupFlow({
+    apiClient,
+    authFlowId: 'late_ready',
+    pollIntervalMs: 10,
+    pollTimeoutMs: 30,
+    hardDeadlineMs: 200,
+    onSessionNotReady: (state) => notReadyStates.push(state),
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 70));
+
+  assert.equal(notReadyStates.length >= 1, true);
+  assert.equal(notReadyStates.some((state) => state.waitingForCallback === true && state.final === false), true);
+
+  shouldReturnReady = true;
+  await win.sendMessage({
+    origin: 'https://example.test',
+    data: { type: 'worksheet-launcher-auth-complete', authFlowId: 'late_ready' },
+  });
+
+  const result = await flow.promise;
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'ready');
+});
+
+
+
+test('startAuthPopupFlow finalizes timed-out error states immediately even when popup is open', async () => {
+  createWindowStub();
+  const notReadyStates = [];
+
+  const apiClient = {
+    getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html?source=test&authFlowId=error_timeout',
+    getSession: async () => ({ ok: false, error: { code: 'BAD_GATEWAY', status: 502, message: 'Gateway error' } }),
+  };
+
+  const flow = startAuthPopupFlow({
+    apiClient,
+    authFlowId: 'error_timeout',
+    pollIntervalMs: 10,
+    pollTimeoutMs: 30,
+    hardDeadlineMs: 200,
+    onSessionNotReady: (state) => notReadyStates.push(state),
+  });
+
+  const result = await flow.promise;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'error');
+  assert.equal(result.error?.code, 'BAD_GATEWAY');
+  assert.equal(notReadyStates.some((state) => state.waitingForCallback === true && state.final === false), false);
+  assert.equal(notReadyStates.some((state) => state.waitingForCallback === false && state.final === true), true);
+});
+
+test('startAuthPopupFlow times out when callback is missed and cleans up listener only after finalization', async () => {
+  const win = createWindowStub();
+  const notReadyStates = [];
   const apiClient = {
     getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html?source=test&authFlowId=never_ready',
     getSession: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401, requiresSignIn: true } }),
@@ -154,19 +276,22 @@ test('startAuthPopupFlow times out when callback is missed and cleans up listene
     apiClient,
     authFlowId: 'never_ready',
     pollIntervalMs: 10,
-    pollTimeoutMs: 45,
-    onSessionNotReady: () => { notReadyCalled += 1; },
+    pollTimeoutMs: 30,
+    hardDeadlineMs: 70,
+    onSessionNotReady: (state) => { notReadyStates.push(state); },
   });
 
   const result = await flow.promise;
   assert.equal(result.ok, false);
   assert.equal(result.timedOut, true);
   assert.equal(result.status, 'not_ready');
-  assert.equal(notReadyCalled, 1);
+  assert.equal(notReadyStates.some((state) => state.waitingForCallback === true && state.final === false), true);
+  assert.equal(notReadyStates.some((state) => state.waitingForCallback === false && state.final === true), true);
 
+  const callCountBeforeLateMessage = notReadyStates.length;
   await win.sendMessage({
     origin: 'https://example.test',
     data: { type: 'worksheet-launcher-auth-complete', authFlowId: 'never_ready' },
   });
-  assert.equal(notReadyCalled, 1);
+  assert.equal(notReadyStates.length, callCountBeforeLateMessage);
 });

@@ -81,8 +81,14 @@ test('probeSession caches and coalesces requests', async () => {
   assert.equal(calls, 1);
   assert.equal(cached.status, 'ready');
 
-  await new Promise((resolve) => setTimeout(resolve, PROBE_CACHE_TTL_MS + 30));
-  await probeSession({ apiClient });
+  const realNow = Date.now;
+  const nowBase = realNow();
+  Date.now = () => nowBase + PROBE_CACHE_TTL_MS + 30;
+  try {
+    await probeSession({ apiClient });
+  } finally {
+    Date.now = realNow;
+  }
   assert.equal(calls, 2);
 });
 
