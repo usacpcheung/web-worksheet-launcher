@@ -7,12 +7,12 @@ import {
   parseWorksheetPackage,
 } from './worksheet-package.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
+import { probeSession } from '../app/auth/session-readiness.js';
+import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
 
 const app = document.getElementById('app');
 
 const AUTOSAVE_MS = 1000;
-const AUTH_POPUP_FALLBACK_POLL_MS = 1000;
-const AUTH_POPUP_FALLBACK_TIMEOUT_MS = 15000;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
 const DEFAULT_PUBLISHER_ID = 'local_editor';
@@ -547,6 +547,7 @@ function createDraftRecord(overrides = {}) {
       serverLink: overrides.metadata?.serverLink || null,
       importedFrom: overrides.metadata?.importedFrom || null,
       modelVersion: overrides.metadata?.modelVersion || 'package-compatible-v1',
+      subject: String(overrides.metadata?.subject || ''),
     },
   };
 }
@@ -613,7 +614,9 @@ class EditorDraftSession {
       lastUploadedDraft: null,
       lastPublishedPackage: null,
       uploadedDrafts: [],
+      isUploadingDraft: false,
       isLoadingUploadedDrafts: false,
+      publishingDraftIds: new Set(),
       publishedBrowseQuery: '',
     };
 
@@ -625,10 +628,10 @@ class EditorDraftSession {
     this.previewAudioUrl = null;
     this.previewAudioPlayback = null;
     this._previewPlayRequestId = 0;
-    this._authPopupMessageListener = null;
     this._authPopupWindow = null;
-    this._authPopupFallbackTimer = null;
-    this._authPopupFallbackProbeInFlight = false;
+    this._authPopupFlow = null;
+    this._activeAuthFlowId = null;
+    this._loadUploadedDraftsPromise = null;
   }
 
   setOnStateChange(handler) {
@@ -793,6 +796,15 @@ class EditorDraftSession {
   updateTitle(nextTitle) {
     if (!this.state.draft) return;
     this.state.draft.title = String(nextTitle || '');
+    this.touchDraft();
+  }
+
+  updateSubject(nextSubject) {
+    if (!this.state.draft) return;
+    this.state.draft.metadata = {
+      ...this.state.draft.metadata,
+      subject: String(nextSubject || ''),
+    };
     this.touchDraft();
   }
 
@@ -2039,6 +2051,7 @@ class EditorDraftSession {
           serverLink: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.serverLink) || null,
           importedFrom: 'legacy_json',
           modelVersion: 'package-compatible-v1',
+          subject: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.subject) || '',
         };
 
         const draft = createDraftRecord({
@@ -2171,6 +2184,7 @@ class EditorDraftSession {
         serverLink: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.serverLink) || null,
         importedFrom: 'package_zip',
         modelVersion: 'package-compatible-v1',
+        subject: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.subject) || '',
       },
     });
 
@@ -2279,107 +2293,75 @@ class EditorDraftSession {
   }
 
   beginServerSignIn() {
-    this.registerAuthPopupMessageListener();
-    const authPopup = window.open(
-      this.apiClient.getSessionSignInUrl({ source: 'editor' }),
-      'worksheet_launcher_auth_popup_editor',
-      'width=520,height=720,left=160,top=120,resizable=yes,scrollbars=yes',
-    );
-    this.state.serverActionMessage = authPopup
-      ? 'Complete sign-in in the popup. Session will refresh automatically.'
-      : 'Sign-in popup was blocked. Allow popups for this site, then try again.';
-    this.notifyStateChange();
-    this.startAuthPopupFallbackPolling(authPopup);
-  }
-
-  startAuthPopupFallbackPolling(authPopup) {
-    this.stopAuthPopupFallbackPolling();
-    if (!authPopup) return;
-
-    this._authPopupWindow = authPopup;
-    const startedAt = Date.now();
-    this._authPopupFallbackTimer = window.setInterval(() => {
-      this.pollForMissedAuthCallback(startedAt).catch(() => {
-        // Keep fallback polling best-effort; callback path remains primary.
-      });
-    }, AUTH_POPUP_FALLBACK_POLL_MS);
-  }
-
-  stopAuthPopupFallbackPolling() {
-    if (this._authPopupFallbackTimer) {
-      window.clearInterval(this._authPopupFallbackTimer);
+    if (this._authPopupFlow?.cancel) {
+      this._authPopupFlow.cancel();
     }
-    this._authPopupFallbackTimer = null;
-    this._authPopupWindow = null;
-    this._authPopupFallbackProbeInFlight = false;
-  }
+    const authFlowId = createLocalId('auth_flow');
+    this._activeAuthFlowId = authFlowId;
 
-  async pollForMissedAuthCallback(startedAt) {
-    if (this.state.serverSession.status === 'ready') {
-      this.stopAuthPopupFallbackPolling();
-      return;
-    }
-
-    const elapsedMs = Date.now() - startedAt;
-    if (elapsedMs >= AUTH_POPUP_FALLBACK_TIMEOUT_MS) {
-      this.stopAuthPopupFallbackPolling();
-      return;
-    }
-
-    const popupClosed = !this._authPopupWindow || this._authPopupWindow.closed;
-    const shouldProbeSession = popupClosed || elapsedMs >= AUTH_POPUP_FALLBACK_POLL_MS * 3;
-    if (!shouldProbeSession || this._authPopupFallbackProbeInFlight) {
-      return;
-    }
-
-    this._authPopupFallbackProbeInFlight = true;
-    try {
-      const result = await this.probeServerSessionSilently();
-      if (result.ok && this.state.serverSession.status === 'ready') {
-        await this.loadUploadedDrafts({ preflight: false });
-        this.state.serverActionMessage = null;
-        this.notifyStateChange();
-        this.stopAuthPopupFallbackPolling();
+    const finalizeFlow = () => {
+      if (this._activeAuthFlowId === authFlowId) {
+        this._activeAuthFlowId = null;
       }
-    } finally {
-      this._authPopupFallbackProbeInFlight = false;
-    }
-  }
-
-  registerAuthPopupMessageListener() {
-    if (this._authPopupMessageListener || typeof window?.addEventListener !== 'function') {
-      return;
-    }
-    this._authPopupMessageListener = (event) => {
-      this.handleAuthCompleteMessage(event).catch((error) => {
-        this.state.serverActionMessage = error?.message || 'Sign-in callback handling failed.';
-        this.notifyStateChange();
-      });
+      this._authPopupWindow = null;
+      this._authPopupFlow = null;
     };
-    window.addEventListener('message', this._authPopupMessageListener);
-  }
 
-  async handleAuthCompleteMessage(event) {
-    const expectedOrigin = window?.location?.origin || '';
-    if (!event || event.origin !== expectedOrigin) return false;
-    if (!isRecord(event.data)) return false;
-    if (event.data.type !== 'worksheet-launcher-auth-complete') return false;
-    this.stopAuthPopupFallbackPolling();
-
-    this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
-    this.notifyStateChange();
-
-    const result = await this.refreshServerSession();
-    if (result.ok && this.state.serverSession.status === 'ready') {
-      await this.loadUploadedDrafts({ preflight: false });
-      this.state.serverActionMessage = null;
-      this.notifyStateChange();
-      return true;
-    }
-
-    this.state.serverActionMessage = result.error?.message || 'Sign-in completed, but session is still not ready.';
-    this.notifyStateChange();
-    return false;
+    this._authPopupFlow = startAuthPopupFlow({
+      apiClient: this.apiClient,
+      source: 'editor',
+      authFlowId,
+      pollIntervalMs: AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs,
+      pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
+      shouldContinue: () => this._activeAuthFlowId === authFlowId,
+      onPopupBlocked: () => {
+        this.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        this.notifyStateChange();
+      },
+      onStatusMessage: (message) => {
+        if (this._activeAuthFlowId !== authFlowId) return;
+        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+          this.state.serverActionMessage = message;
+          this.notifyStateChange();
+        }
+      },
+      onSessionReady: async () => {
+        if (this._activeAuthFlowId !== authFlowId) return;
+        this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
+        this.notifyStateChange();
+        const result = await this.probeServerSessionSilently({ force: true });
+        if (result.ok && this.state.serverSession.status === 'ready') {
+          await this.loadUploadedDrafts({ preflight: false });
+          this.state.serverActionMessage = null;
+          this.notifyStateChange();
+          finalizeFlow();
+          return;
+        }
+        this.state.serverActionMessage = result.error?.message || 'Sign-in completed, but session is still not ready.';
+        this.notifyStateChange();
+        finalizeFlow();
+      },
+      onSessionNotReady: (result) => {
+        if (this._activeAuthFlowId !== authFlowId) return;
+        if (result?.final === false && result?.waitingForCallback === true) {
+          this.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          this.notifyStateChange();
+          return;
+        }
+        if (result?.error?.code === 'SESSION_WAIT_CANCELLED') {
+          finalizeFlow();
+          return;
+        }
+        if (this.state.serverActionMessage === 'Sign-in popup was blocked. Allow popups for this site, then try again.') {
+          finalizeFlow();
+          return;
+        }
+        this.state.serverActionMessage = result?.error?.message || this.state.serverActionMessage;
+        this.notifyStateChange();
+        finalizeFlow();
+      },
+    });
+    this._authPopupWindow = this._authPopupFlow?.popupWindow || null;
   }
 
   async refreshServerSession() {
@@ -2389,23 +2371,23 @@ class EditorDraftSession {
       error: null,
     };
     this.notifyStateChange();
-    return this.probeServerSessionSilently();
+    return this.probeServerSessionSilently({ force: true });
   }
 
-  async probeServerSessionSilently() {
-    const result = await this.apiClient.getSession();
-    if (!result.ok) {
+  async probeServerSessionSilently({ force = false } = {}) {
+    const result = await probeSession({ apiClient: this.apiClient, force });
+    if (result.status !== 'ready') {
       this.state.serverSession = {
-        status: 'not_ready',
+        status: result.status === 'error' ? 'error' : 'not_ready',
         user: null,
-        error: result.error.message,
+        error: result.error?.message || 'Sign-in is required before using server features.',
       };
       this.notifyStateChange();
       return result;
     }
     this.state.serverSession = {
       status: 'ready',
-      user: result.data?.user || null,
+      user: result.user || null,
       error: null,
     };
     this.notifyStateChange();
@@ -2413,11 +2395,20 @@ class EditorDraftSession {
   }
 
   async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.') {
-    const result = await this.probeServerSessionSilently();
+    const result = await this.probeServerSessionSilently({ force: true });
     if (result.ok && this.state.serverSession.status === 'ready') {
       return { ok: true, result };
     }
-    const authMessage = result.error?.requiresSignIn
+    const authStatus = Number(result.error?.status);
+    const authErrorCode = String(result.error?.code || '').toUpperCase();
+    const hasAuthStatus = Number.isFinite(authStatus);
+    const isExplicitAuthFailure = result.status === 'not_ready' && (
+      authErrorCode === 'AUTH_REQUIRED'
+      || (result.error?.requiresSignIn && (!hasAuthStatus || authStatus === 401 || authStatus === 403))
+      || authStatus === 401
+      || authStatus === 403
+    );
+    const authMessage = isExplicitAuthFailure
       ? 'Sign-in session expired. Please sign in again.'
       : (result.error?.message || notReadyMessage);
     this.state.serverActionMessage = authMessage;
@@ -2426,63 +2417,120 @@ class EditorDraftSession {
   }
 
   async uploadCurrentDraftToServer(options = {}) {
-    if (options.preflight !== false) {
-      const sessionReady = await this.ensureServerSessionReady();
-      if (!sessionReady.ok) return sessionReady.result;
+    if (this.state.isUploadingDraft) {
+      return {
+        ok: false,
+        skipped: true,
+        error: { message: 'Upload already in progress.' },
+      };
     }
-    const zipBytes = await this.buildCurrentDraftPackageZipBytes();
-    const result = await this.apiClient.uploadDraftPackage(zipBytes, {
-      title: this.state.draft?.title || '',
-      subject: this.state.draft?.metadata?.subject || '',
-    });
-    if (!result.ok) {
-      this.state.serverActionMessage = result.error.message;
+    this.state.isUploadingDraft = true;
+    this.state.serverActionMessage = 'Uploading…';
+    this.notifyStateChange();
+    try {
+      if (options.preflight !== false) {
+        const sessionReady = await this.ensureServerSessionReady();
+        if (!sessionReady.ok) return sessionReady.result;
+      }
+      const zipBytes = await this.buildCurrentDraftPackageZipBytes();
+      const result = await this.apiClient.uploadDraftPackage(zipBytes, {
+        title: this.state.draft?.title || '',
+        subject: this.state.draft?.metadata?.subject || '',
+      });
+      if (!result.ok) {
+        this.state.serverActionMessage = result.error.message;
+        this.notifyStateChange();
+        return result;
+      }
+      this.state.lastUploadedDraft = result.data;
+      this.state.serverActionMessage = `Uploaded draft ${result.data.uploaded_draft_id}.`;
+      await this.loadUploadedDrafts({ preflight: false });
       this.notifyStateChange();
       return result;
+    } finally {
+      this.state.isUploadingDraft = false;
+      this.notifyStateChange();
     }
-    this.state.lastUploadedDraft = result.data;
-    this.state.serverActionMessage = `Uploaded draft ${result.data.uploaded_draft_id}.`;
-    await this.loadUploadedDrafts({ preflight: false });
-    this.notifyStateChange();
-    return result;
   }
 
-  async publishCurrentDraftToServer() {
-    const sessionReady = await this.ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-    const uploadResult = await this.uploadCurrentDraftToServer({ preflight: false });
-    if (!uploadResult.ok) {
-      return uploadResult;
+  async publishUploadedDraftToServer(uploadedDraftId, metadata = {}) {
+    const normalizedUploadedDraftId = String(uploadedDraftId || '').trim();
+    if (!normalizedUploadedDraftId) {
+      return { ok: false, error: { message: 'Uploaded draft ID is required.' } };
     }
-    const publishResult = await this.apiClient.publishFromUploadedDraft(uploadResult.data.uploaded_draft_id);
-    if (!publishResult.ok) {
-      this.state.serverActionMessage = publishResult.error.message;
+    if (this.state.publishingDraftIds.has(normalizedUploadedDraftId)) {
+      return {
+        ok: false,
+        skipped: true,
+        error: { message: `Publish already in progress for uploaded draft ${normalizedUploadedDraftId}.` },
+      };
+    }
+    this.state.publishingDraftIds.add(normalizedUploadedDraftId);
+    this.state.serverActionMessage = 'Publishing…';
+    this.notifyStateChange();
+    try {
+      const sessionReady = await this.ensureServerSessionReady();
+      if (!sessionReady.ok) return sessionReady.result;
+      const publishResult = await this.apiClient.publishFromUploadedDraft(normalizedUploadedDraftId, {
+        title: metadata.title || '',
+        subject: metadata.subject || '',
+      });
+      if (!publishResult.ok) {
+        this.state.serverActionMessage = publishResult.error.message;
+        this.notifyStateChange();
+        return publishResult;
+      }
+      this.state.lastPublishedPackage = publishResult.data;
+      this.state.serverActionMessage = `Published package ${publishResult.data.published_package_id}.`;
+      await this.loadUploadedDrafts({ preflight: false });
       this.notifyStateChange();
       return publishResult;
+    } finally {
+      this.state.publishingDraftIds.delete(normalizedUploadedDraftId);
+      this.notifyStateChange();
     }
-    this.state.lastPublishedPackage = publishResult.data;
-    this.state.serverActionMessage = `Published package ${publishResult.data.published_package_id}.`;
-    this.notifyStateChange();
-    return publishResult;
   }
 
   async loadUploadedDrafts(options = {}) {
-    if (options.preflight !== false) {
-      const sessionReady = await this.ensureServerSessionReady();
-      if (!sessionReady.ok) return sessionReady.result;
+    if (this._loadUploadedDraftsPromise) {
+      return this._loadUploadedDraftsPromise;
     }
-    this.state.isLoadingUploadedDrafts = true;
-    this.notifyStateChange();
-    const result = await this.apiClient.listUploadedDrafts();
-    this.state.isLoadingUploadedDrafts = false;
-    if (!result.ok) {
-      this.state.serverActionMessage = result.error.message;
+
+    this._loadUploadedDraftsPromise = (async () => {
+      if (options.preflight !== false) {
+        const sessionReady = await this.ensureServerSessionReady();
+        if (!sessionReady.ok) return sessionReady.result;
+      }
+
+      const messageBeforeRefresh = this.state.serverActionMessage;
+      this.state.isLoadingUploadedDrafts = true;
+      this.state.serverActionMessage = 'Refreshing…';
       this.notifyStateChange();
-      return result;
+
+      try {
+        const result = await this.apiClient.listUploadedDrafts();
+        if (!result.ok) {
+          this.state.serverActionMessage = result.error.message;
+          this.notifyStateChange();
+          return result;
+        }
+
+        this.state.uploadedDrafts = Array.isArray(result.data?.items) ? result.data.items : [];
+        if (this.state.serverActionMessage === 'Refreshing…') {
+          this.state.serverActionMessage = messageBeforeRefresh;
+        }
+        this.notifyStateChange();
+        return result;
+      } finally {
+        this.state.isLoadingUploadedDrafts = false;
+        this.notifyStateChange();
+      }
+    })();
+    try {
+      return await this._loadUploadedDraftsPromise;
+    } finally {
+      this._loadUploadedDraftsPromise = null;
     }
-    this.state.uploadedDrafts = Array.isArray(result.data?.items) ? result.data.items : [];
-    this.notifyStateChange();
-    return result;
   }
 
   async reopenUploadedDraftAsLocalCopy(uploadedDraftId) {
@@ -2515,7 +2563,9 @@ class EditorDraftSession {
     const successMessage = 'Uploaded draft deleted.';
     this.state.serverActionMessage = successMessage;
     const refreshResult = await this.loadUploadedDrafts({ preflight: false });
-    if (refreshResult && !refreshResult.ok) {
+    if (refreshResult && refreshResult.ok) {
+      this.state.serverActionMessage = successMessage;
+    } else if (refreshResult && !refreshResult.ok) {
       const refreshMessage = refreshResult.error?.message || 'Uploaded drafts refresh failed.';
       this.state.serverActionMessage = `${successMessage} ${refreshMessage}`;
     }
@@ -2683,9 +2733,31 @@ function renderEditorShell(session) {
   importFileInput.type = 'file';
   importFileInput.accept = 'application/zip,.zip,application/json,.json';
   importFileInput.style.display = 'none';
+  const metadataSection = document.createElement('section');
+  metadataSection.className = 'editor-metadata-section';
+  const metadataHeading = document.createElement('h3');
+  metadataHeading.textContent = 'Draft Metadata';
+  const titleField = document.createElement('div');
+  titleField.className = 'editor-field';
+  const titleLabel = document.createElement('label');
+  titleLabel.setAttribute('for', 'editor-title-input');
+  titleLabel.textContent = 'Worksheet Title';
   const titleInput = document.createElement('input');
+  titleInput.id = 'editor-title-input';
   titleInput.placeholder = 'Worksheet title';
   titleInput.className = 'control';
+  titleField.append(titleLabel, titleInput);
+  const subjectField = document.createElement('div');
+  subjectField.className = 'editor-field';
+  const subjectLabel = document.createElement('label');
+  subjectLabel.setAttribute('for', 'editor-subject-input');
+  subjectLabel.textContent = 'Subject';
+  const subjectInput = document.createElement('input');
+  subjectInput.id = 'editor-subject-input';
+  subjectInput.placeholder = 'Subject';
+  subjectInput.className = 'control';
+  subjectField.append(subjectLabel, subjectInput);
+  metadataSection.append(metadataHeading, titleField, subjectField);
   const blockEditor = document.createElement('textarea');
   blockEditor.id = 'editor-block-editor';
   blockEditor.rows = 8;
@@ -2925,6 +2997,251 @@ function renderEditorShell(session) {
       };
     });
   }
+
+  async function copyTextToClipboard(text) {
+    const value = String(text || '').trim();
+    if (!value) return false;
+    if (navigator?.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (_error) {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function showPublishModal({ uploadedDraft }) {
+    return new Promise((resolve) => {
+      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-modal-overlay';
+      const dialog = document.createElement('section');
+      dialog.className = 'confirm-modal';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      const heading = document.createElement('h3');
+      heading.textContent = 'Publish uploaded draft';
+      const description = document.createElement('p');
+      description.className = 'confirm-modal__description';
+      description.textContent = 'Confirm the published package title and subject. This will not edit uploaded draft metadata.';
+      const publishTitleField = document.createElement('div');
+      publishTitleField.className = 'editor-field';
+      const publishTitleLabel = document.createElement('label');
+      publishTitleLabel.textContent = 'Published Title';
+      const publishTitleInput = document.createElement('input');
+      publishTitleInput.className = 'control';
+      publishTitleInput.value = String(uploadedDraft?.title || '');
+      publishTitleField.append(publishTitleLabel, publishTitleInput);
+      const publishSubjectField = document.createElement('div');
+      publishSubjectField.className = 'editor-field';
+      const publishSubjectLabel = document.createElement('label');
+      publishSubjectLabel.textContent = 'Published Subject';
+      const publishSubjectInput = document.createElement('input');
+      publishSubjectInput.className = 'control';
+      publishSubjectInput.value = String(uploadedDraft?.subject || '');
+      publishSubjectField.append(publishSubjectLabel, publishSubjectInput);
+      const actions = document.createElement('div');
+      actions.className = 'confirm-modal__actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'confirm-modal__btn';
+      cancelBtn.textContent = 'Cancel';
+      const confirmBtn = document.createElement('button');
+      confirmBtn.type = 'button';
+      confirmBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+      confirmBtn.textContent = 'Publish';
+      actions.append(cancelBtn, confirmBtn);
+      dialog.append(heading, description, publishTitleField, publishSubjectField, actions);
+      overlay.appendChild(dialog);
+      shell.appendChild(overlay);
+
+      const getFocusable = () => [
+        publishTitleInput,
+        publishSubjectInput,
+        cancelBtn,
+        confirmBtn,
+      ].filter((node) => !node.disabled);
+      const cleanup = () => {
+        dialog.removeEventListener('keydown', onKeyDown);
+        overlay.remove();
+        if (previousActive && typeof previousActive.focus === 'function') {
+          previousActive.focus();
+        }
+      };
+      const onKeyDown = (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          cleanup();
+          resolve({ confirmed: false });
+          return;
+        }
+        if (event.key !== 'Tab') return;
+        const focusable = getFocusable();
+        if (focusable.length === 0) return;
+        const currentIndex = focusable.indexOf(document.activeElement);
+        if (event.shiftKey) {
+          if (currentIndex <= 0) {
+            event.preventDefault();
+            focusable[focusable.length - 1].focus();
+          }
+          return;
+        }
+        if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+          event.preventDefault();
+          focusable[0].focus();
+        }
+      };
+      dialog.addEventListener('keydown', onKeyDown);
+      cancelBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({ confirmed: false });
+      });
+      confirmBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({
+          confirmed: true,
+          title: publishTitleInput.value,
+          subject: publishSubjectInput.value,
+        });
+      });
+      publishTitleInput.focus();
+    });
+  }
+
+  async function runPublishedSearch() {
+    browsePublishedState = {
+      ...browsePublishedState,
+      loading: true,
+      error: null,
+    };
+    renderPublishedBrowserModal();
+    const result = await session.apiClient.listPublishedPackages({
+      title: browsePublishedState.title,
+      subject: browsePublishedState.subject,
+      owner: browsePublishedState.owner,
+      limit: 20,
+      offset: 0,
+    });
+    if (!result.ok) {
+      browsePublishedState = {
+        ...browsePublishedState,
+        loading: false,
+        error: result.error.message,
+      };
+      renderPublishedBrowserModal();
+      return;
+    }
+    browsePublishedState = {
+      ...browsePublishedState,
+      loading: false,
+      items: Array.isArray(result.data?.items) ? result.data.items : [],
+      error: null,
+    };
+    renderPublishedBrowserModal();
+  }
+
+  function renderPublishedBrowserModal() {
+    browsePublishedModalRoot.innerHTML = '';
+    if (!browsePublishedDialogOpen) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay';
+    const dialog = document.createElement('section');
+    dialog.className = 'confirm-modal browse-modal';
+    const heading = document.createElement('h3');
+    heading.textContent = 'Browse Published Packages';
+    const filterRow = document.createElement('div');
+    filterRow.className = 'button-row';
+    const titleFilter = document.createElement('input');
+    titleFilter.className = 'control';
+    titleFilter.placeholder = 'Filter by title';
+    titleFilter.value = browsePublishedState.title;
+    const subjectFilter = document.createElement('input');
+    subjectFilter.className = 'control';
+    subjectFilter.placeholder = 'Filter by subject';
+    subjectFilter.value = browsePublishedState.subject;
+    const ownerFilter = document.createElement('input');
+    ownerFilter.className = 'control';
+    ownerFilter.placeholder = 'Filter by owner email';
+    ownerFilter.value = browsePublishedState.owner;
+    const searchBtn = document.createElement('button');
+    searchBtn.type = 'button';
+    searchBtn.textContent = 'Search';
+    searchBtn.disabled = browsePublishedState.loading;
+    filterRow.append(titleFilter, subjectFilter, ownerFilter, searchBtn);
+    const results = document.createElement('div');
+    results.className = 'browse-results';
+    if (browsePublishedState.error) {
+      const error = document.createElement('p');
+      error.className = 'control-error';
+      error.textContent = browsePublishedState.error;
+      results.appendChild(error);
+    } else if (browsePublishedState.loading) {
+      const loading = document.createElement('p');
+      loading.className = 'muted';
+      loading.textContent = 'Loading published packages…';
+      results.appendChild(loading);
+    } else if (browsePublishedState.items.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = 'No published packages found.';
+      results.appendChild(empty);
+    } else {
+      browsePublishedState.items.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'published-result-row';
+        const title = document.createElement('strong');
+        title.textContent = item.title || 'Untitled';
+        const subjectOwner = document.createElement('div');
+        subjectOwner.className = 'muted';
+        subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;
+        const publishedMeta = document.createElement('div');
+        publishedMeta.className = 'muted';
+        publishedMeta.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)} • ID: ${item.published_package_id}`;
+        row.append(title, subjectOwner, publishedMeta);
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.textContent = 'Copy Published ID';
+        copyBtn.addEventListener('click', async () => {
+          const copied = await copyTextToClipboard(item.published_package_id);
+          session.state.serverActionMessage = copied
+            ? `Copied published ID ${item.published_package_id}.`
+            : 'Clipboard copy is unavailable in this browser.';
+          session.notifyStateChange();
+        });
+        row.appendChild(copyBtn);
+        results.appendChild(row);
+      });
+    }
+    const actions = document.createElement('div');
+    actions.className = 'confirm-modal__actions';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'confirm-modal__btn';
+    closeBtn.textContent = 'Close';
+    actions.append(closeBtn);
+    dialog.append(heading, filterRow, results, actions);
+    overlay.appendChild(dialog);
+    browsePublishedModalRoot.appendChild(overlay);
+
+    const captureFilters = () => {
+      browsePublishedState = {
+        ...browsePublishedState,
+        title: titleFilter.value,
+        subject: subjectFilter.value,
+        owner: ownerFilter.value,
+      };
+    };
+    searchBtn.addEventListener('click', async () => {
+      captureFilters();
+      await runPublishedSearch();
+    });
+    closeBtn.addEventListener('click', () => {
+      browsePublishedDialogOpen = false;
+      renderPublishedBrowserModal();
+    });
+  }
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
@@ -2965,9 +3282,9 @@ function renderEditorShell(session) {
   const syncDraftBtn = document.createElement('button');
   syncDraftBtn.type = 'button';
   syncDraftBtn.textContent = 'Upload Draft';
-  const publishBtn = document.createElement('button');
-  publishBtn.type = 'button';
-  publishBtn.textContent = 'Publish';
+  const browsePublishedBtn = document.createElement('button');
+  browsePublishedBtn.type = 'button';
+  browsePublishedBtn.textContent = 'Browse Published Packages';
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.textContent = 'Sign in for server features';
@@ -2978,10 +3295,22 @@ function renderEditorShell(session) {
   serverSessionStatus.className = 'muted';
   const serverActionStatus = document.createElement('p');
   serverActionStatus.className = 'muted';
+  serverActionStatus.setAttribute('role', 'status');
+  serverActionStatus.setAttribute('aria-live', 'polite');
   const uploadedDraftList = document.createElement('div');
   uploadedDraftList.className = 'muted';
+  const browsePublishedModalRoot = document.createElement('div');
   const protectedActionsColumn = document.createElement('div');
   protectedActionsColumn.className = 'action-column';
+  let browsePublishedState = {
+    title: '',
+    subject: '',
+    owner: '',
+    loading: false,
+    items: [],
+    error: null,
+  };
+  let browsePublishedDialogOpen = false;
   let detailSignature = null;
   let optionActionSignature = null;
 
@@ -3025,6 +3354,9 @@ function renderEditorShell(session) {
 
     if (activeElement !== titleInput) {
       titleInput.value = session.state.draft?.title || '';
+    }
+    if (activeElement !== subjectInput) {
+      subjectInput.value = session.state.draft?.metadata?.subject || '';
     }
     if (activeElement !== blockEditor) {
       blockEditor.value = selectedText;
@@ -3733,11 +4065,26 @@ function renderEditorShell(session) {
     } else {
       serverSessionStatus.textContent = `Server session: not ready. ${session.state.serverSession?.error || 'Sign in for server features.'}`;
     }
-    serverActionStatus.textContent = session.state.serverActionMessage || '';
+    const isUploadingDraft = session.state.isUploadingDraft;
+    const isRefreshingUploadedDrafts = session.state.isLoadingUploadedDrafts;
+    const activePublishCount = session.state.publishingDraftIds?.size || 0;
+    const hasServerActionInFlight = isUploadingDraft || isRefreshingUploadedDrafts || activePublishCount > 0;
+    if (isUploadingDraft) {
+      serverActionStatus.textContent = 'Uploading…';
+    } else if (activePublishCount > 0) {
+      serverActionStatus.textContent = activePublishCount === 1 ? 'Publishing…' : `Publishing ${activePublishCount} drafts…`;
+    } else if (isRefreshingUploadedDrafts) {
+      serverActionStatus.textContent = 'Refreshing…';
+    } else {
+      serverActionStatus.textContent = session.state.serverActionMessage || '';
+    }
+    serverActionStatus.setAttribute('aria-busy', hasServerActionInFlight ? 'true' : 'false');
     const serverReady = sessionStatus === 'ready';
-    syncDraftBtn.disabled = !serverReady;
-    publishBtn.disabled = !serverReady;
-    loadUploadedDraftsBtn.disabled = !serverReady;
+    syncDraftBtn.textContent = isUploadingDraft ? 'Uploading…' : 'Upload Draft';
+    syncDraftBtn.disabled = !serverReady || isUploadingDraft;
+    browsePublishedBtn.disabled = !serverReady;
+    loadUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? 'Refreshing…' : 'Refresh Uploaded Drafts';
+    loadUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;
     signInBtn.hidden = serverReady;
     uploadedDraftList.innerHTML = '';
     if (session.state.uploadedDrafts.length === 0) {
@@ -3749,19 +4096,48 @@ function renderEditorShell(session) {
       session.state.uploadedDrafts.forEach((item) => {
         const display = toUploadedDraftDisplay(item);
         const row = document.createElement('div');
-        row.className = 'button-row';
+        row.className = 'uploaded-draft-row';
         const meta = document.createElement('div');
+        meta.className = 'uploaded-draft-meta';
         const titleLine = document.createElement('strong');
         titleLine.textContent = display.title;
         const uploadedAtLine = document.createElement('div');
-        uploadedAtLine.className = 'muted';
+        uploadedAtLine.className = 'muted uploaded-draft-uploaded-at';
         uploadedAtLine.textContent = display.uploadedLabel;
         meta.append(titleLine, uploadedAtLine);
+        const detailsGroup = document.createElement('div');
+        detailsGroup.className = 'uploaded-draft-details-group';
+        const draftDetails = document.createElement('details');
+        draftDetails.className = 'uploaded-draft-details uploaded-draft-details--draft';
+        const draftSummary = document.createElement('summary');
+        draftSummary.textContent = 'Draft details';
+        const draftBody = document.createElement('div');
+        draftBody.className = 'muted uploaded-draft-details-body';
+        const draftOwner = item.owner_email
+          || item.owner_name
+          || item.owner_sub
+          || session.state.serverSession?.user?.email
+          || session.state.serverSession?.user?.sub
+          || 'Unknown';
+        const draftIdLine = document.createElement('div');
+        draftIdLine.textContent = `Uploaded draft ID: ${item.uploaded_draft_id || '—'}`;
+        const draftUploadedLine = document.createElement('div');
+        draftUploadedLine.textContent = `Uploaded: ${formatUploadedDraftTimestamp(item.created_at)}`;
+        const draftTitleLine = document.createElement('div');
+        draftTitleLine.textContent = `Title: ${item.title || 'Untitled'}`;
+        const draftSubjectLine = document.createElement('div');
+        draftSubjectLine.textContent = `Subject: ${item.subject || '—'}`;
+        const draftOwnerLine = document.createElement('div');
+        draftOwnerLine.textContent = `Owner: ${draftOwner}`;
+        draftBody.append(draftIdLine, draftUploadedLine, draftTitleLine, draftSubjectLine, draftOwnerLine);
+        draftDetails.append(draftSummary, draftBody);
+        detailsGroup.appendChild(draftDetails);
         const actions = document.createElement('div');
-        actions.className = 'button-row';
+        actions.className = 'uploaded-draft-actions';
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
-        openBtn.textContent = 'Open as local copy';
+        openBtn.className = 'uploaded-draft-action uploaded-draft-action--secondary';
+        openBtn.textContent = 'Open';
         openBtn.disabled = !serverReady;
         openBtn.addEventListener('click', async () => {
           await session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
@@ -3769,14 +4145,18 @@ function renderEditorShell(session) {
         });
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
-        deleteBtn.className = 'danger';
+        deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
         deleteBtn.textContent = 'Delete';
         deleteBtn.disabled = !serverReady;
         deleteBtn.addEventListener('click', async () => {
+          const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
+          const deleteDescription = publishedPackageId
+            ? `This deletes the uploaded draft slot only. The published package will remain available by published package ID (${publishedPackageId}).`
+            : 'This will permanently remove this uploaded draft from server storage.';
           const confirmed = await showConfirmDialog({
             title: 'Delete uploaded draft?',
             entityLabel: isNonEmptyString(item.title) ? item.title.trim() : 'Untitled',
-            descriptionText: 'This will permanently remove this uploaded draft from server storage.',
+            descriptionText: deleteDescription,
             removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
             confirmLabel: 'Delete draft',
           });
@@ -3784,7 +4164,67 @@ function renderEditorShell(session) {
           await session.deleteUploadedDraft(item.uploaded_draft_id);
           updateSummary();
         });
-        actions.append(openBtn, deleteBtn);
+        const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
+        if (publishedPackageId) {
+          actions.classList.add('uploaded-draft-actions--published');
+          const badge = document.createElement('span');
+          badge.className = 'editor-pill editor-pill--ok uploaded-draft-published-badge';
+          badge.textContent = 'Published';
+          meta.appendChild(badge);
+          const copyBtn = document.createElement('button');
+          copyBtn.type = 'button';
+          copyBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+          copyBtn.textContent = 'Copy Published ID';
+          copyBtn.disabled = !serverReady;
+          copyBtn.addEventListener('click', async () => {
+            const copied = await copyTextToClipboard(publishedPackageId);
+            session.state.serverActionMessage = copied
+              ? `Copied published ID ${publishedPackageId}.`
+              : 'Clipboard copy is unavailable in this browser.';
+            session.notifyStateChange();
+          });
+          const details = document.createElement('details');
+          details.className = 'uploaded-draft-details uploaded-draft-details--published';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Published details';
+          const body = document.createElement('div');
+          body.className = 'muted uploaded-draft-details-body';
+          const publishedIdLine = document.createElement('div');
+          publishedIdLine.textContent = `Published ID: ${publishedPackageId}`;
+          const publishedTitleLine = document.createElement('div');
+          publishedTitleLine.textContent = `Title: ${item.published_title || item.title || 'Untitled'}`;
+          const publishedSubjectLine = document.createElement('div');
+          publishedSubjectLine.textContent = `Subject: ${item.published_subject || ''}`;
+          const publishedOwnerLine = document.createElement('div');
+          publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;
+          const publishedAtLine = document.createElement('div');
+          publishedAtLine.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)}`;
+          body.append(publishedIdLine, publishedTitleLine, publishedSubjectLine, publishedOwnerLine, publishedAtLine);
+          details.append(summary, body);
+          detailsGroup.appendChild(details);
+          meta.appendChild(detailsGroup);
+          actions.append(openBtn, copyBtn, deleteBtn);
+        } else {
+          actions.classList.add('uploaded-draft-actions--unpublished');
+          const isPublishing = session.state.publishingDraftIds.has(item.uploaded_draft_id);
+          const publishBtn = document.createElement('button');
+          publishBtn.type = 'button';
+          publishBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+          publishBtn.textContent = isPublishing ? 'Publishing…' : 'Publish';
+          publishBtn.disabled = !serverReady || isPublishing;
+          publishBtn.addEventListener('click', async () => {
+            if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
+            const modal = await showPublishModal({ uploadedDraft: item });
+            if (!modal.confirmed) return;
+            await session.publishUploadedDraftToServer(item.uploaded_draft_id, {
+              title: modal.title,
+              subject: modal.subject,
+            });
+            updateSummary();
+          });
+          meta.appendChild(detailsGroup);
+          actions.append(openBtn, publishBtn, deleteBtn);
+        }
         row.append(meta, actions);
         uploadedDraftList.appendChild(row);
       });
@@ -3797,6 +4237,10 @@ function renderEditorShell(session) {
 
   titleInput.addEventListener('input', () => {
     session.updateTitle(titleInput.value);
+    updateSummary();
+  });
+  subjectInput.addEventListener('input', () => {
+    session.updateSubject(subjectInput.value);
     updateSummary();
   });
   blockKind.addEventListener('change', () => {
@@ -3991,9 +4435,10 @@ function renderEditorShell(session) {
     await session.uploadCurrentDraftToServer();
     updateSummary();
   });
-  publishBtn.addEventListener('click', async () => {
-    await session.publishCurrentDraftToServer();
-    updateSummary();
+  browsePublishedBtn.addEventListener('click', async () => {
+    browsePublishedDialogOpen = true;
+    renderPublishedBrowserModal();
+    await runPublishedSearch();
   });
   signInBtn.addEventListener('click', () => {
     session.beginServerSignIn();
@@ -4015,7 +4460,7 @@ function renderEditorShell(session) {
     serverSessionStatus,
     signInBtn,
     syncDraftBtn,
-    publishBtn,
+    browsePublishedBtn,
     loadUploadedDraftsBtn,
     uploadedDraftList,
     serverActionStatus,
@@ -4023,11 +4468,23 @@ function renderEditorShell(session) {
     t2aBtn
   );
   moreActions.append(protectedActionsColumn);
-  leftPanel.append(leftHeading, titleInput, controlsRow, blockList, moreActions, metaRow, importFileInput, questionImageInput, questionAudioInput, optionAudioInput);
+  leftPanel.append(
+    leftHeading,
+    metadataSection,
+    controlsRow,
+    blockList,
+    moreActions,
+    metaRow,
+    importFileInput,
+    questionImageInput,
+    questionAudioInput,
+    optionAudioInput
+  );
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);
   shell.append(topBar, layout);
+  shell.appendChild(browsePublishedModalRoot);
   app.innerHTML = '';
   app.append(shell);
   updateSummary();
@@ -4068,7 +4525,6 @@ async function bootstrapEditor() {
 
   session.authGate = authGate;
   await authGate.restoreAfterAuthReturn();
-  session.registerAuthPopupMessageListener();
   await session.refreshServerSession();
   if (session.state.serverSession.status === 'ready') {
     await session.loadUploadedDrafts();
