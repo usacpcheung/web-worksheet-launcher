@@ -39,6 +39,34 @@ async function loadViewerModule(overrides = {}) {
       return { ok: true, normalizedValue: Number(text), kind };
     }),
     SharedAuthGate: overrides.SharedAuthGate || class {},
+    probeSession: overrides.probeSession || (async ({ apiClient }) => {
+      const result = await apiClient.getSession();
+      if (result?.ok) return { ok: true, status: 'ready', user: result.data?.user || null, error: null };
+      return { ok: false, status: 'not_ready', user: null, error: result?.error || { message: 'auth required' } };
+    }),
+    AUTH_POPUP_FLOW_DEFAULTS: overrides.AUTH_POPUP_FLOW_DEFAULTS || { pollIntervalMs: 1000, pollTimeoutMs: 15000 },
+    startAuthPopupFlow: overrides.startAuthPopupFlow || ((options = {}) => {
+      const popupWindow = globalThis.window?.open?.(
+        options.apiClient.getSessionSignInUrl({ source: options.source, authFlowId: options.authFlowId }),
+        'worksheet_launcher_auth_popup_viewer',
+        'width=520,height=720,left=160,top=120,resizable=yes,scrollbars=yes'
+      );
+      if (!popupWindow) {
+        options.onPopupBlocked?.();
+        options.onSessionNotReady?.({ ok: false, status: 'not_ready', error: { message: 'blocked' } });
+        return { popupWindow: null, cancel: () => true, promise: Promise.resolve({ ok: false }) };
+      }
+      options.onStatusMessage?.('Complete sign-in in the popup. Session will refresh automatically.');
+      const timer = setTimeout(async () => {
+        const result = await globalThis[bagName].probeSession({ apiClient: options.apiClient, force: true });
+        if (result.ok) {
+          await options.onSessionReady?.(result);
+        } else {
+          options.onSessionNotReady?.(result);
+        }
+      }, 0);
+      return { popupWindow, cancel: () => { clearTimeout(timer); return true; }, promise: Promise.resolve({ ok: true }) };
+    }),
     createServerApiClient: overrides.createServerApiClient || (() => ({
       getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
       getSession: async () => ({ ok: false, error: { message: 'auth required' } }),
@@ -80,9 +108,9 @@ async function loadViewerModule(overrides = {}) {
       replacement: 'const normalizeNumberRules = __testBag.normalizeNumberRules;\nconst validateNumberInputFormat = __testBag.validateNumberInputFormat;',
     },
     {
-      name: 'replace SharedAuthGate import with test bag binding',
-      pattern: /import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];/,
-      replacement: 'const SharedAuthGate = __testBag.SharedAuthGate;',
+      name: 'replace shared auth imports with test bag bindings',
+      pattern: /import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*probeSession\s*\}\s*from\s*['"]\.\.\/app\/auth\/session-readiness\.js['"];\s*import\s*\{\s*startAuthPopupFlow,\s*AUTH_POPUP_FLOW_DEFAULTS\s*\}\s*from\s*['"]\.\.\/app\/auth\/auth-popup-flow\.js['"];/,
+      replacement: 'const SharedAuthGate = __testBag.SharedAuthGate;\nconst probeSession = __testBag.probeSession;\nconst startAuthPopupFlow = __testBag.startAuthPopupFlow;\nconst AUTH_POPUP_FLOW_DEFAULTS = __testBag.AUTH_POPUP_FLOW_DEFAULTS;',
     },
     {
       name: 'replace worksheet package imports with test bag bindings',
@@ -144,9 +172,9 @@ test('resolveImportedWorksheetPayload falls back when snapshot mapping fails', a
   assert.equal(payload.blocks.length, 1);
 });
 
-test('viewer handleAuthCompleteMessage refreshes session and re-browses packages on valid message', async () => {
+test('viewer beginServerSignIn completes via shared popup flow and re-browses packages on ready session', async () => {
   const mod = await loadViewerModule({
-    window: { location: { origin: 'https://example.test' } },
+    window: { location: { origin: 'https://example.test' }, open: () => ({ closed: false }) },
   });
   const session = new mod.ViewerAttemptSession({}, {
     apiClient: {
@@ -161,21 +189,18 @@ test('viewer handleAuthCompleteMessage refreshes session and re-browses packages
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
     },
   });
-  session._activeAuthFlowId = 'auth_flow_viewer_1';
-
-  const handled = await session.handleAuthCompleteMessage({
-    origin: 'https://example.test',
-    data: { type: 'worksheet-launcher-auth-complete', source: 'viewer', authFlowId: 'auth_flow_viewer_1' },
-  });
-
-  assert.equal(handled, true);
+  session.beginServerSignIn();
+  await new Promise((resolve) => setTimeout(resolve, 25));
   assert.equal(session.state.serverSession.status, 'ready');
   assert.deepEqual(session.state.publishedPackages, []);
 });
 
-test('viewer handleAuthCompleteMessage ignores wrong-origin and malformed messages', async () => {
+test('viewer beginServerSignIn shows popup blocked message when popup cannot open', async () => {
   const mod = await loadViewerModule({
-    window: { location: { origin: 'https://example.test' } },
+    window: {
+      location: { origin: 'https://example.test' },
+      open: () => null,
+    },
   });
   const session = new mod.ViewerAttemptSession({}, {
     apiClient: {
@@ -190,30 +215,14 @@ test('viewer handleAuthCompleteMessage ignores wrong-origin and malformed messag
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
     },
   });
-  session._activeAuthFlowId = 'auth_flow_viewer_2';
-
-  const wrongOrigin = await session.handleAuthCompleteMessage({
-    origin: 'https://malicious.test',
-    data: { type: 'worksheet-launcher-auth-complete', authFlowId: 'auth_flow_viewer_2' },
-  });
-  const wrongShape = await session.handleAuthCompleteMessage({
-    origin: 'https://example.test',
-    data: { type: 'not-auth-complete', authFlowId: 'auth_flow_viewer_2' },
-  });
-  const wrongFlow = await session.handleAuthCompleteMessage({
-    origin: 'https://example.test',
-    data: { type: 'worksheet-launcher-auth-complete', authFlowId: 'stale_flow' },
-  });
-
-  assert.equal(wrongOrigin, false);
-  assert.equal(wrongShape, false);
-  assert.equal(wrongFlow, false);
-  assert.equal(session.state.serverSession.status, 'checking');
+  session.beginServerSignIn();
+  assert.equal(
+    session.state.serverActionMessage,
+    'Sign-in popup was blocked. Allow popups for this site, then try again.'
+  );
 });
 
 test('viewer beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
-  const intervalCallbacks = [];
-  const clearedIntervals = [];
   const authPopup = { closed: false };
   let openedPopupUrl = null;
   const mod = await loadViewerModule({
@@ -222,14 +231,6 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
       open: (url) => {
         openedPopupUrl = url;
         return authPopup;
-      },
-      addEventListener: () => {},
-      setInterval: (callback) => {
-        intervalCallbacks.push(callback);
-        return intervalCallbacks.length;
-      },
-      clearInterval: (id) => {
-        clearedIntervals.push(id);
       },
     },
   });
@@ -253,15 +254,10 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
   assert.equal(typeof session._activeAuthFlowId, 'string');
   assert.equal(session._activeAuthFlowId.startsWith('auth_flow_'), true);
   assert.equal(openedPopupUrl.includes('authFlowId='), true);
-  assert.equal(intervalCallbacks.length, 1);
-
-  authPopup.closed = true;
-  intervalCallbacks[0]();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 1100));
 
   assert.equal(session.state.serverSession.status, 'ready');
   assert.equal(session.state.serverActionMessage, null);
-  assert.equal(clearedIntervals.length > 0, true);
   assert.equal(session._activeAuthFlowId, null);
 });
 
@@ -285,18 +281,11 @@ test('viewer silent session probe updates readiness without forcing visible chec
 });
 
 test('viewer popup fallback polling uses silent session probe path', async () => {
-  const intervalCallbacks = [];
   const authPopup = { closed: true };
   const mod = await loadViewerModule({
     window: {
       location: { origin: 'https://example.test' },
       open: () => authPopup,
-      addEventListener: () => {},
-      setInterval: (callback) => {
-        intervalCallbacks.push(callback);
-        return 1;
-      },
-      clearInterval: () => {},
     },
   });
 
@@ -318,8 +307,7 @@ test('viewer popup fallback polling uses silent session probe path', async () =>
   };
 
   session.beginServerSignIn();
-  intervalCallbacks[0]();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 1100));
 
   assert.equal(silentProbeCalls > 0, true);
 });
