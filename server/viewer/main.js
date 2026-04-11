@@ -1158,6 +1158,7 @@ class ViewerAttemptSession {
     this._authPopupWindow = null;
     this._authPopupFallbackTimer = null;
     this._authPopupFallbackProbeInFlight = false;
+    this._activeAuthFlowId = null;
   }
 
   setOnStateChange(handler) {
@@ -1912,9 +1913,10 @@ class ViewerAttemptSession {
   }
 
   beginServerSignIn() {
+    const authFlowId = createLocalId('auth_flow');
     this.registerAuthPopupMessageListener();
     const authPopup = window.open(
-      this.apiClient.getSessionSignInUrl({ source: 'viewer' }),
+      this.apiClient.getSessionSignInUrl({ source: 'viewer', authFlowId }),
       'worksheet_launcher_auth_popup_viewer',
       'width=520,height=720,left=160,top=120,resizable=yes,scrollbars=yes',
     );
@@ -1923,6 +1925,7 @@ class ViewerAttemptSession {
       : 'Sign-in popup was blocked. Allow popups for this site, then try again.';
     this.notifyStateChange();
     this.startAuthPopupFallbackPolling(authPopup);
+    this._activeAuthFlowId = authPopup ? authFlowId : null;
   }
 
   startAuthPopupFallbackPolling(authPopup) {
@@ -1945,6 +1948,7 @@ class ViewerAttemptSession {
     this._authPopupFallbackTimer = null;
     this._authPopupWindow = null;
     this._authPopupFallbackProbeInFlight = false;
+    this._activeAuthFlowId = null;
   }
 
   async pollForMissedAuthCallback(startedAt) {
@@ -1994,9 +1998,12 @@ class ViewerAttemptSession {
 
   async handleAuthCompleteMessage(event) {
     const expectedOrigin = window?.location?.origin || '';
+    const activeAuthFlowId = this._activeAuthFlowId;
     if (!event || event.origin !== expectedOrigin) return false;
     if (!isRecord(event.data)) return false;
     if (event.data.type !== 'worksheet-launcher-auth-complete') return false;
+    if (typeof activeAuthFlowId !== 'string' || !activeAuthFlowId.trim()) return false;
+    if (event.data.authFlowId !== activeAuthFlowId) return false;
     this.stopAuthPopupFallbackPolling();
 
     this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';

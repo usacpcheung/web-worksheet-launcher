@@ -150,15 +150,22 @@ test('viewer handleAuthCompleteMessage refreshes session and re-browses packages
   });
   const session = new mod.ViewerAttemptSession({}, {
     apiClient: {
-      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSessionSignInUrl: ({ source, authFlowId } = {}) => {
+        const params = new URLSearchParams();
+        if (source) params.set('source', source);
+        if (authFlowId) params.set('authFlowId', authFlowId);
+        const query = params.toString();
+        return query ? `/worksheet_launcher/app/login/popup.html?${query}` : '/worksheet_launcher/app/login/popup.html';
+      },
       getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
     },
   });
+  session._activeAuthFlowId = 'auth_flow_viewer_1';
 
   const handled = await session.handleAuthCompleteMessage({
     origin: 'https://example.test',
-    data: { type: 'worksheet-launcher-auth-complete', source: 'viewer' },
+    data: { type: 'worksheet-launcher-auth-complete', source: 'viewer', authFlowId: 'auth_flow_viewer_1' },
   });
 
   assert.equal(handled, true);
@@ -172,23 +179,35 @@ test('viewer handleAuthCompleteMessage ignores wrong-origin and malformed messag
   });
   const session = new mod.ViewerAttemptSession({}, {
     apiClient: {
-      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSessionSignInUrl: ({ source, authFlowId } = {}) => {
+        const params = new URLSearchParams();
+        if (source) params.set('source', source);
+        if (authFlowId) params.set('authFlowId', authFlowId);
+        const query = params.toString();
+        return query ? `/worksheet_launcher/app/login/popup.html?${query}` : '/worksheet_launcher/app/login/popup.html';
+      },
       getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
     },
   });
+  session._activeAuthFlowId = 'auth_flow_viewer_2';
 
   const wrongOrigin = await session.handleAuthCompleteMessage({
     origin: 'https://malicious.test',
-    data: { type: 'worksheet-launcher-auth-complete' },
+    data: { type: 'worksheet-launcher-auth-complete', authFlowId: 'auth_flow_viewer_2' },
   });
   const wrongShape = await session.handleAuthCompleteMessage({
     origin: 'https://example.test',
-    data: { type: 'not-auth-complete' },
+    data: { type: 'not-auth-complete', authFlowId: 'auth_flow_viewer_2' },
+  });
+  const wrongFlow = await session.handleAuthCompleteMessage({
+    origin: 'https://example.test',
+    data: { type: 'worksheet-launcher-auth-complete', authFlowId: 'stale_flow' },
   });
 
   assert.equal(wrongOrigin, false);
   assert.equal(wrongShape, false);
+  assert.equal(wrongFlow, false);
   assert.equal(session.state.serverSession.status, 'checking');
 });
 
@@ -196,10 +215,14 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
   const intervalCallbacks = [];
   const clearedIntervals = [];
   const authPopup = { closed: false };
+  let openedPopupUrl = null;
   const mod = await loadViewerModule({
     window: {
       location: { origin: 'https://example.test' },
-      open: () => authPopup,
+      open: (url) => {
+        openedPopupUrl = url;
+        return authPopup;
+      },
       addEventListener: () => {},
       setInterval: (callback) => {
         intervalCallbacks.push(callback);
@@ -213,7 +236,13 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
 
   const session = new mod.ViewerAttemptSession({}, {
     apiClient: {
-      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSessionSignInUrl: ({ source, authFlowId } = {}) => {
+        const params = new URLSearchParams();
+        if (source) params.set('source', source);
+        if (authFlowId) params.set('authFlowId', authFlowId);
+        const query = params.toString();
+        return query ? `/worksheet_launcher/app/login/popup.html?${query}` : '/worksheet_launcher/app/login/popup.html';
+      },
       getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
     },
@@ -221,6 +250,9 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
 
   session.beginServerSignIn();
   assert.equal(session._authPopupWindow, authPopup);
+  assert.equal(typeof session._activeAuthFlowId, 'string');
+  assert.equal(session._activeAuthFlowId.startsWith('auth_flow_'), true);
+  assert.equal(openedPopupUrl.includes('authFlowId='), true);
   assert.equal(intervalCallbacks.length, 1);
 
   authPopup.closed = true;
@@ -230,6 +262,7 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
   assert.equal(session.state.serverSession.status, 'ready');
   assert.equal(session.state.serverActionMessage, null);
   assert.equal(clearedIntervals.length > 0, true);
+  assert.equal(session._activeAuthFlowId, null);
 });
 
 test('viewer silent session probe updates readiness without forcing visible checking state', async () => {

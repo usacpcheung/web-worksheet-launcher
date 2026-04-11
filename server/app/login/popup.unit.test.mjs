@@ -12,6 +12,8 @@ async function readPopupSource() {
 test('popup login page posts auth-complete message to opener and same-origin target', async () => {
   const source = await readPopupSource();
   assert.equal(source.includes("type: 'worksheet-launcher-auth-complete'"), true);
+  assert.equal(source.includes("const authFlowId = params.get('authFlowId') || '';"), true);
+  assert.equal(source.includes('authFlowId,'), true);
   assert.equal(source.includes('window.opener.postMessage(payload, window.location.origin)'), true);
 });
 
@@ -34,6 +36,8 @@ test('popup login page keeps finalizing status during retries and only reveals f
   assert.equal(source.includes('/worksheet_launcher/app/login/popup.html'), true);
   assert.equal(source.includes("if (params.has('source')) {"), true);
   assert.equal(source.includes("retryUrl.searchParams.set('source', source);"), true);
+  assert.equal(source.includes("if (params.has('authFlowId')) {"), true);
+  assert.equal(source.includes("retryUrl.searchParams.set('authFlowId', authFlowId);"), true);
   assert.equal(source.includes("statusEl.textContent = 'Finalizing sign-in…';"), true);
   assert.equal(source.includes('while (Date.now() <= retryDeadline) {'), true);
   assert.equal(source.includes(`if (!sessionReady) {

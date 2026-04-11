@@ -60,14 +60,19 @@
     (function notifyOpener() {
       const params = new URLSearchParams(window.location.search);
       const source = params.get('source') || 'generic';
+      const authFlowId = params.get('authFlowId') || '';
       const payload = {
         type: 'worksheet-launcher-auth-complete',
         source,
+        authFlowId,
       };
       const retryLinkEl = document.getElementById('retry-link');
       const retryUrl = new URL('/worksheet_launcher/app/login/popup.html', window.location.origin);
       if (params.has('source')) {
         retryUrl.searchParams.set('source', source);
+      }
+      if (params.has('authFlowId')) {
+        retryUrl.searchParams.set('authFlowId', authFlowId);
       }
       if (retryLinkEl) {
         retryLinkEl.href = retryUrl.pathname + retryUrl.search;
