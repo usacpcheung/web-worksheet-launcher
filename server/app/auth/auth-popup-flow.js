@@ -80,7 +80,6 @@ function startAuthPopupFlow(options = {}) {
     if (completed) return result;
     completed = true;
     cleanup();
-    resolveFlowPromise?.(result);
     return result;
   };
 
@@ -96,6 +95,7 @@ function startAuthPopupFlow(options = {}) {
         'onSessionNotReady'
       );
     }
+    resolveFlowPromise?.(finalResult);
     return finalResult;
   };
 
@@ -131,9 +131,47 @@ function startAuthPopupFlow(options = {}) {
   if (!authPopupWindow) {
     onPopupBlocked();
     onStatusMessage('Sign-in popup was blocked.');
-  } else {
-    onStatusMessage('Complete sign-in in the popup. Session will refresh automatically.');
+    void (async () => {
+      const probeResult = await probeSession({ apiClient, force: true });
+      if (probeResult.ok && probeResult.status === 'ready') {
+        await finalize({
+          ...probeResult,
+          attempts: 1,
+          elapsedMs: 0,
+          timedOut: false,
+          cancelled: false,
+          lastProbe: probeResult,
+          waitingForCallback: false,
+          final: true,
+        });
+        return;
+      }
+
+      await finalize({
+        ...probeResult,
+        status: 'not_ready',
+        error: {
+          code: 'AUTH_POPUP_BLOCKED',
+          message: 'Unable to open sign-in popup window. Check popup blocker settings.',
+        },
+        attempts: 1,
+        elapsedMs: 0,
+        timedOut: false,
+        cancelled: false,
+        lastProbe: probeResult,
+        waitingForCallback: false,
+        final: true,
+      });
+    })();
+
+    return {
+      popupWindow: authPopupWindow,
+      cancel,
+      promise: flowPromise,
+    };
   }
+
+  onStatusMessage('Complete sign-in in the popup. Session will refresh automatically.');
 
   const messageListener = async (event) => {
     if (completed || cancelled) return;
@@ -169,7 +207,7 @@ function startAuthPopupFlow(options = {}) {
     return true;
   };
 
-  const normalizedHardDeadlineMs = Math.max(Number(hardDeadlineMs) || 0, Number(pollTimeoutMs) || 0);
+  const normalizedHardDeadlineMs = Math.max(0, Number(hardDeadlineMs) || 0);
   if (normalizedHardDeadlineMs > 0) {
     hardDeadlineTimer = setTimeout(() => {
       if (completed || cancelled) return;
@@ -240,7 +278,7 @@ function startAuthPopupFlow(options = {}) {
     })
     .catch((error) => {
       if (completed || cancelled) return;
-      finalize({
+      void finalize({
         ok: false,
         status: 'error',
         user: null,
