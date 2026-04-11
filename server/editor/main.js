@@ -632,7 +632,8 @@ class EditorDraftSession {
     this._authPopupWindow = null;
     this._authPopupFlow = null;
     this._activeAuthFlowId = null;
-    this._loadUploadedDraftsPromise = null;
+    this._loadUploadedDraftsWithPreflightPromise = null;
+    this._loadUploadedDraftsWithoutPreflightPromise = null;
   }
 
   setOnStateChange(handler) {
@@ -2493,12 +2494,16 @@ class EditorDraftSession {
   }
 
   async loadUploadedDrafts(options = {}) {
-    if (this._loadUploadedDraftsPromise) {
-      return this._loadUploadedDraftsPromise;
+    const shouldPreflight = options.preflight !== false;
+    const inflightKey = shouldPreflight
+      ? '_loadUploadedDraftsWithPreflightPromise'
+      : '_loadUploadedDraftsWithoutPreflightPromise';
+    if (this[inflightKey]) {
+      return this[inflightKey];
     }
 
-    this._loadUploadedDraftsPromise = (async () => {
-      if (options.preflight !== false) {
+    const loadPromise = (async () => {
+      if (shouldPreflight) {
         const sessionReady = await this.ensureServerSessionReady();
         if (!sessionReady.ok) return sessionReady.result;
       }
@@ -2527,10 +2532,13 @@ class EditorDraftSession {
         this.notifyStateChange();
       }
     })();
+    this[inflightKey] = loadPromise;
     try {
-      return await this._loadUploadedDraftsPromise;
+      return await loadPromise;
     } finally {
-      this._loadUploadedDraftsPromise = null;
+      if (this[inflightKey] === loadPromise) {
+        this[inflightKey] = null;
+      }
     }
   }
 
@@ -4309,6 +4317,9 @@ function renderEditorShell(session) {
 
   session.setOnStateChange(() => {
     updateSummary();
+    if (browsePublishedDialogOpen) {
+      renderPublishedBrowserModal();
+    }
   });
 
   titleInput.addEventListener('input', () => {
