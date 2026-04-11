@@ -52,6 +52,10 @@ test('getSessionSignInUrl builds popup login path under app/login', async () => 
     client.getSessionSignInUrl({ source: 'editor' }),
     '/worksheet_launcher/app/login/popup.html?source=editor'
   );
+  assert.equal(
+    client.getSessionSignInUrl({ source: 'editor', authFlowId: 'auth_flow_123' }),
+    '/worksheet_launcher/app/login/popup.html?source=editor&authFlowId=auth_flow_123'
+  );
 });
 
 test('listUploadedDrafts builds canonical public API URL', async () => {

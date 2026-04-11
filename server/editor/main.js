@@ -7,12 +7,12 @@ import {
   parseWorksheetPackage,
 } from './worksheet-package.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
+import { probeSession } from '../app/auth/session-readiness.js';
+import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
 
 const app = document.getElementById('app');
 
 const AUTOSAVE_MS = 1000;
-const AUTH_POPUP_FALLBACK_POLL_MS = 1000;
-const AUTH_POPUP_FALLBACK_TIMEOUT_MS = 15000;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
 const DEFAULT_PUBLISHER_ID = 'local_editor';
@@ -626,10 +626,9 @@ class EditorDraftSession {
     this.previewAudioUrl = null;
     this.previewAudioPlayback = null;
     this._previewPlayRequestId = 0;
-    this._authPopupMessageListener = null;
     this._authPopupWindow = null;
-    this._authPopupFallbackTimer = null;
-    this._authPopupFallbackProbeInFlight = false;
+    this._authPopupFlow = null;
+    this._activeAuthFlowId = null;
   }
 
   setOnStateChange(handler) {
@@ -2291,107 +2290,75 @@ class EditorDraftSession {
   }
 
   beginServerSignIn() {
-    this.registerAuthPopupMessageListener();
-    const authPopup = window.open(
-      this.apiClient.getSessionSignInUrl({ source: 'editor' }),
-      'worksheet_launcher_auth_popup_editor',
-      'width=520,height=720,left=160,top=120,resizable=yes,scrollbars=yes',
-    );
-    this.state.serverActionMessage = authPopup
-      ? 'Complete sign-in in the popup. Session will refresh automatically.'
-      : 'Sign-in popup was blocked. Allow popups for this site, then try again.';
-    this.notifyStateChange();
-    this.startAuthPopupFallbackPolling(authPopup);
-  }
-
-  startAuthPopupFallbackPolling(authPopup) {
-    this.stopAuthPopupFallbackPolling();
-    if (!authPopup) return;
-
-    this._authPopupWindow = authPopup;
-    const startedAt = Date.now();
-    this._authPopupFallbackTimer = window.setInterval(() => {
-      this.pollForMissedAuthCallback(startedAt).catch(() => {
-        // Keep fallback polling best-effort; callback path remains primary.
-      });
-    }, AUTH_POPUP_FALLBACK_POLL_MS);
-  }
-
-  stopAuthPopupFallbackPolling() {
-    if (this._authPopupFallbackTimer) {
-      window.clearInterval(this._authPopupFallbackTimer);
+    if (this._authPopupFlow?.cancel) {
+      this._authPopupFlow.cancel();
     }
-    this._authPopupFallbackTimer = null;
-    this._authPopupWindow = null;
-    this._authPopupFallbackProbeInFlight = false;
-  }
+    const authFlowId = createLocalId('auth_flow');
+    this._activeAuthFlowId = authFlowId;
 
-  async pollForMissedAuthCallback(startedAt) {
-    if (this.state.serverSession.status === 'ready') {
-      this.stopAuthPopupFallbackPolling();
-      return;
-    }
-
-    const elapsedMs = Date.now() - startedAt;
-    if (elapsedMs >= AUTH_POPUP_FALLBACK_TIMEOUT_MS) {
-      this.stopAuthPopupFallbackPolling();
-      return;
-    }
-
-    const popupClosed = !this._authPopupWindow || this._authPopupWindow.closed;
-    const shouldProbeSession = popupClosed || elapsedMs >= AUTH_POPUP_FALLBACK_POLL_MS * 3;
-    if (!shouldProbeSession || this._authPopupFallbackProbeInFlight) {
-      return;
-    }
-
-    this._authPopupFallbackProbeInFlight = true;
-    try {
-      const result = await this.probeServerSessionSilently();
-      if (result.ok && this.state.serverSession.status === 'ready') {
-        await this.loadUploadedDrafts({ preflight: false });
-        this.state.serverActionMessage = null;
-        this.notifyStateChange();
-        this.stopAuthPopupFallbackPolling();
+    const finalizeFlow = () => {
+      if (this._activeAuthFlowId === authFlowId) {
+        this._activeAuthFlowId = null;
       }
-    } finally {
-      this._authPopupFallbackProbeInFlight = false;
-    }
-  }
-
-  registerAuthPopupMessageListener() {
-    if (this._authPopupMessageListener || typeof window?.addEventListener !== 'function') {
-      return;
-    }
-    this._authPopupMessageListener = (event) => {
-      this.handleAuthCompleteMessage(event).catch((error) => {
-        this.state.serverActionMessage = error?.message || 'Sign-in callback handling failed.';
-        this.notifyStateChange();
-      });
+      this._authPopupWindow = null;
+      this._authPopupFlow = null;
     };
-    window.addEventListener('message', this._authPopupMessageListener);
-  }
 
-  async handleAuthCompleteMessage(event) {
-    const expectedOrigin = window?.location?.origin || '';
-    if (!event || event.origin !== expectedOrigin) return false;
-    if (!isRecord(event.data)) return false;
-    if (event.data.type !== 'worksheet-launcher-auth-complete') return false;
-    this.stopAuthPopupFallbackPolling();
-
-    this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
-    this.notifyStateChange();
-
-    const result = await this.refreshServerSession();
-    if (result.ok && this.state.serverSession.status === 'ready') {
-      await this.loadUploadedDrafts({ preflight: false });
-      this.state.serverActionMessage = null;
-      this.notifyStateChange();
-      return true;
-    }
-
-    this.state.serverActionMessage = result.error?.message || 'Sign-in completed, but session is still not ready.';
-    this.notifyStateChange();
-    return false;
+    this._authPopupFlow = startAuthPopupFlow({
+      apiClient: this.apiClient,
+      source: 'editor',
+      authFlowId,
+      pollIntervalMs: AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs,
+      pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
+      shouldContinue: () => this._activeAuthFlowId === authFlowId,
+      onPopupBlocked: () => {
+        this.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        this.notifyStateChange();
+      },
+      onStatusMessage: (message) => {
+        if (this._activeAuthFlowId !== authFlowId) return;
+        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+          this.state.serverActionMessage = message;
+          this.notifyStateChange();
+        }
+      },
+      onSessionReady: async () => {
+        if (this._activeAuthFlowId !== authFlowId) return;
+        this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
+        this.notifyStateChange();
+        const result = await this.probeServerSessionSilently({ force: true });
+        if (result.ok && this.state.serverSession.status === 'ready') {
+          await this.loadUploadedDrafts({ preflight: false });
+          this.state.serverActionMessage = null;
+          this.notifyStateChange();
+          finalizeFlow();
+          return;
+        }
+        this.state.serverActionMessage = result.error?.message || 'Sign-in completed, but session is still not ready.';
+        this.notifyStateChange();
+        finalizeFlow();
+      },
+      onSessionNotReady: (result) => {
+        if (this._activeAuthFlowId !== authFlowId) return;
+        if (result?.final === false && result?.waitingForCallback === true) {
+          this.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          this.notifyStateChange();
+          return;
+        }
+        if (result?.error?.code === 'SESSION_WAIT_CANCELLED') {
+          finalizeFlow();
+          return;
+        }
+        if (this.state.serverActionMessage === 'Sign-in popup was blocked. Allow popups for this site, then try again.') {
+          finalizeFlow();
+          return;
+        }
+        this.state.serverActionMessage = result?.error?.message || this.state.serverActionMessage;
+        this.notifyStateChange();
+        finalizeFlow();
+      },
+    });
+    this._authPopupWindow = this._authPopupFlow?.popupWindow || null;
   }
 
   async refreshServerSession() {
@@ -2401,23 +2368,23 @@ class EditorDraftSession {
       error: null,
     };
     this.notifyStateChange();
-    return this.probeServerSessionSilently();
+    return this.probeServerSessionSilently({ force: true });
   }
 
-  async probeServerSessionSilently() {
-    const result = await this.apiClient.getSession();
-    if (!result.ok) {
+  async probeServerSessionSilently({ force = false } = {}) {
+    const result = await probeSession({ apiClient: this.apiClient, force });
+    if (result.status !== 'ready') {
       this.state.serverSession = {
-        status: 'not_ready',
+        status: result.status === 'error' ? 'error' : 'not_ready',
         user: null,
-        error: result.error.message,
+        error: result.error?.message || 'Sign-in is required before using server features.',
       };
       this.notifyStateChange();
       return result;
     }
     this.state.serverSession = {
       status: 'ready',
-      user: result.data?.user || null,
+      user: result.user || null,
       error: null,
     };
     this.notifyStateChange();
@@ -2425,11 +2392,20 @@ class EditorDraftSession {
   }
 
   async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.') {
-    const result = await this.probeServerSessionSilently();
+    const result = await this.probeServerSessionSilently({ force: true });
     if (result.ok && this.state.serverSession.status === 'ready') {
       return { ok: true, result };
     }
-    const authMessage = result.error?.requiresSignIn
+    const authStatus = Number(result.error?.status);
+    const authErrorCode = String(result.error?.code || '').toUpperCase();
+    const hasAuthStatus = Number.isFinite(authStatus);
+    const isExplicitAuthFailure = result.status === 'not_ready' && (
+      authErrorCode === 'AUTH_REQUIRED'
+      || (result.error?.requiresSignIn && (!hasAuthStatus || authStatus === 401 || authStatus === 403))
+      || authStatus === 401
+      || authStatus === 403
+    );
+    const authMessage = isExplicitAuthFailure
       ? 'Sign-in session expired. Please sign in again.'
       : (result.error?.message || notReadyMessage);
     this.state.serverActionMessage = authMessage;
@@ -3125,7 +3101,7 @@ function renderEditorShell(session) {
     subjectFilter.value = browsePublishedState.subject;
     const ownerFilter = document.createElement('input');
     ownerFilter.className = 'control';
-    ownerFilter.placeholder = 'Filter by owner';
+    ownerFilter.placeholder = 'Filter by owner email';
     ownerFilter.value = browsePublishedState.owner;
     const searchBtn = document.createElement('button');
     searchBtn.type = 'button';
@@ -3157,7 +3133,7 @@ function renderEditorShell(session) {
         title.textContent = item.title || 'Untitled';
         const subjectOwner = document.createElement('div');
         subjectOwner.className = 'muted';
-        subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_name || item.owner_sub || '—'}`;
+        subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;
         const publishedMeta = document.createElement('div');
         publishedMeta.className = 'muted';
         publishedMeta.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)} • ID: ${item.published_package_id}`;
@@ -4109,7 +4085,7 @@ function renderEditorShell(session) {
           const publishedSubjectLine = document.createElement('div');
           publishedSubjectLine.textContent = `Subject: ${item.published_subject || ''}`;
           const publishedOwnerLine = document.createElement('div');
-          publishedOwnerLine.textContent = `Owner: ${item.published_owner_name || session.state.serverSession?.user?.name || 'Unknown'}`;
+          publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;
           const publishedAtLine = document.createElement('div');
           publishedAtLine.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)}`;
           body.append(publishedIdLine, publishedTitleLine, publishedSubjectLine, publishedOwnerLine, publishedAtLine);
@@ -4432,7 +4408,6 @@ async function bootstrapEditor() {
 
   session.authGate = authGate;
   await authGate.restoreAfterAuthReturn();
-  session.registerAuthPopupMessageListener();
   await session.refreshServerSession();
   if (session.state.serverSession.status === 'ready') {
     await session.loadUploadedDrafts();

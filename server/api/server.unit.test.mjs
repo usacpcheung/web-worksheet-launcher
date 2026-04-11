@@ -209,7 +209,7 @@ test('GET /api/v1/published rejects invalid limit query with 400', async () => {
   });
 });
 
-test('GET /api/v1/published forwards title/subject/owner filters', async () => {
+test('GET /api/v1/published forwards title/subject/owner filters (owner email value)', async () => {
   let received = null;
   await withServer(
     {
@@ -222,7 +222,7 @@ test('GET /api/v1/published forwards title/subject/owner filters', async () => {
     },
     async (baseUrl) => {
       const res = await fetch(
-        `${baseUrl}/api/v1/published?title=Algebra&subject=Math&owner=Teacher&limit=5&offset=2`,
+        `${baseUrl}/api/v1/published?title=Algebra&subject=Math&owner=teacher%40example.com&limit=5&offset=2`,
         { headers: authHeaders }
       );
       assert.equal(res.status, 200);
@@ -233,7 +233,7 @@ test('GET /api/v1/published forwards title/subject/owner filters', async () => {
     query: '',
     title: 'Algebra',
     subject: 'Math',
-    owner: 'Teacher',
+    owner: 'teacher@example.com',
     limit: 5,
     offset: 2,
   });
