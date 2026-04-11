@@ -2429,7 +2429,18 @@ class EditorDraftSession {
     if (result.ok && this.state.serverSession.status === 'ready') {
       return { ok: true, result };
     }
-    const authMessage = result.error?.requiresSignIn
+    const authErrorCode = String(result.error?.code || '').toUpperCase();
+    const authErrorMessage = String(result.error?.message || '').toLowerCase();
+    const authStatus = Number(result.error?.status);
+    const isExplicitAuthFailure = result.error?.requiresSignIn && (
+      authStatus === 401
+      || authStatus === 403
+      || authErrorCode === 'AUTH_REQUIRED'
+      || authErrorMessage.includes('auth required')
+      || authErrorMessage.includes('sign in')
+      || authErrorMessage.includes('sign-in')
+    );
+    const authMessage = isExplicitAuthFailure
       ? 'Sign-in session expired. Please sign in again.'
       : (result.error?.message || notReadyMessage);
     this.state.serverActionMessage = authMessage;

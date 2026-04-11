@@ -314,6 +314,38 @@ test('viewer browse action runs silent session preflight and blocks when session
   assert.equal(session.state.serverActionMessage, 'Sign-in session expired. Please sign in again.');
 });
 
+test('viewer browse preflight surfaces transient server/non-auth errors without expired-session copy', async () => {
+  const calls = [];
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      getSession: async () => {
+        calls.push('getSession');
+        return {
+          ok: false,
+          error: {
+            code: 'UNEXPECTED_NON_JSON_RESPONSE',
+            message: 'Server returned an unexpected non-JSON response.',
+            requiresSignIn: true,
+            status: 503,
+          },
+        };
+      },
+      listPublishedPackages: async () => {
+        calls.push('listPublishedPackages');
+        return { ok: true, data: { items: [] } };
+      },
+    },
+  });
+
+  const result = await session.browsePublishedPackages('math');
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(calls, ['getSession']);
+  assert.equal(session.state.serverActionMessage, 'Server returned an unexpected non-JSON response.');
+});
+
+
 test('viewer browse action persists requested publishedQuery before preflight failure', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({}, {

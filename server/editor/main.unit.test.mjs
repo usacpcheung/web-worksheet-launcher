@@ -311,6 +311,40 @@ test('editor upload action runs silent session preflight and blocks when session
   assert.equal(session.state.serverActionMessage, 'Sign-in session expired. Please sign in again.');
 });
 
+test('editor upload preflight surfaces transient server/non-auth errors without expired-session copy', async () => {
+  const calls = [];
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => {
+        calls.push('getSession');
+        return {
+          ok: false,
+          error: {
+            code: 'UNEXPECTED_NON_JSON_RESPONSE',
+            message: 'Server returned an unexpected non-JSON response.',
+            requiresSignIn: true,
+            status: 502,
+          },
+        };
+      },
+      uploadDraftPackage: async () => {
+        calls.push('uploadDraftPackage');
+        return { ok: true, data: { uploaded_draft_id: 'ud_1' } };
+      },
+    },
+  });
+  session.state.draft = { localId: 'd1', title: 'Draft', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const result = await session.uploadCurrentDraftToServer();
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(calls, ['getSession']);
+  assert.equal(session.state.serverActionMessage, 'Server returned an unexpected non-JSON response.');
+});
+
+
 test('editor shell removes Retry session button from normal server controls', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("retrySessionBtn.textContent = 'Retry session';"), false);
