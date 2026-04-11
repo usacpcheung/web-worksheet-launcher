@@ -12,8 +12,16 @@ async function loadEditorModule() {
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*mapLegacyJsonToPackageModel,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
-      replacement: `const editorStorage = {};
-const SharedAuthGate = class {};
+      replacement: `const editorStorage = {
+  drafts: { get: async () => null, put: async (value) => value, delete: async () => {} },
+  importedWorksheets: { put: async () => {} },
+  resumeFlags: { get: () => null, set: () => {}, clear: () => {} },
+  resumeMetadata: { get: () => null, set: () => {}, clear: () => {} },
+};
+const SharedAuthGate = class {
+  constructor() {}
+  async restoreAfterAuthReturn() {}
+};
 const createServerApiClient = () => ({
   getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
   getSession: async () => ({ ok: false, error: { message: 'auth required' } }),
@@ -57,7 +65,7 @@ const AUDIO_EXTENSIONS = ['mp3'];
     {
       name: 'replace shared auth utility imports with local test doubles',
       pattern: /import\s*\{\s*probeSession\s*\}\s*from\s*['"]\.\.\/app\/auth\/session-readiness\.js['"];\s*import\s*\{\s*startAuthPopupFlow,\s*AUTH_POPUP_FLOW_DEFAULTS\s*\}\s*from\s*['"]\.\.\/app\/auth\/auth-popup-flow\.js['"];\s*/,
-      replacement: `const AUTH_POPUP_FLOW_DEFAULTS = { pollIntervalMs: 1000, pollTimeoutMs: 15000 };
+      replacement: `const AUTH_POPUP_FLOW_DEFAULTS = { pollIntervalMs: 20, pollTimeoutMs: 80 };
 const probeSession = async ({ apiClient }) => {
   const result = await apiClient.getSession();
   if (result?.ok) return { ok: true, status: 'ready', user: result.data?.user || null, error: null };
@@ -116,10 +124,16 @@ const startAuthPopupFlow = (options = {}) => {
 
 function createEmptyQuestionBlock`,
     },
+
+    {
+      name: 'replace editor shell rendering call with test probe',
+      pattern: /\n\s*renderEditorShell\(session\);/,
+      replacement: '\n  globalThis.__renderedSession = session;',
+    },
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapEditor\(\)\.catch\([\s\S]*?\);\s*export\s*\{[^}]+\};/,
-      replacement: 'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay };',
+      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay };',
     },
   ]);
 
@@ -128,7 +142,7 @@ function createEmptyQuestionBlock`,
     activeElement: null,
   };
   globalThis.window = {
-    location: { hash: '#fallback', origin: 'https://example.test' },
+    location: { hash: '#fallback', origin: 'https://example.test', search: '', href: 'https://example.test/editor.html#fallback' },
     scrollY: 150,
     setInterval: globalThis.setInterval,
     clearInterval: globalThis.clearInterval,
@@ -176,6 +190,31 @@ function toBlockFieldsWithoutPosition(block) {
     responseConfig: snapshot.responseConfig ? JSON.parse(JSON.stringify(snapshot.responseConfig)) : snapshot.responseConfig,
   };
 }
+
+
+test('bootstrapEditor completes without requiring a registerAuthPopupMessageListener method', async () => {
+  const mod = await loadEditorModule();
+  globalThis.window = {
+    location: {
+      hash: '#fallback',
+      origin: 'https://example.test',
+      search: '',
+      href: 'https://example.test/editor.html#fallback',
+    },
+    history: { replaceState: () => {} },
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
+  };
+
+  await assert.doesNotReject(async () => {
+    await mod.bootstrapEditor();
+  });
+
+  assert.ok(globalThis.window.editorSession);
+  assert.equal(typeof globalThis.window.editorSession.beginServerSignIn, 'function');
+});
 
 test('beginServerSignIn completes via shared popup flow and refreshes uploads on ready session', async () => {
   const mod = await loadEditorModule();
@@ -246,7 +285,7 @@ test('beginServerSignIn stores popup handle and fallback polling can recover mis
   const mod = await loadEditorModule();
   let openedPopupUrl = null;
   globalThis.window = {
-    location: { hash: '#fallback', origin: 'https://example.test' },
+    location: { hash: '#fallback', origin: 'https://example.test', search: '', href: 'https://example.test/editor.html#fallback' },
     open: (url) => {
       openedPopupUrl = url;
       return authPopup;
@@ -276,7 +315,7 @@ test('beginServerSignIn stores popup handle and fallback polling can recover mis
   assert.equal(typeof session._activeAuthFlowId, 'string');
   assert.equal(session._activeAuthFlowId.startsWith('auth_flow_'), true);
   assert.equal(openedPopupUrl.includes('authFlowId='), true);
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await new Promise((resolve) => setTimeout(resolve, 40));
 
   assert.equal(session.state.serverSession.status, 'ready');
   assert.equal(session.state.serverActionMessage, null);
@@ -306,7 +345,7 @@ test('editor popup fallback polling uses shared wait flow and still reaches read
   const mod = await loadEditorModule();
   const authPopup = { closed: true };
   globalThis.window = {
-    location: { hash: '#fallback', origin: 'https://example.test' },
+    location: { hash: '#fallback', origin: 'https://example.test', search: '', href: 'https://example.test/editor.html#fallback' },
     open: () => authPopup,
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -330,7 +369,7 @@ test('editor popup fallback polling uses shared wait flow and still reaches read
   };
 
   session.beginServerSignIn();
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await new Promise((resolve) => setTimeout(resolve, 40));
 
   assert.equal(silentProbeCalls > 0, true);
 });

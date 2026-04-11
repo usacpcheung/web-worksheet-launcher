@@ -254,7 +254,7 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
   assert.equal(typeof session._activeAuthFlowId, 'string');
   assert.equal(session._activeAuthFlowId.startsWith('auth_flow_'), true);
   assert.equal(openedPopupUrl.includes('authFlowId='), true);
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await new Promise((resolve) => setTimeout(resolve, 40));
 
   assert.equal(session.state.serverSession.status, 'ready');
   assert.equal(session.state.serverActionMessage, null);
@@ -307,7 +307,7 @@ test('viewer popup fallback polling uses silent session probe path', async () =>
   };
 
   session.beginServerSignIn();
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  await new Promise((resolve) => setTimeout(resolve, 40));
 
   assert.equal(silentProbeCalls > 0, true);
 });

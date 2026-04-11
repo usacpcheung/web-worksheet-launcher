@@ -1154,10 +1154,8 @@ class ViewerAttemptSession {
     this.activeAudioObjectUrl = null;
     this.activeAudioPlayback = null;
     this._playRequestId = 0;
-    this._authPopupMessageListener = null;
     this._authPopupWindow = null;
-    this._authPopupFallbackTimer = null;
-    this._authPopupFallbackProbeInFlight = false;
+    this._authPopupFlow = null;
     this._activeAuthFlowId = null;
   }
 
@@ -1963,6 +1961,11 @@ class ViewerAttemptSession {
       },
       onSessionNotReady: (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        if (result?.final === false && result?.waitingForCallback === true) {
+          this.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          this.notifyStateChange();
+          return;
+        }
         if (result?.error?.code === 'SESSION_WAIT_CANCELLED') {
           finalizeFlow();
           return;
@@ -1984,7 +1987,7 @@ class ViewerAttemptSession {
       status: 'checking',
       user: null,
       error: null,
-    }
+    };
     this.notifyStateChange();
     return this.probeServerSessionSilently({ force: true });
   }
