@@ -2492,17 +2492,21 @@ class EditorDraftSession {
   }
 
   async loadUploadedDrafts(options = {}) {
-    if (this.state.isLoadingUploadedDrafts && this._loadUploadedDraftsPromise) {
+    if (this._loadUploadedDraftsPromise) {
       return this._loadUploadedDraftsPromise;
     }
+
     this._loadUploadedDraftsPromise = (async () => {
       if (options.preflight !== false) {
         const sessionReady = await this.ensureServerSessionReady();
         if (!sessionReady.ok) return sessionReady.result;
       }
+
+      const messageBeforeRefresh = this.state.serverActionMessage;
       this.state.isLoadingUploadedDrafts = true;
       this.state.serverActionMessage = 'Refreshing…';
       this.notifyStateChange();
+
       try {
         const result = await this.apiClient.listUploadedDrafts();
         if (!result.ok) {
@@ -2510,7 +2514,11 @@ class EditorDraftSession {
           this.notifyStateChange();
           return result;
         }
+
         this.state.uploadedDrafts = Array.isArray(result.data?.items) ? result.data.items : [];
+        if (this.state.serverActionMessage === 'Refreshing…') {
+          this.state.serverActionMessage = messageBeforeRefresh;
+        }
         this.notifyStateChange();
         return result;
       } finally {

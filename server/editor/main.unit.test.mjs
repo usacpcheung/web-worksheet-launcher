@@ -2794,6 +2794,59 @@ test('deleteUploadedDraft refreshes uploaded drafts list and leaves local draft 
   assert.equal(session.state.serverActionMessage, 'Uploaded draft deleted.');
 });
 
+test('loadUploadedDrafts deduplicates concurrent preflight calls before loading flag is set', async () => {
+  const mod = await loadEditorModule();
+  let ensureCalls = 0;
+  let listCalls = 0;
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => {
+        listCalls += 1;
+        return { ok: true, data: { items: [] } };
+      },
+    },
+  });
+
+  session.ensureServerSessionReady = async () => {
+    ensureCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return { ok: true, result: { ok: true } };
+  };
+
+  const [first, second] = await Promise.all([
+    session.loadUploadedDrafts(),
+    session.loadUploadedDrafts(),
+  ]);
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(ensureCalls, 1);
+  assert.equal(listCalls, 1);
+});
+
+test('loadUploadedDrafts restores prior server action message after successful refresh', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+
+  session.state.serverActionMessage = 'Uploaded draft draft_123.';
+  const withExistingMessage = await session.loadUploadedDrafts({ preflight: false });
+  assert.equal(withExistingMessage.ok, true);
+  assert.equal(session.state.serverActionMessage, 'Uploaded draft draft_123.');
+
+  session.state.serverActionMessage = null;
+  const withoutExistingMessage = await session.loadUploadedDrafts({ preflight: false });
+  assert.equal(withoutExistingMessage.ok, true);
+  assert.equal(session.state.serverActionMessage, null);
+});
+
 test('deleteUploadedDraft preserves success message when refresh fails', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests(), {
