@@ -683,6 +683,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;'), true);
   assert.equal(source.includes('const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);'), true);
   assert.equal(source.includes('const reopenResult = await reopenPromise;'), true);
+  assert.equal(source.includes('if (browsePublishedDialogOpen) {\n      renderPublishedBrowserModal();\n    }'), true);
   assert.equal(source.includes('if (reopenResult?.ok) {\n            browsePublishedDialogOpen = false;'), true);
   assert.equal(source.includes("error: session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.',"), true);
   assert.equal(source.includes("summary.textContent = 'Published details';"), true);
@@ -2830,6 +2831,86 @@ test('loadUploadedDrafts deduplicates concurrent preflight calls before loading 
   assert.equal(second.ok, true);
   assert.equal(ensureCalls, 1);
   assert.equal(listCalls, 1);
+});
+
+test('loadUploadedDrafts preflight:false does not reuse an in-flight preflight:true request', async () => {
+  const mod = await loadEditorModule();
+  let listCalls = 0;
+  let resolveEnsure;
+  const ensureGate = new Promise((resolve) => {
+    resolveEnsure = resolve;
+  });
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => {
+        listCalls += 1;
+        return { ok: true, data: { items: [{ uploaded_draft_id: `draft-${listCalls}` }] } };
+      },
+    },
+  });
+
+  session.ensureServerSessionReady = async () => {
+    await ensureGate;
+    return { ok: false, result: { ok: false, error: { message: 'session not ready' } } };
+  };
+
+  const preflightPromise = session.loadUploadedDrafts();
+  const refreshWithoutPreflight = await session.loadUploadedDrafts({ preflight: false });
+  resolveEnsure();
+  const preflightResult = await preflightPromise;
+
+  assert.equal(refreshWithoutPreflight.ok, true);
+  assert.equal(preflightResult.ok, false);
+  assert.equal(listCalls, 1);
+  assert.equal(session.state.uploadedDrafts.length, 1);
+  assert.equal(session.state.uploadedDrafts[0].uploaded_draft_id, 'draft-1');
+});
+
+test('loadUploadedDrafts keeps loading state true until overlapping preflight and non-preflight refreshes finish', async () => {
+  const mod = await loadEditorModule();
+  let resolveEnsure;
+  let resolveList;
+  const ensureGate = new Promise((resolve) => {
+    resolveEnsure = resolve;
+  });
+  const listGate = new Promise((resolve) => {
+    resolveList = resolve;
+  });
+  const loadingStates = [];
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => {
+        await listGate;
+        return { ok: true, data: { items: [] } };
+      },
+    },
+  });
+  session.setOnStateChange((state) => {
+    loadingStates.push(state.isLoadingUploadedDrafts);
+  });
+  session.ensureServerSessionReady = async () => {
+    await ensureGate;
+    return { ok: true, result: { ok: true } };
+  };
+
+  const withPreflight = session.loadUploadedDrafts();
+  const withoutPreflight = session.loadUploadedDrafts({ preflight: false });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  resolveEnsure();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(session.state.isLoadingUploadedDrafts, true);
+
+  resolveList();
+  await Promise.all([withPreflight, withoutPreflight]);
+
+  assert.equal(session.state.isLoadingUploadedDrafts, false);
+  assert.equal(loadingStates.includes(true), true);
+  assert.equal(loadingStates[loadingStates.length - 1], false);
 });
 
 test('loadUploadedDrafts restores prior server action message after successful refresh', async () => {

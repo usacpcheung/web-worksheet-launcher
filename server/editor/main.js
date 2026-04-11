@@ -632,7 +632,10 @@ class EditorDraftSession {
     this._authPopupWindow = null;
     this._authPopupFlow = null;
     this._activeAuthFlowId = null;
-    this._loadUploadedDraftsPromise = null;
+    this._loadUploadedDraftsWithPreflightPromise = null;
+    this._loadUploadedDraftsWithoutPreflightPromise = null;
+    this._loadUploadedDraftsActiveCount = 0;
+    this._loadUploadedDraftsMessageBeforeRefresh = null;
   }
 
   setOnStateChange(handler) {
@@ -2493,18 +2496,25 @@ class EditorDraftSession {
   }
 
   async loadUploadedDrafts(options = {}) {
-    if (this._loadUploadedDraftsPromise) {
-      return this._loadUploadedDraftsPromise;
+    const shouldPreflight = options.preflight !== false;
+    const inflightKey = shouldPreflight
+      ? '_loadUploadedDraftsWithPreflightPromise'
+      : '_loadUploadedDraftsWithoutPreflightPromise';
+    if (this[inflightKey]) {
+      return this[inflightKey];
     }
 
-    this._loadUploadedDraftsPromise = (async () => {
-      if (options.preflight !== false) {
+    const loadPromise = (async () => {
+      if (shouldPreflight) {
         const sessionReady = await this.ensureServerSessionReady();
         if (!sessionReady.ok) return sessionReady.result;
       }
 
-      const messageBeforeRefresh = this.state.serverActionMessage;
-      this.state.isLoadingUploadedDrafts = true;
+      if (this._loadUploadedDraftsActiveCount === 0) {
+        this._loadUploadedDraftsMessageBeforeRefresh = this.state.serverActionMessage;
+      }
+      this._loadUploadedDraftsActiveCount += 1;
+      this.state.isLoadingUploadedDrafts = this._loadUploadedDraftsActiveCount > 0;
       this.state.serverActionMessage = 'Refreshing…';
       this.notifyStateChange();
 
@@ -2517,20 +2527,27 @@ class EditorDraftSession {
         }
 
         this.state.uploadedDrafts = Array.isArray(result.data?.items) ? result.data.items : [];
-        if (this.state.serverActionMessage === 'Refreshing…') {
-          this.state.serverActionMessage = messageBeforeRefresh;
-        }
         this.notifyStateChange();
         return result;
       } finally {
-        this.state.isLoadingUploadedDrafts = false;
+        this._loadUploadedDraftsActiveCount = Math.max(0, this._loadUploadedDraftsActiveCount - 1);
+        this.state.isLoadingUploadedDrafts = this._loadUploadedDraftsActiveCount > 0;
+        if (this._loadUploadedDraftsActiveCount === 0 && this.state.serverActionMessage === 'Refreshing…') {
+          this.state.serverActionMessage = this._loadUploadedDraftsMessageBeforeRefresh;
+        }
+        if (this._loadUploadedDraftsActiveCount === 0) {
+          this._loadUploadedDraftsMessageBeforeRefresh = null;
+        }
         this.notifyStateChange();
       }
     })();
+    this[inflightKey] = loadPromise;
     try {
-      return await this._loadUploadedDraftsPromise;
+      return await loadPromise;
     } finally {
-      this._loadUploadedDraftsPromise = null;
+      if (this[inflightKey] === loadPromise) {
+        this[inflightKey] = null;
+      }
     }
   }
 
@@ -4309,6 +4326,9 @@ function renderEditorShell(session) {
 
   session.setOnStateChange(() => {
     updateSummary();
+    if (browsePublishedDialogOpen) {
+      renderPublishedBrowserModal();
+    }
   });
 
   titleInput.addEventListener('input', () => {
