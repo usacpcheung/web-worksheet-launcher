@@ -756,6 +756,13 @@ textarea.control {
   gap: 6px;
 }
 
+.published-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 @media (max-width: 1100px) {
   .editor-layout {
     grid-template-columns: 1fr;

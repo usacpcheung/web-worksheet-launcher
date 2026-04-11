@@ -617,6 +617,7 @@ class EditorDraftSession {
       isUploadingDraft: false,
       isLoadingUploadedDrafts: false,
       publishingDraftIds: new Set(),
+      openingPublishedPackageIds: new Set(),
       publishedBrowseQuery: '',
     };
 
@@ -2551,6 +2552,43 @@ class EditorDraftSession {
     return { ok: true, data: imported };
   }
 
+  async reopenPublishedPackageAsLocalCopy(publishedPackageId) {
+    const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
+    if (!normalizedPublishedPackageId) {
+      return { ok: false, error: { message: 'Published package ID is required.' } };
+    }
+    if (this.state.openingPublishedPackageIds.has(normalizedPublishedPackageId)) {
+      return {
+        ok: false,
+        skipped: true,
+        error: { message: `Open already in progress for published package ${normalizedPublishedPackageId}.` },
+      };
+    }
+    this.state.openingPublishedPackageIds.add(normalizedPublishedPackageId);
+    this.state.serverActionMessage = 'Opening published package…';
+    this.notifyStateChange();
+    try {
+      const sessionReady = await this.ensureServerSessionReady();
+      if (!sessionReady.ok) return sessionReady.result;
+      const artifact = await this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId);
+      if (!artifact.ok) {
+        this.state.serverActionMessage = artifact.error.message;
+        this.notifyStateChange();
+        return artifact;
+      }
+      const imported = await this.importWorksheetPackageFile(
+        new File([artifact.data], `published-package-${normalizedPublishedPackageId}.zip`, { type: 'application/zip' }),
+        { convertToEditableDraft: true }
+      );
+      this.state.serverActionMessage = `Opened published package ${normalizedPublishedPackageId} as a new local draft copy.`;
+      this.notifyStateChange();
+      return { ok: true, data: imported };
+    } finally {
+      this.state.openingPublishedPackageIds.delete(normalizedPublishedPackageId);
+      this.notifyStateChange();
+    }
+  }
+
   async deleteUploadedDraft(uploadedDraftId) {
     const sessionReady = await this.ensureServerSessionReady();
     if (!sessionReady.ok) return sessionReady.result;
@@ -3145,6 +3183,7 @@ function renderEditorShell(session) {
   function renderPublishedBrowserModal() {
     browsePublishedModalRoot.innerHTML = '';
     if (!browsePublishedDialogOpen) return;
+    const serverReady = session.state.serverSession?.status === 'ready';
     const overlay = document.createElement('div');
     overlay.className = 'confirm-modal-overlay';
     const dialog = document.createElement('section');
@@ -3202,6 +3241,7 @@ function renderEditorShell(session) {
         row.append(title, subjectOwner, publishedMeta);
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
+        copyBtn.className = 'uploaded-draft-action uploaded-draft-action--secondary';
         copyBtn.textContent = 'Copy Published ID';
         copyBtn.addEventListener('click', async () => {
           const copied = await copyTextToClipboard(item.published_package_id);
@@ -3210,7 +3250,21 @@ function renderEditorShell(session) {
             : 'Clipboard copy is unavailable in this browser.';
           session.notifyStateChange();
         });
-        row.appendChild(copyBtn);
+        const openInEditorBtn = document.createElement('button');
+        openInEditorBtn.type = 'button';
+        openInEditorBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+        const isOpening = session.state.openingPublishedPackageIds.has(item.published_package_id);
+        openInEditorBtn.textContent = isOpening ? 'Opening…' : 'Open in Editor';
+        openInEditorBtn.disabled = !serverReady || browsePublishedState.loading || isOpening;
+        openInEditorBtn.addEventListener('click', async () => {
+          if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
+          await session.reopenPublishedPackageAsLocalCopy(item.published_package_id);
+          updateSummary();
+        });
+        const actionRow = document.createElement('div');
+        actionRow.className = 'published-result-actions';
+        actionRow.append(copyBtn, openInEditorBtn);
+        row.appendChild(actionRow);
         results.appendChild(row);
       });
     }
