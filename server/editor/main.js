@@ -3269,7 +3269,10 @@ function renderEditorShell(session) {
         openInEditorBtn.disabled = !serverReady || browsePublishedState.loading || isOpening;
         openInEditorBtn.addEventListener('click', async () => {
           if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
-          await session.reopenPublishedPackageAsLocalCopy(item.published_package_id);
+          const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);
+          renderPublishedBrowserModal();
+          await reopenPromise;
+          renderPublishedBrowserModal();
           updateSummary();
         });
         const actionRow = document.createElement('div');
