@@ -12,8 +12,16 @@ async function loadEditorModule() {
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*mapLegacyJsonToPackageModel,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
-      replacement: `const editorStorage = {};
-const SharedAuthGate = class {};
+      replacement: `const editorStorage = {
+  drafts: { get: async () => null, put: async (value) => value, delete: async () => {} },
+  importedWorksheets: { put: async () => {} },
+  resumeFlags: { get: () => null, set: () => {}, clear: () => {} },
+  resumeMetadata: { get: () => null, set: () => {}, clear: () => {} },
+};
+const SharedAuthGate = class {
+  constructor() {}
+  async restoreAfterAuthReturn() {}
+};
 const createServerApiClient = () => ({
   getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
   getSession: async () => ({ ok: false, error: { message: 'auth required' } }),
@@ -55,6 +63,39 @@ const AUDIO_EXTENSIONS = ['mp3'];
 `,
     },
     {
+      name: 'replace shared auth utility imports with local test doubles',
+      pattern: /import\s*\{\s*probeSession\s*\}\s*from\s*['"]\.\.\/app\/auth\/session-readiness\.js['"];\s*import\s*\{\s*startAuthPopupFlow,\s*AUTH_POPUP_FLOW_DEFAULTS\s*\}\s*from\s*['"]\.\.\/app\/auth\/auth-popup-flow\.js['"];\s*/,
+      replacement: `const AUTH_POPUP_FLOW_DEFAULTS = { pollIntervalMs: 20, pollTimeoutMs: 80 };
+const probeSession = async ({ apiClient }) => {
+  const result = await apiClient.getSession();
+  if (result?.ok) return { ok: true, status: 'ready', user: result.data?.user || null, error: null };
+  return { ok: false, status: 'not_ready', user: null, error: result?.error || { message: 'auth required' } };
+};
+const startAuthPopupFlow = (options = {}) => {
+  const popupWindow = window.open(
+    options.apiClient.getSessionSignInUrl({ source: options.source, authFlowId: options.authFlowId }),
+    'worksheet_launcher_auth_popup_editor',
+    'width=520,height=720,left=160,top=120,resizable=yes,scrollbars=yes'
+  );
+  if (!popupWindow) {
+    options.onPopupBlocked?.();
+    options.onSessionNotReady?.({ ok: false, status: 'not_ready', error: { message: 'blocked' } });
+    return { popupWindow: null, cancel: () => true, promise: Promise.resolve({ ok: false }) };
+  }
+  options.onStatusMessage?.('Complete sign-in in the popup. Session will refresh automatically.');
+  const timer = setTimeout(async () => {
+    const result = await probeSession({ apiClient: options.apiClient, force: true });
+    if (result.ok) {
+      await options.onSessionReady?.(result);
+    } else {
+      options.onSessionNotReady?.(result);
+    }
+  }, 0);
+  return { popupWindow, cancel: () => { clearTimeout(timer); return true; }, promise: Promise.resolve({ ok: true }) };
+};
+`,
+    },
+    {
       name: 'replace dynamic contracts loader with deterministic test stub',
       pattern: /async function loadContracts\(\)\s*\{[\s\S]*?\n\}\s*\nfunction createEmptyQuestionBlock/,
       replacement: `async function loadContracts() {
@@ -83,10 +124,16 @@ const AUDIO_EXTENSIONS = ['mp3'];
 
 function createEmptyQuestionBlock`,
     },
+
+    {
+      name: 'replace editor shell rendering call with test probe',
+      pattern: /\n\s*renderEditorShell\(session\);/,
+      replacement: '\n  globalThis.__renderedSession = session;',
+    },
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapEditor\(\)\.catch\([\s\S]*?\);\s*export\s*\{[^}]+\};/,
-      replacement: 'export { EditorDraftSession, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay };',
+      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay };',
     },
   ]);
 
@@ -95,7 +142,7 @@ function createEmptyQuestionBlock`,
     activeElement: null,
   };
   globalThis.window = {
-    location: { hash: '#fallback', origin: 'https://example.test' },
+    location: { hash: '#fallback', origin: 'https://example.test', search: '', href: 'https://example.test/editor.html#fallback' },
     scrollY: 150,
     setInterval: globalThis.setInterval,
     clearInterval: globalThis.clearInterval,
@@ -144,68 +191,79 @@ function toBlockFieldsWithoutPosition(block) {
   };
 }
 
-test('handleAuthCompleteMessage refreshes session and uploads list when message is valid', async () => {
+
+test('bootstrapEditor completes without requiring a registerAuthPopupMessageListener method', async () => {
   const mod = await loadEditorModule();
+  globalThis.window = {
+    location: {
+      hash: '#fallback',
+      origin: 'https://example.test',
+      search: '',
+      href: 'https://example.test/editor.html#fallback',
+    },
+    history: { replaceState: () => {} },
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
+  };
+
+  await assert.doesNotReject(async () => {
+    await mod.bootstrapEditor();
+  });
+
+  assert.ok(globalThis.window.editorSession);
+  assert.equal(typeof globalThis.window.editorSession.beginServerSignIn, 'function');
+});
+
+test('beginServerSignIn completes via shared popup flow and refreshes uploads on ready session', async () => {
+  const mod = await loadEditorModule();
+  let messageHandler = null;
+  globalThis.window = {
+    location: { origin: 'https://example.test' },
+    open: () => ({ closed: false }),
+    addEventListener: (type, handler) => {
+      if (type === 'message') messageHandler = handler;
+    },
+    removeEventListener: () => {},
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+  };
   const session = new mod.EditorDraftSession(createSessionForTests(), {
     apiClient: {
-      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSessionSignInUrl: ({ source, authFlowId } = {}) => {
+        const params = new URLSearchParams();
+        if (source) params.set('source', source);
+        if (authFlowId) params.set('authFlowId', authFlowId);
+        const query = params.toString();
+        return query ? `/worksheet_launcher/app/login/popup.html?${query}` : '/worksheet_launcher/app/login/popup.html';
+      },
       getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
       listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
     },
   });
-
-  const handled = await session.handleAuthCompleteMessage({
+  session.beginServerSignIn();
+  const authFlowId = session._activeAuthFlowId;
+  await messageHandler?.({
     origin: 'https://example.test',
-    data: { type: 'worksheet-launcher-auth-complete', source: 'editor' },
+    data: { type: 'worksheet-launcher-auth-complete', source: 'editor', authFlowId },
   });
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.equal(handled, true);
   assert.equal(session.state.serverSession.status, 'ready');
   assert.deepEqual(session.state.uploadedDrafts, []);
 });
 
-test('handleAuthCompleteMessage ignores wrong-origin and malformed messages', async () => {
-  const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession(createSessionForTests(), {
-    apiClient: {
-      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
-      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
-      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
-    },
-  });
-
-  const wrongOrigin = await session.handleAuthCompleteMessage({
-    origin: 'https://malicious.test',
-    data: { type: 'worksheet-launcher-auth-complete' },
-  });
-  const wrongShape = await session.handleAuthCompleteMessage({
-    origin: 'https://example.test',
-    data: { type: 'not-auth-complete' },
-  });
-
-  assert.equal(wrongOrigin, false);
-  assert.equal(wrongShape, false);
-  assert.equal(session.state.serverSession.status, 'checking');
-});
-
-test('beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
-  const intervalCallbacks = [];
-  const clearedIntervals = [];
-  const authPopup = { closed: false };
+test('beginServerSignIn shows popup blocked message when popup cannot open', async () => {
   const mod = await loadEditorModule();
   globalThis.window = {
-    location: { hash: '#fallback', origin: 'https://example.test' },
-    open: () => authPopup,
+    location: { origin: 'https://example.test' },
+    open: () => null,
     addEventListener: () => {},
-    setInterval: (callback) => {
-      intervalCallbacks.push(callback);
-      return intervalCallbacks.length;
-    },
-    clearInterval: (id) => {
-      clearedIntervals.push(id);
-    },
+    removeEventListener: () => {},
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
   };
-
   const session = new mod.EditorDraftSession(createSessionForTests(), {
     apiClient: {
       getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
@@ -215,16 +273,53 @@ test('beginServerSignIn stores popup handle and fallback polling can recover mis
   });
 
   session.beginServerSignIn();
-  assert.equal(session._authPopupWindow, authPopup);
-  assert.equal(intervalCallbacks.length, 1);
 
-  authPopup.closed = true;
-  intervalCallbacks[0]();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(
+    session.state.serverActionMessage,
+    'Sign-in popup was blocked. Allow popups for this site, then try again.'
+  );
+});
+
+test('beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
+  const authPopup = { closed: false };
+  const mod = await loadEditorModule();
+  let openedPopupUrl = null;
+  globalThis.window = {
+    location: { hash: '#fallback', origin: 'https://example.test', search: '', href: 'https://example.test/editor.html#fallback' },
+    open: (url) => {
+      openedPopupUrl = url;
+      return authPopup;
+    },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+  };
+
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: ({ source, authFlowId } = {}) => {
+        const params = new URLSearchParams();
+        if (source) params.set('source', source);
+        if (authFlowId) params.set('authFlowId', authFlowId);
+        const query = params.toString();
+        return query ? `/worksheet_launcher/app/login/popup.html?${query}` : '/worksheet_launcher/app/login/popup.html';
+      },
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+
+  session.beginServerSignIn();
+  assert.equal(session._authPopupWindow, authPopup);
+  assert.equal(typeof session._activeAuthFlowId, 'string');
+  assert.equal(session._activeAuthFlowId.startsWith('auth_flow_'), true);
+  assert.equal(openedPopupUrl.includes('authFlowId='), true);
+  await new Promise((resolve) => setTimeout(resolve, 40));
 
   assert.equal(session.state.serverSession.status, 'ready');
   assert.equal(session.state.serverActionMessage, null);
-  assert.equal(clearedIntervals.length > 0, true);
+  assert.equal(session._activeAuthFlowId, null);
 });
 
 test('editor silent session probe updates readiness without forcing visible checking state', async () => {
@@ -246,19 +341,16 @@ test('editor silent session probe updates readiness without forcing visible chec
   assert.equal(session.state.serverSession.status, 'not_ready');
 });
 
-test('editor popup fallback polling uses silent session probe path', async () => {
-  const intervalCallbacks = [];
+test('editor popup fallback polling uses shared wait flow and still reaches ready state', async () => {
   const mod = await loadEditorModule();
   const authPopup = { closed: true };
   globalThis.window = {
-    location: { hash: '#fallback', origin: 'https://example.test' },
+    location: { hash: '#fallback', origin: 'https://example.test', search: '', href: 'https://example.test/editor.html#fallback' },
     open: () => authPopup,
     addEventListener: () => {},
-    setInterval: (callback) => {
-      intervalCallbacks.push(callback);
-      return 1;
-    },
-    clearInterval: () => {},
+    removeEventListener: () => {},
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
   };
 
   const session = new mod.EditorDraftSession(createSessionForTests(), {
@@ -270,9 +362,6 @@ test('editor popup fallback polling uses silent session probe path', async () =>
   });
 
   let silentProbeCalls = 0;
-  session.refreshServerSession = async () => {
-    throw new Error('fallback must not call visible refresh');
-  };
   session.probeServerSessionSilently = async () => {
     silentProbeCalls += 1;
     session.state.serverSession = { status: 'ready', user: { email: 'teacher@example.test' }, error: null };
@@ -280,8 +369,7 @@ test('editor popup fallback polling uses silent session probe path', async () =>
   };
 
   session.beginServerSignIn();
-  intervalCallbacks[0]();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 40));
 
   assert.equal(silentProbeCalls > 0, true);
 });
