@@ -4109,7 +4109,7 @@ function renderEditorShell(session) {
           const publishedSubjectLine = document.createElement('div');
           publishedSubjectLine.textContent = `Subject: ${item.published_subject || ''}`;
           const publishedOwnerLine = document.createElement('div');
-          publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || session.state.serverSession?.user?.email || 'Unknown'}`;
+          publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;
           const publishedAtLine = document.createElement('div');
           publishedAtLine.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)}`;
           body.append(publishedIdLine, publishedTitleLine, publishedSubjectLine, publishedOwnerLine, publishedAtLine);

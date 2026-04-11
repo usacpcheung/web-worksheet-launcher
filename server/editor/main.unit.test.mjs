@@ -559,7 +559,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("copyBtn.textContent = 'Copy Published ID';"), true);
   assert.equal(source.includes("summary.textContent = 'Published details';"), true);
   assert.equal(
-    source.includes("publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || session.state.serverSession?.user?.email || 'Unknown'}`;"),
+    source.includes("publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;"),
     true
   );
   assert.equal(
