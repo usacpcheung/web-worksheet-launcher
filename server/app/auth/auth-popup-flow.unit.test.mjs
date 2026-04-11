@@ -184,6 +184,35 @@ test('startAuthPopupFlow treats poll timeout as soft when popup remains open and
   assert.equal(result.status, 'ready');
 });
 
+
+
+test('startAuthPopupFlow finalizes timed-out error states immediately even when popup is open', async () => {
+  createWindowStub();
+  const notReadyStates = [];
+
+  const apiClient = {
+    getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html?source=test&authFlowId=error_timeout',
+    getSession: async () => ({ ok: false, error: { code: 'BAD_GATEWAY', status: 502, message: 'Gateway error' } }),
+  };
+
+  const flow = startAuthPopupFlow({
+    apiClient,
+    authFlowId: 'error_timeout',
+    pollIntervalMs: 10,
+    pollTimeoutMs: 30,
+    hardDeadlineMs: 200,
+    onSessionNotReady: (state) => notReadyStates.push(state),
+  });
+
+  const result = await flow.promise;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'error');
+  assert.equal(result.error?.code, 'BAD_GATEWAY');
+  assert.equal(notReadyStates.some((state) => state.waitingForCallback === true && state.final === false), false);
+  assert.equal(notReadyStates.some((state) => state.waitingForCallback === false && state.final === true), true);
+});
+
 test('startAuthPopupFlow times out when callback is missed and cleans up listener only after finalization', async () => {
   const win = createWindowStub();
   const notReadyStates = [];

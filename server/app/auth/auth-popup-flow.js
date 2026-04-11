@@ -221,7 +221,8 @@ function startAuthPopupFlow(options = {}) {
       const popupOpen = authPopupWindow && authPopupWindow.closed !== true;
       const canWaitForCallback = Boolean(popupOpen);
 
-      if (result.timedOut && canWaitForCallback) {
+      const isTimedOutAuthNotReady = result.timedOut && result.status === 'not_ready';
+      if (isTimedOutAuthNotReady && canWaitForCallback) {
         onStatusMessage('Sign-in check timed out, still waiting for popup callback…');
         await invokeCallbackSafely(
           onSessionNotReady,
