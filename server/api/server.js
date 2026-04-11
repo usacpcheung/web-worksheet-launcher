@@ -178,7 +178,14 @@ export function createRequestHandler({ service, artifactStore, config }) {
           return json(res, 400, fail(validatedUploadedDraftId.error.code, validatedUploadedDraftId.error.message));
         }
 
-        const result = await service.publishFromDraft({ identity, uploadedDraftId: validatedUploadedDraftId.value });
+        const title = typeof payload.title === 'string' ? payload.title : '';
+        const subject = typeof payload.subject === 'string' ? payload.subject : '';
+        const result = await service.publishFromDraft({
+          identity,
+          uploadedDraftId: validatedUploadedDraftId.value,
+          title,
+          subject,
+        });
         if (!result.ok) {
           return json(res, result.statusCode, fail(result.error.code, result.error.message));
         }
@@ -206,7 +213,9 @@ export function createRequestHandler({ service, artifactStore, config }) {
 
         const rows = await service.listPublished({
           query: url.searchParams.get('q') || '',
+          title: url.searchParams.get('title') || '',
           subject: url.searchParams.get('subject') || '',
+          owner: url.searchParams.get('owner') || '',
           limit: parsedLimit.value,
           offset: parsedOffset.value,
         });

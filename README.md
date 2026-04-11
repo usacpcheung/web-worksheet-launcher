@@ -97,7 +97,8 @@ npm run start:api
 
 ## Runtime layer map (current state)
 
-- `server/editor/` and `server/viewer/`: local-first runtime apps (draft editing, package import/export, local attempts).
+- `server/editor/`: local-first editor with top-level Upload Draft, labeled draft metadata (Worksheet Title + Subject), row-based publish from uploaded drafts, and a dedicated published-package browser modal.
+- `server/viewer/`: local-first runtime app for attempts and published-package open flows.
 - `server/api/`: Node API foundation for server-backed draft upload/publish/load/browse.
 - `server/app/contracts/`: shared local payload validators/mappers (includes transitional snapshot naming for compatibility).
 - `server/app/auth/`: shared client-side auth-return gate used by editor/viewer protected-action stubs while API integrations are still being wired directly.
@@ -120,5 +121,11 @@ Sign-in UX flow:
 2. Apache OIDC protects `/worksheet_launcher/app/login/` and handles login.
 3. Popup posts `worksheet-launcher-auth-complete` back to opener and attempts to close itself.
 4. Editor/viewer re-checks `GET /api/worksheet-launcher/v1/session` and updates server-feature UI automatically.
+
+Auth UX notes:
+
+- Popup callback is the primary success signal.
+- Any fallback session probing is silent + bounded (best-effort safety net for missed callback events).
+- Auth-required server actions do a silent preflight session check; if session is missing/expired, actions are blocked and users are prompted to sign in again.
 
 The popup login HTML is intentionally isolated under `server/app/login/` so Apache can protect only that path and avoid accidentally protecting shared runtime JS folders (for example `server/app/auth/` or `server/app/api/`).

@@ -5,7 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { PackageService } from './package-service.js';
 
-function createFakeDb({ draftCount = 0, failInsert = false, draftExists = true, failDelete = false } = {}) {
+function createFakeDb({
+  draftCount = 0,
+  failInsert = false,
+  draftExists = true,
+  failDelete = false,
+  existingPublished = null,
+} = {}) {
   const state = { draftCount, queries: [] };
 
   return {
@@ -39,11 +45,29 @@ function createFakeDb({ draftCount = 0, failInsert = false, draftExists = true, 
             }
             return { rowCount: 0, rows: [] };
           }
+          if (sql.includes('SELECT published_package_id, title, subject') && sql.includes('source_uploaded_draft_id')) {
+            if (existingPublished) {
+              return { rowCount: 1, rows: [existingPublished] };
+            }
+            return { rowCount: 0, rows: [] };
+          }
           if (sql.includes('INSERT INTO uploaded_drafts') || sql.includes('INSERT INTO published_packages')) {
             if (failInsert) {
               throw new Error('insert failed');
             }
-            return { rowCount: 1, rows: [{}] };
+            return {
+              rowCount: 1,
+              rows: [
+                {
+                  published_package_id: 'p-new',
+                  title: 'Published Title',
+                  subject: 'Published Subject',
+                  source_uploaded_draft_id: 'u',
+                  owner_email: 'teacher@example.test',
+                  owner_name: 'Teacher Name',
+                },
+              ],
+            };
           }
           if (sql.includes('DELETE FROM uploaded_drafts')) {
             if (failDelete) {
@@ -160,6 +184,85 @@ test('publishFromDraft removes artifact file when DB insert fails', async () => 
   await fs.rm(tempDir, { recursive: true, force: true });
 });
 
+test('publishFromDraft returns existing published package for same uploaded draft', async () => {
+  const db = createFakeDb({
+    existingPublished: {
+      published_package_id: 'p-existing',
+      title: 'Existing title',
+      subject: 'Existing subject',
+      source_uploaded_draft_id: 'u',
+      owner_email: 'teacher@example.test',
+      owner_name: 'Teacher',
+    },
+  });
+  let storeArtifactCalls = 0;
+  const service = createService({
+    db,
+    artifactStore: {
+      async readArtifact() {
+        return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+      },
+      async storeArtifact() {
+        storeArtifactCalls += 1;
+        return { artifactPath: 'published/a.zip', absolutePath: '/tmp/a.zip', artifactSha256: 'sha', artifactSizeBytes: 4 };
+      },
+    },
+  });
+
+  const result = await service.publishFromDraft({
+    identity: { sub: 'oidc-sub' },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.data.published_package_id, 'p-existing');
+  assert.equal(storeArtifactCalls, 0);
+});
+
+test('publishFromDraft supports published title/subject overrides without mutating draft metadata', async () => {
+  const db = createFakeDb();
+  const insertQueries = [];
+  const service = createService({
+    db: {
+      ...db,
+      async connect() {
+        const client = await db.connect();
+        return {
+          ...client,
+          async query(sql, values) {
+            if (sql.includes('INSERT INTO published_packages')) {
+              insertQueries.push(values);
+            }
+            return client.query(sql, values);
+          },
+        };
+      },
+    },
+    artifactStore: {
+      async readArtifact() {
+        return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+      },
+      async storeArtifact() {
+        return { artifactPath: 'published/a.zip', absolutePath: '/tmp/a.zip', artifactSha256: 'sha', artifactSizeBytes: 4 };
+      },
+    },
+  });
+
+  const result = await service.publishFromDraft({
+    identity: { sub: 'oidc-sub', email: 'teacher@example.test', name: 'Teacher Name' },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Final release title',
+    subject: 'Final release subject',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.statusCode, 201);
+  assert.equal(insertQueries.length, 1);
+  assert.equal(insertQueries[0][5], 'Final release title');
+  assert.equal(insertQueries[0][6], 'Final release subject');
+});
+
 test('deleteOwnDraft removes artifact file after deleting owner draft row', async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-delete-cleanup-'));
   const artifactPath = path.join(tempDir, 'draft.zip');
@@ -270,4 +373,83 @@ test('deleteOwnDraft succeeds when artifact unlink fails with non-ENOENT error',
     fs.unlink = originalUnlink;
     console.warn = originalWarn;
   }
+});
+
+test('listOwnDrafts returns published-state metadata fields for uploaded draft rows', async () => {
+  const service = createService({
+    db: {
+      async query() {
+        return {
+          rows: [
+            {
+              uploaded_draft_id: 'u1',
+              title: 'Draft 1',
+              subject: 'Math',
+              published_package_id: 'p1',
+              published_title: 'Released Draft 1',
+              published_subject: 'Algebra',
+              published_owner_email: 'teacher@example.test',
+              published_owner_name: 'Teacher Name',
+              published_at: '2026-04-07T15:42:00.000Z',
+            },
+          ],
+        };
+      },
+    },
+    artifactStore: {},
+  });
+
+  const rows = await service.listOwnDrafts({ sub: 'oidc-sub' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].published_package_id, 'p1');
+  assert.equal(rows[0].published_owner_email, 'teacher@example.test');
+  assert.equal(rows[0].published_owner_name, 'Teacher Name');
+});
+
+test('listPublished owner filter uses owner_email-compatible predicate ordering', async () => {
+  let capturedSql = '';
+  const service = createService({
+    db: {
+      async query(sql) {
+        capturedSql = sql;
+        return { rows: [] };
+      },
+    },
+    artifactStore: {},
+  });
+
+  await service.listPublished({
+    query: '',
+    title: '',
+    subject: '',
+    owner: 'teacher@example.test',
+    limit: 10,
+    offset: 0,
+  });
+
+  assert.equal(capturedSql.includes('(lower(owner_email) LIKE $1 OR lower(owner_name) LIKE $1)'), true);
+});
+
+test('listPublished free-text query checks owner_email in searchable fields', async () => {
+  let capturedSql = '';
+  const service = createService({
+    db: {
+      async query(sql) {
+        capturedSql = sql;
+        return { rows: [] };
+      },
+    },
+    artifactStore: {},
+  });
+
+  await service.listPublished({
+    query: 'teacher@example.test',
+    title: '',
+    subject: '',
+    owner: '',
+    limit: 10,
+    offset: 0,
+  });
+
+  assert.equal(capturedSql.includes('lower(owner_email) LIKE $1'), true);
 });

@@ -7,7 +7,7 @@ This document defines the first server/database foundation added in Phase D.
 Implemented in this phase:
 
 - Upload draft ZIP for later edit (owner private, max 3 per owner).
-- Publish immutable package from uploaded draft.
+- Publish immutable package from uploaded draft (one uploaded draft maps to one published package).
 - Load published package metadata by `publishedPackageId`.
 - Download published package ZIP artifact by `publishedPackageId`.
 - Basic authenticated browse/search of published packages.
@@ -95,7 +95,7 @@ Tables:
   - ZIP metadata: `artifact_path`, `artifact_sha256`, `artifact_size_bytes`
   - Authoring metadata: `title`, `subject`
 - `published_packages`
-  - Published identity: `published_package_id` (UUID, immutable per publish)
+  - Published identity: `published_package_id` (UUID, immutable)
   - Provenance: `source_uploaded_draft_id`
   - Ownership and ZIP metadata fields
   - Search metadata: `title`, `subject`, plus indexes
@@ -170,6 +170,7 @@ Slot cap response: `409` with `DRAFT_SLOT_LIMIT_REACHED`.
 - Removes the uploaded draft database row and deletes the stored draft ZIP artifact.
 - Returns `404 UPLOADED_DRAFT_NOT_FOUND` when the draft does not exist for the current owner.
 - Deleting an uploaded draft immediately frees one draft slot (slot cap remains 3 per owner).
+- Deleting an uploaded draft does **not** delete a previously published package created from it.
 
 ### 3) Publish immutable package
 
@@ -178,15 +179,16 @@ Slot cap response: `409` with `DRAFT_SLOT_LIMIT_REACHED`.
 Request JSON:
 
 ```json
-{ "uploadedDraftId": "uuid" }
+{ "uploadedDraftId": "uuid", "title": "Optional published title override", "subject": "Optional published subject override" }
 ```
 
 Behavior:
 
 - Reads owner draft by id.
-- Copies canonical ZIP artifact into immutable published bucket.
-- Creates new `published_package_id` every publish.
+- Copies canonical ZIP artifact into immutable published bucket on first publish.
+- Enforces one uploaded draft → one published package. Re-publish of the same uploaded draft returns the existing package instead of creating duplicates.
 - Stores provenance link to `source_uploaded_draft_id`.
+- Optional publish-time `title`/`subject` overrides apply to published package metadata only (uploaded draft metadata is unchanged).
 
 ### 4) Load published package metadata by id
 
@@ -202,10 +204,12 @@ Behavior:
 
 ### 6) Basic published browse/search
 
-`GET /api/v1/published?q=<titleQuery>&subject=<subject>&limit=<n>&offset=<n>`
+`GET /api/v1/published?q=<query>&title=<title>&subject=<subject>&owner=<ownerEmail>&limit=<n>&offset=<n>`
 
 - Search scope: published packages only.
-- Query currently applies case-insensitive `LIKE` on title and subject.
+- Query applies case-insensitive `LIKE` on title, subject, and owner email (with owner name compatibility during transition).
+- `owner` filter is email-primary (`owner_email`) with compatibility fallback to `owner_name`.
+- Response items include both `owner_email` (primary display) and `owner_name` (compatibility).
 - Sorted by most recent `published_at DESC`.
 
 ### 7) Lightweight session check
@@ -230,7 +234,9 @@ Flow:
 3. Popup page posts `worksheet-launcher-auth-complete` to `window.opener` with `targetOrigin = window.location.origin`.
 4. Popup attempts `window.close()`.
 5. Editor/viewer validates `event.origin` and `event.data.type`, then re-checks `GET /api/worksheet-launcher/v1/session`.
-6. If ready, server-gated UI updates automatically (no manual hard refresh required).
+6. Popup callback is the primary success path; any fallback polling is bounded, best-effort, and silent (no repeated visible “checking” churn).
+7. Protected server actions run a silent preflight session check before API reads/writes and block with a sign-in prompt if session is missing/expired.
+8. If ready, server-gated UI updates automatically (no manual hard refresh required).
 
 ### Apache OIDC / reverse proxy example (sanitized placeholders)
 
