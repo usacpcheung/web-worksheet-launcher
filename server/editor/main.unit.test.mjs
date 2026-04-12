@@ -1131,6 +1131,62 @@ test('saveNow and export failures emit error notifications', async () => {
   assert.equal(Boolean(exportError), true);
 });
 
+test('saveNow dedupes active save.manual notifications across repeated saves', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (value) => value },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_save_dedupe');
+  clearTimeout(session.autosaveTimer);
+
+  await session.saveNow();
+  await session.saveNow();
+  await session.saveNow();
+
+  const activeManualSaveNotifications = session.state.notifications
+    .filter((item) => item?.source === 'save.manual');
+  assert.equal(activeManualSaveNotifications.length, 1);
+  assert.equal(activeManualSaveNotifications[0].kind, 'success');
+});
+
+test('exportCurrentDraftToPackageFile revokes object URL when click throws', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (value) => value },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+    localAssets: { get: async () => null, put: async () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_export_revoke_on_throw');
+  clearTimeout(session.autosaveTimer);
+
+  const originalDocument = globalThis.document;
+  const originalUrl = globalThis.URL;
+  const originalBlob = globalThis.Blob;
+  const revokedUrls = [];
+  globalThis.URL = {
+    createObjectURL: () => 'blob:test-export-throw',
+    revokeObjectURL: (value) => revokedUrls.push(value),
+  };
+  globalThis.document = {
+    ...originalDocument,
+    body: { appendChild: () => {} },
+    createElement: () => ({ click() { throw new Error('click failed'); }, remove() {} }),
+  };
+  globalThis.Blob = originalBlob;
+  try {
+    await assert.rejects(() => session.exportCurrentDraftToPackageFile(), /click failed/);
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.URL = originalUrl;
+    globalThis.Blob = originalBlob;
+  }
+
+  assert.deepEqual(revokedUrls, ['blob:test-export-throw']);
+});
+
 test('new question transient prompt validation is suppressed during first autosave', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({

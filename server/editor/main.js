@@ -2413,7 +2413,7 @@ class EditorDraftSession {
     try {
       const persisted = await this.autosave();
       this.state.lastManualSaveAt = nowIso();
-      this.pushNotification({
+      this.setNotificationForSource({
         kind: 'success',
         category: 'editor',
         source: 'save.manual',
@@ -2423,7 +2423,7 @@ class EditorDraftSession {
       return persisted;
     } catch (error) {
       console.error('Manual save failed', error);
-      this.pushNotification({
+      this.setNotificationForSource({
         kind: 'error',
         category: 'editor',
         source: 'save.manual',
@@ -2435,6 +2435,8 @@ class EditorDraftSession {
   }
 
   async exportCurrentDraftToPackageFile() {
+    let objectUrl = null;
+    let link = null;
     try {
       if (!this.state.draft) {
         throw new Error('No active draft to export.');
@@ -2444,14 +2446,12 @@ class EditorDraftSession {
       const filename = `worksheet-package-${this.state.draft.localId}-${timestampToken}.zip`;
       const bytes = await this.buildCurrentDraftPackageZipBytes();
       const blob = new Blob([bytes], { type: 'application/zip' });
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      objectUrl = URL.createObjectURL(blob);
+      link = document.createElement('a');
       link.href = objectUrl;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
       this.state.lastExportedAt = nowIso();
       this.pushNotification({
         kind: 'success',
@@ -2470,6 +2470,13 @@ class EditorDraftSession {
       });
       this.notifyStateChange();
       throw error;
+    } finally {
+      if (link?.remove) {
+        link.remove();
+      }
+      if (objectUrl && URL?.revokeObjectURL) {
+        URL.revokeObjectURL(objectUrl);
+      }
     }
   }
 
