@@ -3534,6 +3534,32 @@ test('reopenPublishedPackageAsLocalCopy emits modal-open notification sequence',
   assert.equal(openActivityTexts.includes('Opened published package pkg_42 as a new local draft copy.'), true);
 });
 
+test('reopenPublishedPackageAsLocalCopy supports environments without global File', async () => {
+  const mod = await loadEditorModule();
+  const originalFile = globalThis.File;
+  let importedFile = null;
+  globalThis.File = undefined;
+  try {
+    const session = new mod.EditorDraftSession(createSessionForTests(), {
+      apiClient: {
+        getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+        fetchPublishedPackageArtifact: async () => ({ ok: true, data: new Uint8Array([4, 5, 6]) }),
+      },
+    });
+    session.importWorksheetPackageFile = async (file) => {
+      importedFile = file;
+      return { importedRecord: { localId: 'draft_imported' } };
+    };
+    const result = await session.reopenPublishedPackageAsLocalCopy('pkg_42');
+    assert.equal(result.ok, true);
+    assert.equal(typeof importedFile?.arrayBuffer, 'function');
+    assert.equal(importedFile?.name, 'published-package-pkg_42.zip');
+    assert.equal(importedFile?.type, 'application/zip');
+  } finally {
+    globalThis.File = originalFile;
+  }
+});
+
 test('setRecoveryMessage emits visible recovery notification objects', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());

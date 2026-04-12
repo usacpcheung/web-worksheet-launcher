@@ -53,6 +53,20 @@ function createLocalId(prefix = 'local') {
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
 }
 
+function createZipFileLikeObject(binaryData, fileName) {
+  const normalizedName = String(fileName || 'worksheet-package.zip').trim() || 'worksheet-package.zip';
+  const normalizedType = 'application/zip';
+  if (typeof File === 'function') {
+    return new File([binaryData], normalizedName, { type: normalizedType });
+  }
+  const fallbackBlob = new Blob([binaryData], { type: normalizedType });
+  Object.defineProperties(fallbackBlob, {
+    name: { value: normalizedName, enumerable: true },
+    lastModified: { value: Date.now(), enumerable: true },
+  });
+  return fallbackBlob;
+}
+
 function isRecord(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -2857,7 +2871,7 @@ class EditorDraftSession {
       return artifact;
     }
     const imported = await this.importWorksheetPackageFile(
-      new File([artifact.data], `uploaded-draft-${uploadedDraftId}.zip`, { type: 'application/zip' }),
+      createZipFileLikeObject(artifact.data, `uploaded-draft-${uploadedDraftId}.zip`),
       { convertToEditableDraft: true }
     );
     this.pushNotification({
@@ -2895,7 +2909,7 @@ class EditorDraftSession {
         return artifact;
       }
       const imported = await this.importWorksheetPackageFile(
-        new File([artifact.data], `published-package-${normalizedPublishedPackageId}.zip`, { type: 'application/zip' }),
+        createZipFileLikeObject(artifact.data, `published-package-${normalizedPublishedPackageId}.zip`),
         { convertToEditableDraft: true }
       );
       this.pushNotification({
