@@ -3619,18 +3619,17 @@ function renderEditorShell(session) {
   loadUploadedDraftsBtn.textContent = 'Refresh Uploaded Drafts';
   const serverSessionStatus = document.createElement('p');
   serverSessionStatus.className = 'muted';
-  const serverActionStatus = document.createElement('p');
-  serverActionStatus.className = 'muted';
-  serverActionStatus.setAttribute('role', 'status');
-  serverActionStatus.setAttribute('aria-live', 'polite');
   const activityFeed = document.createElement('section');
   activityFeed.className = 'notification-feed';
-  const activityFeedHeading = document.createElement('h4');
-  activityFeedHeading.className = 'notification-feed__heading';
+  const activityFeedToggle = document.createElement('details');
+  activityFeedToggle.className = 'editor-activity-panel';
+  const activityFeedHeading = document.createElement('summary');
+  activityFeedHeading.className = 'editor-activity-panel__summary';
   activityFeedHeading.textContent = 'Activity';
   const activityFeedList = document.createElement('div');
   activityFeedList.className = 'notification-feed__list';
-  activityFeed.append(activityFeedHeading, activityFeedList);
+  activityFeed.append(activityFeedList);
+  activityFeedToggle.append(activityFeedHeading, activityFeed);
   const toastContainer = document.createElement('div');
   toastContainer.className = 'notification-toast-container';
   const uploadedDraftList = document.createElement('div');
@@ -4451,17 +4450,6 @@ function renderEditorShell(session) {
     const isUploadingDraft = session.state.isUploadingDraft;
     const isRefreshingUploadedDrafts = session.state.isLoadingUploadedDrafts;
     const activePublishCount = session.state.publishingDraftIds?.size || 0;
-    const hasServerActionInFlight = isUploadingDraft || isRefreshingUploadedDrafts || activePublishCount > 0;
-    if (isUploadingDraft) {
-      serverActionStatus.textContent = 'Uploading…';
-    } else if (activePublishCount > 0) {
-      serverActionStatus.textContent = activePublishCount === 1 ? 'Publishing…' : `Publishing ${activePublishCount} drafts…`;
-    } else if (isRefreshingUploadedDrafts) {
-      serverActionStatus.textContent = 'Refreshing…';
-    } else {
-      renderNotification(serverActionStatus, ['server', 'recovery']);
-    }
-    serverActionStatus.setAttribute('aria-busy', hasServerActionInFlight ? 'true' : 'false');
 
     const feedNotifications = session.state.notifications.slice(-30).reverse();
     activityFeedList.innerHTML = '';
@@ -4898,8 +4886,6 @@ function renderEditorShell(session) {
     browsePublishedBtn,
     loadUploadedDraftsBtn,
     uploadedDraftList,
-    serverActionStatus,
-    activityFeed,
     rewriteBtn,
     t2aBtn
   );
@@ -4910,6 +4896,7 @@ function renderEditorShell(session) {
     controlsRow,
     blockList,
     moreActions,
+    activityFeedToggle,
     metaRow,
     importFileInput,
     questionImageInput,
