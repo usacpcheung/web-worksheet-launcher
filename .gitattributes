@@ -1,0 +1,11 @@
+# Enforce LF line endings for all text source files
+* text=auto eol=lf
+
+# Explicitly LF for JS/HTML/CSS/JSON/MJS
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.sql   text eol=lf
