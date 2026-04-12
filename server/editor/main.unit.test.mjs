@@ -432,6 +432,73 @@ test('editor upload preflight surfaces transient server/non-auth errors without 
   assert.equal(session.state.serverActionMessage, 'Server returned an unexpected non-JSON response.');
 });
 
+test('uploadCurrentDraftToServer emits ordered notifications for progress, success, and refresh result', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      uploadDraftPackage: async () => ({ ok: true, data: { uploaded_draft_id: 'draft_upload_1' } }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.state.draft = { localId: 'draft_local_1', title: 'Draft 1', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const result = await session.uploadCurrentDraftToServer();
+  assert.equal(result.ok, true);
+  const uploadNotifications = session.state.notifications
+    .filter((item) => ['upload.status', 'upload.refresh'].includes(item.source))
+    .map(({ source, kind, category, text }) => ({ source, kind, category, text }));
+  assert.deepEqual(uploadNotifications, [
+    {
+      source: 'upload.status',
+      kind: 'info',
+      category: 'server',
+      text: 'Uploading…',
+    },
+    {
+      source: 'upload.status',
+      kind: 'success',
+      category: 'server',
+      text: 'Uploaded draft draft_upload_1.',
+    },
+    {
+      source: 'upload.refresh',
+      kind: 'success',
+      category: 'server',
+      text: 'Uploaded drafts refreshed.',
+    },
+  ]);
+});
+
+test('uploadCurrentDraftToServer emits refresh warning when uploaded drafts refresh fails', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      uploadDraftPackage: async () => ({ ok: true, data: { uploaded_draft_id: 'draft_upload_2' } }),
+      listUploadedDrafts: async () => ({ ok: false, error: { message: 'Unable to refresh uploaded drafts.' } }),
+    },
+  });
+  session.state.draft = { localId: 'draft_local_2', title: 'Draft 2', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const result = await session.uploadCurrentDraftToServer();
+  assert.equal(result.ok, true);
+
+  const refreshNotifications = session.state.notifications
+    .filter((item) => item.source === 'upload.refresh')
+    .map(({ source, kind, category, text }) => ({ source, kind, category, text }));
+  assert.deepEqual(refreshNotifications, [
+    {
+      source: 'upload.refresh',
+      kind: 'warn',
+      category: 'server',
+      text: 'Unable to refresh uploaded drafts.',
+    },
+  ]);
+});
+
 
 test('editor shell removes Retry session button from normal server controls', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
@@ -669,6 +736,70 @@ test('publishUploadedDraftToServer forwards modal title/subject overrides and re
   });
 });
 
+test('publishUploadedDraftToServer emits ordered notifications and keeps terminal messages for concurrent publishes', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      publishFromUploadedDraft: async (uploadedDraftId) => ({
+        ok: true,
+        data: { published_package_id: `pkg_${uploadedDraftId}` },
+      }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+
+  const [first, second] = await Promise.all([
+    session.publishUploadedDraftToServer('u1', { title: 'T1', subject: 'S1' }),
+    session.publishUploadedDraftToServer('u2', { title: 'T2', subject: 'S2' }),
+  ]);
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  const terminalPublishes = session.state.notifications
+    .filter((item) => item.source === 'publish.status' && item.kind === 'success')
+    .map((item) => item.text)
+    .sort();
+  assert.deepEqual(terminalPublishes, [
+    'Published package pkg_u1.',
+    'Published package pkg_u2.',
+  ]);
+  const refreshFollowups = session.state.notifications
+    .filter((item) => item.source === 'publish.refresh')
+    .map((item) => ({ source: item.source, kind: item.kind, category: item.category, text: item.text }));
+  assert.equal(refreshFollowups.length >= 1, true);
+  assert.equal(refreshFollowups.every((item) => item.kind === 'success' && item.category === 'server'), true);
+});
+
+test('publishUploadedDraftToServer emits refresh warning when uploaded drafts refresh fails', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      publishFromUploadedDraft: async () => ({ ok: true, data: { published_package_id: 'pkg_warn_1' } }),
+      listUploadedDrafts: async () => ({ ok: false, error: { message: 'Unable to refresh uploaded drafts.' } }),
+    },
+  });
+
+  const result = await session.publishUploadedDraftToServer('u_warn_1', {
+    title: 'Warn title',
+    subject: 'Warn subject',
+  });
+
+  assert.equal(result.ok, true);
+  const refreshFollowups = session.state.notifications
+    .filter((item) => item.source === 'publish.refresh')
+    .map(({ source, kind, category, text }) => ({ source, kind, category, text }));
+  assert.deepEqual(refreshFollowups, [
+    {
+      source: 'publish.refresh',
+      kind: 'warn',
+      category: 'server',
+      text: 'Unable to refresh uploaded drafts.',
+    },
+  ]);
+});
+
 test('editor source removes global Publish button and adds labeled metadata and browse controls', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('await session.publishCurrentDraftToServer();'), false);
@@ -684,8 +815,10 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);'), true);
   assert.equal(source.includes('const reopenResult = await reopenPromise;'), true);
   assert.equal(source.includes('if (browsePublishedDialogOpen) {\n      renderPublishedBrowserModal();\n    }'), true);
-  assert.equal(source.includes('if (reopenResult?.ok) {\n            browsePublishedDialogOpen = false;'), true);
-  assert.equal(source.includes("error: session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.',"), true);
+  assert.equal(source.includes('if (reopenResult?.ok) {'), true);
+  assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
+  assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.';"), true);
+  assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("summary.textContent = 'Published details';"), true);
   assert.equal(
     source.includes("publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;"),
@@ -2798,7 +2931,28 @@ test('deleteUploadedDraft refreshes uploaded drafts list and leaves local draft 
   assert.equal(session.state.uploadedDrafts.length, 1);
   assert.equal(session.state.uploadedDrafts[0].uploaded_draft_id, 'new-draft-id');
   assert.equal(session.state.draft.localId, 'local_draft_1');
-  assert.equal(session.state.serverActionMessage, 'Uploaded draft deleted.');
+  assert.equal(session.state.serverActionMessage, 'Uploaded drafts refreshed.');
+  assert.equal(
+    session.state.notifications.some((item) => item.text === 'Uploaded draft deleted.'),
+    true
+  );
+  const deleteNotifications = session.state.notifications
+    .filter((item) => item.source === 'uploadedDraft.delete' || item.source === 'uploadedDraft.delete.refresh')
+    .map(({ source, kind, category, text }) => ({ source, kind, category, text }));
+  assert.deepEqual(deleteNotifications, [
+    {
+      source: 'uploadedDraft.delete',
+      kind: 'success',
+      category: 'server',
+      text: 'Uploaded draft deleted.',
+    },
+    {
+      source: 'uploadedDraft.delete.refresh',
+      kind: 'success',
+      category: 'server',
+      text: 'Uploaded drafts refreshed.',
+    },
+  ]);
 });
 
 test('loadUploadedDrafts deduplicates concurrent preflight calls before loading flag is set', async () => {
@@ -2913,7 +3067,7 @@ test('loadUploadedDrafts keeps loading state true until overlapping preflight an
   assert.equal(loadingStates[loadingStates.length - 1], false);
 });
 
-test('loadUploadedDrafts restores prior server action message after successful refresh', async () => {
+test('loadUploadedDrafts keeps prior notification-derived server action message after successful refresh', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests(), {
     apiClient: {
@@ -2923,15 +3077,46 @@ test('loadUploadedDrafts restores prior server action message after successful r
     },
   });
 
-  session.state.serverActionMessage = 'Uploaded draft draft_123.';
+  session.pushNotification({
+    kind: 'success',
+    source: 'test.seed',
+    text: 'Uploaded draft draft_123.',
+  });
   const withExistingMessage = await session.loadUploadedDrafts({ preflight: false });
   assert.equal(withExistingMessage.ok, true);
   assert.equal(session.state.serverActionMessage, 'Uploaded draft draft_123.');
 
-  session.state.serverActionMessage = null;
+  session.clearNotificationsBySource('test.seed');
   const withoutExistingMessage = await session.loadUploadedDrafts({ preflight: false });
   assert.equal(withoutExistingMessage.ok, true);
   assert.equal(session.state.serverActionMessage, null);
+});
+
+test('loadUploadedDrafts preserves terminal refresh warnings after request completes', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({ ok: false, error: { message: 'Unable to refresh uploaded drafts.' } }),
+    },
+  });
+
+  const result = await session.loadUploadedDrafts({ preflight: false });
+  assert.equal(result.ok, false);
+  assert.equal(session.state.serverActionMessage, 'Unable to refresh uploaded drafts.');
+
+  const refreshNotifications = session.state.notifications
+    .filter((item) => item.source === 'uploadedDrafts.refresh')
+    .map(({ source, kind, category, text }) => ({ source, kind, category, text }));
+  assert.deepEqual(refreshNotifications, [
+    {
+      source: 'uploadedDrafts.refresh',
+      kind: 'warn',
+      category: 'server',
+      text: 'Unable to refresh uploaded drafts.',
+    },
+  ]);
 });
 
 test('deleteUploadedDraft preserves success message when refresh fails', async () => {
@@ -2949,7 +3134,81 @@ test('deleteUploadedDraft preserves success message when refresh fails', async (
 
   assert.equal(result.ok, true);
   assert.equal(result.refreshResult.ok, false);
-  assert.equal(session.state.serverActionMessage, 'Uploaded draft deleted. Unable to refresh uploaded drafts.');
+  assert.equal(session.state.serverActionMessage, 'Unable to refresh uploaded drafts.');
+  assert.equal(
+    session.state.notifications.some((item) => item.text === 'Uploaded draft deleted.'),
+    true
+  );
+  const deleteNotifications = session.state.notifications
+    .filter((item) => item.source === 'uploadedDraft.delete' || item.source === 'uploadedDraft.delete.refresh')
+    .map(({ source, kind, category, text }) => ({ source, kind, category, text }));
+  assert.deepEqual(deleteNotifications, [
+    {
+      source: 'uploadedDraft.delete',
+      kind: 'success',
+      category: 'server',
+      text: 'Uploaded draft deleted.',
+    },
+    {
+      source: 'uploadedDraft.delete.refresh',
+      kind: 'warn',
+      category: 'server',
+      text: 'Unable to refresh uploaded drafts.',
+    },
+  ]);
+});
+
+test('reopenPublishedPackageAsLocalCopy emits modal-open notification sequence', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      fetchPublishedPackageArtifact: async () => ({ ok: true, data: new Uint8Array([1, 2, 3]) }),
+    },
+  });
+  session.importWorksheetPackageFile = async () => ({ importedRecord: { localId: 'draft_imported' } });
+
+  const result = await session.reopenPublishedPackageAsLocalCopy('pkg_42');
+  assert.equal(result.ok, true);
+  const openNotifications = session.state.notifications
+    .filter((item) => item.source === 'publishedPackage.open')
+    .map(({ source, kind, category, text }) => ({ source, kind, category, text }));
+  assert.deepEqual(openNotifications, [
+    {
+      source: 'publishedPackage.open',
+      kind: 'info',
+      category: 'server',
+      text: 'Opening published package…',
+    },
+    {
+      source: 'publishedPackage.open',
+      kind: 'success',
+      category: 'server',
+      text: 'Opened published package pkg_42 as a new local draft copy.',
+    },
+  ]);
+});
+
+test('setRecoveryMessage emits visible recovery notification objects', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+
+  session.setRecoveryMessage('Resumed your previous action after sign-in.');
+  const recoveryNotification = session.getLatestNotification({ categories: ['recovery'] });
+  assert.deepEqual(
+    {
+      source: recoveryNotification.source,
+      kind: recoveryNotification.kind,
+      category: recoveryNotification.category,
+      text: recoveryNotification.text,
+    },
+    {
+      source: 'auth.recovery',
+      kind: 'info',
+      category: 'recovery',
+      text: 'Resumed your previous action after sign-in.',
+    }
+  );
 });
 
 test('toUploadedDraftDisplay includes fallback title and uploaded label', async () => {
