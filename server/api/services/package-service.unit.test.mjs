@@ -421,6 +421,7 @@ test('listPublished owner filter uses owner_email-compatible predicate ordering'
   });
 
   const result = await service.listPublished({
+    query: '',
     title: '',
     subject: '',
     owner: 'teacher@example.test',
@@ -454,6 +455,7 @@ test('listPublished owner filter keeps owner_email predicate when title/subject 
   });
 
   const result = await service.listPublished({
+    query: '',
     title: 'algebra',
     subject: 'math',
     owner: 'teacher@example.test',
@@ -475,4 +477,36 @@ test('listPublished owner filter keeps owner_email predicate when title/subject 
     hasMore: true,
     nextOffset: 6,
   });
+});
+
+test('listPublished supports q compatibility filter across title/subject/owner fields', async () => {
+  let capturedSql = '';
+  let capturedValues = null;
+  const service = createService({
+    db: {
+      async query(sql, values) {
+        capturedSql = sql;
+        capturedValues = values;
+        return { rows: [] };
+      },
+    },
+    artifactStore: {},
+  });
+
+  await service.listPublished({
+    query: 'fractions',
+    title: '',
+    subject: '',
+    owner: '',
+    limit: 10,
+    offset: 5,
+  });
+
+  assert.equal(
+    capturedSql.includes(
+      '(lower(title) LIKE $1 OR lower(subject) LIKE $1 OR lower(owner_email) LIKE $1 OR lower(owner_name) LIKE $1)'
+    ),
+    true
+  );
+  assert.deepEqual(capturedValues, ['%fractions%', 11, 5]);
 });

@@ -209,7 +209,20 @@ test('GET /api/v1/published rejects invalid limit query with 400', async () => {
   });
 });
 
-test('GET /api/v1/published forwards title/subject/owner filters (owner email value)', async () => {
+test('GET /api/v1/published rejects zero limit query with 400', async () => {
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/published?limit=0`, {
+      headers: authHeaders,
+    });
+
+    assert.equal(res.status, 400);
+    const payload = await res.json();
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'INVALID_QUERY_PARAM');
+  });
+});
+
+test('GET /api/v1/published forwards q/title/subject/owner filters (owner email value)', async () => {
   let received = null;
   await withServer(
     {
@@ -222,7 +235,7 @@ test('GET /api/v1/published forwards title/subject/owner filters (owner email va
     },
     async (baseUrl) => {
       const res = await fetch(
-        `${baseUrl}/api/v1/published?title=Algebra&subject=Math&owner=teacher%40example.com&limit=5&offset=2`,
+        `${baseUrl}/api/v1/published?q=fractions&title=Algebra&subject=Math&owner=teacher%40example.com&limit=5&offset=2`,
         { headers: authHeaders }
       );
       assert.equal(res.status, 200);
@@ -230,6 +243,7 @@ test('GET /api/v1/published forwards title/subject/owner filters (owner email va
   );
 
   assert.deepEqual(received, {
+    query: 'fractions',
     title: 'Algebra',
     subject: 'Math',
     owner: 'teacher@example.com',

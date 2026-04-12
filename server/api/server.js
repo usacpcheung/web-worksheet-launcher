@@ -201,6 +201,9 @@ export function createRequestHandler({ service, artifactStore, config }) {
         if (!parsedLimit.ok) {
           return json(res, 400, fail(parsedLimit.error.code, parsedLimit.error.message));
         }
+        if (parsedLimit.value === 0) {
+          return json(res, 400, fail('INVALID_QUERY_PARAM', 'limit must be greater than 0.'));
+        }
 
         const parsedOffset = parseOptionalNonNegativeInt(url.searchParams.get('offset'), {
           field: 'offset',
@@ -212,6 +215,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
         }
 
         const publishedBrowse = await service.listPublished({
+          query: url.searchParams.get('q') || '',
           title: url.searchParams.get('title') || '',
           subject: url.searchParams.get('subject') || '',
           owner: url.searchParams.get('owner') || '',

@@ -298,9 +298,16 @@ export class PackageService {
     return result.rows[0];
   }
 
-  async listPublished({ title, subject, owner, limit, offset }) {
+  async listPublished({ query = '', title, subject, owner, limit, offset }) {
     const values = [];
     const clauses = [];
+
+    if (query) {
+      values.push(`%${query.toLowerCase()}%`);
+      clauses.push(
+        `(lower(title) LIKE $${values.length} OR lower(subject) LIKE $${values.length} OR lower(owner_email) LIKE $${values.length} OR lower(owner_name) LIKE $${values.length})`
+      );
+    }
 
     if (title) {
       values.push(`%${title.toLowerCase()}%`);
