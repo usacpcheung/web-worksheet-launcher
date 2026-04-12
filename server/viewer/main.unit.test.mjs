@@ -407,6 +407,43 @@ test('viewer browse action sends published query using canonical title/subject/o
   }]);
 });
 
+test('viewer browse append mode uses nextOffset and appends results', async () => {
+  const requests = [];
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      listPublishedPackages: async (query) => {
+        requests.push(query);
+        return {
+          ok: true,
+          data: {
+            items: [{ published_package_id: 'p2', title: 'Pack 2' }],
+            hasMore: false,
+          },
+        };
+      },
+    },
+  });
+  session.state.publishedPackages = [{ published_package_id: 'p1', title: 'Pack 1' }];
+  session.state.publishedQuery = 'math';
+  session.state.publishedNextOffset = 20;
+
+  const result = await session.browsePublishedPackages('math', { preflight: false, append: true });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(requests, [{
+    title: 'math',
+    subject: '',
+    owner: '',
+    limit: 20,
+    offset: 20,
+  }]);
+  assert.deepEqual(session.state.publishedPackages, [
+    { published_package_id: 'p1', title: 'Pack 1' },
+    { published_package_id: 'p2', title: 'Pack 2' },
+  ]);
+});
+
 test('viewer start panel removes Retry session button from normal server controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("retrySessionBtn.textContent = 'Retry session';"), false);
@@ -627,6 +664,8 @@ test('viewer start panel includes session-ready published browse integration', a
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('await session.refreshServerSession();'), true);
   assert.equal(source.includes('await session.browsePublishedPackages'), true);
+  assert.equal(source.includes("loadMoreBtn.textContent = 'Load more';"), true);
+  assert.equal(source.includes("await session.browsePublishedPackages(session.state.publishedQuery || '', { append: true });"), true);
   assert.equal(source.includes('await session.startFromPublishedPackage'), true);
 });
 

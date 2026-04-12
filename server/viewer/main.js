@@ -2037,6 +2037,7 @@ class ViewerAttemptSession {
   }
 
   async browsePublishedPackages(query = '', options = {}) {
+    const isAppend = options.append === true;
     const normalizedQuery = String(query ?? '');
     const shouldNotifyQueryChange = this.state.publishedQuery !== normalizedQuery;
     this.state.publishedQuery = normalizedQuery;
@@ -2050,12 +2051,15 @@ class ViewerAttemptSession {
     }
     this.state.isLoadingPublishedPackages = true;
     this.notifyStateChange();
+    const requestOffset = isAppend && Number.isFinite(Number(this.state.publishedNextOffset))
+      ? Number(this.state.publishedNextOffset)
+      : 0;
     const result = await this.apiClient.listPublishedPackages({
       title: normalizedQuery || '',
       subject: '',
       owner: '',
       limit: 20,
-      offset: 0,
+      offset: requestOffset,
     });
     this.state.isLoadingPublishedPackages = false;
     if (!result.ok) {
@@ -2063,7 +2067,10 @@ class ViewerAttemptSession {
       this.notifyStateChange();
       return result;
     }
-    this.state.publishedPackages = Array.isArray(result.data?.items) ? result.data.items : [];
+    const nextItems = Array.isArray(result.data?.items) ? result.data.items : [];
+    this.state.publishedPackages = isAppend
+      ? [...this.state.publishedPackages, ...nextItems]
+      : nextItems;
     this.state.publishedHasMore = result.data?.hasMore === true;
     this.state.publishedNextOffset = Number.isFinite(Number(result.data?.nextOffset))
       ? Number(result.data.nextOffset)
@@ -3311,6 +3318,11 @@ function renderViewerStartPanel(session, options = {}) {
   browseBtn.type = 'button';
   browseBtn.className = 'viewer-start-btn';
   browseBtn.textContent = 'Browse published packages';
+  const loadMoreBtn = document.createElement('button');
+  loadMoreBtn.type = 'button';
+  loadMoreBtn.className = 'viewer-start-btn';
+  loadMoreBtn.textContent = 'Load more';
+  loadMoreBtn.hidden = true;
   const searchInput = document.createElement('input');
   searchInput.type = 'search';
   searchInput.placeholder = 'Search published title';
@@ -3403,6 +3415,10 @@ function renderViewerStartPanel(session, options = {}) {
     await session.browsePublishedPackages(searchInput.value.trim());
     renderServerControls();
   });
+  loadMoreBtn.addEventListener('click', async () => {
+    await session.browsePublishedPackages(session.state.publishedQuery || '', { append: true });
+    renderServerControls();
+  });
 
   async function openPublishedPackage(publishedPackageId) {
     const result = await session.startFromPublishedPackage(publishedPackageId);
@@ -3430,7 +3446,9 @@ function renderViewerStartPanel(session, options = {}) {
       sessionStatus.textContent = `Server session: not ready. ${session.state.serverSession?.error || 'Sign in for server features.'}`;
     }
     signInBtn.hidden = sessionState === 'ready';
-    browseBtn.disabled = sessionState !== 'ready';
+    browseBtn.disabled = sessionState !== 'ready' || session.state.isLoadingPublishedPackages;
+    loadMoreBtn.hidden = !session.state.publishedHasMore;
+    loadMoreBtn.disabled = sessionState !== 'ready' || session.state.isLoadingPublishedPackages;
     serverStatus.textContent = session.state.serverActionMessage || '';
     publishedList.innerHTML = '';
     const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];
@@ -3470,7 +3488,7 @@ function renderViewerStartPanel(session, options = {}) {
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  serverActions.append(signInBtn, browseBtn);
+  serverActions.append(signInBtn, browseBtn, loadMoreBtn);
   panel.append(importActions, sessionStatus, serverActions, searchInput, publishedList, serverStatus, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';

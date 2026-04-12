@@ -1013,6 +1013,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("titleLabel.textContent = 'Worksheet Title';"), true);
   assert.equal(source.includes("subjectLabel.textContent = 'Subject';"), true);
   assert.equal(source.includes("browsePublishedBtn.textContent = 'Browse Published Packages';"), true);
+  assert.equal(source.includes("loadMoreBtn.textContent = browsePublishedState.loading ? 'Loading…' : 'Load more';"), true);
   assert.equal(source.includes("ownerFilter.placeholder = 'Filter by owner email';"), true);
   assert.equal(source.includes("copyBtn.textContent = 'Copy Published ID';"), true);
   assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? 'Opening…' : 'Open in Editor';"), true);
@@ -1024,6 +1025,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
   assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.';"), true);
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
+  assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
   assert.equal(source.includes("summary.textContent = 'Published details';"), true);
   assert.equal(
     source.includes("publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;"),

@@ -3510,7 +3510,8 @@ function renderEditorShell(session) {
     });
   }
 
-  async function runPublishedSearch() {
+  async function runPublishedSearch(options = {}) {
+    const append = options.append === true;
     const sessionReady = await session.ensureServerSessionReady();
     if (!sessionReady.ok) {
       const notReadyMessage = session.state.serverActionMessage || 'Sign in for server features, then retry this action.';
@@ -3541,7 +3542,9 @@ function renderEditorShell(session) {
       subject: browsePublishedState.subject,
       owner: browsePublishedState.owner,
       limit: 20,
-      offset: 0,
+      offset: append && Number.isFinite(Number(browsePublishedState.nextOffset))
+        ? Number(browsePublishedState.nextOffset)
+        : 0,
     });
     if (!result.ok) {
       browsePublishedState = {
@@ -3563,7 +3566,7 @@ function renderEditorShell(session) {
     browsePublishedState = {
       ...browsePublishedState,
       loading: false,
-      items: resultItems,
+      items: append ? [...browsePublishedState.items, ...resultItems] : resultItems,
       hasMore: result.data?.hasMore === true,
       nextOffset: Number.isFinite(Number(result.data?.nextOffset)) ? Number(result.data.nextOffset) : null,
       error: null,
@@ -3571,7 +3574,9 @@ function renderEditorShell(session) {
     emitPublishedBrowseNotification({
       kind: 'success',
       source: 'browse.published.search',
-      text: `Found ${resultItems.length} published package${resultItems.length === 1 ? '' : 's'}.`,
+      text: append
+        ? `Loaded ${resultItems.length} more published package${resultItems.length === 1 ? '' : 's'}.`
+        : `Found ${resultItems.length} published package${resultItems.length === 1 ? '' : 's'}.`,
     });
     renderPublishedBrowserModal();
   }
@@ -3697,11 +3702,17 @@ function renderEditorShell(session) {
     }
     const actions = document.createElement('div');
     actions.className = 'confirm-modal__actions';
+    const loadMoreBtn = document.createElement('button');
+    loadMoreBtn.type = 'button';
+    loadMoreBtn.className = 'confirm-modal__btn';
+    loadMoreBtn.textContent = browsePublishedState.loading ? 'Loading…' : 'Load more';
+    loadMoreBtn.hidden = !browsePublishedState.hasMore;
+    loadMoreBtn.disabled = browsePublishedState.loading || !serverReady;
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'confirm-modal__btn';
     closeBtn.textContent = 'Close';
-    actions.append(closeBtn);
+    actions.append(loadMoreBtn, closeBtn);
     dialog.append(heading, filterRow, results, actions);
     overlay.appendChild(dialog);
     browsePublishedModalRoot.appendChild(overlay);
@@ -3717,6 +3728,9 @@ function renderEditorShell(session) {
     searchBtn.addEventListener('click', async () => {
       captureFilters();
       await runPublishedSearch();
+    });
+    loadMoreBtn.addEventListener('click', async () => {
+      await runPublishedSearch({ append: true });
     });
     closeBtn.addEventListener('click', () => {
       browsePublishedDialogOpen = false;
