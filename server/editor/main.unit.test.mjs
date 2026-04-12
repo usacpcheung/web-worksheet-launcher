@@ -280,6 +280,36 @@ test('beginServerSignIn shows popup blocked message when popup cannot open', asy
   );
 });
 
+test('beginServerSignIn clears stale popup-blocked notification before a new auth flow', async () => {
+  const mod = await loadEditorModule();
+  globalThis.window = {
+    location: { origin: 'https://example.test' },
+    open: () => ({ closed: false }),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+  };
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.pushNotification({
+    kind: 'error',
+    category: 'server',
+    source: 'auth.popup',
+    text: 'Sign-in popup was blocked. Allow popups for this site, then try again.',
+  });
+  assert.equal(session.state.notifications.some((item) => item.source === 'auth.popup'), true);
+
+  session.beginServerSignIn();
+
+  assert.equal(session.state.notifications.some((item) => item.source === 'auth.popup'), false);
+});
+
 test('beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
   const authPopup = { closed: false };
   const mod = await loadEditorModule();
@@ -469,6 +499,38 @@ test('uploadCurrentDraftToServer emits ordered notifications for progress, succe
       text: 'Uploaded drafts refreshed.',
     },
   ]);
+  const uploadActivityTexts = session.state.activityLog
+    .filter((item) => item.source === 'upload.status' || item.source === 'upload.refresh')
+    .map((item) => item.text);
+  assert.equal(uploadActivityTexts.includes('Uploading…'), false);
+  assert.equal(uploadActivityTexts.includes('Uploaded draft draft_upload_1.'), true);
+  assert.equal(uploadActivityTexts.includes('Uploaded drafts refreshed.'), true);
+});
+
+test('uploadCurrentDraftToServer keeps in-progress notification visible while request is in flight', async () => {
+  const mod = await loadEditorModule();
+  let resolveUpload;
+  const uploadPromise = new Promise((resolve) => { resolveUpload = resolve; });
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      uploadDraftPackage: async () => uploadPromise,
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.state.draft = { localId: 'draft_local_inflight', title: 'Draft inflight', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const pendingUpload = session.uploadCurrentDraftToServer();
+  const inflightNotification = session.state.notifications.find((item) => (
+    item.source === 'upload.status' && item.kind === 'info' && item.text === 'Uploading…'
+  ));
+  assert.equal(Boolean(inflightNotification), true);
+  assert.equal(session.state.activityLog.some((item) => item.text === 'Uploading…'), false);
+
+  resolveUpload({ ok: true, data: { uploaded_draft_id: 'draft_upload_inflight' } });
+  const result = await pendingUpload;
+  assert.equal(result.ok, true);
 });
 
 test('uploadCurrentDraftToServer emits refresh warning when uploaded drafts refresh fails', async () => {
@@ -740,6 +802,34 @@ test('pushNotification appends activity log entries and caps at 200 records', as
   assert.equal(session.state.activityLog.length, 200);
   assert.equal(session.state.activityLog[0].text, 'event 10');
   assert.equal(session.state.activityLog[199].text, 'event 209');
+  assert.equal(session.state.notifications.length, 200);
+  assert.equal(session.state.notifications[0].text, 'event 10');
+  assert.equal(session.state.notifications[199].text, 'event 209');
+});
+
+test('pushNotification prunes expired ttl notifications before appending', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  const createdAt = new Date(Date.now() - 5000).toISOString();
+  session.state.notifications.push({
+    id: 'notif_expired',
+    kind: 'info',
+    category: 'server',
+    source: 'ttl.expired',
+    text: 'old',
+    createdAt,
+    ttlMs: 1000,
+  });
+
+  session.pushNotification({
+    kind: 'info',
+    category: 'editor',
+    source: 'activity.test.current',
+    text: 'current',
+  });
+
+  assert.equal(session.state.notifications.some((item) => item.source === 'ttl.expired'), false);
+  assert.equal(session.state.notifications.some((item) => item.source === 'activity.test.current'), true);
 });
 
 test('notification dedupe/removal does not erase historical activity log entries', async () => {
@@ -774,6 +864,8 @@ test('activity panel source uses activity log pagination with load-older control
   assert.equal(source.includes('const feedNotifications = (Array.isArray(session.state.activityLog) ? session.state.activityLog : [])'), true);
   assert.equal(source.includes('visibleActivityCount = Math.min(totalActivity, visibleActivityCount + ACTIVITY_VISIBLE_INITIAL);'), true);
   assert.equal(source.includes('Showing ${Math.min(visibleActivityCount, totalActivity)} of ${totalActivity} recent activities.'), true);
+  assert.equal(source.includes("renderNotificationCard(notification, 'notification-feed-item', { announce: false })"), true);
+  assert.equal(source.includes("item.setAttribute('aria-live', 'off');"), true);
 });
 
 test('editor shell no longer relies on 500ms summary interval loop', async () => {
@@ -871,6 +963,12 @@ test('publishUploadedDraftToServer emits ordered notifications and keeps termina
     'Published package pkg_u1.',
     'Published package pkg_u2.',
   ]);
+  const publishActivityTexts = session.state.activityLog
+    .filter((item) => item.source === 'publish.status')
+    .map((item) => item.text);
+  assert.equal(publishActivityTexts.includes('Publishing…'), false);
+  assert.equal(publishActivityTexts.includes('Published package pkg_u1.'), true);
+  assert.equal(publishActivityTexts.includes('Published package pkg_u2.'), true);
   const refreshFollowups = session.state.notifications
     .filter((item) => item.source === 'publish.refresh')
     .map((item) => ({ source: item.source, kind: item.kind, category: item.category, text: item.text }));
@@ -1069,6 +1167,62 @@ test('saveNow and export failures emit error notifications', async () => {
   await assert.rejects(() => session.exportCurrentDraftToPackageFile(), /No active draft to export/);
   const exportError = session.state.notifications.find((item) => item.source === 'export.package_zip' && item.kind === 'error');
   assert.equal(Boolean(exportError), true);
+});
+
+test('saveNow dedupes active save.manual notifications across repeated saves', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (value) => value },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_save_dedupe');
+  clearTimeout(session.autosaveTimer);
+
+  await session.saveNow();
+  await session.saveNow();
+  await session.saveNow();
+
+  const activeManualSaveNotifications = session.state.notifications
+    .filter((item) => item?.source === 'save.manual');
+  assert.equal(activeManualSaveNotifications.length, 1);
+  assert.equal(activeManualSaveNotifications[0].kind, 'success');
+});
+
+test('exportCurrentDraftToPackageFile revokes object URL when click throws', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (value) => value },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+    localAssets: { get: async () => null, put: async () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_export_revoke_on_throw');
+  clearTimeout(session.autosaveTimer);
+
+  const originalDocument = globalThis.document;
+  const originalUrl = globalThis.URL;
+  const originalBlob = globalThis.Blob;
+  const revokedUrls = [];
+  globalThis.URL = {
+    createObjectURL: () => 'blob:test-export-throw',
+    revokeObjectURL: (value) => revokedUrls.push(value),
+  };
+  globalThis.document = {
+    ...originalDocument,
+    body: { appendChild: () => {} },
+    createElement: () => ({ click() { throw new Error('click failed'); }, remove() {} }),
+  };
+  globalThis.Blob = originalBlob;
+  try {
+    await assert.rejects(() => session.exportCurrentDraftToPackageFile(), /click failed/);
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.URL = originalUrl;
+    globalThis.Blob = originalBlob;
+  }
+
+  assert.deepEqual(revokedUrls, ['blob:test-export-throw']);
 });
 
 test('new question transient prompt validation is suppressed during first autosave', async () => {
@@ -3298,6 +3452,11 @@ test('loadUploadedDrafts preserves terminal refresh warnings after request compl
       text: 'Unable to refresh uploaded drafts.',
     },
   ]);
+  const refreshActivityTexts = session.state.activityLog
+    .filter((item) => item.source === 'uploadedDrafts.refresh')
+    .map((item) => item.text);
+  assert.equal(refreshActivityTexts.includes('Refreshing…'), false);
+  assert.equal(refreshActivityTexts.includes('Unable to refresh uploaded drafts.'), true);
 });
 
 test('deleteUploadedDraft preserves success message when refresh fails', async () => {
@@ -3368,6 +3527,11 @@ test('reopenPublishedPackageAsLocalCopy emits modal-open notification sequence',
       text: 'Opened published package pkg_42 as a new local draft copy.',
     },
   ]);
+  const openActivityTexts = session.state.activityLog
+    .filter((item) => item.source === 'publishedPackage.open')
+    .map((item) => item.text);
+  assert.equal(openActivityTexts.includes('Opening published package…'), false);
+  assert.equal(openActivityTexts.includes('Opened published package pkg_42 as a new local draft copy.'), true);
 });
 
 test('setRecoveryMessage emits visible recovery notification objects', async () => {

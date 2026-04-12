@@ -15,6 +15,7 @@ const app = document.getElementById('app');
 const AUTOSAVE_MS = 1000;
 const ACTIVITY_VISIBLE_INITIAL = 30;
 const ACTIVITY_MAX_STORED = 200;
+const ACTIVE_NOTIFICATIONS_MAX_STORED = 200;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
 let contractsPromise;
@@ -677,7 +678,9 @@ class EditorDraftSession {
     ttlMs = null,
     category = 'server',
     actionLabel = null,
+    logActivity = true,
   } = {}) {
+    this.pruneExpiredNotifications();
     const normalizedText = String(text || '').trim();
     if (!normalizedText) return null;
     const normalizedKind = kind === 'warning' ? 'warn' : kind;
@@ -689,13 +692,39 @@ class EditorDraftSession {
       source: String(source || 'editor'),
       actionLabel: isNonEmptyString(actionLabel) ? actionLabel.trim() : null,
       ttlMs: Number.isFinite(Number(ttlMs)) && Number(ttlMs) > 0 ? Number(ttlMs) : null,
+      logActivity: logActivity !== false,
       createdAt: nowIso(),
     };
-    this.state.notifications = [...this.state.notifications, notification];
-    this.state.activityLog = [...this.state.activityLog, notification]
-      .slice(-ACTIVITY_MAX_STORED);
+    this.state.notifications = [...this.state.notifications, notification]
+      .slice(-ACTIVE_NOTIFICATIONS_MAX_STORED);
+    // Notification policy:
+    // - transient progress events stay in active notifications/toasts only
+    // - historical terminal events are recorded in activityLog
+    if (notification.logActivity !== false) {
+      this.state.activityLog = [...this.state.activityLog, notification]
+        .slice(-ACTIVITY_MAX_STORED);
+    }
     this.syncDeprecatedMessageFieldsFromNotifications();
     return notification;
+  }
+
+  pruneExpiredNotifications({ nowMs = Date.now() } = {}) {
+    if (!Array.isArray(this.state.notifications) || this.state.notifications.length === 0) return 0;
+    const previousLength = this.state.notifications.length;
+    this.state.notifications = this.state.notifications.filter((item) => {
+      const ttlMs = Number.isFinite(Number(item?.ttlMs)) && Number(item.ttlMs) > 0
+        ? Number(item.ttlMs)
+        : null;
+      if (!ttlMs) return true;
+      const createdAtMs = new Date(item?.createdAt || '').getTime();
+      if (!Number.isFinite(createdAtMs)) return true;
+      return createdAtMs + ttlMs > nowMs;
+    });
+    const removedCount = Math.max(0, previousLength - this.state.notifications.length);
+    if (removedCount > 0) {
+      this.syncDeprecatedMessageFieldsFromNotifications();
+    }
+    return removedCount;
   }
 
   consumeNotification() {
@@ -2391,7 +2420,7 @@ class EditorDraftSession {
     try {
       const persisted = await this.autosave();
       this.state.lastManualSaveAt = nowIso();
-      this.pushNotification({
+      this.setNotificationForSource({
         kind: 'success',
         category: 'editor',
         source: 'save.manual',
@@ -2401,7 +2430,7 @@ class EditorDraftSession {
       return persisted;
     } catch (error) {
       console.error('Manual save failed', error);
-      this.pushNotification({
+      this.setNotificationForSource({
         kind: 'error',
         category: 'editor',
         source: 'save.manual',
@@ -2413,6 +2442,8 @@ class EditorDraftSession {
   }
 
   async exportCurrentDraftToPackageFile() {
+    let objectUrl = null;
+    let link = null;
     try {
       if (!this.state.draft) {
         throw new Error('No active draft to export.');
@@ -2422,14 +2453,12 @@ class EditorDraftSession {
       const filename = `worksheet-package-${this.state.draft.localId}-${timestampToken}.zip`;
       const bytes = await this.buildCurrentDraftPackageZipBytes();
       const blob = new Blob([bytes], { type: 'application/zip' });
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      objectUrl = URL.createObjectURL(blob);
+      link = document.createElement('a');
       link.href = objectUrl;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
       this.state.lastExportedAt = nowIso();
       this.pushNotification({
         kind: 'success',
@@ -2448,6 +2477,13 @@ class EditorDraftSession {
       });
       this.notifyStateChange();
       throw error;
+    } finally {
+      if (link?.remove) {
+        link.remove();
+      }
+      if (objectUrl && URL?.revokeObjectURL) {
+        URL.revokeObjectURL(objectUrl);
+      }
     }
   }
 
@@ -2479,6 +2515,8 @@ class EditorDraftSession {
     if (this._authPopupFlow?.cancel) {
       this._authPopupFlow.cancel();
     }
+    this.clearNotificationsBySource('auth.popup');
+    this.clearNotificationsBySource('auth.status');
     const authFlowId = createLocalId('auth_flow');
     this._activeAuthFlowId = authFlowId;
 
@@ -2514,6 +2552,7 @@ class EditorDraftSession {
             category: 'server',
             source: 'auth.status',
             text: message,
+            logActivity: false,
           });
           this.notifyStateChange();
         }
@@ -2525,6 +2564,7 @@ class EditorDraftSession {
           category: 'server',
           source: 'auth.status',
           text: 'Sign-in completed. Refreshing server session…',
+          logActivity: false,
         });
         this.notifyStateChange();
         const result = await this.probeServerSessionSilently({ force: true });
@@ -2552,6 +2592,7 @@ class EditorDraftSession {
             category: 'server',
             source: 'auth.status',
             text: 'Still waiting for sign-in confirmation from the popup…',
+            logActivity: false,
           });
           this.notifyStateChange();
           return;
@@ -2647,7 +2688,7 @@ class EditorDraftSession {
       };
     }
     this.state.isUploadingDraft = true;
-    this.pushNotification({ kind: 'info', category: 'server', source: 'upload.status', text: 'Uploading…' });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'upload.status', text: 'Uploading…', logActivity: false });
     this.notifyStateChange();
     try {
       if (options.preflight !== false) {
@@ -2708,7 +2749,7 @@ class EditorDraftSession {
       };
     }
     this.state.publishingDraftIds.add(normalizedUploadedDraftId);
-    this.pushNotification({ kind: 'info', category: 'server', source: 'publish.status', text: 'Publishing…' });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'publish.status', text: 'Publishing…', logActivity: false });
     this.notifyStateChange();
     try {
       const sessionReady = await this.ensureServerSessionReady();
@@ -2770,7 +2811,7 @@ class EditorDraftSession {
 
       this._loadUploadedDraftsActiveCount += 1;
       this.state.isLoadingUploadedDrafts = this._loadUploadedDraftsActiveCount > 0;
-      this.pushNotification({ kind: 'info', category: 'server', source: 'uploadedDrafts.refresh', text: 'Refreshing…' });
+      this.pushNotification({ kind: 'info', category: 'server', source: 'uploadedDrafts.refresh', text: 'Refreshing…', logActivity: false });
       this.notifyStateChange();
 
       try {
@@ -2842,7 +2883,7 @@ class EditorDraftSession {
       };
     }
     this.state.openingPublishedPackageIds.add(normalizedPublishedPackageId);
-    this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: 'Opening published package…' });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: 'Opening published package…', logActivity: false });
     this.notifyStateChange();
     try {
       const sessionReady = await this.ensureServerSessionReady();
@@ -3750,12 +3791,16 @@ function renderEditorShell(session) {
     if (Number.isNaN(parsed.getTime())) return '';
     return parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
   };
-  const renderNotificationCard = (notification, className) => {
+  const renderNotificationCard = (notification, className, { announce = true } = {}) => {
     const item = document.createElement('article');
     const severity = ['success', 'info', 'warn', 'error'].includes(notification?.kind) ? notification.kind : 'info';
     item.className = `${className} ${className}--${severity}`;
-    item.setAttribute('aria-live', getNotificationAriaLive(severity));
-    item.setAttribute('role', getNotificationRole(severity));
+    if (announce) {
+      item.setAttribute('aria-live', getNotificationAriaLive(severity));
+      item.setAttribute('role', getNotificationRole(severity));
+    } else {
+      item.setAttribute('aria-live', 'off');
+    }
     const message = document.createElement('div');
     message.className = `${className}__text`;
     message.textContent = notification?.text || '';
@@ -4488,6 +4533,7 @@ function renderEditorShell(session) {
   };
 
   const updateSummary = () => {
+    session.pruneExpiredNotifications();
     session.validateCurrentDraft();
     syncFormControls();
     renderBlockList();
@@ -4560,7 +4606,7 @@ function renderEditorShell(session) {
       activityFeedList.appendChild(emptyFeed);
     } else {
       feedNotifications.forEach((notification) => {
-        activityFeedList.appendChild(renderNotificationCard(notification, 'notification-feed-item'));
+        activityFeedList.appendChild(renderNotificationCard(notification, 'notification-feed-item', { announce: false }));
       });
     }
     const hasOlderActivity = totalActivity > visibleActivityCount;
