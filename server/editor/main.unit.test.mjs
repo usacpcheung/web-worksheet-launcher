@@ -280,6 +280,36 @@ test('beginServerSignIn shows popup blocked message when popup cannot open', asy
   );
 });
 
+test('beginServerSignIn clears stale popup-blocked notification before a new auth flow', async () => {
+  const mod = await loadEditorModule();
+  globalThis.window = {
+    location: { origin: 'https://example.test' },
+    open: () => ({ closed: false }),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+  };
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.pushNotification({
+    kind: 'error',
+    category: 'server',
+    source: 'auth.popup',
+    text: 'Sign-in popup was blocked. Allow popups for this site, then try again.',
+  });
+  assert.equal(session.state.notifications.some((item) => item.source === 'auth.popup'), true);
+
+  session.beginServerSignIn();
+
+  assert.equal(session.state.notifications.some((item) => item.source === 'auth.popup'), false);
+});
+
 test('beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
   const authPopup = { closed: false };
   const mod = await loadEditorModule();
@@ -740,6 +770,34 @@ test('pushNotification appends activity log entries and caps at 200 records', as
   assert.equal(session.state.activityLog.length, 200);
   assert.equal(session.state.activityLog[0].text, 'event 10');
   assert.equal(session.state.activityLog[199].text, 'event 209');
+  assert.equal(session.state.notifications.length, 200);
+  assert.equal(session.state.notifications[0].text, 'event 10');
+  assert.equal(session.state.notifications[199].text, 'event 209');
+});
+
+test('pushNotification prunes expired ttl notifications before appending', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  const createdAt = new Date(Date.now() - 5000).toISOString();
+  session.state.notifications.push({
+    id: 'notif_expired',
+    kind: 'info',
+    category: 'server',
+    source: 'ttl.expired',
+    text: 'old',
+    createdAt,
+    ttlMs: 1000,
+  });
+
+  session.pushNotification({
+    kind: 'info',
+    category: 'editor',
+    source: 'activity.test.current',
+    text: 'current',
+  });
+
+  assert.equal(session.state.notifications.some((item) => item.source === 'ttl.expired'), false);
+  assert.equal(session.state.notifications.some((item) => item.source === 'activity.test.current'), true);
 });
 
 test('notification dedupe/removal does not erase historical activity log entries', async () => {
@@ -774,6 +832,8 @@ test('activity panel source uses activity log pagination with load-older control
   assert.equal(source.includes('const feedNotifications = (Array.isArray(session.state.activityLog) ? session.state.activityLog : [])'), true);
   assert.equal(source.includes('visibleActivityCount = Math.min(totalActivity, visibleActivityCount + ACTIVITY_VISIBLE_INITIAL);'), true);
   assert.equal(source.includes('Showing ${Math.min(visibleActivityCount, totalActivity)} of ${totalActivity} recent activities.'), true);
+  assert.equal(source.includes("renderNotificationCard(notification, 'notification-feed-item', { announce: false })"), true);
+  assert.equal(source.includes("item.setAttribute('aria-live', 'off');"), true);
 });
 
 test('editor shell no longer relies on 500ms summary interval loop', async () => {

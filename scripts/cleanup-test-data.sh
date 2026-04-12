@@ -103,18 +103,18 @@ WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 PATHS_FILE="$WORK_DIR/artifact_paths.txt"
 FAILED_FILE_DELETES="$WORK_DIR/failed_file_deletes.txt"
-OWNER_PREFIX_SQL=$(printf "%s" "$OWNER_PREFIX" | sed "s/'/''/g")
+OWNER_PREFIX_LIKE_SQL=$(printf "%s" "$OWNER_PREFIX" | sed -e 's/\\/\\\\/g' -e 's/%/\\%/g' -e 's/_/\\_/g' -e "s/'/''/g")
 
 SQL_PATHS=$(cat <<SQL
 WITH target_uploaded AS (
   SELECT artifact_path
   FROM uploaded_drafts
-  WHERE owner_sub LIKE '${OWNER_PREFIX_SQL}%'
+  WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
     AND created_at < now() - ('${OLDER_THAN_DAYS} days')::interval
 ), target_published AS (
   SELECT artifact_path
   FROM published_packages
-  WHERE owner_sub LIKE '${OWNER_PREFIX_SQL}%'
+  WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
     AND published_at < now() - ('${OLDER_THAN_DAYS} days')::interval
 )
 SELECT DISTINCT artifact_path
@@ -131,12 +131,12 @@ SQL
 SQL_COUNTS=$(cat <<SQL
 SELECT 'uploaded_drafts' AS table_name, count(*) AS row_count
 FROM uploaded_drafts
-WHERE owner_sub LIKE '${OWNER_PREFIX_SQL}%'
+WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
   AND created_at < now() - ('${OLDER_THAN_DAYS} days')::interval
 UNION ALL
 SELECT 'published_packages' AS table_name, count(*) AS row_count
 FROM published_packages
-WHERE owner_sub LIKE '${OWNER_PREFIX_SQL}%'
+WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
   AND published_at < now() - ('${OLDER_THAN_DAYS} days')::interval
 ORDER BY table_name;
 SQL
@@ -166,11 +166,11 @@ fi
 SQL_DELETE=$(cat <<SQL
 BEGIN;
 DELETE FROM published_packages
-WHERE owner_sub LIKE '${OWNER_PREFIX_SQL}%'
+WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
   AND published_at < now() - ('${OLDER_THAN_DAYS} days')::interval;
 
 DELETE FROM uploaded_drafts
-WHERE owner_sub LIKE '${OWNER_PREFIX_SQL}%'
+WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
   AND created_at < now() - ('${OLDER_THAN_DAYS} days')::interval;
 COMMIT;
 SQL
@@ -182,12 +182,12 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "$SQL_DELETE"
 
 echo
 echo "== Removing storage files =="
+normalized_root=$(realpath -m "$STORAGE_ROOT")
 while IFS= read -r relpath; do
   [[ -z "$relpath" ]] && continue
 
   target="$STORAGE_ROOT/$relpath"
   normalized_target=$(realpath -m "$target")
-  normalized_root=$(realpath -m "$STORAGE_ROOT")
 
   if [[ "$normalized_target" != "$normalized_root"/* ]]; then
     echo "skip (path escapes storage root): $relpath"
@@ -195,7 +195,7 @@ while IFS= read -r relpath; do
   fi
 
   if [[ -e "$normalized_target" ]]; then
-    if rm -f "$normalized_target"; then
+    if rm -f -- "$normalized_target"; then
       echo "deleted: $relpath"
     else
       echo "$normalized_target" >> "$FAILED_FILE_DELETES"

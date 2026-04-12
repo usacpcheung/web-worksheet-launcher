@@ -15,6 +15,7 @@ const app = document.getElementById('app');
 const AUTOSAVE_MS = 1000;
 const ACTIVITY_VISIBLE_INITIAL = 30;
 const ACTIVITY_MAX_STORED = 200;
+const ACTIVE_NOTIFICATIONS_MAX_STORED = 200;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
 let contractsPromise;
@@ -678,6 +679,7 @@ class EditorDraftSession {
     category = 'server',
     actionLabel = null,
   } = {}) {
+    this.pruneExpiredNotifications();
     const normalizedText = String(text || '').trim();
     if (!normalizedText) return null;
     const normalizedKind = kind === 'warning' ? 'warn' : kind;
@@ -691,11 +693,31 @@ class EditorDraftSession {
       ttlMs: Number.isFinite(Number(ttlMs)) && Number(ttlMs) > 0 ? Number(ttlMs) : null,
       createdAt: nowIso(),
     };
-    this.state.notifications = [...this.state.notifications, notification];
+    this.state.notifications = [...this.state.notifications, notification]
+      .slice(-ACTIVE_NOTIFICATIONS_MAX_STORED);
     this.state.activityLog = [...this.state.activityLog, notification]
       .slice(-ACTIVITY_MAX_STORED);
     this.syncDeprecatedMessageFieldsFromNotifications();
     return notification;
+  }
+
+  pruneExpiredNotifications({ nowMs = Date.now() } = {}) {
+    if (!Array.isArray(this.state.notifications) || this.state.notifications.length === 0) return 0;
+    const previousLength = this.state.notifications.length;
+    this.state.notifications = this.state.notifications.filter((item) => {
+      const ttlMs = Number.isFinite(Number(item?.ttlMs)) && Number(item.ttlMs) > 0
+        ? Number(item.ttlMs)
+        : null;
+      if (!ttlMs) return true;
+      const createdAtMs = new Date(item?.createdAt || '').getTime();
+      if (!Number.isFinite(createdAtMs)) return true;
+      return createdAtMs + ttlMs > nowMs;
+    });
+    const removedCount = Math.max(0, previousLength - this.state.notifications.length);
+    if (removedCount > 0) {
+      this.syncDeprecatedMessageFieldsFromNotifications();
+    }
+    return removedCount;
   }
 
   consumeNotification() {
@@ -2479,6 +2501,8 @@ class EditorDraftSession {
     if (this._authPopupFlow?.cancel) {
       this._authPopupFlow.cancel();
     }
+    this.clearNotificationsBySource('auth.popup');
+    this.clearNotificationsBySource('auth.status');
     const authFlowId = createLocalId('auth_flow');
     this._activeAuthFlowId = authFlowId;
 
@@ -3750,12 +3774,16 @@ function renderEditorShell(session) {
     if (Number.isNaN(parsed.getTime())) return '';
     return parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
   };
-  const renderNotificationCard = (notification, className) => {
+  const renderNotificationCard = (notification, className, { announce = true } = {}) => {
     const item = document.createElement('article');
     const severity = ['success', 'info', 'warn', 'error'].includes(notification?.kind) ? notification.kind : 'info';
     item.className = `${className} ${className}--${severity}`;
-    item.setAttribute('aria-live', getNotificationAriaLive(severity));
-    item.setAttribute('role', getNotificationRole(severity));
+    if (announce) {
+      item.setAttribute('aria-live', getNotificationAriaLive(severity));
+      item.setAttribute('role', getNotificationRole(severity));
+    } else {
+      item.setAttribute('aria-live', 'off');
+    }
     const message = document.createElement('div');
     message.className = `${className}__text`;
     message.textContent = notification?.text || '';
@@ -4488,6 +4516,7 @@ function renderEditorShell(session) {
   };
 
   const updateSummary = () => {
+    session.pruneExpiredNotifications();
     session.validateCurrentDraft();
     syncFormControls();
     renderBlockList();
@@ -4560,7 +4589,7 @@ function renderEditorShell(session) {
       activityFeedList.appendChild(emptyFeed);
     } else {
       feedNotifications.forEach((notification) => {
-        activityFeedList.appendChild(renderNotificationCard(notification, 'notification-feed-item'));
+        activityFeedList.appendChild(renderNotificationCard(notification, 'notification-feed-item', { announce: false }));
       });
     }
     const hasOlderActivity = totalActivity > visibleActivityCount;
