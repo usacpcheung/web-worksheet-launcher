@@ -253,6 +253,18 @@ async function toUint8ArrayFromFile(file) {
   return new Uint8Array(buffer);
 }
 
+function createZipFileFromBytes(bytes, name) {
+  if (typeof File === 'function') {
+    return new File([bytes], name, { type: 'application/zip' });
+  }
+  const blob = new Blob([bytes], { type: 'application/zip' });
+  Object.defineProperty(blob, 'name', {
+    value: String(name || 'worksheet-package.zip'),
+    configurable: true,
+  });
+  return blob;
+}
+
 async function loadContracts() {
   if (!contractsPromise) {
     contractsPromise = import('../app/contracts/index.js');
@@ -2857,7 +2869,7 @@ class EditorDraftSession {
       return artifact;
     }
     const imported = await this.importWorksheetPackageFile(
-      new File([artifact.data], `uploaded-draft-${uploadedDraftId}.zip`, { type: 'application/zip' }),
+      createZipFileFromBytes(artifact.data, `uploaded-draft-${uploadedDraftId}.zip`),
       { convertToEditableDraft: true }
     );
     this.pushNotification({
@@ -2895,7 +2907,7 @@ class EditorDraftSession {
         return artifact;
       }
       const imported = await this.importWorksheetPackageFile(
-        new File([artifact.data], `published-package-${normalizedPublishedPackageId}.zip`, { type: 'application/zip' }),
+        createZipFileFromBytes(artifact.data, `published-package-${normalizedPublishedPackageId}.zip`),
         { convertToEditableDraft: true }
       );
       this.pushNotification({
