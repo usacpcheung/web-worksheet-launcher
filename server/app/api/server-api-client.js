@@ -32,6 +32,19 @@ function authLikeStatus(status) {
   return status === 401 || status === 403;
 }
 
+function normalizePublishedPackagesQuery(query = {}) {
+  const source = query && typeof query === 'object' ? query : {};
+  const normalizedLimit = Number(source.limit);
+  const normalizedOffset = Number(source.offset);
+  return {
+    title: String(source.title ?? ''),
+    subject: String(source.subject ?? ''),
+    owner: String(source.owner ?? ''),
+    limit: Number.isFinite(normalizedLimit) ? normalizedLimit : 20,
+    offset: Number.isFinite(normalizedOffset) ? normalizedOffset : 0,
+  };
+}
+
 function toStructuredError({ code, message, status = null, requiresSignIn = false, details = null }) {
   return {
     ok: false,
@@ -257,7 +270,7 @@ function createServerApiClient(options = {}) {
       });
     },
     listPublishedPackages(query = {}) {
-      return requestJson('/published', { query });
+      return requestJson('/published', { query: normalizePublishedPackagesQuery(query) });
     },
     fetchPublishedPackageArtifact(publishedPackageId) {
       return requestZip(`/published/${publishedPackageId}/artifact`);

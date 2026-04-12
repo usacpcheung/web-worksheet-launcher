@@ -383,6 +383,30 @@ test('viewer browse action persists requested publishedQuery before preflight fa
   assert.equal(session.state.publishedQuery, 'new-query');
 });
 
+test('viewer browse action sends published query using canonical title/subject/owner shape', async () => {
+  const requests = [];
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      listPublishedPackages: async (query) => {
+        requests.push(query);
+        return { ok: true, data: { items: [] } };
+      },
+    },
+  });
+
+  const result = await session.browsePublishedPackages('math', { preflight: false });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(requests, [{
+    title: 'math',
+    subject: '',
+    owner: '',
+    limit: 20,
+    offset: 0,
+  }]);
+});
+
 test('viewer start panel removes Retry session button from normal server controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("retrySessionBtn.textContent = 'Retry session';"), false);

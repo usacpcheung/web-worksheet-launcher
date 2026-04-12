@@ -211,8 +211,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
           return json(res, 400, fail(parsedOffset.error.code, parsedOffset.error.message));
         }
 
-        const rows = await service.listPublished({
-          query: url.searchParams.get('q') || '',
+        const publishedBrowse = await service.listPublished({
           title: url.searchParams.get('title') || '',
           subject: url.searchParams.get('subject') || '',
           owner: url.searchParams.get('owner') || '',
@@ -220,7 +219,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
           offset: parsedOffset.value,
         });
 
-        return json(res, 200, ok({ items: rows }));
+        return json(res, 200, ok(publishedBrowse));
       }
 
       if (req.method === 'GET' && isPublishedDetailRoute(segments)) {

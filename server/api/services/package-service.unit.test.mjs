@@ -408,18 +408,19 @@ test('listOwnDrafts returns published-state metadata fields for uploaded draft r
 
 test('listPublished owner filter uses owner_email-compatible predicate ordering', async () => {
   let capturedSql = '';
+  let capturedValues = null;
   const service = createService({
     db: {
-      async query(sql) {
+      async query(sql, values) {
         capturedSql = sql;
+        capturedValues = values;
         return { rows: [] };
       },
     },
     artifactStore: {},
   });
 
-  await service.listPublished({
-    query: '',
+  const result = await service.listPublished({
     title: '',
     subject: '',
     owner: 'teacher@example.test',
@@ -428,28 +429,50 @@ test('listPublished owner filter uses owner_email-compatible predicate ordering'
   });
 
   assert.equal(capturedSql.includes('(lower(owner_email) LIKE $1 OR lower(owner_name) LIKE $1)'), true);
+  assert.deepEqual(capturedValues, ['%teacher@example.test%', 11, 0]);
+  assert.deepEqual(result, { items: [], limit: 10, offset: 0, hasMore: false });
 });
 
-test('listPublished free-text query checks owner_email in searchable fields', async () => {
+test('listPublished owner filter keeps owner_email predicate when title/subject filters are also present', async () => {
   let capturedSql = '';
+  let capturedValues = null;
   const service = createService({
     db: {
-      async query(sql) {
+      async query(sql, values) {
         capturedSql = sql;
-        return { rows: [] };
+        capturedValues = values;
+        return {
+          rows: [
+            { published_package_id: 'p3', title: 'Algebra C' },
+            { published_package_id: 'p2', title: 'Algebra B' },
+            { published_package_id: 'p1', title: 'Algebra A' },
+          ],
+        };
       },
     },
     artifactStore: {},
   });
 
-  await service.listPublished({
-    query: 'teacher@example.test',
-    title: '',
-    subject: '',
-    owner: '',
-    limit: 10,
-    offset: 0,
+  const result = await service.listPublished({
+    title: 'algebra',
+    subject: 'math',
+    owner: 'teacher@example.test',
+    limit: 2,
+    offset: 4,
   });
 
-  assert.equal(capturedSql.includes('lower(owner_email) LIKE $1'), true);
+  assert.equal(capturedSql.includes('lower(title) LIKE $1'), true);
+  assert.equal(capturedSql.includes('lower(subject) LIKE $2'), true);
+  assert.equal(capturedSql.includes('(lower(owner_email) LIKE $3 OR lower(owner_name) LIKE $3)'), true);
+  assert.deepEqual(capturedValues, ['%algebra%', '%math%', '%teacher@example.test%', 3, 4]);
+  assert.deepEqual(result, {
+    items: [
+      { published_package_id: 'p3', title: 'Algebra C' },
+      { published_package_id: 'p2', title: 'Algebra B' },
+    ],
+    limit: 2,
+    offset: 4,
+    hasMore: true,
+    nextOffset: 6,
+  });
 });

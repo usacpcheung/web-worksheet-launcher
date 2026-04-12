@@ -40,7 +40,7 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
         return null;
       },
       async listPublished() {
-        return [];
+        return { items: [], limit: 20, offset: 0, hasMore: false };
       },
       ...service,
     },
@@ -216,7 +216,7 @@ test('GET /api/v1/published forwards title/subject/owner filters (owner email va
       service: {
         async listPublished(filters) {
           received = filters;
-          return [];
+          return { items: [], limit: 5, offset: 2, hasMore: false };
         },
       },
     },
@@ -230,13 +230,43 @@ test('GET /api/v1/published forwards title/subject/owner filters (owner email va
   );
 
   assert.deepEqual(received, {
-    query: '',
     title: 'Algebra',
     subject: 'Math',
     owner: 'teacher@example.com',
     limit: 5,
     offset: 2,
   });
+});
+
+test('GET /api/v1/published returns pagination metadata payload', async () => {
+  await withServer(
+    {
+      service: {
+        async listPublished() {
+          return {
+            items: [{ published_package_id: 'p1', title: 'Pack 1' }],
+            limit: 1,
+            offset: 0,
+            hasMore: true,
+            nextOffset: 1,
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/published?limit=1&offset=0`, { headers: authHeaders });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data, {
+        items: [{ published_package_id: 'p1', title: 'Pack 1' }],
+        limit: 1,
+        offset: 0,
+        hasMore: true,
+        nextOffset: 1,
+      });
+    }
+  );
 });
 
 test('GET /api/v1/drafts/:id/artifact rejects malformed uploadedDraftId with 400', async () => {

@@ -298,16 +298,9 @@ export class PackageService {
     return result.rows[0];
   }
 
-  async listPublished({ query, title, subject, owner, limit, offset }) {
+  async listPublished({ title, subject, owner, limit, offset }) {
     const values = [];
     const clauses = [];
-
-    if (query) {
-      values.push(`%${query.toLowerCase()}%`);
-      clauses.push(
-        `(lower(title) LIKE $${values.length} OR lower(subject) LIKE $${values.length} OR lower(owner_email) LIKE $${values.length} OR lower(owner_name) LIKE $${values.length})`
-      );
-    }
 
     if (title) {
       values.push(`%${title.toLowerCase()}%`);
@@ -325,7 +318,7 @@ export class PackageService {
     }
 
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-    values.push(limit);
+    values.push(limit + 1);
     const limitPlaceholder = `$${values.length}`;
     values.push(offset);
     const offsetPlaceholder = `$${values.length}`;
@@ -338,6 +331,14 @@ export class PackageService {
       OFFSET ${offsetPlaceholder}`;
 
     const result = await this.db.query(sql, values);
-    return result.rows;
+    const hasMore = result.rows.length > limit;
+    const items = hasMore ? result.rows.slice(0, limit) : result.rows;
+    return {
+      items,
+      limit,
+      offset,
+      hasMore,
+      ...(hasMore ? { nextOffset: offset + items.length } : {}),
+    };
   }
 }

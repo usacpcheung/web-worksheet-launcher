@@ -3519,6 +3519,8 @@ function renderEditorShell(session) {
         loading: false,
         error: notReadyMessage,
         items: [],
+        hasMore: false,
+        nextOffset: null,
       };
       emitPublishedBrowseNotification({
         kind: 'warn',
@@ -3546,6 +3548,8 @@ function renderEditorShell(session) {
         ...browsePublishedState,
         loading: false,
         error: result.error.message,
+        hasMore: false,
+        nextOffset: null,
       };
       emitPublishedBrowseNotification({
         kind: 'error',
@@ -3560,6 +3564,8 @@ function renderEditorShell(session) {
       ...browsePublishedState,
       loading: false,
       items: resultItems,
+      hasMore: result.data?.hasMore === true,
+      nextOffset: Number.isFinite(Number(result.data?.nextOffset)) ? Number(result.data.nextOffset) : null,
       error: null,
     };
     emitPublishedBrowseNotification({
@@ -3682,6 +3688,12 @@ function renderEditorShell(session) {
         row.appendChild(actionRow);
         results.appendChild(row);
       });
+      if (browsePublishedState.hasMore) {
+        const moreHint = document.createElement('p');
+        moreHint.className = 'muted';
+        moreHint.textContent = 'More results are available. Load more support is coming soon.';
+        results.appendChild(moreHint);
+      }
     }
     const actions = document.createElement('div');
     actions.className = 'confirm-modal__actions';
@@ -3785,6 +3797,8 @@ function renderEditorShell(session) {
     owner: '',
     loading: false,
     items: [],
+    hasMore: false,
+    nextOffset: null,
     error: null,
   };
   let browsePublishedDialogOpen = false;

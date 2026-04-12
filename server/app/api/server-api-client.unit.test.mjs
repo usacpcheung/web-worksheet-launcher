@@ -160,3 +160,25 @@ test('publishFromUploadedDraft sends uploadedDraftId with title and subject over
     subject: 'Algebra',
   });
 });
+
+test('listPublishedPackages sends canonical query shape with title, subject, owner, limit, and offset', async () => {
+  globalThis.window = {
+    location: {
+      origin: 'https://example.test',
+      search: '',
+    },
+  };
+  let requestedUrl = null;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return mockJsonResponse(200, { ok: true, data: { items: [] } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.listPublishedPackages({ title: 'math', subject: 'algebra', owner: 'owner@example.test' });
+  assert.equal(result.ok, true);
+  assert.equal(
+    requestedUrl,
+    '/api/worksheet-launcher/v1/published?title=math&subject=algebra&owner=owner%40example.test&limit=20&offset=0'
+  );
+});

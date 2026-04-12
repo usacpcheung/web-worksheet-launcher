@@ -1143,6 +1143,8 @@ class ViewerAttemptSession {
       },
       serverActionMessage: null,
       publishedPackages: [],
+      publishedHasMore: false,
+      publishedNextOffset: null,
       publishedQuery: '',
       isLoadingPublishedPackages: false,
     };
@@ -2048,7 +2050,13 @@ class ViewerAttemptSession {
     }
     this.state.isLoadingPublishedPackages = true;
     this.notifyStateChange();
-    const result = await this.apiClient.listPublishedPackages({ q: normalizedQuery || '', limit: 20, offset: 0 });
+    const result = await this.apiClient.listPublishedPackages({
+      title: normalizedQuery || '',
+      subject: '',
+      owner: '',
+      limit: 20,
+      offset: 0,
+    });
     this.state.isLoadingPublishedPackages = false;
     if (!result.ok) {
       this.state.serverActionMessage = result.error.message;
@@ -2056,6 +2064,10 @@ class ViewerAttemptSession {
       return result;
     }
     this.state.publishedPackages = Array.isArray(result.data?.items) ? result.data.items : [];
+    this.state.publishedHasMore = result.data?.hasMore === true;
+    this.state.publishedNextOffset = Number.isFinite(Number(result.data?.nextOffset))
+      ? Number(result.data.nextOffset)
+      : null;
     this.state.serverActionMessage = null;
     this.notifyStateChange();
     return result;
@@ -3446,6 +3458,12 @@ function renderViewerStartPanel(session, options = {}) {
       row.append(meta, openBtn);
       publishedList.appendChild(row);
     });
+    if (session.state.publishedHasMore) {
+      const moreHint = document.createElement('p');
+      moreHint.className = 'muted';
+      moreHint.textContent = 'More published packages are available. Load more coming soon.';
+      publishedList.appendChild(moreHint);
+    }
   }
 
   panel.append(heading, description);
