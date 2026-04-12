@@ -15,7 +15,6 @@ const app = document.getElementById('app');
 const AUTOSAVE_MS = 1000;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
-const DEFAULT_PUBLISHER_ID = 'local_editor';
 let contractsPromise;
 
 function nowIso() {
@@ -598,7 +597,6 @@ class EditorDraftSession {
       lastManualSaveAt: null,
       lastExportedAt: null,
       lastImportedAt: null,
-      publishPreview: null,
       draftRevision: 0,
       lastSavedRevision: 0,
       // Deprecated compatibility fields; derived from notifications.
@@ -2296,49 +2294,6 @@ class EditorDraftSession {
     return persisted;
   }
 
-  async simulateLocalPublish() {
-    if (!this.state.draft) {
-      throw new Error('No active draft to publish.');
-    }
-
-    const validation = this.validateCurrentDraft();
-    if (!validation.valid) {
-      throw new Error(`Draft validation failed: ${validation.errors.join('; ')}`);
-    }
-
-    const { mapDraftToSnapshot, validateDraftSchema } = await loadContracts();
-    const contractValidation = validateDraftSchema(validation.normalizedDraft);
-    if (!contractValidation.valid) {
-      throw new Error(`Draft validation failed: ${contractValidation.errors.join('; ')}`);
-    }
-
-    const localWorksheetId = `ws_${this.state.draft.localId}`;
-    const localSnapshotId = `snapshot_${createLocalId('pub')}`;
-
-    const snapshot = mapDraftToSnapshot(validation.normalizedDraft, {
-      // Do not assign client-generated IDs to server-owned identity fields.
-      worksheetId: null,
-      snapshotId: null,
-      schemaVersion: 1,
-      snapshotVersion: Math.max(this.state.draftRevision, 1),
-      publishedAt: nowIso(),
-      publishedByUserId: DEFAULT_PUBLISHER_ID,
-      sourceDraftRevision: String(this.state.draftRevision),
-      integrity: {
-        source: 'local_publish_simulation',
-        // Local-only identifiers for simulation purposes; replaced by server-issued UUIDs on real publish.
-        localWorksheetId,
-        localSnapshotId,
-      },
-    });
-
-    // Note: validateSnapshotSchema is intentionally skipped here because worksheetId/snapshotId
-    // are null pending server sync. The snapshot structure is otherwise valid.
-
-    this.state.publishPreview = snapshot;
-    return snapshot;
-  }
-
   async exportCurrentDraftToPackageFile() {
     if (!this.state.draft) {
       throw new Error('No active draft to export.');
@@ -2914,7 +2869,6 @@ class EditorDraftSession {
 
 function renderEditorShell(session) {
   if (!app) return;
-  const isDebugMode = new URLSearchParams(window.location.search).get('debug') === '1';
 
   const shell = document.createElement('div');
   shell.className = 'editor-shell';
@@ -3593,12 +3547,6 @@ function renderEditorShell(session) {
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
   exportBtn.textContent = 'Export package (.zip)';
-  const localPublishBtn = document.createElement('button');
-  localPublishBtn.type = 'button';
-  localPublishBtn.textContent = 'Generate publish payload (debug)';
-  const localPublishHint = document.createElement('p');
-  localPublishHint.className = 'muted';
-  localPublishHint.textContent = 'Debug only: generates a local snapshot preview and does not call server publish APIs.';
   const rewriteBtn = document.createElement('button');
   rewriteBtn.type = 'button';
   rewriteBtn.textContent = 'Rewrite (Sign-in required)';
@@ -4837,10 +4785,6 @@ function renderEditorShell(session) {
     await session.exportCurrentDraftToPackageFile();
     updateSummary();
   });
-  localPublishBtn.addEventListener('click', async () => {
-    await session.simulateLocalPublish();
-    updateSummary();
-  });
   rewriteBtn.addEventListener('click', async () => {
     await session.triggerProtectedAction('resumeRewriteAfterLogin');
     updateSummary();
@@ -4876,9 +4820,6 @@ function renderEditorShell(session) {
   addQuestionBtn.textContent = '+ Add Question';
   controlsRow.append(addContentBtn, addQuestionBtn);
   metaRow.append(saveBtn, exportBtn, importBtn, openViewerBtn);
-  if (isDebugMode) {
-    moreActions.append(localPublishHint, localPublishBtn);
-  }
   protectedActionsColumn.append(
     serverSessionStatus,
     signInBtn,
