@@ -499,6 +499,38 @@ test('uploadCurrentDraftToServer emits ordered notifications for progress, succe
       text: 'Uploaded drafts refreshed.',
     },
   ]);
+  const uploadActivityTexts = session.state.activityLog
+    .filter((item) => item.source === 'upload.status' || item.source === 'upload.refresh')
+    .map((item) => item.text);
+  assert.equal(uploadActivityTexts.includes('Uploading…'), false);
+  assert.equal(uploadActivityTexts.includes('Uploaded draft draft_upload_1.'), true);
+  assert.equal(uploadActivityTexts.includes('Uploaded drafts refreshed.'), true);
+});
+
+test('uploadCurrentDraftToServer keeps in-progress notification visible while request is in flight', async () => {
+  const mod = await loadEditorModule();
+  let resolveUpload;
+  const uploadPromise = new Promise((resolve) => { resolveUpload = resolve; });
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      uploadDraftPackage: async () => uploadPromise,
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.state.draft = { localId: 'draft_local_inflight', title: 'Draft inflight', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const pendingUpload = session.uploadCurrentDraftToServer();
+  const inflightNotification = session.state.notifications.find((item) => (
+    item.source === 'upload.status' && item.kind === 'info' && item.text === 'Uploading…'
+  ));
+  assert.equal(Boolean(inflightNotification), true);
+  assert.equal(session.state.activityLog.some((item) => item.text === 'Uploading…'), false);
+
+  resolveUpload({ ok: true, data: { uploaded_draft_id: 'draft_upload_inflight' } });
+  const result = await pendingUpload;
+  assert.equal(result.ok, true);
 });
 
 test('uploadCurrentDraftToServer emits refresh warning when uploaded drafts refresh fails', async () => {
@@ -931,6 +963,12 @@ test('publishUploadedDraftToServer emits ordered notifications and keeps termina
     'Published package pkg_u1.',
     'Published package pkg_u2.',
   ]);
+  const publishActivityTexts = session.state.activityLog
+    .filter((item) => item.source === 'publish.status')
+    .map((item) => item.text);
+  assert.equal(publishActivityTexts.includes('Publishing…'), false);
+  assert.equal(publishActivityTexts.includes('Published package pkg_u1.'), true);
+  assert.equal(publishActivityTexts.includes('Published package pkg_u2.'), true);
   const refreshFollowups = session.state.notifications
     .filter((item) => item.source === 'publish.refresh')
     .map((item) => ({ source: item.source, kind: item.kind, category: item.category, text: item.text }));
@@ -3414,6 +3452,11 @@ test('loadUploadedDrafts preserves terminal refresh warnings after request compl
       text: 'Unable to refresh uploaded drafts.',
     },
   ]);
+  const refreshActivityTexts = session.state.activityLog
+    .filter((item) => item.source === 'uploadedDrafts.refresh')
+    .map((item) => item.text);
+  assert.equal(refreshActivityTexts.includes('Refreshing…'), false);
+  assert.equal(refreshActivityTexts.includes('Unable to refresh uploaded drafts.'), true);
 });
 
 test('deleteUploadedDraft preserves success message when refresh fails', async () => {
@@ -3484,6 +3527,11 @@ test('reopenPublishedPackageAsLocalCopy emits modal-open notification sequence',
       text: 'Opened published package pkg_42 as a new local draft copy.',
     },
   ]);
+  const openActivityTexts = session.state.activityLog
+    .filter((item) => item.source === 'publishedPackage.open')
+    .map((item) => item.text);
+  assert.equal(openActivityTexts.includes('Opening published package…'), false);
+  assert.equal(openActivityTexts.includes('Opened published package pkg_42 as a new local draft copy.'), true);
 });
 
 test('setRecoveryMessage emits visible recovery notification objects', async () => {

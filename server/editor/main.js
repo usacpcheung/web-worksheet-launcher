@@ -678,6 +678,7 @@ class EditorDraftSession {
     ttlMs = null,
     category = 'server',
     actionLabel = null,
+    logActivity = true,
   } = {}) {
     this.pruneExpiredNotifications();
     const normalizedText = String(text || '').trim();
@@ -691,12 +692,18 @@ class EditorDraftSession {
       source: String(source || 'editor'),
       actionLabel: isNonEmptyString(actionLabel) ? actionLabel.trim() : null,
       ttlMs: Number.isFinite(Number(ttlMs)) && Number(ttlMs) > 0 ? Number(ttlMs) : null,
+      logActivity: logActivity !== false,
       createdAt: nowIso(),
     };
     this.state.notifications = [...this.state.notifications, notification]
       .slice(-ACTIVE_NOTIFICATIONS_MAX_STORED);
-    this.state.activityLog = [...this.state.activityLog, notification]
-      .slice(-ACTIVITY_MAX_STORED);
+    // Notification policy:
+    // - transient progress events stay in active notifications/toasts only
+    // - historical terminal events are recorded in activityLog
+    if (notification.logActivity !== false) {
+      this.state.activityLog = [...this.state.activityLog, notification]
+        .slice(-ACTIVITY_MAX_STORED);
+    }
     this.syncDeprecatedMessageFieldsFromNotifications();
     return notification;
   }
@@ -2545,6 +2552,7 @@ class EditorDraftSession {
             category: 'server',
             source: 'auth.status',
             text: message,
+            logActivity: false,
           });
           this.notifyStateChange();
         }
@@ -2556,6 +2564,7 @@ class EditorDraftSession {
           category: 'server',
           source: 'auth.status',
           text: 'Sign-in completed. Refreshing server session…',
+          logActivity: false,
         });
         this.notifyStateChange();
         const result = await this.probeServerSessionSilently({ force: true });
@@ -2583,6 +2592,7 @@ class EditorDraftSession {
             category: 'server',
             source: 'auth.status',
             text: 'Still waiting for sign-in confirmation from the popup…',
+            logActivity: false,
           });
           this.notifyStateChange();
           return;
@@ -2678,7 +2688,7 @@ class EditorDraftSession {
       };
     }
     this.state.isUploadingDraft = true;
-    this.pushNotification({ kind: 'info', category: 'server', source: 'upload.status', text: 'Uploading…' });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'upload.status', text: 'Uploading…', logActivity: false });
     this.notifyStateChange();
     try {
       if (options.preflight !== false) {
@@ -2739,7 +2749,7 @@ class EditorDraftSession {
       };
     }
     this.state.publishingDraftIds.add(normalizedUploadedDraftId);
-    this.pushNotification({ kind: 'info', category: 'server', source: 'publish.status', text: 'Publishing…' });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'publish.status', text: 'Publishing…', logActivity: false });
     this.notifyStateChange();
     try {
       const sessionReady = await this.ensureServerSessionReady();
@@ -2801,7 +2811,7 @@ class EditorDraftSession {
 
       this._loadUploadedDraftsActiveCount += 1;
       this.state.isLoadingUploadedDrafts = this._loadUploadedDraftsActiveCount > 0;
-      this.pushNotification({ kind: 'info', category: 'server', source: 'uploadedDrafts.refresh', text: 'Refreshing…' });
+      this.pushNotification({ kind: 'info', category: 'server', source: 'uploadedDrafts.refresh', text: 'Refreshing…', logActivity: false });
       this.notifyStateChange();
 
       try {
@@ -2873,7 +2883,7 @@ class EditorDraftSession {
       };
     }
     this.state.openingPublishedPackageIds.add(normalizedPublishedPackageId);
-    this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: 'Opening published package…' });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: 'Opening published package…', logActivity: false });
     this.notifyStateChange();
     try {
       const sessionReady = await this.ensureServerSessionReady();
