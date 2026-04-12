@@ -3693,12 +3693,6 @@ function renderEditorShell(session) {
         row.appendChild(actionRow);
         results.appendChild(row);
       });
-      if (browsePublishedState.hasMore) {
-        const moreHint = document.createElement('p');
-        moreHint.className = 'muted';
-        moreHint.textContent = 'More results are available. Load more support is coming soon.';
-        results.appendChild(moreHint);
-      }
     }
     const actions = document.createElement('div');
     actions.className = 'confirm-modal__actions';

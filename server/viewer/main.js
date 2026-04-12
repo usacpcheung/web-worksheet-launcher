@@ -3476,12 +3476,6 @@ function renderViewerStartPanel(session, options = {}) {
       row.append(meta, openBtn);
       publishedList.appendChild(row);
     });
-    if (session.state.publishedHasMore) {
-      const moreHint = document.createElement('p');
-      moreHint.className = 'muted';
-      moreHint.textContent = 'More published packages are available. Load more coming soon.';
-      publishedList.appendChild(moreHint);
-    }
   }
 
   panel.append(heading, description);
