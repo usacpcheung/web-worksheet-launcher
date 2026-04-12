@@ -2580,13 +2580,22 @@ class EditorDraftSession {
         source: 'upload.status',
         text: `Uploaded draft ${result.data.uploaded_draft_id}.`,
       });
-      await this.loadUploadedDrafts({ preflight: false });
-      this.pushNotification({
-        kind: 'success',
-        category: 'server',
-        source: 'upload.refresh',
-        text: 'Uploaded drafts refreshed.',
-      });
+      const refreshResult = await this.loadUploadedDrafts({ preflight: false });
+      if (refreshResult?.ok) {
+        this.pushNotification({
+          kind: 'success',
+          category: 'server',
+          source: 'upload.refresh',
+          text: 'Uploaded drafts refreshed.',
+        });
+      } else {
+        this.pushNotification({
+          kind: 'warn',
+          category: 'server',
+          source: 'upload.refresh',
+          text: refreshResult?.error?.message || 'Unable to refresh uploaded drafts.',
+        });
+      }
       this.notifyStateChange();
       return result;
     } finally {
@@ -2629,13 +2638,22 @@ class EditorDraftSession {
         source: 'publish.status',
         text: `Published package ${publishResult.data.published_package_id}.`,
       });
-      await this.loadUploadedDrafts({ preflight: false });
-      this.pushNotification({
-        kind: 'success',
-        category: 'server',
-        source: 'publish.refresh',
-        text: 'Uploaded drafts refreshed.',
-      });
+      const refreshResult = await this.loadUploadedDrafts({ preflight: false });
+      if (refreshResult?.ok) {
+        this.pushNotification({
+          kind: 'success',
+          category: 'server',
+          source: 'publish.refresh',
+          text: 'Uploaded drafts refreshed.',
+        });
+      } else {
+        this.pushNotification({
+          kind: 'warn',
+          category: 'server',
+          source: 'publish.refresh',
+          text: refreshResult?.error?.message || 'Unable to refresh uploaded drafts.',
+        });
+      }
       this.notifyStateChange();
       return publishResult;
     } finally {
@@ -2679,7 +2697,10 @@ class EditorDraftSession {
         this._loadUploadedDraftsActiveCount = Math.max(0, this._loadUploadedDraftsActiveCount - 1);
         this.state.isLoadingUploadedDrafts = this._loadUploadedDraftsActiveCount > 0;
         if (this._loadUploadedDraftsActiveCount === 0) {
-          this.clearNotificationsBySource('uploadedDrafts.refresh');
+          this.state.notifications = this.state.notifications.filter((item) => !(
+            item?.source === 'uploadedDrafts.refresh' && item?.kind === 'info'
+          ));
+          this.syncDeprecatedMessageFieldsFromNotifications();
         }
         this.notifyStateChange();
       }

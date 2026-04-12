@@ -471,6 +471,34 @@ test('uploadCurrentDraftToServer emits ordered notifications for progress, succe
   ]);
 });
 
+test('uploadCurrentDraftToServer emits refresh warning when uploaded drafts refresh fails', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      uploadDraftPackage: async () => ({ ok: true, data: { uploaded_draft_id: 'draft_upload_2' } }),
+      listUploadedDrafts: async () => ({ ok: false, error: { message: 'Unable to refresh uploaded drafts.' } }),
+    },
+  });
+  session.state.draft = { localId: 'draft_local_2', title: 'Draft 2', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const result = await session.uploadCurrentDraftToServer();
+  assert.equal(result.ok, true);
+
+  const refreshNotifications = session.state.notifications
+    .filter((item) => item.source === 'upload.refresh')
+    .map(({ source, kind, category, text }) => ({ source, kind, category, text }));
+  assert.deepEqual(refreshNotifications, [
+    {
+      source: 'upload.refresh',
+      kind: 'warn',
+      category: 'server',
+      text: 'Unable to refresh uploaded drafts.',
+    },
+  ]);
+});
+
 
 test('editor shell removes Retry session button from normal server controls', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
@@ -741,6 +769,35 @@ test('publishUploadedDraftToServer emits ordered notifications and keeps termina
     .map((item) => ({ source: item.source, kind: item.kind, category: item.category, text: item.text }));
   assert.equal(refreshFollowups.length >= 1, true);
   assert.equal(refreshFollowups.every((item) => item.kind === 'success' && item.category === 'server'), true);
+});
+
+test('publishUploadedDraftToServer emits refresh warning when uploaded drafts refresh fails', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      publishFromUploadedDraft: async () => ({ ok: true, data: { published_package_id: 'pkg_warn_1' } }),
+      listUploadedDrafts: async () => ({ ok: false, error: { message: 'Unable to refresh uploaded drafts.' } }),
+    },
+  });
+
+  const result = await session.publishUploadedDraftToServer('u_warn_1', {
+    title: 'Warn title',
+    subject: 'Warn subject',
+  });
+
+  assert.equal(result.ok, true);
+  const refreshFollowups = session.state.notifications
+    .filter((item) => item.source === 'publish.refresh')
+    .map(({ source, kind, category, text }) => ({ source, kind, category, text }));
+  assert.deepEqual(refreshFollowups, [
+    {
+      source: 'publish.refresh',
+      kind: 'warn',
+      category: 'server',
+      text: 'Unable to refresh uploaded drafts.',
+    },
+  ]);
 });
 
 test('editor source removes global Publish button and adds labeled metadata and browse controls', async () => {
@@ -3033,6 +3090,33 @@ test('loadUploadedDrafts keeps prior notification-derived server action message 
   const withoutExistingMessage = await session.loadUploadedDrafts({ preflight: false });
   assert.equal(withoutExistingMessage.ok, true);
   assert.equal(session.state.serverActionMessage, null);
+});
+
+test('loadUploadedDrafts preserves terminal refresh warnings after request completes', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({ ok: false, error: { message: 'Unable to refresh uploaded drafts.' } }),
+    },
+  });
+
+  const result = await session.loadUploadedDrafts({ preflight: false });
+  assert.equal(result.ok, false);
+  assert.equal(session.state.serverActionMessage, 'Unable to refresh uploaded drafts.');
+
+  const refreshNotifications = session.state.notifications
+    .filter((item) => item.source === 'uploadedDrafts.refresh')
+    .map(({ source, kind, category, text }) => ({ source, kind, category, text }));
+  assert.deepEqual(refreshNotifications, [
+    {
+      source: 'uploadedDrafts.refresh',
+      kind: 'warn',
+      category: 'server',
+      text: 'Unable to refresh uploaded drafts.',
+    },
+  ]);
 });
 
 test('deleteUploadedDraft preserves success message when refresh fails', async () => {
