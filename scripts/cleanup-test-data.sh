@@ -27,8 +27,6 @@ OWNER_PREFIX="test-"
 OLDER_THAN_DAYS=7
 DATABASE_URL="${DATABASE_URL:-}"
 STORAGE_ROOT="${STORAGE_ROOT:-}"
-INITIAL_DATABASE_URL="$DATABASE_URL"
-INITIAL_STORAGE_ROOT="$STORAGE_ROOT"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -65,14 +63,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$DATABASE_URL" || -z "$STORAGE_ROOT" ]]; then
+  RESOLVED_DATABASE_URL="$DATABASE_URL"
+  RESOLVED_STORAGE_ROOT="$STORAGE_ROOT"
   if [[ -f .env ]]; then
     set -a
     # shellcheck disable=SC1091
     source .env
     set +a
-    DATABASE_URL="${INITIAL_DATABASE_URL:-${DATABASE_URL:-}}"
-    STORAGE_ROOT="${INITIAL_STORAGE_ROOT:-${STORAGE_ROOT:-}}"
   fi
+  DATABASE_URL="${RESOLVED_DATABASE_URL:-${DATABASE_URL:-}}"
+  STORAGE_ROOT="${RESOLVED_STORAGE_ROOT:-${STORAGE_ROOT:-}}"
 fi
 
 if [[ -z "${DATABASE_URL:-}" ]]; then
