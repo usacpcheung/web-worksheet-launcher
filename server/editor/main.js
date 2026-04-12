@@ -13,6 +13,9 @@ import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-p
 const app = document.getElementById('app');
 
 const AUTOSAVE_MS = 1000;
+const ACTIVITY_VISIBLE_INITIAL = 30;
+const ACTIVITY_MAX_STORED = 200;
+const ACTIVE_NOTIFICATIONS_MAX_STORED = 200;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
 let contractsPromise;
@@ -610,6 +613,7 @@ class EditorDraftSession {
         error: null,
       },
       notifications: [],
+      activityLog: [],
       serverActionMessage: null,
       lastUploadedDraft: null,
       lastPublishedPackage: null,
@@ -674,7 +678,9 @@ class EditorDraftSession {
     ttlMs = null,
     category = 'server',
     actionLabel = null,
+    logActivity = true,
   } = {}) {
+    this.pruneExpiredNotifications();
     const normalizedText = String(text || '').trim();
     if (!normalizedText) return null;
     const normalizedKind = kind === 'warning' ? 'warn' : kind;
@@ -686,11 +692,39 @@ class EditorDraftSession {
       source: String(source || 'editor'),
       actionLabel: isNonEmptyString(actionLabel) ? actionLabel.trim() : null,
       ttlMs: Number.isFinite(Number(ttlMs)) && Number(ttlMs) > 0 ? Number(ttlMs) : null,
+      logActivity: logActivity !== false,
       createdAt: nowIso(),
     };
-    this.state.notifications = [...this.state.notifications, notification];
+    this.state.notifications = [...this.state.notifications, notification]
+      .slice(-ACTIVE_NOTIFICATIONS_MAX_STORED);
+    // Notification policy:
+    // - transient progress events stay in active notifications/toasts only
+    // - historical terminal events are recorded in activityLog
+    if (notification.logActivity !== false) {
+      this.state.activityLog = [...this.state.activityLog, notification]
+        .slice(-ACTIVITY_MAX_STORED);
+    }
     this.syncDeprecatedMessageFieldsFromNotifications();
     return notification;
+  }
+
+  pruneExpiredNotifications({ nowMs = Date.now() } = {}) {
+    if (!Array.isArray(this.state.notifications) || this.state.notifications.length === 0) return 0;
+    const previousLength = this.state.notifications.length;
+    this.state.notifications = this.state.notifications.filter((item) => {
+      const ttlMs = Number.isFinite(Number(item?.ttlMs)) && Number(item.ttlMs) > 0
+        ? Number(item.ttlMs)
+        : null;
+      if (!ttlMs) return true;
+      const createdAtMs = new Date(item?.createdAt || '').getTime();
+      if (!Number.isFinite(createdAtMs)) return true;
+      return createdAtMs + ttlMs > nowMs;
+    });
+    const removedCount = Math.max(0, previousLength - this.state.notifications.length);
+    if (removedCount > 0) {
+      this.syncDeprecatedMessageFieldsFromNotifications();
+    }
+    return removedCount;
   }
 
   consumeNotification() {
@@ -722,6 +756,48 @@ class EditorDraftSession {
       .filter((item) => item?.category !== normalizedCategory);
     this.syncDeprecatedMessageFieldsFromNotifications();
     return Math.max(0, previousLength - this.state.notifications.length);
+  }
+
+  setNotificationForSource({
+    source = 'editor',
+    category = 'server',
+    kind = 'info',
+    text = '',
+    ttlMs = null,
+    actionLabel = null,
+  } = {}) {
+    const normalizedSource = String(source || '').trim();
+    if (!normalizedSource) return null;
+    const normalizedText = String(text || '').trim();
+    const existing = this.state.notifications.find((item) => item?.source === normalizedSource) || null;
+
+    if (!normalizedText) {
+      if (existing) {
+        this.clearNotificationsBySource(normalizedSource);
+      }
+      return null;
+    }
+
+    const normalizedKind = kind === 'warning' ? 'warn' : kind;
+    const normalizedCategory = String(category || 'server');
+    if (
+      existing &&
+      existing.kind === normalizedKind &&
+      existing.category === normalizedCategory &&
+      existing.text === normalizedText
+    ) {
+      return existing;
+    }
+
+    this.clearNotificationsBySource(normalizedSource);
+    return this.pushNotification({
+      source: normalizedSource,
+      category: normalizedCategory,
+      kind: normalizedKind,
+      text: normalizedText,
+      ttlMs,
+      actionLabel,
+    });
   }
 
   normalizeDraftForContracts(draft) {
@@ -2081,6 +2157,18 @@ class EditorDraftSession {
           contractValidation.valid || shouldSuppressPristineWarning || shouldSuppressTransientQuestionWarning
           ? null
           : `Draft saved locally with validation warnings (${contractValidation.errors.length}).`;
+        this.setNotificationForSource({
+          source: 'autosave.persistence',
+          category: 'editor',
+          kind: 'error',
+          text: this.state.lastPersistenceError,
+        });
+        this.setNotificationForSource({
+          source: 'autosave.validation',
+          category: 'editor',
+          kind: 'warn',
+          text: this.state.lastValidationWarning,
+        });
         this.persistRestoreMetadata();
         this.notifyStateChange();
       }
@@ -2091,6 +2179,12 @@ class EditorDraftSession {
         revisionAtSaveStart > this.state.lastSavedRevision;
       if (shouldApplyErrorStatus) {
         this.state.lastPersistenceError = error?.message || String(error);
+        this.setNotificationForSource({
+          source: 'autosave.persistence',
+          category: 'editor',
+          kind: 'error',
+          text: this.state.lastPersistenceError,
+        });
         this.notifyStateChange();
       }
       throw error;
@@ -2103,86 +2197,104 @@ class EditorDraftSession {
   }
 
   async importWorksheetJson(jsonInput, options = {}) {
-    let parsed = jsonInput;
-    if (typeof jsonInput === 'string') {
-      try {
-        parsed = JSON.parse(jsonInput);
-      } catch (error) {
-        throw new Error(`Imported worksheet JSON could not be parsed: ${error?.message || String(error)}`);
-      }
-    }
-
-    const mapped = mapLegacyJsonToPackageModel(parsed);
-    const importedLocalId = createLocalId('imported');
-    const importedRecord = {
-      localId: importedLocalId,
-      worksheet: mapped.worksheet,
-      packageManifest: mapped.manifest,
-      metadata: {
-        localId: importedLocalId,
-        origin: 'legacy_json_import',
-        updatedAt: nowIso(),
-      },
-    };
-
-    await this.storage.importedWorksheets.put(importedRecord);
-
-    if (options.convertToEditableDraft) {
-      // Validate and extract blocks from parsed JSON
-      // Clear any pending autosave before replacing the draft
-      clearTimeout(this.autosaveTimer);
-      this.autosaveTimer = null;
-      this.state.autosavePending = false;
-      try {
-        // For round-trip imports (exporting and re-importing), preserve metadata if present
-        // Otherwise, use 'imported_file' as default origin
-        const importedMetadata = {
-          createdAt: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.createdAt) || nowIso(),
-          serverLink: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.serverLink) || null,
-          importedFrom: 'legacy_json',
-          modelVersion: 'package-compatible-v1',
-          subject: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.subject) || '',
-        };
-
-        const draft = createDraftRecord({
-          title: mapped.worksheet.title || 'Imported worksheet',
-          blocks: mapped.worksheet.blocks,
-          assets: [],
-          origin: 'legacy_json_import',
-          metadata: importedMetadata,
-        });
-
-        this.state.draft = draft;
-        this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
-        this.state.draftRevision += 1;
-        this.state.lastImportedAt = nowIso();
-        this.validateCurrentDraft();
+    try {
+      let parsed = jsonInput;
+      if (typeof jsonInput === 'string') {
         try {
-          await this.autosave();
+          parsed = JSON.parse(jsonInput);
         } catch (error) {
-          console.warn('Initial autosave after import failed; draft remains in-memory.', error);
+          throw new Error(`Imported worksheet JSON could not be parsed: ${error?.message || String(error)}`);
         }
-        this.persistRestoreMetadata();
-        return { importedRecord, draftRecord: this.state.draft };
-      } catch (error) {
-        this.state.autosavePending = false;
-        this.notifyStateChange();
-        throw error;
       }
-    }
 
-    return { importedRecord, draftRecord: null };
+      const mapped = mapLegacyJsonToPackageModel(parsed);
+      const importedLocalId = createLocalId('imported');
+      const importedRecord = {
+        localId: importedLocalId,
+        worksheet: mapped.worksheet,
+        packageManifest: mapped.manifest,
+        metadata: {
+          localId: importedLocalId,
+          origin: 'legacy_json_import',
+          updatedAt: nowIso(),
+        },
+      };
+
+      await this.storage.importedWorksheets.put(importedRecord);
+
+      if (options.convertToEditableDraft) {
+        // Validate and extract blocks from parsed JSON
+        // Clear any pending autosave before replacing the draft
+        clearTimeout(this.autosaveTimer);
+        this.autosaveTimer = null;
+        this.state.autosavePending = false;
+        try {
+          // For round-trip imports (exporting and re-importing), preserve metadata if present
+          // Otherwise, use 'imported_file' as default origin
+          const importedMetadata = {
+            createdAt: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.createdAt) || nowIso(),
+            serverLink: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.serverLink) || null,
+            importedFrom: 'legacy_json',
+            modelVersion: 'package-compatible-v1',
+            subject: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.subject) || '',
+          };
+
+          const draft = createDraftRecord({
+            title: mapped.worksheet.title || 'Imported worksheet',
+            blocks: mapped.worksheet.blocks,
+            assets: [],
+            origin: 'legacy_json_import',
+            metadata: importedMetadata,
+          });
+
+          this.state.draft = draft;
+          this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
+          this.state.draftRevision += 1;
+          this.state.lastImportedAt = nowIso();
+          this.validateCurrentDraft();
+          try {
+            await this.autosave();
+          } catch (error) {
+            console.warn('Initial autosave after import failed; draft remains in-memory.', error);
+          }
+          this.persistRestoreMetadata();
+          const successMessage = `Imported legacy_json worksheet (importedId: ${importedRecord.localId}, draftId: ${this.state.draft.localId}).`;
+          this.pushNotification({ kind: 'success', category: 'editor', source: 'import.legacy_json', text: successMessage });
+          this.notifyStateChange();
+          return { importedRecord, draftRecord: this.state.draft };
+        } catch (error) {
+          this.state.autosavePending = false;
+          this.notifyStateChange();
+          throw error;
+        }
+      }
+
+      const successMessage = `Imported legacy_json worksheet (importedId: ${importedRecord.localId}, draftId: none).`;
+      this.pushNotification({ kind: 'success', category: 'editor', source: 'import.legacy_json', text: successMessage });
+      this.notifyStateChange();
+      return { importedRecord, draftRecord: null };
+    } catch (error) {
+      this.pushNotification({
+        kind: 'error',
+        category: 'editor',
+        source: 'import.legacy_json',
+        text: error?.message || 'Unable to import worksheet JSON.',
+      });
+      this.notifyStateChange();
+      throw error;
+    }
   }
 
   async importWorksheetPackageFile(file, options = {}) {
-    if (!file || typeof file.arrayBuffer !== 'function') {
-      throw new Error('A .zip worksheet package file is required.');
-    }
+    try {
+      if (!file || typeof file.arrayBuffer !== 'function') {
+        throw new Error('A .zip worksheet package file is required.');
+      }
 
-    const parsedPackage = parseWorksheetPackage(await file.arrayBuffer());
-    const importedLocalId = createLocalId('imported');
-    const now = nowIso();
-    const importedRecord = {
+      const parsedPackage = parseWorksheetPackage(await file.arrayBuffer());
+      const importedLocalId = createLocalId('imported');
+      const now = nowIso();
+      const importedRecord = {
       localId: importedLocalId,
       worksheet: parsedPackage.worksheet,
       packageManifest: parsedPackage.manifest,
@@ -2200,10 +2312,10 @@ class EditorDraftSession {
       },
     };
 
-    await this.storage.importedWorksheets.put(importedRecord);
+      await this.storage.importedWorksheets.put(importedRecord);
 
-    const assetIdRemap = new Map();
-    for (const asset of parsedPackage.assets) {
+      const assetIdRemap = new Map();
+      for (const asset of parsedPackage.assets) {
       let targetId = asset.assetId;
       if (this.storage.localAssets?.get) {
         const existing = await this.storage.localAssets.get(targetId);
@@ -2225,12 +2337,12 @@ class EditorDraftSession {
       });
     }
 
-    const remapMediaRefs = (mediaRefs) => normalizeMediaRefs(mediaRefs).map((ref) => ({
+      const remapMediaRefs = (mediaRefs) => normalizeMediaRefs(mediaRefs).map((ref) => ({
       ...ref,
       assetId: assetIdRemap.get(ref.assetId) || ref.assetId,
     }));
 
-    const remappedBlocks = normalizeBlocks(parsedPackage.worksheet.blocks).map((block) => {
+      const remappedBlocks = normalizeBlocks(parsedPackage.worksheet.blocks).map((block) => {
       if (block.kind !== 'question') return block;
       const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
       const options = (responseConfig.options || []).map((option) => {
@@ -2247,15 +2359,18 @@ class EditorDraftSession {
       };
     });
 
-    if (!options.convertToEditableDraft) {
-      return { importedRecord, draftRecord: null };
-    }
+      if (!options.convertToEditableDraft) {
+        const successMessage = `Imported package_zip worksheet (importedId: ${importedRecord.localId}, draftId: none).`;
+        this.pushNotification({ kind: 'success', category: 'editor', source: 'import.package_zip', text: successMessage });
+        this.notifyStateChange();
+        return { importedRecord, draftRecord: null };
+      }
 
-    clearTimeout(this.autosaveTimer);
-    this.autosaveTimer = null;
-    this.state.autosavePending = false;
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+      this.state.autosavePending = false;
 
-    const draft = createDraftRecord({
+      const draft = createDraftRecord({
       title: parsedPackage.worksheet.title || 'Imported worksheet',
       blocks: remappedBlocks,
       assets: parsedPackage.assets.map((asset) => {
@@ -2278,41 +2393,98 @@ class EditorDraftSession {
       },
     });
 
-    this.state.draft = draft;
-    this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
-    this.state.draftRevision += 1;
-    this.state.lastImportedAt = nowIso();
-    this.validateCurrentDraft();
-    await this.autosave();
-    this.persistRestoreMetadata();
-    return { importedRecord, draftRecord: this.state.draft };
+      this.state.draft = draft;
+      this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
+      this.state.draftRevision += 1;
+      this.state.lastImportedAt = nowIso();
+      this.validateCurrentDraft();
+      await this.autosave();
+      this.persistRestoreMetadata();
+      const successMessage = `Imported package_zip worksheet (importedId: ${importedRecord.localId}, draftId: ${this.state.draft.localId}).`;
+      this.pushNotification({ kind: 'success', category: 'editor', source: 'import.package_zip', text: successMessage });
+      this.notifyStateChange();
+      return { importedRecord, draftRecord: this.state.draft };
+    } catch (error) {
+      this.pushNotification({
+        kind: 'error',
+        category: 'editor',
+        source: 'import.package_zip',
+        text: error?.message || 'Unable to import worksheet package.',
+      });
+      this.notifyStateChange();
+      throw error;
+    }
   }
 
   async saveNow() {
-    const persisted = await this.autosave();
-    this.state.lastManualSaveAt = nowIso();
-    return persisted;
+    try {
+      const persisted = await this.autosave();
+      this.state.lastManualSaveAt = nowIso();
+      this.setNotificationForSource({
+        kind: 'success',
+        category: 'editor',
+        source: 'save.manual',
+        text: `Saved draft ${persisted?.localId || this.state.draft?.localId || 'unknown'}.`,
+      });
+      this.notifyStateChange();
+      return persisted;
+    } catch (error) {
+      console.error('Manual save failed', error);
+      this.setNotificationForSource({
+        kind: 'error',
+        category: 'editor',
+        source: 'save.manual',
+        text: error?.message || 'Manual save failed.',
+      });
+      this.notifyStateChange();
+      throw error;
+    }
   }
 
   async exportCurrentDraftToPackageFile() {
-    if (!this.state.draft) {
-      throw new Error('No active draft to export.');
-    }
+    let objectUrl = null;
+    let link = null;
+    try {
+      if (!this.state.draft) {
+        throw new Error('No active draft to export.');
+      }
 
-    const timestampToken = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `worksheet-package-${this.state.draft.localId}-${timestampToken}.zip`;
-    const bytes = await this.buildCurrentDraftPackageZipBytes();
-    const blob = new Blob([bytes], { type: 'application/zip' });
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(objectUrl);
-    this.state.lastExportedAt = nowIso();
-    return filename;
+      const timestampToken = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `worksheet-package-${this.state.draft.localId}-${timestampToken}.zip`;
+      const bytes = await this.buildCurrentDraftPackageZipBytes();
+      const blob = new Blob([bytes], { type: 'application/zip' });
+      objectUrl = URL.createObjectURL(blob);
+      link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      this.state.lastExportedAt = nowIso();
+      this.pushNotification({
+        kind: 'success',
+        category: 'editor',
+        source: 'export.package_zip',
+        text: `Exported package ${filename}.`,
+      });
+      this.notifyStateChange();
+      return filename;
+    } catch (error) {
+      this.pushNotification({
+        kind: 'error',
+        category: 'editor',
+        source: 'export.package_zip',
+        text: error?.message || 'Unable to export package.',
+      });
+      this.notifyStateChange();
+      throw error;
+    } finally {
+      if (link?.remove) {
+        link.remove();
+      }
+      if (objectUrl && URL?.revokeObjectURL) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    }
   }
 
   async buildCurrentDraftPackageZipBytes() {
@@ -2343,6 +2515,8 @@ class EditorDraftSession {
     if (this._authPopupFlow?.cancel) {
       this._authPopupFlow.cancel();
     }
+    this.clearNotificationsBySource('auth.popup');
+    this.clearNotificationsBySource('auth.status');
     const authFlowId = createLocalId('auth_flow');
     this._activeAuthFlowId = authFlowId;
 
@@ -2378,6 +2552,7 @@ class EditorDraftSession {
             category: 'server',
             source: 'auth.status',
             text: message,
+            logActivity: false,
           });
           this.notifyStateChange();
         }
@@ -2389,6 +2564,7 @@ class EditorDraftSession {
           category: 'server',
           source: 'auth.status',
           text: 'Sign-in completed. Refreshing server session…',
+          logActivity: false,
         });
         this.notifyStateChange();
         const result = await this.probeServerSessionSilently({ force: true });
@@ -2416,6 +2592,7 @@ class EditorDraftSession {
             category: 'server',
             source: 'auth.status',
             text: 'Still waiting for sign-in confirmation from the popup…',
+            logActivity: false,
           });
           this.notifyStateChange();
           return;
@@ -2511,7 +2688,7 @@ class EditorDraftSession {
       };
     }
     this.state.isUploadingDraft = true;
-    this.pushNotification({ kind: 'info', category: 'server', source: 'upload.status', text: 'Uploading…' });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'upload.status', text: 'Uploading…', logActivity: false });
     this.notifyStateChange();
     try {
       if (options.preflight !== false) {
@@ -2572,7 +2749,7 @@ class EditorDraftSession {
       };
     }
     this.state.publishingDraftIds.add(normalizedUploadedDraftId);
-    this.pushNotification({ kind: 'info', category: 'server', source: 'publish.status', text: 'Publishing…' });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'publish.status', text: 'Publishing…', logActivity: false });
     this.notifyStateChange();
     try {
       const sessionReady = await this.ensureServerSessionReady();
@@ -2634,7 +2811,7 @@ class EditorDraftSession {
 
       this._loadUploadedDraftsActiveCount += 1;
       this.state.isLoadingUploadedDrafts = this._loadUploadedDraftsActiveCount > 0;
-      this.pushNotification({ kind: 'info', category: 'server', source: 'uploadedDrafts.refresh', text: 'Refreshing…' });
+      this.pushNotification({ kind: 'info', category: 'server', source: 'uploadedDrafts.refresh', text: 'Refreshing…', logActivity: false });
       this.notifyStateChange();
 
       try {
@@ -2706,7 +2883,7 @@ class EditorDraftSession {
       };
     }
     this.state.openingPublishedPackageIds.add(normalizedPublishedPackageId);
-    this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: 'Opening published package…' });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: 'Opening published package…', logActivity: false });
     this.notifyStateChange();
     try {
       const sessionReady = await this.ensureServerSessionReady();
@@ -3576,7 +3753,12 @@ function renderEditorShell(session) {
   activityFeedHeading.textContent = 'Activity';
   const activityFeedList = document.createElement('div');
   activityFeedList.className = 'notification-feed__list';
-  activityFeed.append(activityFeedList);
+  const activityFeedSummary = document.createElement('p');
+  activityFeedSummary.className = 'muted';
+  const loadOlderActivityBtn = document.createElement('button');
+  loadOlderActivityBtn.type = 'button';
+  loadOlderActivityBtn.textContent = 'Load older activity';
+  activityFeed.append(activityFeedSummary, activityFeedList, loadOlderActivityBtn);
   activityFeedToggle.append(activityFeedHeading, activityFeed);
   const toastContainer = document.createElement('div');
   toastContainer.className = 'notification-toast-container';
@@ -3596,6 +3778,7 @@ function renderEditorShell(session) {
   let browsePublishedDialogOpen = false;
   let detailSignature = null;
   let optionActionSignature = null;
+  let visibleActivityCount = ACTIVITY_VISIBLE_INITIAL;
   const dismissedToastIds = new Set();
   const toastTimers = new Map();
   const DEFAULT_TOAST_TTL_MS = 5000;
@@ -3608,12 +3791,16 @@ function renderEditorShell(session) {
     if (Number.isNaN(parsed.getTime())) return '';
     return parsed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
   };
-  const renderNotificationCard = (notification, className) => {
+  const renderNotificationCard = (notification, className, { announce = true } = {}) => {
     const item = document.createElement('article');
     const severity = ['success', 'info', 'warn', 'error'].includes(notification?.kind) ? notification.kind : 'info';
     item.className = `${className} ${className}--${severity}`;
-    item.setAttribute('aria-live', getNotificationAriaLive(severity));
-    item.setAttribute('role', getNotificationRole(severity));
+    if (announce) {
+      item.setAttribute('aria-live', getNotificationAriaLive(severity));
+      item.setAttribute('role', getNotificationRole(severity));
+    } else {
+      item.setAttribute('aria-live', 'off');
+    }
     const message = document.createElement('div');
     message.className = `${className}__text`;
     message.textContent = notification?.text || '';
@@ -4346,6 +4533,7 @@ function renderEditorShell(session) {
   };
 
   const updateSummary = () => {
+    session.pruneExpiredNotifications();
     session.validateCurrentDraft();
     syncFormControls();
     renderBlockList();
@@ -4399,8 +4587,18 @@ function renderEditorShell(session) {
     const isRefreshingUploadedDrafts = session.state.isLoadingUploadedDrafts;
     const activePublishCount = session.state.publishingDraftIds?.size || 0;
 
-    const feedNotifications = session.state.notifications.slice(-30).reverse();
+    const totalActivity = Array.isArray(session.state.activityLog) ? session.state.activityLog.length : 0;
+    visibleActivityCount = Math.min(
+      Math.max(ACTIVITY_VISIBLE_INITIAL, visibleActivityCount),
+      Math.max(totalActivity, ACTIVITY_VISIBLE_INITIAL)
+    );
+    const feedNotifications = (Array.isArray(session.state.activityLog) ? session.state.activityLog : [])
+      .slice(-visibleActivityCount)
+      .reverse();
     activityFeedList.innerHTML = '';
+    activityFeedSummary.textContent = totalActivity > 0
+      ? `Showing ${Math.min(visibleActivityCount, totalActivity)} of ${totalActivity} recent activities.`
+      : 'Showing 0 of 0 recent activities.';
     if (feedNotifications.length === 0) {
       const emptyFeed = document.createElement('p');
       emptyFeed.className = 'muted';
@@ -4408,9 +4606,12 @@ function renderEditorShell(session) {
       activityFeedList.appendChild(emptyFeed);
     } else {
       feedNotifications.forEach((notification) => {
-        activityFeedList.appendChild(renderNotificationCard(notification, 'notification-feed-item'));
+        activityFeedList.appendChild(renderNotificationCard(notification, 'notification-feed-item', { announce: false }));
       });
     }
+    const hasOlderActivity = totalActivity > visibleActivityCount;
+    loadOlderActivityBtn.hidden = !hasOlderActivity;
+    loadOlderActivityBtn.disabled = !hasOlderActivity;
 
     const activeNotificationIds = new Set(session.state.notifications.map((item) => item?.id).filter(Boolean));
     Array.from(toastTimers.keys()).forEach((notificationId) => {
@@ -4813,6 +5014,11 @@ function renderEditorShell(session) {
   });
   loadUploadedDraftsBtn.addEventListener('click', async () => {
     await session.loadUploadedDrafts();
+    updateSummary();
+  });
+  loadOlderActivityBtn.addEventListener('click', () => {
+    const totalActivity = Array.isArray(session.state.activityLog) ? session.state.activityLog.length : 0;
+    visibleActivityCount = Math.min(totalActivity, visibleActivityCount + ACTIVITY_VISIBLE_INITIAL);
     updateSummary();
   });
 
