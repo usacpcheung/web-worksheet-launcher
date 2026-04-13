@@ -3267,6 +3267,7 @@ function renderEditorShell(session) {
   optionAudioInput.style.display = 'none';
   let pendingOptionAudioTarget = null;
   let activeConfirmDialog = null;
+  let mediaActionInFlight = false;
 
   function closeActiveConfirmDialog(confirmed = false) {
     const dialog = activeConfirmDialog;
@@ -3278,10 +3279,13 @@ function renderEditorShell(session) {
 
   function showConfirmDialog({
     title,
+    bodyText,
     entityLabel,
     descriptionText,
     removalItems = [],
     confirmLabel = 'Delete',
+    cancelLabel = 'Cancel',
+    variant = 'danger',
   }) {
     if (activeConfirmDialog) {
       closeActiveConfirmDialog(false);
@@ -3301,8 +3305,9 @@ function renderEditorShell(session) {
     dialog.setAttribute('aria-labelledby', titleId);
     const description = document.createElement('p');
     description.className = 'confirm-modal__description';
-    description.textContent = isNonEmptyString(descriptionText)
-      ? descriptionText
+    const resolvedBodyText = isNonEmptyString(bodyText) ? bodyText : descriptionText;
+    description.textContent = isNonEmptyString(resolvedBodyText)
+      ? resolvedBodyText
       : `You are deleting ${entityLabel}.`;
     const detailsHeading = document.createElement('p');
     detailsHeading.className = 'confirm-modal__details-heading';
@@ -3322,10 +3327,12 @@ function renderEditorShell(session) {
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
     cancelBtn.className = 'confirm-modal__btn';
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = cancelLabel;
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
-    deleteBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+    deleteBtn.className = variant === 'danger'
+      ? 'confirm-modal__btn confirm-modal__btn--destructive'
+      : 'confirm-modal__btn';
     deleteBtn.textContent = confirmLabel;
     actionRow.append(cancelBtn, deleteBtn);
     dialog.append(heading, description, detailsHeading, detailsList, warning, actionRow);
@@ -3380,6 +3387,36 @@ function renderEditorShell(session) {
         },
       };
     });
+  }
+
+  // Launcher editor policy: do not use native window.confirm in UI flows.
+  // Always route confirmations through showConfirmDialog for consistent keyboard/focus behavior.
+  async function confirmDangerAction({
+    title,
+    bodyText,
+    confirmLabel,
+    removalItems = [],
+  }) {
+    return showConfirmDialog({
+      title,
+      bodyText,
+      removalItems,
+      confirmLabel,
+      cancelLabel: 'Cancel',
+      variant: 'danger',
+      entityLabel: '',
+    });
+  }
+
+  async function runMediaAction(action) {
+    if (mediaActionInFlight) return false;
+    mediaActionInFlight = true;
+    try {
+      await action();
+      return true;
+    } finally {
+      mediaActionInFlight = false;
+    }
   }
 
   async function copyTextToClipboard(text) {
@@ -4217,13 +4254,21 @@ function renderEditorShell(session) {
       questionImageInput.click();
     });
     removeImageBtn.addEventListener('click', async () => {
-      const confirmed = window.confirm('Remove the current question image attachment?');
-      const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_image', { confirmRemove: confirmed });
-      if (!result.ok && result.reason !== 'confirm-remove-required') {
-        updateSummary();
-      } else if (result.ok) {
-        updateSummary();
-      }
+      await runMediaAction(async () => {
+        const confirmed = await confirmDangerAction({
+          title: 'Remove question image?',
+          bodyText: 'This will remove the current question image attachment.',
+          confirmLabel: 'Remove image',
+          removalItems: ['Current image file attachment for this question.'],
+        });
+        if (!confirmed) return;
+        const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_image', { confirmRemove: true });
+        if (!result.ok && result.reason !== 'confirm-remove-required') {
+          updateSummary();
+        } else if (result.ok) {
+          updateSummary();
+        }
+      });
     });
     viewImageBtn.addEventListener('click', async () => {
       if (!currentQuestionImageRef?.assetId) return;
@@ -4259,11 +4304,19 @@ function renderEditorShell(session) {
       questionAudioInput.click();
     });
     removeQuestionAudioBtn.addEventListener('click', async () => {
-      const confirmed = window.confirm('Remove the current question audio attachment?');
-      const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: confirmed });
-      if (result.ok || result.reason !== 'confirm-remove-required') {
-        updateSummary();
-      }
+      await runMediaAction(async () => {
+        const confirmed = await confirmDangerAction({
+          title: 'Remove question audio?',
+          bodyText: 'This will remove the current question audio attachment.',
+          confirmLabel: 'Remove audio',
+          removalItems: ['Current audio file attachment for this question.'],
+        });
+        if (!confirmed) return;
+        const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: true });
+        if (result.ok || result.reason !== 'confirm-remove-required') {
+          updateSummary();
+        }
+      });
     });
     playQuestionAudioBtn.addEventListener('click', async () => {
       if (!currentQuestionAudioRef?.assetId || playQuestionAudioBtn.disabled) return;
@@ -4484,11 +4537,19 @@ function renderEditorShell(session) {
         removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
         removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
         removeOptionAudioBtn.addEventListener('click', async () => {
-          const confirmed = window.confirm(`Remove audio from option ${optionIndex + 1}?`);
-          const result = await session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: confirmed });
-          if (result.ok || result.reason !== 'confirm-remove-required') {
-            updateSummary();
-          }
+          await runMediaAction(async () => {
+            const confirmed = await confirmDangerAction({
+              title: `Remove option ${optionIndex + 1} audio?`,
+              bodyText: `This will remove the audio attachment for option ${optionIndex + 1}.`,
+              confirmLabel: 'Remove audio',
+              removalItems: ['Current audio file attachment for this option.'],
+            });
+            if (!confirmed) return;
+            const result = await session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: true });
+            if (result.ok || result.reason !== 'confirm-remove-required') {
+              updateSummary();
+            }
+          });
           optionActionsMenu.open = false;
         });
         const playOptionAudioBtn = document.createElement('button');
@@ -4964,49 +5025,85 @@ function renderEditorShell(session) {
     updateSummary();
   });
   questionImageInput.addEventListener('change', async () => {
-    const [file] = questionImageInput.files || [];
-    const blockId = questionImageInput.dataset.blockId;
-    if (!file || !blockId) return;
-    const currentBlock = session.findBlock(blockId);
-    const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_image'));
-    const confirmed = !hasExisting || window.confirm('Replace existing question image?');
-    const result = await session.attachQuestionMedia(blockId, 'question_image', file, { confirmReplace: confirmed });
-    if (result.reason === 'confirm-replace-required') {
-      session.setMediaFeedback('Image replacement canceled.');
-    }
-    questionImageInput.value = '';
-    updateSummary();
+    await runMediaAction(async () => {
+      const [file] = questionImageInput.files || [];
+      const blockId = questionImageInput.dataset.blockId;
+      if (!file || !blockId) return;
+      const currentBlock = session.findBlock(blockId);
+      const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_image'));
+      if (hasExisting) {
+        const confirmed = await confirmDangerAction({
+          title: 'Replace question image?',
+          bodyText: 'Replacing will discard the currently attached question image.',
+          confirmLabel: 'Replace image',
+          removalItems: ['Current image file attachment for this question.'],
+        });
+        if (!confirmed) {
+          session.setMediaFeedback('Image replacement canceled.');
+          questionImageInput.value = '';
+          updateSummary();
+          return;
+        }
+      }
+      await session.attachQuestionMedia(blockId, 'question_image', file, { confirmReplace: true });
+      questionImageInput.value = '';
+      updateSummary();
+    });
   });
   questionAudioInput.addEventListener('change', async () => {
-    const [file] = questionAudioInput.files || [];
-    const blockId = questionAudioInput.dataset.blockId;
-    if (!file || !blockId) return;
-    const currentBlock = session.findBlock(blockId);
-    const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_audio'));
-    const confirmed = !hasExisting || window.confirm('Replace existing question audio?');
-    const result = await session.attachQuestionMedia(blockId, 'question_audio', file, { confirmReplace: confirmed });
-    if (result.reason === 'confirm-replace-required') {
-      session.setMediaFeedback('Audio replacement canceled.');
-    }
-    questionAudioInput.value = '';
-    updateSummary();
+    await runMediaAction(async () => {
+      const [file] = questionAudioInput.files || [];
+      const blockId = questionAudioInput.dataset.blockId;
+      if (!file || !blockId) return;
+      const currentBlock = session.findBlock(blockId);
+      const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_audio'));
+      if (hasExisting) {
+        const confirmed = await confirmDangerAction({
+          title: 'Replace question audio?',
+          bodyText: 'Replacing will discard the currently attached question audio.',
+          confirmLabel: 'Replace audio',
+          removalItems: ['Current audio file attachment for this question.'],
+        });
+        if (!confirmed) {
+          session.setMediaFeedback('Audio replacement canceled.');
+          questionAudioInput.value = '';
+          updateSummary();
+          return;
+        }
+      }
+      await session.attachQuestionMedia(blockId, 'question_audio', file, { confirmReplace: true });
+      questionAudioInput.value = '';
+      updateSummary();
+    });
   });
   optionAudioInput.addEventListener('change', async () => {
-    const [file] = optionAudioInput.files || [];
-    if (!file || !pendingOptionAudioTarget) return;
-    const { blockId, optionId } = pendingOptionAudioTarget;
-    pendingOptionAudioTarget = null;
-    const block = session.findBlock(blockId);
-    const config = normalizeQuestionResponseConfig(block?.responseConfig);
-    const option = (config.options || []).map((item) => normalizeResponseOption(item)).find((item) => item.id === optionId);
-    const hasExisting = Boolean(getSingleMediaRef(option?.mediaRefs, 'option_audio'));
-    const confirmed = !hasExisting || window.confirm('Replace existing option audio?');
-    const result = await session.attachOptionAudio(blockId, optionId, file, { confirmReplace: confirmed });
-    if (result.reason === 'confirm-replace-required') {
-      session.setMediaFeedback('Option audio replacement canceled.');
-    }
-    optionAudioInput.value = '';
-    updateSummary();
+    await runMediaAction(async () => {
+      const [file] = optionAudioInput.files || [];
+      if (!file || !pendingOptionAudioTarget) return;
+      const { blockId, optionId } = pendingOptionAudioTarget;
+      pendingOptionAudioTarget = null;
+      const block = session.findBlock(blockId);
+      const config = normalizeQuestionResponseConfig(block?.responseConfig);
+      const option = (config.options || []).map((item) => normalizeResponseOption(item)).find((item) => item.id === optionId);
+      const hasExisting = Boolean(getSingleMediaRef(option?.mediaRefs, 'option_audio'));
+      if (hasExisting) {
+        const confirmed = await confirmDangerAction({
+          title: 'Replace option audio?',
+          bodyText: 'Replacing will discard the currently attached option audio.',
+          confirmLabel: 'Replace audio',
+          removalItems: ['Current audio file attachment for this option.'],
+        });
+        if (!confirmed) {
+          session.setMediaFeedback('Option audio replacement canceled.');
+          optionAudioInput.value = '';
+          updateSummary();
+          return;
+        }
+      }
+      await session.attachOptionAudio(blockId, optionId, file, { confirmReplace: true });
+      optionAudioInput.value = '';
+      updateSummary();
+    });
   });
 
   importBtn.addEventListener('click', () => {

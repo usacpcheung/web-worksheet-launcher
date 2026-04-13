@@ -1379,9 +1379,38 @@ test('question input type change flow routes destructive switches through in-app
 
 test('confirm modal uses configurable description copy and defaults initial focus to cancel', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('bodyText,'), true);
+  assert.equal(source.includes('cancelLabel = \'Cancel\''), true);
+  assert.equal(source.includes('variant = \'danger\''), true);
   assert.equal(source.includes('descriptionText,'), true);
-  assert.equal(source.includes('description.textContent = isNonEmptyString(descriptionText)'), true);
+  assert.equal(source.includes('const resolvedBodyText = isNonEmptyString(bodyText) ? bodyText : descriptionText;'), true);
+  assert.equal(source.includes('description.textContent = isNonEmptyString(resolvedBodyText)'), true);
   assert.equal(source.includes('cancelBtn.focus();'), true);
+});
+
+test('replace/delete image flows use shared confirm modal and avoid native confirm', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("title: 'Replace question image?'"), true);
+  assert.equal(source.includes("confirmLabel: 'Replace image'"), true);
+  assert.equal(source.includes("title: 'Remove question image?'"), true);
+  assert.equal(source.includes("confirmLabel: 'Remove image'"), true);
+  assert.equal(source.includes('await confirmDangerAction({'), true);
+  assert.equal(source.includes('window.confirm('), false);
+});
+
+test('delete block baseline confirm parity uses shared danger modal labels', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("title: `Delete block ${displayIndex}?`"), true);
+  assert.equal(source.includes("confirmLabel: 'Delete block'"), true);
+  assert.equal(source.includes('await showConfirmDialog({'), true);
+});
+
+test('media confirmation actions gate duplicate submissions while busy', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('let mediaActionInFlight = false;'), true);
+  assert.equal(source.includes('if (mediaActionInFlight) return false;'), true);
+  assert.equal(source.includes('mediaActionInFlight = true;'), true);
+  assert.equal(source.includes('mediaActionInFlight = false;'), true);
 });
 
 test('non-destructive type switch does not require confirmation', async () => {
