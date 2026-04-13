@@ -1379,22 +1379,22 @@ test('question input type change flow routes destructive switches through in-app
 
 test('confirm modal uses configurable description copy and defaults initial focus to cancel', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes('bodyText,'), true);
-  assert.equal(source.includes('cancelLabel = \'Cancel\''), true);
-  assert.equal(source.includes('variant = \'danger\''), true);
-  assert.equal(source.includes('descriptionText,'), true);
-  assert.equal(source.includes('const resolvedBodyText = isNonEmptyString(bodyText) ? bodyText : descriptionText;'), true);
-  assert.equal(source.includes('description.textContent = isNonEmptyString(resolvedBodyText)'), true);
+  assert.match(source, /function showConfirmDialog\(\{\s*title,\s*bodyText,\s*entityLabel,\s*descriptionText,/m);
+  assert.match(source, /cancelLabel\s*=\s*'Cancel'/);
+  assert.match(source, /variant\s*=\s*'danger'/);
+  assert.match(source, /resolvedBodyText\s*=\s*isNonEmptyString\(bodyText\)\s*\?\s*bodyText\s*:\s*descriptionText/);
+  assert.match(source, /fallbackDescription\s*=\s*isNonEmptyString\(entityLabel\)/);
+  assert.match(source, /'Are you sure you want to continue\?'/);
   assert.equal(source.includes('cancelBtn.focus();'), true);
 });
 
 test('replace/delete image flows use shared confirm modal and avoid native confirm', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("title: 'Replace question image?'"), true);
-  assert.equal(source.includes("confirmLabel: 'Replace image'"), true);
-  assert.equal(source.includes("title: 'Remove question image?'"), true);
-  assert.equal(source.includes("confirmLabel: 'Remove image'"), true);
-  assert.equal(source.includes('await confirmDangerAction({'), true);
+  assert.match(source, /title:\s*'Replace question image\?'/);
+  assert.match(source, /confirmLabel:\s*'Replace image'/);
+  assert.match(source, /title:\s*'Remove question image\?'/);
+  assert.match(source, /confirmLabel:\s*'Remove image'/);
+  assert.match(source, /await\s+confirmDangerAction\(\{/);
   assert.equal(source.includes('window.confirm('), false);
 });
 
@@ -1407,10 +1407,23 @@ test('delete block baseline confirm parity uses shared danger modal labels', asy
 
 test('media confirmation actions gate duplicate submissions while busy', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes('let mediaActionInFlight = false;'), true);
-  assert.equal(source.includes('if (mediaActionInFlight) return false;'), true);
-  assert.equal(source.includes('mediaActionInFlight = true;'), true);
-  assert.equal(source.includes('mediaActionInFlight = false;'), true);
+  assert.match(source, /let mediaActionInFlight\s*=\s*false/);
+  assert.match(source, /if\s*\(mediaActionInFlight\)\s*return false/);
+  assert.match(source, /mediaActionInFlight\s*=\s*true/);
+  assert.match(source, /mediaActionInFlight\s*=\s*false/);
+});
+
+test('browse modal filters are decoupled from generic button-row card styling and search button has one naming source', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.match(source, /filterRow\.className\s*=\s*'browse-modal__filters'/);
+  assert.equal(source.includes("filterRow.className = 'button-row browse-modal__filters'"), false);
+  assert.match(source, /searchBtn\.setAttribute\('aria-label', 'Search published packages'\)/);
+  assert.equal(source.includes('<span class="sr-only">Search</span>'), false);
+});
+
+test('confirmDangerAction safely no-ops when body text is missing', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.match(source, /if\s*\(!isNonEmptyString\(bodyText\)\)\s*\{\s*return false;\s*\}/m);
 });
 
 test('non-destructive type switch does not require confirmation', async () => {

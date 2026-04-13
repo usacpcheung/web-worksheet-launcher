@@ -3306,9 +3306,12 @@ function renderEditorShell(session) {
     const description = document.createElement('p');
     description.className = 'confirm-modal__description';
     const resolvedBodyText = isNonEmptyString(bodyText) ? bodyText : descriptionText;
+    const fallbackDescription = isNonEmptyString(entityLabel)
+      ? `You are deleting ${entityLabel}.`
+      : 'Are you sure you want to continue?';
     description.textContent = isNonEmptyString(resolvedBodyText)
       ? resolvedBodyText
-      : `You are deleting ${entityLabel}.`;
+      : fallbackDescription;
     const detailsHeading = document.createElement('p');
     detailsHeading.className = 'confirm-modal__details-heading';
     detailsHeading.textContent = 'This will remove:';
@@ -3397,6 +3400,9 @@ function renderEditorShell(session) {
     confirmLabel,
     removalItems = [],
   }) {
+    if (!isNonEmptyString(bodyText)) {
+      return false;
+    }
     return showConfirmDialog({
       title,
       bodyText,
@@ -3629,7 +3635,7 @@ function renderEditorShell(session) {
     const heading = document.createElement('h3');
     heading.textContent = 'Browse Published Packages';
     const filterRow = document.createElement('div');
-    filterRow.className = 'button-row browse-modal__filters';
+    filterRow.className = 'browse-modal__filters';
     const titleFilter = document.createElement('input');
     titleFilter.className = 'control';
     titleFilter.placeholder = 'Filter by title';
@@ -3645,7 +3651,7 @@ function renderEditorShell(session) {
     const searchBtn = document.createElement('button');
     searchBtn.type = 'button';
     searchBtn.className = 'browse-modal__search-btn';
-    searchBtn.innerHTML = '<svg class="browse-modal__search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.25" stroke="currentColor" stroke-width="1.6"></circle><path d="M12.5 12.5L16.25 16.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg><span class="sr-only">Search</span>';
+    searchBtn.innerHTML = '<svg class="browse-modal__search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.25" stroke="currentColor" stroke-width="1.6"></circle><path d="M12.5 12.5L16.25 16.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg>';
     searchBtn.setAttribute('aria-label', 'Search published packages');
     searchBtn.disabled = browsePublishedState.loading;
     filterRow.append(titleFilter, subjectFilter, ownerFilter, searchBtn);
