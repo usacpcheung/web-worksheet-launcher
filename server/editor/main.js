@@ -3608,7 +3608,7 @@ function renderEditorShell(session) {
     const searchBtn = document.createElement('button');
     searchBtn.type = 'button';
     searchBtn.className = 'browse-modal__search-btn';
-    searchBtn.innerHTML = '<span aria-hidden="true">🔍</span><span class="sr-only">Search</span>';
+    searchBtn.innerHTML = '<svg class="browse-modal__search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.25" stroke="currentColor" stroke-width="1.6"></circle><path d="M12.5 12.5L16.25 16.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg><span class="sr-only">Search</span>';
     searchBtn.setAttribute('aria-label', 'Search published packages');
     searchBtn.disabled = browsePublishedState.loading;
     filterRow.append(titleFilter, subjectFilter, ownerFilter, searchBtn);
