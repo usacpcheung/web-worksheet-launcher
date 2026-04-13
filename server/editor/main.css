@@ -767,15 +767,15 @@ textarea.control {
 }
 
 .browse-modal h3 {
-  font-weight: 420;
+  font-weight: 520;
 }
 
 .browse-modal__filters {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(44px, auto);
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border: none;
   padding: 0;
   box-shadow: none;
@@ -783,11 +783,13 @@ textarea.control {
 
 .browse-modal__filters .control {
   width: 100%;
+  box-sizing: border-box;
 }
 
 .browse-modal__search-btn {
   width: 44px;
   min-width: 44px;
+  box-sizing: border-box;
   padding: 9px;
   display: inline-flex;
   align-items: center;
