@@ -3592,7 +3592,7 @@ function renderEditorShell(session) {
     const heading = document.createElement('h3');
     heading.textContent = 'Browse Published Packages';
     const filterRow = document.createElement('div');
-    filterRow.className = 'button-row';
+    filterRow.className = 'button-row browse-modal__filters';
     const titleFilter = document.createElement('input');
     titleFilter.className = 'control';
     titleFilter.placeholder = 'Filter by title';
@@ -3607,7 +3607,9 @@ function renderEditorShell(session) {
     ownerFilter.value = browsePublishedState.owner;
     const searchBtn = document.createElement('button');
     searchBtn.type = 'button';
-    searchBtn.textContent = 'Search';
+    searchBtn.className = 'browse-modal__search-btn';
+    searchBtn.innerHTML = '<span aria-hidden="true">🔍</span><span class="sr-only">Search</span>';
+    searchBtn.setAttribute('aria-label', 'Search published packages');
     searchBtn.disabled = browsePublishedState.loading;
     filterRow.append(titleFilter, subjectFilter, ownerFilter, searchBtn);
     const results = document.createElement('div');
@@ -3631,18 +3633,25 @@ function renderEditorShell(session) {
       browsePublishedState.items.forEach((item) => {
         const row = document.createElement('div');
         row.className = 'published-result-row';
+        const titleLine = document.createElement('div');
+        titleLine.className = 'published-result-title-line';
         const title = document.createElement('strong');
+        title.className = 'published-result-title';
         title.textContent = item.title || 'Untitled';
+        const publishedDate = document.createElement('span');
+        publishedDate.className = 'published-result-date muted';
+        publishedDate.textContent = formatUploadedDraftTimestamp(item.published_at);
+        titleLine.append(title, publishedDate);
         const subjectOwner = document.createElement('div');
-        subjectOwner.className = 'muted';
+        subjectOwner.className = 'muted published-result-subject-owner';
         subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;
         const publishedMeta = document.createElement('div');
-        publishedMeta.className = 'muted';
-        publishedMeta.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)} • ID: ${item.published_package_id}`;
-        row.append(title, subjectOwner, publishedMeta);
+        publishedMeta.className = 'muted published-result-id';
+        publishedMeta.textContent = `Package ID: ${item.published_package_id}`;
+        row.append(titleLine, subjectOwner, publishedMeta);
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
-        copyBtn.className = 'uploaded-draft-action uploaded-draft-action--secondary';
+        copyBtn.className = 'uploaded-draft-action published-result-action';
         copyBtn.textContent = 'Copy Published ID';
         copyBtn.addEventListener('click', async () => {
           const copied = await copyTextToClipboard(item.published_package_id);
@@ -3656,7 +3665,7 @@ function renderEditorShell(session) {
         });
         const openInEditorBtn = document.createElement('button');
         openInEditorBtn.type = 'button';
-        openInEditorBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+        openInEditorBtn.className = 'uploaded-draft-action published-result-action';
         const isOpening = session.state.openingPublishedPackageIds.has(item.published_package_id);
         openInEditorBtn.textContent = isOpening ? 'Opening…' : 'Open in Editor';
         openInEditorBtn.disabled = !serverReady || browsePublishedState.loading || isOpening;
