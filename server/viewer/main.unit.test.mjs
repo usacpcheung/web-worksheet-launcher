@@ -157,7 +157,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, buildTechnicalDetailsRows, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -2106,6 +2106,38 @@ test('getInputHelperText maps input types to guidance', async () => {
   assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one option only.');
   assert.equal(mod.getInputHelperText('boolean'), 'Choose True / False.');
   assert.equal(mod.getInputHelperText('text'), 'Text response.');
+});
+
+test('buildTechnicalDetailsRows only shows current session ids', async () => {
+  const mod = await loadViewerModule();
+  const rows = mod.buildTechnicalDetailsRows({
+    localAttemptId: 'attempt_1',
+    sourceLocalDraftId: 'draft_11',
+    sourceImportedWorksheetId: 'imported_7',
+    viewerPayload: {
+      worksheetId: 'ws_legacy',
+      snapshotId: 'snap_legacy',
+    },
+    source: 'local_draft',
+    sourceType: 'local_draft_preview',
+  });
+
+  assert.deepEqual(rows, [
+    ['Local attempt ID', 'attempt_1'],
+    ['Local draft ID', 'draft_11'],
+    ['Imported worksheet ID', 'imported_7'],
+  ]);
+});
+
+test('buildTechnicalDetailsRows omits source ids that do not apply', async () => {
+  const mod = await loadViewerModule();
+  const rows = mod.buildTechnicalDetailsRows({
+    localAttemptId: 'attempt_2',
+  });
+
+  assert.deepEqual(rows, [
+    ['Local attempt ID', 'attempt_2'],
+  ]);
 });
 
 test('getNumberInputErrorMessage reports range and rule errors without coercion', async () => {

@@ -258,6 +258,21 @@ function computeViewerPayloadFingerprint(payload) {
   return computeStableHash(projection);
 }
 
+function buildTechnicalDetailsRows(state = {}) {
+  const rows = [
+    ['Local attempt ID', state.localAttemptId || 'n/a'],
+  ];
+
+  if (state.sourceLocalDraftId) {
+    rows.push(['Local draft ID', state.sourceLocalDraftId]);
+  }
+  if (state.sourceImportedWorksheetId) {
+    rows.push(['Imported worksheet ID', state.sourceImportedWorksheetId]);
+  }
+
+  return rows;
+}
+
 function isSnapshotLikeWorksheet(value) {
   return (
     isRecord(value)
@@ -2428,12 +2443,7 @@ function renderViewerShell(session) {
   };
 
   const renderTechnicalDetails = () => {
-    const technicalRows = [
-      ['Worksheet ID', session.state.viewerPayload?.worksheetId || 'n/a'],
-      ['Snapshot ID', session.state.viewerPayload?.snapshotId || 'n/a'],
-      ['Local attempt ID', session.state.localAttemptId || 'n/a'],
-      ['Source', session.state.source || 'n/a'],
-    ];
+    const technicalRows = buildTechnicalDetailsRows(session.state);
     learnerNameInput.value = studentName;
     detailsList.innerHTML = '';
     technicalRows.forEach(([label, value]) => {
