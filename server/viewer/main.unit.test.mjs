@@ -697,7 +697,6 @@ test('viewer start panel includes logged_out/checking/logged_in server-state ren
   assert.equal(source.includes("LOGGED_IN: 'logged_in'"), true);
   assert.equal(source.includes("signInBtn.textContent = 'Log in to view published online worksheet';"), true);
   assert.equal(source.includes('const canAccessPublished = isLoggedIn;'), true);
-  assert.equal(source.includes('browseBtn.hidden = !canAccessPublished;'), true);
   assert.equal(source.includes('publishedList.hidden = !canAccessPublished;'), true);
   assert.equal(source.includes('signInBtn.disabled = isChecking;'), true);
   assert.equal(source.includes("const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';"), true);
@@ -2581,14 +2580,12 @@ test('renderViewerStartPanel hides published controls when server session is log
 
   const panel = appRoot.children[0];
   const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
-  const browseBtn = findNodeByText(panel, 'Browse published packages');
   const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
   const filterRow = findNodeByClass(panel, 'viewer-published-filters');
   const publishedList = findNodeByClass(panel, 'viewer-published-list');
   const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
 
   assert.equal(signInBtn.hidden, false);
-  assert.equal(browseBtn.hidden, true);
   assert.equal(publishedHeading.hidden, true);
   assert.equal(filterRow.hidden, true);
   assert.equal(publishedList.hidden, true);
@@ -2625,14 +2622,12 @@ test('renderViewerStartPanel shows published controls only when server session i
 
   const panel = appRoot.children[0];
   const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
-  const browseBtn = findNodeByText(panel, 'Browse published packages');
   const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
   const filterRow = findNodeByClass(panel, 'viewer-published-filters');
   const publishedList = findNodeByClass(panel, 'viewer-published-list');
   const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
 
   assert.equal(signInBtn.hidden, true);
-  assert.equal(browseBtn.hidden, false);
   assert.equal(publishedHeading.hidden, false);
   assert.equal(filterRow.hidden, false);
   assert.equal(publishedList.hidden, false);
@@ -2668,12 +2663,10 @@ test('renderViewerStartPanel treats unknown server state as not logged in for pu
   mod.renderViewerStartPanel(session);
 
   const panel = appRoot.children[0];
-  const browseBtn = findNodeByText(panel, 'Browse published packages');
   const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
   const filterRow = findNodeByClass(panel, 'viewer-published-filters');
   const publishedList = findNodeByClass(panel, 'viewer-published-list');
 
-  assert.equal(browseBtn.hidden, true);
   assert.equal(publishedHeading.hidden, true);
   assert.equal(filterRow.hidden, true);
   assert.equal(publishedList.hidden, true);

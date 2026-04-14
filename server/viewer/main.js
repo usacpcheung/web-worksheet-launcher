@@ -3409,10 +3409,6 @@ function renderViewerStartPanel(session, options = {}) {
   signInBtn.type = 'button';
   signInBtn.className = 'viewer-start-btn';
   signInBtn.textContent = 'Log in to view published online worksheet';
-  const browseBtn = document.createElement('button');
-  browseBtn.type = 'button';
-  browseBtn.className = 'viewer-start-btn';
-  browseBtn.textContent = 'Browse published packages';
   const loadMoreBtn = document.createElement('button');
   loadMoreBtn.type = 'button';
   loadMoreBtn.className = 'viewer-start-btn viewer-load-more-btn';
@@ -3443,7 +3439,7 @@ function renderViewerStartPanel(session, options = {}) {
   ownerFilterInput.setAttribute('aria-label', 'Filter published packages by owner');
   filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput);
   const sessionStatus = document.createElement('p');
-  sessionStatus.className = 'muted';
+  sessionStatus.className = 'muted viewer-session-status';
   const publishedList = document.createElement('div');
   publishedList.className = 'muted viewer-published-list';
 
@@ -3538,14 +3534,6 @@ function renderViewerStartPanel(session, options = {}) {
       }, 300);
     };
   })();
-  browseBtn.addEventListener('click', async () => {
-    await session.browsePublishedPackages({
-      title: titleFilterInput.value,
-      subject: subjectFilterInput.value,
-      owner: ownerFilterInput.value,
-    });
-    renderServerControls();
-  });
   [titleFilterInput, subjectFilterInput, ownerFilterInput].forEach((input) => {
     input.addEventListener('input', () => {
       scheduleDebouncedBrowse();
@@ -3591,8 +3579,6 @@ function renderViewerStartPanel(session, options = {}) {
     sessionStatus.textContent = actionMessage || defaultSessionMessage;
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking;
-    browseBtn.hidden = !canAccessPublished;
-    browseBtn.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
     publishedHeading.hidden = !canAccessPublished;
     filterRow.hidden = !canAccessPublished;
     titleFilterInput.hidden = !canAccessPublished;
@@ -3615,10 +3601,19 @@ function renderViewerStartPanel(session, options = {}) {
     }
     const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];
     if (session.state.publishedListError) {
-      const error = document.createElement('p');
-      error.className = 'control-error';
-      error.textContent = session.state.publishedListError;
-      publishedList.appendChild(error);
+      const errorRow = document.createElement('p');
+      errorRow.className = 'viewer-list-error';
+      errorRow.appendChild(document.createTextNode('Could not load packages. '));
+      const retryBtn = document.createElement('button');
+      retryBtn.type = 'button';
+      retryBtn.className = 'viewer-list-retry-btn';
+      retryBtn.textContent = 'Retry';
+      retryBtn.addEventListener('click', async () => {
+        await session.browsePublishedPackages(session.state.publishedFilters || {}, { reset: true });
+        renderServerControls();
+      });
+      errorRow.appendChild(retryBtn);
+      publishedList.appendChild(errorRow);
       return;
     }
     if (publishedItems.length === 0) {
@@ -3660,7 +3655,7 @@ function renderViewerStartPanel(session, options = {}) {
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  serverActions.append(signInBtn, browseBtn);
+  serverActions.append(signInBtn);
   panel.append(importActions, serverActions, sessionStatus, publishedHeading, filterRow, publishedList, loadMoreRow, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';

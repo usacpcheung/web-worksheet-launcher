@@ -58,6 +58,36 @@ body {
   display: none !important;
 }
 
+/* Overrides the centred .muted rule for the session status line */
+.viewer-start-panel > .viewer-session-status {
+  text-align: left;
+}
+
+/* Error row rendered inside the published list box when the fetch fails */
+.viewer-list-error {
+  margin: 0;
+  padding: 14px 16px;
+  color: #b42318;
+  font-size: 0.92rem;
+}
+
+/* Inline "Retry" link-style button next to the error text */
+.viewer-list-retry-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: #2563eb;
+  font-size: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.viewer-list-retry-btn:hover {
+  color: #1d4ed8;
+}
+
 .viewer-start-error {
   margin: 0;
   min-height: 1.2em;
