@@ -1414,7 +1414,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
     .print-question-image {
       display: block;
       max-width: 100%;
-      max-height: 180mm;
+      max-height: 60mm;
       border: 1px solid #d7dbe2;
       border-radius: 2mm;
     }
