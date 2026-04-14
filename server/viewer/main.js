@@ -3391,7 +3391,7 @@ function renderViewerStartPanel(session, options = {}) {
   heading.textContent = 'Start Viewer';
   const description = document.createElement('p');
   description.className = 'muted';
-  description.textContent = 'Import a worksheet package (.zip) to start a local attempt, or resume a previous local attempt.';
+  description.textContent = 'Resume local attempts, import a worksheet, or load a published online version.';
   const resumeAttempt = options.resumeAttempt || null;
   const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
   const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
@@ -3462,7 +3462,7 @@ function renderViewerStartPanel(session, options = {}) {
     resumeCard = document.createElement('div');
     resumeCard.className = 'viewer-resume-card';
     const resumeTitle = document.createElement('h2');
-    resumeTitle.textContent = 'Resumable local attempt found';
+    resumeTitle.textContent = 'Resume previous attempt';
     const resumeMeta = document.createElement('p');
     resumeMeta.className = 'muted';
     const resumeUpdatedAt =
@@ -3483,7 +3483,7 @@ function renderViewerStartPanel(session, options = {}) {
     });
     const discardBtn = document.createElement('button');
     discardBtn.type = 'button';
-    discardBtn.className = 'viewer-start-btn';
+    discardBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
     discardBtn.textContent = 'Discard attempt';
     discardBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
@@ -3574,7 +3574,7 @@ function renderViewerStartPanel(session, options = {}) {
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
-    const isLoggedOut = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_OUT;
+    const canAccessPublished = isLoggedIn;
     const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
     if (isLoggedIn) {
       sessionStatus.textContent = `Server session: ready (${userLabel})`;
@@ -3585,23 +3585,23 @@ function renderViewerStartPanel(session, options = {}) {
     }
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking;
-    browseBtn.hidden = isLoggedOut;
-    browseBtn.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages;
-    publishedHeading.hidden = isLoggedOut;
-    filterRow.hidden = isLoggedOut;
-    titleFilterInput.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages;
-    subjectFilterInput.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages;
-    ownerFilterInput.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages;
+    browseBtn.hidden = !canAccessPublished;
+    browseBtn.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
+    publishedHeading.hidden = !canAccessPublished;
+    filterRow.hidden = !canAccessPublished;
+    titleFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
+    subjectFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
+    ownerFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
     const activeFilters = session.state.publishedFilters || {};
     if (document.activeElement !== titleFilterInput) titleFilterInput.value = String(activeFilters.title || '');
     if (document.activeElement !== subjectFilterInput) subjectFilterInput.value = String(activeFilters.subject || '');
     if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
-    loadMoreBtn.hidden = isLoggedOut || !session.state.publishedHasMore;
-    loadMoreBtn.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
+    loadMoreBtn.hidden = !canAccessPublished || !session.state.publishedHasMore;
+    loadMoreBtn.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
     serverStatus.textContent = session.state.serverActionMessage || '';
     publishedList.innerHTML = '';
-    publishedList.hidden = isLoggedOut;
-    if (isLoggedOut) {
+    publishedList.hidden = !canAccessPublished;
+    if (!canAccessPublished) {
       return;
     }
     const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];

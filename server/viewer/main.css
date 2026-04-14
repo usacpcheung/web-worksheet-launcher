@@ -31,27 +31,27 @@ body {
   border: 0;
   border-radius: 0;
   box-shadow: none;
-  padding: 22px 12px 28px;
+  padding: 40px 12px 28px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  max-width: 960px;
-  width: min(100%, 960px);
+  gap: 14px;
+  max-width: 760px;
+  width: min(100%, 760px);
   margin: 0 auto;
 }
 
 .viewer-start-panel h1 {
   margin: 0;
   text-align: center;
-  font-size: clamp(2rem, 1.86rem + 0.9vw, 3rem);
-  line-height: 1.06;
+  font-size: clamp(2.15rem, 1.95rem + 0.6vw, 3rem);
+  line-height: 1.08;
   letter-spacing: -0.02em;
 }
 
 .viewer-start-panel > .muted {
   text-align: center;
   color: #7c8798;
-  font-size: 1.05rem;
+  font-size: 0.96rem;
 }
 
 .viewer-start-error {
@@ -63,16 +63,16 @@ body {
 
 .viewer-resume-card {
   border: 1px solid #e2e8f1;
-  border-radius: 22px;
-  padding: 28px 32px;
+  border-radius: 14px;
+  padding: 22px 24px;
   background: #fff;
   box-shadow: 0 2px 8px rgb(15 23 42 / 4%);
 }
 
 .viewer-resume-card h2 {
   margin: 0;
-  font-size: clamp(1.8rem, 1.52rem + 0.35vw, 2.15rem);
-  line-height: 1.15;
+  font-size: clamp(1.25rem, 1.15rem + 0.25vw, 1.55rem);
+  line-height: 1.2;
 }
 
 .viewer-start-panel .muted {
@@ -114,14 +114,15 @@ body {
 }
 
 .viewer-resume-card .viewer-start-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
   margin-top: 12px;
 }
 
 .viewer-resume-card .viewer-start-btn {
-  width: 100%;
+  width: auto;
 }
 
 .viewer-start-btn:hover:not(:disabled) {
@@ -156,10 +157,26 @@ body {
   color: #1559c6;
 }
 
+.viewer-start-btn--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: #6b7280;
+  padding-inline: 8px;
+  min-height: 44px;
+}
+
+.viewer-start-btn--quiet:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: #4b5563;
+  box-shadow: none;
+  transform: none;
+}
+
 .viewer-published-heading {
-  margin: 18px 0 0;
-  font-size: clamp(2.05rem, 1.82rem + 0.55vw, 2.55rem);
-  line-height: 1.08;
+  margin: 6px 0 0;
+  font-size: 1.18rem;
+  line-height: 1.2;
   letter-spacing: -0.02em;
 }
 
@@ -235,7 +252,12 @@ body {
 
 @media (max-width: 640px) {
   .viewer-resume-card .viewer-start-actions {
+    display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .viewer-resume-card .viewer-start-btn {
+    width: 100%;
   }
 
   .viewer-published-filters {

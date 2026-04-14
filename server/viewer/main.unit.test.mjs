@@ -696,8 +696,9 @@ test('viewer start panel includes logged_out/checking/logged_in server-state ren
   assert.equal(source.includes("CHECKING: 'checking'"), true);
   assert.equal(source.includes("LOGGED_IN: 'logged_in'"), true);
   assert.equal(source.includes("signInBtn.textContent = 'Log in to view published online worksheet';"), true);
-  assert.equal(source.includes('browseBtn.hidden = isLoggedOut;'), true);
-  assert.equal(source.includes('publishedList.hidden = isLoggedOut;'), true);
+  assert.equal(source.includes('const canAccessPublished = isLoggedIn;'), true);
+  assert.equal(source.includes('browseBtn.hidden = !canAccessPublished;'), true);
+  assert.equal(source.includes('publishedList.hidden = !canAccessPublished;'), true);
   assert.equal(source.includes('signInBtn.disabled = isChecking;'), true);
   assert.equal(source.includes("const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';"), true);
   assert.equal(source.includes("loadMoreBtn.textContent = 'Load more';"), true);
@@ -2384,6 +2385,27 @@ function createFakeDom() {
   return { document, appRoot, bottomBarRoot };
 }
 
+function collectNodes(root) {
+  const result = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node || typeof node !== 'object') continue;
+    result.push(node);
+    const children = Array.isArray(node.children) ? node.children : [];
+    for (const child of children) stack.push(child);
+  }
+  return result;
+}
+
+function findNodeByClass(root, className) {
+  return collectNodes(root).find((node) => String(node.className || '').split(/\s+/).includes(className));
+}
+
+function findNodeByText(root, text) {
+  return collectNodes(root).find((node) => node.textContent === text);
+}
+
 test('bootstrapViewer on bare /viewer/ opens start panel with explicit resume action instead of auto-resume', { concurrency: false }, async () => {
   const { document } = createFakeDom();
   let renderedSession = null;
@@ -2528,6 +2550,127 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
     hour12: false,
   });
   assert.equal(resumeMeta.textContent, `Attempt attempt_resume_ms · ${expected}`);
+});
+
+test('renderViewerStartPanel hides published controls when server session is logged out', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
+  const browseBtn = findNodeByText(panel, 'Browse published packages');
+  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
+  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
+  const publishedList = findNodeByClass(panel, 'viewer-published-list');
+
+  assert.equal(signInBtn.hidden, false);
+  assert.equal(browseBtn.hidden, true);
+  assert.equal(publishedHeading.hidden, true);
+  assert.equal(filterRow.hidden, true);
+  assert.equal(publishedList.hidden, true);
+});
+
+test('renderViewerStartPanel shows published controls only when server session is logged in', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'logged_in', user: { email: 'learner@example.test' } },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
+  const browseBtn = findNodeByText(panel, 'Browse published packages');
+  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
+  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
+  const publishedList = findNodeByClass(panel, 'viewer-published-list');
+
+  assert.equal(signInBtn.hidden, true);
+  assert.equal(browseBtn.hidden, false);
+  assert.equal(publishedHeading.hidden, false);
+  assert.equal(filterRow.hidden, false);
+  assert.equal(publishedList.hidden, false);
+});
+
+test('renderViewerStartPanel treats unknown server state as not logged in for published controls', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'expired', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const browseBtn = findNodeByText(panel, 'Browse published packages');
+  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
+  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
+  const publishedList = findNodeByClass(panel, 'viewer-published-list');
+
+  assert.equal(browseBtn.hidden, true);
+  assert.equal(publishedHeading.hidden, true);
+  assert.equal(filterRow.hidden, true);
+  assert.equal(publishedList.hidden, true);
 });
 
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
