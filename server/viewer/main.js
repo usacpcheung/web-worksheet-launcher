@@ -1285,7 +1285,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
 
     const resultHtml = question.result
       ? `
-        <section class="print-question-panel print-question-panel--result print-result-${escapeHtml(question.result.status || 'neutral')}">
+        <section class="print-question-section print-question-section--result print-result-${escapeHtml(question.result.status || 'neutral')}">
           <h3>Check result</h3>
           <p class="print-result-label">${escapeHtml(question.result.label)}</p>
           ${question.result.detail ? `<p class="print-result-detail">${formatMultilineTextForHtml(question.result.detail)}</p>` : ''}
@@ -1298,12 +1298,12 @@ function buildWorksheetPrintReportHtml(reportModel) {
         <header class="print-question-header">
           <div class="print-question-number">Question ${question.questionNumber}</div>
         </header>
-        <section class="print-question-panel print-question-panel--prompt">
+        <section class="print-question-section print-question-section--prompt">
           <h3>Prompt</h3>
           <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || 'No prompt text provided.')}</p>
           ${imageHtml}
         </section>
-        <section class="print-question-panel print-question-panel--answer">
+        <section class="print-question-section print-question-section--answer">
           <h3>Answer</h3>
           <p class="print-answer-text">${formatMultilineTextForHtml(question.answerText)}</p>
         </section>
@@ -1381,11 +1381,10 @@ function buildWorksheetPrintReportHtml(reportModel) {
     }
 
     .print-question {
-      border: 1px solid #d7dbe2;
-      border-radius: 3mm;
-      padding: 6mm;
-      margin: 0 0 7mm;
-      background: #fff;
+      margin: 0 0 9mm;
+      padding: 0 0 7mm;
+      border-bottom: 1px solid #dde2e8;
+      background: transparent;
     }
 
     .print-question--keep-all {
@@ -1402,7 +1401,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
     .print-question-header {
       break-after: avoid;
       page-break-after: avoid;
-      margin-bottom: 4mm;
+      margin-bottom: 3mm;
     }
 
     .print-question-number {
@@ -1410,25 +1409,32 @@ function buildWorksheetPrintReportHtml(reportModel) {
       font-weight: 700;
     }
 
-    .print-question-panel {
-      margin-top: 4mm;
+    .print-question-section {
+      margin-top: 0;
+      padding-top: 0;
     }
 
-    .print-question--keep-all .print-question-panel,
-    .print-question--keep-head .print-question-panel--prompt {
+    .print-question-section + .print-question-section {
+      margin-top: 4mm;
+      padding-top: 3.2mm;
+      border-top: 1px solid #eceff3;
+    }
+
+    .print-question--keep-all .print-question-section,
+    .print-question--keep-head .print-question-section--prompt {
       break-inside: avoid;
       page-break-inside: avoid;
     }
 
-    .print-question--flow .print-question-panel--answer,
-    .print-question--flow .print-question-panel--result,
-    .print-question--keep-head .print-question-panel--answer,
-    .print-question--keep-head .print-question-panel--result {
+    .print-question--flow .print-question-section--answer,
+    .print-question--flow .print-question-section--result,
+    .print-question--keep-head .print-question-section--answer,
+    .print-question--keep-head .print-question-section--result {
       break-inside: auto;
       page-break-inside: auto;
     }
 
-    .print-question-panel h3 {
+    .print-question-section h3 {
       margin: 0 0 2mm;
       font-size: 10pt;
       text-transform: uppercase;
@@ -1465,9 +1471,8 @@ function buildWorksheetPrintReportHtml(reportModel) {
       font-style: italic;
     }
 
-    .print-question-panel--result {
-      border-top: 1px solid #d7dbe2;
-      padding-top: 4mm;
+    .print-question-section--result .print-result-label {
+      margin-bottom: 1.5mm;
     }
 
     .print-result-correct .print-result-label {
