@@ -1382,14 +1382,15 @@ function buildWorksheetPrintReportHtml(reportModel) {
 
     .print-question {
       margin: 0 0 9mm;
-      padding: 0 0 7mm;
-      border-bottom: 1px solid #dde2e8;
+      padding: 0 0 4mm;
       background: transparent;
+      break-inside: auto;
+      page-break-inside: auto;
     }
 
     .print-question--keep-all {
-      break-inside: avoid;
-      page-break-inside: avoid;
+      break-inside: auto;
+      page-break-inside: auto;
     }
 
     .print-question--keep-head,
@@ -1415,21 +1416,18 @@ function buildWorksheetPrintReportHtml(reportModel) {
     }
 
     .print-question-section + .print-question-section {
-      margin-top: 4mm;
-      padding-top: 3.2mm;
-      border-top: 1px solid #eceff3;
+      margin-top: 4.5mm;
+      padding-top: 0;
     }
 
-    .print-question--keep-all .print-question-section,
-    .print-question--keep-head .print-question-section--prompt {
+    .print-question-section--prompt,
+    .print-question-section--answer,
+    .print-question-section--result {
       break-inside: avoid;
       page-break-inside: avoid;
     }
 
-    .print-question--flow .print-question-section--answer,
-    .print-question--flow .print-question-section--result,
-    .print-question--keep-head .print-question-section--answer,
-    .print-question--keep-head .print-question-section--result {
+    .print-question--flow .print-question-section--answer {
       break-inside: auto;
       page-break-inside: auto;
     }

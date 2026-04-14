@@ -441,6 +441,8 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(html.includes('print-question-section--answer'), true);
   assert.equal(html.includes('print-question-section--result'), true);
   assert.equal(html.includes('border-radius: 3mm;'), false);
+  assert.equal(html.includes('border-top: 1px solid #eceff3;'), false);
+  assert.equal(html.includes('border-bottom: 1px solid #dde2e8;'), false);
 });
 
 test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
