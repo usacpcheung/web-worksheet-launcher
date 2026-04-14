@@ -1105,14 +1105,37 @@ function buildPrintQuestionResult(block, checkResult) {
   };
 }
 
-function classifyPrintQuestionLength(question) {
-  const combinedText = [
-    question.promptText,
-    question.answerText,
-    question.result?.detail || '',
-  ].join('\n');
+function classifyPrintQuestionLayout(question) {
+  const promptText = String(question?.promptText || '');
+  const answerText = String(question?.answerText || '');
+  const resultDetail = String(question?.result?.detail || '');
+  const hasImage = question?.image?.status === 'ready';
+  const combinedText = [promptText, answerText, resultDetail].join('\n');
   const lineCount = combinedText.split(/\r?\n/).length;
-  return combinedText.length > 900 || lineCount > 18;
+  const answerLineBreaks = (answerText.match(/\n/g) || []).length;
+  const estimatedBlockChars = promptText.length + answerText.length + resultDetail.length;
+  const hasVisibleResultDetail = resultDetail.trim().length > 0;
+
+  if (
+    estimatedBlockChars > 900
+    || lineCount > 18
+    || answerText.length > 450
+    || answerLineBreaks >= 3
+  ) {
+    return 'flow';
+  }
+
+  if (
+    promptText.length > 240
+    || answerText.length > 260
+    || lineCount > 10
+    || (hasImage && estimatedBlockChars > 260)
+    || (hasVisibleResultDetail && estimatedBlockChars > 320)
+  ) {
+    return 'keep-head';
+  }
+
+  return 'keep-all';
 }
 
 function escapeHtml(value) {
@@ -1210,7 +1233,7 @@ async function buildWorksheetPrintReportModel({
     };
     return {
       ...question,
-      allowPageBreakInside: classifyPrintQuestionLength(question),
+      layoutMode: classifyPrintQuestionLayout(question),
     };
   }));
 
@@ -1262,7 +1285,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
 
     const resultHtml = question.result
       ? `
-        <section class="print-question-panel print-question-panel--result print-result-${escapeHtml(question.result.status || 'neutral')}">
+        <section class="print-question-section print-question-section--result print-result-${escapeHtml(question.result.status || 'neutral')}">
           <h3>Check result</h3>
           <p class="print-result-label">${escapeHtml(question.result.label)}</p>
           ${question.result.detail ? `<p class="print-result-detail">${formatMultilineTextForHtml(question.result.detail)}</p>` : ''}
@@ -1271,16 +1294,16 @@ function buildWorksheetPrintReportHtml(reportModel) {
       : '';
 
     return `
-      <article class="print-question ${question.allowPageBreakInside ? 'is-breakable' : ''}">
+      <article class="print-question print-question--${escapeHtml(question.layoutMode || 'keep-all')}">
         <header class="print-question-header">
           <div class="print-question-number">Question ${question.questionNumber}</div>
         </header>
-        <section class="print-question-panel">
+        <section class="print-question-section print-question-section--prompt">
           <h3>Prompt</h3>
           <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || 'No prompt text provided.')}</p>
           ${imageHtml}
         </section>
-        <section class="print-question-panel">
+        <section class="print-question-section print-question-section--answer">
           <h3>Answer</h3>
           <p class="print-answer-text">${formatMultilineTextForHtml(question.answerText)}</p>
         </section>
@@ -1358,16 +1381,20 @@ function buildWorksheetPrintReportHtml(reportModel) {
     }
 
     .print-question {
-      border: 1px solid #d7dbe2;
-      border-radius: 3mm;
-      padding: 6mm;
-      margin: 0 0 7mm;
-      break-inside: avoid;
-      page-break-inside: avoid;
-      background: #fff;
+      margin: 0 0 9mm;
+      padding: 0 0 4mm;
+      background: transparent;
+      break-inside: auto;
+      page-break-inside: auto;
     }
 
-    .print-question.is-breakable {
+    .print-question--keep-all {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
+    .print-question--keep-head,
+    .print-question--flow {
       break-inside: auto;
       page-break-inside: auto;
     }
@@ -1375,7 +1402,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
     .print-question-header {
       break-after: avoid;
       page-break-after: avoid;
-      margin-bottom: 4mm;
+      margin-bottom: 3mm;
     }
 
     .print-question-number {
@@ -1383,11 +1410,29 @@ function buildWorksheetPrintReportHtml(reportModel) {
       font-weight: 700;
     }
 
-    .print-question-panel {
-      margin-top: 4mm;
+    .print-question-section {
+      margin-top: 0;
+      padding-top: 0;
     }
 
-    .print-question-panel h3 {
+    .print-question-section + .print-question-section {
+      margin-top: 4.5mm;
+      padding-top: 0;
+    }
+
+    .print-question-section--prompt,
+    .print-question-section--answer,
+    .print-question-section--result {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .print-question--flow .print-question-section--answer {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
+    .print-question-section h3 {
       margin: 0 0 2mm;
       font-size: 10pt;
       text-transform: uppercase;
@@ -1424,9 +1469,8 @@ function buildWorksheetPrintReportHtml(reportModel) {
       font-style: italic;
     }
 
-    .print-question-panel--result {
-      border-top: 1px solid #d7dbe2;
-      padding-top: 4mm;
+    .print-question-section--result .print-result-label {
+      margin-bottom: 1.5mm;
     }
 
     .print-result-correct .print-result-label {
@@ -4420,6 +4464,7 @@ export {
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
+  classifyPrintQuestionLayout,
   buildWorksheetPrintReportModel,
   buildWorksheetPrintReportHtml,
   startWorksheetPrintFlow,
