@@ -2673,6 +2673,79 @@ test('renderViewerStartPanel treats unknown server state as not logged in for pu
   assert.equal(publishedList.hidden, true);
 });
 
+test('renderViewerStartPanel orders controls as import then auth row then single status line', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const importRow = panel.children[2];
+  const authRow = panel.children[3];
+  const statusLine = panel.children[4];
+
+  assert.equal(importRow.className, 'viewer-start-actions');
+  assert.equal(importRow.children[0].textContent, 'Import worksheet package (.zip)');
+  assert.equal(authRow.className, 'viewer-start-actions');
+  assert.equal(authRow.children[0].textContent, 'Log in to view published online worksheet');
+  assert.equal(statusLine.className, 'muted');
+  assert.equal(statusLine.textContent.includes('Server session:'), true);
+});
+
+test('renderViewerStartPanel renders one session-related message line without duplicate status text', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const duplicateText = 'Session expired. Please log in again.';
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: duplicateText },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: duplicateText,
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const matched = collectNodes(panel).filter((node) => String(node.textContent || '').includes(duplicateText));
+  assert.equal(matched.length, 1);
+});
+
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({

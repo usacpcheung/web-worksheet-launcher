@@ -3441,8 +3441,6 @@ function renderViewerStartPanel(session, options = {}) {
   filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput);
   const sessionStatus = document.createElement('p');
   sessionStatus.className = 'muted';
-  const serverStatus = document.createElement('p');
-  serverStatus.className = 'muted';
   const publishedList = document.createElement('div');
   publishedList.className = 'muted viewer-published-list';
 
@@ -3576,13 +3574,18 @@ function renderViewerStartPanel(session, options = {}) {
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
     const canAccessPublished = isLoggedIn;
     const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
+    let defaultSessionMessage = '';
     if (isLoggedIn) {
-      sessionStatus.textContent = `Server session: ready (${userLabel})`;
+      defaultSessionMessage = `Server session: ready (${userLabel})`;
     } else if (isChecking) {
-      sessionStatus.textContent = 'Server session: checking…';
+      defaultSessionMessage = 'Server session: checking…';
     } else {
-      sessionStatus.textContent = `Server session: logged out. ${session.state.serverSession?.error || 'Log in to view published online worksheet.'}`;
+      defaultSessionMessage = `Server session: logged out. ${session.state.serverSession?.error || 'Log in to view published online worksheet.'}`;
     }
+    const actionMessage = typeof session.state.serverActionMessage === 'string'
+      ? session.state.serverActionMessage.trim()
+      : '';
+    sessionStatus.textContent = actionMessage || defaultSessionMessage;
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking;
     browseBtn.hidden = !canAccessPublished;
@@ -3598,7 +3601,6 @@ function renderViewerStartPanel(session, options = {}) {
     if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
     loadMoreBtn.hidden = !canAccessPublished || !session.state.publishedHasMore;
     loadMoreBtn.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
-    serverStatus.textContent = session.state.serverActionMessage || '';
     publishedList.innerHTML = '';
     publishedList.hidden = !canAccessPublished;
     if (!canAccessPublished) {
@@ -3652,7 +3654,7 @@ function renderViewerStartPanel(session, options = {}) {
     panel.append(resumeCard);
   }
   serverActions.append(signInBtn, browseBtn, loadMoreBtn);
-  panel.append(importActions, sessionStatus, serverActions, publishedHeading, filterRow, publishedList, serverStatus, packageFileInput, errorMessage);
+  panel.append(importActions, serverActions, sessionStatus, publishedHeading, filterRow, publishedList, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
