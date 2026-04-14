@@ -3418,6 +3418,9 @@ function renderViewerStartPanel(session, options = {}) {
   loadMoreBtn.className = 'viewer-start-btn viewer-load-more-btn';
   loadMoreBtn.textContent = 'Load more';
   loadMoreBtn.hidden = true;
+  const loadMoreRow = document.createElement('div');
+  loadMoreRow.className = 'viewer-load-more-row';
+  loadMoreRow.append(loadMoreBtn);
   const filterRow = document.createElement('div');
   filterRow.className = 'viewer-start-actions viewer-published-filters';
   const publishedHeading = document.createElement('h2');
@@ -3604,6 +3607,7 @@ function renderViewerStartPanel(session, options = {}) {
     if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
     loadMoreBtn.hidden = !canAccessPublished || !session.state.publishedHasMore;
     loadMoreBtn.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
+    loadMoreRow.hidden = loadMoreBtn.hidden;
     publishedList.innerHTML = '';
     publishedList.hidden = !canAccessPublished;
     if (!canAccessPublished) {
@@ -3656,12 +3660,15 @@ function renderViewerStartPanel(session, options = {}) {
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  serverActions.append(signInBtn, browseBtn, loadMoreBtn);
-  panel.append(importActions, serverActions, sessionStatus, publishedHeading, filterRow, publishedList, packageFileInput, errorMessage);
+  serverActions.append(signInBtn, browseBtn);
+  panel.append(importActions, serverActions, sessionStatus, publishedHeading, filterRow, publishedList, loadMoreRow, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
   renderServerControls();
+  if (typeof session.setOnStateChange === 'function') {
+    session.setOnStateChange(() => renderServerControls());
+  }
 }
 
 async function bootstrapViewer() {
