@@ -1105,14 +1105,37 @@ function buildPrintQuestionResult(block, checkResult) {
   };
 }
 
-function classifyPrintQuestionLength(question) {
-  const combinedText = [
-    question.promptText,
-    question.answerText,
-    question.result?.detail || '',
-  ].join('\n');
+function classifyPrintQuestionLayout(question) {
+  const promptText = String(question?.promptText || '');
+  const answerText = String(question?.answerText || '');
+  const resultDetail = String(question?.result?.detail || '');
+  const hasImage = question?.image?.status === 'ready';
+  const combinedText = [promptText, answerText, resultDetail].join('\n');
   const lineCount = combinedText.split(/\r?\n/).length;
-  return combinedText.length > 900 || lineCount > 18;
+  const answerLineBreaks = (answerText.match(/\n/g) || []).length;
+  const estimatedBlockChars = promptText.length + answerText.length + resultDetail.length;
+  const hasVisibleResultDetail = resultDetail.trim().length > 0;
+
+  if (
+    estimatedBlockChars > 900
+    || lineCount > 18
+    || answerText.length > 450
+    || answerLineBreaks >= 3
+  ) {
+    return 'flow';
+  }
+
+  if (
+    promptText.length > 240
+    || answerText.length > 260
+    || lineCount > 10
+    || (hasImage && estimatedBlockChars > 260)
+    || (hasVisibleResultDetail && estimatedBlockChars > 320)
+  ) {
+    return 'keep-head';
+  }
+
+  return 'keep-all';
 }
 
 function escapeHtml(value) {
@@ -1210,7 +1233,7 @@ async function buildWorksheetPrintReportModel({
     };
     return {
       ...question,
-      allowPageBreakInside: classifyPrintQuestionLength(question),
+      layoutMode: classifyPrintQuestionLayout(question),
     };
   }));
 
@@ -1271,16 +1294,16 @@ function buildWorksheetPrintReportHtml(reportModel) {
       : '';
 
     return `
-      <article class="print-question ${question.allowPageBreakInside ? 'is-breakable' : ''}">
+      <article class="print-question print-question--${escapeHtml(question.layoutMode || 'keep-all')}">
         <header class="print-question-header">
           <div class="print-question-number">Question ${question.questionNumber}</div>
         </header>
-        <section class="print-question-panel">
+        <section class="print-question-panel print-question-panel--prompt">
           <h3>Prompt</h3>
           <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || 'No prompt text provided.')}</p>
           ${imageHtml}
         </section>
-        <section class="print-question-panel">
+        <section class="print-question-panel print-question-panel--answer">
           <h3>Answer</h3>
           <p class="print-answer-text">${formatMultilineTextForHtml(question.answerText)}</p>
         </section>
@@ -1362,12 +1385,16 @@ function buildWorksheetPrintReportHtml(reportModel) {
       border-radius: 3mm;
       padding: 6mm;
       margin: 0 0 7mm;
-      break-inside: avoid;
-      page-break-inside: avoid;
       background: #fff;
     }
 
-    .print-question.is-breakable {
+    .print-question--keep-all {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .print-question--keep-head,
+    .print-question--flow {
       break-inside: auto;
       page-break-inside: auto;
     }
@@ -1385,6 +1412,20 @@ function buildWorksheetPrintReportHtml(reportModel) {
 
     .print-question-panel {
       margin-top: 4mm;
+    }
+
+    .print-question--keep-all .print-question-panel,
+    .print-question--keep-head .print-question-panel--prompt {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .print-question--flow .print-question-panel--answer,
+    .print-question--flow .print-question-panel--result,
+    .print-question--keep-head .print-question-panel--answer,
+    .print-question--keep-head .print-question-panel--result {
+      break-inside: auto;
+      page-break-inside: auto;
     }
 
     .print-question-panel h3 {
@@ -4420,6 +4461,7 @@ export {
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
+  classifyPrintQuestionLayout,
   buildWorksheetPrintReportModel,
   buildWorksheetPrintReportHtml,
   startWorksheetPrintFlow,

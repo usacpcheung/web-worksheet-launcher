@@ -157,7 +157,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, buildTechnicalDetailsRows, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -329,10 +329,43 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   assert.equal(report.questions[0].answerText, 'It increases by 2 each line.');
   assert.equal(report.questions[0].image.status, 'ready');
   assert.match(report.questions[0].image.src, /^data:image\/png;base64,/);
+  assert.equal(report.questions[0].layoutMode, 'keep-all');
   assert.equal(report.questions[1].answerText, 'Two\nFive');
   assert.equal(report.questions[1].result.label, 'Correct');
   assert.equal(report.questions[2].result.label, 'Incorrect');
   assert.equal(report.questions[2].result.detail, 'Correct answer: True');
+});
+
+test('classifyPrintQuestionLayout uses keep-all, keep-head, and flow thresholds conservatively', async () => {
+  const mod = await loadViewerModule();
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Short prompt',
+    answerText: 'Short answer',
+    result: null,
+    image: null,
+  }), 'keep-all');
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Prompt '.repeat(35),
+    answerText: 'Answer',
+    result: null,
+    image: null,
+  }), 'keep-head');
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Prompt',
+    answerText: 'Long answer paragraph '.repeat(30),
+    result: { detail: 'Correct answer: Example' },
+    image: null,
+  }), 'flow');
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Prompt with image',
+    answerText: 'Supporting answer text '.repeat(16),
+    result: null,
+    image: { status: 'ready', src: 'data:image/png;base64,abc' },
+  }), 'keep-head');
 });
 
 test('buildWorksheetPrintReportHtml omits empty student row and renders missing image note', async () => {
@@ -364,6 +397,46 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
   assert.equal(html.includes('>Student<'), false);
   assert.equal(html.includes('Question image unavailable.'), true);
   assert.equal(html.includes('No answer submitted'), true);
+});
+
+test('buildWorksheetPrintReportHtml emits layout-mode classes for print pagination behavior', async () => {
+  const mod = await loadViewerModule();
+  const html = mod.buildWorksheetPrintReportHtml({
+    title: 'Worksheet',
+    studentName: '',
+    completedAtLabel: 'April 14, 2026, 18:00',
+    checkedSummary: '',
+    questions: [
+      {
+        questionNumber: 1,
+        promptText: 'Short prompt',
+        answerText: 'Short answer',
+        result: null,
+        image: null,
+        layoutMode: 'keep-all',
+      },
+      {
+        questionNumber: 2,
+        promptText: 'Medium prompt',
+        answerText: 'Answer',
+        result: null,
+        image: null,
+        layoutMode: 'keep-head',
+      },
+      {
+        questionNumber: 3,
+        promptText: 'Long prompt',
+        answerText: 'Long answer',
+        result: { status: 'incorrect', label: 'Incorrect', detail: 'Correct answer: Example' },
+        image: null,
+        layoutMode: 'flow',
+      },
+    ],
+  });
+
+  assert.equal(html.includes('print-question--keep-all'), true);
+  assert.equal(html.includes('print-question--keep-head'), true);
+  assert.equal(html.includes('print-question--flow'), true);
 });
 
 test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
