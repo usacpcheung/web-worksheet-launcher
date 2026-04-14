@@ -49,7 +49,11 @@ Notes:
 - UI filter labels map directly to these keys:
   - "Filter by title" → `title`
   - "Filter by subject" → `subject`
-  - "Filter by owner email" → `owner`
+  - "Filter by owner" → `owner`
+- Owner filter semantics are intentionally broad in viewer/editor compatibility:
+  - backend still receives one canonical `owner` query key,
+  - UI row rendering can show `owner_email`, `owner_name`, or `owner_sub`,
+  - integrations should treat the owner filter as matching owner identity text (email/name/sub), not email-only.
 
 ## Response schema consumed by editor
 

@@ -1,3 +1,5 @@
+import { DEFAULT_PUBLISHED_PACKAGE_LIMIT } from './published-packages-service.js';
+
 const DEFAULT_PUBLIC_API_BASE = '/api/worksheet-launcher/v1';
 const DEFAULT_SIGN_IN_POPUP_PATH = '/worksheet_launcher/app/login/popup.html';
 
@@ -40,7 +42,7 @@ function normalizePublishedPackagesQuery(query = {}) {
     title: String(source.title ?? ''),
     subject: String(source.subject ?? ''),
     owner: String(source.owner ?? ''),
-    limit: Number.isFinite(normalizedLimit) ? normalizedLimit : 20,
+    limit: Number.isFinite(normalizedLimit) ? normalizedLimit : DEFAULT_PUBLISHED_PACKAGE_LIMIT,
     offset: Number.isFinite(normalizedOffset) ? normalizedOffset : 0,
   };
 }

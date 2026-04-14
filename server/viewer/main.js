@@ -94,6 +94,17 @@ function parseLaunchParamJson(params, key, parseErrorCode) {
   return { present: true, value: parsed };
 }
 
+function isAuthSessionError(error) {
+  const status = Number(error?.status);
+  const code = String(error?.code || '').toUpperCase();
+  return Boolean(
+    error?.requiresSignIn
+    || status === 401
+    || status === 403
+    || code === 'AUTH_REQUIRED'
+  );
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -1970,21 +1981,24 @@ class ViewerAttemptSession {
         if (this._activeAuthFlowId !== authFlowId) return;
         if (this._authAutoLoadInFlightByFlowId.has(authFlowId)) return;
         this._authAutoLoadInFlightByFlowId.add(authFlowId);
-        this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
-        this.notifyStateChange();
-        const result = await this.preflightPublishedSession();
-        if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
-          await this.browsePublishedPackages(this.state.publishedFilters || {}, { preflight: false, reset: true });
-          this.state.serverActionMessage = null;
+        try {
+          this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
           this.notifyStateChange();
-          this._authAutoLoadInFlightByFlowId.delete(authFlowId);
+          const result = await this.preflightPublishedSession();
+          if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+            await this.browsePublishedPackages(this.state.publishedFilters || {}, { preflight: false, reset: true });
+            this.state.serverActionMessage = null;
+            this.notifyStateChange();
+            finalizeFlow();
+            return;
+          }
+          const fallbackMessage = result?.result?.error?.message || this.state.serverSession?.error || 'Sign-in completed, but session is still not ready.';
+          this.state.serverActionMessage = fallbackMessage;
+          this.notifyStateChange();
           finalizeFlow();
-          return;
+        } finally {
+          this._authAutoLoadInFlightByFlowId.delete(authFlowId);
         }
-        this.state.serverActionMessage = SESSION_EXPIRED_MESSAGE;
-        this.notifyStateChange();
-        this._authAutoLoadInFlightByFlowId.delete(authFlowId);
-        finalizeFlow();
       },
       onSessionNotReady: (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
@@ -2034,7 +2048,18 @@ class ViewerAttemptSession {
   async probeServerSessionSilently({ force = false } = {}) {
     const result = await probeSession({ apiClient: this.apiClient, force });
     if (result.status !== 'ready') {
-      this.transitionServerSessionToLoggedOut(result.error?.message || 'Sign-in is required before using server features.');
+      const message = result.error?.message || 'Sign-in is required before using server features.';
+      if (isAuthSessionError(result.error)) {
+        this.transitionServerSessionToLoggedOut(SESSION_EXPIRED_MESSAGE);
+      } else {
+        this.state.serverSession = {
+          status: VIEWER_SERVER_SESSION_STATES.CHECKING,
+          user: null,
+          error: message,
+        };
+        this.state.serverActionMessage = message;
+        this.notifyStateChange();
+      }
       return result;
     }
     this.state.serverSession = {
@@ -2051,25 +2076,23 @@ class ViewerAttemptSession {
     if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
       return { ok: true, result };
     }
-    const hasAuthStatus = Number.isFinite(Number(result.error?.status));
-    const authErrorCode = String(result.error?.code || '').toUpperCase();
-    const authStatus = Number(result.error?.status);
-    const isExplicitAuthFailure = result.status === 'not_ready' && (
-      authErrorCode === 'AUTH_REQUIRED'
-      || (result.error?.requiresSignIn && (!hasAuthStatus || authStatus === 401 || authStatus === 403))
-      || authStatus === 401
-      || authStatus === 403
-    );
-    const authMessage = isExplicitAuthFailure ? SESSION_EXPIRED_MESSAGE : (result.error?.message || notReadyMessage);
-    this.transitionServerSessionToLoggedOut(authMessage);
+    const message = result.error?.message || notReadyMessage;
+    if (result.status === 'not_ready' && isAuthSessionError(result.error)) {
+      this.transitionServerSessionToLoggedOut(SESSION_EXPIRED_MESSAGE);
+    } else {
+      this.state.serverSession = {
+        status: VIEWER_SERVER_SESSION_STATES.CHECKING,
+        user: null,
+        error: message,
+      };
+      this.state.serverActionMessage = message;
+      this.notifyStateChange();
+    }
     return { ok: false, result };
   }
 
   async preflightPublishedSession() {
-    const sessionReady = await this.ensureServerSessionReady();
-    if (sessionReady.ok) return sessionReady;
-    this.transitionServerSessionToLoggedOut(SESSION_EXPIRED_MESSAGE);
-    return sessionReady;
+    return this.ensureServerSessionReady();
   }
 
   async browsePublishedPackages(query = '', options = {}) {
@@ -2140,7 +2163,10 @@ class ViewerAttemptSession {
   async startFromPublishedPackage(publishedPackageId) {
     const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
     if (!normalizedPublishedPackageId) {
-      return { ok: false, error: { message: 'Published package ID is required.' } };
+      const message = 'Published package ID is required.';
+      this.state.serverActionMessage = message;
+      this.notifyStateChange();
+      return { ok: false, error: { message } };
     }
     if (this._openingPublishedPackageIds.has(normalizedPublishedPackageId)) {
       return { ok: false, skipped: true, error: { message: `Open already in progress for ${normalizedPublishedPackageId}.` } };
@@ -3401,14 +3427,17 @@ function renderViewerStartPanel(session, options = {}) {
   titleFilterInput.type = 'search';
   titleFilterInput.placeholder = 'Filter by title';
   titleFilterInput.className = 'viewer-details-form__input';
+  titleFilterInput.setAttribute('aria-label', 'Filter published packages by title');
   const subjectFilterInput = document.createElement('input');
   subjectFilterInput.type = 'search';
   subjectFilterInput.placeholder = 'Filter by subject';
   subjectFilterInput.className = 'viewer-details-form__input';
+  subjectFilterInput.setAttribute('aria-label', 'Filter published packages by subject');
   const ownerFilterInput = document.createElement('input');
   ownerFilterInput.type = 'search';
   ownerFilterInput.placeholder = 'Filter by owner';
   ownerFilterInput.className = 'viewer-details-form__input';
+  ownerFilterInput.setAttribute('aria-label', 'Filter published packages by owner');
   filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput);
   const sessionStatus = document.createElement('p');
   sessionStatus.className = 'muted';
@@ -3598,23 +3627,22 @@ function renderViewerStartPanel(session, options = {}) {
       const publishedAtLabel = item.published_at ? formatTimestampForDisplay(item.published_at) : 'unknown time';
       const ownerLabel = item.owner_email || item.owner_name || item.owner_sub || '—';
       meta.textContent = `Title: ${item.title || 'Untitled'} · Subject: ${item.subject || '—'} · Owner: ${ownerLabel} · Published: ${publishedAtLabel}`;
-      if (item.published_package_id) {
-        const idLine = document.createElement('div');
-        idLine.className = 'muted viewer-published-id';
-        idLine.textContent = `Publish ID: ${item.published_package_id}`;
-        row.append(meta, idLine);
-      } else {
-        row.append(meta);
-      }
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
       openBtn.className = 'viewer-start-btn viewer-published-open-btn';
       openBtn.textContent = 'Open package';
-      openBtn.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages;
+      openBtn.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages || !item.published_package_id;
       openBtn.addEventListener('click', async () => {
         await openPublishedPackage(item.published_package_id);
       });
-      row.append(openBtn);
+      if (item.published_package_id) {
+        const idLine = document.createElement('div');
+        idLine.className = 'muted viewer-published-id';
+        idLine.textContent = `Publish ID: ${item.published_package_id}`;
+        row.append(meta, openBtn, idLine);
+      } else {
+        row.append(meta, openBtn);
+      }
       publishedList.appendChild(row);
     });
   }
