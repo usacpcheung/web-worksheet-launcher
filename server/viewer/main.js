@@ -7,6 +7,13 @@ import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
 import { mapLegacyJsonToPackageModel, parseWorksheetPackage } from '../editor/worksheet-package.js';
 import { createServerApiClient } from '../app/api/server-api-client.js';
+import {
+  DEFAULT_PUBLISHED_PACKAGE_LIMIT,
+  fetchPublishedPackagesPage,
+  mergePublishedPackageRows,
+  normalizePaginationState,
+  normalizePublishedPackageFilters,
+} from '../app/api/published-packages-service.js';
 
 const app = document.getElementById('app');
 const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
@@ -15,6 +22,12 @@ const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
+const VIEWER_SERVER_SESSION_STATES = Object.freeze({
+  LOGGED_OUT: 'logged_out',
+  CHECKING: 'checking',
+  LOGGED_IN: 'logged_in',
+});
+const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';
 let activeViewerShellAbortController = null;
 
 
@@ -1137,7 +1150,7 @@ class ViewerAttemptSession {
       checkResult: null,
       lastProtectedAction: null,
       serverSession: {
-        status: 'checking',
+        status: VIEWER_SERVER_SESSION_STATES.CHECKING,
         user: null,
         error: null,
       },
@@ -1146,6 +1159,12 @@ class ViewerAttemptSession {
       publishedHasMore: false,
       publishedNextOffset: null,
       publishedQuery: '',
+      publishedFilters: {
+        title: '',
+        subject: '',
+        owner: '',
+      },
+      publishedListError: null,
       isLoadingPublishedPackages: false,
     };
 
@@ -1159,6 +1178,8 @@ class ViewerAttemptSession {
     this._authPopupWindow = null;
     this._authPopupFlow = null;
     this._activeAuthFlowId = null;
+    this._authAutoLoadInFlightByFlowId = new Set();
+    this._openingPublishedPackageIds = new Set();
   }
 
   setOnStateChange(handler) {
@@ -1947,18 +1968,22 @@ class ViewerAttemptSession {
       },
       onSessionReady: async () => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        if (this._authAutoLoadInFlightByFlowId.has(authFlowId)) return;
+        this._authAutoLoadInFlightByFlowId.add(authFlowId);
         this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
         this.notifyStateChange();
-        const result = await this.probeServerSessionSilently({ force: true });
-        if (result.ok && this.state.serverSession.status === 'ready') {
-          await this.browsePublishedPackages(this.state.publishedQuery || '', { preflight: false });
+        const result = await this.preflightPublishedSession();
+        if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+          await this.browsePublishedPackages(this.state.publishedFilters || {}, { preflight: false, reset: true });
           this.state.serverActionMessage = null;
           this.notifyStateChange();
+          this._authAutoLoadInFlightByFlowId.delete(authFlowId);
           finalizeFlow();
           return;
         }
-        this.state.serverActionMessage = result.error?.message || 'Sign-in completed, but session is still not ready.';
+        this.state.serverActionMessage = SESSION_EXPIRED_MESSAGE;
         this.notifyStateChange();
+        this._authAutoLoadInFlightByFlowId.delete(authFlowId);
         finalizeFlow();
       },
       onSessionNotReady: (result) => {
@@ -1979,6 +2004,7 @@ class ViewerAttemptSession {
         this.state.serverActionMessage = result?.error?.message || this.state.serverActionMessage;
         this.notifyStateChange();
         finalizeFlow();
+        this._authAutoLoadInFlightByFlowId.delete(authFlowId);
       },
     });
     this._authPopupWindow = this._authPopupFlow?.popupWindow || null;
@@ -1986,7 +2012,7 @@ class ViewerAttemptSession {
 
   async refreshServerSession() {
     this.state.serverSession = {
-      status: 'checking',
+      status: VIEWER_SERVER_SESSION_STATES.CHECKING,
       user: null,
       error: null,
     };
@@ -1994,19 +2020,25 @@ class ViewerAttemptSession {
     return this.probeServerSessionSilently({ force: true });
   }
 
+  transitionServerSessionToLoggedOut(message = SESSION_EXPIRED_MESSAGE) {
+    const resolvedMessage = String(message || '').trim() || SESSION_EXPIRED_MESSAGE;
+    this.state.serverSession = {
+      status: VIEWER_SERVER_SESSION_STATES.LOGGED_OUT,
+      user: null,
+      error: resolvedMessage,
+    };
+    this.state.serverActionMessage = resolvedMessage;
+    this.notifyStateChange();
+  }
+
   async probeServerSessionSilently({ force = false } = {}) {
     const result = await probeSession({ apiClient: this.apiClient, force });
     if (result.status !== 'ready') {
-      this.state.serverSession = {
-        status: result.status === 'error' ? 'error' : 'not_ready',
-        user: null,
-        error: result.error?.message || 'Sign-in is required before using server features.',
-      };
-      this.notifyStateChange();
+      this.transitionServerSessionToLoggedOut(result.error?.message || 'Sign-in is required before using server features.');
       return result;
     }
     this.state.serverSession = {
-      status: 'ready',
+      status: VIEWER_SERVER_SESSION_STATES.LOGGED_IN,
       user: result.user || null,
       error: null,
     };
@@ -2016,7 +2048,7 @@ class ViewerAttemptSession {
 
   async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.') {
     const result = await this.probeServerSessionSilently({ force: true });
-    if (result.ok && this.state.serverSession.status === 'ready') {
+    if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
       return { ok: true, result };
     }
     const hasAuthStatus = Number.isFinite(Number(result.error?.status));
@@ -2028,25 +2060,43 @@ class ViewerAttemptSession {
       || authStatus === 401
       || authStatus === 403
     );
-    const authMessage = isExplicitAuthFailure
-      ? 'Sign-in session expired. Please sign in again.'
-      : (result.error?.message || notReadyMessage);
-    this.state.serverActionMessage = authMessage;
-    this.notifyStateChange();
+    const authMessage = isExplicitAuthFailure ? SESSION_EXPIRED_MESSAGE : (result.error?.message || notReadyMessage);
+    this.transitionServerSessionToLoggedOut(authMessage);
     return { ok: false, result };
   }
 
+  async preflightPublishedSession() {
+    const sessionReady = await this.ensureServerSessionReady();
+    if (sessionReady.ok) return sessionReady;
+    this.transitionServerSessionToLoggedOut(SESSION_EXPIRED_MESSAGE);
+    return sessionReady;
+  }
+
   async browsePublishedPackages(query = '', options = {}) {
-    const isAppend = options.append === true;
-    const normalizedQuery = String(query ?? '');
-    const shouldNotifyQueryChange = this.state.publishedQuery !== normalizedQuery;
-    this.state.publishedQuery = normalizedQuery;
-    if (shouldNotifyQueryChange) {
-      this.notifyStateChange();
+    const requestedFilters = typeof query === 'object' && query !== null
+      ? query
+      : { title: query, subject: '', owner: '' };
+    const normalizedFilters = normalizePublishedPackageFilters(requestedFilters);
+    const previousFilters = normalizePublishedPackageFilters(this.state.publishedFilters || {});
+    const filtersChanged = (
+      previousFilters.title !== normalizedFilters.title
+      || previousFilters.subject !== normalizedFilters.subject
+      || previousFilters.owner !== normalizedFilters.owner
+    );
+    const isAppend = options.append === true && !filtersChanged && options.reset !== true;
+
+    this.state.publishedFilters = normalizedFilters;
+    this.state.publishedQuery = normalizedFilters.title;
+    if (filtersChanged || options.reset === true) {
+      this.state.publishedPackages = [];
+      this.state.publishedHasMore = false;
+      this.state.publishedNextOffset = null;
+      this.state.publishedListError = null;
     }
+    this.notifyStateChange();
 
     if (options.preflight !== false) {
-      const sessionReady = await this.ensureServerSessionReady();
+      const sessionReady = await this.preflightPublishedSession();
       if (!sessionReady.ok) return sessionReady.result;
     }
     this.state.isLoadingPublishedPackages = true;
@@ -2054,45 +2104,64 @@ class ViewerAttemptSession {
     const requestOffset = isAppend && Number.isFinite(Number(this.state.publishedNextOffset))
       ? Number(this.state.publishedNextOffset)
       : 0;
-    const result = await this.apiClient.listPublishedPackages({
-      title: normalizedQuery || '',
-      subject: '',
-      owner: '',
-      limit: 20,
+    const filters = normalizePublishedPackageFilters(normalizedFilters);
+    const pagination = normalizePaginationState({
+      limit: DEFAULT_PUBLISHED_PACKAGE_LIMIT,
       offset: requestOffset,
+    });
+    const result = await fetchPublishedPackagesPage({
+      apiClient: this.apiClient,
+      filters,
+      pagination,
     });
     this.state.isLoadingPublishedPackages = false;
     if (!result.ok) {
       this.state.serverActionMessage = result.error.message;
+      this.state.publishedListError = result.error.message;
       this.notifyStateChange();
       return result;
     }
     const nextItems = Array.isArray(result.data?.items) ? result.data.items : [];
-    this.state.publishedPackages = isAppend
-      ? [...this.state.publishedPackages, ...nextItems]
-      : nextItems;
+    this.state.publishedPackages = mergePublishedPackageRows({
+      existingRows: this.state.publishedPackages,
+      incomingRows: nextItems,
+      append: isAppend,
+    });
     this.state.publishedHasMore = result.data?.hasMore === true;
     this.state.publishedNextOffset = Number.isFinite(Number(result.data?.nextOffset))
       ? Number(result.data.nextOffset)
       : null;
+    this.state.publishedListError = null;
     this.state.serverActionMessage = null;
     this.notifyStateChange();
     return result;
   }
 
   async startFromPublishedPackage(publishedPackageId) {
-    const sessionReady = await this.ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-    const artifact = await this.apiClient.fetchPublishedPackageArtifact(publishedPackageId);
-    if (!artifact.ok) {
-      this.state.serverActionMessage = artifact.error.message;
-      this.notifyStateChange();
-      return artifact;
+    const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
+    if (!normalizedPublishedPackageId) {
+      return { ok: false, error: { message: 'Published package ID is required.' } };
     }
-    const started = await this.startImportedWorksheetFromPackageFile(artifact.data);
-    this.state.serverActionMessage = `Imported published package ${publishedPackageId} into local viewer runtime.`;
-    this.notifyStateChange();
-    return { ok: true, data: started };
+    if (this._openingPublishedPackageIds.has(normalizedPublishedPackageId)) {
+      return { ok: false, skipped: true, error: { message: `Open already in progress for ${normalizedPublishedPackageId}.` } };
+    }
+    this._openingPublishedPackageIds.add(normalizedPublishedPackageId);
+    try {
+      const sessionReady = await this.preflightPublishedSession();
+      if (!sessionReady.ok) return sessionReady.result;
+      const artifact = await this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId);
+      if (!artifact.ok) {
+        this.state.serverActionMessage = artifact.error.message;
+        this.notifyStateChange();
+        return artifact;
+      }
+      const started = await this.startImportedWorksheetFromPackageFile(artifact.data);
+      this.state.serverActionMessage = `Imported published package ${normalizedPublishedPackageId} into local viewer runtime.`;
+      this.notifyStateChange();
+      return { ok: true, data: started };
+    } finally {
+      this._openingPublishedPackageIds.delete(normalizedPublishedPackageId);
+    }
   }
 
   persistResumeMetadata() {
@@ -3313,26 +3382,40 @@ function renderViewerStartPanel(session, options = {}) {
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.className = 'viewer-start-btn';
-  signInBtn.textContent = 'Sign in for server features';
+  signInBtn.textContent = 'Log in to view published online worksheet';
   const browseBtn = document.createElement('button');
   browseBtn.type = 'button';
   browseBtn.className = 'viewer-start-btn';
   browseBtn.textContent = 'Browse published packages';
   const loadMoreBtn = document.createElement('button');
   loadMoreBtn.type = 'button';
-  loadMoreBtn.className = 'viewer-start-btn';
+  loadMoreBtn.className = 'viewer-start-btn viewer-load-more-btn';
   loadMoreBtn.textContent = 'Load more';
   loadMoreBtn.hidden = true;
-  const searchInput = document.createElement('input');
-  searchInput.type = 'search';
-  searchInput.placeholder = 'Search published title';
-  searchInput.className = 'viewer-details-form__input';
+  const filterRow = document.createElement('div');
+  filterRow.className = 'viewer-start-actions viewer-published-filters';
+  const publishedHeading = document.createElement('h2');
+  publishedHeading.className = 'viewer-published-heading';
+  publishedHeading.textContent = 'Published Packages';
+  const titleFilterInput = document.createElement('input');
+  titleFilterInput.type = 'search';
+  titleFilterInput.placeholder = 'Filter by title';
+  titleFilterInput.className = 'viewer-details-form__input';
+  const subjectFilterInput = document.createElement('input');
+  subjectFilterInput.type = 'search';
+  subjectFilterInput.placeholder = 'Filter by subject';
+  subjectFilterInput.className = 'viewer-details-form__input';
+  const ownerFilterInput = document.createElement('input');
+  ownerFilterInput.type = 'search';
+  ownerFilterInput.placeholder = 'Filter by owner';
+  ownerFilterInput.className = 'viewer-details-form__input';
+  filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput);
   const sessionStatus = document.createElement('p');
   sessionStatus.className = 'muted';
   const serverStatus = document.createElement('p');
   serverStatus.className = 'muted';
   const publishedList = document.createElement('div');
-  publishedList.className = 'muted';
+  publishedList.className = 'muted viewer-published-list';
 
   const packageFileInput = document.createElement('input');
   packageFileInput.type = 'file';
@@ -3411,12 +3494,35 @@ function renderViewerStartPanel(session, options = {}) {
     session.beginServerSignIn();
     renderServerControls();
   });
+  const scheduleDebouncedBrowse = (() => {
+    let debounceTimer = null;
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        await session.browsePublishedPackages({
+          title: titleFilterInput.value,
+          subject: subjectFilterInput.value,
+          owner: ownerFilterInput.value,
+        });
+        renderServerControls();
+      }, 300);
+    };
+  })();
   browseBtn.addEventListener('click', async () => {
-    await session.browsePublishedPackages(searchInput.value.trim());
+    await session.browsePublishedPackages({
+      title: titleFilterInput.value,
+      subject: subjectFilterInput.value,
+      owner: ownerFilterInput.value,
+    });
     renderServerControls();
   });
+  [titleFilterInput, subjectFilterInput, ownerFilterInput].forEach((input) => {
+    input.addEventListener('input', () => {
+      scheduleDebouncedBrowse();
+    });
+  });
   loadMoreBtn.addEventListener('click', async () => {
-    await session.browsePublishedPackages(session.state.publishedQuery || '', { append: true });
+    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });
     renderServerControls();
   });
 
@@ -3436,22 +3542,47 @@ function renderViewerStartPanel(session, options = {}) {
   }
 
   function renderServerControls() {
-    const sessionState = session.state.serverSession?.status || 'checking';
+    const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const isLoggedOut = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_OUT;
     const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
-    if (sessionState === 'ready') {
+    if (isLoggedIn) {
       sessionStatus.textContent = `Server session: ready (${userLabel})`;
-    } else if (sessionState === 'checking') {
+    } else if (isChecking) {
       sessionStatus.textContent = 'Server session: checking…';
     } else {
-      sessionStatus.textContent = `Server session: not ready. ${session.state.serverSession?.error || 'Sign in for server features.'}`;
+      sessionStatus.textContent = `Server session: logged out. ${session.state.serverSession?.error || 'Log in to view published online worksheet.'}`;
     }
-    signInBtn.hidden = sessionState === 'ready';
-    browseBtn.disabled = sessionState !== 'ready' || session.state.isLoadingPublishedPackages;
-    loadMoreBtn.hidden = !session.state.publishedHasMore;
-    loadMoreBtn.disabled = sessionState !== 'ready' || session.state.isLoadingPublishedPackages;
+    signInBtn.hidden = isLoggedIn;
+    signInBtn.disabled = isChecking;
+    browseBtn.hidden = isLoggedOut;
+    browseBtn.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages;
+    publishedHeading.hidden = isLoggedOut;
+    filterRow.hidden = isLoggedOut;
+    titleFilterInput.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages;
+    subjectFilterInput.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages;
+    ownerFilterInput.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages;
+    const activeFilters = session.state.publishedFilters || {};
+    if (document.activeElement !== titleFilterInput) titleFilterInput.value = String(activeFilters.title || '');
+    if (document.activeElement !== subjectFilterInput) subjectFilterInput.value = String(activeFilters.subject || '');
+    if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
+    loadMoreBtn.hidden = isLoggedOut || !session.state.publishedHasMore;
+    loadMoreBtn.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
     serverStatus.textContent = session.state.serverActionMessage || '';
     publishedList.innerHTML = '';
+    publishedList.hidden = isLoggedOut;
+    if (isLoggedOut) {
+      return;
+    }
     const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];
+    if (session.state.publishedListError) {
+      const error = document.createElement('p');
+      error.className = 'control-error';
+      error.textContent = session.state.publishedListError;
+      publishedList.appendChild(error);
+      return;
+    }
     if (publishedItems.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'muted';
@@ -3461,19 +3592,29 @@ function renderViewerStartPanel(session, options = {}) {
     }
     publishedItems.forEach((item) => {
       const row = document.createElement('div');
-      row.className = 'viewer-start-actions';
-      const meta = document.createElement('span');
-      meta.className = 'muted';
-      meta.textContent = `${item.title || 'Untitled'} · ${item.published_package_id}`;
+      row.className = 'viewer-published-row';
+      const meta = document.createElement('div');
+      meta.className = 'muted viewer-published-meta';
+      const publishedAtLabel = item.published_at ? formatTimestampForDisplay(item.published_at) : 'unknown time';
+      const ownerLabel = item.owner_email || item.owner_name || item.owner_sub || '—';
+      meta.textContent = `Title: ${item.title || 'Untitled'} · Subject: ${item.subject || '—'} · Owner: ${ownerLabel} · Published: ${publishedAtLabel}`;
+      if (item.published_package_id) {
+        const idLine = document.createElement('div');
+        idLine.className = 'muted viewer-published-id';
+        idLine.textContent = `Publish ID: ${item.published_package_id}`;
+        row.append(meta, idLine);
+      } else {
+        row.append(meta);
+      }
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
-      openBtn.className = 'viewer-start-btn';
+      openBtn.className = 'viewer-start-btn viewer-published-open-btn';
       openBtn.textContent = 'Open package';
-      openBtn.disabled = sessionState !== 'ready';
+      openBtn.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages;
       openBtn.addEventListener('click', async () => {
         await openPublishedPackage(item.published_package_id);
       });
-      row.append(meta, openBtn);
+      row.append(openBtn);
       publishedList.appendChild(row);
     });
   }
@@ -3483,7 +3624,7 @@ function renderViewerStartPanel(session, options = {}) {
     panel.append(resumeCard);
   }
   serverActions.append(signInBtn, browseBtn, loadMoreBtn);
-  panel.append(importActions, sessionStatus, serverActions, searchInput, publishedList, serverStatus, packageFileInput, errorMessage);
+  panel.append(importActions, sessionStatus, serverActions, publishedHeading, filterRow, publishedList, serverStatus, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
@@ -3515,7 +3656,7 @@ async function bootstrapViewer() {
 
   session.authGate = authGate;
   await session.refreshServerSession();
-  if (session.state.serverSession.status === 'ready') {
+  if (session.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
     await session.browsePublishedPackages('');
   }
 

@@ -73,6 +73,28 @@ async function loadViewerModule(overrides = {}) {
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
       fetchPublishedPackageArtifact: async () => ({ ok: false, error: { message: 'not configured' } }),
     })),
+    DEFAULT_PUBLISHED_PACKAGE_LIMIT: overrides.DEFAULT_PUBLISHED_PACKAGE_LIMIT || 20,
+    normalizePublishedPackageFilters: overrides.normalizePublishedPackageFilters || ((filters = {}) => ({
+      title: String(filters?.title ?? ''),
+      subject: String(filters?.subject ?? ''),
+      owner: String(filters?.owner ?? ''),
+    })),
+    normalizePaginationState: overrides.normalizePaginationState || ((pagination = {}) => ({
+      limit: Number.isFinite(Number(pagination?.limit)) ? Number(pagination.limit) : 20,
+      offset: Number.isFinite(Number(pagination?.offset)) ? Number(pagination.offset) : 0,
+    })),
+    fetchPublishedPackagesPage: overrides.fetchPublishedPackagesPage || (async ({ apiClient, filters = {}, pagination = {} }) => (
+      apiClient.listPublishedPackages({
+        title: String(filters?.title ?? ''),
+        subject: String(filters?.subject ?? ''),
+        owner: String(filters?.owner ?? ''),
+        limit: Number.isFinite(Number(pagination?.limit)) ? Number(pagination.limit) : 20,
+        offset: Number.isFinite(Number(pagination?.offset)) ? Number(pagination.offset) : 0,
+      })
+    )),
+    mergePublishedPackageRows: overrides.mergePublishedPackageRows || (({ existingRows = [], incomingRows = [], append = false } = {}) => (
+      append ? [...existingRows, ...incomingRows] : incomingRows
+    )),
     mapLegacyJsonToPackageModel: overrides.mapLegacyJsonToPackageModel || ((value) => {
       if (!value || typeof value !== 'object' || !Array.isArray(value.blocks) || value.blocks.length === 0) {
         throw new Error('Imported worksheet must have a non-empty blocks array.');
@@ -121,6 +143,11 @@ async function loadViewerModule(overrides = {}) {
       name: 'replace createServerApiClient import with test bag binding',
       pattern: /import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];/,
       replacement: 'const createServerApiClient = __testBag.createServerApiClient;',
+    },
+    {
+      name: 'replace published package service imports with test bag bindings',
+      pattern: /import\s*\{\s*DEFAULT_PUBLISHED_PACKAGE_LIMIT\s*,\s*fetchPublishedPackagesPage\s*,\s*mergePublishedPackageRows\s*,\s*normalizePaginationState\s*,\s*normalizePublishedPackageFilters\s*,\s*\}\s*from\s*['"]\.\.\/app\/api\/published-packages-service\.js['"];/,
+      replacement: 'const DEFAULT_PUBLISHED_PACKAGE_LIMIT = __testBag.DEFAULT_PUBLISHED_PACKAGE_LIMIT;\nconst fetchPublishedPackagesPage = __testBag.fetchPublishedPackagesPage;\nconst mergePublishedPackageRows = __testBag.mergePublishedPackageRows;\nconst normalizePaginationState = __testBag.normalizePaginationState;\nconst normalizePublishedPackageFilters = __testBag.normalizePublishedPackageFilters;',
     },
     {
       name: 'reroute renderViewerShell side effect',
@@ -191,7 +218,7 @@ test('viewer beginServerSignIn completes via shared popup flow and re-browses pa
   });
   session.beginServerSignIn();
   await new Promise((resolve) => setTimeout(resolve, 25));
-  assert.equal(session.state.serverSession.status, 'ready');
+  assert.equal(session.state.serverSession.status, 'logged_in');
   assert.deepEqual(session.state.publishedPackages, []);
 });
 
@@ -256,7 +283,7 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
   assert.equal(openedPopupUrl.includes('authFlowId='), true);
   await new Promise((resolve) => setTimeout(resolve, 40));
 
-  assert.equal(session.state.serverSession.status, 'ready');
+  assert.equal(session.state.serverSession.status, 'logged_in');
   assert.equal(session.state.serverActionMessage, null);
   assert.equal(session._activeAuthFlowId, null);
 });
@@ -269,7 +296,7 @@ test('viewer silent session probe updates readiness without forcing visible chec
       getSession: async () => ({ ok: false, error: { message: 'auth required', requiresSignIn: true } }),
     },
   });
-  session.state.serverSession = { status: 'ready', user: { email: 'learner@example.test' }, error: null };
+  session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' }, error: null };
   session.setOnStateChange((state) => {
     statuses.push(state.serverSession.status);
   });
@@ -277,7 +304,7 @@ test('viewer silent session probe updates readiness without forcing visible chec
   await session.probeServerSessionSilently();
 
   assert.equal(statuses.includes('checking'), false);
-  assert.equal(session.state.serverSession.status, 'not_ready');
+  assert.equal(session.state.serverSession.status, 'logged_out');
 });
 
 test('viewer popup fallback polling uses silent session probe path', async () => {
@@ -302,7 +329,7 @@ test('viewer popup fallback polling uses silent session probe path', async () =>
   };
   session.probeServerSessionSilently = async () => {
     silentProbeCalls += 1;
-    session.state.serverSession = { status: 'ready', user: { email: 'learner@example.test' }, error: null };
+    session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' }, error: null };
     return { ok: true, data: { user: { email: 'learner@example.test' } } };
   };
 
@@ -332,10 +359,10 @@ test('viewer browse action runs silent session preflight and blocks when session
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'Sign-in session expired. Please sign in again.');
+  assert.equal(session.state.serverActionMessage, 'Session expired. Please log in again.');
 });
 
-test('viewer browse preflight surfaces transient server/non-auth errors without expired-session copy', async () => {
+test('viewer browse preflight transitions to expired-session copy for invalid session responses', async () => {
   const calls = [];
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({}, {
@@ -363,7 +390,7 @@ test('viewer browse preflight surfaces transient server/non-auth errors without 
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'Server returned an unexpected non-JSON response.');
+  assert.equal(session.state.serverActionMessage, 'Session expired. Please log in again.');
 });
 
 
@@ -426,6 +453,7 @@ test('viewer browse append mode uses nextOffset and appends results', async () =
   });
   session.state.publishedPackages = [{ published_package_id: 'p1', title: 'Pack 1' }];
   session.state.publishedQuery = 'math';
+  session.state.publishedFilters = { title: 'math', subject: '', owner: '' };
   session.state.publishedNextOffset = 20;
 
   const result = await session.browsePublishedPackages('math', { preflight: false, append: true });
@@ -660,12 +688,20 @@ test('normalizeViewerBlock preserves non-canonical plain_text/short_text inputTy
   assert.equal(Object.hasOwn(short.responseConfig, 'displayMode'), false);
 });
 
-test('viewer start panel includes session-ready published browse integration', async () => {
+test('viewer start panel includes logged_out/checking/logged_in server-state render rules', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('await session.refreshServerSession();'), true);
   assert.equal(source.includes('await session.browsePublishedPackages'), true);
+  assert.equal(source.includes("LOGGED_OUT: 'logged_out'"), true);
+  assert.equal(source.includes("CHECKING: 'checking'"), true);
+  assert.equal(source.includes("LOGGED_IN: 'logged_in'"), true);
+  assert.equal(source.includes("signInBtn.textContent = 'Log in to view published online worksheet';"), true);
+  assert.equal(source.includes('browseBtn.hidden = isLoggedOut;'), true);
+  assert.equal(source.includes('publishedList.hidden = isLoggedOut;'), true);
+  assert.equal(source.includes('signInBtn.disabled = isChecking;'), true);
+  assert.equal(source.includes("const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';"), true);
   assert.equal(source.includes("loadMoreBtn.textContent = 'Load more';"), true);
-  assert.equal(source.includes("await session.browsePublishedPackages(session.state.publishedQuery || '', { append: true });"), true);
+  assert.equal(source.includes("await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });"), true);
   assert.equal(source.includes('await session.startFromPublishedPackage'), true);
 });
 
