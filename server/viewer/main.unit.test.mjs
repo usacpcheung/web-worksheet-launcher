@@ -157,7 +157,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, buildTechnicalDetailsRows, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, buildTechnicalDetailsRows, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -247,6 +247,157 @@ test('viewer beginServerSignIn shows popup blocked message when popup cannot ope
     session.state.serverActionMessage,
     'Sign-in popup was blocked. Allow popups for this site, then try again.'
   );
+});
+
+test('buildWorksheetPrintReportModel formats answers, grading, and question images for print', async () => {
+  const mod = await loadViewerModule();
+  const viewerPayload = {
+    title: 'Practice Worksheet',
+    blocks: [
+      {
+        blockId: 'q_text',
+        kind: 'question',
+        position: 0,
+        prompt: {
+          text: 'Explain the pattern.',
+          mediaRefs: [
+            { usage: 'question_audio', assetId: 'audio_should_be_ignored' },
+            { usage: 'question_image', assetId: 'img_1' },
+          ],
+        },
+        responseConfig: { inputType: 'text' },
+      },
+      {
+        blockId: 'q_multi',
+        kind: 'question',
+        position: 1,
+        prompt: { text: 'Choose all prime numbers.' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          selectionMode: 'multi',
+          options: [
+            { id: 'opt_a', value: '2', label: 'Two', mediaRefs: [{ usage: 'option_audio', assetId: 'opt_audio_1' }] },
+            { id: 'opt_b', value: '4', label: 'Four' },
+            { id: 'opt_c', value: '5', label: 'Five' },
+          ],
+          correctAnswer: ['2', '5'],
+        },
+      },
+      {
+        blockId: 'q_bool',
+        kind: 'question',
+        position: 2,
+        prompt: { text: 'The sun rises in the east.' },
+        responseConfig: {
+          inputType: 'boolean',
+          correctAnswer: true,
+        },
+      },
+    ],
+  };
+
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload,
+    answers: {
+      q_text: { value: 'It increases by 2 each line.' },
+      q_multi: { value: ['5', '2'] },
+      q_bool: { value: false },
+    },
+    studentName: 'Ada Lovelace',
+    completedAt: '2026-04-14T10:15:00Z',
+    checkResult: {
+      correctCount: 1,
+      totalQuestions: 2,
+      statusByBlockId: {
+        q_multi: 'correct',
+        q_bool: 'incorrect',
+      },
+    },
+    storage: {
+      localAssets: {
+        get: async (assetId) => assetId === 'img_1'
+          ? { binary: new Uint8Array([137, 80, 78, 71]), metadata: { mimeType: 'image/png' } }
+          : null,
+      },
+    },
+  });
+
+  assert.equal(report.title, 'Practice Worksheet');
+  assert.equal(report.studentName, 'Ada Lovelace');
+  assert.equal(report.checkedSummary, 'Checked 1/2 correct');
+  assert.equal(report.questions.length, 3);
+  assert.equal(report.questions[0].answerText, 'It increases by 2 each line.');
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/png;base64,/);
+  assert.equal(report.questions[1].answerText, 'Two\nFive');
+  assert.equal(report.questions[1].result.label, 'Correct');
+  assert.equal(report.questions[2].result.label, 'Incorrect');
+  assert.equal(report.questions[2].result.detail, 'Correct answer: True');
+});
+
+test('buildWorksheetPrintReportHtml omits empty student row and renders missing image note', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Describe the image.', mediaRefs: [{ usage: 'question_image', assetId: 'missing_img' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    answers: {},
+    studentName: '',
+    completedAt: '2026-04-14T10:15:00Z',
+    storage: {
+      localAssets: {
+        get: async () => null,
+      },
+    },
+  });
+
+  const html = mod.buildWorksheetPrintReportHtml(report);
+  assert.equal(html.includes('>Student<'), false);
+  assert.equal(html.includes('Question image unavailable.'), true);
+  assert.equal(html.includes('No answer submitted'), true);
+});
+
+test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
+  const mod = await loadViewerModule();
+  const result = await mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1' },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {},
+    },
+    openWindow: () => null,
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    message: 'Print window was blocked. Allow popups for this site, then try again.',
+  });
 });
 
 test('viewer beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
@@ -2740,7 +2891,7 @@ test('renderViewerStartPanel orders controls as import then auth row then single
   assert.equal(importRow.children[0].textContent, 'Import worksheet package (.zip)');
   assert.equal(authRow.className, 'viewer-start-actions');
   assert.equal(authRow.children[0].textContent, 'Log in to view published online worksheet');
-  assert.equal(statusLine.className, 'muted');
+  assert.equal(statusLine.className, 'muted viewer-session-status');
   assert.equal(statusLine.textContent.includes('Server session:'), true);
 });
 
