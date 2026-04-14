@@ -2585,12 +2585,15 @@ test('renderViewerStartPanel hides published controls when server session is log
   const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
   const filterRow = findNodeByClass(panel, 'viewer-published-filters');
   const publishedList = findNodeByClass(panel, 'viewer-published-list');
+  const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
 
   assert.equal(signInBtn.hidden, false);
   assert.equal(browseBtn.hidden, true);
   assert.equal(publishedHeading.hidden, true);
   assert.equal(filterRow.hidden, true);
   assert.equal(publishedList.hidden, true);
+  assert.equal(searchInputs.length, 3);
+  searchInputs.forEach((input) => assert.equal(input.hidden, true));
 });
 
 test('renderViewerStartPanel shows published controls only when server session is logged in', { concurrency: false }, async () => {
@@ -2626,12 +2629,15 @@ test('renderViewerStartPanel shows published controls only when server session i
   const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
   const filterRow = findNodeByClass(panel, 'viewer-published-filters');
   const publishedList = findNodeByClass(panel, 'viewer-published-list');
+  const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
 
   assert.equal(signInBtn.hidden, true);
   assert.equal(browseBtn.hidden, false);
   assert.equal(publishedHeading.hidden, false);
   assert.equal(filterRow.hidden, false);
   assert.equal(publishedList.hidden, false);
+  assert.equal(searchInputs.length, 3);
+  searchInputs.forEach((input) => assert.equal(input.hidden, false));
 });
 
 test('renderViewerStartPanel treats unknown server state as not logged in for published controls', { concurrency: false }, async () => {
