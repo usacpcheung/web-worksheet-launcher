@@ -128,6 +128,24 @@ function formatTimestampForDisplay(timestamp) {
   });
 }
 
+function formatTimestampForReportHeader(timestamp) {
+  if (typeof timestamp !== 'string' || !timestamp.trim()) {
+    return '';
+  }
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp;
+  }
+  return parsed.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
 function createLocalId(prefix = 'local') {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}_${crypto.randomUUID()}`;
@@ -950,6 +968,694 @@ function computeAnswerSummary(viewerPayload, answers) {
   return { answered, total: questions.length };
 }
 
+function getQuestionBlocksInOrder(viewerPayload) {
+  return Array.isArray(viewerPayload?.blocks)
+    ? viewerPayload.blocks
+      .filter((block) => block?.kind === 'question')
+      .sort((a, b) => a.position - b.position)
+    : [];
+}
+
+function getQuestionImageRefForPrint(block) {
+  const promptMediaRefs = normalizePromptMediaRefs(block?.prompt?.mediaRefs);
+  return promptMediaRefs.find((ref) => ref.usage === 'question_image') || null;
+}
+
+function getOptionLabelByValue(block, rawValue) {
+  const options = Array.isArray(block?.responseConfig?.options)
+    ? block.responseConfig.options
+    : [];
+  const normalizedValue = String(rawValue ?? '');
+  const matched = options.find((option) => String(option?.value ?? option?.label ?? '') === normalizedValue);
+  return matched ? String(matched.label ?? matched.value ?? normalizedValue) : normalizedValue;
+}
+
+function formatAnswerValueForPrint(block, rawValue) {
+  const inputType = block?.responseConfig?.inputType || 'text';
+  if (inputType === 'multiple_choice') {
+    const selectionMode = block?.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
+    if (selectionMode === 'multi') {
+      const normalizedValues = Array.isArray(rawValue)
+        ? rawValue.map((value) => String(value))
+        : [];
+      if (normalizedValues.length === 0) {
+        return 'No answer submitted';
+      }
+      const options = Array.isArray(block?.responseConfig?.options)
+        ? block.responseConfig.options
+        : [];
+      const optionOrder = options.map((option) => String(option?.value ?? option?.label ?? ''));
+      const orderedValues = optionOrder.filter((value) => normalizedValues.includes(value));
+      const remainingValues = normalizedValues.filter((value) => !orderedValues.includes(value));
+      return [...orderedValues, ...remainingValues]
+        .map((value) => getOptionLabelByValue(block, value))
+        .join('\n');
+    }
+
+    if (rawValue === null || rawValue === undefined || String(rawValue).trim() === '') {
+      return 'No answer submitted';
+    }
+    return getOptionLabelByValue(block, rawValue);
+  }
+
+  if (inputType === 'boolean') {
+    const normalized = coerceAnswerValueByInputType('boolean', rawValue);
+    if (normalized === true) return 'True';
+    if (normalized === false) return 'False';
+    return 'No answer submitted';
+  }
+
+  if (inputType === 'number') {
+    if (rawValue === '' || rawValue === null || rawValue === undefined) {
+      return 'No answer submitted';
+    }
+    return String(rawValue);
+  }
+
+  const textValue = String(rawValue ?? '');
+  return textValue.trim() ? textValue : 'No answer submitted';
+}
+
+function formatCorrectAnswerForPrint(block) {
+  const inputType = block?.responseConfig?.inputType || 'text';
+  const correctAnswer = block?.responseConfig?.correctAnswer;
+
+  if (inputType === 'multiple_choice') {
+    const selectionMode = block?.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
+    if (selectionMode === 'multi') {
+      const normalizedValues = Array.isArray(correctAnswer)
+        ? correctAnswer.map((value) => String(value))
+        : [];
+      return normalizedValues.length > 0
+        ? normalizedValues.map((value) => getOptionLabelByValue(block, value)).join('\n')
+        : '';
+    }
+    return typeof correctAnswer === 'string' && correctAnswer.trim()
+      ? getOptionLabelByValue(block, correctAnswer)
+      : '';
+  }
+
+  if (inputType === 'boolean') {
+    const normalized = coerceAnswerValueByInputType('boolean', correctAnswer);
+    if (normalized === true) return 'True';
+    if (normalized === false) return 'False';
+    return '';
+  }
+
+  if (inputType === 'number') {
+    return correctAnswer === '' || correctAnswer === null || correctAnswer === undefined
+      ? ''
+      : String(correctAnswer);
+  }
+
+  return '';
+}
+
+function buildPrintQuestionResult(block, checkResult) {
+  if (!checkResult) {
+    return null;
+  }
+
+  const status = checkResult?.statusByBlockId?.[block?.blockId] || null;
+  if (!status) {
+    return null;
+  }
+
+  if (status === 'correct') {
+    return {
+      status,
+      label: 'Correct',
+      detail: '',
+    };
+  }
+
+  if (status === 'incorrect') {
+    const correctAnswerText = formatCorrectAnswerForPrint(block);
+    return {
+      status,
+      label: 'Incorrect',
+      detail: correctAnswerText ? `Correct answer: ${correctAnswerText}` : '',
+    };
+  }
+
+  return {
+    status,
+    label: 'Not graded',
+    detail: '',
+  };
+}
+
+function classifyPrintQuestionLayout(question) {
+  const promptText = String(question?.promptText || '');
+  const answerText = String(question?.answerText || '');
+  const resultDetail = String(question?.result?.detail || '');
+  const hasImage = question?.image?.status === 'ready';
+  const combinedText = [promptText, answerText, resultDetail].join('\n');
+  const lineCount = combinedText.split(/\r?\n/).length;
+  const answerLineBreaks = (answerText.match(/\n/g) || []).length;
+  const estimatedBlockChars = promptText.length + answerText.length + resultDetail.length;
+  const hasVisibleResultDetail = resultDetail.trim().length > 0;
+
+  if (
+    estimatedBlockChars > 900
+    || lineCount > 18
+    || answerText.length > 450
+    || answerLineBreaks >= 3
+  ) {
+    return 'flow';
+  }
+
+  if (
+    promptText.length > 240
+    || answerText.length > 260
+    || lineCount > 10
+    || (hasImage && estimatedBlockChars > 260)
+    || (hasVisibleResultDetail && estimatedBlockChars > 320)
+  ) {
+    return 'keep-head';
+  }
+
+  return 'keep-all';
+}
+
+function classifyPrintSectionBreakMode({
+  text = '',
+  hasImage = false,
+  lineThreshold = 28,
+  charThreshold = 1200,
+} = {}) {
+  const normalizedText = String(text || '');
+  const lineCount = normalizedText.split(/\r?\n/).length;
+  const effectiveCharThreshold = hasImage ? Math.max(700, charThreshold - 220) : charThreshold;
+  if (normalizedText.length > effectiveCharThreshold || lineCount > lineThreshold) {
+    return 'flow';
+  }
+  return 'keep';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function formatMultilineTextForHtml(value) {
+  return escapeHtml(value).replace(/\r?\n/g, '<br>');
+}
+
+function encodeBytesToBase64(bytes) {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes).toString('base64');
+  }
+
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+const PRINT_IMAGE_MIME_TYPE_ALLOWLIST = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+]);
+
+function normalizePrintImageMimeType(mimeType, fallback = 'image/png') {
+  if (typeof mimeType !== 'string') {
+    return fallback;
+  }
+  const normalized = mimeType.trim().toLowerCase().split(';')[0];
+  if (normalized === 'image/jpg') {
+    return 'image/jpeg';
+  }
+  if (!PRINT_IMAGE_MIME_TYPE_ALLOWLIST.has(normalized)) {
+    return fallback;
+  }
+  return normalized;
+}
+
+function binaryToDataUrl(binary, mimeType = 'image/png') {
+  if (!(binary instanceof Uint8Array) || binary.byteLength === 0) {
+    return null;
+  }
+  const safeMimeType = normalizePrintImageMimeType(mimeType, 'image/png');
+  const encoded = encodeBytesToBase64(binary);
+  return `data:${safeMimeType};base64,${encoded}`;
+}
+
+async function resolvePrintQuestionImage(questionImageRef, storage) {
+  if (!questionImageRef?.assetId || !storage?.localAssets?.get) {
+    return null;
+  }
+
+  try {
+    const asset = await storage.localAssets.get(questionImageRef.assetId);
+    if (!(asset?.binary instanceof Uint8Array) || asset.binary.byteLength === 0) {
+      return {
+        status: 'missing',
+        message: 'Question image unavailable.',
+      };
+    }
+    const mimeType = normalizePrintImageMimeType(asset?.metadata?.mimeType, 'image/png');
+    const src = binaryToDataUrl(asset.binary, mimeType);
+    if (!src) {
+      return {
+        status: 'missing',
+        message: 'Question image unavailable.',
+      };
+    }
+    return {
+      status: 'ready',
+      src,
+      alt: 'Question image',
+    };
+  } catch {
+    return {
+      status: 'missing',
+      message: 'Question image unavailable.',
+    };
+  }
+}
+
+async function buildWorksheetPrintReportModel({
+  viewerPayload,
+  answers = {},
+  studentName = '',
+  completedAt = '',
+  checkResult = null,
+  storage = null,
+} = {}) {
+  const orderedQuestions = getQuestionBlocksInOrder(viewerPayload);
+  const checkedSummary = checkResult
+    ? `Checked ${checkResult.correctCount}/${checkResult.totalQuestions} correct`
+    : '';
+
+  const questions = await Promise.all(orderedQuestions.map(async (block, index) => {
+    const learnerValue = answers?.[block.blockId]?.value;
+    const questionImage = await resolvePrintQuestionImage(getQuestionImageRefForPrint(block), storage);
+    const question = {
+      blockId: block.blockId,
+      questionNumber: index + 1,
+      promptText: String(block?.prompt?.text || '').trim(),
+      answerText: formatAnswerValueForPrint(block, learnerValue),
+      result: buildPrintQuestionResult(block, checkResult),
+      image: questionImage,
+    };
+    const promptSectionMode = classifyPrintSectionBreakMode({
+      text: question.promptText,
+      hasImage: question.image?.status === 'ready',
+      lineThreshold: 20,
+      charThreshold: 850,
+    });
+    const answerSectionMode = classifyPrintSectionBreakMode({
+      text: question.answerText,
+      lineThreshold: 30,
+      charThreshold: 1400,
+    });
+    const checkedAnswerSectionMode = question.result
+      ? classifyPrintSectionBreakMode({
+        text: [question.result.label, question.result.detail || ''].join('\n'),
+        lineThreshold: 22,
+        charThreshold: 1000,
+      })
+      : null;
+    return {
+      ...question,
+      layoutMode: classifyPrintQuestionLayout(question),
+      sectionBreakModes: {
+        prompt: promptSectionMode,
+        answer: answerSectionMode,
+        checkedAnswer: checkedAnswerSectionMode,
+      },
+    };
+  }));
+
+  return {
+    title: String(viewerPayload?.title || 'Worksheet'),
+    studentName: String(studentName || '').trim(),
+    completedAtLabel: formatTimestampForReportHeader(completedAt),
+    checkedSummary,
+    questions,
+  };
+}
+
+function buildWorksheetPrintReportHtml(reportModel) {
+  const studentRow = reportModel.studentName
+    ? `
+      <div class="print-meta-row">
+        <dt>Student</dt>
+        <dd>${escapeHtml(reportModel.studentName)}</dd>
+      </div>
+    `
+    : '';
+  const completedRow = reportModel.completedAtLabel
+    ? `
+      <div class="print-meta-row">
+        <dt>Completed</dt>
+        <dd>${escapeHtml(reportModel.completedAtLabel)}</dd>
+      </div>
+    `
+    : '';
+  const checkedRow = reportModel.checkedSummary
+    ? `
+      <div class="print-meta-row">
+        <dt>Check result</dt>
+        <dd>${escapeHtml(reportModel.checkedSummary)}</dd>
+      </div>
+    `
+    : '';
+
+  const questionsHtml = reportModel.questions.map((question) => {
+    const imageHtml = question.image?.status === 'ready' && question.image?.src
+      ? `
+        <div class="print-question-image-wrap">
+          <img class="print-question-image" src="${escapeHtml(question.image.src)}" alt="${escapeHtml(question.image.alt || 'Question image')}">
+        </div>
+      `
+      : question.image?.status === 'missing'
+        ? `<p class="print-question-media-note">${escapeHtml(question.image.message || 'Question image unavailable.')}</p>`
+        : '';
+
+    const checkedAnswerSectionClass = `print-question-section--${escapeHtml(question.sectionBreakModes?.checkedAnswer || 'keep')}`;
+    const resultHtml = question.result
+      ? `
+        <section class="print-question-section print-question-section--result ${checkedAnswerSectionClass} print-result-${escapeHtml(question.result.status || 'neutral')}">
+          <h3>Checked answer</h3>
+          <p class="print-result-label">${escapeHtml(question.result.label)}</p>
+          ${question.result.detail ? `<p class="print-result-detail">${formatMultilineTextForHtml(question.result.detail)}</p>` : ''}
+        </section>
+      `
+      : '';
+
+    return `
+      <article class="print-question print-question--${escapeHtml(question.layoutMode || 'keep-all')}">
+        <header class="print-question-header">
+          <div class="print-question-number">Question ${question.questionNumber}</div>
+        </header>
+        <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
+          <h3>Question</h3>
+          <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || 'No prompt text provided.')}</p>
+          ${imageHtml}
+        </section>
+        <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
+          <h3>Answer</h3>
+          <p class="print-answer-text">${formatMultilineTextForHtml(question.answerText)}</p>
+        </section>
+        ${resultHtml}
+      </article>
+    `;
+  }).join('');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(reportModel.title)} - Print Report</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 16mm 14mm 18mm 14mm;
+    }
+
+    :root {
+      color-scheme: light;
+      font-family: "Georgia", "Times New Roman", serif;
+      color: #111;
+      background: #fff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: #111;
+      background: #fff;
+      font-size: 11.5pt;
+      line-height: 1.45;
+    }
+
+    .print-report {
+      width: 100%;
+    }
+
+    .print-header {
+      border-bottom: 1px solid #b8bcc4;
+      padding-bottom: 10mm;
+      margin-bottom: 9mm;
+      break-after: avoid;
+    }
+
+    .print-title {
+      margin: 0 0 5mm;
+      font-size: 20pt;
+      line-height: 1.15;
+      font-weight: 700;
+    }
+
+    .print-meta {
+      display: grid;
+      gap: 2.5mm;
+      margin: 0;
+    }
+
+    .print-meta-row {
+      display: grid;
+      grid-template-columns: 32mm 1fr;
+      gap: 4mm;
+    }
+
+    .print-meta-row dt {
+      font-weight: 700;
+    }
+
+    .print-meta-row dd {
+      margin: 0;
+    }
+
+    .print-question {
+      margin: 0 0 9mm;
+      padding: 0 0 4mm;
+      background: transparent;
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
+    .print-question--keep-all,
+    .print-question--keep-head,
+    .print-question--flow {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
+    .print-question-header {
+      break-after: avoid;
+      page-break-after: avoid;
+      margin-bottom: 3mm;
+    }
+
+    .print-question-number {
+      font-size: 13pt;
+      font-weight: 700;
+    }
+
+    .print-question-section {
+      margin-top: 0;
+      padding-top: 0;
+    }
+
+    .print-question-section + .print-question-section {
+      margin-top: 4.5mm;
+      padding-top: 0;
+    }
+
+    .print-question-section--keep {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .print-question-section--flow {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
+    .print-question-section h3 {
+      margin: 0 0 2mm;
+      font-size: 10pt;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #444;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+
+    .print-question-text,
+    .print-answer-text,
+    .print-result-detail,
+    .print-question-media-note,
+    .print-result-label {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .print-question-image-wrap {
+      margin-top: 4mm;
+    }
+
+    .print-question-image {
+      display: block;
+      max-width: 100%;
+      max-height: 60mm;
+      border: 1px solid #d7dbe2;
+      border-radius: 2mm;
+    }
+
+    .print-question-media-note {
+      color: #666;
+      font-style: italic;
+    }
+
+    .print-question-section--result .print-result-label {
+      margin-bottom: 1.5mm;
+    }
+
+    .print-result-correct .print-result-label {
+      font-weight: 700;
+    }
+
+    .print-result-incorrect .print-result-label,
+    .print-result-ungraded_missing_or_invalid_key .print-result-label {
+      font-weight: 700;
+    }
+
+    @media print {
+      body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="print-report">
+    <header class="print-header">
+      <h1 class="print-title">${escapeHtml(reportModel.title)}</h1>
+      <dl class="print-meta">
+        ${studentRow}
+        ${completedRow}
+        ${checkedRow}
+      </dl>
+    </header>
+    ${questionsHtml}
+  </main>
+  <script>
+    (function () {
+      const images = Array.from(document.images || []);
+      const waitForImages = images.length === 0
+        ? Promise.resolve()
+        : Promise.all(images.map((img) => (
+          img.complete
+            ? Promise.resolve()
+            : new Promise((resolve) => {
+              img.addEventListener('load', resolve, { once: true });
+              img.addEventListener('error', resolve, { once: true });
+            })
+        )));
+
+      waitForImages.then(() => {
+        if (typeof window.focus === 'function') {
+          window.focus();
+        }
+        if (typeof window.print === 'function') {
+          window.print();
+        }
+      });
+
+      window.addEventListener('afterprint', () => {
+        if (typeof window.close === 'function') {
+          window.close();
+        }
+      });
+    }());
+  </script>
+</body>
+</html>`;
+}
+
+async function startWorksheetPrintFlow({
+  session,
+  openWindow = (...args) => window.open(...args),
+} = {}) {
+  if (!session?.state?.viewerPayload || session.state.status !== 'completed') {
+    return {
+      ok: false,
+      message: 'Submit the worksheet before printing the report.',
+    };
+  }
+
+  const printWindow = openWindow('', 'worksheet_print_report', 'width=960,height=720,resizable=yes,scrollbars=yes');
+  if (!printWindow || !printWindow.document || typeof printWindow.document.open !== 'function') {
+    return {
+      ok: false,
+      message: 'Print window was blocked. Allow popups for this site, then try again.',
+    };
+  }
+  try {
+    printWindow.opener = null;
+  } catch {
+    // Ignore environments that prevent mutating opener.
+  }
+
+  const reportModel = await buildWorksheetPrintReportModel({
+    viewerPayload: session.state.viewerPayload,
+    answers: session.state.answers,
+    studentName: session.state.studentName,
+    completedAt: session.state.completedAt,
+    checkResult: session.state.checkResult,
+    storage: session.storage,
+  });
+
+  if (
+    printWindow.closed
+    || !printWindow.document
+    || typeof printWindow.document.open !== 'function'
+    || typeof printWindow.document.write !== 'function'
+    || typeof printWindow.document.close !== 'function'
+  ) {
+    return {
+      ok: false,
+      message: 'Print window was closed before the report finished loading. Try printing again.',
+    };
+  }
+
+  const html = buildWorksheetPrintReportHtml(reportModel);
+  try {
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+  } catch {
+    return {
+      ok: false,
+      message: 'Unable to load the print report window. Try printing again.',
+    };
+  }
+  return {
+    ok: true,
+    reportModel,
+  };
+}
+
 function pickAttemptStudentName(attemptRecord) {
   const direct = typeof attemptRecord?.studentName === 'string' ? attemptRecord.studentName.trim() : '';
   if (direct) return direct;
@@ -1174,6 +1880,7 @@ class ViewerAttemptSession {
       lastSavedRevision: 0,
       recoveryMessage: null,
       checkResult: null,
+      utilityMessage: null,
       lastProtectedAction: null,
       serverSession: {
         status: VIEWER_SERVER_SESSION_STATES.CHECKING,
@@ -2254,6 +2961,8 @@ function renderViewerShell(session) {
   answerSummary.className = 'answer-summary';
   const resumeWarning = document.createElement('p');
   resumeWarning.className = 'answer-summary';
+  const utilityFeedback = document.createElement('p');
+  utilityFeedback.className = 'viewer-utility-feedback';
   const status = document.createElement('p');
   let studentName = session.state.studentName || '';
 
@@ -2344,7 +3053,12 @@ function renderViewerShell(session) {
   rewriteAssistBtn.className = 'viewer-utility-menu__item';
   rewriteAssistBtn.setAttribute('role', 'menuitem');
   rewriteAssistBtn.textContent = 'Rewrite Assist (Sign-in required)';
-  utilityMenuList.append(syncResumeBtn, rewriteAssistBtn);
+  const printReportBtn = document.createElement('button');
+  printReportBtn.type = 'button';
+  printReportBtn.className = 'viewer-utility-menu__item';
+  printReportBtn.setAttribute('role', 'menuitem');
+  printReportBtn.textContent = 'Print worksheet report';
+  utilityMenuList.append(syncResumeBtn, rewriteAssistBtn, printReportBtn);
   utilityMenu.append(utilityMenuBtn, utilityMenuList);
   headerActions.append(infoBtn, utilityMenu);
 
@@ -3282,11 +3996,15 @@ function renderViewerShell(session) {
               : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
     resumeWarning.textContent = session.state.recoveryMessage ? `⚠️ ${session.state.recoveryMessage}` : '';
     resumeWarning.hidden = !session.state.recoveryMessage;
+    utilityFeedback.textContent = session.state.utilityMessage ? `⚠️ ${session.state.utilityMessage}` : '';
+    utilityFeedback.hidden = !session.state.utilityMessage;
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     const checkAvailable = session.state.status === 'completed';
     checkBtn.hidden = !checkAvailable;
     checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
+    printReportBtn.hidden = !checkAvailable;
+    printReportBtn.disabled = session.state.isFinalizing || !checkAvailable;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
     const normalizedAttemptStatus = session.state.status
@@ -3325,6 +4043,15 @@ function renderViewerShell(session) {
     await session.triggerProtectedAction('resumeViewerRewriteAfterLogin');
     renderUI();
   });
+  printReportBtn.addEventListener('click', async () => {
+    closeUtilityMenu({ returnFocus: true });
+    session.state.utilityMessage = null;
+    const result = await startWorksheetPrintFlow({ session });
+    if (!result.ok) {
+      session.state.utilityMessage = result.message;
+    }
+    renderUI();
+  });
   window.addEventListener('resize', () => {
     updateStepperFitState();
     if (currentBlockIndex === 0) {
@@ -3335,7 +4062,7 @@ function renderViewerShell(session) {
   nextBtn.addEventListener('click', goNext);
 
   headerTop.append(heading, headerActions);
-  header.append(headerTop, answerSummary, resumeWarning);
+  header.append(headerTop, answerSummary, resumeWarning, utilityFeedback);
   blockSection.append(blockHeading, stepper, blockList);
   shell.append(header, blockSection);
   app.innerHTML = '';
@@ -3819,6 +4546,10 @@ export {
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
+  classifyPrintQuestionLayout,
+  buildWorksheetPrintReportModel,
+  buildWorksheetPrintReportHtml,
+  startWorksheetPrintFlow,
   renderViewerFatalError,
   ViewerBootError,
   VIEWER_BOOT_ERROR_CODES,
