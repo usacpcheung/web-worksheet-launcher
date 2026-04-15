@@ -330,10 +330,72 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   assert.equal(report.questions[0].image.status, 'ready');
   assert.match(report.questions[0].image.src, /^data:image\/png;base64,/);
   assert.equal(report.questions[0].layoutMode, 'keep-all');
+  assert.equal(report.questions[0].sectionBreakModes.prompt, 'keep');
+  assert.equal(report.questions[0].sectionBreakModes.answer, 'keep');
   assert.equal(report.questions[1].answerText, 'Two\nFive');
   assert.equal(report.questions[1].result.label, 'Correct');
   assert.equal(report.questions[2].result.label, 'Incorrect');
   assert.equal(report.questions[2].result.detail, 'Correct answer: True');
+  assert.equal(report.questions[2].sectionBreakModes.checkedAnswer, 'keep');
+});
+
+test('buildWorksheetPrintReportModel normalizes unsafe image mime types for data urls', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Prompt', mediaRefs: [{ usage: 'question_image', assetId: 'img_unsafe' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    storage: {
+      localAssets: {
+        get: async () => ({
+          binary: new Uint8Array([137, 80, 78, 71]),
+          metadata: { mimeType: 'image/png" onerror="alert(1)' },
+        }),
+      },
+    },
+  });
+
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/png;base64,/);
+  assert.equal(report.questions[0].image.src.includes('onerror='), false);
+});
+
+test('buildWorksheetPrintReportModel normalizes image/jpg to image/jpeg for print data urls', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Prompt', mediaRefs: [{ usage: 'question_image', assetId: 'img_jpg' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    storage: {
+      localAssets: {
+        get: async () => ({
+          binary: new Uint8Array([255, 216, 255, 224]),
+          metadata: { mimeType: 'image/jpg' },
+        }),
+      },
+    },
+  });
+
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/jpeg;base64,/);
 });
 
 test('classifyPrintQuestionLayout uses keep-all, keep-head, and flow thresholds conservatively', async () => {
@@ -414,6 +476,7 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
         result: null,
         image: null,
         layoutMode: 'keep-all',
+        sectionBreakModes: { prompt: 'keep', answer: 'keep', checkedAnswer: null },
       },
       {
         questionNumber: 2,
@@ -422,6 +485,7 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
         result: null,
         image: null,
         layoutMode: 'keep-head',
+        sectionBreakModes: { prompt: 'keep', answer: 'flow', checkedAnswer: null },
       },
       {
         questionNumber: 3,
@@ -430,6 +494,7 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
         result: { status: 'incorrect', label: 'Incorrect', detail: 'Correct answer: Example' },
         image: null,
         layoutMode: 'flow',
+        sectionBreakModes: { prompt: 'flow', answer: 'flow', checkedAnswer: 'keep' },
       },
     ],
   });
@@ -440,9 +505,67 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(html.includes('print-question-section--prompt'), true);
   assert.equal(html.includes('print-question-section--answer'), true);
   assert.equal(html.includes('print-question-section--result'), true);
+  assert.equal(html.includes('print-question-section--keep'), true);
+  assert.equal(html.includes('print-question-section--flow'), true);
+  assert.equal(html.includes('>Question<'), true);
+  assert.equal(html.includes('>Checked answer<'), true);
+  assert.equal(html.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
   assert.equal(html.includes('border-radius: 3mm;'), false);
   assert.equal(html.includes('border-top: 1px solid #eceff3;'), false);
   assert.equal(html.includes('border-bottom: 1px solid #dde2e8;'), false);
+});
+
+test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
+  const mod = await loadViewerModule();
+  const html = mod.buildWorksheetPrintReportHtml({
+    title: 'Worksheet',
+    studentName: '',
+    completedAtLabel: '',
+    checkedSummary: '',
+    questions: [
+      {
+        questionNumber: 1,
+        promptText: 'Prompt',
+        answerText: 'Answer',
+        result: null,
+        image: { status: 'ready', src: 'data:image/png;base64,abc" onerror="alert(1)', alt: 'Question image' },
+        layoutMode: 'keep-all',
+        sectionBreakModes: { prompt: 'keep', answer: 'keep', checkedAnswer: null },
+      },
+    ],
+  });
+  assert.equal(html.includes('onerror="alert(1)"'), false);
+  assert.equal(html.includes('&quot; onerror=&quot;alert(1)'), true);
+});
+
+test('buildWorksheetPrintReportModel marks oversized sections as flow to allow internal page breaks', async () => {
+  const mod = await loadViewerModule();
+  const longPrompt = `Prompt line\n`.repeat(90);
+  const longAnswer = `Answer line\n`.repeat(110);
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: longPrompt },
+          responseConfig: { inputType: 'text', correctAnswer: 'expected answer' },
+        },
+      ],
+    },
+    answers: { q1: { value: longAnswer } },
+    checkResult: {
+      correctCount: 0,
+      totalQuestions: 1,
+      statusByBlockId: { q1: 'incorrect' },
+    },
+  });
+
+  assert.equal(report.questions[0].sectionBreakModes.prompt, 'flow');
+  assert.equal(report.questions[0].sectionBreakModes.answer, 'flow');
+  assert.equal(report.questions[0].sectionBreakModes.checkedAnswer, 'keep');
 });
 
 test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
@@ -476,6 +599,124 @@ test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
   assert.deepEqual(result, {
     ok: false,
     message: 'Print window was blocked. Allow popups for this site, then try again.',
+  });
+});
+
+test('startWorksheetPrintFlow opens popup synchronously before async model work', async () => {
+  const mod = await loadViewerModule();
+  let openCalled = false;
+  let openerCleared = false;
+  let resolveGet;
+  const storageGetPromise = new Promise((resolve) => {
+    resolveGet = resolve;
+  });
+  const flowPromise = mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {
+        localAssets: {
+          get: async () => storageGetPromise,
+        },
+      },
+    },
+    openWindow: () => {
+      openCalled = true;
+      const popup = {
+        opener: { some: 'parent' },
+        document: {
+          open: () => {},
+          write: () => {},
+          close: () => {},
+        },
+      };
+      Object.defineProperty(popup, 'opener', {
+        get: () => null,
+        set: (value) => {
+          if (value === null) {
+            openerCleared = true;
+          }
+        },
+      });
+      return popup;
+    },
+  });
+
+  assert.equal(openCalled, true);
+  assert.equal(openerCleared, true);
+  resolveGet({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'image/png' } });
+  const result = await flowPromise;
+  assert.equal(result.ok, true);
+});
+
+test('startWorksheetPrintFlow returns friendly message when popup is closed before async model completes', async () => {
+  const mod = await loadViewerModule();
+  let resolveGet;
+  const storageGetPromise = new Promise((resolve) => {
+    resolveGet = resolve;
+  });
+  const popup = {
+    closed: false,
+    document: {
+      open: () => {},
+      write: () => {},
+      close: () => {},
+    },
+  };
+
+  const flowPromise = mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {
+        localAssets: {
+          get: async () => storageGetPromise,
+        },
+      },
+    },
+    openWindow: () => popup,
+  });
+
+  popup.closed = true;
+  resolveGet({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'image/png' } });
+  const result = await flowPromise;
+  assert.deepEqual(result, {
+    ok: false,
+    message: 'Print window was closed before the report finished loading. Try printing again.',
   });
 });
 

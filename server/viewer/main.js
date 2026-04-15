@@ -1138,6 +1138,21 @@ function classifyPrintQuestionLayout(question) {
   return 'keep-all';
 }
 
+function classifyPrintSectionBreakMode({
+  text = '',
+  hasImage = false,
+  lineThreshold = 28,
+  charThreshold = 1200,
+} = {}) {
+  const normalizedText = String(text || '');
+  const lineCount = normalizedText.split(/\r?\n/).length;
+  const effectiveCharThreshold = hasImage ? Math.max(700, charThreshold - 220) : charThreshold;
+  if (normalizedText.length > effectiveCharThreshold || lineCount > lineThreshold) {
+    return 'flow';
+  }
+  return 'keep';
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -1165,12 +1180,36 @@ function encodeBytesToBase64(bytes) {
   return btoa(binary);
 }
 
+const PRINT_IMAGE_MIME_TYPE_ALLOWLIST = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+]);
+
+function normalizePrintImageMimeType(mimeType, fallback = 'image/png') {
+  if (typeof mimeType !== 'string') {
+    return fallback;
+  }
+  const normalized = mimeType.trim().toLowerCase().split(';')[0];
+  if (normalized === 'image/jpg') {
+    return 'image/jpeg';
+  }
+  if (!PRINT_IMAGE_MIME_TYPE_ALLOWLIST.has(normalized)) {
+    return fallback;
+  }
+  return normalized;
+}
+
 function binaryToDataUrl(binary, mimeType = 'image/png') {
   if (!(binary instanceof Uint8Array) || binary.byteLength === 0) {
     return null;
   }
+  const safeMimeType = normalizePrintImageMimeType(mimeType, 'image/png');
   const encoded = encodeBytesToBase64(binary);
-  return `data:${mimeType};base64,${encoded}`;
+  return `data:${safeMimeType};base64,${encoded}`;
 }
 
 async function resolvePrintQuestionImage(questionImageRef, storage) {
@@ -1186,7 +1225,7 @@ async function resolvePrintQuestionImage(questionImageRef, storage) {
         message: 'Question image unavailable.',
       };
     }
-    const mimeType = asset?.metadata?.mimeType || 'image/png';
+    const mimeType = normalizePrintImageMimeType(asset?.metadata?.mimeType, 'image/png');
     const src = binaryToDataUrl(asset.binary, mimeType);
     if (!src) {
       return {
@@ -1231,9 +1270,32 @@ async function buildWorksheetPrintReportModel({
       result: buildPrintQuestionResult(block, checkResult),
       image: questionImage,
     };
+    const promptSectionMode = classifyPrintSectionBreakMode({
+      text: question.promptText,
+      hasImage: question.image?.status === 'ready',
+      lineThreshold: 20,
+      charThreshold: 850,
+    });
+    const answerSectionMode = classifyPrintSectionBreakMode({
+      text: question.answerText,
+      lineThreshold: 30,
+      charThreshold: 1400,
+    });
+    const checkedAnswerSectionMode = question.result
+      ? classifyPrintSectionBreakMode({
+        text: [question.result.label, question.result.detail || ''].join('\n'),
+        lineThreshold: 22,
+        charThreshold: 1000,
+      })
+      : null;
     return {
       ...question,
       layoutMode: classifyPrintQuestionLayout(question),
+      sectionBreakModes: {
+        prompt: promptSectionMode,
+        answer: answerSectionMode,
+        checkedAnswer: checkedAnswerSectionMode,
+      },
     };
   }));
 
@@ -1276,17 +1338,18 @@ function buildWorksheetPrintReportHtml(reportModel) {
     const imageHtml = question.image?.status === 'ready' && question.image?.src
       ? `
         <div class="print-question-image-wrap">
-          <img class="print-question-image" src="${question.image.src}" alt="${escapeHtml(question.image.alt || 'Question image')}">
+          <img class="print-question-image" src="${escapeHtml(question.image.src)}" alt="${escapeHtml(question.image.alt || 'Question image')}">
         </div>
       `
       : question.image?.status === 'missing'
         ? `<p class="print-question-media-note">${escapeHtml(question.image.message || 'Question image unavailable.')}</p>`
         : '';
 
+    const checkedAnswerSectionClass = `print-question-section--${escapeHtml(question.sectionBreakModes?.checkedAnswer || 'keep')}`;
     const resultHtml = question.result
       ? `
-        <section class="print-question-section print-question-section--result print-result-${escapeHtml(question.result.status || 'neutral')}">
-          <h3>Check result</h3>
+        <section class="print-question-section print-question-section--result ${checkedAnswerSectionClass} print-result-${escapeHtml(question.result.status || 'neutral')}">
+          <h3>Checked answer</h3>
           <p class="print-result-label">${escapeHtml(question.result.label)}</p>
           ${question.result.detail ? `<p class="print-result-detail">${formatMultilineTextForHtml(question.result.detail)}</p>` : ''}
         </section>
@@ -1298,12 +1361,12 @@ function buildWorksheetPrintReportHtml(reportModel) {
         <header class="print-question-header">
           <div class="print-question-number">Question ${question.questionNumber}</div>
         </header>
-        <section class="print-question-section print-question-section--prompt">
-          <h3>Prompt</h3>
+        <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
+          <h3>Question</h3>
           <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || 'No prompt text provided.')}</p>
           ${imageHtml}
         </section>
-        <section class="print-question-section print-question-section--answer">
+        <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
           <h3>Answer</h3>
           <p class="print-answer-text">${formatMultilineTextForHtml(question.answerText)}</p>
         </section>
@@ -1388,11 +1451,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
       page-break-inside: auto;
     }
 
-    .print-question--keep-all {
-      break-inside: auto;
-      page-break-inside: auto;
-    }
-
+    .print-question--keep-all,
     .print-question--keep-head,
     .print-question--flow {
       break-inside: auto;
@@ -1420,14 +1479,12 @@ function buildWorksheetPrintReportHtml(reportModel) {
       padding-top: 0;
     }
 
-    .print-question-section--prompt,
-    .print-question-section--answer,
-    .print-question-section--result {
+    .print-question-section--keep {
       break-inside: avoid;
       page-break-inside: avoid;
     }
 
-    .print-question--flow .print-question-section--answer {
+    .print-question-section--flow {
       break-inside: auto;
       page-break-inside: auto;
     }
@@ -1547,6 +1604,19 @@ async function startWorksheetPrintFlow({
     };
   }
 
+  const printWindow = openWindow('', 'worksheet_print_report', 'width=960,height=720,resizable=yes,scrollbars=yes');
+  if (!printWindow || !printWindow.document || typeof printWindow.document.open !== 'function') {
+    return {
+      ok: false,
+      message: 'Print window was blocked. Allow popups for this site, then try again.',
+    };
+  }
+  try {
+    printWindow.opener = null;
+  } catch {
+    // Ignore environments that prevent mutating opener.
+  }
+
   const reportModel = await buildWorksheetPrintReportModel({
     viewerPayload: session.state.viewerPayload,
     answers: session.state.answers,
@@ -1556,18 +1626,30 @@ async function startWorksheetPrintFlow({
     storage: session.storage,
   });
 
-  const printWindow = openWindow('', 'worksheet_print_report', 'width=960,height=720,resizable=yes,scrollbars=yes');
-  if (!printWindow || !printWindow.document || typeof printWindow.document.open !== 'function') {
+  if (
+    printWindow.closed
+    || !printWindow.document
+    || typeof printWindow.document.open !== 'function'
+    || typeof printWindow.document.write !== 'function'
+    || typeof printWindow.document.close !== 'function'
+  ) {
     return {
       ok: false,
-      message: 'Print window was blocked. Allow popups for this site, then try again.',
+      message: 'Print window was closed before the report finished loading. Try printing again.',
     };
   }
 
   const html = buildWorksheetPrintReportHtml(reportModel);
-  printWindow.document.open();
-  printWindow.document.write(html);
-  printWindow.document.close();
+  try {
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+  } catch {
+    return {
+      ok: false,
+      message: 'Unable to load the print report window. Try printing again.',
+    };
+  }
   return {
     ok: true,
     reportModel,
