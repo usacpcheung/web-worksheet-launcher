@@ -235,6 +235,7 @@ body {
   max-height: 320px;
   overflow-y: auto;
   overflow-x: hidden;
+  text-align: left;
 }
 
 .viewer-published-row {
