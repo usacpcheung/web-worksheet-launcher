@@ -237,6 +237,11 @@ body {
   overflow-x: hidden;
 }
 
+/* Overrides .viewer-start-panel > .muted centering so published metadata stays left-aligned. */
+.viewer-start-panel > .viewer-published-list {
+  text-align: left;
+}
+
 .viewer-published-row {
   display: grid;
   grid-template-columns: 1fr auto;
