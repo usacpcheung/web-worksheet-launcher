@@ -369,6 +369,35 @@ test('buildWorksheetPrintReportModel normalizes unsafe image mime types for data
   assert.equal(report.questions[0].image.src.includes('onerror='), false);
 });
 
+test('buildWorksheetPrintReportModel normalizes image/jpg to image/jpeg for print data urls', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Prompt', mediaRefs: [{ usage: 'question_image', assetId: 'img_jpg' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    storage: {
+      localAssets: {
+        get: async () => ({
+          binary: new Uint8Array([255, 216, 255, 224]),
+          metadata: { mimeType: 'image/jpg' },
+        }),
+      },
+    },
+  });
+
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/jpeg;base64,/);
+});
+
 test('classifyPrintQuestionLayout uses keep-all, keep-head, and flow thresholds conservatively', async () => {
   const mod = await loadViewerModule();
 
@@ -576,6 +605,7 @@ test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
 test('startWorksheetPrintFlow opens popup synchronously before async model work', async () => {
   const mod = await loadViewerModule();
   let openCalled = false;
+  let openerCleared = false;
   let resolveGet;
   const storageGetPromise = new Promise((resolve) => {
     resolveGet = resolve;
@@ -609,20 +639,85 @@ test('startWorksheetPrintFlow opens popup synchronously before async model work'
     },
     openWindow: () => {
       openCalled = true;
-      return {
+      const popup = {
+        opener: { some: 'parent' },
         document: {
           open: () => {},
           write: () => {},
           close: () => {},
         },
       };
+      Object.defineProperty(popup, 'opener', {
+        get: () => null,
+        set: (value) => {
+          if (value === null) {
+            openerCleared = true;
+          }
+        },
+      });
+      return popup;
     },
   });
 
   assert.equal(openCalled, true);
+  assert.equal(openerCleared, true);
   resolveGet({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'image/png' } });
   const result = await flowPromise;
   assert.equal(result.ok, true);
+});
+
+test('startWorksheetPrintFlow returns friendly message when popup is closed before async model completes', async () => {
+  const mod = await loadViewerModule();
+  let resolveGet;
+  const storageGetPromise = new Promise((resolve) => {
+    resolveGet = resolve;
+  });
+  const popup = {
+    closed: false,
+    document: {
+      open: () => {},
+      write: () => {},
+      close: () => {},
+    },
+  };
+
+  const flowPromise = mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {
+        localAssets: {
+          get: async () => storageGetPromise,
+        },
+      },
+    },
+    openWindow: () => popup,
+  });
+
+  popup.closed = true;
+  resolveGet({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'image/png' } });
+  const result = await flowPromise;
+  assert.deepEqual(result, {
+    ok: false,
+    message: 'Print window was closed before the report finished loading. Try printing again.',
+  });
 });
 
 test('viewer beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {

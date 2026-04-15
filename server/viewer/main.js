@@ -1183,6 +1183,7 @@ function encodeBytesToBase64(bytes) {
 const PRINT_IMAGE_MIME_TYPE_ALLOWLIST = new Set([
   'image/png',
   'image/jpeg',
+  'image/jpg',
   'image/gif',
   'image/webp',
   'image/bmp',
@@ -1193,6 +1194,9 @@ function normalizePrintImageMimeType(mimeType, fallback = 'image/png') {
     return fallback;
   }
   const normalized = mimeType.trim().toLowerCase().split(';')[0];
+  if (normalized === 'image/jpg') {
+    return 'image/jpeg';
+  }
   if (!PRINT_IMAGE_MIME_TYPE_ALLOWLIST.has(normalized)) {
     return fallback;
   }
@@ -1607,6 +1611,11 @@ async function startWorksheetPrintFlow({
       message: 'Print window was blocked. Allow popups for this site, then try again.',
     };
   }
+  try {
+    printWindow.opener = null;
+  } catch {
+    // Ignore environments that prevent mutating opener.
+  }
 
   const reportModel = await buildWorksheetPrintReportModel({
     viewerPayload: session.state.viewerPayload,
@@ -1617,10 +1626,30 @@ async function startWorksheetPrintFlow({
     storage: session.storage,
   });
 
+  if (
+    printWindow.closed
+    || !printWindow.document
+    || typeof printWindow.document.open !== 'function'
+    || typeof printWindow.document.write !== 'function'
+    || typeof printWindow.document.close !== 'function'
+  ) {
+    return {
+      ok: false,
+      message: 'Print window was closed before the report finished loading. Try printing again.',
+    };
+  }
+
   const html = buildWorksheetPrintReportHtml(reportModel);
-  printWindow.document.open();
-  printWindow.document.write(html);
-  printWindow.document.close();
+  try {
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+  } catch {
+    return {
+      ok: false,
+      message: 'Unable to load the print report window. Try printing again.',
+    };
+  }
   return {
     ok: true,
     reportModel,
