@@ -235,6 +235,10 @@ body {
   max-height: 320px;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+/* Overrides .viewer-start-panel > .muted centering so published metadata stays left-aligned. */
+.viewer-start-panel > .viewer-published-list {
   text-align: left;
 }
 
