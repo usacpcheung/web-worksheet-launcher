@@ -1165,12 +1165,32 @@ function encodeBytesToBase64(bytes) {
   return btoa(binary);
 }
 
+const PRINT_IMAGE_MIME_TYPE_ALLOWLIST = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+]);
+
+function normalizePrintImageMimeType(mimeType, fallback = 'image/png') {
+  if (typeof mimeType !== 'string') {
+    return fallback;
+  }
+  const normalized = mimeType.trim().toLowerCase().split(';')[0];
+  if (!PRINT_IMAGE_MIME_TYPE_ALLOWLIST.has(normalized)) {
+    return fallback;
+  }
+  return normalized;
+}
+
 function binaryToDataUrl(binary, mimeType = 'image/png') {
   if (!(binary instanceof Uint8Array) || binary.byteLength === 0) {
     return null;
   }
+  const safeMimeType = normalizePrintImageMimeType(mimeType, 'image/png');
   const encoded = encodeBytesToBase64(binary);
-  return `data:${mimeType};base64,${encoded}`;
+  return `data:${safeMimeType};base64,${encoded}`;
 }
 
 async function resolvePrintQuestionImage(questionImageRef, storage) {
@@ -1186,7 +1206,7 @@ async function resolvePrintQuestionImage(questionImageRef, storage) {
         message: 'Question image unavailable.',
       };
     }
-    const mimeType = asset?.metadata?.mimeType || 'image/png';
+    const mimeType = normalizePrintImageMimeType(asset?.metadata?.mimeType, 'image/png');
     const src = binaryToDataUrl(asset.binary, mimeType);
     if (!src) {
       return {
@@ -1276,7 +1296,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
     const imageHtml = question.image?.status === 'ready' && question.image?.src
       ? `
         <div class="print-question-image-wrap">
-          <img class="print-question-image" src="${question.image.src}" alt="${escapeHtml(question.image.alt || 'Question image')}">
+          <img class="print-question-image" src="${escapeHtml(question.image.src)}" alt="${escapeHtml(question.image.alt || 'Question image')}">
         </div>
       `
       : question.image?.status === 'missing'
@@ -1286,7 +1306,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
     const resultHtml = question.result
       ? `
         <section class="print-question-section print-question-section--result print-result-${escapeHtml(question.result.status || 'neutral')}">
-          <h3>Check result</h3>
+          <h3>Checked answer</h3>
           <p class="print-result-label">${escapeHtml(question.result.label)}</p>
           ${question.result.detail ? `<p class="print-result-detail">${formatMultilineTextForHtml(question.result.detail)}</p>` : ''}
         </section>
@@ -1299,7 +1319,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
           <div class="print-question-number">Question ${question.questionNumber}</div>
         </header>
         <section class="print-question-section print-question-section--prompt">
-          <h3>Prompt</h3>
+          <h3>Question</h3>
           <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || 'No prompt text provided.')}</p>
           ${imageHtml}
         </section>
@@ -1389,11 +1409,15 @@ function buildWorksheetPrintReportHtml(reportModel) {
     }
 
     .print-question--keep-all {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .print-question--keep-head {
       break-inside: auto;
       page-break-inside: auto;
     }
 
-    .print-question--keep-head,
     .print-question--flow {
       break-inside: auto;
       page-break-inside: auto;
@@ -1420,14 +1444,38 @@ function buildWorksheetPrintReportHtml(reportModel) {
       padding-top: 0;
     }
 
-    .print-question-section--prompt,
-    .print-question-section--answer,
-    .print-question-section--result {
+    .print-question--keep-all .print-question-section--prompt,
+    .print-question--keep-all .print-question-section--answer,
+    .print-question--keep-all .print-question-section--result {
       break-inside: avoid;
       page-break-inside: avoid;
     }
 
+    .print-question--keep-head .print-question-section--prompt {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .print-question--keep-head .print-question-section--answer,
+    .print-question--keep-head .print-question-section--result,
+    .print-question--flow .print-question-section--prompt,
+    .print-question--flow .print-question-section--answer,
+    .print-question--flow .print-question-section--result {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .print-question--keep-head .print-question-section--answer {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
     .print-question--flow .print-question-section--answer {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
+    .print-question--flow .print-question-section--result {
       break-inside: auto;
       page-break-inside: auto;
     }
@@ -1547,6 +1595,14 @@ async function startWorksheetPrintFlow({
     };
   }
 
+  const printWindow = openWindow('', 'worksheet_print_report', 'width=960,height=720,resizable=yes,scrollbars=yes');
+  if (!printWindow || !printWindow.document || typeof printWindow.document.open !== 'function') {
+    return {
+      ok: false,
+      message: 'Print window was blocked. Allow popups for this site, then try again.',
+    };
+  }
+
   const reportModel = await buildWorksheetPrintReportModel({
     viewerPayload: session.state.viewerPayload,
     answers: session.state.answers,
@@ -1555,14 +1611,6 @@ async function startWorksheetPrintFlow({
     checkResult: session.state.checkResult,
     storage: session.storage,
   });
-
-  const printWindow = openWindow('', 'worksheet_print_report', 'width=960,height=720,resizable=yes,scrollbars=yes');
-  if (!printWindow || !printWindow.document || typeof printWindow.document.open !== 'function') {
-    return {
-      ok: false,
-      message: 'Print window was blocked. Allow popups for this site, then try again.',
-    };
-  }
 
   const html = buildWorksheetPrintReportHtml(reportModel);
   printWindow.document.open();

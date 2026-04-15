@@ -336,6 +336,36 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   assert.equal(report.questions[2].result.detail, 'Correct answer: True');
 });
 
+test('buildWorksheetPrintReportModel normalizes unsafe image mime types for data urls', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Prompt', mediaRefs: [{ usage: 'question_image', assetId: 'img_unsafe' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    storage: {
+      localAssets: {
+        get: async () => ({
+          binary: new Uint8Array([137, 80, 78, 71]),
+          metadata: { mimeType: 'image/png" onerror="alert(1)' },
+        }),
+      },
+    },
+  });
+
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/png;base64,/);
+  assert.equal(report.questions[0].image.src.includes('onerror='), false);
+});
+
 test('classifyPrintQuestionLayout uses keep-all, keep-head, and flow thresholds conservatively', async () => {
   const mod = await loadViewerModule();
 
@@ -440,9 +470,34 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(html.includes('print-question-section--prompt'), true);
   assert.equal(html.includes('print-question-section--answer'), true);
   assert.equal(html.includes('print-question-section--result'), true);
+  assert.equal(html.includes('>Question<'), true);
+  assert.equal(html.includes('>Checked answer<'), true);
+  assert.equal(html.includes('.print-question--keep-all {\n      break-inside: avoid;'), true);
   assert.equal(html.includes('border-radius: 3mm;'), false);
   assert.equal(html.includes('border-top: 1px solid #eceff3;'), false);
   assert.equal(html.includes('border-bottom: 1px solid #dde2e8;'), false);
+});
+
+test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
+  const mod = await loadViewerModule();
+  const html = mod.buildWorksheetPrintReportHtml({
+    title: 'Worksheet',
+    studentName: '',
+    completedAtLabel: '',
+    checkedSummary: '',
+    questions: [
+      {
+        questionNumber: 1,
+        promptText: 'Prompt',
+        answerText: 'Answer',
+        result: null,
+        image: { status: 'ready', src: 'data:image/png;base64,abc" onerror="alert(1)', alt: 'Question image' },
+        layoutMode: 'keep-all',
+      },
+    ],
+  });
+  assert.equal(html.includes('onerror="alert(1)"'), false);
+  assert.equal(html.includes('&quot; onerror=&quot;alert(1)'), true);
 });
 
 test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
@@ -477,6 +532,58 @@ test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
     ok: false,
     message: 'Print window was blocked. Allow popups for this site, then try again.',
   });
+});
+
+test('startWorksheetPrintFlow opens popup synchronously before async model work', async () => {
+  const mod = await loadViewerModule();
+  let openCalled = false;
+  let resolveGet;
+  const storageGetPromise = new Promise((resolve) => {
+    resolveGet = resolve;
+  });
+  const flowPromise = mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {
+        localAssets: {
+          get: async () => storageGetPromise,
+        },
+      },
+    },
+    openWindow: () => {
+      openCalled = true;
+      return {
+        document: {
+          open: () => {},
+          write: () => {},
+          close: () => {},
+        },
+      };
+    },
+  });
+
+  assert.equal(openCalled, true);
+  resolveGet({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'image/png' } });
+  const result = await flowPromise;
+  assert.equal(result.ok, true);
 });
 
 test('viewer beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
