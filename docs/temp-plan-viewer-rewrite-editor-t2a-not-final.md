@@ -2,6 +2,21 @@
 
 Status: temporary working draft, not finalized.
 
+## Review-driven revision log (why each change was made)
+
+This section exists so reviewers can quickly understand **why** requirements were tightened or reworded.
+
+1. **Stage instructions were converted from broad intent to explicit requirements + in-scope/out-of-scope constraints.**
+   - **Reason for review:** previous wording allowed implementation drift and inconsistent interpretation across editor/viewer/API layers.
+2. **Protected-action replay requirements were tightened around context validation and stale-intent handling.**
+   - **Reason for review:** replay is now expected to mutate data (rewrite/T2A), so stale context can cause wrong-block writes or data loss if not guarded.
+3. **Stage boundaries now include hard “cannot do” rules and completion gates.**
+   - **Reason for review:** earlier stages mixed foundation and runtime details; this made sequencing ambiguous and increased regression risk.
+4. **Compatibility constraints were made explicit for existing server app architecture and existing actions.**
+   - **Reason for review:** current code already has protected-action scaffolding; abrupt replacement without compatibility behavior could break existing flows.
+5. **Error-handling requirements were normalized (structured codes + user-facing messaging expectations).**
+   - **Reason for review:** inconsistent failure handling between API/client/UI leads to confusing UX and weaker diagnosability.
+
 ## Summary
 
 Replace the current global rewrite/T2A stub buttons with context-aware actions that match the intended product flow:
@@ -93,6 +108,25 @@ Remove `rewriteBtn` (`Rewrite (Sign-in required)`) and `t2aBtn` (`T2A (Sign-in r
 ---
 
 ## Key Changes
+
+## Execution Rules (normative for all stages)
+
+### Required implementation pattern
+
+- Every stage must define:
+  - **Requirements** (what must be true),
+  - **Task details** (how to implement),
+  - **Scope to act on** (allowed files/surfaces),
+  - **Cannot do** (hard exclusions).
+- Replay logic must be **safe-by-default**:
+  - If context cannot be validated, replay must abort without mutation.
+- New action IDs and payload shapes must be introduced with compatibility handling for existing protected actions during migration.
+
+### Hard exclusions (all stages)
+
+- Do not modify popup launch-hash or popup `postMessage` contracts unless the contract doc is updated in the same PR.
+- Do not bypass existing answer/media write paths (must reuse canonical update helpers so validation/counters/state bookkeeping remain consistent).
+- Do not apply rewrite/T2A results when replay context is stale, missing, or mismatched.
 
 ### 1. Bridge client — API and contracts
 
@@ -298,36 +332,144 @@ isGeneratingAudio: null,  // null or { blockId, target, optionId? }
 
 ### Stage 1 — API Layer and Contract Foundation
 
-**Goal**: all bridge API methods exist, are callable, return correct structured results, and are covered by unit tests. No UI changes yet. Existing stubs remain in place. This stage is done when the bridge calls work end-to-end in a real browser session and tests pass.
+**Goal**: all bridge API methods exist, are callable, return correct structured results, and are covered by unit tests. No runtime UI behavior changes yet. Existing stubs remain in place.
 
-**Tasks**
+**Requirements (must be true)**
+
+1. `server/app/api/server-api-client.js` exposes bridge-capable methods with the same structured error contract as existing API helpers.
+2. `triggerProtectedAction(actionId, intentPayload)` supports action-specific payloads **without breaking existing action IDs/callsites**.
+3. `replayProtectedAction` in viewer/editor can dispatch new action IDs, but must fail safely on invalid/stale context.
+4. New state fields exist for rewrite/T2A in-flight tracking and are initialized predictably.
+5. Unit tests cover success/error/auth/content-type/empty-body paths and payload forwarding semantics.
+
+**Task details (how to implement)**
 
 1. Add `BRIDGE_API_BASE = '/api/rewrite-bridge'` constant to `server-api-client.js`. Confirm it is not derived from `options.apiBase` or query params.
 2. Add `requestBinary(path, expectedMime, request)` private helper to `server-api-client.js`. Covers: auth error detection, content-type mismatch, zero-byte response, network error.
 3. Add `rewriteText(text)` method to the client. Includes response validation (non-empty trimmed string in `data.text`).
 4. Add `generateAudioFromText(text)` method to the client. Uses `requestBinary`.
-5. Refactor `triggerProtectedAction(actionId, intentPayload)` in `editor/main.js` to accept and forward `intentPayload`. Update all existing callsites to pass `{}` so they are unaffected.
-6. Implement real dispatch in `replayProtectedAction(intent)` in both `viewer/main.js` and `editor/main.js` for the new action IDs.
+5. Refactor `triggerProtectedAction(actionId, intentPayload)` in `editor/main.js` and `viewer/main.js` to accept and forward `intentPayload` with backward-compatible default behavior when omitted.
+6. Implement dispatch in `replayProtectedAction(intent)` in both `viewer/main.js` and `editor/main.js` for new action IDs with context validation (`localDraftId`/`localAttemptId`, target existence, freshness).
 7. Add session state fields: `undoBuffer`, `isRewriting`, `rewritingBlockId` to viewer; `isGeneratingAudio` to editor.
 8. Write or update unit tests for:
    - `rewriteText`: success, empty-response guard, auth error, network error.
    - `generateAudioFromText`: success, zero-byte guard, content-type mismatch, auth error.
    - `triggerProtectedAction` payload forwarding.
 
-**Verification checkpoint for Stage 1**
+**Scope to act on**
+
+- `server/app/api/server-api-client.js`
+- `server/app/api/server-api-client.unit.test.mjs`
+- `server/viewer/main.js`
+- `server/editor/main.js`
+- related auth-gate tests only if payload contract requires it
+
+**Cannot do (Stage 1)**
+
+- Do not ship new viewer/editor buttons or visible runtime behavior yet.
+- Do not remove existing stub buttons in this stage.
+- Do not introduce contract/schema changes outside existing storage/message boundaries.
+
+**Completion gate (Stage 1)**
 
 - In a signed-in browser session, calling `apiClient.rewriteText("hello world")` from the browser console returns `{ ok: true, data: { text: "..." } }`.
 - Calling `apiClient.generateAudioFromText("hello world")` returns `{ ok: true, data: Uint8Array }` and the bytes are a valid MP3.
 - In a signed-out session, both methods return `{ ok: false, error: { code: 'AUTH_REQUIRED', requiresSignIn: true } }`.
 - All new unit tests pass.
 
+**Manual verification steps (Stage 1)**
+
+These steps can be performed in a browser before any UI changes land. They require a running local server with the bridge routes available.
+
+1. **Bridge constants — not derived from query params**
+   Open the viewer or editor in the browser. In DevTools console run:
+   ```js
+   // Should output '/api/rewrite-bridge', not any value from the URL
+   console.log(window.__apiClient?.BRIDGE_API_BASE ?? 'check module internals')
+   ```
+   Navigate to a URL with `?apiBase=/attacker-controlled`; confirm bridge URLs in Network tab still start with `/api/rewrite-bridge/`.
+
+2. **`rewriteText` — signed in, success**
+   In DevTools console (signed-in session):
+   ```js
+   const result = await apiClient.rewriteText("This is a short test sentence.");
+   console.log(result); // expect { ok: true, data: { text: "..." } }
+   ```
+   Confirm `result.data.text` is a non-empty string.
+
+3. **`rewriteText` — signed out, AUTH_REQUIRED**
+   Sign out (clear session cookies or use an incognito tab). In console:
+   ```js
+   const result = await apiClient.rewriteText("hello");
+   console.log(result); // expect { ok: false, error: { code: 'AUTH_REQUIRED', requiresSignIn: true } }
+   ```
+
+4. **`generateAudioFromText` — signed in, success**
+   In DevTools console (signed-in session):
+   ```js
+   const result = await apiClient.generateAudioFromText("Hello world.");
+   console.log(result.ok, result.data instanceof Uint8Array, result.data.byteLength > 0);
+   // expect: true true true
+   // Optional: play the audio
+   const blob = new Blob([result.data], { type: 'audio/mpeg' });
+   new Audio(URL.createObjectURL(blob)).play();
+   ```
+
+5. **`generateAudioFromText` — signed out, AUTH_REQUIRED**
+   In an incognito/signed-out tab:
+   ```js
+   const result = await apiClient.generateAudioFromText("Hello");
+   console.log(result); // expect { ok: false, error: { code: 'AUTH_REQUIRED', requiresSignIn: true } }
+   ```
+
+6. **`triggerProtectedAction` payload forwarding**
+   In a signed-out viewer session, open DevTools. Manually call:
+   ```js
+   // Simulate what the Rewrite button will do post-Stage 2
+   authGate.triggerProtectedAction('viewerRewrite', {
+     localAttemptId: 'test-attempt-1',
+     blockId: 'block-1',
+     answerTextAtClickTime: 'My test answer'
+   });
+   ```
+   Sign in when prompted, then inspect `pendingIntent` stored by `SharedAuthGate` — it must contain the full `intentPayload` including `answerTextAtClickTime`.
+
+7. **`replayProtectedAction` — invalid/stale context aborts safely**
+   In a signed-in session, manually trigger replay with a mismatched `localAttemptId`:
+   ```js
+   viewer.replayProtectedAction({
+     actionId: 'viewerRewrite',
+     payload: { localAttemptId: 'stale-id', blockId: 'block-99', answerTextAtClickTime: 'test' }
+   });
+   ```
+   Confirm: no answer mutation occurs, no unhandled error thrown, console shows abort/warning log.
+
+8. **Session state fields initialized correctly**
+   After page load, in console:
+   ```js
+   // Viewer
+   console.log(session.state.undoBuffer);      // expect {}
+   console.log(session.state.isRewriting);     // expect false
+   console.log(session.state.rewritingBlockId); // expect null
+   // Editor
+   console.log(session.state.isGeneratingAudio); // expect null
+   ```
+
 ---
 
 ### Stage 2 — Viewer UI: Rewrite and Undo
 
-**Goal**: the contextual `Rewrite` and `Undo` buttons appear and work correctly in the viewer. The utility-menu stub is removed.
+**Goal**: contextual `Rewrite` and `Undo` are implemented for text questions in viewer with safe replay and race-resistant apply behavior. The utility-menu rewrite stub is removed.
 
-**Tasks**
+**Requirements (must be true)**
+
+1. Rewrite controls appear only when all visibility conditions are satisfied.
+2. Undo restores exact pre-rewrite value and is cleared on manual edit or successful subsequent rewrite.
+3. In-flight UI state remains consistent across re-renders/autosave.
+4. Replay must not overwrite newer user edits (context/revision guard).
+5. Failures are non-destructive (answer remains unchanged if rewrite fails/invalid).
+
+**Task details (how to implement)**
 
 1. Remove `rewriteAssistBtn` from `utilityMenuList` in `viewer/main.js`.
 2. Add the rewrite action row (right-aligned below the textarea) to the text question block render path in `renderUI()`.
@@ -335,9 +477,22 @@ isGeneratingAudio: null,  // null or { blockId, target, optionId? }
 4. Wire `Rewrite` click: authenticated path and unauthenticated redirect path (with `answerTextAtClickTime` in intent).
 5. Wire `Undo` click: restore from `undoBuffer`, delete entry, re-render.
 6. Wire textarea `input` event: delete `undoBuffer[blockId]` to clear undo on manual edit.
-7. Ensure `renderUI()` reads `session.state.isRewriting` and `session.state.rewritingBlockId` to show the loading label atomically, so autosave-triggered re-renders do not flash an active button during a call.
+7. Ensure `renderUI()` signature invalidation includes rewrite transient state (`isRewriting`, `rewritingBlockId`, undo presence, rewrite error state) so loading/undo UI does not stale-cache.
+8. Add apply guard: if answer changed since click-time snapshot, abort apply and show non-destructive feedback.
 
-**Verification checkpoint for Stage 2**
+**Scope to act on**
+
+- `server/viewer/main.js`
+- `server/viewer/main.unit.test.mjs`
+- viewer styles only if needed for action-row layout
+
+**Cannot do (Stage 2)**
+
+- Do not alter non-text question behavior.
+- Do not bypass existing `setAnswer`/counter/clamp paths.
+- Do not auto-apply rewrite results when stale-context checks fail.
+
+**Completion gate (Stage 2)**
 
 - `Rewrite` appears only on `text` questions with non-empty answers that are within 300 chars and not completed.
 - `Rewrite` is absent on `number`, `boolean`, `multiple_choice`, content blocks, and completed attempts.
@@ -347,24 +502,110 @@ isGeneratingAudio: null,  // null or { blockId, target, optionId? }
 - Clicking `Rewrite` while signed out opens the sign-in flow; after login, rewrite replays for the same block with the snapshotted text.
 - Answer is unchanged if the API call fails.
 
+**Manual verification steps (Stage 2)**
+
+Open the viewer with a worksheet that has at least one `text` question, one `number` question, one `multiple_choice` question, and one completed attempt.
+
+1. **Rewrite button visibility — positive case**
+   Navigate to a `text` question block. Type a non-empty answer (≤ 300 chars) and confirm an attempt is not completed.
+   - Expect: `Rewrite` button appears below the textarea, right-aligned, next to the text counter line.
+   - Expect: `Undo` is absent.
+
+2. **Rewrite button visibility — negative cases**
+   - Navigate to a `number` question: `Rewrite` must not appear.
+   - Navigate to a `multiple_choice` question: `Rewrite` must not appear.
+   - Navigate to a content block: `Rewrite` must not appear.
+   - On a `text` question, clear the answer to empty: `Rewrite` must disappear.
+   - On a `text` question, type an answer longer than 300 chars: `Rewrite` must disappear and the inline hint `"Answer is too long to rewrite (max 300 characters)."` must appear.
+   - Open a completed attempt: `Rewrite` must not appear.
+
+3. **Rewrite — authenticated, success**
+   Sign in. On a `text` question with a short non-empty answer, click `Rewrite`.
+   - Expect: button label changes to `"Rewriting…"` and is disabled while the call is in flight.
+   - Expect: `Undo` is also disabled during the call.
+   - After the call: answer field updates to the rewritten text; text counter reflects new length.
+   - Expect: `Undo` button appears.
+
+4. **Undo**
+   After a successful rewrite (step 3), click `Undo`.
+   - Expect: answer field reverts to the exact text that was there before clicking `Rewrite`.
+   - Expect: `Undo` button disappears.
+   - Expect: text counter reflects restored value.
+
+5. **Undo cleared on manual edit**
+   After a successful rewrite, manually type a character in the textarea.
+   - Expect: `Undo` button disappears.
+
+6. **Undo survives block navigation**
+   After a successful rewrite on block A, navigate to block B, then back to block A.
+   - Expect: `Undo` is still visible and clicking it restores the pre-rewrite text.
+
+7. **Second rewrite replaces undo snapshot**
+   After a successful rewrite, click `Rewrite` again (re-type or use the already-rewritten answer).
+   - Expect: `Undo` after the second rewrite restores the state from before the *second* rewrite, not the original.
+
+8. **Rewrite — API failure**
+   Simulate a failure by temporarily making the bridge endpoint unreachable (e.g., block the URL in DevTools Network > request blocking, or use a proxy rule).
+   Click `Rewrite`.
+   - Expect: answer field is unchanged after the call returns.
+   - Expect: inline error message appears (e.g., `"Rewrite failed. Your answer is unchanged."`).
+   - Expect: `Undo` is not shown (no successful rewrite occurred).
+
+9. **Rewrite — unauthenticated, sign-in replay**
+   Sign out. On a `text` question, type an answer (e.g., `"Original answer"`). Click `Rewrite`.
+   - Expect: sign-in flow opens (auth popup or redirect).
+   - Sign in.
+   - Expect: rewrite replays automatically using `"Original answer"` (the snapshotted text), not whatever may be in the field on return.
+   - Expect: answer field updates to the rewritten result.
+
+10. **Utility menu — stub button removed**
+    Open the utility menu (the `⋮` or utility button in the viewer toolbar).
+    - Expect: `Rewrite Assist (Sign-in required)` is not present.
+    - Expect: `syncResumeBtn` and `printReportBtn` are still present.
+
+11. **renderUI re-render consistency during in-flight**
+    While a rewrite is in progress (e.g., use DevTools to slow the network), trigger any action that causes `renderUI()` to re-run (e.g., autosave tick or switching focus).
+    - Expect: button remains in `"Rewriting…"` disabled state; it does not flash back to the normal `Rewrite` label during re-render.
+
 ---
 
 ### Stage 3 — Editor UI: T2A Generate Audio
 
-**Goal**: `Generate audio` / `Regenerate audio` buttons appear in the correct rows and work correctly. The editor stubs are removed.
+**Goal**: contextual prompt/option T2A actions work reliably with replacement safety, row-scoped locking, and no regression in manual audio attach flows. Editor stubs are removed.
 
-**Tasks**
+**Requirements (must be true)**
+
+1. Generate/regenerate controls appear in question-audio row and MC option rows with proper text-length eligibility.
+2. Replacement confirmation happens exactly once when target already has audio.
+3. In-flight state locking is scoped to target row (not a global UX freeze unless intentionally chosen).
+4. Failures never replace/remove existing audio.
+5. Generated audio attaches through existing media model and remains export/import compatible.
+
+**Task details (how to implement)**
 
 1. Remove `rewriteBtn` and `t2aBtn` from `protectedActionsColumn` in `editor/main.js`.
 2. Add `Generate audio` / `Regenerate audio` to the question audio row in the block detail panel. Place it right-aligned next to the existing `Attach audio…` / `Replace audio…` button.
 3. Apply T2A visibility rule: disabled if `trim(promptText).length === 0` or `> 200`; show 200-char hint if over limit.
-4. Wire click: replace confirmation (before bridge call) → set `isGeneratingAudio` → call `generateAudioFromText` → attach result via `attachQuestionMedia`.
+4. Wire click: replace confirmation (before bridge call) → set in-flight key for target row → call `generateAudioFromText` → attach result via `attachQuestionMedia`.
 5. Add `Generate audio` / `Regenerate audio` to each MC option actions row. Same disable rules applied to the option label.
 6. Wire click for option T2A: same flow using `attachOptionAudio`.
-7. During generation, disable all audio action buttons for that target row. Restore on completion or failure.
+7. During generation, disable all audio action buttons for that target row. Restore on completion or failure; unrelated rows remain interactive.
 8. On failure, push notification to activity feed with plain-language message.
+9. Keep manual upload flows behaviorally unchanged except where explicitly sharing replacement-confirm policy helpers.
 
-**Verification checkpoint for Stage 3**
+**Scope to act on**
+
+- `server/editor/main.js`
+- `server/editor/main.unit.test.mjs`
+- editor styles if required for row layout only
+
+**Cannot do (Stage 3)**
+
+- Do not mutate package schema/export format.
+- Do not skip replacement confirmation when existing audio is present.
+- Do not block all editor actions globally for a single-row generation request.
+
+**Completion gate (Stage 3)**
 
 - `Generate audio` appears in every question audio row when prompt text is non-empty and ≤ 200 chars.
 - It is disabled with a hint when prompt text exceeds 200 chars.
@@ -373,6 +614,75 @@ isGeneratingAudio: null,  // null or { blockId, target, optionId? }
 - On failure, existing audio is unchanged and the activity feed shows an error.
 - `Generate audio` is absent for MC options with empty label/value.
 - Export → import round-trip for a package with generated audio works correctly (audio is in `mediaRefs` and plays in the viewer).
+
+**Manual verification steps (Stage 3)**
+
+Open the editor with a worksheet that has at least one question with a prompt and one multiple-choice question with options. A running local server with the bridge routes is required.
+
+1. **Generate audio button visibility — question prompt, positive case**
+   Open a question block in the editor. Ensure the prompt text is non-empty and ≤ 200 chars and there is currently no audio attached.
+   - Expect: `Generate audio` button appears in the question audio row, right-aligned next to `Attach audio…`.
+
+2. **Generate audio button visibility — question prompt, negative cases**
+   - Clear the prompt text to empty: `Generate audio` must be disabled (no hint required).
+   - Type a prompt longer than 200 chars: `Generate audio` must be disabled with hint `"Text is too long to generate audio (max 200 characters)."`.
+   - Restore valid prompt text: button re-enables.
+
+3. **Generate audio — no existing audio, success**
+   With a valid prompt (non-empty, ≤ 200 chars) and no audio attached, click `Generate audio`.
+   - Expect: all audio row buttons (`Attach audio…`, `Generate audio`) become disabled and button shows `"Generating…"`.
+   - Expect on success: row updates to show `Replace audio…`, `Regenerate audio`, `Play`, `Remove`.
+   - Click `Play`: audio plays (valid MP3).
+
+4. **Regenerate audio — existing audio, replace confirmation**
+   With audio already attached, click `Regenerate audio`.
+   - Expect: replace confirmation dialog appears **before** any bridge call is made. (Verify in DevTools Network tab — no request to `/api/rewrite-bridge/t2a` until confirmed.)
+   - Click cancel: no bridge call, existing audio unchanged.
+   - Click confirm: bridge call fires; on success, row shows updated audio; `Play` still works.
+
+5. **Generate audio — API failure**
+   Block the T2A bridge endpoint via DevTools Network request blocking. Click `Generate audio`.
+   - Expect: existing audio (if any) is unchanged after failure.
+   - Expect: activity feed / notification shows `"Audio generation failed. Existing audio is unchanged."` plus detail.
+   - Expect: all audio row buttons re-enable after failure.
+
+6. **Row-scoped locking — other rows remain interactive**
+   Start a T2A generation on question block A (slow the network to keep it in-flight).
+   - Navigate to question block B: its audio row must be fully interactive (not locked).
+   - MC option rows must also remain interactive during block A's in-flight call.
+
+7. **Concurrent generation on same target blocked**
+   While generation is in flight for a target row, try to click `Generate audio` again (may require DevTools to intercept and delay the response).
+   - Expect: second click is either blocked (button disabled) or results in feedback `"Audio generation is already in progress."` with no second bridge call.
+
+8. **MC option — Generate audio visibility and behavior**
+   Open a multiple-choice question. Find an option with a non-empty label (≤ 200 chars).
+   - Expect: `Generate audio` button appears in the option actions row.
+   - Clear the option label to empty: `Generate audio` must be disabled (no hint).
+   - Enter a label over 200 chars: disabled with hint.
+   - On success, `Play` appears in the option row and the audio is playable.
+
+9. **MC option — Regenerate confirmation**
+   On an MC option that already has generated audio, click `Regenerate audio`.
+   - Expect: replace confirmation appears before the bridge call.
+   - Cancel: no mutation.
+
+10. **Editor stub buttons removed**
+    Open the `protectedActionsColumn` section of the editor UI.
+    - Expect: `Rewrite (Sign-in required)` button is absent.
+    - Expect: `T2A (Sign-in required)` button is absent.
+    - Expect: `Sign in` and server session management controls are still present.
+
+11. **Manual audio attach unaffected**
+    Click `Attach audio…` / `Replace audio…` (without using T2A).
+    - Expect: manual upload file picker opens and attaches audio as before — no behavior change.
+
+12. **Export/import round-trip with generated audio**
+    After successfully generating audio for a question prompt:
+    - Export the worksheet package from the editor.
+    - Import the package in a new editor session.
+    - Open the viewer with the imported package.
+    - Expect: audio plays correctly; no missing-asset errors; package schema unchanged (no new ZIP fields).
 
 ---
 
@@ -426,3 +736,14 @@ isGeneratingAudio: null,  // null or { blockId, target, optionId? }
 - The 300-char (rewrite) and 200-char (T2A) limits are client-side guards only; the bridge may have its own server-side limits which take precedence. Client limits are set conservatively below expected server limits.
 - Generated local asset metadata may tag `origin: 't2a'` for debugging purposes. The exported package structure is unchanged — no new fields in the package ZIP schema.
 - `docs/message-contract.md` is unchanged until a concrete need to modify popup transport arises during implementation.
+
+## Reviewer sign-off checklist (explicit reasons)
+
+- [ ] Stage 1 requirements are explicit and backward-compatible.
+  - **Reason to review:** protects existing auth-recovery and protected-action behavior during migration.
+- [ ] Stage 2 includes stale-context and render-cache safeguards.
+  - **Reason to review:** prevents rewrite race bugs and silent UI desync.
+- [ ] Stage 3 uses row-scoped generation safety and non-destructive failure behavior.
+  - **Reason to review:** prevents accidental media replacement and editor UX lockups.
+- [ ] Every stage lists “scope to act on” and “cannot do.”
+  - **Reason to review:** reduces implementation ambiguity and prevents out-of-scope coupling.
