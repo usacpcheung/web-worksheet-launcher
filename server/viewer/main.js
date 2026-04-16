@@ -1881,6 +1881,9 @@ class ViewerAttemptSession {
       recoveryMessage: null,
       checkResult: null,
       utilityMessage: null,
+      undoBuffer: {},
+      isRewriting: false,
+      rewritingBlockId: null,
       lastProtectedAction: null,
       serverSession: {
         status: VIEWER_SERVER_SESSION_STATES.CHECKING,
@@ -2315,6 +2318,9 @@ class ViewerAttemptSession {
     this.state.isFinalizing = false;
     this.state.lastFinalizeError = null;
     this.state.checkResult = null;
+    this.state.undoBuffer = {};
+    this.state.isRewriting = false;
+    this.state.rewritingBlockId = null;
 
     if (options.markDirty) {
       this.state.attemptRevision += 1;
@@ -2648,21 +2654,85 @@ class ViewerAttemptSession {
   }
 
   async replayProtectedAction(intent) {
-    this.state.lastProtectedAction = intent.actionId;
-    this.setRecoveryMessage(null);
+    const actionId = typeof intent?.actionId === 'string' ? intent.actionId : '';
+    const payload = intent?.payload && typeof intent.payload === 'object' ? intent.payload : {};
+    this.state.lastProtectedAction = actionId || null;
+
+    switch (actionId) {
+      case 'viewerRewrite':
+      case 'resumeViewerRewriteAfterLogin':
+        return this.replayViewerRewriteIntent(payload);
+      case 'resumeAttemptServerResumeAfterLogin':
+        this.setRecoveryMessage(null);
+        return { ok: true, status: 'noop_resume_attempt' };
+      default:
+        this.setRecoveryMessage(null);
+        return { ok: true, status: 'noop_unsupported_action' };
+    }
   }
 
-  async triggerProtectedAction(actionId) {
+  validateViewerRewriteIntentPayload(payload = {}) {
+    const currentAttemptId = this.state.localAttemptId || null;
+    const intentAttemptId = typeof payload.localAttemptId === 'string' ? payload.localAttemptId : null;
+    if (!currentAttemptId || !intentAttemptId || intentAttemptId !== currentAttemptId) {
+      return {
+        ok: false,
+        message: 'Rewrite recovery context is stale. Please retry from the current attempt.',
+      };
+    }
+
+    const intentBlockId = typeof payload.blockId === 'string' ? payload.blockId : null;
+    const blocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
+    const matchingBlock = intentBlockId
+      ? blocks.find((block) => block?.blockId === intentBlockId)
+      : null;
+    if (!intentBlockId || !matchingBlock) {
+      return {
+        ok: false,
+        message: 'Rewrite recovery target is no longer available for this worksheet.',
+      };
+    }
+
+    if (this.state.lastActiveBlockId && this.state.lastActiveBlockId !== intentBlockId) {
+      return {
+        ok: false,
+        message: 'Rewrite recovery target is stale. Navigate to the target question and retry.',
+      };
+    }
+
+    return { ok: true };
+  }
+
+  async replayViewerRewriteIntent(payload = {}) {
+    const validation = this.validateViewerRewriteIntentPayload(payload);
+    if (!validation.ok) {
+      this.setRecoveryMessage(validation.message);
+      console.warn('[viewer] Ignoring stale/invalid rewrite recovery intent.', {
+        action: 'viewerRewrite',
+        payload,
+      });
+      return { ok: false, status: 'invalid_context' };
+    }
+
+    // Stage 1 dispatcher entrypoint for rewrite recovery.
+    this.setRecoveryMessage('Rewrite recovery is not available yet. Please run Rewrite Assist again.');
+    return { ok: true, status: 'deferred_viewer_rewrite' };
+  }
+
+  async triggerProtectedAction(actionId, intentPayload = {}) {
     if (!this.authGate) {
       throw new Error('Auth gate is not configured for viewer session.');
     }
 
+    const payload = {
+      localAttemptId: this.state.localAttemptId || null,
+      ...(intentPayload && typeof intentPayload === 'object' ? intentPayload : {}),
+    };
+
     return this.authGate.runProtectedAction({
       actionId,
       recordStore: 'localAttempts',
-      payload: {
-        localAttemptId: this.state.localAttemptId || null,
-      },
+      payload,
     });
   }
 
@@ -4040,7 +4110,15 @@ function renderViewerShell(session) {
 
   rewriteAssistBtn.addEventListener('click', async () => {
     closeUtilityMenu({ returnFocus: true });
-    await session.triggerProtectedAction('resumeViewerRewriteAfterLogin');
+    const orderedBlocks = getOrderedBlocks();
+    const currentBlock = orderedBlocks[currentBlockIndex] || null;
+    const rawAnswerAtClick = currentBlock?.blockId ? session.state.answers?.[currentBlock.blockId] : '';
+    await session.triggerProtectedAction('resumeViewerRewriteAfterLogin', {
+      blockId: currentBlock?.blockId || null,
+      answerTextAtClickTime: typeof rawAnswerAtClick === 'string'
+        ? rawAnswerAtClick
+        : String(rawAnswerAtClick ?? ''),
+    });
     renderUI();
   });
   printReportBtn.addEventListener('click', async () => {
@@ -4405,6 +4483,31 @@ function renderViewerStartPanel(session, options = {}) {
 
 async function bootstrapViewer() {
   const session = new ViewerAttemptSession(viewerStorage);
+  const hasOnlyAllowedKeys = (payload, allowedKeys) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    return Object.keys(payload).every((key) => allowedKeys.has(key));
+  };
+  const validateViewerIntent = (intent) => {
+    const actionId = typeof intent?.actionId === 'string' ? intent.actionId : '';
+    if (!actionId || !session.state.localAttemptId) return false;
+    const payload = intent?.payload;
+
+    if (actionId === 'viewerRewrite' || actionId === 'resumeViewerRewriteAfterLogin') {
+      const allowed = new Set(['localAttemptId', 'blockId', 'answerTextAtClickTime']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      if (typeof payload.localAttemptId !== 'string' || typeof payload.blockId !== 'string') return false;
+      if (payload.answerTextAtClickTime !== undefined && typeof payload.answerTextAtClickTime !== 'string') return false;
+      return session.validateViewerRewriteIntentPayload(payload).ok;
+    }
+
+    if (actionId === 'resumeAttemptServerResumeAfterLogin') {
+      const allowed = new Set(['localAttemptId']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      return typeof payload.localAttemptId === 'string' && payload.localAttemptId === session.state.localAttemptId;
+    }
+
+    return false;
+  };
 
   const authGate = new SharedAuthGate({
     appArea: 'viewer',
@@ -4416,7 +4519,7 @@ async function bootstrapViewer() {
     persistLocalRecord: () => session.flushLocalStateForAuthRedirect(),
     restoreByLocalId: (localIdToRestore) => session.restoreByLocalId(localIdToRestore),
     restoreUiState: (uiState) => session.applyUiRestoreState(uiState),
-    validateIntent: (intent) => Boolean(intent?.actionId && session.state.localAttemptId),
+    validateIntent: (intent) => validateViewerIntent(intent),
     replayIntent: (intent) => session.replayProtectedAction(intent),
     onRecoveryMessage: (message) => session.setRecoveryMessage(message),
     redirectToAuth: ({ redirectTo }) => {

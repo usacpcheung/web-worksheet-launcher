@@ -3628,3 +3628,164 @@ test('toUploadedDraftDisplay includes fallback title and uploaded label', async 
     Intl.DateTimeFormat = originalFormatter;
   }
 });
+
+test('editor intent payload validators reject stale or malformed prompt/option t2a payloads', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Question 1' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: 'A', label: 'A' }],
+      },
+    }],
+  });
+
+  assert.equal(
+    session.validateEditorPromptT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'q1',
+      target: 'question_prompt',
+    }).ok,
+    true
+  );
+  assert.equal(
+    session.validateEditorPromptT2AIntentPayload({
+      localDraftId: 'draft_stale',
+      blockId: 'q1',
+      target: 'question_prompt',
+    }).ok,
+    false
+  );
+  assert.equal(
+    session.validateEditorPromptT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'missing',
+      target: 'question_prompt',
+    }).ok,
+    false
+  );
+  assert.equal(
+    session.validateEditorPromptT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'q1',
+      target: 'option',
+    }).ok,
+    false
+  );
+
+  assert.equal(
+    session.validateEditorOptionT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'q1',
+      target: 'option',
+      optionId: 'opt_1',
+    }).ok,
+    true
+  );
+  assert.equal(
+    session.validateEditorOptionT2AIntentPayload({
+      localDraftId: 'draft_stale',
+      blockId: 'q1',
+      target: 'option',
+      optionId: 'opt_1',
+    }).ok,
+    false
+  );
+  assert.equal(
+    session.validateEditorOptionT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'q1',
+      target: 'option',
+      optionId: 'missing_opt',
+    }).ok,
+    false
+  );
+  assert.equal(
+    session.validateEditorOptionT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'q1',
+      target: 'question_prompt',
+      optionId: 'opt_1',
+    }).ok,
+    false
+  );
+});
+
+test('bootstrapEditor validateIntent uses action-aware payload validation', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("actionId === 'editorPromptT2A' || actionId === 'resumeT2AAfterLogin'"), true);
+  assert.equal(source.includes("actionId === 'editorOptionT2A'"), true);
+  assert.equal(source.includes("actionId === 'resumeRewriteAfterLogin'"), true);
+  assert.equal(source.includes('hasOnlyAllowedKeys(payload, allowed)'), true);
+  assert.equal(source.includes('session.validateEditorPromptT2AIntentPayload(payload).ok'), true);
+  assert.equal(source.includes('session.validateEditorOptionT2AIntentPayload(payload).ok'), true);
+});
+
+test('editor triggerProtectedAction forwards payload and remains functional without intentPayload', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = mod.createDraftRecord({ localId: 'draft_1' });
+  const calls = [];
+  session.authGate = {
+    runProtectedAction: async (intent) => {
+      calls.push(intent);
+      return { status: 'executed' };
+    },
+  };
+
+  const noPayloadResult = await session.triggerProtectedAction('resumeRewriteAfterLogin');
+  const withPayloadResult = await session.triggerProtectedAction('editorPromptT2A', {
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+
+  assert.equal(noPayloadResult.status, 'executed');
+  assert.equal(withPayloadResult.status, 'executed');
+  assert.deepEqual(calls[0], {
+    actionId: 'resumeRewriteAfterLogin',
+    recordStore: 'localDrafts',
+    payload: { localDraftId: 'draft_1' },
+  });
+  assert.deepEqual(calls[1], {
+    actionId: 'editorPromptT2A',
+    recordStore: 'localDrafts',
+    payload: { localDraftId: 'draft_1', blockId: 'q1', target: 'question_prompt' },
+  });
+});
+
+test('editor replayProtectedAction receives payload and avoids mutation on stale context', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Question 1' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: 'A', label: 'A' }],
+      },
+    }],
+  });
+  const beforeDraft = JSON.stringify(session.state.draft);
+
+  const result = await session.replayProtectedAction({
+    actionId: 'editorOptionT2A',
+    payload: {
+      localDraftId: 'draft_stale',
+      blockId: 'q1',
+      target: 'option',
+      optionId: 'opt_1',
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'invalid_context');
+  assert.equal(JSON.stringify(session.state.draft), beforeDraft);
+});

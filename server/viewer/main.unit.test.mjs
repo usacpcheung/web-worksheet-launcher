@@ -3931,3 +3931,107 @@ test('viewer source binding blocks resume when source fingerprint or identity dr
   assert.equal(source.includes('expectedFingerprint && expectedFingerprint !== actualFingerprint'), true);
   assert.equal(source.includes('Saved attempt no longer matches this worksheet source. Start a new attempt.'), true);
 });
+
+test('viewer rewrite payload validator rejects stale or malformed payload context', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'b1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'b1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+
+  assert.equal(session.validateViewerRewriteIntentPayload({
+    localAttemptId: 'attempt_1',
+    blockId: 'b1',
+    answerTextAtClickTime: 'answer',
+  }).ok, true);
+  assert.equal(session.validateViewerRewriteIntentPayload({
+    localAttemptId: 'attempt_stale',
+    blockId: 'b1',
+    answerTextAtClickTime: 'answer',
+  }).ok, false);
+  assert.equal(session.validateViewerRewriteIntentPayload({
+    localAttemptId: 'attempt_1',
+    blockId: 'missing',
+    answerTextAtClickTime: 'answer',
+  }).ok, false);
+});
+
+test('bootstrapViewer validateIntent uses action-aware viewer rewrite payload checks', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("actionId === 'viewerRewrite' || actionId === 'resumeViewerRewriteAfterLogin'"), true);
+  assert.equal(source.includes("actionId === 'resumeAttemptServerResumeAfterLogin'"), true);
+  assert.equal(source.includes('hasOnlyAllowedKeys(payload, allowed)'), true);
+  assert.equal(source.includes('session.validateViewerRewriteIntentPayload(payload).ok'), true);
+  assert.equal(source.includes('return false;'), true);
+});
+
+test('viewer triggerProtectedAction forwards payload and remains functional without intentPayload', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  const calls = [];
+  session.authGate = {
+    runProtectedAction: async (intent) => {
+      calls.push(intent);
+      return { status: 'executed' };
+    },
+  };
+
+  const noPayloadResult = await session.triggerProtectedAction('resumeAttemptServerResumeAfterLogin');
+  const withPayloadResult = await session.triggerProtectedAction('viewerRewrite', {
+    blockId: 'b1',
+    answerTextAtClickTime: 'typed',
+  });
+
+  assert.equal(noPayloadResult.status, 'executed');
+  assert.equal(withPayloadResult.status, 'executed');
+  assert.deepEqual(calls[0], {
+    actionId: 'resumeAttemptServerResumeAfterLogin',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1' },
+  });
+  assert.deepEqual(calls[1], {
+    actionId: 'viewerRewrite',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1', blockId: 'b1', answerTextAtClickTime: 'typed' },
+  });
+});
+
+test('viewer replayProtectedAction receives payload and avoids mutation on stale context', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_active';
+  session.state.lastActiveBlockId = 'b1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'b1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    b1: { value: 'original', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+  const beforeAnswers = JSON.stringify(session.state.answers);
+
+  const result = await session.replayProtectedAction({
+    actionId: 'viewerRewrite',
+    payload: {
+      localAttemptId: 'attempt_stale',
+      blockId: 'b1',
+      answerTextAtClickTime: 'new value',
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'invalid_context');
+  assert.equal(JSON.stringify(session.state.answers), beforeAnswers);
+});

@@ -71,6 +71,68 @@ test('runProtectedAction persists pending intent and redirects when unauthentica
   assert.equal(redirectCalls[0].includes('intent='), false);
 });
 
+test('runProtectedAction preserves intentPayload without mutation in pendingIntent', async () => {
+  const storage = createStorage();
+  const redirectCalls = [];
+  const payload = {
+    localAttemptId: 'attempt_1',
+    blockId: 'b1',
+    answerTextAtClickTime: 'Draft answer',
+    nested: { marker: 'keep' },
+  };
+
+  globalThis.window = {
+    location: { href: 'https://example.test/viewer/?localAttemptId=attempt_1' },
+  };
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    isAuthenticated: () => false,
+    getCurrentLocalId: () => 'attempt_1',
+    getCurrentUiState: () => ({ status: 'in_progress' }),
+    persistLocalRecord: async () => {},
+    redirectToAuth: ({ redirectTo }) => redirectCalls.push(redirectTo),
+  });
+
+  await gate.runProtectedAction({
+    actionId: 'viewerRewrite',
+    recordStore: 'localAttempts',
+    payload,
+  });
+
+  assert.deepEqual(storage.pendingIntent.get().intentPayload, payload);
+  assert.equal(redirectCalls.length, 1);
+});
+
+test('runProtectedAction remains functional when intent payload is omitted', async () => {
+  const storage = createStorage();
+  globalThis.window = {
+    location: { href: 'https://example.test/editor/?localDraftId=draft_1' },
+  };
+
+  const gate = new SharedAuthGate({
+    appArea: 'editor',
+    resumeFlagKey: 'editor:lastSession',
+    storage,
+    isAuthenticated: () => false,
+    getCurrentLocalId: () => 'draft_1',
+    getCurrentUiState: () => ({ mode: 'edit' }),
+    persistLocalRecord: async () => {},
+    redirectToAuth: () => {},
+  });
+
+  const result = await gate.runProtectedAction({
+    actionId: 'resumeT2AAfterLogin',
+    recordStore: 'localDrafts',
+  });
+
+  assert.equal(result.status, 'redirected');
+  assert.equal(storage.pendingIntent.get().actionId, 'resumeT2AAfterLogin');
+  assert.equal(storage.pendingIntent.get().intentPayload, null);
+});
+
 test('runProtectedAction returns invalid_intent for missing actionId without side effects', async () => {
   const storage = createStorage();
   let persistCalled = false;

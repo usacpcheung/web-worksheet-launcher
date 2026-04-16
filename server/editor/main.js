@@ -632,6 +632,7 @@ class EditorDraftSession {
       uploadedDrafts: [],
       isUploadingDraft: false,
       isLoadingUploadedDrafts: false,
+      isGeneratingAudio: null,
       publishingDraftIds: new Set(),
       openingPublishedPackageIds: new Set(),
       publishedBrowseQuery: '',
@@ -945,6 +946,7 @@ class EditorDraftSession {
     this.state.mode = initialMode;
     this.state.hash = initialHash ?? this.state.hash;
     this.state.scrollToken = initialScrollToken ?? this.state.scrollToken;
+    this.state.isGeneratingAudio = null;
 
     this.state.selectedBlockId = this.state.draft.blocks[0]?.blockId || null;
     if (initialSelectedBlockId) {
@@ -2261,6 +2263,7 @@ class EditorDraftSession {
 
           this.state.draft = draft;
           this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
+          this.state.isGeneratingAudio = null;
           this.state.draftRevision += 1;
           this.state.lastImportedAt = nowIso();
           this.validateCurrentDraft();
@@ -2407,6 +2410,7 @@ class EditorDraftSession {
 
       this.state.draft = draft;
       this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
+      this.state.isGeneratingAudio = null;
       this.state.draftRevision += 1;
       this.state.lastImportedAt = nowIso();
       this.validateCurrentDraft();
@@ -3019,21 +3023,138 @@ class EditorDraftSession {
   }
 
   async replayProtectedAction(intent) {
-    this.state.lastProtectedAction = intent.actionId;
-    this.setRecoveryMessage(null);
+    const actionId = typeof intent?.actionId === 'string' ? intent.actionId : '';
+    const payload = intent?.payload && typeof intent.payload === 'object' ? intent.payload : {};
+    this.state.lastProtectedAction = actionId || null;
+
+    switch (actionId) {
+      case 'editorPromptT2A':
+      case 'resumeT2AAfterLogin':
+        return this.replayEditorPromptT2AIntent(payload);
+      case 'editorOptionT2A':
+        return this.replayEditorOptionT2AIntent(payload);
+      case 'resumeRewriteAfterLogin':
+        this.setRecoveryMessage('Rewrite recovery is not available yet. Please run Rewrite again.');
+        return { ok: true, status: 'deferred_editor_rewrite' };
+      default:
+        this.setRecoveryMessage(null);
+        return { ok: true, status: 'noop_unsupported_action' };
+    }
   }
 
-  async triggerProtectedAction(actionId) {
+  validateEditorPromptT2AIntentPayload(payload = {}) {
+    const localDraftId = this.state.draft?.localId || null;
+    const intentDraftId = typeof payload.localDraftId === 'string' ? payload.localDraftId : null;
+    if (!localDraftId || !intentDraftId || localDraftId !== intentDraftId) {
+      return {
+        ok: false,
+        message: 'Audio recovery context is stale. Please retry from the current draft.',
+      };
+    }
+    if (payload.target !== 'question_prompt') {
+      return {
+        ok: false,
+        message: 'Audio recovery target mismatch. Please retry from the prompt control.',
+      };
+    }
+    const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
+    const block = blockId ? this.findBlock(blockId) : null;
+    if (!block || block.kind !== 'question') {
+      return {
+        ok: false,
+        message: 'Audio recovery target block is no longer available.',
+      };
+    }
+    return { ok: true };
+  }
+
+  async replayEditorPromptT2AIntent(payload = {}) {
+    const validation = this.validateEditorPromptT2AIntentPayload(payload);
+    if (!validation.ok) {
+      this.setRecoveryMessage(validation.message);
+      console.warn('[editor] Ignoring stale/invalid prompt t2a recovery intent.', {
+        action: 'editorPromptT2A',
+        payload,
+      });
+      return { ok: false, status: 'invalid_context' };
+    }
+
+    // Stage 1 dispatcher entrypoint for prompt T2A recovery.
+    this.setRecoveryMessage('Prompt audio recovery is not available yet. Please run T2A again.');
+    return { ok: true, status: 'deferred_editor_prompt_t2a' };
+  }
+
+  validateEditorOptionT2AIntentPayload(payload = {}) {
+    const localDraftId = this.state.draft?.localId || null;
+    const intentDraftId = typeof payload.localDraftId === 'string' ? payload.localDraftId : null;
+    if (!localDraftId || !intentDraftId || localDraftId !== intentDraftId) {
+      return {
+        ok: false,
+        message: 'Option audio recovery context is stale. Please retry from the current draft.',
+      };
+    }
+    if (payload.target !== 'option') {
+      return {
+        ok: false,
+        message: 'Option audio recovery target mismatch. Please retry from an option control.',
+      };
+    }
+    const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
+    const optionId = typeof payload.optionId === 'string' ? payload.optionId : null;
+    const block = blockId ? this.findBlock(blockId) : null;
+    if (!block || block.kind !== 'question') {
+      return {
+        ok: false,
+        message: 'Option audio recovery block is no longer available.',
+      };
+    }
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    const options = Array.isArray(responseConfig.options) ? responseConfig.options : [];
+    const hasOption = Boolean(
+      optionId
+      && options
+        .map((item, index) => normalizeResponseOption(item, `option_${index}`))
+        .find((item) => item.id === optionId)
+    );
+    if (!hasOption) {
+      return {
+        ok: false,
+        message: 'Option audio recovery target is no longer available.',
+      };
+    }
+    return { ok: true };
+  }
+
+  async replayEditorOptionT2AIntent(payload = {}) {
+    const validation = this.validateEditorOptionT2AIntentPayload(payload);
+    if (!validation.ok) {
+      this.setRecoveryMessage(validation.message);
+      console.warn('[editor] Ignoring stale/invalid option t2a recovery intent.', {
+        action: 'editorOptionT2A',
+        payload,
+      });
+      return { ok: false, status: 'invalid_context' };
+    }
+
+    // Stage 1 dispatcher entrypoint for option T2A recovery.
+    this.setRecoveryMessage('Option audio recovery is not available yet. Please run T2A again.');
+    return { ok: true, status: 'deferred_editor_option_t2a' };
+  }
+
+  async triggerProtectedAction(actionId, intentPayload = {}) {
     if (!this.authGate) {
       throw new Error('Auth gate is not configured for editor session.');
     }
 
+    const payload = {
+      localDraftId: this.state.draft?.localId || null,
+      ...(intentPayload && typeof intentPayload === 'object' ? intentPayload : {}),
+    };
+
     return this.authGate.runProtectedAction({
       actionId,
       recordStore: 'localDrafts',
-      payload: {
-        localDraftId: this.state.draft?.localId || null,
-      },
+      payload,
     });
   }
 
@@ -5133,11 +5254,17 @@ function renderEditorShell(session) {
     updateSummary();
   });
   rewriteBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeRewriteAfterLogin');
+    await session.triggerProtectedAction('resumeRewriteAfterLogin', {
+      blockId: session.state.selectedBlockId || null,
+      target: 'question_prompt',
+    });
     updateSummary();
   });
   t2aBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeT2AAfterLogin');
+    await session.triggerProtectedAction('resumeT2AAfterLogin', {
+      blockId: session.state.selectedBlockId || null,
+      target: 'question_prompt',
+    });
     updateSummary();
   });
   syncDraftBtn.addEventListener('click', async () => {
@@ -5220,6 +5347,49 @@ async function bootstrapEditor() {
     scrollToken: initialRestore?.scrollToken || null,
   });
 
+  const hasOnlyAllowedKeys = (payload, allowedKeys) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    return Object.keys(payload).every((key) => allowedKeys.has(key));
+  };
+  const validateEditorIntent = (intent) => {
+    const actionId = typeof intent?.actionId === 'string' ? intent.actionId : '';
+    if (!actionId || !session.state.draft?.localId) return false;
+    const payload = intent?.payload;
+
+    if (actionId === 'editorPromptT2A' || actionId === 'resumeT2AAfterLogin') {
+      const allowed = new Set(['localDraftId', 'blockId', 'target']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      if (typeof payload.localDraftId !== 'string' || typeof payload.blockId !== 'string') return false;
+      if (payload.target !== 'question_prompt') return false;
+      return session.validateEditorPromptT2AIntentPayload(payload).ok;
+    }
+
+    if (actionId === 'editorOptionT2A') {
+      const allowed = new Set(['localDraftId', 'blockId', 'target', 'optionId']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      if (
+        typeof payload.localDraftId !== 'string'
+        || typeof payload.blockId !== 'string'
+        || typeof payload.optionId !== 'string'
+      ) {
+        return false;
+      }
+      if (payload.target !== 'option') return false;
+      return session.validateEditorOptionT2AIntentPayload(payload).ok;
+    }
+
+    if (actionId === 'resumeRewriteAfterLogin') {
+      const allowed = new Set(['localDraftId', 'blockId', 'target']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      if (typeof payload.localDraftId !== 'string' || typeof payload.blockId !== 'string') return false;
+      if (payload.target !== 'question_prompt') return false;
+      const block = session.findBlock(payload.blockId);
+      return payload.localDraftId === session.state.draft?.localId && Boolean(block && block.kind === 'question');
+    }
+
+    return false;
+  };
+
   const authGate = new SharedAuthGate({
     appArea: 'editor',
     resumeFlagKey: RESUME_FLAG_KEY,
@@ -5230,7 +5400,7 @@ async function bootstrapEditor() {
     persistLocalRecord: () => session.flushLocalStateForAuthRedirect(),
     restoreByLocalId: (localIdToRestore) => session.restoreByLocalId(localIdToRestore),
     restoreUiState: (uiState) => session.applyUiRestoreState(uiState),
-    validateIntent: (intent) => Boolean(intent?.actionId && session.state.draft?.localId),
+    validateIntent: (intent) => validateEditorIntent(intent),
     replayIntent: (intent) => session.replayProtectedAction(intent),
     onRecoveryMessage: (message) => session.setRecoveryMessage(message),
     redirectToAuth: ({ redirectTo }) => {

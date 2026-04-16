@@ -1,6 +1,7 @@
 import { DEFAULT_PUBLISHED_PACKAGE_LIMIT } from './published-packages-service.js';
 
 const DEFAULT_PUBLIC_API_BASE = '/api/worksheet-launcher/v1';
+const BRIDGE_API_BASE = '/api/rewrite-bridge';
 const DEFAULT_SIGN_IN_POPUP_PATH = '/worksheet_launcher/app/login/popup.html';
 
 function buildPublicApiBase(options = {}) {
@@ -208,6 +209,77 @@ function createServerApiClient(options = {}) {
     return { ok: true, data: bytes, status: response.status };
   }
 
+  async function requestBinary(path, expectedMime, request = {}) {
+    const { method = 'GET', body = null, headers = {} } = request;
+    let response;
+    try {
+      response = await fetch(`${BRIDGE_API_BASE}${path}`, {
+        method,
+        credentials: 'include',
+        headers,
+        ...(body ? { body } : {}),
+      });
+    } catch (error) {
+      return toStructuredError({
+        code: 'NETWORK_ERROR',
+        message: `Unable to reach bridge API. ${error?.message || String(error)}`,
+      });
+    }
+
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+
+    if (!response.ok) {
+      if (authLikeStatus(response.status) || contentType.includes('text/html')) {
+        return toStructuredError({
+          code: 'AUTH_REQUIRED',
+          message: createAuthMessage(),
+          status: response.status,
+          requiresSignIn: true,
+        });
+      }
+      const parsedError = await parseErrorBody(response);
+      if (parsedError.kind === 'json') {
+        return toStructuredError({
+          code: parsedError.parsed?.error?.code || 'API_ERROR',
+          message: parsedError.parsed?.error?.message || 'API request failed.',
+          status: response.status,
+        });
+      }
+      return toStructuredError({
+        code: 'API_ERROR',
+        message: 'API request failed.',
+        status: response.status,
+      });
+    }
+
+    if (contentType.includes('text/html')) {
+      return toStructuredError({
+        code: 'AUTH_REQUIRED',
+        message: createAuthMessage(),
+        status: response.status,
+        requiresSignIn: true,
+      });
+    }
+
+    if (!contentType.includes(String(expectedMime || '').toLowerCase())) {
+      return toStructuredError({
+        code: 'UNEXPECTED_CONTENT_TYPE',
+        message: `Expected ${expectedMime} response but got ${contentType || 'unknown'}.`,
+        status: response.status,
+      });
+    }
+
+    const bytes = await response.arrayBuffer();
+    if (!bytes || bytes.byteLength <= 0) {
+      return toStructuredError({
+        code: 'BRIDGE_EMPTY_RESPONSE',
+        message: 'Bridge returned an empty binary response.',
+        status: response.status,
+      });
+    }
+    return { ok: true, data: new Uint8Array(bytes), status: response.status };
+  }
+
   async function uploadZip(path, zipBytes, request = {}) {
     const { query = null } = request;
     let response;
@@ -276,6 +348,48 @@ function createServerApiClient(options = {}) {
     },
     fetchPublishedPackageArtifact(publishedPackageId) {
       return requestZip(`/published/${publishedPackageId}/artifact`);
+    },
+    async rewriteText(text) {
+      let response;
+      try {
+        response = await fetch(`${BRIDGE_API_BASE}/rewrite`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            text: String(text),
+            stream: false,
+          }),
+        });
+      } catch (error) {
+        return toStructuredError({
+          code: 'NETWORK_ERROR',
+          message: `Unable to reach bridge API. ${error?.message || String(error)}`,
+        });
+      }
+
+      const parsed = await parseJsonResponse(response);
+      if (!parsed?.ok) return parsed;
+      const rewrittenText = String(parsed.data?.text ?? '').trim();
+      if (!rewrittenText) {
+        return toStructuredError({
+          code: 'BRIDGE_EMPTY_RESPONSE',
+          message: 'Bridge returned an empty rewrite response.',
+          status: parsed.status ?? response.status,
+        });
+      }
+      return { ok: true, data: { text: rewrittenText }, status: parsed.status ?? response.status };
+    },
+    generateAudioFromText(text) {
+      return requestBinary('/t2a', 'audio/mpeg', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          text: String(text),
+          format: 'mp3',
+          response_mode: 'binary',
+        }),
+      });
     },
   };
 }
