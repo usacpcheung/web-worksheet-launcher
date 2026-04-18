@@ -4008,8 +4008,65 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
 
 test('rewrite assist snapshots answer text from answer record value', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('const answerRecordAtClick = currentBlock?.blockId ? session.state.answers?.[currentBlock.blockId] : null;'), true);
-  assert.equal(source.includes('? answerRecordAtClick.value'), true);
+  assert.equal(source.includes('const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {'), true);
+  assert.equal(source.includes('const answerRecord = session.state.answers?.[blockId];'), true);
+  assert.equal(source.includes('? answerRecord.value'), true);
+  assert.equal(source.includes("await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);"), true);
+});
+
+test('rewrite visibility rules enforce text-only, in-progress, and trimmed length boundaries', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("block.kind === 'question'"), true);
+  assert.equal(source.includes("inputType === 'text'"), true);
+  assert.equal(source.includes("session.state.status !== 'completed'"), true);
+  assert.equal(source.includes('trimmedAnswerLength > 0'), true);
+  assert.equal(source.includes('trimmedAnswerLength <= 300'), true);
+  assert.equal(source.includes('const isAnswerTooLongToRewrite = trimmedAnswerLength > 300;'), true);
+  assert.equal(source.includes('Answer is too long to rewrite (max 300 characters).'), true);
+});
+
+test('replayViewerRewriteIntent valid viewerRewrite context calls rewrite API and applies answer with undo snapshot', async () => {
+  const mod = await loadViewerModule();
+  const rewriteCalls = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async (text) => {
+        rewriteCalls.push(text);
+        return { ok: true, data: { text: 'rewritten answer' } };
+      },
+    },
+  });
+
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text' },
+    }],
+  };
+  session.state.answers = {
+    q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'original answer',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.deepEqual(rewriteCalls, ['original answer']);
+  assert.equal(session.state.undoBuffer.q1, 'original answer');
+  assert.equal(session.state.answers.q1.value, 'rewritten answer');
 });
 
 test('viewer replayProtectedAction receives payload and avoids mutation on stale context', async () => {
@@ -4041,4 +4098,92 @@ test('viewer replayProtectedAction receives payload and avoids mutation on stale
   assert.equal(result.ok, false);
   assert.equal(result.status, 'invalid_context');
   assert.equal(JSON.stringify(session.state.answers), beforeAnswers);
+});
+
+test('stale replay context aborts without calling rewrite API or mutating answers', async () => {
+  const mod = await loadViewerModule();
+  let rewriteCallCount = 0;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => {
+        rewriteCallCount += 1;
+        return { ok: true, data: { text: 'should not apply' } };
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_active';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'keep me', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+  const before = JSON.stringify(session.state.answers);
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_stale',
+    blockId: 'q1',
+    answerTextAtClickTime: 'keep me',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'invalid_context');
+  assert.equal(rewriteCallCount, 0);
+  assert.equal(JSON.stringify(session.state.answers), before);
+});
+
+test('undo lifecycle wiring exists for post-rewrite visibility, restore, and manual input clear', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);'), true);
+  assert.equal(source.includes("undoButton.textContent = 'Undo';"), true);
+  assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer);'), true);
+  assert.equal(source.includes('delete nextUndoBuffer[block.blockId];'), true);
+  assert.equal(source.includes("control.addEventListener('input', () => {"), true);
+  assert.equal(source.includes('session.state.undoBuffer = nextUndoBuffer;'), true);
+});
+
+test('in-flight rewrite state renders loading label and disables/hides controls', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;'), true);
+  assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';"), true);
+  assert.equal(source.includes('rewriteButton.disabled = isRewriteInFlight;'), true);
+  assert.equal(source.includes('if (hasUndoEntry && !isRewriteInFlight) {'), true);
+});
+
+test('rewrite API failure keeps original answer unchanged and clears in-flight flags', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: false, error: { message: 'bridge failed' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'original answer',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'rewrite_failed');
+  assert.equal(session.state.answers.q1.value, 'original answer');
+  assert.equal(session.state.isRewriting, false);
+  assert.equal(session.state.rewritingBlockId, null);
 });

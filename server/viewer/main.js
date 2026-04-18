@@ -2714,9 +2714,95 @@ class ViewerAttemptSession {
       return { ok: false, status: 'invalid_context' };
     }
 
-    // Stage 1 dispatcher entrypoint for rewrite recovery.
-    this.setRecoveryMessage('Rewrite recovery is not available yet. Please run Rewrite Assist again.');
-    return { ok: true, status: 'deferred_viewer_rewrite' };
+    const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
+    const blocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
+    const targetBlock = blockId ? blocks.find((block) => block?.blockId === blockId) : null;
+    const isRewriteTargetSupported = Boolean(
+      targetBlock
+      && targetBlock.kind === 'question'
+      && targetBlock.responseConfig?.inputType === 'text'
+    );
+    if (!isRewriteTargetSupported) {
+      this.setRecoveryMessage('Rewrite recovery is only available for text-response questions.');
+      return { ok: false, status: 'unsupported_target' };
+    }
+
+    const answerTextAtClickTime = typeof payload.answerTextAtClickTime === 'string'
+      ? payload.answerTextAtClickTime
+      : String(payload.answerTextAtClickTime ?? '');
+    const trimmedClickText = answerTextAtClickTime.trim();
+    if (!trimmedClickText) {
+      this.setRecoveryMessage('Nothing to rewrite yet. Enter a response first, then try Rewrite Assist again.');
+      return { ok: false, status: 'empty_source_text' };
+    }
+
+    this.state.isRewriting = true;
+    this.state.rewritingBlockId = blockId;
+    this.setRecoveryMessage(null);
+    this.notifyStateChange();
+
+    const clearRewriteFlags = () => {
+      this.state.isRewriting = false;
+      this.state.rewritingBlockId = null;
+    };
+
+    const currentAnswerValue = (attemptBlockId) => {
+      const answerRecord = attemptBlockId ? this.state.answers?.[attemptBlockId] : null;
+      const rawValue = answerRecord && typeof answerRecord === 'object'
+        ? answerRecord.value
+        : answerRecord;
+      return typeof rawValue === 'string' ? rawValue : String(rawValue ?? '');
+    };
+
+    const rewriteResult = await this.apiClient.rewriteText(trimmedClickText);
+    if (!rewriteResult?.ok) {
+      clearRewriteFlags();
+      this.setRecoveryMessage(
+        'Rewrite could not be completed. Your answer is unchanged—please try Rewrite Assist again.'
+      );
+      this.notifyStateChange();
+      return {
+        ok: false,
+        status: 'rewrite_failed',
+        error: rewriteResult?.error || rewriteResult || null,
+      };
+    }
+
+    const currentAttemptId = this.state.localAttemptId || null;
+    const intentAttemptId = typeof payload.localAttemptId === 'string' ? payload.localAttemptId : null;
+    const refreshedBlocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
+    const refreshedBlock = blockId ? refreshedBlocks.find((block) => block?.blockId === blockId) : null;
+    const isFreshContext = Boolean(
+      currentAttemptId
+      && intentAttemptId
+      && currentAttemptId === intentAttemptId
+      && refreshedBlock
+      && refreshedBlock.kind === 'question'
+      && refreshedBlock.responseConfig?.inputType === 'text'
+      && (!this.state.lastActiveBlockId || this.state.lastActiveBlockId === blockId)
+    );
+    const answerMatchesSnapshot = currentAnswerValue(blockId) === answerTextAtClickTime;
+
+    if (!isFreshContext || !answerMatchesSnapshot) {
+      clearRewriteFlags();
+      this.setRecoveryMessage(
+        'Your answer changed before rewrite finished, so we did not apply the rewrite. Please review and try again.'
+      );
+      this.notifyStateChange();
+      return { ok: false, status: 'rewrite_stale_context' };
+    }
+
+    const preRewriteAnswer = currentAnswerValue(blockId);
+    const rewrittenText = String(rewriteResult.data?.text ?? '').trim();
+    this.state.undoBuffer = {
+      ...this.state.undoBuffer,
+      [blockId]: preRewriteAnswer,
+    };
+    this.setAnswer(blockId, rewrittenText);
+    clearRewriteFlags();
+    this.setRecoveryMessage(null);
+    this.notifyStateChange();
+    return { ok: true, status: 'rewrite_applied' };
   }
 
   async triggerProtectedAction(actionId, intentPayload = {}) {
@@ -3118,17 +3204,12 @@ function renderViewerShell(session) {
   syncResumeBtn.setAttribute('role', 'menuitem');
   syncResumeBtn.textContent = 'Server Resume (Sign-in required)';
 
-  const rewriteAssistBtn = document.createElement('button');
-  rewriteAssistBtn.type = 'button';
-  rewriteAssistBtn.className = 'viewer-utility-menu__item';
-  rewriteAssistBtn.setAttribute('role', 'menuitem');
-  rewriteAssistBtn.textContent = 'Rewrite Assist (Sign-in required)';
   const printReportBtn = document.createElement('button');
   printReportBtn.type = 'button';
   printReportBtn.className = 'viewer-utility-menu__item';
   printReportBtn.setAttribute('role', 'menuitem');
   printReportBtn.textContent = 'Print worksheet report';
-  utilityMenuList.append(syncResumeBtn, rewriteAssistBtn, printReportBtn);
+  utilityMenuList.append(syncResumeBtn, printReportBtn);
   utilityMenu.append(utilityMenuBtn, utilityMenuList);
   headerActions.append(infoBtn, utilityMenu);
 
@@ -3576,6 +3657,38 @@ function renderViewerShell(session) {
     localInputCache.set(blockId, value);
   };
 
+  const getTrimmedAnswerTextForBlock = (blockId) => {
+    if (!blockId) return '';
+    const answerRecord = session.state.answers?.[blockId];
+    const rawAnswer = answerRecord && typeof answerRecord === 'object'
+      ? answerRecord.value
+      : answerRecord;
+    return typeof rawAnswer === 'string'
+      ? rawAnswer.trim()
+      : String(rawAnswer ?? '').trim();
+  };
+
+  const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {
+    const localAttemptId = typeof session.state.localAttemptId === 'string'
+      ? session.state.localAttemptId
+      : null;
+    const blockId = typeof questionBlock?.blockId === 'string' ? questionBlock.blockId : null;
+    const isTextQuestion = Boolean(
+      questionBlock
+      && questionBlock.kind === 'question'
+      && questionBlock.responseConfig?.inputType === 'text'
+      && blockId
+    );
+    if (!localAttemptId || !isTextQuestion) {
+      return null;
+    }
+    return {
+      localAttemptId,
+      blockId,
+      answerTextAtClickTime: getTrimmedAnswerTextForBlock(blockId),
+    };
+  };
+
   const renderCurrentBlockCard = (currentBlock) => {
     const currentBlockCheckStatus = currentBlock?.blockId
       ? session.state.checkResult?.statusByBlockId?.[currentBlock.blockId]
@@ -3584,9 +3697,14 @@ function renderViewerShell(session) {
     const currentBlockIsCheckable = isSupportedCheckQuestionBlock(currentBlock);
     const hasCurrentBlockCheckStatus = typeof currentBlockCheckStatus === 'string';
     const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;
+    const currentBlockId = currentBlock?.blockId || null;
+    const hasUndoForCurrentBlock = Boolean(currentBlockId && session.state.undoBuffer?.[currentBlockId]);
+    const rewriteMessageForCard = currentBlockId && session.state.rewritingBlockId === currentBlockId
+      ? (session.state.recoveryMessage || '')
+      : '';
 
     const nextSignature = JSON.stringify({
-      blockId: currentBlock?.blockId || null,
+      blockId: currentBlockId,
       prompt: currentBlock?.prompt?.text || '',
       content: currentBlock?.content?.text || '',
       inputType: currentBlock?.responseConfig?.inputType || null,
@@ -3602,6 +3720,10 @@ function renderViewerShell(session) {
       hasGlobalCheckResult,
       currentBlockIsCheckable,
       currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,
+      isRewriting: Boolean(session.state.isRewriting),
+      rewritingBlockId: session.state.rewritingBlockId || null,
+      hasUndoForCurrentBlock,
+      rewriteMessageForCard,
     });
     if (nextSignature === blockSignature) return;
 
@@ -3814,6 +3936,11 @@ function renderViewerShell(session) {
         control.type = 'text';
         control.addEventListener('input', () => {
           cacheRawControlValue(block.blockId, control.value);
+          if (Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId)) {
+            const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
+            delete nextUndoBuffer[block.blockId];
+            session.state.undoBuffer = nextUndoBuffer;
+          }
           session.setAnswer(block.blockId, control.value);
           const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
@@ -3926,6 +4053,11 @@ function renderViewerShell(session) {
         control.rows = 5;
         control.addEventListener('input', () => {
           cacheRawControlValue(block.blockId, control.value);
+          if (Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId)) {
+            const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
+            delete nextUndoBuffer[block.blockId];
+            session.state.undoBuffer = nextUndoBuffer;
+          }
           session.setAnswer(block.blockId, control.value);
           const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
@@ -3953,11 +4085,79 @@ function renderViewerShell(session) {
           counter: textCounter,
           status: textStatus,
         });
+        const rewriteRow = document.createElement('div');
+        rewriteRow.className = 'question-card__rewrite-row';
+        const trimmedAnswerText = getTrimmedAnswerTextForBlock(block.blockId);
+        const trimmedAnswerLength = trimmedAnswerText.length;
+        const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);
+        const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
+        const canShowRewriteButton = Boolean(
+          block.kind === 'question'
+          && inputType === 'text'
+          && session.state.status !== 'completed'
+          && trimmedAnswerLength > 0
+          && trimmedAnswerLength <= 300
+        );
+        const isAnswerTooLongToRewrite = trimmedAnswerLength > 300;
+
+        if (isRewriteInFlight || canShowRewriteButton) {
+          const rewriteButton = document.createElement('button');
+          rewriteButton.type = 'button';
+          rewriteButton.className = 'question-card__rewrite-btn';
+          rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';
+          rewriteButton.disabled = isRewriteInFlight;
+          if (!isRewriteInFlight) {
+            rewriteButton.addEventListener('click', async () => {
+              const rewriteIntentPayload = buildViewerRewriteIntentPayloadForBlock(block);
+              if (!rewriteIntentPayload) {
+                session.state.utilityMessage = 'Rewrite Assist is available only for text-response questions.';
+                renderUI();
+                return;
+              }
+              session.state.utilityMessage = null;
+              await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);
+              renderUI();
+            });
+          }
+          rewriteRow.append(rewriteButton);
+        }
+
+        if (isAnswerTooLongToRewrite && !isRewriteInFlight) {
+          const rewriteHint = document.createElement('p');
+          rewriteHint.className = 'question-card__rewrite-hint';
+          rewriteHint.textContent = 'Answer is too long to rewrite (max 300 characters).';
+          rewriteRow.append(rewriteHint);
+        }
+
+        if (hasUndoEntry && !isRewriteInFlight) {
+          const undoButton = document.createElement('button');
+          undoButton.type = 'button';
+          undoButton.className = 'question-card__undo-btn';
+          undoButton.textContent = 'Undo';
+          undoButton.disabled = session.state.status === 'completed';
+          undoButton.addEventListener('click', () => {
+            const savedUndoAnswer = session.state.undoBuffer?.[block.blockId];
+            if (savedUndoAnswer === undefined) {
+              return;
+            }
+            session.setAnswer(block.blockId, savedUndoAnswer);
+            const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
+            delete nextUndoBuffer[block.blockId];
+            session.state.undoBuffer = nextUndoBuffer;
+            renderUI();
+          });
+          rewriteRow.append(undoButton);
+        }
+
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
           card.append(checkBanner, checkReveal);
         }
-        card.append(helper, control, mediaFeedback, textCounter, textStatus, inputError);
+        card.append(helper, control, mediaFeedback, textCounter, textStatus);
+        if (rewriteRow.childNodes.length > 0) {
+          card.append(rewriteRow);
+        }
+        card.append(inputError);
       } else {
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
@@ -4108,22 +4308,6 @@ function renderViewerShell(session) {
     renderUI();
   });
 
-  rewriteAssistBtn.addEventListener('click', async () => {
-    closeUtilityMenu({ returnFocus: true });
-    const orderedBlocks = getOrderedBlocks();
-    const currentBlock = orderedBlocks[currentBlockIndex] || null;
-    const answerRecordAtClick = currentBlock?.blockId ? session.state.answers?.[currentBlock.blockId] : null;
-    const rawAnswerAtClick = answerRecordAtClick && typeof answerRecordAtClick === 'object'
-      ? answerRecordAtClick.value
-      : answerRecordAtClick;
-    await session.triggerProtectedAction('resumeViewerRewriteAfterLogin', {
-      blockId: currentBlock?.blockId || null,
-      answerTextAtClickTime: typeof rawAnswerAtClick === 'string'
-        ? rawAnswerAtClick
-        : String(rawAnswerAtClick ?? ''),
-    });
-    renderUI();
-  });
   printReportBtn.addEventListener('click', async () => {
     closeUtilityMenu({ returnFocus: true });
     session.state.utilityMessage = null;
