@@ -71,7 +71,7 @@ test('runProtectedAction persists pending intent and redirects when unauthentica
   assert.equal(redirectCalls[0].includes('intent='), false);
 });
 
-test('runProtectedAction preserves intentPayload without mutation in pendingIntent', async () => {
+test('runProtectedAction stores a cloned intentPayload in pendingIntent', async () => {
   const storage = createStorage();
   const redirectCalls = [];
   const payload = {
@@ -103,6 +103,14 @@ test('runProtectedAction preserves intentPayload without mutation in pendingInte
   });
 
   assert.deepEqual(storage.pendingIntent.get().intentPayload, payload);
+  payload.answerTextAtClickTime = 'Mutated answer';
+  payload.nested.marker = 'mutated';
+  assert.deepEqual(storage.pendingIntent.get().intentPayload, {
+    localAttemptId: 'attempt_1',
+    blockId: 'b1',
+    answerTextAtClickTime: 'Draft answer',
+    nested: { marker: 'keep' },
+  });
   assert.equal(redirectCalls.length, 1);
 });
 
