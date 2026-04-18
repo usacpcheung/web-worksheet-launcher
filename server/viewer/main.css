@@ -1128,6 +1128,13 @@ input[type='text']::placeholder {
   text-align: right;
 }
 
+.question-card__rewrite-error {
+  margin: 0;
+  color: #9f1239;
+  font-size: 0.86rem;
+  text-align: right;
+}
+
 .viewer-section h2 {
   position: absolute;
   inline-size: 1px;

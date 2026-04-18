@@ -1884,6 +1884,7 @@ class ViewerAttemptSession {
       undoBuffer: {},
       isRewriting: false,
       rewritingBlockId: null,
+      rewriteMessageByBlock: {},
       lastProtectedAction: null,
       serverSession: {
         status: VIEWER_SERVER_SESSION_STATES.CHECKING,
@@ -2321,6 +2322,7 @@ class ViewerAttemptSession {
     this.state.undoBuffer = {};
     this.state.isRewriting = false;
     this.state.rewritingBlockId = null;
+    this.state.rewriteMessageByBlock = {};
 
     if (options.markDirty) {
       this.state.attemptRevision += 1;
@@ -2653,6 +2655,19 @@ class ViewerAttemptSession {
     this.state.recoveryMessage = message || null;
   }
 
+  setRewriteMessage(blockId, message) {
+    if (typeof blockId !== 'string' || !blockId) {
+      return;
+    }
+    const nextMessages = { ...(this.state.rewriteMessageByBlock || {}) };
+    if (message) {
+      nextMessages[blockId] = String(message);
+    } else {
+      delete nextMessages[blockId];
+    }
+    this.state.rewriteMessageByBlock = nextMessages;
+  }
+
   async replayProtectedAction(intent) {
     const actionId = typeof intent?.actionId === 'string' ? intent.actionId : '';
     const payload = intent?.payload && typeof intent.payload === 'object' ? intent.payload : {};
@@ -2704,9 +2719,14 @@ class ViewerAttemptSession {
   }
 
   async replayViewerRewriteIntent(payload = {}) {
+    const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
     const validation = this.validateViewerRewriteIntentPayload(payload);
     if (!validation.ok) {
-      this.setRecoveryMessage(validation.message);
+      if (blockId) {
+        this.setRewriteMessage(blockId, validation.message);
+      } else {
+        this.setRecoveryMessage(validation.message);
+      }
       console.warn('[viewer] Ignoring stale/invalid rewrite recovery intent.', {
         action: 'viewerRewrite',
         payload,
@@ -2714,7 +2734,6 @@ class ViewerAttemptSession {
       return { ok: false, status: 'invalid_context' };
     }
 
-    const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
     const blocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
     const targetBlock = blockId ? blocks.find((block) => block?.blockId === blockId) : null;
     const isRewriteTargetSupported = Boolean(
@@ -2723,7 +2742,7 @@ class ViewerAttemptSession {
       && targetBlock.responseConfig?.inputType === 'text'
     );
     if (!isRewriteTargetSupported) {
-      this.setRecoveryMessage('Rewrite recovery is only available for text-response questions.');
+      this.setRewriteMessage(blockId, 'Rewrite is only available for text-response questions.');
       return { ok: false, status: 'unsupported_target' };
     }
 
@@ -2732,12 +2751,13 @@ class ViewerAttemptSession {
       : String(payload.answerTextAtClickTime ?? '');
     const trimmedClickText = answerTextAtClickTime.trim();
     if (!trimmedClickText) {
-      this.setRecoveryMessage('Nothing to rewrite yet. Enter a response first, then try Rewrite Assist again.');
+      this.setRewriteMessage(blockId, 'Nothing to rewrite yet. Enter a response first, then try Rewrite again.');
       return { ok: false, status: 'empty_source_text' };
     }
 
     this.state.isRewriting = true;
     this.state.rewritingBlockId = blockId;
+    this.setRewriteMessage(blockId, null);
     this.setRecoveryMessage(null);
     this.notifyStateChange();
 
@@ -2757,9 +2777,7 @@ class ViewerAttemptSession {
     const rewriteResult = await this.apiClient.rewriteText(trimmedClickText);
     if (!rewriteResult?.ok) {
       clearRewriteFlags();
-      this.setRecoveryMessage(
-        'Rewrite could not be completed. Your answer is unchanged—please try Rewrite Assist again.'
-      );
+      this.setRewriteMessage(blockId, 'Rewrite could not be completed. Your answer is unchanged—please try again.');
       this.notifyStateChange();
       return {
         ok: false,
@@ -2779,13 +2797,15 @@ class ViewerAttemptSession {
       && refreshedBlock
       && refreshedBlock.kind === 'question'
       && refreshedBlock.responseConfig?.inputType === 'text'
+      && this.state.status !== 'completed'
       && (!this.state.lastActiveBlockId || this.state.lastActiveBlockId === blockId)
     );
-    const answerMatchesSnapshot = currentAnswerValue(blockId) === answerTextAtClickTime;
+    const answerMatchesSnapshot = currentAnswerValue(blockId).trim() === trimmedClickText;
 
     if (!isFreshContext || !answerMatchesSnapshot) {
       clearRewriteFlags();
-      this.setRecoveryMessage(
+      this.setRewriteMessage(
+        blockId,
         'Your answer changed before rewrite finished, so we did not apply the rewrite. Please review and try again.'
       );
       this.notifyStateChange();
@@ -2798,8 +2818,23 @@ class ViewerAttemptSession {
       ...this.state.undoBuffer,
       [blockId]: preRewriteAnswer,
     };
+    const beforeApplyAnswer = currentAnswerValue(blockId);
     this.setAnswer(blockId, rewrittenText);
+    const afterApplyAnswer = currentAnswerValue(blockId);
+    if (this.state.status === 'completed' || afterApplyAnswer === beforeApplyAnswer) {
+      const nextUndoBuffer = { ...(this.state.undoBuffer || {}) };
+      delete nextUndoBuffer[blockId];
+      this.state.undoBuffer = nextUndoBuffer;
+      clearRewriteFlags();
+      this.setRewriteMessage(
+        blockId,
+        'Rewrite finished, but your answer could not be updated because this attempt is no longer editable.'
+      );
+      this.notifyStateChange();
+      return { ok: false, status: 'rewrite_not_applied' };
+    }
     clearRewriteFlags();
+    this.setRewriteMessage(blockId, null);
     this.setRecoveryMessage(null);
     this.notifyStateChange();
     return { ok: true, status: 'rewrite_applied' };
@@ -3698,9 +3733,11 @@ function renderViewerShell(session) {
     const hasCurrentBlockCheckStatus = typeof currentBlockCheckStatus === 'string';
     const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;
     const currentBlockId = currentBlock?.blockId || null;
-    const hasUndoForCurrentBlock = Boolean(currentBlockId && session.state.undoBuffer?.[currentBlockId]);
-    const rewriteMessageForCard = currentBlockId && session.state.rewritingBlockId === currentBlockId
-      ? (session.state.recoveryMessage || '')
+    const hasUndoForCurrentBlock = Boolean(
+      currentBlockId && Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, currentBlockId)
+    );
+    const rewriteMessageForCard = currentBlockId
+      ? String(session.state.rewriteMessageByBlock?.[currentBlockId] || '')
       : '';
 
     const nextSignature = JSON.stringify({
@@ -4090,6 +4127,7 @@ function renderViewerShell(session) {
         const trimmedAnswerText = getTrimmedAnswerTextForBlock(block.blockId);
         const trimmedAnswerLength = trimmedAnswerText.length;
         const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);
+        const rewriteInlineMessage = String(session.state.rewriteMessageByBlock?.[block.blockId] || '');
         const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
         const canShowRewriteButton = Boolean(
           block.kind === 'question'
@@ -4110,7 +4148,7 @@ function renderViewerShell(session) {
             rewriteButton.addEventListener('click', async () => {
               const rewriteIntentPayload = buildViewerRewriteIntentPayloadForBlock(block);
               if (!rewriteIntentPayload) {
-                session.state.utilityMessage = 'Rewrite Assist is available only for text-response questions.';
+                session.state.utilityMessage = 'Rewrite is available only for text-response questions.';
                 renderUI();
                 return;
               }
@@ -4147,6 +4185,13 @@ function renderViewerShell(session) {
             renderUI();
           });
           rewriteRow.append(undoButton);
+        }
+
+        if (rewriteInlineMessage) {
+          const rewriteError = document.createElement('p');
+          rewriteError.className = 'question-card__rewrite-error';
+          rewriteError.textContent = `⚠️ ${rewriteInlineMessage}`;
+          rewriteRow.append(rewriteError);
         }
 
         if (!card.contains(label)) card.append(label);

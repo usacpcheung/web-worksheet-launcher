@@ -4069,6 +4069,37 @@ test('replayViewerRewriteIntent valid viewerRewrite context calls rewrite API an
   assert.equal(session.state.answers.q1.value, 'rewritten answer');
 });
 
+test('replayViewerRewriteIntent accepts unchanged answers that differ only by surrounding whitespace', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'clean rewrite' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: '  hello  ', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'hello',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(session.state.answers.q1.value, 'clean rewrite');
+});
+
 test('viewer replayProtectedAction receives payload and avoids mutation on stale context', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
@@ -4153,6 +4184,7 @@ test('in-flight rewrite state renders loading label and disables/hides controls'
   assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';"), true);
   assert.equal(source.includes('rewriteButton.disabled = isRewriteInFlight;'), true);
   assert.equal(source.includes('if (hasUndoEntry && !isRewriteInFlight) {'), true);
+  assert.equal(source.includes('session.state.rewriteMessageByBlock?.[block.blockId]'), true);
 });
 
 test('rewrite API failure keeps original answer unchanged and clears in-flight flags', async () => {
@@ -4186,4 +4218,6 @@ test('rewrite API failure keeps original answer unchanged and clears in-flight f
   assert.equal(session.state.answers.q1.value, 'original answer');
   assert.equal(session.state.isRewriting, false);
   assert.equal(session.state.rewritingBlockId, null);
+  assert.equal(session.state.rewriteMessageByBlock.q1.includes('Rewrite could not be completed'), true);
+  assert.equal(session.state.recoveryMessage, null);
 });
