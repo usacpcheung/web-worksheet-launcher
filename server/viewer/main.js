@@ -3773,7 +3773,6 @@ function renderViewerShell(session) {
       rewritingBlockId: session.state.rewritingBlockId || null,
       hasUndoForCurrentBlock,
       rewriteMessageForCard,
-      trimmedAnswerLengthForCurrentBlock,
       canShowRewriteButtonForCurrentBlock,
       isAnswerTooLongToRewriteForCurrentBlock,
     });
