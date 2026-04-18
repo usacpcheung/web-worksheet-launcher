@@ -3739,12 +3739,24 @@ function renderViewerShell(session) {
     const rewriteMessageForCard = currentBlockId
       ? String(session.state.rewriteMessageByBlock?.[currentBlockId] || '')
       : '';
+    const currentBlockInputType = currentBlock?.responseConfig?.inputType || null;
+    const trimmedAnswerLengthForCurrentBlock = currentBlockId
+      ? getTrimmedAnswerTextForBlock(currentBlockId).length
+      : 0;
+    const canShowRewriteButtonForCurrentBlock = Boolean(
+      currentBlock?.kind === 'question'
+      && currentBlockInputType === 'text'
+      && session.state.status !== 'completed'
+      && trimmedAnswerLengthForCurrentBlock > 0
+      && trimmedAnswerLengthForCurrentBlock <= 300
+    );
+    const isAnswerTooLongToRewriteForCurrentBlock = trimmedAnswerLengthForCurrentBlock > 300;
 
     const nextSignature = JSON.stringify({
       blockId: currentBlockId,
       prompt: currentBlock?.prompt?.text || '',
       content: currentBlock?.content?.text || '',
-      inputType: currentBlock?.responseConfig?.inputType || null,
+      inputType: currentBlockInputType,
       maxLength: currentBlock?.responseConfig?.maxLength || null,
       options: Array.isArray(currentBlock?.responseConfig?.options)
         ? currentBlock.responseConfig.options.map((opt) => [
@@ -3761,6 +3773,9 @@ function renderViewerShell(session) {
       rewritingBlockId: session.state.rewritingBlockId || null,
       hasUndoForCurrentBlock,
       rewriteMessageForCard,
+      trimmedAnswerLengthForCurrentBlock,
+      canShowRewriteButtonForCurrentBlock,
+      isAnswerTooLongToRewriteForCurrentBlock,
     });
     if (nextSignature === blockSignature) return;
 

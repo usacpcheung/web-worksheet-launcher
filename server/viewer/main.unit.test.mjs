@@ -4025,6 +4025,16 @@ test('rewrite visibility rules enforce text-only, in-progress, and trimmed lengt
   assert.equal(source.includes('Answer is too long to rewrite (max 300 characters).'), true);
 });
 
+test('render signature includes answer-derived rewrite visibility inputs for current block', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const trimmedAnswerLengthForCurrentBlock = currentBlockId'), true);
+  assert.equal(source.includes('const canShowRewriteButtonForCurrentBlock = Boolean('), true);
+  assert.equal(source.includes('const isAnswerTooLongToRewriteForCurrentBlock = trimmedAnswerLengthForCurrentBlock > 300;'), true);
+  assert.equal(source.includes('trimmedAnswerLengthForCurrentBlock,'), true);
+  assert.equal(source.includes('canShowRewriteButtonForCurrentBlock,'), true);
+  assert.equal(source.includes('isAnswerTooLongToRewriteForCurrentBlock,'), true);
+});
+
 test('replayViewerRewriteIntent valid viewerRewrite context calls rewrite API and applies answer with undo snapshot', async () => {
   const mod = await loadViewerModule();
   const rewriteCalls = [];
