@@ -2725,8 +2725,8 @@ class ViewerAttemptSession {
     }
 
     const payload = {
-      localAttemptId: this.state.localAttemptId || null,
       ...(intentPayload && typeof intentPayload === 'object' ? intentPayload : {}),
+      localAttemptId: this.state.localAttemptId || null,
     };
 
     return this.authGate.runProtectedAction({
@@ -4112,7 +4112,10 @@ function renderViewerShell(session) {
     closeUtilityMenu({ returnFocus: true });
     const orderedBlocks = getOrderedBlocks();
     const currentBlock = orderedBlocks[currentBlockIndex] || null;
-    const rawAnswerAtClick = currentBlock?.blockId ? session.state.answers?.[currentBlock.blockId] : '';
+    const answerRecordAtClick = currentBlock?.blockId ? session.state.answers?.[currentBlock.blockId] : null;
+    const rawAnswerAtClick = answerRecordAtClick && typeof answerRecordAtClick === 'object'
+      ? answerRecordAtClick.value
+      : answerRecordAtClick;
     await session.triggerProtectedAction('resumeViewerRewriteAfterLogin', {
       blockId: currentBlock?.blockId || null,
       answerTextAtClickTime: typeof rawAnswerAtClick === 'string'

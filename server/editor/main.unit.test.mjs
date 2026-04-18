@@ -3740,6 +3740,7 @@ test('editor triggerProtectedAction forwards payload and remains functional with
 
   const noPayloadResult = await session.triggerProtectedAction('resumeRewriteAfterLogin');
   const withPayloadResult = await session.triggerProtectedAction('editorPromptT2A', {
+    localDraftId: 'draft_stale',
     blockId: 'q1',
     target: 'question_prompt',
   });

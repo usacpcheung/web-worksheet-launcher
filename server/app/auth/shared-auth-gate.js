@@ -4,6 +4,14 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function cloneIntentPayload(payload) {
+  if (payload == null) return null;
+  if (typeof structuredClone === 'function') {
+    return structuredClone(payload);
+  }
+  return JSON.parse(JSON.stringify(payload));
+}
+
 function buildReturnUrl(currentUrl) {
   const url = new URL(currentUrl.href);
   url.searchParams.set(AUTH_RETURN_PARAM, '1');
@@ -78,7 +86,7 @@ class SharedAuthGate {
       localId,
       resumeFlagKey: this.options.resumeFlagKey,
       resumeUi: resume.ui,
-      intentPayload: intent.payload || null,
+      intentPayload: cloneIntentPayload(intent.payload),
       updatedAt: nowIso(),
     });
 

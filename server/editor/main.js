@@ -632,7 +632,6 @@ class EditorDraftSession {
       uploadedDrafts: [],
       isUploadingDraft: false,
       isLoadingUploadedDrafts: false,
-      isGeneratingAudio: null,
       publishingDraftIds: new Set(),
       openingPublishedPackageIds: new Set(),
       publishedBrowseQuery: '',
@@ -946,7 +945,6 @@ class EditorDraftSession {
     this.state.mode = initialMode;
     this.state.hash = initialHash ?? this.state.hash;
     this.state.scrollToken = initialScrollToken ?? this.state.scrollToken;
-    this.state.isGeneratingAudio = null;
 
     this.state.selectedBlockId = this.state.draft.blocks[0]?.blockId || null;
     if (initialSelectedBlockId) {
@@ -2263,7 +2261,6 @@ class EditorDraftSession {
 
           this.state.draft = draft;
           this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
-          this.state.isGeneratingAudio = null;
           this.state.draftRevision += 1;
           this.state.lastImportedAt = nowIso();
           this.validateCurrentDraft();
@@ -2410,7 +2407,6 @@ class EditorDraftSession {
 
       this.state.draft = draft;
       this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
-      this.state.isGeneratingAudio = null;
       this.state.draftRevision += 1;
       this.state.lastImportedAt = nowIso();
       this.validateCurrentDraft();
@@ -3147,8 +3143,8 @@ class EditorDraftSession {
     }
 
     const payload = {
-      localDraftId: this.state.draft?.localId || null,
       ...(intentPayload && typeof intentPayload === 'object' ? intentPayload : {}),
+      localDraftId: this.state.draft?.localId || null,
     };
 
     return this.authGate.runProtectedAction({

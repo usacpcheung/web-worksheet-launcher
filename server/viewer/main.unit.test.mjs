@@ -3987,6 +3987,7 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
 
   const noPayloadResult = await session.triggerProtectedAction('resumeAttemptServerResumeAfterLogin');
   const withPayloadResult = await session.triggerProtectedAction('viewerRewrite', {
+    localAttemptId: 'attempt_stale',
     blockId: 'b1',
     answerTextAtClickTime: 'typed',
   });
@@ -4003,6 +4004,12 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
     recordStore: 'localAttempts',
     payload: { localAttemptId: 'attempt_1', blockId: 'b1', answerTextAtClickTime: 'typed' },
   });
+});
+
+test('rewrite assist snapshots answer text from answer record value', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const answerRecordAtClick = currentBlock?.blockId ? session.state.answers?.[currentBlock.blockId] : null;'), true);
+  assert.equal(source.includes('? answerRecordAtClick.value'), true);
 });
 
 test('viewer replayProtectedAction receives payload and avoids mutation on stale context', async () => {
