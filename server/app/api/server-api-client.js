@@ -368,17 +368,54 @@ function createServerApiClient(options = {}) {
         });
       }
 
-      const parsed = await parseJsonResponse(response);
-      if (!parsed?.ok) return parsed;
-      const rewrittenText = String(parsed.data?.text ?? '').trim();
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      if (authLikeStatus(response.status) || contentType.includes('text/html')) {
+        return toStructuredError({
+          code: 'AUTH_REQUIRED',
+          message: createAuthMessage(),
+          status: response.status,
+          requiresSignIn: true,
+        });
+      }
+      if (!contentType.includes('application/json')) {
+        const bodyText = await response.text();
+        return toStructuredError({
+          code: 'UNEXPECTED_NON_JSON_RESPONSE',
+          message: 'Server returned an unexpected non-JSON response.',
+          status: response.status,
+          details: { contentType, bodyPreview: bodyText.slice(0, 120) },
+        });
+      }
+      let body;
+      try {
+        body = await response.json();
+      } catch {
+        return toStructuredError({
+          code: 'INVALID_JSON_RESPONSE',
+          message: 'Server returned malformed JSON.',
+          status: response.status,
+        });
+      }
+      if (!response.ok || body?.ok !== true) {
+        const errorCode = body?.error?.code || (authLikeStatus(response.status) ? 'AUTH_REQUIRED' : 'API_ERROR');
+        return toStructuredError({
+          code: errorCode,
+          message: body?.error?.message || (authLikeStatus(response.status) ? createAuthMessage() : 'API request failed.'),
+          status: response.status,
+          requiresSignIn: authLikeStatus(response.status),
+          details: body?.error?.details || null,
+        });
+      }
+      // Bridge returns { ok: true, result: "..." } — not data.text
+      const rewrittenText = typeof body.result === 'string' ? body.result.trim() : '';
       if (!rewrittenText) {
         return toStructuredError({
           code: 'BRIDGE_EMPTY_RESPONSE',
           message: 'Bridge returned an empty rewrite response.',
-          status: parsed.status ?? response.status,
+          status: response.status,
         });
       }
-      return { ok: true, data: { text: rewrittenText }, status: parsed.status ?? response.status };
+      return { ok: true, data: { text: rewrittenText }, status: response.status };
     },
     generateAudioFromText(text) {
       return requestBinary('/t2a', 'audio/mpeg', {

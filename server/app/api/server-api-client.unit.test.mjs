@@ -147,7 +147,7 @@ test('listPublishedPackages sends canonical query shape with title, subject, own
   );
 });
 
-test('rewriteText returns success payload for non-empty data.text', async () => {
+test('rewriteText returns success payload for non-empty result', async () => {
   setTestWindow();
   globalThis.fetch = async (url, request = {}) => {
     assert.equal(url, '/api/rewrite-bridge/rewrite');
@@ -155,7 +155,7 @@ test('rewriteText returns success payload for non-empty data.text', async () => 
     assert.equal(request.credentials, 'include');
     assert.equal(request.headers?.['content-type'], 'application/json');
     assert.deepEqual(JSON.parse(request.body), { text: 'hello', stream: false });
-    return mockJsonResponse(200, { ok: true, data: { text: ' rewritten ' } });
+    return mockJsonResponse(200, { ok: true, result: ' rewritten ' });
   };
 
   const client = createServerApiClient();
@@ -164,12 +164,12 @@ test('rewriteText returns success payload for non-empty data.text', async () => 
   assert.equal(result.data.text, 'rewritten');
 });
 
-test('rewriteText returns BRIDGE_EMPTY_RESPONSE for empty/missing/whitespace text payload', async () => {
+test('rewriteText returns BRIDGE_EMPTY_RESPONSE for empty/missing/whitespace result', async () => {
   setTestWindow();
   const payloads = [
-    { ok: true, data: { text: '' } },
-    { ok: true, data: { text: '   ' } },
-    { ok: true, data: {} },
+    { ok: true, result: '' },
+    { ok: true, result: '   ' },
+    { ok: true },
   ];
   let index = 0;
   globalThis.fetch = async () => mockJsonResponse(200, payloads[index++]);
