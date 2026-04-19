@@ -201,6 +201,27 @@ test('rewriteText maps auth statuses and auth-like html responses to AUTH_REQUIR
   }
 });
 
+test('rewriteText preserves backend auth error payload for JSON 401 responses', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => mockJsonResponse(401, {
+    ok: false,
+    error: {
+      code: 'BRIDGE_AUTH_HEADER_MISSING',
+      message: 'Missing X-Bridge-Auth header.',
+      details: { expectedHeader: 'X-Bridge-Auth' },
+    },
+  });
+
+  const client = createServerApiClient();
+  const result = await client.rewriteText('hello');
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'BRIDGE_AUTH_HEADER_MISSING');
+  assert.equal(result.error.message, 'Missing X-Bridge-Auth header.');
+  assert.equal(result.error.status, 401);
+  assert.equal(result.error.requiresSignIn, true);
+  assert.deepEqual(result.error.details, { expectedHeader: 'X-Bridge-Auth' });
+});
+
 test('rewriteText returns NETWORK_ERROR on fetch failure', async () => {
   setTestWindow();
   globalThis.fetch = async () => {

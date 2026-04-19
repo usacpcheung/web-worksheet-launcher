@@ -2786,11 +2786,15 @@ class ViewerAttemptSession {
       const errorMessage = typeof rewriteError?.message === 'string' && rewriteError.message.trim()
         ? rewriteError.message.trim()
         : 'No additional error message provided.';
+      const errorDetails = rewriteError?.details;
+      const detailsText = errorDetails && typeof errorDetails === 'object'
+        ? JSON.stringify(errorDetails).slice(0, 220)
+        : '';
 
       clearRewriteFlags();
       this.setRewriteMessage(
         blockId,
-        `Rewrite could not be completed. code=${errorCode}${errorStatus !== null ? ` | status=${errorStatus}` : ''} | message=${errorMessage}`
+        `Rewrite could not be completed. code=${errorCode}${errorStatus !== null ? ` | status=${errorStatus}` : ''} | message=${errorMessage}${detailsText ? ` | details=${detailsText}` : ''}`
       );
       console.error('[viewer] Rewrite request failed.', {
         blockId,

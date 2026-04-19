@@ -369,7 +369,7 @@ function createServerApiClient(options = {}) {
       }
 
       const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-      if (authLikeStatus(response.status) || contentType.includes('text/html')) {
+      if (contentType.includes('text/html')) {
         return toStructuredError({
           code: 'AUTH_REQUIRED',
           message: createAuthMessage(),
@@ -379,6 +379,15 @@ function createServerApiClient(options = {}) {
       }
       if (!contentType.includes('application/json')) {
         const bodyText = await response.text();
+        if (authLikeStatus(response.status)) {
+          return toStructuredError({
+            code: 'AUTH_REQUIRED',
+            message: createAuthMessage(),
+            status: response.status,
+            requiresSignIn: true,
+            details: { contentType, bodyPreview: bodyText.slice(0, 160) },
+          });
+        }
         return toStructuredError({
           code: 'UNEXPECTED_NON_JSON_RESPONSE',
           message: 'Server returned an unexpected non-JSON response.',
