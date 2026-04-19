@@ -467,9 +467,10 @@ function clampTextAnswer(rawValue, maxLength) {
 }
 
 function normalizeTextForRewriteSnapshotCompare(questionBlock, rawValue) {
-  const value = String(rawValue ?? '').trim();
+  // Match save semantics: clamp first, then trim for comparison.
+  const value = String(rawValue ?? '');
   const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
-  return clampTextAnswer(value, responseConfig.maxLength);
+  return clampTextAnswer(value, responseConfig.maxLength).trim();
 }
 
 function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = TEXT_WARNING_THRESHOLD_RATIO) {
@@ -2842,9 +2843,12 @@ class ViewerAttemptSession {
       refreshedBlock,
       currentAnswerValue(blockId)
     );
+    const snapshotCompareSource = typeof payload.answerTextRawAtClickTime === 'string'
+      ? payload.answerTextRawAtClickTime
+      : answerTextAtClickTime;
     const normalizedSnapshotAnswer = normalizeTextForRewriteSnapshotCompare(
       refreshedBlock,
-      answerTextAtClickTime
+      snapshotCompareSource
     );
     const answerMatchesSnapshot = normalizedCurrentAnswer === normalizedSnapshotAnswer;
 

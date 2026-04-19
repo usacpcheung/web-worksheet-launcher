@@ -4254,6 +4254,46 @@ test('replayViewerRewriteIntent accepts auth-restore maxLength truncation when s
   assert.equal(result.status, 'rewrite_applied');
 });
 
+test('replayViewerRewriteIntent stale-check prefers raw snapshot and save-equivalent clamp-then-trim normalization', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'rewritten' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text', maxLength: 5 },
+    }],
+  };
+  // Simulates restored save-phase value for raw pre-auth text "   abcde".
+  session.state.answers = {
+    q1: { value: '   ab', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    // Legacy trimmed snapshot would not match restored value in this edge case.
+    answerTextAtClickTime: 'abcde',
+    // Raw snapshot should be used for comparison.
+    answerTextRawAtClickTime: '   abcde',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+});
+
 test('viewer replayProtectedAction receives payload and avoids mutation on stale context', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
