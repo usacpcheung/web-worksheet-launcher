@@ -257,6 +257,14 @@ Auth-return behavior (`authReturn=1`):
 - If restore fails and no explicit source params are present, viewer returns to start screen with recovery guidance.
 - If explicit source params are present, standard explicit launch validation/fatal semantics apply.
 
+Dedicated callback-mode behavior (`authReturn=1&authCallback=1`):
+
+- Viewer enters a callback-only recovery state (not normal start-panel boot).
+- Viewer attempts restore+replay with bounded automatic retry for transient/auth-not-ready session probe outcomes.
+- Callback mode keeps pending protected intent state until replay succeeds or the user explicitly cancels recovery.
+- Callback mode exposes explicit controls for retrying, continuing sign-in, and cancelling recovery.
+- Legacy `authReturn=1` behavior remains a compatibility path when `authCallback` is absent.
+
 ## 1) Launch query contract
 
 The popup URL query string **must** follow:

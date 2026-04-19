@@ -147,7 +147,7 @@ test('listPublishedPackages sends canonical query shape with title, subject, own
   );
 });
 
-test('rewriteText returns success payload for non-empty data.text', async () => {
+test('rewriteText returns success payload for non-empty result', async () => {
   setTestWindow();
   globalThis.fetch = async (url, request = {}) => {
     assert.equal(url, '/api/rewrite-bridge/rewrite');
@@ -155,7 +155,7 @@ test('rewriteText returns success payload for non-empty data.text', async () => 
     assert.equal(request.credentials, 'include');
     assert.equal(request.headers?.['content-type'], 'application/json');
     assert.deepEqual(JSON.parse(request.body), { text: 'hello', stream: false });
-    return mockJsonResponse(200, { ok: true, data: { text: ' rewritten ' } });
+    return mockJsonResponse(200, { ok: true, result: ' rewritten ' });
   };
 
   const client = createServerApiClient();
@@ -164,12 +164,12 @@ test('rewriteText returns success payload for non-empty data.text', async () => 
   assert.equal(result.data.text, 'rewritten');
 });
 
-test('rewriteText returns BRIDGE_EMPTY_RESPONSE for empty/missing/whitespace text payload', async () => {
+test('rewriteText returns BRIDGE_EMPTY_RESPONSE for empty/missing/whitespace result', async () => {
   setTestWindow();
   const payloads = [
-    { ok: true, data: { text: '' } },
-    { ok: true, data: { text: '   ' } },
-    { ok: true, data: {} },
+    { ok: true, result: '' },
+    { ok: true, result: '   ' },
+    { ok: true },
   ];
   let index = 0;
   globalThis.fetch = async () => mockJsonResponse(200, payloads[index++]);
@@ -198,7 +198,35 @@ test('rewriteText maps auth statuses and auth-like html responses to AUTH_REQUIR
     assert.equal(result.ok, false);
     assert.equal(result.error.code, 'AUTH_REQUIRED');
     assert.equal(result.error.requiresSignIn, true);
+    if (i === 2) {
+      assert.equal(result.error.details?.contentType, 'text/html');
+      assert.equal(typeof result.error.details?.bodyPreview, 'string');
+      assert.equal(result.error.details.bodyPreview.includes('login'), true);
+      assert.equal(result.error.details?.bodyLength > 0, true);
+      assert.equal(typeof result.error.details?.bodyTruncated, 'boolean');
+    }
   }
+});
+
+test('rewriteText preserves backend auth error payload for JSON 401 responses', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => mockJsonResponse(401, {
+    ok: false,
+    error: {
+      code: 'BRIDGE_AUTH_HEADER_MISSING',
+      message: 'Missing X-Bridge-Auth header.',
+      details: { expectedHeader: 'X-Bridge-Auth' },
+    },
+  });
+
+  const client = createServerApiClient();
+  const result = await client.rewriteText('hello');
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'BRIDGE_AUTH_HEADER_MISSING');
+  assert.equal(result.error.message, 'Missing X-Bridge-Auth header.');
+  assert.equal(result.error.status, 401);
+  assert.equal(result.error.requiresSignIn, true);
+  assert.deepEqual(result.error.details, { expectedHeader: 'X-Bridge-Auth' });
 });
 
 test('rewriteText returns NETWORK_ERROR on fetch failure', async () => {

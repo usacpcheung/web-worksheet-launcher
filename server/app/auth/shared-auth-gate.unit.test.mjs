@@ -114,6 +114,37 @@ test('runProtectedAction stores a cloned intentPayload in pendingIntent', async 
   assert.equal(redirectCalls.length, 1);
 });
 
+test('runProtectedAction includes configured return query params in auth redirect URL', async () => {
+  const storage = createStorage();
+  const redirectCalls = [];
+  globalThis.window = {
+    location: { href: 'https://example.test/viewer/?localAttemptId=attempt_1' },
+  };
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    isAuthenticated: () => false,
+    getCurrentLocalId: () => 'attempt_1',
+    getCurrentUiState: () => ({ status: 'in_progress' }),
+    persistLocalRecord: async () => {},
+    returnQueryParams: { authCallback: '1' },
+    redirectToAuth: ({ redirectTo }) => redirectCalls.push(redirectTo),
+  });
+
+  const result = await gate.runProtectedAction({
+    actionId: 'viewerRewrite',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1', blockId: 'q1' },
+  });
+
+  assert.equal(result.status, 'redirected');
+  assert.equal(redirectCalls.length, 1);
+  assert.equal(redirectCalls[0].includes('authReturn=1'), true);
+  assert.equal(redirectCalls[0].includes('authCallback=1'), true);
+});
+
 test('runProtectedAction remains functional when intent payload is omitted', async () => {
   const storage = createStorage();
   globalThis.window = {
@@ -255,6 +286,40 @@ test('restoreAfterAuthReturn restores and replays valid intent', async () => {
   assert.equal(storage.pendingIntent.get(), null);
 });
 
+test('restoreAfterAuthReturn cleanup removes configured return query params', async () => {
+  const storage = createStorage();
+  storage.pendingIntent.set({
+    appArea: 'viewer',
+    actionId: 'resumeAttemptSyncAfterLogin',
+    recordStore: 'localAttempts',
+    localId: 'attempt_1',
+    resumeFlagKey: 'viewer:lastSession',
+    resumeUi: { status: 'in_progress' },
+  });
+
+  const { replaceCalls } = createWindowStub('https://example.test/viewer/?authReturn=1&authCallback=1&intent=resumeAttemptSyncAfterLogin');
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    isAuthenticated: () => true,
+    returnQueryParams: { authCallback: '1' },
+    restoreByLocalId: async () => true,
+    validateIntent: async () => true,
+    replayIntent: async () => {},
+  });
+
+  const result = await gate.restoreAfterAuthReturn();
+
+  assert.equal(result.status, 'replayed');
+  assert.equal(replaceCalls.length, 1);
+  const nextUrl = replaceCalls[0][2];
+  assert.equal(nextUrl.includes('authReturn='), false);
+  assert.equal(nextUrl.includes('intent='), false);
+  assert.equal(nextUrl.includes('authCallback='), false);
+});
+
 test('restoreAfterAuthReturn returns not_authenticated and cleans URL params', async () => {
   const storage = createStorage();
   const callLog = [];
@@ -294,6 +359,85 @@ test('restoreAfterAuthReturn returns not_authenticated and cleans URL params', a
   const nextUrl = replaceCalls[0][2];
   assert.equal(nextUrl.includes('authReturn='), false);
   assert.equal(nextUrl.includes('intent='), false);
+});
+
+test('restoreAfterAuthReturn can preserve auth-return URL params on auth-not-ready when requested', async () => {
+  const storage = createStorage();
+  const callLog = [];
+  storage.pendingIntent.set({
+    appArea: 'viewer',
+    actionId: 'resumeAttemptSyncAfterLogin',
+    recordStore: 'localAttempts',
+    localId: 'attempt_1',
+    resumeFlagKey: 'viewer:lastSession',
+    resumeUi: { status: 'in_progress' },
+  });
+
+  const { replaceCalls } = createWindowStub('https://example.test/viewer/?authReturn=1&authCallback=1&intent=resumeAttemptSyncAfterLogin');
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    isAuthenticated: () => false,
+    restoreByLocalId: async () => {
+      callLog.push('restore');
+      return true;
+    },
+    replayIntent: async () => {
+      callLog.push('replay');
+    },
+    onRecoveryMessage: (message) => callLog.push(message),
+  });
+
+  const result = await gate.restoreAfterAuthReturn({
+    preserveUrlOnAuthNotReady: true,
+  });
+
+  assert.equal(result.status, 'not_authenticated');
+  assert.equal(callLog.includes('restore'), false);
+  assert.equal(callLog.includes('replay'), false);
+  assert.equal(storage.pendingIntent.get().actionId, 'resumeAttemptSyncAfterLogin');
+  assert.equal(replaceCalls.length, 0);
+});
+
+test('restoreAfterAuthReturn blocks on non-auth probe errors and preserves recovery URL/state', async () => {
+  const storage = createStorage();
+  const callLog = [];
+  storage.pendingIntent.set({
+    appArea: 'viewer',
+    actionId: 'resumeAttemptSyncAfterLogin',
+    recordStore: 'localAttempts',
+    localId: 'attempt_1',
+    resumeFlagKey: 'viewer:lastSession',
+    resumeUi: { status: 'in_progress' },
+  });
+
+  const { replaceCalls } = createWindowStub('https://example.test/viewer/?authReturn=1&intent=resumeAttemptSyncAfterLogin');
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    checkSessionReady: async () => ({ ok: false, result: { status: 'error', error: { code: 'NETWORK_ERROR', message: 'offline' } } }),
+    restoreByLocalId: async () => {
+      callLog.push('restore');
+      return true;
+    },
+    replayIntent: async () => {
+      callLog.push('replay');
+    },
+    onRecoveryMessage: (message) => callLog.push(message),
+  });
+
+  const result = await gate.restoreAfterAuthReturn();
+
+  assert.equal(result.status, 'blocked_session_probe');
+  assert.equal(result.result?.result?.status, 'error');
+  assert.equal(callLog.includes('restore'), false);
+  assert.equal(callLog.includes('replay'), false);
+  assert.equal(storage.pendingIntent.get().actionId, 'resumeAttemptSyncAfterLogin');
+  assert.equal(replaceCalls.length, 0);
 });
 
 test('restoreAfterAuthReturn missing_local_id clears pending and cleans URL params', async () => {
@@ -381,4 +525,95 @@ test('restoreAfterAuthReturn intent_invalid clears pending and cleans URL params
   assert.equal(replaceCalls.length, 1);
   const nextUrl = replaceCalls[0][2];
   assert.equal(nextUrl.includes('authReturn='), false);
+});
+
+test('runProtectedAction executes immediately when checkSessionReady reports ready', async () => {
+  const storage = createStorage();
+  let replayed = false;
+  let redirected = false;
+  globalThis.window = {
+    location: { href: 'https://example.test/viewer/?localAttemptId=attempt_1' },
+  };
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    checkSessionReady: async () => ({ ok: true }),
+    getCurrentLocalId: () => 'attempt_1',
+    getCurrentUiState: () => ({ status: 'in_progress' }),
+    replayIntent: async () => { replayed = true; },
+    redirectToAuth: () => { redirected = true; },
+  });
+
+  const result = await gate.runProtectedAction({
+    actionId: 'viewerRewrite',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1', blockId: 'q1' },
+  });
+
+  assert.equal(result.status, 'executed');
+  assert.equal(replayed, true);
+  assert.equal(redirected, false);
+  assert.equal(storage.pendingIntent.get(), null);
+});
+
+test('runProtectedAction redirects when checkSessionReady reports auth-not-ready', async () => {
+  const storage = createStorage();
+  let redirected = false;
+  globalThis.window = {
+    location: { href: 'https://example.test/viewer/?localAttemptId=attempt_1' },
+  };
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    checkSessionReady: async () => ({ ok: false, result: { status: 'not_ready', error: { code: 'AUTH_REQUIRED', status: 401 } } }),
+    getCurrentLocalId: () => 'attempt_1',
+    getCurrentUiState: () => ({ status: 'in_progress' }),
+    persistLocalRecord: async () => {},
+    redirectToAuth: () => { redirected = true; },
+  });
+
+  const result = await gate.runProtectedAction({
+    actionId: 'viewerRewrite',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1', blockId: 'q1' },
+  });
+
+  assert.equal(result.status, 'redirected');
+  assert.equal(redirected, true);
+  assert.equal(storage.pendingIntent.get().actionId, 'viewerRewrite');
+});
+
+test('runProtectedAction blocks without redirect when checkSessionReady reports non-auth probe error', async () => {
+  const storage = createStorage();
+  let redirected = false;
+  let replayed = false;
+  globalThis.window = {
+    location: { href: 'https://example.test/viewer/?localAttemptId=attempt_1' },
+  };
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    checkSessionReady: async () => ({ ok: false, result: { status: 'error', error: { code: 'NETWORK_ERROR', message: 'offline' } } }),
+    getCurrentLocalId: () => 'attempt_1',
+    getCurrentUiState: () => ({ status: 'in_progress' }),
+    replayIntent: async () => { replayed = true; },
+    redirectToAuth: () => { redirected = true; },
+  });
+
+  const result = await gate.runProtectedAction({
+    actionId: 'viewerRewrite',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1', blockId: 'q1' },
+  });
+
+  assert.equal(result.status, 'blocked_session_probe');
+  assert.equal(redirected, false);
+  assert.equal(replayed, false);
+  assert.equal(storage.pendingIntent.get(), null);
 });

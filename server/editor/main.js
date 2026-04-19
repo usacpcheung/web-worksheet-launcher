@@ -5390,7 +5390,7 @@ async function bootstrapEditor() {
     appArea: 'editor',
     resumeFlagKey: RESUME_FLAG_KEY,
     storage: session.storage,
-    isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1',
+    checkSessionReady: async () => session.ensureServerSessionReady(),
     getCurrentLocalId: () => session.state.draft?.localId || null,
     getCurrentUiState: () => session.getUiRestoreState(),
     persistLocalRecord: () => session.flushLocalStateForAuthRedirect(),
