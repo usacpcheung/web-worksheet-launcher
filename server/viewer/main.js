@@ -4409,11 +4409,14 @@ function renderViewerShell(session) {
   renderUI();
 }
 
-function buildViewerAuthCallbackSignInUrl() {
+function buildViewerAuthCallbackSignInUrl(options = {}) {
   const url = new URL(window.location.href);
   url.searchParams.set('auth', '1');
   url.searchParams.set(AUTH_RETURN_PARAM, '1');
   url.searchParams.set(VIEWER_AUTH_CALLBACK_PARAM, '1');
+  if (options.forceNavigationToken) {
+    url.searchParams.set('authBounceTs', String(Date.now()));
+  }
   return url.toString();
 }
 
@@ -4991,8 +4994,16 @@ async function bootstrapViewer() {
         },
         onContinueSignIn: async () => {
           clearRetryTimer();
-          callbackState.stopped = true;
-          window.location.assign(buildViewerAuthCallbackSignInUrl());
+          callbackState.timedOut = false;
+          callbackState.nextRetryDelayMs = 0;
+          callbackState.lastMessage = 'Redirecting to sign-in…';
+          renderCallbackPanel();
+          try {
+            window.location.assign(buildViewerAuthCallbackSignInUrl({ forceNavigationToken: true }));
+          } catch (error) {
+            callbackState.lastMessage = error?.message || 'Unable to open sign-in. Please retry or cancel recovery.';
+            renderCallbackPanel();
+          }
         },
         onCancelRecovery: async () => {
           clearRetryTimer();

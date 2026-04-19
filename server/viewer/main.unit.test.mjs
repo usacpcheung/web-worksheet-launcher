@@ -3445,6 +3445,13 @@ test('bootstrapViewer callback mode includes explicit cancel recovery escape-hat
   assert.equal(source.includes('await renderStartPanelFromResumeFlag(session.state.recoveryMessage);'), true);
 });
 
+test('bootstrapViewer callback mode continue sign-in forces navigable redirect without freezing recovery state', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("window.location.assign(buildViewerAuthCallbackSignInUrl({ forceNavigationToken: true }));"), true);
+  assert.equal(source.includes("url.searchParams.set('authBounceTs', String(Date.now()));"), true);
+  assert.equal(source.includes('callbackState.stopped = true;\n          window.location.assign(buildViewerAuthCallbackSignInUrl());'), false);
+});
+
 test('bootstrapViewer renders fatal panel for explicit localAttemptId resume failure and does not create synthetic attempt', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   let putCalls = 0;
