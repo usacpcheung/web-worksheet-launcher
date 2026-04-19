@@ -4179,6 +4179,43 @@ test('replayViewerRewriteIntent accepts unchanged answers that differ only by su
   assert.equal(session.state.answers.q1.value, 'clean rewrite');
 });
 
+test('replayViewerRewriteIntent accepts auth-restore maxLength truncation when snapshot otherwise matches', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'rewritten text that is also long' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text', maxLength: 20 },
+    }],
+  };
+  session.state.answers = {
+    // Simulates save-phase truncation that occurred during auth redirect/restore.
+    q1: { value: '01234567890123456789', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: '01234567890123456789EXTRA_CHARS_TYPED_BEFORE_AUTH',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+});
+
 test('viewer replayProtectedAction receives payload and avoids mutation on stale context', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({

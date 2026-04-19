@@ -466,6 +466,12 @@ function clampTextAnswer(rawValue, maxLength) {
   return value.slice(0, max);
 }
 
+function normalizeTextForRewriteSnapshotCompare(questionBlock, rawValue) {
+  const value = String(rawValue ?? '').trim();
+  const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
+  return clampTextAnswer(value, responseConfig.maxLength);
+}
+
 function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = TEXT_WARNING_THRESHOLD_RATIO) {
   const current = String(rawValue ?? '').length;
   const max = Number.isFinite(maxLength) && maxLength > 0 ? Math.trunc(maxLength) : 0;
@@ -2832,7 +2838,15 @@ class ViewerAttemptSession {
       && this.state.status !== 'completed'
       && (!this.state.lastActiveBlockId || this.state.lastActiveBlockId === blockId)
     );
-    const answerMatchesSnapshot = currentAnswerValue(blockId).trim() === trimmedClickText;
+    const normalizedCurrentAnswer = normalizeTextForRewriteSnapshotCompare(
+      refreshedBlock,
+      currentAnswerValue(blockId)
+    );
+    const normalizedSnapshotAnswer = normalizeTextForRewriteSnapshotCompare(
+      refreshedBlock,
+      answerTextAtClickTime
+    );
+    const answerMatchesSnapshot = normalizedCurrentAnswer === normalizedSnapshotAnswer;
 
     if (!isFreshContext || !answerMatchesSnapshot) {
       clearRewriteFlags();
