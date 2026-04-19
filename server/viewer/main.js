@@ -4194,6 +4194,8 @@ function renderViewerShell(session) {
           }
           session.state.utilityMessage = null;
           await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);
+          const rewrittenValue = session.state.answers?.[block.blockId]?.value;
+          cacheRawControlValue(block.blockId, String(rewrittenValue ?? ''));
           renderUI();
         });
 
@@ -4211,6 +4213,7 @@ function renderViewerShell(session) {
             return;
           }
           session.setAnswer(block.blockId, savedUndoAnswer);
+          cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));
           const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
           delete nextUndoBuffer[block.blockId];
           session.state.undoBuffer = nextUndoBuffer;
@@ -4247,13 +4250,15 @@ function renderViewerShell(session) {
       const inputType = block.responseConfig?.inputType || 'text';
       const storedValue = session.state.answers?.[block.blockId]?.value;
       const cachedRawValue = localInputCache.get(block.blockId);
-      const nextValue = cachedRawValue !== undefined
-        ? String(cachedRawValue)
-        : inputType === 'number'
+      const stateValue = inputType === 'number'
         ? (storedValue === '' || storedValue === null || storedValue === undefined ? '' : String(storedValue))
         : inputType === 'boolean'
           ? (storedValue === true ? 'true' : storedValue === false ? 'false' : '')
           : String(storedValue || '');
+      const isControlFocused = control === activeElement;
+      const nextValue = isControlFocused && cachedRawValue !== undefined
+        ? String(cachedRawValue)
+        : stateValue;
       if (inputType === 'multiple_choice') {
         applyChoiceButtonGroupState(
           control,
@@ -4263,8 +4268,11 @@ function renderViewerShell(session) {
         );
       } else if (inputType === 'boolean') {
         applyBooleanGroupState(control, storedValue, session.state.status === 'completed');
-      } else if (control !== activeElement && control.value !== nextValue) {
+      } else if (!isControlFocused && control.value !== nextValue) {
         control.value = nextValue;
+      }
+      if (!isControlFocused && cachedRawValue !== undefined && String(cachedRawValue) !== stateValue) {
+        cacheRawControlValue(block.blockId, stateValue);
       }
       if (inputType === 'text') {
         const feedbackNodes = textControlFeedback.get(block.blockId);

@@ -4252,10 +4252,18 @@ test('undo lifecycle wiring exists for post-rewrite visibility, restore, and man
   assert.equal(source.includes('const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);'), true);
   assert.equal(source.includes("undoButton.textContent = 'Undo';"), true);
   assert.equal(source.includes('if (undoButton.disabled || isRewriteInFlight) {'), true);
+  assert.equal(source.includes("cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));"), true);
   assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer);'), true);
   assert.equal(source.includes('delete nextUndoBuffer[block.blockId];'), true);
   assert.equal(source.includes("control.addEventListener('input', () => {"), true);
   assert.equal(source.includes('session.state.undoBuffer = nextUndoBuffer;'), true);
+});
+
+test('text control sync prefers focused edit cache and falls back to canonical state when unfocused', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const isControlFocused = control === activeElement;'), true);
+  assert.equal(source.includes('const nextValue = isControlFocused && cachedRawValue !== undefined'), true);
+  assert.equal(source.includes("if (!isControlFocused && cachedRawValue !== undefined && String(cachedRawValue) !== stateValue) {"), true);
 });
 
 test('in-flight rewrite state renders loading label while preserving always-visible controls', async () => {
