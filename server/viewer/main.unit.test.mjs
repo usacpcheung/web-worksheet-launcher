@@ -4014,25 +4014,28 @@ test('rewrite assist snapshots answer text from answer record value', async () =
   assert.equal(source.includes("await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);"), true);
 });
 
-test('rewrite visibility rules enforce text-only, in-progress, and trimmed length boundaries', async () => {
+test('rewrite controls remain always mounted for text questions and enforce disabled states by rules', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("block.kind === 'question'"), true);
-  assert.equal(source.includes("inputType === 'text'"), true);
-  assert.equal(source.includes("session.state.status !== 'completed'"), true);
-  assert.equal(source.includes('trimmedAnswerLength > 0'), true);
-  assert.equal(source.includes('trimmedAnswerLength <= 300'), true);
-  assert.equal(source.includes('const isAnswerTooLongToRewrite = trimmedAnswerLength > 300;'), true);
+  assert.equal(source.includes("if (inputType === 'text') {"), true);
+  assert.equal(source.includes("rewriteButton.className = 'question-card__rewrite-btn';"), true);
+  assert.equal(source.includes("undoButton.className = 'question-card__undo-btn';"), true);
+  assert.equal(source.includes('const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= 300;'), true);
+  assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;'), true);
+  assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
+  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || !hasUndoEntry;'), true);
+  assert.equal(source.includes("rewriteHint.textContent = 'Enter text to rewrite.';"), true);
   assert.equal(source.includes('Answer is too long to rewrite (max 300 characters).'), true);
 });
 
-test('render signature tracks rewrite threshold flags without per-keystroke answer length churn', async () => {
+test('render signature excludes rewrite-row dynamic flags to avoid remounting for text length transitions', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('const trimmedAnswerLengthForCurrentBlock = currentBlockId'), true);
-  assert.equal(source.includes('const canShowRewriteButtonForCurrentBlock = Boolean('), true);
-  assert.equal(source.includes('const isAnswerTooLongToRewriteForCurrentBlock = trimmedAnswerLengthForCurrentBlock > 300;'), true);
-  assert.equal(source.includes('trimmedAnswerLengthForCurrentBlock,'), false);
-  assert.equal(source.includes('canShowRewriteButtonForCurrentBlock,'), true);
-  assert.equal(source.includes('isAnswerTooLongToRewriteForCurrentBlock,'), true);
+  assert.equal(source.includes('const trimmedAnswerLengthForCurrentBlock = currentBlockId'), false);
+  assert.equal(source.includes('const canShowRewriteButtonForCurrentBlock = Boolean('), false);
+  assert.equal(source.includes('const isAnswerTooLongToRewriteForCurrentBlock = trimmedAnswerLengthForCurrentBlock > 300;'), false);
+  assert.equal(source.includes('hasUndoForCurrentBlock,'), false);
+  assert.equal(source.includes('rewriteMessageForCard,'), false);
+  assert.equal(source.includes('canShowRewriteButtonForCurrentBlock,'), false);
+  assert.equal(source.includes('isAnswerTooLongToRewriteForCurrentBlock,'), false);
 });
 
 test('replayViewerRewriteIntent valid viewerRewrite context calls rewrite API and applies answer with undo snapshot', async () => {
@@ -4188,13 +4191,19 @@ test('undo lifecycle wiring exists for post-rewrite visibility, restore, and man
   assert.equal(source.includes('session.state.undoBuffer = nextUndoBuffer;'), true);
 });
 
-test('in-flight rewrite state renders loading label and disables/hides controls', async () => {
+test('in-flight rewrite state renders loading label while preserving always-visible controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;'), true);
   assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';"), true);
-  assert.equal(source.includes('rewriteButton.disabled = isRewriteInFlight;'), true);
-  assert.equal(source.includes('if (hasUndoEntry && !isRewriteInFlight) {'), true);
+  assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
+  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || !hasUndoEntry;'), true);
   assert.equal(source.includes('session.state.rewriteMessageByBlock?.[block.blockId]'), true);
+});
+
+test('rewrite row updates happen in place without mount/unmount checks', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("card.append(helper, control, mediaFeedback, textCounter, textStatus, rewriteRow, inputError);"), true);
+  assert.equal(source.includes('if (rewriteRow.childNodes.length > 0) {'), false);
 });
 
 test('rewrite API failure keeps original answer unchanged and clears in-flight flags', async () => {

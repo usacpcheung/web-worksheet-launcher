@@ -3733,24 +3733,7 @@ function renderViewerShell(session) {
     const hasCurrentBlockCheckStatus = typeof currentBlockCheckStatus === 'string';
     const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;
     const currentBlockId = currentBlock?.blockId || null;
-    const hasUndoForCurrentBlock = Boolean(
-      currentBlockId && Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, currentBlockId)
-    );
-    const rewriteMessageForCard = currentBlockId
-      ? String(session.state.rewriteMessageByBlock?.[currentBlockId] || '')
-      : '';
     const currentBlockInputType = currentBlock?.responseConfig?.inputType || null;
-    const trimmedAnswerLengthForCurrentBlock = currentBlockId
-      ? getTrimmedAnswerTextForBlock(currentBlockId).length
-      : 0;
-    const canShowRewriteButtonForCurrentBlock = Boolean(
-      currentBlock?.kind === 'question'
-      && currentBlockInputType === 'text'
-      && session.state.status !== 'completed'
-      && trimmedAnswerLengthForCurrentBlock > 0
-      && trimmedAnswerLengthForCurrentBlock <= 300
-    );
-    const isAnswerTooLongToRewriteForCurrentBlock = trimmedAnswerLengthForCurrentBlock > 300;
 
     const nextSignature = JSON.stringify({
       blockId: currentBlockId,
@@ -3769,12 +3752,6 @@ function renderViewerShell(session) {
       hasGlobalCheckResult,
       currentBlockIsCheckable,
       currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,
-      isRewriting: Boolean(session.state.isRewriting),
-      rewritingBlockId: session.state.rewritingBlockId || null,
-      hasUndoForCurrentBlock,
-      rewriteMessageForCard,
-      canShowRewriteButtonForCurrentBlock,
-      isAnswerTooLongToRewriteForCurrentBlock,
     });
     if (nextSignature === blockSignature) return;
 
@@ -4138,85 +4115,56 @@ function renderViewerShell(session) {
         });
         const rewriteRow = document.createElement('div');
         rewriteRow.className = 'question-card__rewrite-row';
-        const trimmedAnswerText = getTrimmedAnswerTextForBlock(block.blockId);
-        const trimmedAnswerLength = trimmedAnswerText.length;
-        const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);
-        const rewriteInlineMessage = String(session.state.rewriteMessageByBlock?.[block.blockId] || '');
-        const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
-        const canShowRewriteButton = Boolean(
-          block.kind === 'question'
-          && inputType === 'text'
-          && session.state.status !== 'completed'
-          && trimmedAnswerLength > 0
-          && trimmedAnswerLength <= 300
-        );
-        const isAnswerTooLongToRewrite = trimmedAnswerLength > 300;
 
-        if (isRewriteInFlight || canShowRewriteButton) {
-          const rewriteButton = document.createElement('button');
-          rewriteButton.type = 'button';
-          rewriteButton.className = 'question-card__rewrite-btn';
-          rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';
-          rewriteButton.disabled = isRewriteInFlight;
-          if (!isRewriteInFlight) {
-            rewriteButton.addEventListener('click', async () => {
-              const rewriteIntentPayload = buildViewerRewriteIntentPayloadForBlock(block);
-              if (!rewriteIntentPayload) {
-                session.state.utilityMessage = 'Rewrite is available only for text-response questions.';
-                renderUI();
-                return;
-              }
-              session.state.utilityMessage = null;
-              await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);
-              renderUI();
-            });
+        const rewriteButton = document.createElement('button');
+        rewriteButton.type = 'button';
+        rewriteButton.className = 'question-card__rewrite-btn';
+        rewriteButton.textContent = 'Rewrite';
+        rewriteButton.addEventListener('click', async () => {
+          if (rewriteButton.disabled) {
+            return;
           }
-          rewriteRow.append(rewriteButton);
-        }
-
-        if (isAnswerTooLongToRewrite && !isRewriteInFlight) {
-          const rewriteHint = document.createElement('p');
-          rewriteHint.className = 'question-card__rewrite-hint';
-          rewriteHint.textContent = 'Answer is too long to rewrite (max 300 characters).';
-          rewriteRow.append(rewriteHint);
-        }
-
-        if (hasUndoEntry && !isRewriteInFlight) {
-          const undoButton = document.createElement('button');
-          undoButton.type = 'button';
-          undoButton.className = 'question-card__undo-btn';
-          undoButton.textContent = 'Undo';
-          undoButton.disabled = session.state.status === 'completed';
-          undoButton.addEventListener('click', () => {
-            const savedUndoAnswer = session.state.undoBuffer?.[block.blockId];
-            if (savedUndoAnswer === undefined) {
-              return;
-            }
-            session.setAnswer(block.blockId, savedUndoAnswer);
-            const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
-            delete nextUndoBuffer[block.blockId];
-            session.state.undoBuffer = nextUndoBuffer;
+          const rewriteIntentPayload = buildViewerRewriteIntentPayloadForBlock(block);
+          if (!rewriteIntentPayload) {
+            session.state.utilityMessage = 'Rewrite is available only for text-response questions.';
             renderUI();
-          });
-          rewriteRow.append(undoButton);
-        }
+            return;
+          }
+          session.state.utilityMessage = null;
+          await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);
+          renderUI();
+        });
 
-        if (rewriteInlineMessage) {
-          const rewriteError = document.createElement('p');
-          rewriteError.className = 'question-card__rewrite-error';
-          rewriteError.textContent = `⚠️ ${rewriteInlineMessage}`;
-          rewriteRow.append(rewriteError);
-        }
+        const undoButton = document.createElement('button');
+        undoButton.type = 'button';
+        undoButton.className = 'question-card__undo-btn';
+        undoButton.textContent = 'Undo';
+        undoButton.addEventListener('click', () => {
+          if (undoButton.disabled) {
+            return;
+          }
+          const savedUndoAnswer = session.state.undoBuffer?.[block.blockId];
+          if (savedUndoAnswer === undefined) {
+            return;
+          }
+          session.setAnswer(block.blockId, savedUndoAnswer);
+          const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
+          delete nextUndoBuffer[block.blockId];
+          session.state.undoBuffer = nextUndoBuffer;
+          renderUI();
+        });
+
+        const rewriteHint = document.createElement('p');
+        rewriteHint.className = 'question-card__rewrite-hint';
+        const rewriteError = document.createElement('p');
+        rewriteError.className = 'question-card__rewrite-error';
+        rewriteRow.append(rewriteButton, undoButton, rewriteHint, rewriteError);
 
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
           card.append(checkBanner, checkReveal);
         }
-        card.append(helper, control, mediaFeedback, textCounter, textStatus);
-        if (rewriteRow.childNodes.length > 0) {
-          card.append(rewriteRow);
-        }
-        card.append(inputError);
+        card.append(helper, control, mediaFeedback, textCounter, textStatus, rewriteRow, inputError);
       } else {
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
@@ -4259,6 +4207,38 @@ function renderViewerShell(session) {
         const feedbackNodes = textControlFeedback.get(block.blockId);
         const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
         updateTextCounterUI(feedbackNodes?.counter, feedbackNodes?.status, feedback);
+        const card = control.closest('.question-card');
+        const rewriteButton = card?.querySelector('.question-card__rewrite-btn');
+        const undoButton = card?.querySelector('.question-card__undo-btn');
+        const rewriteHint = card?.querySelector('.question-card__rewrite-hint');
+        const rewriteError = card?.querySelector('.question-card__rewrite-error');
+        const trimmedAnswerLength = getTrimmedAnswerTextForBlock(block.blockId).length;
+        const isAttemptCompleted = session.state.status === 'completed';
+        const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);
+        const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
+        const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= 300;
+        const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;
+
+        if (rewriteButton) {
+          rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';
+          rewriteButton.disabled = !canRewrite;
+        }
+        if (undoButton) {
+          undoButton.disabled = isAttemptCompleted || !hasUndoEntry;
+        }
+        if (rewriteHint) {
+          if (trimmedAnswerLength === 0) {
+            rewriteHint.textContent = 'Enter text to rewrite.';
+          } else if (trimmedAnswerLength > 300) {
+            rewriteHint.textContent = 'Answer is too long to rewrite (max 300 characters).';
+          } else {
+            rewriteHint.textContent = '';
+          }
+        }
+        if (rewriteError) {
+          const rewriteInlineMessage = String(session.state.rewriteMessageByBlock?.[block.blockId] || '');
+          rewriteError.textContent = rewriteInlineMessage ? `⚠️ ${rewriteInlineMessage}` : '';
+        }
       }
       if (inputType !== 'multiple_choice' && inputType !== 'boolean') {
         control.disabled = session.state.status === 'completed';
