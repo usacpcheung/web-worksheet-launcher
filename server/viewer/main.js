@@ -2776,13 +2776,32 @@ class ViewerAttemptSession {
 
     const rewriteResult = await this.apiClient.rewriteText(trimmedClickText);
     if (!rewriteResult?.ok) {
+      const rewriteError = rewriteResult?.error || rewriteResult || null;
+      const errorCode = typeof rewriteError?.code === 'string' && rewriteError.code.trim()
+        ? rewriteError.code.trim()
+        : 'UNKNOWN_ERROR';
+      const errorStatus = Number.isFinite(Number(rewriteError?.status))
+        ? Number(rewriteError.status)
+        : null;
+      const errorMessage = typeof rewriteError?.message === 'string' && rewriteError.message.trim()
+        ? rewriteError.message.trim()
+        : 'No additional error message provided.';
+
       clearRewriteFlags();
-      this.setRewriteMessage(blockId, 'Rewrite could not be completed. Your answer is unchanged—please try again.');
+      this.setRewriteMessage(
+        blockId,
+        `Rewrite could not be completed. code=${errorCode}${errorStatus !== null ? ` | status=${errorStatus}` : ''} | message=${errorMessage}`
+      );
+      console.error('[viewer] Rewrite request failed.', {
+        blockId,
+        sourceLength: trimmedClickText.length,
+        error: rewriteError,
+      });
       this.notifyStateChange();
       return {
         ok: false,
         status: 'rewrite_failed',
-        error: rewriteResult?.error || rewriteResult || null,
+        error: rewriteError,
       };
     }
 
