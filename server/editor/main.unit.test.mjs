@@ -3726,6 +3726,12 @@ test('bootstrapEditor validateIntent uses action-aware payload validation', asyn
   assert.equal(source.includes('session.validateEditorOptionT2AIntentPayload(payload).ok'), true);
 });
 
+test('bootstrapEditor configures SharedAuthGate with live session probe check', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('checkSessionReady: async () => session.ensureServerSessionReady(),'), true);
+  assert.equal(source.includes("isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1'"), false);
+});
+
 test('editor triggerProtectedAction forwards payload and remains functional without intentPayload', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());
