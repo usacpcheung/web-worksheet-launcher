@@ -4083,8 +4083,8 @@ test('rewrite assist snapshots answer text from answer record value', async () =
 test('rewrite controls remain always mounted for text questions and enforce disabled states by rules', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("if (inputType === 'text') {"), true);
-  assert.equal(source.includes("rewriteButton.className = 'question-card__rewrite-btn';"), true);
-  assert.equal(source.includes("undoButton.className = 'question-card__undo-btn';"), true);
+  assert.equal(source.includes("rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';"), true);
+  assert.equal(source.includes("undoButton.className = 'question-card__undo-btn icon-nav-btn';"), true);
   assert.equal(source.includes('const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= 300;'), true);
   assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;'), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
@@ -4277,7 +4277,10 @@ test('in-flight rewrite state renders loading label while preserving always-visi
 
 test('rewrite row updates happen in place without mount/unmount checks', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("card.append(helper, control, mediaFeedback, textCounter, textStatus, rewriteRow, inputError);"), true);
+  assert.equal(source.includes("rewriteRow.append(rewriteButton, undoButton);"), true);
+  assert.equal(source.includes("rewriteMessages.append(textStatus, rewriteHint, rewriteError);"), true);
+  assert.equal(source.includes("textActionsRow.append(textCounter, rewriteRow);"), true);
+  assert.equal(source.includes("card.append(helper, control, mediaFeedback, textFooter, inputError);"), true);
   assert.equal(source.includes('if (rewriteRow.childNodes.length > 0) {'), false);
 });
 

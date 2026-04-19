@@ -4175,12 +4175,18 @@ function renderViewerShell(session) {
           counter: textCounter,
           status: textStatus,
         });
+        const textFooter = document.createElement('div');
+        textFooter.className = 'question-card__text-footer';
+        const textActionsRow = document.createElement('div');
+        textActionsRow.className = 'question-card__text-actions-row';
         const rewriteRow = document.createElement('div');
         rewriteRow.className = 'question-card__rewrite-row';
+        const rewriteMessages = document.createElement('div');
+        rewriteMessages.className = 'question-card__rewrite-messages';
 
         const rewriteButton = document.createElement('button');
         rewriteButton.type = 'button';
-        rewriteButton.className = 'question-card__rewrite-btn';
+        rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';
         rewriteButton.textContent = 'Rewrite';
         rewriteButton.addEventListener('click', async () => {
           if (rewriteButton.disabled) {
@@ -4201,7 +4207,7 @@ function renderViewerShell(session) {
 
         const undoButton = document.createElement('button');
         undoButton.type = 'button';
-        undoButton.className = 'question-card__undo-btn';
+        undoButton.className = 'question-card__undo-btn icon-nav-btn';
         undoButton.textContent = 'Undo';
         undoButton.addEventListener('click', () => {
           const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
@@ -4224,13 +4230,16 @@ function renderViewerShell(session) {
         rewriteHint.className = 'question-card__rewrite-hint';
         const rewriteError = document.createElement('p');
         rewriteError.className = 'question-card__rewrite-error';
-        rewriteRow.append(rewriteButton, undoButton, rewriteHint, rewriteError);
+        rewriteRow.append(rewriteButton, undoButton);
+        rewriteMessages.append(textStatus, rewriteHint, rewriteError);
+        textActionsRow.append(textCounter, rewriteRow);
+        textFooter.append(textActionsRow, rewriteMessages);
 
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
           card.append(checkBanner, checkReveal);
         }
-        card.append(helper, control, mediaFeedback, textCounter, textStatus, rewriteRow, inputError);
+        card.append(helper, control, mediaFeedback, textFooter, inputError);
       } else {
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
