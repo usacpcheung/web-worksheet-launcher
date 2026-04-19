@@ -4231,7 +4231,27 @@ function renderViewerShell(session) {
             return;
           }
           session.state.utilityMessage = null;
-          await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);
+          const protectedActionResult = await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);
+          if (protectedActionResult?.status === 'redirected') {
+            return;
+          }
+          if (protectedActionResult?.status !== 'executed') {
+            let blockedMessage = 'Rewrite could not be started. Please try again.';
+            if (protectedActionResult?.status === 'blocked_session_probe') {
+              const probeFailureMessage = protectedActionResult?.result?.error?.message
+                || protectedActionResult?.result?.result?.error?.message
+                || '';
+              blockedMessage = probeFailureMessage
+                ? `Rewrite is temporarily unavailable: ${probeFailureMessage}`
+                : 'Rewrite is temporarily unavailable because session verification failed. Please try again.';
+            } else if (protectedActionResult?.status === 'blocked_no_local_id') {
+              blockedMessage = 'Rewrite could not start because no active local attempt was found.';
+            }
+            session.state.utilityMessage = blockedMessage;
+            session.setRewriteMessage(block.blockId, blockedMessage);
+            renderUI();
+            return;
+          }
           const rewrittenValue = session.state.answers?.[block.blockId]?.value;
           cacheRawControlValue(block.blockId, String(rewrittenValue ?? ''));
           renderUI();
@@ -4486,17 +4506,6 @@ function renderViewerShell(session) {
   app.append(shell, detailsModal);
   bottomBarRoot.append(bottomBar);
   renderUI();
-}
-
-function buildViewerAuthCallbackSignInUrl(options = {}) {
-  const url = new URL(window.location.href);
-  url.searchParams.set('auth', '1');
-  url.searchParams.set(AUTH_RETURN_PARAM, '1');
-  url.searchParams.set(VIEWER_AUTH_CALLBACK_PARAM, '1');
-  if (options.forceNavigationToken) {
-    url.searchParams.set('authBounceTs', String(Date.now()));
-  }
-  return url.toString();
 }
 
 function cleanupViewerAuthCallbackUrlParams() {

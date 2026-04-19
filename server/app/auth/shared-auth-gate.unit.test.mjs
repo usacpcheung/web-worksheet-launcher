@@ -286,6 +286,40 @@ test('restoreAfterAuthReturn restores and replays valid intent', async () => {
   assert.equal(storage.pendingIntent.get(), null);
 });
 
+test('restoreAfterAuthReturn cleanup removes configured return query params', async () => {
+  const storage = createStorage();
+  storage.pendingIntent.set({
+    appArea: 'viewer',
+    actionId: 'resumeAttemptSyncAfterLogin',
+    recordStore: 'localAttempts',
+    localId: 'attempt_1',
+    resumeFlagKey: 'viewer:lastSession',
+    resumeUi: { status: 'in_progress' },
+  });
+
+  const { replaceCalls } = createWindowStub('https://example.test/viewer/?authReturn=1&authCallback=1&intent=resumeAttemptSyncAfterLogin');
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    isAuthenticated: () => true,
+    returnQueryParams: { authCallback: '1' },
+    restoreByLocalId: async () => true,
+    validateIntent: async () => true,
+    replayIntent: async () => {},
+  });
+
+  const result = await gate.restoreAfterAuthReturn();
+
+  assert.equal(result.status, 'replayed');
+  assert.equal(replaceCalls.length, 1);
+  const nextUrl = replaceCalls[0][2];
+  assert.equal(nextUrl.includes('authReturn='), false);
+  assert.equal(nextUrl.includes('intent='), false);
+  assert.equal(nextUrl.includes('authCallback='), false);
+});
+
 test('restoreAfterAuthReturn returns not_authenticated and cleans URL params', async () => {
   const storage = createStorage();
   const callLog = [];

@@ -28,10 +28,20 @@ function buildReturnUrl(currentUrl, returnQueryParams = null) {
   return url.toString();
 }
 
-function cleanupAuthReturnUrlParams() {
+function getReturnQueryParamKeys(returnQueryParams = null) {
+  if (!returnQueryParams || typeof returnQueryParams !== 'object') {
+    return [];
+  }
+  return Object.keys(returnQueryParams).map((key) => String(key)).filter(Boolean);
+}
+
+function cleanupAuthReturnUrlParams(returnQueryParams = null) {
   const cleanUrl = new URL(window.location.href);
   cleanUrl.searchParams.delete(AUTH_RETURN_PARAM);
   cleanUrl.searchParams.delete('intent');
+  getReturnQueryParamKeys(returnQueryParams).forEach((key) => {
+    cleanUrl.searchParams.delete(key);
+  });
   window.history.replaceState({}, '', cleanUrl.toString());
 }
 
@@ -197,7 +207,7 @@ class SharedAuthGate {
         this.clearPending();
       }
       if (!preserveUrlOnAuthNotReady) {
-        cleanupAuthReturnUrlParams();
+        cleanupAuthReturnUrlParams(this.options.returnQueryParams);
       }
       return { status: 'not_authenticated' };
     }
@@ -206,7 +216,7 @@ class SharedAuthGate {
     if (!localId) {
       this.options.onRecoveryMessage('Sign-in restore metadata was missing a local record reference. Your local data is still available.');
       this.clearPending();
-      cleanupAuthReturnUrlParams();
+      cleanupAuthReturnUrlParams(this.options.returnQueryParams);
       return { status: 'missing_local_id' };
     }
 
@@ -214,7 +224,7 @@ class SharedAuthGate {
     if (!restored) {
       this.options.onRecoveryMessage('Unable to reload your local record after sign-in. No data was deleted.');
       this.clearPending();
-      cleanupAuthReturnUrlParams();
+      cleanupAuthReturnUrlParams(this.options.returnQueryParams);
       return { status: 'restore_failed' };
     }
 
@@ -230,13 +240,13 @@ class SharedAuthGate {
     if (!stillValid) {
       this.options.onRecoveryMessage('We restored your local data, but the original protected action is no longer valid.');
       this.clearPending();
-      cleanupAuthReturnUrlParams();
+      cleanupAuthReturnUrlParams(this.options.returnQueryParams);
       return { status: 'intent_invalid' };
     }
 
     await this.options.replayIntent(intent);
     this.clearPending();
-    cleanupAuthReturnUrlParams();
+    cleanupAuthReturnUrlParams(this.options.returnQueryParams);
 
     return { status: 'replayed' };
   }

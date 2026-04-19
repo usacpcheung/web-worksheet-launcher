@@ -3451,6 +3451,7 @@ test('bootstrapViewer callback mode continue sign-in reuses popup auth flow and 
   assert.equal(source.includes('onSessionReady: async ({ finalizeFlow }) => {'), true);
   assert.equal(source.includes('await attemptRecovery({ manual: true });'), true);
   assert.equal(source.includes('window.location.assign(buildViewerAuthCallbackSignInUrl({ forceNavigationToken: true }));'), false);
+  assert.equal(source.includes('function buildViewerAuthCallbackSignInUrl(options = {}) {'), false);
 });
 
 test('bootstrapViewer renders fatal panel for explicit localAttemptId resume failure and does not create synthetic attempt', { concurrency: false }, async () => {
@@ -4077,7 +4078,15 @@ test('rewrite assist snapshots answer text from answer record value', async () =
   assert.equal(source.includes('const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {'), true);
   assert.equal(source.includes('const getRawAnswerTextForBlock = (blockId) => {'), true);
   assert.equal(source.includes('answerTextRawAtClickTime: getRawAnswerTextForBlock(blockId),'), true);
-  assert.equal(source.includes("await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);"), true);
+  assert.equal(source.includes("const protectedActionResult = await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);"), true);
+});
+
+test('rewrite click handler surfaces blocked protected-action statuses before touching cached answers', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("if (protectedActionResult?.status === 'redirected') {"), true);
+  assert.equal(source.includes("if (protectedActionResult?.status !== 'executed') {"), true);
+  assert.equal(source.includes("protectedActionResult?.status === 'blocked_session_probe'"), true);
+  assert.equal(source.includes('session.setRewriteMessage(block.blockId, blockedMessage);'), true);
 });
 
 test('rewrite controls remain always mounted for text questions and enforce disabled states by rules', async () => {
