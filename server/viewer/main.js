@@ -2889,7 +2889,20 @@ class ViewerAttemptSession {
     });
   }
 
-  beginServerSignIn() {
+  beginServerSignIn(signInOptions = {}) {
+    const onPopupBlockedOverride = typeof signInOptions.onPopupBlocked === 'function'
+      ? signInOptions.onPopupBlocked
+      : null;
+    const onStatusMessageOverride = typeof signInOptions.onStatusMessage === 'function'
+      ? signInOptions.onStatusMessage
+      : null;
+    const onSessionReadyOverride = typeof signInOptions.onSessionReady === 'function'
+      ? signInOptions.onSessionReady
+      : null;
+    const onSessionNotReadyOverride = typeof signInOptions.onSessionNotReady === 'function'
+      ? signInOptions.onSessionNotReady
+      : null;
+
     if (this._authPopupFlow?.cancel) {
       this._authPopupFlow.cancel();
     }
@@ -2912,18 +2925,31 @@ class ViewerAttemptSession {
       pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
       shouldContinue: () => this._activeAuthFlowId === authFlowId,
       onPopupBlocked: () => {
+        if (this._activeAuthFlowId !== authFlowId) return;
+        if (onPopupBlockedOverride) {
+          onPopupBlockedOverride({ authFlowId, finalizeFlow });
+          return;
+        }
         this.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
         this.notifyStateChange();
       },
       onStatusMessage: (message) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        if (onStatusMessageOverride) {
+          onStatusMessageOverride({ message, authFlowId, finalizeFlow });
+          return;
+        }
         if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
           this.state.serverActionMessage = message;
           this.notifyStateChange();
         }
       },
-      onSessionReady: async () => {
+      onSessionReady: async (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        if (onSessionReadyOverride) {
+          await onSessionReadyOverride({ result, authFlowId, finalizeFlow });
+          return;
+        }
         if (this._authAutoLoadInFlightByFlowId.has(authFlowId)) return;
         this._authAutoLoadInFlightByFlowId.add(authFlowId);
         try {
@@ -2947,6 +2973,10 @@ class ViewerAttemptSession {
       },
       onSessionNotReady: (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        if (onSessionNotReadyOverride) {
+          onSessionNotReadyOverride({ result, authFlowId, finalizeFlow });
+          return;
+        }
         if (result?.final === false && result?.waitingForCallback === true) {
           this.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
           this.notifyStateChange();
@@ -4935,6 +4965,7 @@ async function bootstrapViewer() {
     const callbackState = {
       attemptCount: 0,
       inFlight: false,
+      signInPopupInFlight: false,
       nextRetryDelayMs: 0,
       timedOut: false,
       retryTimer: null,
@@ -4972,6 +5003,8 @@ async function bootstrapViewer() {
               : 'Waiting to recover your previous protected action.';
       const progressText = callbackState.timedOut
         ? `Automatic retries paused after ${Math.round(AUTH_CALLBACK_RETRY_BUDGET_MS / 1000)} seconds.`
+        : callbackState.signInPopupInFlight
+          ? 'Waiting for sign-in confirmation from popup…'
         : callbackState.inFlight
           ? 'Recovery attempt in progress…'
           : callbackState.nextRetryDelayMs > 0
@@ -4981,8 +5014,8 @@ async function bootstrapViewer() {
         statusText: fallbackStatusMessage,
         message: overrideMessage || callbackState.lastMessage || session.state.recoveryMessage || '',
         progressText,
-        retryDisabled: callbackState.inFlight,
-        continueSignInDisabled: callbackState.inFlight,
+        retryDisabled: callbackState.inFlight || callbackState.signInPopupInFlight,
+        continueSignInDisabled: callbackState.inFlight || callbackState.signInPopupInFlight,
         cancelDisabled: callbackState.inFlight,
         onRetryNow: async () => {
           callbackState.timedOut = false;
@@ -4996,17 +5029,55 @@ async function bootstrapViewer() {
           clearRetryTimer();
           callbackState.timedOut = false;
           callbackState.nextRetryDelayMs = 0;
-          callbackState.lastMessage = 'Redirecting to sign-in…';
+          callbackState.signInPopupInFlight = true;
+          callbackState.lastMessage = 'Opening sign-in popup…';
           renderCallbackPanel();
-          try {
-            window.location.assign(buildViewerAuthCallbackSignInUrl({ forceNavigationToken: true }));
-          } catch (error) {
-            callbackState.lastMessage = error?.message || 'Unable to open sign-in. Please retry or cancel recovery.';
+          session.beginServerSignIn({
+            onPopupBlocked: () => {
+              callbackState.signInPopupInFlight = false;
+              callbackState.lastMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+              renderCallbackPanel();
+            },
+            onStatusMessage: ({ message }) => {
+              callbackState.lastMessage = message || callbackState.lastMessage;
+              renderCallbackPanel();
+            },
+            onSessionReady: async ({ finalizeFlow }) => {
+              callbackState.signInPopupInFlight = false;
+              callbackState.timedOut = false;
+              callbackState.startedAtMs = Date.now();
+              callbackState.attemptCount = 0;
+              callbackState.lastMessage = 'Sign-in completed. Retrying recovery…';
+              renderCallbackPanel();
+              finalizeFlow();
+              await attemptRecovery({ manual: true });
+            },
+            onSessionNotReady: ({ result, finalizeFlow }) => {
+              if (result?.final === false && result?.waitingForCallback === true) {
+                callbackState.lastMessage = 'Still waiting for sign-in confirmation from the popup…';
+                renderCallbackPanel();
+                return;
+              }
+              callbackState.signInPopupInFlight = false;
+              callbackState.lastMessage = result?.error?.message || 'Sign-in did not complete. Retry to continue.';
+              finalizeFlow();
+              renderCallbackPanel();
+            },
+          });
+          if (!session._authPopupWindow) {
+            callbackState.signInPopupInFlight = false;
+            if (!callbackState.lastMessage) {
+              callbackState.lastMessage = 'Unable to open sign-in popup. Please retry or cancel recovery.';
+            }
             renderCallbackPanel();
           }
         },
         onCancelRecovery: async () => {
           clearRetryTimer();
+          if (session._authPopupFlow?.cancel) {
+            session._authPopupFlow.cancel();
+          }
+          callbackState.signInPopupInFlight = false;
           callbackState.stopped = true;
           authGate.clearPending();
           cleanupViewerAuthCallbackUrlParams();
