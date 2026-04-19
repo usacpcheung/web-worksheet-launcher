@@ -3394,6 +3394,57 @@ test('bootstrapViewer renders start panel recovery warning for authReturn withou
   assert.match(statusNode.textContent, /restore failed/i);
 });
 
+test('bootstrapViewer callback mode uses dedicated recovery panel and passes preserve options to restore', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  let restoreOptions = null;
+  class FakeAuthGate {
+    constructor({ onRecoveryMessage }) {
+      this.onRecoveryMessage = onRecoveryMessage;
+    }
+    async restoreAfterAuthReturn(options = {}) {
+      restoreOptions = options;
+      if (this.onRecoveryMessage) {
+        this.onRecoveryMessage('Recovery ticket exists but cannot replay yet.');
+      }
+      return { status: 'no_pending_intent' };
+    }
+    clearPending() {}
+  }
+
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/?authReturn=1&authCallback=1', search: '?authReturn=1&authCallback=1' },
+      history: { replaceState: () => {} },
+    },
+    SharedAuthGate: FakeAuthGate,
+    renderViewerShell: () => {
+      throw new Error('should not render shell while callback recovery is unresolved');
+    },
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      pendingIntent: { get: () => null, set: () => {}, clear: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+  const panel = appRoot.children[0];
+  assert.equal(panel.className, 'viewer-auth-callback-panel');
+  assert.equal(restoreOptions?.preserveUrlOnAuthNotReady, true);
+  assert.equal(restoreOptions?.preservePendingOnAuthNotReady, true);
+});
+
+test('bootstrapViewer callback mode includes explicit cancel recovery escape-hatch behavior', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("cancelRecoveryBtn.textContent = 'Cancel recovery';"), true);
+  assert.equal(source.includes('authGate.clearPending();'), true);
+  assert.equal(source.includes('cleanupViewerAuthCallbackUrlParams();'), true);
+  assert.equal(source.includes('await renderStartPanelFromResumeFlag(session.state.recoveryMessage);'), true);
+});
+
 test('bootstrapViewer renders fatal panel for explicit localAttemptId resume failure and does not create synthetic attempt', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   let putCalls = 0;
@@ -3974,6 +4025,7 @@ test('bootstrapViewer validateIntent uses action-aware viewer rewrite payload ch
 test('bootstrapViewer configures SharedAuthGate with live session probe check', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('checkSessionReady: async () => session.ensureServerSessionReady(),'), true);
+  assert.equal(source.includes("returnQueryParams: { [VIEWER_AUTH_CALLBACK_PARAM]: '1' },"), true);
   assert.equal(source.includes("isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1'"), false);
 });
 

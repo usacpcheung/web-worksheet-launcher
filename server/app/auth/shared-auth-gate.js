@@ -12,9 +12,19 @@ function cloneIntentPayload(payload) {
   return JSON.parse(JSON.stringify(payload));
 }
 
-function buildReturnUrl(currentUrl) {
+function buildReturnUrl(currentUrl, returnQueryParams = null) {
   const url = new URL(currentUrl.href);
   url.searchParams.set(AUTH_RETURN_PARAM, '1');
+  if (returnQueryParams && typeof returnQueryParams === 'object') {
+    Object.entries(returnQueryParams).forEach(([key, value]) => {
+      if (!key) return;
+      if (value === null || value === undefined || value === '') {
+        url.searchParams.delete(String(key));
+        return;
+      }
+      url.searchParams.set(String(key), String(value));
+    });
+  }
   return url.toString();
 }
 
@@ -77,6 +87,7 @@ class SharedAuthGate {
       replayIntent: async () => {},
       onRecoveryMessage: () => {},
       redirectToAuth: null,
+      returnQueryParams: null,
       ...options,
     };
 
@@ -141,7 +152,7 @@ class SharedAuthGate {
       updatedAt: nowIso(),
     });
 
-    const redirectTo = buildReturnUrl(new URL(window.location.href));
+    const redirectTo = buildReturnUrl(new URL(window.location.href), this.options.returnQueryParams);
 
     if (typeof this.options.redirectToAuth === 'function') {
       this.options.redirectToAuth({ redirectTo, intent });
@@ -152,7 +163,9 @@ class SharedAuthGate {
     return { status: 'redirected' };
   }
 
-  async restoreAfterAuthReturn() {
+  async restoreAfterAuthReturn(restoreOptions = {}) {
+    const preserveUrlOnAuthNotReady = restoreOptions?.preserveUrlOnAuthNotReady === true;
+    const preservePendingOnAuthNotReady = restoreOptions?.preservePendingOnAuthNotReady !== false;
     const url = new URL(window.location.href);
     const hasAuthReturnFlag = url.searchParams.get(AUTH_RETURN_PARAM) === '1';
 
@@ -180,7 +193,12 @@ class SharedAuthGate {
         return { status: 'blocked_session_probe', result: authState.rawResult };
       }
       this.options.onRecoveryMessage('You are not signed in yet. Please complete sign-in and try again.');
-      cleanupAuthReturnUrlParams();
+      if (!preservePendingOnAuthNotReady) {
+        this.clearPending();
+      }
+      if (!preserveUrlOnAuthNotReady) {
+        cleanupAuthReturnUrlParams();
+      }
       return { status: 'not_authenticated' };
     }
 

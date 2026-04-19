@@ -28,6 +28,11 @@ const VIEWER_SERVER_SESSION_STATES = Object.freeze({
   LOGGED_IN: 'logged_in',
 });
 const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';
+const AUTH_RETURN_PARAM = 'authReturn';
+const VIEWER_AUTH_CALLBACK_PARAM = 'authCallback';
+const AUTH_CALLBACK_RETRY_BASE_MS = 1000;
+const AUTH_CALLBACK_RETRY_MAX_MS = 10000;
+const AUTH_CALLBACK_RETRY_BUDGET_MS = 60000;
 let activeViewerShellAbortController = null;
 
 
@@ -4404,6 +4409,86 @@ function renderViewerShell(session) {
   renderUI();
 }
 
+function buildViewerAuthCallbackSignInUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.set('auth', '1');
+  url.searchParams.set(AUTH_RETURN_PARAM, '1');
+  url.searchParams.set(VIEWER_AUTH_CALLBACK_PARAM, '1');
+  return url.toString();
+}
+
+function cleanupViewerAuthCallbackUrlParams() {
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.delete(AUTH_RETURN_PARAM);
+  nextUrl.searchParams.delete(VIEWER_AUTH_CALLBACK_PARAM);
+  nextUrl.searchParams.delete('intent');
+  window.history.replaceState({}, '', nextUrl.toString());
+}
+
+function renderViewerAuthCallbackPanel(session, options = {}) {
+  if (!app || !bottomBarRoot) {
+    return;
+  }
+  const panel = document.createElement('section');
+  panel.className = 'viewer-auth-callback-panel';
+
+  const heading = document.createElement('h1');
+  heading.textContent = 'Restoring your session';
+
+  const description = document.createElement('p');
+  description.className = 'muted viewer-auth-callback-panel__status';
+  description.textContent = options.statusText || 'Checking sign-in status and restoring your previous action…';
+
+  const message = document.createElement('p');
+  message.className = 'viewer-start-error';
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  message.textContent = options.message || '';
+
+  const progress = document.createElement('p');
+  progress.className = 'muted viewer-auth-callback-panel__progress';
+  progress.textContent = options.progressText || '';
+
+  const actions = document.createElement('div');
+  actions.className = 'viewer-start-actions';
+  const retryNowBtn = document.createElement('button');
+  retryNowBtn.type = 'button';
+  retryNowBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  retryNowBtn.textContent = 'Retry now';
+  retryNowBtn.disabled = options.retryDisabled === true;
+  retryNowBtn.addEventListener('click', async () => {
+    if (typeof options.onRetryNow === 'function') {
+      await options.onRetryNow();
+    }
+  });
+  const continueSignInBtn = document.createElement('button');
+  continueSignInBtn.type = 'button';
+  continueSignInBtn.className = 'viewer-start-btn';
+  continueSignInBtn.textContent = 'Continue sign-in';
+  continueSignInBtn.disabled = options.continueSignInDisabled === true;
+  continueSignInBtn.addEventListener('click', async () => {
+    if (typeof options.onContinueSignIn === 'function') {
+      await options.onContinueSignIn();
+    }
+  });
+  const cancelRecoveryBtn = document.createElement('button');
+  cancelRecoveryBtn.type = 'button';
+  cancelRecoveryBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
+  cancelRecoveryBtn.textContent = 'Cancel recovery';
+  cancelRecoveryBtn.disabled = options.cancelDisabled === true;
+  cancelRecoveryBtn.addEventListener('click', async () => {
+    if (typeof options.onCancelRecovery === 'function') {
+      await options.onCancelRecovery();
+    }
+  });
+  actions.append(retryNowBtn, continueSignInBtn, cancelRecoveryBtn);
+
+  panel.append(heading, description, message, progress, actions);
+  app.innerHTML = '';
+  bottomBarRoot.innerHTML = '';
+  app.append(panel);
+}
+
 
 function renderViewerFatalError(error) {
   if (!app || !bottomBarRoot) {
@@ -4776,6 +4861,7 @@ async function bootstrapViewer() {
     validateIntent: (intent) => validateViewerIntent(intent),
     replayIntent: (intent) => session.replayProtectedAction(intent),
     onRecoveryMessage: (message) => session.setRecoveryMessage(message),
+    returnQueryParams: { [VIEWER_AUTH_CALLBACK_PARAM]: '1' },
     redirectToAuth: ({ redirectTo }) => {
       const url = new URL(redirectTo);
       url.searchParams.set('auth', '1');
@@ -4789,17 +4875,7 @@ async function bootstrapViewer() {
     await session.browsePublishedPackages('');
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const hasAuthReturn = params.get('authReturn') === '1';
-  const hasLaunchIntent =
-    params.has('localAttemptId')
-    || params.has('localDraftId')
-    || params.has('viewerPayload')
-    || params.has('snapshot')
-    || params.has('importedWorksheetId')
-    || hasAuthReturn;
-
-  if (!hasLaunchIntent) {
+  const renderStartPanelFromResumeFlag = async (warningMessage = session.state.recoveryMessage) => {
     const flaggedAttempt = session.storage.resumeFlags.get(RESUME_FLAG_KEY);
     const resumeAttempt = flaggedAttempt?.localId
       ? await session.storage.attempts.get(flaggedAttempt.localId)
@@ -4829,10 +4905,161 @@ async function bootstrapViewer() {
       },
     };
     renderViewerStartPanel(session, {
-      warningMessage: session.state.recoveryMessage,
+      warningMessage,
       resumeAttempt: resumeAttempt || null,
       ...startPanelHandlers,
     });
+  };
+
+  const params = new URLSearchParams(window.location.search);
+  const hasAuthReturn = params.get(AUTH_RETURN_PARAM) === '1';
+  const hasAuthCallback = params.get(VIEWER_AUTH_CALLBACK_PARAM) === '1';
+  const isAuthCallbackMode = hasAuthReturn && hasAuthCallback;
+  const hasLaunchIntent =
+    params.has('localAttemptId')
+    || params.has('localDraftId')
+    || params.has('viewerPayload')
+    || params.has('snapshot')
+    || params.has('importedWorksheetId')
+    || hasAuthReturn;
+
+  if (!hasLaunchIntent) {
+    await renderStartPanelFromResumeFlag(session.state.recoveryMessage);
+    return;
+  }
+
+  if (isAuthCallbackMode) {
+    const callbackState = {
+      attemptCount: 0,
+      inFlight: false,
+      nextRetryDelayMs: 0,
+      timedOut: false,
+      retryTimer: null,
+      stopped: false,
+      startedAtMs: Date.now(),
+      lastStatus: 'initial',
+      lastMessage: '',
+    };
+
+    const clearRetryTimer = () => {
+      if (callbackState.retryTimer) {
+        clearTimeout(callbackState.retryTimer);
+        callbackState.retryTimer = null;
+      }
+    };
+
+    const scheduleRetry = (delayMs) => {
+      callbackState.nextRetryDelayMs = delayMs;
+      clearRetryTimer();
+      callbackState.retryTimer = setTimeout(() => {
+        callbackState.retryTimer = null;
+        void attemptRecovery({ manual: false });
+      }, delayMs);
+    };
+
+    const renderCallbackPanel = (overrideMessage = '') => {
+      const fallbackStatusMessage = callbackState.inFlight
+        ? 'Checking sign-in status and restoring your previous action…'
+        : callbackState.lastStatus === 'replayed'
+          ? 'Session recovered successfully.'
+          : callbackState.lastStatus === 'not_authenticated'
+            ? 'Sign-in is still pending. You can continue sign-in or retry.'
+            : callbackState.lastStatus === 'blocked_session_probe'
+              ? 'Temporary session-check issue. We will retry automatically.'
+              : 'Waiting to recover your previous protected action.';
+      const progressText = callbackState.timedOut
+        ? `Automatic retries paused after ${Math.round(AUTH_CALLBACK_RETRY_BUDGET_MS / 1000)} seconds.`
+        : callbackState.inFlight
+          ? 'Recovery attempt in progress…'
+          : callbackState.nextRetryDelayMs > 0
+            ? `Next automatic retry in ${Math.max(1, Math.ceil(callbackState.nextRetryDelayMs / 1000))} seconds.`
+            : '';
+      renderViewerAuthCallbackPanel(session, {
+        statusText: fallbackStatusMessage,
+        message: overrideMessage || callbackState.lastMessage || session.state.recoveryMessage || '',
+        progressText,
+        retryDisabled: callbackState.inFlight,
+        continueSignInDisabled: callbackState.inFlight,
+        cancelDisabled: callbackState.inFlight,
+        onRetryNow: async () => {
+          callbackState.timedOut = false;
+          callbackState.nextRetryDelayMs = 0;
+          callbackState.startedAtMs = Date.now();
+          callbackState.attemptCount = 0;
+          clearRetryTimer();
+          await attemptRecovery({ manual: true });
+        },
+        onContinueSignIn: async () => {
+          clearRetryTimer();
+          callbackState.stopped = true;
+          window.location.assign(buildViewerAuthCallbackSignInUrl());
+        },
+        onCancelRecovery: async () => {
+          clearRetryTimer();
+          callbackState.stopped = true;
+          authGate.clearPending();
+          cleanupViewerAuthCallbackUrlParams();
+          session.setRecoveryMessage('Sign-in recovery was cancelled. You can resume manually from start.');
+          await renderStartPanelFromResumeFlag(session.state.recoveryMessage);
+        },
+      });
+    };
+
+    const attemptRecovery = async ({ manual = false } = {}) => {
+      if (callbackState.stopped || callbackState.inFlight) return;
+      if (manual) {
+        callbackState.startedAtMs = Date.now();
+      }
+      callbackState.inFlight = true;
+      callbackState.nextRetryDelayMs = 0;
+      renderCallbackPanel();
+      try {
+        const restoreResult = await authGate.restoreAfterAuthReturn({
+          preserveUrlOnAuthNotReady: true,
+          preservePendingOnAuthNotReady: true,
+        });
+        callbackState.lastStatus = restoreResult?.status || 'unknown';
+        callbackState.lastMessage = session.state.recoveryMessage || '';
+
+        if (session.state.viewerPayload || restoreResult?.status === 'replayed') {
+          clearRetryTimer();
+          callbackState.stopped = true;
+          renderViewerShell(session);
+          window.viewerSession = session;
+          return;
+        }
+
+        const shouldAutoRetry = restoreResult?.status === 'blocked_session_probe' || restoreResult?.status === 'not_authenticated';
+        if (shouldAutoRetry) {
+          const elapsedMs = Date.now() - callbackState.startedAtMs;
+          if (elapsedMs >= AUTH_CALLBACK_RETRY_BUDGET_MS) {
+            callbackState.timedOut = true;
+            callbackState.lastMessage = session.state.recoveryMessage
+              || 'Automatic retries timed out. You can retry now or continue sign-in.';
+            return;
+          }
+          callbackState.timedOut = false;
+          const delayMs = Math.min(
+            AUTH_CALLBACK_RETRY_BASE_MS * (2 ** callbackState.attemptCount),
+            AUTH_CALLBACK_RETRY_MAX_MS
+          );
+          callbackState.attemptCount += 1;
+          scheduleRetry(delayMs);
+          return;
+        }
+
+        callbackState.timedOut = false;
+        callbackState.nextRetryDelayMs = 0;
+      } finally {
+        callbackState.inFlight = false;
+        if (!callbackState.stopped && !session.state.viewerPayload) {
+          renderCallbackPanel();
+        }
+      }
+    };
+
+    renderCallbackPanel();
+    await attemptRecovery({ manual: true });
     return;
   }
 

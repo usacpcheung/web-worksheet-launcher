@@ -40,7 +40,29 @@ body {
   margin: 0 auto;
 }
 
+.viewer-auth-callback-panel {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 40px 12px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 760px;
+  width: min(100%, 760px);
+  margin: 0 auto;
+}
+
 .viewer-start-panel h1 {
+  margin: 0;
+  text-align: center;
+  font-size: clamp(2.15rem, 1.95rem + 0.6vw, 3rem);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+}
+
+.viewer-auth-callback-panel h1 {
   margin: 0;
   text-align: center;
   font-size: clamp(2.15rem, 1.95rem + 0.6vw, 3rem);
@@ -54,7 +76,17 @@ body {
   font-size: 0.96rem;
 }
 
+.viewer-auth-callback-panel > .muted {
+  text-align: center;
+  color: #7c8798;
+  font-size: 0.96rem;
+}
+
 .viewer-start-panel [hidden] {
+  display: none !important;
+}
+
+.viewer-auth-callback-panel [hidden] {
   display: none !important;
 }
 
