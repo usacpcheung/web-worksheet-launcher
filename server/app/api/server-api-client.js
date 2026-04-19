@@ -370,11 +370,13 @@ function createServerApiClient(options = {}) {
 
       const contentType = String(response.headers.get('content-type') || '').toLowerCase();
       if (contentType.includes('text/html')) {
+        const bodyText = await response.text();
         return toStructuredError({
           code: 'AUTH_REQUIRED',
           message: createAuthMessage(),
           status: response.status,
           requiresSignIn: true,
+          details: { contentType, bodyPreview: bodyText.slice(0, 160) },
         });
       }
       if (!contentType.includes('application/json')) {

@@ -2787,9 +2787,9 @@ class ViewerAttemptSession {
         ? rewriteError.message.trim()
         : 'No additional error message provided.';
       const errorDetails = rewriteError?.details;
-      const detailsText = errorDetails && typeof errorDetails === 'object'
-        ? JSON.stringify(errorDetails).slice(0, 220)
-        : '';
+      const detailsText = errorDetails == null
+        ? ''
+        : String(typeof errorDetails === 'object' ? JSON.stringify(errorDetails) : errorDetails).slice(0, 220);
 
       clearRewriteFlags();
       this.setRewriteMessage(

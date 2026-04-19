@@ -198,6 +198,11 @@ test('rewriteText maps auth statuses and auth-like html responses to AUTH_REQUIR
     assert.equal(result.ok, false);
     assert.equal(result.error.code, 'AUTH_REQUIRED');
     assert.equal(result.error.requiresSignIn, true);
+    if (i === 2) {
+      assert.equal(result.error.details?.contentType, 'text/html');
+      assert.equal(typeof result.error.details?.bodyPreview, 'string');
+      assert.equal(result.error.details.bodyPreview.includes('login'), true);
+    }
   }
 });
 
