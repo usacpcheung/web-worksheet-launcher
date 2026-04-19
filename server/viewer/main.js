@@ -4766,7 +4766,7 @@ async function bootstrapViewer() {
     appArea: 'viewer',
     resumeFlagKey: RESUME_FLAG_KEY,
     storage: session.storage,
-    isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1',
+    checkSessionReady: async () => session.ensureServerSessionReady(),
     getCurrentLocalId: () => session.state.localAttemptId || null,
     getCurrentUiState: () => session.getUiRestoreState(),
     persistLocalRecord: () => session.flushLocalStateForAuthRedirect(),

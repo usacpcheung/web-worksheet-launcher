@@ -25,12 +25,48 @@ function cleanupAuthReturnUrlParams() {
   window.history.replaceState({}, '', cleanUrl.toString());
 }
 
+function toUpperCode(value) {
+  return String(value || '').toUpperCase();
+}
+
+function isAuthLikeErrorCandidate(candidate) {
+  const status = Number(candidate?.status);
+  const code = toUpperCode(candidate?.code);
+  return Boolean(
+    candidate?.requiresSignIn
+    || status === 401
+    || status === 403
+    || code === 'AUTH_REQUIRED'
+  );
+}
+
+function normalizeSessionCheckResult(rawResult) {
+  if (rawResult === true) return { ready: true, authNotReady: false, rawResult };
+  if (rawResult === false || rawResult == null) return { ready: false, authNotReady: true, rawResult };
+  if (typeof rawResult !== 'object') return { ready: false, authNotReady: true, rawResult };
+
+  if (rawResult.ok === true) {
+    return { ready: true, authNotReady: false, rawResult };
+  }
+
+  const directAuthLike = isAuthLikeErrorCandidate(rawResult);
+  const nestedResult = rawResult.result && typeof rawResult.result === 'object' ? rawResult.result : null;
+  const nestedError = rawResult.error && typeof rawResult.error === 'object' ? rawResult.error : null;
+  const nestedAuthLike = isAuthLikeErrorCandidate(nestedResult?.error)
+    || isAuthLikeErrorCandidate(nestedResult)
+    || isAuthLikeErrorCandidate(nestedError);
+  const nestedNotReady = rawResult.status === 'not_ready' || nestedResult?.status === 'not_ready';
+  const authNotReady = directAuthLike || nestedAuthLike || nestedNotReady;
+  return { ready: false, authNotReady, rawResult };
+}
+
 class SharedAuthGate {
   constructor(options) {
     this.options = {
       appArea: 'app',
       resumeFlagKey: '',
       storage: null,
+      checkSessionReady: null,
       isAuthenticated: () => false,
       getCurrentLocalId: () => null,
       getCurrentUiState: () => ({}),
@@ -58,9 +94,24 @@ class SharedAuthGate {
       return { status: 'invalid_intent' };
     }
 
-    if (this.options.isAuthenticated()) {
+    let authState;
+    if (typeof this.options.checkSessionReady === 'function') {
+      const checkResult = await this.options.checkSessionReady(intent);
+      authState = normalizeSessionCheckResult(checkResult);
+    } else {
+      authState = {
+        ready: Boolean(this.options.isAuthenticated()),
+        authNotReady: true,
+        rawResult: null,
+      };
+    }
+
+    if (authState.ready) {
       await this.options.replayIntent(intent);
       return { status: 'executed' };
+    }
+    if (!authState.authNotReady) {
+      return { status: 'blocked_session_probe', result: authState.rawResult };
     }
 
     const localId = this.options.getCurrentLocalId();
@@ -112,7 +163,16 @@ class SharedAuthGate {
       return { status: 'no_pending_intent' };
     }
 
-    if (!this.options.isAuthenticated()) {
+    const authState = typeof this.options.checkSessionReady === 'function'
+      ? normalizeSessionCheckResult(await this.options.checkSessionReady({
+        actionId: pendingIntent?.actionId || '',
+        recordStore: pendingIntent?.recordStore || '',
+        payload: pendingIntent?.intentPayload || null,
+      }))
+      : {
+        ready: Boolean(this.options.isAuthenticated()),
+      };
+    if (!authState.ready) {
       this.options.onRecoveryMessage('You are not signed in yet. Please complete sign-in and try again.');
       cleanupAuthReturnUrlParams();
       return { status: 'not_authenticated' };

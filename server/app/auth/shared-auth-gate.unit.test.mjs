@@ -382,3 +382,94 @@ test('restoreAfterAuthReturn intent_invalid clears pending and cleans URL params
   const nextUrl = replaceCalls[0][2];
   assert.equal(nextUrl.includes('authReturn='), false);
 });
+
+test('runProtectedAction executes immediately when checkSessionReady reports ready', async () => {
+  const storage = createStorage();
+  let replayed = false;
+  let redirected = false;
+  globalThis.window = {
+    location: { href: 'https://example.test/viewer/?localAttemptId=attempt_1' },
+  };
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    checkSessionReady: async () => ({ ok: true }),
+    getCurrentLocalId: () => 'attempt_1',
+    getCurrentUiState: () => ({ status: 'in_progress' }),
+    replayIntent: async () => { replayed = true; },
+    redirectToAuth: () => { redirected = true; },
+  });
+
+  const result = await gate.runProtectedAction({
+    actionId: 'viewerRewrite',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1', blockId: 'q1' },
+  });
+
+  assert.equal(result.status, 'executed');
+  assert.equal(replayed, true);
+  assert.equal(redirected, false);
+  assert.equal(storage.pendingIntent.get(), null);
+});
+
+test('runProtectedAction redirects when checkSessionReady reports auth-not-ready', async () => {
+  const storage = createStorage();
+  let redirected = false;
+  globalThis.window = {
+    location: { href: 'https://example.test/viewer/?localAttemptId=attempt_1' },
+  };
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    checkSessionReady: async () => ({ ok: false, result: { status: 'not_ready', error: { code: 'AUTH_REQUIRED', status: 401 } } }),
+    getCurrentLocalId: () => 'attempt_1',
+    getCurrentUiState: () => ({ status: 'in_progress' }),
+    persistLocalRecord: async () => {},
+    redirectToAuth: () => { redirected = true; },
+  });
+
+  const result = await gate.runProtectedAction({
+    actionId: 'viewerRewrite',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1', blockId: 'q1' },
+  });
+
+  assert.equal(result.status, 'redirected');
+  assert.equal(redirected, true);
+  assert.equal(storage.pendingIntent.get().actionId, 'viewerRewrite');
+});
+
+test('runProtectedAction blocks without redirect when checkSessionReady reports non-auth probe error', async () => {
+  const storage = createStorage();
+  let redirected = false;
+  let replayed = false;
+  globalThis.window = {
+    location: { href: 'https://example.test/viewer/?localAttemptId=attempt_1' },
+  };
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    checkSessionReady: async () => ({ ok: false, result: { status: 'error', error: { code: 'NETWORK_ERROR', message: 'offline' } } }),
+    getCurrentLocalId: () => 'attempt_1',
+    getCurrentUiState: () => ({ status: 'in_progress' }),
+    replayIntent: async () => { replayed = true; },
+    redirectToAuth: () => { redirected = true; },
+  });
+
+  const result = await gate.runProtectedAction({
+    actionId: 'viewerRewrite',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1', blockId: 'q1' },
+  });
+
+  assert.equal(result.status, 'blocked_session_probe');
+  assert.equal(redirected, false);
+  assert.equal(replayed, false);
+  assert.equal(storage.pendingIntent.get(), null);
+});

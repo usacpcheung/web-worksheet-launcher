@@ -3971,6 +3971,12 @@ test('bootstrapViewer validateIntent uses action-aware viewer rewrite payload ch
   assert.equal(source.includes('return false;'), true);
 });
 
+test('bootstrapViewer configures SharedAuthGate with live session probe check', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('checkSessionReady: async () => session.ensureServerSessionReady(),'), true);
+  assert.equal(source.includes("isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1'"), false);
+});
+
 test('viewer triggerProtectedAction forwards payload and remains functional without intentPayload', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
