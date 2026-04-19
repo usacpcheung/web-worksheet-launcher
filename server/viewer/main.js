@@ -2858,7 +2858,9 @@ class ViewerAttemptSession {
       return { ok: false, status: 'rewrite_stale_context' };
     }
 
-    const preRewriteAnswer = currentAnswerValue(blockId);
+    const preRewriteAnswer = typeof payload.answerTextRawAtClickTime === 'string'
+      ? payload.answerTextRawAtClickTime
+      : currentAnswerValue(blockId);
     const rewrittenText = String(rewriteResult.data?.text ?? '').trim();
     this.state.undoBuffer = {
       ...this.state.undoBuffer,
@@ -3779,6 +3781,17 @@ function renderViewerShell(session) {
       : String(rawAnswer ?? '').trim();
   };
 
+  const getRawAnswerTextForBlock = (blockId) => {
+    if (!blockId) return '';
+    const answerRecord = session.state.answers?.[blockId];
+    const rawAnswer = answerRecord && typeof answerRecord === 'object'
+      ? answerRecord.value
+      : answerRecord;
+    return typeof rawAnswer === 'string'
+      ? rawAnswer
+      : String(rawAnswer ?? '');
+  };
+
   const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {
     const localAttemptId = typeof session.state.localAttemptId === 'string'
       ? session.state.localAttemptId
@@ -3797,6 +3810,7 @@ function renderViewerShell(session) {
       localAttemptId,
       blockId,
       answerTextAtClickTime: getTrimmedAnswerTextForBlock(blockId),
+      answerTextRawAtClickTime: getRawAnswerTextForBlock(blockId),
     };
   };
 
@@ -4896,10 +4910,11 @@ async function bootstrapViewer() {
     const payload = intent?.payload;
 
     if (actionId === 'viewerRewrite' || actionId === 'resumeViewerRewriteAfterLogin') {
-      const allowed = new Set(['localAttemptId', 'blockId', 'answerTextAtClickTime']);
+      const allowed = new Set(['localAttemptId', 'blockId', 'answerTextAtClickTime', 'answerTextRawAtClickTime']);
       if (!hasOnlyAllowedKeys(payload, allowed)) return false;
       if (typeof payload.localAttemptId !== 'string' || typeof payload.blockId !== 'string') return false;
       if (payload.answerTextAtClickTime !== undefined && typeof payload.answerTextAtClickTime !== 'string') return false;
+      if (payload.answerTextRawAtClickTime !== undefined && typeof payload.answerTextRawAtClickTime !== 'string') return false;
       return session.validateViewerRewriteIntentPayload(payload).ok;
     }
 

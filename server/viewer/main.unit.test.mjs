@@ -4075,8 +4075,8 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
 test('rewrite assist snapshots answer text from answer record value', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {'), true);
-  assert.equal(source.includes('const answerRecord = session.state.answers?.[blockId];'), true);
-  assert.equal(source.includes('? answerRecord.value'), true);
+  assert.equal(source.includes('const getRawAnswerTextForBlock = (blockId) => {'), true);
+  assert.equal(source.includes('answerTextRawAtClickTime: getRawAnswerTextForBlock(blockId),'), true);
   assert.equal(source.includes("await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);"), true);
 });
 
@@ -4146,6 +4146,44 @@ test('replayViewerRewriteIntent valid viewerRewrite context calls rewrite API an
   assert.deepEqual(rewriteCalls, ['original answer']);
   assert.equal(session.state.undoBuffer.q1, 'original answer');
   assert.equal(session.state.answers.q1.value, 'rewritten answer');
+});
+
+test('replayViewerRewriteIntent stores raw click snapshot for undo when provided', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'rewritten answer' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text', maxLength: 20 },
+    }],
+  };
+  session.state.answers = {
+    q1: { value: '01234567890123456789', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: '01234567890123456789EXTRA',
+    answerTextRawAtClickTime: '01234567890123456789EXTRA',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(session.state.undoBuffer.q1, '01234567890123456789EXTRA');
 });
 
 test('replayViewerRewriteIntent accepts unchanged answers that differ only by surrounding whitespace', async () => {
