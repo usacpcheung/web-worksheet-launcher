@@ -202,6 +202,8 @@ test('rewriteText maps auth statuses and auth-like html responses to AUTH_REQUIR
       assert.equal(result.error.details?.contentType, 'text/html');
       assert.equal(typeof result.error.details?.bodyPreview, 'string');
       assert.equal(result.error.details.bodyPreview.includes('login'), true);
+      assert.equal(result.error.details?.bodyLength > 0, true);
+      assert.equal(typeof result.error.details?.bodyTruncated, 'boolean');
     }
   }
 });

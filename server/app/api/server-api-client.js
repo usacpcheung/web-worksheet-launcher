@@ -369,6 +369,7 @@ function createServerApiClient(options = {}) {
       }
 
       const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      const authBodyPreviewLimit = 1200;
       if (contentType.includes('text/html')) {
         const bodyText = await response.text();
         return toStructuredError({
@@ -376,7 +377,12 @@ function createServerApiClient(options = {}) {
           message: createAuthMessage(),
           status: response.status,
           requiresSignIn: true,
-          details: { contentType, bodyPreview: bodyText.slice(0, 160) },
+          details: {
+            contentType,
+            bodyPreview: bodyText.slice(0, authBodyPreviewLimit),
+            bodyLength: bodyText.length,
+            bodyTruncated: bodyText.length > authBodyPreviewLimit,
+          },
         });
       }
       if (!contentType.includes('application/json')) {
@@ -387,7 +393,12 @@ function createServerApiClient(options = {}) {
             message: createAuthMessage(),
             status: response.status,
             requiresSignIn: true,
-            details: { contentType, bodyPreview: bodyText.slice(0, 160) },
+            details: {
+              contentType,
+              bodyPreview: bodyText.slice(0, authBodyPreviewLimit),
+              bodyLength: bodyText.length,
+              bodyTruncated: bodyText.length > authBodyPreviewLimit,
+            },
           });
         }
         return toStructuredError({
