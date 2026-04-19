@@ -296,6 +296,45 @@ test('restoreAfterAuthReturn returns not_authenticated and cleans URL params', a
   assert.equal(nextUrl.includes('intent='), false);
 });
 
+test('restoreAfterAuthReturn blocks on non-auth probe errors and preserves recovery URL/state', async () => {
+  const storage = createStorage();
+  const callLog = [];
+  storage.pendingIntent.set({
+    appArea: 'viewer',
+    actionId: 'resumeAttemptSyncAfterLogin',
+    recordStore: 'localAttempts',
+    localId: 'attempt_1',
+    resumeFlagKey: 'viewer:lastSession',
+    resumeUi: { status: 'in_progress' },
+  });
+
+  const { replaceCalls } = createWindowStub('https://example.test/viewer/?authReturn=1&intent=resumeAttemptSyncAfterLogin');
+
+  const gate = new SharedAuthGate({
+    appArea: 'viewer',
+    resumeFlagKey: 'viewer:lastSession',
+    storage,
+    checkSessionReady: async () => ({ ok: false, result: { status: 'error', error: { code: 'NETWORK_ERROR', message: 'offline' } } }),
+    restoreByLocalId: async () => {
+      callLog.push('restore');
+      return true;
+    },
+    replayIntent: async () => {
+      callLog.push('replay');
+    },
+    onRecoveryMessage: (message) => callLog.push(message),
+  });
+
+  const result = await gate.restoreAfterAuthReturn();
+
+  assert.equal(result.status, 'blocked_session_probe');
+  assert.equal(result.result?.result?.status, 'error');
+  assert.equal(callLog.includes('restore'), false);
+  assert.equal(callLog.includes('replay'), false);
+  assert.equal(storage.pendingIntent.get().actionId, 'resumeAttemptSyncAfterLogin');
+  assert.equal(replaceCalls.length, 0);
+});
+
 test('restoreAfterAuthReturn missing_local_id clears pending and cleans URL params', async () => {
   const storage = createStorage();
   storage.pendingIntent.set({

@@ -4028,7 +4028,7 @@ test('rewrite controls remain always mounted for text questions and enforce disa
   assert.equal(source.includes('const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= 300;'), true);
   assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;'), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
-  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || !hasUndoEntry;'), true);
+  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
   assert.equal(source.includes("rewriteHint.textContent = 'Enter text to rewrite.';"), true);
   assert.equal(source.includes('Answer is too long to rewrite (max 300 characters).'), true);
 });
@@ -4191,6 +4191,7 @@ test('undo lifecycle wiring exists for post-rewrite visibility, restore, and man
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);'), true);
   assert.equal(source.includes("undoButton.textContent = 'Undo';"), true);
+  assert.equal(source.includes('if (undoButton.disabled || isRewriteInFlight) {'), true);
   assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer);'), true);
   assert.equal(source.includes('delete nextUndoBuffer[block.blockId];'), true);
   assert.equal(source.includes("control.addEventListener('input', () => {"), true);
@@ -4202,7 +4203,7 @@ test('in-flight rewrite state renders loading label while preserving always-visi
   assert.equal(source.includes('const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;'), true);
   assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';"), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
-  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || !hasUndoEntry;'), true);
+  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
   assert.equal(source.includes('session.state.rewriteMessageByBlock?.[block.blockId]'), true);
 });
 

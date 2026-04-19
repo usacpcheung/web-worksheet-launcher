@@ -171,8 +171,14 @@ class SharedAuthGate {
       }))
       : {
         ready: Boolean(this.options.isAuthenticated()),
+        authNotReady: true,
+        rawResult: null,
       };
     if (!authState.ready) {
+      if (!authState.authNotReady) {
+        this.options.onRecoveryMessage('Unable to verify sign-in due to a temporary session check issue. Please retry when the connection is stable.');
+        return { status: 'blocked_session_probe', result: authState.rawResult };
+      }
       this.options.onRecoveryMessage('You are not signed in yet. Please complete sign-in and try again.');
       cleanupAuthReturnUrlParams();
       return { status: 'not_authenticated' };

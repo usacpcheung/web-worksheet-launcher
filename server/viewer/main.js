@@ -4167,7 +4167,8 @@ function renderViewerShell(session) {
         undoButton.className = 'question-card__undo-btn';
         undoButton.textContent = 'Undo';
         undoButton.addEventListener('click', () => {
-          if (undoButton.disabled) {
+          const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
+          if (undoButton.disabled || isRewriteInFlight) {
             return;
           }
           const savedUndoAnswer = session.state.undoBuffer?.[block.blockId];
@@ -4251,7 +4252,7 @@ function renderViewerShell(session) {
           rewriteButton.disabled = !canRewrite;
         }
         if (undoButton) {
-          undoButton.disabled = isAttemptCompleted || !hasUndoEntry;
+          undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;
         }
         if (rewriteHint) {
           if (trimmedAnswerLength === 0) {
