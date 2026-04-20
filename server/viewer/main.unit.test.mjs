@@ -4442,3 +4442,73 @@ test('rewrite API failure keeps original answer unchanged and clears in-flight f
   assert.equal(session.state.rewriteMessageByBlock.q1.includes('Rewrite could not be completed'), true);
   assert.equal(session.state.recoveryMessage, null);
 });
+
+test('rewrite API thrown error keeps original answer unchanged and clears in-flight flags', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => {
+        throw new Error('unexpected parse error');
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'original answer',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'rewrite_failed');
+  assert.equal(session.state.answers.q1.value, 'original answer');
+  assert.equal(session.state.isRewriting, false);
+  assert.equal(session.state.rewritingBlockId, null);
+  assert.equal(session.state.rewriteMessageByBlock.q1.includes('Rewrite could not be completed'), true);
+});
+
+test('rewrite apply with unchanged resulting text is treated as success (not non-editable)', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'same answer' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'same answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+  session.state.undoBuffer = { q1: 'older answer' };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'same answer',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(session.state.answers.q1.value, 'same answer');
+  assert.equal(Object.prototype.hasOwnProperty.call(session.state.undoBuffer, 'q1'), false);
+  assert.equal(session.state.rewriteMessageByBlock.q1 || null, null);
+});

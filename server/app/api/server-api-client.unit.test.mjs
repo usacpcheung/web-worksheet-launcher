@@ -208,6 +208,23 @@ test('rewriteText maps auth statuses and auth-like html responses to AUTH_REQUIR
   }
 });
 
+test('rewriteText treats non-auth html responses as UNEXPECTED_NON_JSON_RESPONSE', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => new Response('<html><body>upstream failed</body></html>', {
+    status: 502,
+    headers: { 'content-type': 'text/html' },
+  });
+
+  const client = createServerApiClient();
+  const result = await client.rewriteText('hello');
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'UNEXPECTED_NON_JSON_RESPONSE');
+  assert.equal(result.error.requiresSignIn, false);
+  assert.equal(result.error.status, 502);
+  assert.equal(result.error.details?.contentType, 'text/html');
+  assert.equal(result.error.details?.bodyPreview.includes('upstream failed'), true);
+});
+
 test('rewriteText preserves backend auth error payload for JSON 401 responses', async () => {
   setTestWindow();
   globalThis.fetch = async () => mockJsonResponse(401, {
