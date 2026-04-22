@@ -1009,9 +1009,14 @@ test('editor source removes global Publish button and adds labeled metadata and 
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('await session.publishCurrentDraftToServer();'), false);
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    publishBtn,'), false);
+  assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
+  assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
   assert.equal(source.includes("metadataHeading.textContent = 'Draft Metadata';"), true);
   assert.equal(source.includes("titleLabel.textContent = 'Worksheet Title';"), true);
   assert.equal(source.includes("subjectLabel.textContent = 'Subject';"), true);
+  assert.equal(source.includes("signInBtn.textContent = 'Sign in for server features';"), true);
+  assert.equal(source.includes("syncDraftBtn.textContent = 'Upload Draft';"), true);
+  assert.equal(source.includes("loadUploadedDraftsBtn.textContent = 'Refresh Uploaded Drafts';"), true);
   assert.equal(source.includes("browsePublishedBtn.textContent = 'Browse Published Packages';"), true);
   assert.equal(source.includes("loadMoreBtn.textContent = browsePublishedState.loading ? 'Loading…' : 'Load more';"), true);
   assert.equal(source.includes("ownerFilter.placeholder = 'Filter by owner email';"), true);
@@ -1037,6 +1042,13 @@ test('editor source removes global Publish button and adds labeled metadata and 
   );
 });
 
+test('stage3: protected actions column no longer includes legacy rewrite/t2a stub buttons', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
+  assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
+  assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    browsePublishedBtn,\n    loadUploadedDraftsBtn,\n    uploadedDraftList\n  );'), true);
+});
+
 test('detail signature includes media refs so media attach/remove rerenders immediately', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('const normalizedPromptMediaRefs = selectedBlock.kind === \'question\''), true);
@@ -1049,8 +1061,31 @@ test('multiple-choice option audio controls gate placeholder options with helper
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('const persistedOptionIds = new Set(normalizedOptions.map((option) => String(option?.id || \'\')));'), true);
   assert.equal(source.includes('const isPersistedOption = persistedOptionIds.has(optionId);'), true);
-  assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption;"), true);
+  assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("Enter option text or click Add option before attaching audio."), true);
+});
+
+test('question audio row adds contextual generate/regenerate control with prompt eligibility checks', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("const promptExceedsT2ALimit = trimmedPromptText.length > 200;"), true);
+  assert.equal(source.includes("generateQuestionAudioBtn.textContent = isPromptT2AInFlight"), true);
+  assert.equal(source.includes("? 'Generating…'"), true);
+  assert.equal(source.includes(": currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio';"), true);
+  assert.equal(source.includes("generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;"), true);
+  assert.equal(source.includes("Prompt is too long for Generate audio (limit: 200 characters)."), true);
+  assert.equal(source.includes("attachQuestionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("playQuestionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("removeQuestionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("questionAudioRow.append(attachQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn, generateQuestionAudioBtn);"), true);
+});
+
+test('stage3: prompt row triggers replace confirmation before prompt bridge generation when audio exists', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const hasAudioConfirmIdx = source.indexOf("title: 'Regenerate question audio?'");
+  const promptBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorPromptT2A', {");
+  assert.equal(hasAudioConfirmIdx >= 0, true);
+  assert.equal(promptBridgeCallIdx >= 0, true);
+  assert.equal(hasAudioConfirmIdx < promptBridgeCallIdx, true);
 });
 
 test('multiple-choice option row collapses audio actions into a more-menu and shows attached asset id', async () => {
@@ -1059,6 +1094,42 @@ test('multiple-choice option row collapses audio actions into a more-menu and sh
   assert.equal(source.includes("optionActionsToggle.textContent = '⋯';"), true);
   assert.equal(source.includes('row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);'), true);
   assert.equal(source.includes('Option audio attached ('), true);
+});
+
+test('multiple-choice option actions include contextual generate/regenerate audio with text eligibility and row lock', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("const optionDisplayText = String(option?.label ?? option?.value ?? '');"), true);
+  assert.equal(source.includes("const optionTextExceedsT2ALimit = trimmedOptionDisplayText.length > 200;"), true);
+  assert.equal(source.includes("const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;"), true);
+  assert.equal(source.includes("const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey;"), true);
+  assert.equal(source.includes("optionT2ABtn.textContent = isOptionT2AInFlight"), true);
+  assert.equal(source.includes(": optionAudioRef ? 'Regenerate audio' : 'Generate audio';"), true);
+  assert.equal(source.includes("optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("optionT2AInFlightKey = optionT2AKey;"), true);
+  assert.equal(source.includes("optionT2AInFlightKey = null;"), true);
+  assert.equal(source.includes("actionId: 'editorOptionT2A'"), false);
+  assert.equal(source.includes("await session.triggerProtectedAction('editorOptionT2A', {"), true);
+  assert.equal(source.includes("text: message || 'Could not generate option audio. Please try again.'"), true);
+  assert.equal(source.includes('Option text is too long for Generate audio (limit: 200 characters).'), true);
+  assert.equal(source.includes("optionActionsList.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);"), true);
+});
+
+test('stage3: option row triggers replace confirmation before option bridge generation when audio exists', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const hasAudioConfirmIdx = source.indexOf("title: `Regenerate option ${optionIndex + 1} audio?`");
+  const optionBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorOptionT2A', {");
+  assert.equal(hasAudioConfirmIdx >= 0, true);
+  assert.equal(optionBridgeCallIdx >= 0, true);
+  assert.equal(hasAudioConfirmIdx < optionBridgeCallIdx, true);
+});
+
+test('stage3: in-flight lock is row-scoped by block/option key and leaves unrelated rows interactive', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;"), true);
+  assert.equal(source.includes("const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey;"), true);
+  assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;"), true);
 });
 
 test('multiple-choice option action state rerenders while typing when option ids/media refs change and restores caret', async () => {
@@ -3795,4 +3866,353 @@ test('editor replayProtectedAction receives payload and avoids mutation on stale
   assert.equal(result.ok, false);
   assert.equal(result.status, 'invalid_context');
   assert.equal(JSON.stringify(session.state.draft), beforeDraft);
+});
+
+test('editor replayEditorPromptT2AIntent generates audio and attaches via canonical question media path', async () => {
+  const mod = await loadEditorModule();
+  const attachCalls = [];
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async (text) => ({
+        ok: true,
+        data: { bytes: new Uint8Array([1, 2, 3]), text },
+      }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt audio text' } }],
+  });
+  session.attachQuestionMedia = async (...args) => {
+    attachCalls.push(args);
+    return { ok: true };
+  };
+
+  const result = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'generated_editor_prompt_t2a');
+  assert.equal(attachCalls.length, 1);
+  assert.equal(attachCalls[0][0], 'q1');
+  assert.equal(attachCalls[0][1], 'question_audio');
+  assert.equal(typeof attachCalls[0][2]?.arrayBuffer, 'function');
+  assert.equal(attachCalls[0][3]?.confirmReplace, false);
+});
+
+test('editor replayEditorPromptT2AIntent returns plain-language errors for invalid prompt generation states', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async () => ({ ok: false, error: { message: '' } }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: '' } }],
+  });
+
+  const missingPrompt = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  assert.equal(missingPrompt.ok, false);
+  assert.equal(missingPrompt.error.message, 'Enter a prompt before generating audio.');
+
+  session.state.draft.blocks[0].prompt.text = 'a'.repeat(201);
+  const tooLong = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  assert.equal(tooLong.ok, false);
+  assert.equal(tooLong.error.message, 'Prompt must be 200 characters or fewer to generate audio.');
+
+  session.state.draft.blocks[0].prompt.text = 'short prompt';
+  const generationFailure = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  assert.equal(generationFailure.ok, false);
+  assert.equal(generationFailure.error.message, 'Could not generate question audio. Please try again.');
+  const promptRecoveryNotification = session.state.notifications
+    .find((item) => item.source === 'prompt.t2a' && item.kind === 'error');
+  assert.equal(Boolean(promptRecoveryNotification), true);
+});
+
+test('editor replayEditorOptionT2AIntent generates audio and attaches via canonical option media path', async () => {
+  const mod = await loadEditorModule();
+  const attachCalls = [];
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async (text) => ({
+        ok: true,
+        data: { bytes: new Uint8Array([4, 5, 6]), text },
+      }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Q1' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: 'Option one', label: 'Option one' }],
+      },
+    }],
+  });
+  session.attachOptionAudio = async (...args) => {
+    attachCalls.push(args);
+    return { ok: true };
+  };
+
+  const result = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'generated_editor_option_t2a');
+  assert.equal(attachCalls.length, 1);
+  assert.equal(attachCalls[0][0], 'q1');
+  assert.equal(attachCalls[0][1], 'opt_1');
+  assert.equal(typeof attachCalls[0][2]?.arrayBuffer, 'function');
+  assert.equal(attachCalls[0][3]?.confirmReplace, false);
+});
+
+test('editor replayEditorOptionT2AIntent returns plain-language errors for invalid option generation states', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async () => ({ ok: false, error: { message: '' } }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Q1' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: '', label: '' }],
+      },
+    }],
+  });
+
+  const missingText = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+  assert.equal(missingText.ok, false);
+  assert.equal(missingText.error.message, 'Enter option text before generating audio.');
+
+  session.state.draft.blocks[0].responseConfig.options[0].label = 'a'.repeat(201);
+  const tooLong = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+  assert.equal(tooLong.ok, false);
+  assert.equal(tooLong.error.message, 'Option text must be 200 characters or fewer to generate audio.');
+
+  session.state.draft.blocks[0].responseConfig.options[0].label = 'short option';
+  const generationFailure = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+  assert.equal(generationFailure.ok, false);
+  assert.equal(generationFailure.error.message, 'Could not generate option audio. Please try again.');
+  const optionRecoveryNotification = session.state.notifications
+    .find((item) => item.source === 'option.t2a' && item.kind === 'error');
+  assert.equal(Boolean(optionRecoveryNotification), true);
+});
+
+test('prompt/option replay T2A guards duplicate in-flight requests per target', async () => {
+  const mod = await loadEditorModule();
+  let resolvePrompt;
+  let resolveOption;
+  const promptPending = new Promise((resolve) => { resolvePrompt = resolve; });
+  const optionPending = new Promise((resolve) => { resolveOption = resolve; });
+  const apiCalls = [];
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async (text) => {
+        apiCalls.push(text);
+        if (text === 'Prompt text') return promptPending;
+        return optionPending;
+      },
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Prompt text' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: 'Option text', label: 'Option text' }],
+      },
+    }],
+  });
+  session.attachQuestionMedia = async () => ({ ok: true });
+  session.attachOptionAudio = async () => ({ ok: true });
+
+  const firstPrompt = session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  const duplicatePrompt = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  assert.equal(duplicatePrompt.ok, false);
+  assert.equal(duplicatePrompt.status, 'already_in_flight');
+  resolvePrompt({ ok: true, data: { bytes: new Uint8Array([1]) } });
+  await firstPrompt;
+
+  const firstOption = session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+  const duplicateOption = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+  assert.equal(duplicateOption.ok, false);
+  assert.equal(duplicateOption.status, 'already_in_flight');
+  resolveOption({ ok: true, data: { bytes: new Uint8Array([2]) } });
+  await firstOption;
+  assert.equal(apiCalls.length, 2);
+});
+
+test('stage3: api failure keeps existing prompt/option audio refs unchanged and emits plain-language notifications', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async () => ({ ok: false, error: { message: '' } }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: {
+        text: 'Prompt for audio',
+        mediaRefs: [{ usage: 'question_audio', assetId: 'asset_prompt_existing' }],
+      },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{
+          id: 'opt_1',
+          value: 'Option one',
+          label: 'Option one',
+          mediaRefs: [{ usage: 'option_audio', assetId: 'asset_option_existing' }],
+        }],
+      },
+    }],
+  });
+  const before = JSON.stringify(session.state.draft);
+
+  const promptResult = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  const optionResult = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+
+  assert.equal(promptResult.ok, false);
+  assert.equal(optionResult.ok, false);
+  assert.equal(session.findBlock('q1').prompt.mediaRefs[0].assetId, 'asset_prompt_existing');
+  assert.equal(
+    mod.normalizeBlocks(session.state.draft.blocks)[0].responseConfig.options[0].mediaRefs[0].assetId,
+    'asset_option_existing'
+  );
+  assert.equal(JSON.parse(before).blocks[0].prompt.mediaRefs[0].assetId, 'asset_prompt_existing');
+  assert.equal(
+    session.state.notifications.some((item) => item.text === 'Could not generate question audio. Please try again.'),
+    true
+  );
+  assert.equal(
+    session.state.notifications.some((item) => item.text === 'Could not generate option audio. Please try again.'),
+    true
+  );
+});
+
+test('stage3: successful replay T2A attaches mp3 bytes through canonical media helpers and updates refs', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async (text) => ({
+        ok: true,
+        data: { bytes: new Uint8Array([7, 8, 9]), text },
+      }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Prompt success path' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: 'Option success', label: 'Option success' }],
+      },
+    }],
+  });
+
+  const promptResult = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  const optionResult = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+
+  const block = session.findBlock('q1');
+  const promptAudioRef = block.prompt.mediaRefs.find((ref) => ref.usage === 'question_audio');
+  const optionAudioRef = mod.normalizeBlocks([block])[0].responseConfig.options[0].mediaRefs.find((ref) => ref.usage === 'option_audio');
+  const promptAsset = session.state.draft.assets.find((asset) => asset.assetId === promptAudioRef.assetId);
+  const optionAsset = session.state.draft.assets.find((asset) => asset.assetId === optionAudioRef.assetId);
+
+  assert.equal(promptResult.ok, true);
+  assert.equal(optionResult.ok, true);
+  assert.equal(Boolean(promptAudioRef?.assetId), true);
+  assert.equal(Boolean(optionAudioRef?.assetId), true);
+  assert.equal(promptAsset.kind, 'audio');
+  assert.equal(optionAsset.kind, 'audio');
+  assert.equal(promptAsset.mimeType, 'audio/mpeg');
+  assert.equal(optionAsset.mimeType, 'audio/mpeg');
 });

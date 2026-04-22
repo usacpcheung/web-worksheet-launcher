@@ -265,6 +265,15 @@ function createZipFileFromBytes(bytes, name) {
   return blob;
 }
 
+function createAudioFileFromBytes(bytes, name = 'generated-question-audio.mp3') {
+  if (typeof File === 'function') {
+    return new File([bytes], name, { type: 'audio/mpeg' });
+  }
+  const blob = new Blob([bytes], { type: 'audio/mpeg' });
+  blob.name = name;
+  return blob;
+}
+
 async function loadContracts() {
   if (!contractsPromise) {
     contractsPromise = import('../app/contracts/index.js');
@@ -651,6 +660,8 @@ class EditorDraftSession {
     this._loadUploadedDraftsWithPreflightPromise = null;
     this._loadUploadedDraftsWithoutPreflightPromise = null;
     this._loadUploadedDraftsActiveCount = 0;
+    this._promptT2AInFlightTargets = new Set();
+    this._optionT2AInFlightTargets = new Set();
   }
 
   setOnStateChange(handler) {
@@ -3074,10 +3085,83 @@ class EditorDraftSession {
       });
       return { ok: false, status: 'invalid_context' };
     }
-
-    // Stage 1 dispatcher entrypoint for prompt T2A recovery.
-    this.setRecoveryMessage('Prompt audio recovery is not available yet. Please run T2A again.');
-    return { ok: true, status: 'deferred_editor_prompt_t2a' };
+    const blockId = String(payload.blockId);
+    const block = this.findBlock(blockId);
+    const promptText = String(block?.prompt?.text || '').trim();
+    const inFlightKey = `prompt:${blockId}`;
+    if (this._promptT2AInFlightTargets.has(inFlightKey)) {
+      const message = 'Question prompt audio generation is already in progress.';
+      this.setRecoveryMessage(message);
+      this.pushNotification({
+        kind: 'info',
+        category: 'editor',
+        source: 'prompt.t2a',
+        text: message,
+      });
+      this.notifyStateChange();
+      return { ok: false, status: 'already_in_flight', error: { message } };
+    }
+    if (!promptText) {
+      const message = 'Enter a prompt before generating audio.';
+      this.setRecoveryMessage(message);
+      this.notifyStateChange();
+      return {
+        ok: false,
+        status: 'missing_prompt_text',
+        error: { message },
+      };
+    }
+    if (promptText.length > 200) {
+      const message = 'Prompt must be 200 characters or fewer to generate audio.';
+      this.setRecoveryMessage(message);
+      this.notifyStateChange();
+      return {
+        ok: false,
+        status: 'prompt_too_long',
+        error: { message },
+      };
+    }
+    this._promptT2AInFlightTargets.add(inFlightKey);
+    try {
+      const audioResult = await this.apiClient.generateAudioFromText(promptText);
+      if (!audioResult?.ok) {
+        const message = String(audioResult?.error?.message || '').trim() || 'Could not generate question audio. Please try again.';
+        this.setRecoveryMessage(message);
+        this.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'prompt.t2a',
+          text: message,
+        });
+        this.notifyStateChange();
+        return { ok: false, status: 'generation_failed', error: { message } };
+      }
+      const generatedFile = createAudioFileFromBytes(audioResult.data.bytes, `${blockId}_prompt.mp3`);
+      const attachResult = await this.attachQuestionMedia(blockId, 'question_audio', generatedFile, { confirmReplace: false });
+      if (!attachResult?.ok) {
+        const message = String(attachResult?.error?.message || '').trim() || 'Could not attach generated audio to this question.';
+        this.setRecoveryMessage(message);
+        this.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'prompt.t2a',
+          text: message,
+        });
+        this.notifyStateChange();
+        return { ok: false, status: 'attach_failed', error: { message } };
+      }
+      this.setRecoveryMessage('Question prompt audio generated and attached.');
+      this.pushNotification({
+        kind: 'success',
+        category: 'editor',
+        source: 'prompt.t2a',
+        text: 'Question prompt audio generated and attached.',
+      });
+      this.notifyStateChange();
+      return { ok: true, status: 'generated_editor_prompt_t2a', data: { blockId } };
+    } finally {
+      this._promptT2AInFlightTargets.delete(inFlightKey);
+    }
   }
 
   validateEditorOptionT2AIntentPayload(payload = {}) {
@@ -3131,10 +3215,88 @@ class EditorDraftSession {
       });
       return { ok: false, status: 'invalid_context' };
     }
-
-    // Stage 1 dispatcher entrypoint for option T2A recovery.
-    this.setRecoveryMessage('Option audio recovery is not available yet. Please run T2A again.');
-    return { ok: true, status: 'deferred_editor_option_t2a' };
+    const blockId = String(payload.blockId);
+    const optionId = String(payload.optionId);
+    const inFlightKey = `option:${blockId}:${optionId}`;
+    if (this._optionT2AInFlightTargets.has(inFlightKey)) {
+      const message = 'Option audio generation is already in progress.';
+      this.setRecoveryMessage(message);
+      this.pushNotification({
+        kind: 'info',
+        category: 'editor',
+        source: 'option.t2a',
+        text: message,
+      });
+      this.notifyStateChange();
+      return { ok: false, status: 'already_in_flight', error: { message } };
+    }
+    const block = this.findBlock(blockId);
+    const responseConfig = normalizeQuestionResponseConfig(block?.responseConfig);
+    const normalizedOptions = (responseConfig.options || []).map((item, index) =>
+      normalizeResponseOption(item, `option_${index}`));
+    const selectedOption = normalizedOptions.find((item) => item.id === optionId) || null;
+    const optionText = String(selectedOption?.label ?? selectedOption?.value ?? '').trim();
+    if (!optionText) {
+      const message = 'Enter option text before generating audio.';
+      this.setRecoveryMessage(message);
+      this.notifyStateChange();
+      return {
+        ok: false,
+        status: 'missing_option_text',
+        error: { message },
+      };
+    }
+    if (optionText.length > 200) {
+      const message = 'Option text must be 200 characters or fewer to generate audio.';
+      this.setRecoveryMessage(message);
+      this.notifyStateChange();
+      return {
+        ok: false,
+        status: 'option_text_too_long',
+        error: { message },
+      };
+    }
+    this._optionT2AInFlightTargets.add(inFlightKey);
+    try {
+      const audioResult = await this.apiClient.generateAudioFromText(optionText);
+      if (!audioResult?.ok) {
+        const message = String(audioResult?.error?.message || '').trim() || 'Could not generate option audio. Please try again.';
+        this.setRecoveryMessage(message);
+        this.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'option.t2a',
+          text: message,
+        });
+        this.notifyStateChange();
+        return { ok: false, status: 'generation_failed', error: { message } };
+      }
+      const generatedFile = createAudioFileFromBytes(audioResult.data.bytes, `${blockId}_${optionId}.mp3`);
+      const attachResult = await this.attachOptionAudio(blockId, optionId, generatedFile, { confirmReplace: false });
+      if (!attachResult?.ok) {
+        const message = String(attachResult?.error?.message || '').trim() || 'Could not attach generated audio to this option.';
+        this.setRecoveryMessage(message);
+        this.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'option.t2a',
+          text: message,
+        });
+        this.notifyStateChange();
+        return { ok: false, status: 'attach_failed', error: { message } };
+      }
+      this.setRecoveryMessage('Option audio generated and attached.');
+      this.pushNotification({
+        kind: 'success',
+        category: 'editor',
+        source: 'option.t2a',
+        text: 'Option audio generated and attached.',
+      });
+      this.notifyStateChange();
+      return { ok: true, status: 'generated_editor_option_t2a', data: { blockId, optionId } };
+    } finally {
+      this._optionT2AInFlightTargets.delete(inFlightKey);
+    }
   }
 
   async triggerProtectedAction(actionId, intentPayload = {}) {
@@ -3383,6 +3545,8 @@ function renderEditorShell(session) {
   optionAudioInput.accept = '.mp3,audio/mpeg';
   optionAudioInput.style.display = 'none';
   let pendingOptionAudioTarget = null;
+  let promptT2AInFlightBlockId = null;
+  let optionT2AInFlightKey = null;
   let activeConfirmDialog = null;
   let mediaActionInFlight = false;
 
@@ -3925,12 +4089,6 @@ function renderEditorShell(session) {
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
   exportBtn.textContent = 'Export package (.zip)';
-  const rewriteBtn = document.createElement('button');
-  rewriteBtn.type = 'button';
-  rewriteBtn.textContent = 'Rewrite (Sign-in required)';
-  const t2aBtn = document.createElement('button');
-  t2aBtn.type = 'button';
-  t2aBtn.textContent = 'T2A (Sign-in required)';
   const syncDraftBtn = document.createElement('button');
   syncDraftBtn.type = 'button';
   syncDraftBtn.textContent = 'Upload Draft';
@@ -4407,6 +4565,11 @@ function renderEditorShell(session) {
     questionAudioLabel.textContent = currentQuestionAudioRef
       ? `Question audio attached (${currentQuestionAudioRef.assetId})`
       : 'Question audio: none attached';
+    const trimmedPromptText = String(selectedBlock?.prompt?.text || '').trim();
+    const promptHasText = trimmedPromptText.length > 0;
+    const promptExceedsT2ALimit = trimmedPromptText.length > 200;
+    const promptT2AEligible = promptHasText && !promptExceedsT2ALimit;
+    const isPromptT2AInFlight = promptT2AInFlightBlockId === selectedBlock.blockId;
     const attachQuestionAudioBtn = document.createElement('button');
     attachQuestionAudioBtn.type = 'button';
     attachQuestionAudioBtn.className = 'media-action-btn';
@@ -4421,6 +4584,26 @@ function renderEditorShell(session) {
     playQuestionAudioBtn.className = 'media-action-btn';
     playQuestionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
     playQuestionAudioBtn.disabled = !currentQuestionAudioRef;
+    const generateQuestionAudioBtn = document.createElement('button');
+    generateQuestionAudioBtn.type = 'button';
+    generateQuestionAudioBtn.className = 'media-action-btn';
+    generateQuestionAudioBtn.textContent = isPromptT2AInFlight
+      ? 'Generating…'
+      : currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio';
+    generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;
+    const questionAudioHint = document.createElement('p');
+    questionAudioHint.className = 'muted';
+    questionAudioHint.textContent = promptExceedsT2ALimit
+      ? 'Prompt is too long for Generate audio (limit: 200 characters).'
+      : '';
+    if (!promptExceedsT2ALimit) {
+      questionAudioHint.hidden = true;
+    }
+    if (isPromptT2AInFlight) {
+      attachQuestionAudioBtn.disabled = true;
+      playQuestionAudioBtn.disabled = true;
+      removeQuestionAudioBtn.disabled = true;
+    }
     attachQuestionAudioBtn.addEventListener('click', () => {
       questionAudioInput.dataset.blockId = selectedBlock.blockId;
       questionAudioInput.value = '';
@@ -4460,8 +4643,57 @@ function renderEditorShell(session) {
       }
       updateSummary();
     });
-    questionAudioRow.append(attachQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
-    rightPanel.append(questionAudioLabel, questionAudioRow, mediaFeedback);
+    generateQuestionAudioBtn.addEventListener('click', async () => {
+      if (!promptT2AEligible || isPromptT2AInFlight) return;
+      await runMediaAction(async () => {
+        if (currentQuestionAudioRef) {
+          const confirmed = await confirmDangerAction({
+            title: 'Regenerate question audio?',
+            bodyText: 'Regenerating will discard the currently attached question audio.',
+            confirmLabel: 'Regenerate audio',
+            removalItems: ['Current audio file attachment for this question.'],
+          });
+          if (!confirmed) {
+            session.setMediaFeedback('Audio regeneration canceled.');
+            updateSummary();
+            return;
+          }
+        }
+
+        promptT2AInFlightBlockId = selectedBlock.blockId;
+        updateSummary();
+        try {
+          const result = await session.triggerProtectedAction('editorPromptT2A', {
+            blockId: selectedBlock.blockId,
+            target: 'question_prompt',
+            localDraftId: session.state.draft?.localId || null,
+          });
+          if (!result?.ok) {
+            const message = String(result?.error?.message || '').trim();
+            session.pushNotification({
+              kind: 'error',
+              category: 'editor',
+              source: 'prompt.t2a',
+              text: message || 'Could not generate question audio. Please try again.',
+            });
+            session.notifyStateChange();
+          }
+        } catch (_error) {
+          session.pushNotification({
+            kind: 'error',
+            category: 'editor',
+            source: 'prompt.t2a',
+            text: 'Could not generate question audio. Please try again.',
+          });
+          session.notifyStateChange();
+        } finally {
+          promptT2AInFlightBlockId = null;
+          updateSummary();
+        }
+      });
+    });
+    questionAudioRow.append(attachQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn, generateQuestionAudioBtn);
+    rightPanel.append(questionAudioLabel, questionAudioRow, questionAudioHint, mediaFeedback);
 
     const inputTypeLabel = document.createElement('label');
     inputTypeLabel.textContent = 'Answer input type';
@@ -4567,7 +4799,13 @@ function renderEditorShell(session) {
       optionList.forEach((option, optionIndex) => {
         const optionId = String(option?.id || '');
         const optionValue = String(option?.value ?? '');
+        const optionDisplayText = String(option?.label ?? option?.value ?? '');
+        const trimmedOptionDisplayText = optionDisplayText.trim();
         const isPersistedOption = persistedOptionIds.has(optionId);
+        const optionTextExceedsT2ALimit = trimmedOptionDisplayText.length > 200;
+        const optionTextEligibleForT2A = trimmedOptionDisplayText.length > 0 && !optionTextExceedsT2ALimit;
+        const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;
+        const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey;
         const row = document.createElement('div');
         row.className = 'option-row';
 
@@ -4642,7 +4880,7 @@ function renderEditorShell(session) {
         optionAudioBtn.title = isPersistedOption
           ? optionAudioRef ? 'Replace option audio' : 'Attach option audio'
           : 'Enter option text or click Add option before attaching audio';
-        optionAudioBtn.disabled = !isPersistedOption;
+        optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
         optionAudioBtn.addEventListener('click', () => {
           if (!isPersistedOption) {
             session.setMediaFeedback('Enter option text or click Add option before attaching audio.');
@@ -4658,7 +4896,7 @@ function renderEditorShell(session) {
         removeOptionAudioBtn.type = 'button';
         removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove option-actions-menu__item';
         removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
-        removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
+        removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
         removeOptionAudioBtn.addEventListener('click', async () => {
           await runMediaAction(async () => {
             const confirmed = await confirmDangerAction({
@@ -4679,7 +4917,7 @@ function renderEditorShell(session) {
         playOptionAudioBtn.type = 'button';
         playOptionAudioBtn.className = 'media-action-btn option-actions-menu__item';
         playOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
-        playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
+        playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
         playOptionAudioBtn.addEventListener('click', async () => {
           if (!optionAudioRef?.assetId || playOptionAudioBtn.disabled) return;
           playOptionAudioBtn.disabled = true;
@@ -4700,7 +4938,69 @@ function renderEditorShell(session) {
           optionActionsMenu.open = false;
           updateSummary();
         });
-        optionActionsList.append(optionAudioBtn, playOptionAudioBtn, removeOptionAudioBtn);
+        const optionT2ABtn = document.createElement('button');
+        optionT2ABtn.type = 'button';
+        optionT2ABtn.className = 'media-action-btn option-actions-menu__item';
+        optionT2ABtn.textContent = isOptionT2AInFlight
+          ? 'Generating…'
+          : optionAudioRef ? 'Regenerate audio' : 'Generate audio';
+        optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;
+        optionT2ABtn.addEventListener('click', async () => {
+          if (!isPersistedOption) {
+            session.setMediaFeedback('Enter option text or click Add option before attaching audio.');
+            updateSummary();
+            return;
+          }
+          if (!optionTextEligibleForT2A || isOptionT2AInFlight) return;
+          await runMediaAction(async () => {
+            if (optionAudioRef) {
+              const confirmed = await confirmDangerAction({
+                title: `Regenerate option ${optionIndex + 1} audio?`,
+                bodyText: `Regenerating will discard the current audio attachment for option ${optionIndex + 1}.`,
+                confirmLabel: 'Regenerate audio',
+                removalItems: ['Current audio file attachment for this option.'],
+              });
+              if (!confirmed) {
+                session.setMediaFeedback('Option audio regeneration canceled.');
+                updateSummary();
+                return;
+              }
+            }
+            optionActionsMenu.open = false;
+            optionT2AInFlightKey = optionT2AKey;
+            updateSummary();
+            try {
+              const result = await session.triggerProtectedAction('editorOptionT2A', {
+                blockId: selectedBlock.blockId,
+                optionId,
+                target: 'option',
+                localDraftId: session.state.draft?.localId || null,
+              });
+              if (!result?.ok) {
+                const message = String(result?.error?.message || '').trim();
+                session.pushNotification({
+                  kind: 'error',
+                  category: 'editor',
+                  source: 'option.t2a',
+                  text: message || 'Could not generate option audio. Please try again.',
+                });
+                session.notifyStateChange();
+              }
+            } catch (_error) {
+              session.pushNotification({
+                kind: 'error',
+                category: 'editor',
+                source: 'option.t2a',
+                text: 'Could not generate option audio. Please try again.',
+              });
+              session.notifyStateChange();
+            } finally {
+              optionT2AInFlightKey = null;
+              updateSummary();
+            }
+          });
+        });
+        optionActionsList.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);
         optionActionsMenu.appendChild(optionActionsList);
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
@@ -4735,6 +5035,11 @@ function renderEditorShell(session) {
           optionAudioHint.className = 'muted option-row__meta';
           optionAudioHint.textContent = 'Enter option text or click Add option before attaching audio.';
           row.appendChild(optionAudioHint);
+        } else if (optionTextExceedsT2ALimit) {
+          const optionT2AHint = document.createElement('span');
+          optionT2AHint.className = 'muted option-row__meta';
+          optionT2AHint.textContent = 'Option text is too long for Generate audio (limit: 200 characters).';
+          row.appendChild(optionT2AHint);
         }
         if (optionAudioRef) {
           const optionAudioAttached = document.createElement('span');
@@ -5249,20 +5554,6 @@ function renderEditorShell(session) {
     await session.exportCurrentDraftToPackageFile();
     updateSummary();
   });
-  rewriteBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeRewriteAfterLogin', {
-      blockId: session.state.selectedBlockId || null,
-      target: 'question_prompt',
-    });
-    updateSummary();
-  });
-  t2aBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeT2AAfterLogin', {
-      blockId: session.state.selectedBlockId || null,
-      target: 'question_prompt',
-    });
-    updateSummary();
-  });
   syncDraftBtn.addEventListener('click', async () => {
     await session.uploadCurrentDraftToServer();
     updateSummary();
@@ -5301,9 +5592,7 @@ function renderEditorShell(session) {
     syncDraftBtn,
     browsePublishedBtn,
     loadUploadedDraftsBtn,
-    uploadedDraftList,
-    rewriteBtn,
-    t2aBtn
+    uploadedDraftList
   );
   moreActions.append(protectedActionsColumn);
   leftPanel.append(
