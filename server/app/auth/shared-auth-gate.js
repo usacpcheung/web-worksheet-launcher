@@ -186,17 +186,33 @@ class SharedAuthGate {
       return { status: 'no_pending_intent' };
     }
 
-    const authState = typeof this.options.checkSessionReady === 'function'
-      ? normalizeSessionCheckResult(await this.options.checkSessionReady({
-        actionId: pendingIntent?.actionId || '',
-        recordStore: pendingIntent?.recordStore || '',
-        payload: pendingIntent?.intentPayload || null,
-      }))
-      : {
+    let authState;
+    if (typeof this.options.checkSessionReady === 'function') {
+      try {
+        authState = normalizeSessionCheckResult(await this.options.checkSessionReady({
+          actionId: pendingIntent?.actionId || '',
+          recordStore: pendingIntent?.recordStore || '',
+          payload: pendingIntent?.intentPayload || null,
+        }));
+      } catch (error) {
+        authState = normalizeSessionCheckResult({
+          ok: false,
+          result: {
+            status: 'error',
+            error: {
+              code: 'SESSION_PROBE_ERROR',
+              message: error?.message || String(error),
+            },
+          },
+        });
+      }
+    } else {
+      authState = {
         ready: Boolean(this.options.isAuthenticated()),
         authNotReady: true,
         rawResult: null,
       };
+    }
     if (!authState.ready) {
       if (!authState.authNotReady) {
         this.options.onRecoveryMessage('Unable to verify sign-in due to a temporary session check issue. Please retry when the connection is stable.');

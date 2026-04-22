@@ -372,11 +372,27 @@ function createServerApiClient(options = {}) {
       const authBodyPreviewLimit = 1200;
       if (contentType.includes('text/html')) {
         const bodyText = await response.text();
+        const loweredBody = bodyText.toLowerCase();
+        const authHintedHtml = /sign[\s-]?in|log[\s-]?in|auth|unauthori[sz]ed/.test(loweredBody);
+        const shouldTreatAsAuth = authLikeStatus(response.status) || authHintedHtml;
+        if (shouldTreatAsAuth) {
+          return toStructuredError({
+            code: 'AUTH_REQUIRED',
+            message: createAuthMessage(),
+            status: response.status,
+            requiresSignIn: true,
+            details: {
+              contentType,
+              bodyPreview: bodyText.slice(0, authBodyPreviewLimit),
+              bodyLength: bodyText.length,
+              bodyTruncated: bodyText.length > authBodyPreviewLimit,
+            },
+          });
+        }
         return toStructuredError({
-          code: 'AUTH_REQUIRED',
-          message: createAuthMessage(),
+          code: 'UNEXPECTED_NON_JSON_RESPONSE',
+          message: 'Server returned an unexpected non-JSON response.',
           status: response.status,
-          requiresSignIn: true,
           details: {
             contentType,
             bodyPreview: bodyText.slice(0, authBodyPreviewLimit),

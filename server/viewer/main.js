@@ -2786,110 +2786,136 @@ class ViewerAttemptSession {
       return typeof rawValue === 'string' ? rawValue : String(rawValue ?? '');
     };
 
-    const rewriteResult = await this.apiClient.rewriteText(trimmedClickText);
-    if (!rewriteResult?.ok) {
-      const rewriteError = rewriteResult?.error || rewriteResult || null;
-      const errorCode = typeof rewriteError?.code === 'string' && rewriteError.code.trim()
-        ? rewriteError.code.trim()
-        : 'UNKNOWN_ERROR';
-      const errorStatus = Number.isFinite(Number(rewriteError?.status))
-        ? Number(rewriteError.status)
-        : null;
-      const errorMessage = typeof rewriteError?.message === 'string' && rewriteError.message.trim()
-        ? rewriteError.message.trim()
-        : 'No additional error message provided.';
-      const errorDetails = rewriteError?.details;
-      const detailsPreviewLimit = 1200;
-      const rawDetailsText = errorDetails == null
-        ? ''
-        : String(typeof errorDetails === 'object' ? JSON.stringify(errorDetails) : errorDetails);
-      const detailsText = rawDetailsText.length > detailsPreviewLimit
-        ? `${rawDetailsText.slice(0, detailsPreviewLimit)}...`
-        : rawDetailsText;
+    try {
+      const rewriteResult = await this.apiClient.rewriteText(trimmedClickText);
+      if (!rewriteResult?.ok) {
+        const rewriteError = rewriteResult?.error || rewriteResult || null;
+        const errorCode = typeof rewriteError?.code === 'string' && rewriteError.code.trim()
+          ? rewriteError.code.trim()
+          : 'UNKNOWN_ERROR';
+        const errorStatus = Number.isFinite(Number(rewriteError?.status))
+          ? Number(rewriteError.status)
+          : null;
+        const errorMessage = typeof rewriteError?.message === 'string' && rewriteError.message.trim()
+          ? rewriteError.message.trim()
+          : 'No additional error message provided.';
+        const errorDetails = rewriteError?.details;
+        const detailsPreviewLimit = 1200;
+        const rawDetailsText = errorDetails == null
+          ? ''
+          : String(typeof errorDetails === 'object' ? JSON.stringify(errorDetails) : errorDetails);
+        const detailsText = rawDetailsText.length > detailsPreviewLimit
+          ? `${rawDetailsText.slice(0, detailsPreviewLimit)}...`
+          : rawDetailsText;
 
-      clearRewriteFlags();
+        this.setRewriteMessage(
+          blockId,
+          `Rewrite could not be completed. code=${errorCode}${errorStatus !== null ? ` | status=${errorStatus}` : ''} | message=${errorMessage}${detailsText ? ` | details=${detailsText}` : ''}`
+        );
+        console.error('[viewer] Rewrite request failed.', {
+          blockId,
+          sourceLength: trimmedClickText.length,
+          error: rewriteError,
+        });
+        return {
+          ok: false,
+          status: 'rewrite_failed',
+          error: rewriteError,
+        };
+      }
+
+      const currentAttemptId = this.state.localAttemptId || null;
+      const intentAttemptId = typeof payload.localAttemptId === 'string' ? payload.localAttemptId : null;
+      const refreshedBlocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
+      const refreshedBlock = blockId ? refreshedBlocks.find((block) => block?.blockId === blockId) : null;
+      const isFreshContext = Boolean(
+        currentAttemptId
+        && intentAttemptId
+        && currentAttemptId === intentAttemptId
+        && refreshedBlock
+        && refreshedBlock.kind === 'question'
+        && refreshedBlock.responseConfig?.inputType === 'text'
+        && this.state.status !== 'completed'
+        && (!this.state.lastActiveBlockId || this.state.lastActiveBlockId === blockId)
+      );
+      const normalizedCurrentAnswer = normalizeTextForRewriteSnapshotCompare(
+        refreshedBlock,
+        currentAnswerValue(blockId)
+      );
+      const snapshotCompareSource = typeof payload.answerTextRawAtClickTime === 'string'
+        ? payload.answerTextRawAtClickTime
+        : answerTextAtClickTime;
+      const normalizedSnapshotAnswer = normalizeTextForRewriteSnapshotCompare(
+        refreshedBlock,
+        snapshotCompareSource
+      );
+      const answerMatchesSnapshot = normalizedCurrentAnswer === normalizedSnapshotAnswer;
+
+      if (!isFreshContext || !answerMatchesSnapshot) {
+        this.setRewriteMessage(
+          blockId,
+          'Your answer changed before rewrite finished, so we did not apply the rewrite. Please review and try again.'
+        );
+        return { ok: false, status: 'rewrite_stale_context' };
+      }
+
+      const preRewriteAnswer = typeof payload.answerTextRawAtClickTime === 'string'
+        ? payload.answerTextRawAtClickTime
+        : currentAnswerValue(blockId);
+      const rewrittenText = String(rewriteResult.data?.text ?? '').trim();
+      this.state.undoBuffer = {
+        ...this.state.undoBuffer,
+        [blockId]: preRewriteAnswer,
+      };
+      const beforeApplyAnswer = currentAnswerValue(blockId);
+      this.setAnswer(blockId, rewrittenText);
+      const afterApplyAnswer = currentAnswerValue(blockId);
+      if (this.state.status === 'completed') {
+        const nextUndoBuffer = { ...(this.state.undoBuffer || {}) };
+        delete nextUndoBuffer[blockId];
+        this.state.undoBuffer = nextUndoBuffer;
+        this.setRewriteMessage(
+          blockId,
+          'Rewrite finished, but your answer could not be updated because this attempt is no longer editable.'
+        );
+        return { ok: false, status: 'rewrite_not_applied' };
+      }
+      if (afterApplyAnswer === beforeApplyAnswer) {
+        const nextUndoBuffer = { ...(this.state.undoBuffer || {}) };
+        delete nextUndoBuffer[blockId];
+        this.state.undoBuffer = nextUndoBuffer;
+      }
+      this.setRewriteMessage(blockId, null);
+      this.setRecoveryMessage(null);
+      return { ok: true, status: 'rewrite_applied' };
+    } catch (error) {
+      const thrownError = error && typeof error === 'object'
+        ? error
+        : { message: String(error) };
+      const errorCode = typeof thrownError?.code === 'string' && thrownError.code.trim()
+        ? thrownError.code.trim()
+        : 'UNEXPECTED_REWRITE_ERROR';
+      const errorMessage = typeof thrownError?.message === 'string' && thrownError.message.trim()
+        ? thrownError.message.trim()
+        : 'No additional error message provided.';
       this.setRewriteMessage(
         blockId,
-        `Rewrite could not be completed. code=${errorCode}${errorStatus !== null ? ` | status=${errorStatus}` : ''} | message=${errorMessage}${detailsText ? ` | details=${detailsText}` : ''}`
+        `Rewrite could not be completed. code=${errorCode} | message=${errorMessage}`
       );
-      console.error('[viewer] Rewrite request failed.', {
+      console.error('[viewer] Rewrite request threw an unexpected error.', {
         blockId,
         sourceLength: trimmedClickText.length,
-        error: rewriteError,
+        error: thrownError,
       });
-      this.notifyStateChange();
       return {
         ok: false,
         status: 'rewrite_failed',
-        error: rewriteError,
+        error: thrownError,
       };
-    }
-
-    const currentAttemptId = this.state.localAttemptId || null;
-    const intentAttemptId = typeof payload.localAttemptId === 'string' ? payload.localAttemptId : null;
-    const refreshedBlocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
-    const refreshedBlock = blockId ? refreshedBlocks.find((block) => block?.blockId === blockId) : null;
-    const isFreshContext = Boolean(
-      currentAttemptId
-      && intentAttemptId
-      && currentAttemptId === intentAttemptId
-      && refreshedBlock
-      && refreshedBlock.kind === 'question'
-      && refreshedBlock.responseConfig?.inputType === 'text'
-      && this.state.status !== 'completed'
-      && (!this.state.lastActiveBlockId || this.state.lastActiveBlockId === blockId)
-    );
-    const normalizedCurrentAnswer = normalizeTextForRewriteSnapshotCompare(
-      refreshedBlock,
-      currentAnswerValue(blockId)
-    );
-    const snapshotCompareSource = typeof payload.answerTextRawAtClickTime === 'string'
-      ? payload.answerTextRawAtClickTime
-      : answerTextAtClickTime;
-    const normalizedSnapshotAnswer = normalizeTextForRewriteSnapshotCompare(
-      refreshedBlock,
-      snapshotCompareSource
-    );
-    const answerMatchesSnapshot = normalizedCurrentAnswer === normalizedSnapshotAnswer;
-
-    if (!isFreshContext || !answerMatchesSnapshot) {
+    } finally {
       clearRewriteFlags();
-      this.setRewriteMessage(
-        blockId,
-        'Your answer changed before rewrite finished, so we did not apply the rewrite. Please review and try again.'
-      );
       this.notifyStateChange();
-      return { ok: false, status: 'rewrite_stale_context' };
     }
-
-    const preRewriteAnswer = typeof payload.answerTextRawAtClickTime === 'string'
-      ? payload.answerTextRawAtClickTime
-      : currentAnswerValue(blockId);
-    const rewrittenText = String(rewriteResult.data?.text ?? '').trim();
-    this.state.undoBuffer = {
-      ...this.state.undoBuffer,
-      [blockId]: preRewriteAnswer,
-    };
-    const beforeApplyAnswer = currentAnswerValue(blockId);
-    this.setAnswer(blockId, rewrittenText);
-    const afterApplyAnswer = currentAnswerValue(blockId);
-    if (this.state.status === 'completed' || afterApplyAnswer === beforeApplyAnswer) {
-      const nextUndoBuffer = { ...(this.state.undoBuffer || {}) };
-      delete nextUndoBuffer[blockId];
-      this.state.undoBuffer = nextUndoBuffer;
-      clearRewriteFlags();
-      this.setRewriteMessage(
-        blockId,
-        'Rewrite finished, but your answer could not be updated because this attempt is no longer editable.'
-      );
-      this.notifyStateChange();
-      return { ok: false, status: 'rewrite_not_applied' };
-    }
-    clearRewriteFlags();
-    this.setRewriteMessage(blockId, null);
-    this.setRecoveryMessage(null);
-    this.notifyStateChange();
-    return { ok: true, status: 'rewrite_applied' };
   }
 
   async triggerProtectedAction(actionId, intentPayload = {}) {
