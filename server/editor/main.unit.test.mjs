@@ -1072,11 +1072,11 @@ test('question audio row adds contextual generate/regenerate control with prompt
   assert.equal(source.includes("? 'Generating…'"), true);
   assert.equal(source.includes(": currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio';"), true);
   assert.equal(source.includes("generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;"), true);
-  assert.equal(source.includes("Prompt is too long for Generate audio (limit: 200 characters)."), true);
+  assert.equal(source.includes("Text is too long to generate audio (max 200 characters)."), true);
   assert.equal(source.includes("attachQuestionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("playQuestionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("removeQuestionAudioBtn.disabled = true;"), true);
-  assert.equal(source.includes("questionAudioRow.append(attachQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn, generateQuestionAudioBtn);"), true);
+  assert.equal(source.includes("questionAudioRow.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);"), true);
 });
 
 test('stage3: prompt row triggers replace confirmation before prompt bridge generation when audio exists', async () => {
@@ -1088,11 +1088,11 @@ test('stage3: prompt row triggers replace confirmation before prompt bridge gene
   assert.equal(hasAudioConfirmIdx < promptBridgeCallIdx, true);
 });
 
-test('multiple-choice option row collapses audio actions into a more-menu and shows attached asset id', async () => {
+test('multiple-choice option row renders inline audio actions and shows attached asset id', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("optionActionsMenu.className = 'option-actions-menu';"), true);
-  assert.equal(source.includes("optionActionsToggle.textContent = '⋯';"), true);
-  assert.equal(source.includes('row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);'), true);
+  assert.equal(source.includes("const optionActionsRow = document.createElement('div');"), true);
+  assert.equal(source.includes("optionActionsRow.className = 'button-row';"), true);
+  assert.equal(source.includes('row.append(correctToggle, optionInput, optionActionsRow, removeBtn);'), true);
   assert.equal(source.includes('Option audio attached ('), true);
 });
 
@@ -1109,9 +1109,9 @@ test('multiple-choice option actions include contextual generate/regenerate audi
   assert.equal(source.includes("optionT2AInFlightKey = null;"), true);
   assert.equal(source.includes("actionId: 'editorOptionT2A'"), false);
   assert.equal(source.includes("await session.triggerProtectedAction('editorOptionT2A', {"), true);
-  assert.equal(source.includes("text: message || 'Could not generate option audio. Please try again.'"), true);
-  assert.equal(source.includes('Option text is too long for Generate audio (limit: 200 characters).'), true);
-  assert.equal(source.includes("optionActionsList.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);"), true);
+  assert.equal(source.includes("text: getProtectedActionErrorMessage(result, 'Unable to start audio generation. Please try again.'),"), true);
+  assert.equal(source.includes('Text is too long to generate audio (max 200 characters).'), true);
+  assert.equal(source.includes("optionActionsRow.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);"), true);
 });
 
 test('stage3: option row triggers replace confirmation before option bridge generation when audio exists', async () => {
@@ -1130,6 +1130,9 @@ test('stage3: in-flight lock is row-scoped by block/option key and leaves unrela
   assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("await runMediaAction(async () => {\n            if (optionAudioRef)"), false);
+  assert.equal(source.includes("await runMediaAction(async () => {\n        if (currentQuestionAudioRef)"), false);
+  assert.equal(source.includes("status !== 'executed' && status !== 'redirected'"), true);
 });
 
 test('multiple-choice option action state rerenders while typing when option ids/media refs change and restores caret', async () => {
@@ -3875,7 +3878,7 @@ test('editor replayEditorPromptT2AIntent generates audio and attaches via canoni
     apiClient: {
       generateAudioFromText: async (text) => ({
         ok: true,
-        data: { bytes: new Uint8Array([1, 2, 3]), text },
+        data: new Uint8Array([1, 2, 3]),
       }),
     },
   });
@@ -3939,7 +3942,7 @@ test('editor replayEditorPromptT2AIntent returns plain-language errors for inval
     target: 'question_prompt',
   });
   assert.equal(generationFailure.ok, false);
-  assert.equal(generationFailure.error.message, 'Could not generate question audio. Please try again.');
+  assert.equal(generationFailure.error.message, 'Audio generation failed. Existing audio is unchanged.');
   const promptRecoveryNotification = session.state.notifications
     .find((item) => item.source === 'prompt.t2a' && item.kind === 'error');
   assert.equal(Boolean(promptRecoveryNotification), true);
@@ -3952,7 +3955,7 @@ test('editor replayEditorOptionT2AIntent generates audio and attaches via canoni
     apiClient: {
       generateAudioFromText: async (text) => ({
         ok: true,
-        data: { bytes: new Uint8Array([4, 5, 6]), text },
+        data: new Uint8Array([4, 5, 6]),
       }),
     },
   });
@@ -4036,10 +4039,61 @@ test('editor replayEditorOptionT2AIntent returns plain-language errors for inval
     target: 'option',
   });
   assert.equal(generationFailure.ok, false);
-  assert.equal(generationFailure.error.message, 'Could not generate option audio. Please try again.');
+  assert.equal(generationFailure.error.message, 'Audio generation failed. Existing audio is unchanged.');
   const optionRecoveryNotification = session.state.notifications
     .find((item) => item.source === 'option.t2a' && item.kind === 'error');
   assert.equal(Boolean(optionRecoveryNotification), true);
+});
+
+test('stage3: replay T2A rejects invalid binary payload shape without replacing existing audio', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async () => ({ ok: true, data: { bytes: new Uint8Array([1, 2, 3]) } }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: {
+        text: 'Prompt for audio',
+        mediaRefs: [{ usage: 'question_audio', assetId: 'asset_prompt_existing' }],
+      },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{
+          id: 'opt_1',
+          value: 'Option one',
+          label: 'Option one',
+          mediaRefs: [{ usage: 'option_audio', assetId: 'asset_option_existing' }],
+        }],
+      },
+    }],
+  });
+
+  const promptResult = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  const optionResult = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+
+  assert.equal(promptResult.ok, false);
+  assert.equal(optionResult.ok, false);
+  assert.equal(promptResult.error.message.includes('Bridge returned invalid audio data.'), true);
+  assert.equal(optionResult.error.message.includes('Bridge returned invalid audio data.'), true);
+  assert.equal(session.findBlock('q1').prompt.mediaRefs[0].assetId, 'asset_prompt_existing');
+  assert.equal(
+    mod.normalizeBlocks(session.state.draft.blocks)[0].responseConfig.options[0].mediaRefs[0].assetId,
+    'asset_option_existing'
+  );
 });
 
 test('prompt/option replay T2A guards duplicate in-flight requests per target', async () => {
@@ -4085,7 +4139,7 @@ test('prompt/option replay T2A guards duplicate in-flight requests per target', 
   });
   assert.equal(duplicatePrompt.ok, false);
   assert.equal(duplicatePrompt.status, 'already_in_flight');
-  resolvePrompt({ ok: true, data: { bytes: new Uint8Array([1]) } });
+  resolvePrompt({ ok: true, data: new Uint8Array([1]) });
   await firstPrompt;
 
   const firstOption = session.replayEditorOptionT2AIntent({
@@ -4102,7 +4156,7 @@ test('prompt/option replay T2A guards duplicate in-flight requests per target', 
   });
   assert.equal(duplicateOption.ok, false);
   assert.equal(duplicateOption.status, 'already_in_flight');
-  resolveOption({ ok: true, data: { bytes: new Uint8Array([2]) } });
+  resolveOption({ ok: true, data: new Uint8Array([2]) });
   await firstOption;
   assert.equal(apiCalls.length, 2);
 });
@@ -4157,11 +4211,11 @@ test('stage3: api failure keeps existing prompt/option audio refs unchanged and 
   );
   assert.equal(JSON.parse(before).blocks[0].prompt.mediaRefs[0].assetId, 'asset_prompt_existing');
   assert.equal(
-    session.state.notifications.some((item) => item.text === 'Could not generate question audio. Please try again.'),
+    session.state.notifications.some((item) => item.text === 'Audio generation failed. Existing audio is unchanged.'),
     true
   );
   assert.equal(
-    session.state.notifications.some((item) => item.text === 'Could not generate option audio. Please try again.'),
+    session.state.notifications.filter((item) => item.text === 'Audio generation failed. Existing audio is unchanged.').length >= 2,
     true
   );
 });
@@ -4172,7 +4226,7 @@ test('stage3: successful replay T2A attaches mp3 bytes through canonical media h
     apiClient: {
       generateAudioFromText: async (text) => ({
         ok: true,
-        data: { bytes: new Uint8Array([7, 8, 9]), text },
+        data: new Uint8Array([7, 8, 9]),
       }),
     },
   });
