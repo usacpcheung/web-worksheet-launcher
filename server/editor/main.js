@@ -270,7 +270,10 @@ function createAudioFileFromBytes(bytes, name = 'generated-question-audio.mp3') 
     return new File([bytes], name, { type: 'audio/mpeg' });
   }
   const blob = new Blob([bytes], { type: 'audio/mpeg' });
-  blob.name = name;
+  Object.defineProperty(blob, 'name', {
+    value: String(name || 'generated-question-audio.mp3'),
+    configurable: true,
+  });
   return blob;
 }
 
@@ -3160,7 +3163,10 @@ class EditorDraftSession {
         return { ok: false, status: 'generation_failed', error: { message } };
       }
       const generatedFile = createAudioFileFromBytes(audioBytes, `${blockId}_prompt.mp3`);
-      const attachResult = await this.attachQuestionMedia(blockId, 'question_audio', generatedFile, { confirmReplace: false });
+      const hasExistingQuestionAudio = Boolean(getSingleMediaRef(block?.prompt?.mediaRefs, 'question_audio'));
+      const attachResult = await this.attachQuestionMedia(blockId, 'question_audio', generatedFile, {
+        confirmReplace: hasExistingQuestionAudio,
+      });
       if (!attachResult?.ok) {
         const message = String(attachResult?.error?.message || '').trim() || 'Could not attach generated audio to this question.';
         this.setRecoveryMessage(message);
@@ -3311,7 +3317,10 @@ class EditorDraftSession {
         return { ok: false, status: 'generation_failed', error: { message } };
       }
       const generatedFile = createAudioFileFromBytes(audioBytes, `${blockId}_${optionId}.mp3`);
-      const attachResult = await this.attachOptionAudio(blockId, optionId, generatedFile, { confirmReplace: false });
+      const hasExistingOptionAudio = Boolean(getSingleMediaRef(selectedOption?.mediaRefs, 'option_audio'));
+      const attachResult = await this.attachOptionAudio(blockId, optionId, generatedFile, {
+        confirmReplace: hasExistingOptionAudio,
+      });
       if (!attachResult?.ok) {
         const message = String(attachResult?.error?.message || '').trim() || 'Could not attach generated audio to this option.';
         this.setRecoveryMessage(message);
@@ -3586,8 +3595,13 @@ function renderEditorShell(session) {
   let pendingOptionAudioTarget = null;
   let promptT2AInFlightBlockId = null;
   let optionT2AInFlightKey = null;
+  const promptT2AInFlightBlockIds = new Set();
   let activeConfirmDialog = null;
   let mediaActionInFlight = false;
+
+  const restoreLegacyPromptInFlightMarker = () => {
+    promptT2AInFlightBlockId = promptT2AInFlightBlockIds.values().next().value || null;
+  };
 
   function closeActiveConfirmDialog(confirmed = false) {
     const dialog = activeConfirmDialog;
@@ -4434,6 +4448,9 @@ function renderEditorShell(session) {
         String(ref?.assetId ?? ''),
       ]))
       : '[]';
+    const promptTextSignature = selectedBlock.kind === 'question'
+      ? String(selectedBlock?.prompt?.text ?? '').trim()
+      : '';
     const normalizedOptionMediaRefs = selectedBlock.kind === 'question'
       ? JSON.stringify((normalizedResponseConfig?.options || []).map((opt) => {
         const normalized = normalizeResponseOption(opt);
@@ -4460,9 +4477,28 @@ function renderEditorShell(session) {
       }
       return '';
     })();
+    const scopedPromptT2AInFlight = selectedBlock.kind === 'question'
+      && (
+        promptT2AInFlightBlockIds.has(selectedBlock.blockId)
+        || promptT2AInFlightBlockId === selectedBlock.blockId
+      )
+      ? '1'
+      : '0';
+    const scopedOptionT2AInFlight = selectedBlock.kind === 'question'
+      && (normalizeQuestionResponseConfig(selectedBlock.responseConfig).options || [])
+        .map((opt, index) => normalizeResponseOption(opt, `option_${index}`))
+        .some((opt) => {
+          const optionId = String(opt?.id || '');
+          if (!optionId) return false;
+          const key = `${selectedBlock.blockId}:${optionId}`;
+          return optionT2AInFlightKey === key;
+        })
+      ? '1'
+      : '0';
     return [
       selectedBlock.blockId,
       selectedBlock.kind,
+      promptTextSignature,
       normalizedInputType,
       normalizedResponseConfig?.displayMode || '',
       normalizedSelectionMode,
@@ -4474,8 +4510,8 @@ function renderEditorShell(session) {
       ])),
       normalizedOptionMediaRefs,
       normalizedCorrectAnswer,
-      promptT2AInFlightBlockId || '',
-      optionT2AInFlightKey || '',
+      scopedPromptT2AInFlight,
+      scopedOptionT2AInFlight,
     ].join(':');
   };
 
@@ -4489,9 +4525,17 @@ function renderEditorShell(session) {
     }
     return JSON.stringify((normalizedResponseConfig.options || []).map((option, index) => {
       const normalized = normalizeResponseOption(option, `option_${index}`);
+      const trimmedOptionText = String(normalized?.label ?? normalized?.value ?? '').trim();
+      const optionTextExceedsT2ALimit = trimmedOptionText.length > 200;
+      const optionTextEligibleForT2A = trimmedOptionText.length > 0 && !optionTextExceedsT2ALimit;
+      const optionT2AKey = `${selectedBlock.blockId}:${String(normalized?.id ?? '')}`;
+      const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey;
       return [
         String(normalized.id ?? ''),
         ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
+        optionTextEligibleForT2A ? '1' : '0',
+        optionTextExceedsT2ALimit ? '1' : '0',
+        isOptionT2AInFlight ? '1' : '0',
       ];
     }));
   };
@@ -4520,16 +4564,17 @@ function renderEditorShell(session) {
       document.activeElement instanceof HTMLInputElement &&
       document.activeElement.dataset.optionInput === '1';
     const nextOptionActionSignature = computeOptionActionSignature(selectedBlock);
+    const nextSignature = computeDetailSignature(selectedBlock);
     if (
       !force &&
       isOptionInputActive &&
       selectedBlock?.responseConfig?.inputType === 'multiple_choice' &&
       questionOptionsList.contains(document.activeElement) &&
-      nextOptionActionSignature === optionActionSignature
+      nextOptionActionSignature === optionActionSignature &&
+      nextSignature === detailSignature
     ) {
       return;
     }
-    const nextSignature = computeDetailSignature(selectedBlock);
     if (!force && nextSignature === detailSignature) {
       return;
     }
@@ -4628,7 +4673,8 @@ function renderEditorShell(session) {
     const promptHasText = trimmedPromptText.length > 0;
     const promptExceedsT2ALimit = trimmedPromptText.length > 200;
     const promptT2AEligible = promptHasText && !promptExceedsT2ALimit;
-    const isPromptT2AInFlight = promptT2AInFlightBlockId === selectedBlock.blockId;
+    const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
+      || promptT2AInFlightBlockId === selectedBlock.blockId;
     const attachQuestionAudioBtn = document.createElement('button');
     attachQuestionAudioBtn.type = 'button';
     attachQuestionAudioBtn.className = 'media-action-btn';
@@ -4703,10 +4749,11 @@ function renderEditorShell(session) {
       updateSummary();
     });
     generateQuestionAudioBtn.addEventListener('click', async () => {
-      if (!promptT2AEligible || promptT2AInFlightBlockId === selectedBlock.blockId) return;
+      if (!promptT2AEligible || promptT2AInFlightBlockIds.has(selectedBlock.blockId)) return;
+      promptT2AInFlightBlockIds.add(selectedBlock.blockId);
+      promptT2AInFlightBlockId = selectedBlock.blockId;
+      updateSummary();
       if (currentQuestionAudioRef) {
-        promptT2AInFlightBlockId = selectedBlock.blockId;
-        updateSummary();
         const confirmed = await confirmDangerAction({
           title: 'Regenerate question audio?',
           bodyText: 'Regenerating will discard the currently attached question audio.',
@@ -4714,14 +4761,12 @@ function renderEditorShell(session) {
           removalItems: ['Current audio file attachment for this question.'],
         });
         if (!confirmed) {
-          promptT2AInFlightBlockId = null;
+          promptT2AInFlightBlockIds.delete(selectedBlock.blockId);
+          restoreLegacyPromptInFlightMarker();
           session.setMediaFeedback('Audio regeneration canceled.');
           updateSummary();
           return;
         }
-      } else {
-        promptT2AInFlightBlockId = selectedBlock.blockId;
-        updateSummary();
       }
 
       try {
@@ -4753,7 +4798,8 @@ function renderEditorShell(session) {
         });
         session.notifyStateChange();
       } finally {
-        promptT2AInFlightBlockId = null;
+        promptT2AInFlightBlockIds.delete(selectedBlock.blockId);
+        restoreLegacyPromptInFlightMarker();
         updateSummary();
       }
     });
@@ -5005,6 +5051,8 @@ function renderEditorShell(session) {
             return;
           }
           if (!optionTextEligibleForT2A || isOptionT2AInFlight) return;
+          optionT2AInFlightKey = optionT2AKey;
+          updateSummary();
           if (optionAudioRef) {
             const confirmed = await confirmDangerAction({
               title: `Regenerate option ${optionIndex + 1} audio?`,
@@ -5013,13 +5061,12 @@ function renderEditorShell(session) {
               removalItems: ['Current audio file attachment for this option.'],
             });
             if (!confirmed) {
+              optionT2AInFlightKey = null;
               session.setMediaFeedback('Option audio regeneration canceled.');
               updateSummary();
               return;
             }
           }
-          optionT2AInFlightKey = optionT2AKey;
-          updateSummary();
           try {
             const result = await session.triggerProtectedAction('editorOptionT2A', {
               blockId: selectedBlock.blockId,
