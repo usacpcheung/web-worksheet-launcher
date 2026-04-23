@@ -4474,6 +4474,8 @@ function renderEditorShell(session) {
       ])),
       normalizedOptionMediaRefs,
       normalizedCorrectAnswer,
+      promptT2AInFlightBlockId || '',
+      optionT2AInFlightKey || '',
     ].join(':');
   };
 
@@ -4701,8 +4703,10 @@ function renderEditorShell(session) {
       updateSummary();
     });
     generateQuestionAudioBtn.addEventListener('click', async () => {
-      if (!promptT2AEligible || isPromptT2AInFlight) return;
+      if (!promptT2AEligible || promptT2AInFlightBlockId === selectedBlock.blockId) return;
       if (currentQuestionAudioRef) {
+        promptT2AInFlightBlockId = selectedBlock.blockId;
+        updateSummary();
         const confirmed = await confirmDangerAction({
           title: 'Regenerate question audio?',
           bodyText: 'Regenerating will discard the currently attached question audio.',
@@ -4710,14 +4714,16 @@ function renderEditorShell(session) {
           removalItems: ['Current audio file attachment for this question.'],
         });
         if (!confirmed) {
+          promptT2AInFlightBlockId = null;
           session.setMediaFeedback('Audio regeneration canceled.');
           updateSummary();
           return;
         }
+      } else {
+        promptT2AInFlightBlockId = selectedBlock.blockId;
+        updateSummary();
       }
 
-      promptT2AInFlightBlockId = selectedBlock.blockId;
-      updateSummary();
       try {
         const result = await session.triggerProtectedAction('editorPromptT2A', {
           blockId: selectedBlock.blockId,
