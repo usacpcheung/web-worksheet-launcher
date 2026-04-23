@@ -16,6 +16,7 @@ const AUTOSAVE_MS = 1000;
 const ACTIVITY_VISIBLE_INITIAL = 30;
 const ACTIVITY_MAX_STORED = 200;
 const ACTIVE_NOTIFICATIONS_MAX_STORED = 200;
+const T2A_TEXT_MAX_LENGTH = 200;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
 let contractsPromise;
@@ -118,6 +119,18 @@ function collectDraftQuestionAssetIds(draft) {
 
 function hasTypedText(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function getT2ATextEligibility(text, maxLength = T2A_TEXT_MAX_LENGTH) {
+  const trimmedText = String(text ?? '').trim();
+  const hasText = trimmedText.length > 0;
+  const exceedsLimit = trimmedText.length > maxLength;
+  return {
+    trimmedText,
+    hasText,
+    exceedsLimit,
+    eligible: hasText && !exceedsLimit,
+  };
 }
 
 function getBlockDeletePolicy(block) {
@@ -3121,8 +3134,8 @@ class EditorDraftSession {
         error: { message },
       };
     }
-    if (promptText.length > 200) {
-      const message = 'Prompt must be 200 characters or fewer to generate audio.';
+    if (promptText.length > T2A_TEXT_MAX_LENGTH) {
+      const message = `Prompt must be ${T2A_TEXT_MAX_LENGTH} characters or fewer to generate audio.`;
       this.setRecoveryMessage(message);
       this.notifyStateChange();
       return {
@@ -3275,8 +3288,8 @@ class EditorDraftSession {
         error: { message },
       };
     }
-    if (optionText.length > 200) {
-      const message = 'Option text must be 200 characters or fewer to generate audio.';
+    if (optionText.length > T2A_TEXT_MAX_LENGTH) {
+      const message = `Option text must be ${T2A_TEXT_MAX_LENGTH} characters or fewer to generate audio.`;
       this.setRecoveryMessage(message);
       this.notifyStateChange();
       return {
@@ -3596,11 +3609,17 @@ function renderEditorShell(session) {
   let promptT2AInFlightBlockId = null;
   let optionT2AInFlightKey = null;
   const promptT2AInFlightBlockIds = new Set();
+  const optionT2AInFlightKeys = new Set();
+  let promptT2AUiRefs = null;
   let activeConfirmDialog = null;
   let mediaActionInFlight = false;
 
   const restoreLegacyPromptInFlightMarker = () => {
     promptT2AInFlightBlockId = promptT2AInFlightBlockIds.values().next().value || null;
+  };
+
+  const restoreLegacyOptionInFlightMarker = () => {
+    optionT2AInFlightKey = optionT2AInFlightKeys.values().next().value || null;
   };
 
   function closeActiveConfirmDialog(confirmed = false) {
@@ -4448,9 +4467,6 @@ function renderEditorShell(session) {
         String(ref?.assetId ?? ''),
       ]))
       : '[]';
-    const promptTextSignature = selectedBlock.kind === 'question'
-      ? String(selectedBlock?.prompt?.text ?? '').trim()
-      : '';
     const normalizedOptionMediaRefs = selectedBlock.kind === 'question'
       ? JSON.stringify((normalizedResponseConfig?.options || []).map((opt) => {
         const normalized = normalizeResponseOption(opt);
@@ -4491,14 +4507,13 @@ function renderEditorShell(session) {
           const optionId = String(opt?.id || '');
           if (!optionId) return false;
           const key = `${selectedBlock.blockId}:${optionId}`;
-          return optionT2AInFlightKey === key;
+          return optionT2AInFlightKeys.has(key) || optionT2AInFlightKey === key;
         })
       ? '1'
       : '0';
     return [
       selectedBlock.blockId,
       selectedBlock.kind,
-      promptTextSignature,
       normalizedInputType,
       normalizedResponseConfig?.displayMode || '',
       normalizedSelectionMode,
@@ -4525,19 +4540,92 @@ function renderEditorShell(session) {
     }
     return JSON.stringify((normalizedResponseConfig.options || []).map((option, index) => {
       const normalized = normalizeResponseOption(option, `option_${index}`);
-      const trimmedOptionText = String(normalized?.label ?? normalized?.value ?? '').trim();
-      const optionTextExceedsT2ALimit = trimmedOptionText.length > 200;
-      const optionTextEligibleForT2A = trimmedOptionText.length > 0 && !optionTextExceedsT2ALimit;
+      const optionTextState = getT2ATextEligibility(normalized?.label ?? normalized?.value ?? '');
       const optionT2AKey = `${selectedBlock.blockId}:${String(normalized?.id ?? '')}`;
-      const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey;
+      const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey
+        || optionT2AInFlightKeys.has(optionT2AKey);
       return [
         String(normalized.id ?? ''),
         ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
-        optionTextEligibleForT2A ? '1' : '0',
-        optionTextExceedsT2ALimit ? '1' : '0',
+        optionTextState.eligible ? '1' : '0',
+        optionTextState.exceedsLimit ? '1' : '0',
         isOptionT2AInFlight ? '1' : '0',
       ];
     }));
+  };
+
+  const refreshPromptT2AControlsForSelectedBlock = () => {
+    if (!promptT2AUiRefs) return;
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
+    if (!selectedBlock || selectedBlock.kind !== 'question' || selectedBlock.blockId !== promptT2AUiRefs.blockId) {
+      return;
+    }
+    const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');
+    const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
+    const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
+    const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
+      || promptT2AInFlightBlockId === selectedBlock.blockId;
+    promptT2AUiRefs.generateBtn.textContent = isPromptT2AInFlight
+      ? 'Generating…'
+      : currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio';
+    promptT2AUiRefs.generateBtn.disabled = !promptTextState.eligible || isPromptT2AInFlight;
+    promptT2AUiRefs.hint.textContent = promptTextState.exceedsLimit
+      ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+      : '';
+    promptT2AUiRefs.hint.hidden = !promptTextState.exceedsLimit;
+    promptT2AUiRefs.attachBtn.disabled = isPromptT2AInFlight;
+    promptT2AUiRefs.playBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
+    promptT2AUiRefs.removeBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
+  };
+
+  const refreshOptionRowT2AControls = (selectedBlockId, optionId, row) => {
+    if (!row || !selectedBlockId || !optionId) return;
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlockId);
+    if (!selectedBlock || selectedBlock.kind !== 'question') return;
+    const responseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
+    if (responseConfig.inputType !== 'multiple_choice') return;
+    const normalizedOptions = (responseConfig.options || []).map((option, index) =>
+      normalizeResponseOption(option, `option_${index}`));
+    const option = normalizedOptions.find((item) => String(item?.id || '') === optionId) || null;
+    if (!option) return;
+    const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
+    const optionTextState = getT2ATextEligibility(option?.label ?? option?.value ?? '');
+    const optionT2AKey = `${selectedBlockId}:${optionId}`;
+    const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);
+
+    const optionAudioBtn = row.querySelector('[data-option-audio-btn="1"]');
+    const optionT2ABtn = row.querySelector('[data-option-t2a-btn="1"]');
+    const playOptionAudioBtn = row.querySelector('[data-option-play-btn="1"]');
+    const removeOptionAudioBtn = row.querySelector('[data-option-remove-audio-btn="1"]');
+    const optionT2AHint = row.querySelector('[data-option-t2a-hint="1"]');
+    const optionAudioAttached = row.querySelector('[data-option-audio-attached="1"]');
+    const isPersistedOption = row.dataset.persistedOption === '1';
+
+    if (optionAudioBtn instanceof HTMLButtonElement) {
+      optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
+    }
+    if (optionT2ABtn instanceof HTMLButtonElement) {
+      optionT2ABtn.textContent = isOptionT2AInFlight
+        ? 'Generating…'
+        : optionAudioRef ? 'Regenerate audio' : 'Generate audio';
+      optionT2ABtn.disabled = !isPersistedOption || !optionTextState.eligible || isOptionT2AInFlight;
+    }
+    if (playOptionAudioBtn instanceof HTMLButtonElement) {
+      playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
+    }
+    if (removeOptionAudioBtn instanceof HTMLButtonElement) {
+      removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
+    }
+    if (optionT2AHint instanceof HTMLElement) {
+      optionT2AHint.hidden = !isPersistedOption || !optionTextState.exceedsLimit;
+      optionT2AHint.textContent = optionTextState.exceedsLimit
+        ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+        : '';
+    }
+    if (optionAudioAttached instanceof HTMLElement) {
+      optionAudioAttached.hidden = !optionAudioRef;
+      optionAudioAttached.textContent = optionAudioRef ? `Option audio attached (${optionAudioRef.assetId})` : '';
+    }
   };
 
   const renderDetailEditor = ({ force = false } = {}) => {
@@ -4583,6 +4671,7 @@ function renderEditorShell(session) {
     rightPanel.innerHTML = '';
     rightPanel.append(rightHeading, statusRow);
     if (!selectedBlock) {
+      promptT2AUiRefs = null;
       const empty = document.createElement('p');
       empty.textContent = 'Select a block to edit.';
       rightPanel.appendChild(empty);
@@ -4595,6 +4684,7 @@ function renderEditorShell(session) {
     rightPanel.append(kindLabel, blockKind);
 
     if (selectedBlock.kind === 'content') {
+      promptT2AUiRefs = null;
       const contentLabel = document.createElement('label');
       contentLabel.textContent = 'Content text';
       contentLabel.htmlFor = 'editor-block-editor';
@@ -4669,10 +4759,9 @@ function renderEditorShell(session) {
     questionAudioLabel.textContent = currentQuestionAudioRef
       ? `Question audio attached (${currentQuestionAudioRef.assetId})`
       : 'Question audio: none attached';
-    const trimmedPromptText = String(selectedBlock?.prompt?.text || '').trim();
-    const promptHasText = trimmedPromptText.length > 0;
-    const promptExceedsT2ALimit = trimmedPromptText.length > 200;
-    const promptT2AEligible = promptHasText && !promptExceedsT2ALimit;
+    const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');
+    const promptExceedsT2ALimit = promptTextState.exceedsLimit;
+    const promptT2AEligible = promptTextState.eligible;
     const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
       || promptT2AInFlightBlockId === selectedBlock.blockId;
     const attachQuestionAudioBtn = document.createElement('button');
@@ -4699,7 +4788,7 @@ function renderEditorShell(session) {
     const questionAudioHint = document.createElement('p');
     questionAudioHint.className = 'muted';
     questionAudioHint.textContent = promptExceedsT2ALimit
-      ? 'Text is too long to generate audio (max 200 characters).'
+      ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
       : '';
     if (!promptExceedsT2ALimit) {
       questionAudioHint.hidden = true;
@@ -4709,6 +4798,14 @@ function renderEditorShell(session) {
       playQuestionAudioBtn.disabled = true;
       removeQuestionAudioBtn.disabled = true;
     }
+    promptT2AUiRefs = {
+      blockId: selectedBlock.blockId,
+      attachBtn: attachQuestionAudioBtn,
+      generateBtn: generateQuestionAudioBtn,
+      playBtn: playQuestionAudioBtn,
+      removeBtn: removeQuestionAudioBtn,
+      hint: questionAudioHint,
+    };
     attachQuestionAudioBtn.addEventListener('click', () => {
       questionAudioInput.dataset.blockId = selectedBlock.blockId;
       questionAudioInput.value = '';
@@ -4749,7 +4846,9 @@ function renderEditorShell(session) {
       updateSummary();
     });
     generateQuestionAudioBtn.addEventListener('click', async () => {
-      if (!promptT2AEligible || promptT2AInFlightBlockIds.has(selectedBlock.blockId)) return;
+      const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlock.blockId);
+      const latestPromptState = getT2ATextEligibility(latestBlock?.prompt?.text || '');
+      if (!latestPromptState.eligible || promptT2AInFlightBlockIds.has(selectedBlock.blockId)) return;
       promptT2AInFlightBlockIds.add(selectedBlock.blockId);
       promptT2AInFlightBlockId = selectedBlock.blockId;
       updateSummary();
@@ -4911,14 +5010,16 @@ function renderEditorShell(session) {
         const optionId = String(option?.id || '');
         const optionValue = String(option?.value ?? '');
         const optionDisplayText = String(option?.label ?? option?.value ?? '');
-        const trimmedOptionDisplayText = optionDisplayText.trim();
+        const optionTextState = getT2ATextEligibility(optionDisplayText);
         const isPersistedOption = persistedOptionIds.has(optionId);
-        const optionTextExceedsT2ALimit = trimmedOptionDisplayText.length > 200;
-        const optionTextEligibleForT2A = trimmedOptionDisplayText.length > 0 && !optionTextExceedsT2ALimit;
+        const optionTextExceedsT2ALimit = optionTextState.exceedsLimit;
+        const optionTextEligibleForT2A = optionTextState.eligible;
         const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;
-        const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey;
+        const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);
         const row = document.createElement('div');
         row.className = 'option-row';
+        row.dataset.persistedOption = isPersistedOption ? '1' : '0';
+        row.dataset.optionId = optionId;
 
         const isSelected = isMultiSelect
           ? selectedOptionIds.has(optionId)
@@ -4970,6 +5071,8 @@ function renderEditorShell(session) {
         optionInput.value = String(option?.label ?? option?.value ?? '');
         optionInput.addEventListener('input', () => {
           session.updateQuestionOptionAtIndex(selectedBlock.blockId, optionIndex, optionInput.value);
+          refreshOptionRowT2AControls(selectedBlock.blockId, optionId, row);
+          updateSummary({ preserveDetailEditor: true });
         });
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
         const optionActionsRow = document.createElement('div');
@@ -4978,6 +5081,7 @@ function renderEditorShell(session) {
         const optionAudioBtn = document.createElement('button');
         optionAudioBtn.type = 'button';
         optionAudioBtn.className = 'media-action-btn';
+        optionAudioBtn.dataset.optionAudioBtn = '1';
         optionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${optionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
         optionAudioBtn.title = isPersistedOption
           ? optionAudioRef ? 'Replace option audio' : 'Attach option audio'
@@ -4996,6 +5100,7 @@ function renderEditorShell(session) {
         const removeOptionAudioBtn = document.createElement('button');
         removeOptionAudioBtn.type = 'button';
         removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove';
+        removeOptionAudioBtn.dataset.optionRemoveAudioBtn = '1';
         removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
         removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
         removeOptionAudioBtn.addEventListener('click', async () => {
@@ -5016,6 +5121,7 @@ function renderEditorShell(session) {
         const playOptionAudioBtn = document.createElement('button');
         playOptionAudioBtn.type = 'button';
         playOptionAudioBtn.className = 'media-action-btn';
+        playOptionAudioBtn.dataset.optionPlayBtn = '1';
         playOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
         playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
         playOptionAudioBtn.addEventListener('click', async () => {
@@ -5040,6 +5146,7 @@ function renderEditorShell(session) {
         const optionT2ABtn = document.createElement('button');
         optionT2ABtn.type = 'button';
         optionT2ABtn.className = 'media-action-btn';
+        optionT2ABtn.dataset.optionT2aBtn = '1';
         optionT2ABtn.textContent = isOptionT2AInFlight
           ? 'Generating…'
           : optionAudioRef ? 'Regenerate audio' : 'Generate audio';
@@ -5050,7 +5157,14 @@ function renderEditorShell(session) {
             updateSummary();
             return;
           }
-          if (!optionTextEligibleForT2A || isOptionT2AInFlight) return;
+          const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlock.blockId);
+          const latestResponseConfig = normalizeQuestionResponseConfig(latestBlock?.responseConfig);
+          const latestOptions = (latestResponseConfig.options || []).map((item, index) =>
+            normalizeResponseOption(item, `option_${index}`));
+          const latestOption = latestOptions.find((item) => String(item?.id || '') === optionId) || null;
+          const latestOptionTextState = getT2ATextEligibility(latestOption?.label ?? latestOption?.value ?? '');
+          if (!latestOptionTextState.eligible || optionT2AInFlightKeys.has(optionT2AKey)) return;
+          optionT2AInFlightKeys.add(optionT2AKey);
           optionT2AInFlightKey = optionT2AKey;
           updateSummary();
           if (optionAudioRef) {
@@ -5061,7 +5175,8 @@ function renderEditorShell(session) {
               removalItems: ['Current audio file attachment for this option.'],
             });
             if (!confirmed) {
-              optionT2AInFlightKey = null;
+              optionT2AInFlightKeys.delete(optionT2AKey);
+              restoreLegacyOptionInFlightMarker();
               session.setMediaFeedback('Option audio regeneration canceled.');
               updateSummary();
               return;
@@ -5097,7 +5212,8 @@ function renderEditorShell(session) {
             });
             session.notifyStateChange();
           } finally {
-            optionT2AInFlightKey = null;
+            optionT2AInFlightKeys.delete(optionT2AKey);
+            restoreLegacyOptionInFlightMarker();
             updateSummary();
           }
         });
@@ -5135,16 +5251,26 @@ function renderEditorShell(session) {
           optionAudioHint.className = 'muted option-row__meta';
           optionAudioHint.textContent = 'Enter option text or click Add option before attaching audio.';
           row.appendChild(optionAudioHint);
-        } else if (optionTextExceedsT2ALimit) {
-          const optionT2AHint = document.createElement('span');
-          optionT2AHint.className = 'muted option-row__meta';
-          optionT2AHint.textContent = 'Text is too long to generate audio (max 200 characters).';
-          row.appendChild(optionT2AHint);
         }
+        const optionT2AHint = document.createElement('span');
+        optionT2AHint.className = 'muted option-row__meta';
+        optionT2AHint.dataset.optionT2aHint = '1';
+        optionT2AHint.textContent = optionTextExceedsT2ALimit
+          ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+          : '';
+        optionT2AHint.hidden = !isPersistedOption || !optionTextExceedsT2ALimit;
+        row.appendChild(optionT2AHint);
         if (optionAudioRef) {
           const optionAudioAttached = document.createElement('span');
           optionAudioAttached.className = 'muted option-row__meta';
+          optionAudioAttached.dataset.optionAudioAttached = '1';
           optionAudioAttached.textContent = `Option audio attached (${optionAudioRef.assetId})`;
+          row.appendChild(optionAudioAttached);
+        } else {
+          const optionAudioAttached = document.createElement('span');
+          optionAudioAttached.className = 'muted option-row__meta';
+          optionAudioAttached.dataset.optionAudioAttached = '1';
+          optionAudioAttached.hidden = true;
           row.appendChild(optionAudioAttached);
         }
         questionOptionsList.appendChild(row);
@@ -5164,12 +5290,14 @@ function renderEditorShell(session) {
     }
   };
 
-  const updateSummary = () => {
+  const updateSummary = ({ preserveDetailEditor = false } = {}) => {
     session.pruneExpiredNotifications();
     session.validateCurrentDraft();
     syncFormControls();
     renderBlockList();
-    renderDetailEditor();
+    if (!preserveDetailEditor) {
+      renderDetailEditor();
+    }
 
     const saveState = session.state.lastPersistenceError
       ? 'Save error'
@@ -5447,7 +5575,13 @@ function renderEditorShell(session) {
     updateSummary();
   });
   blockEditor.addEventListener('input', () => {
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
     session.updateBlockContent(session.state.selectedBlockId, blockEditor.value);
+    if (selectedBlock?.kind === 'question') {
+      refreshPromptT2AControlsForSelectedBlock();
+      updateSummary({ preserveDetailEditor: true });
+      return;
+    }
     updateSummary();
   });
   saveBtn.addEventListener('click', async () => {
