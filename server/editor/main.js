@@ -4849,6 +4849,10 @@ function renderEditorShell(session) {
       const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlock.blockId);
       const latestPromptState = getT2ATextEligibility(latestBlock?.prompt?.text || '');
       if (!latestPromptState.eligible || promptT2AInFlightBlockIds.has(selectedBlock.blockId)) return;
+      const sessionReady = await session.ensureServerSessionReady();
+      if (!sessionReady.ok) {
+        return;
+      }
       promptT2AInFlightBlockIds.add(selectedBlock.blockId);
       promptT2AInFlightBlockId = selectedBlock.blockId;
       updateSummary();
@@ -5164,6 +5168,10 @@ function renderEditorShell(session) {
           const latestOption = latestOptions.find((item) => String(item?.id || '') === optionId) || null;
           const latestOptionTextState = getT2ATextEligibility(latestOption?.label ?? latestOption?.value ?? '');
           if (!latestOptionTextState.eligible || optionT2AInFlightKeys.has(optionT2AKey)) return;
+          const sessionReady = await session.ensureServerSessionReady();
+          if (!sessionReady.ok) {
+            return;
+          }
           optionT2AInFlightKeys.add(optionT2AKey);
           optionT2AInFlightKey = optionT2AKey;
           updateSummary();

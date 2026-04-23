@@ -1083,8 +1083,11 @@ test('stage3: prompt row triggers replace confirmation before prompt bridge gene
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   const hasAudioConfirmIdx = source.indexOf("title: 'Regenerate question audio?'");
   const promptBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorPromptT2A', {");
+  const sessionReadyIdx = source.indexOf("const sessionReady = await session.ensureServerSessionReady();");
   assert.equal(hasAudioConfirmIdx >= 0, true);
+  assert.equal(sessionReadyIdx >= 0, true);
   assert.equal(promptBridgeCallIdx >= 0, true);
+  assert.equal(sessionReadyIdx < promptBridgeCallIdx, true);
   assert.equal(hasAudioConfirmIdx < promptBridgeCallIdx, true);
 });
 
@@ -1118,8 +1121,11 @@ test('stage3: option row triggers replace confirmation before option bridge gene
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   const hasAudioConfirmIdx = source.indexOf("title: `Regenerate option ${optionIndex + 1} audio?`");
   const optionBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorOptionT2A', {");
+  const optionSessionReadyIdx = source.indexOf("const sessionReady = await session.ensureServerSessionReady();");
   assert.equal(hasAudioConfirmIdx >= 0, true);
+  assert.equal(optionSessionReadyIdx >= 0, true);
   assert.equal(optionBridgeCallIdx >= 0, true);
+  assert.equal(optionSessionReadyIdx < optionBridgeCallIdx, true);
   assert.equal(hasAudioConfirmIdx < optionBridgeCallIdx, true);
 });
 
