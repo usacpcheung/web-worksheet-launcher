@@ -1091,11 +1091,16 @@ test('stage3: prompt row triggers replace confirmation before prompt bridge gene
   assert.equal(hasAudioConfirmIdx < promptBridgeCallIdx, true);
 });
 
-test('multiple-choice option row renders inline audio actions and shows attached asset id', async () => {
+test('multiple-choice option row renders audio status menu and shows attached asset id', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("const optionActionsMenu = document.createElement('details');"), true);
+  assert.equal(source.includes("optionActionsMenu.className = 'option-actions-menu option-audio-menu';"), true);
+  assert.equal(source.includes("const optionAudioMenuTrigger = document.createElement('summary');"), true);
+  assert.equal(source.includes("optionAudioMenuTrigger.dataset.optionAudioMenuTrigger = '1';"), true);
   assert.equal(source.includes("const optionActionsRow = document.createElement('div');"), true);
-  assert.equal(source.includes("optionActionsRow.className = 'button-row';"), true);
-  assert.equal(source.includes('row.append(correctToggle, optionInput, optionActionsRow, removeBtn);'), true);
+  assert.equal(source.includes("optionActionsRow.className = 'option-actions-menu__list option-audio-menu__list';"), true);
+  assert.equal(source.includes('optionActionsMenu.append(optionAudioMenuTrigger, optionActionsRow);'), true);
+  assert.equal(source.includes('row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);'), true);
   assert.equal(source.includes('Option audio attached ('), true);
 });
 
@@ -1105,8 +1110,9 @@ test('multiple-choice option actions include contextual generate/regenerate audi
   assert.equal(source.includes("const optionTextState = getT2ATextEligibility(optionDisplayText);"), true);
   assert.equal(source.includes("const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;"), true);
   assert.equal(source.includes("const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);"), true);
-  assert.equal(source.includes("optionT2ABtn.textContent = isOptionT2AInFlight"), true);
+  assert.equal(source.includes("const optionT2ALabel = isOptionT2AInFlight"), true);
   assert.equal(source.includes(": optionAudioRef ? 'Regenerate audio' : 'Generate audio';"), true);
+  assert.equal(source.includes("setMediaActionButtonContent("), true);
   assert.equal(source.includes("optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("optionT2AInFlightKey = optionT2AKey;"), true);
   assert.equal(source.includes("optionT2AInFlightKey = null;"), true);
@@ -1115,6 +1121,7 @@ test('multiple-choice option actions include contextual generate/regenerate audi
   assert.equal(source.includes("text: getProtectedActionErrorMessage(result, 'Unable to start audio generation. Please try again.'),"), true);
   assert.equal(source.includes('Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).'), true);
   assert.equal(source.includes("optionActionsRow.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);"), true);
+  assert.equal(source.includes("setOptionAudioMenuTriggerState(optionAudioMenuTrigger"), true);
 });
 
 test('stage3: option row triggers replace confirmation before option bridge generation when audio exists', async () => {

@@ -297,6 +297,39 @@ function toValidGeneratedAudioBytes(candidate) {
   return candidate;
 }
 
+function createEditorIcon(name) {
+  const icons = {
+    audio: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="17" cy="16" r="3"></circle></svg>',
+    audioAttached: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="17" cy="16" r="3"></circle><path d="M3.75 6.75 6 9l4-4"></path></svg>',
+    loading: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"></path></svg>',
+    play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>',
+    upload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4"></path><path d="m7 9 5-5 5 5"></path><path d="M5 20h14"></path></svg>',
+    generate: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h8l-1 8 10-12h-8z"></path></svg>',
+    refresh: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.25"></path><path d="M3 12A9 9 0 0 1 18.5 5.75"></path><path d="M18 2v4h-4"></path><path d="M6 22v-4h4"></path></svg>',
+    trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>',
+  };
+  return icons[name] || icons.audio;
+}
+
+function setMediaActionButtonContent(button, iconName, label) {
+  button.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">${createEditorIcon(iconName)}</span><span>${label}</span>`;
+}
+
+function setOptionAudioMenuTriggerState(trigger, { hasAudio = false, isGenerating = false, isPersisted = true } = {}) {
+  if (!(trigger instanceof HTMLElement)) return;
+  const iconName = isGenerating ? 'loading' : hasAudio ? 'audioAttached' : 'audio';
+  const label = isGenerating
+    ? 'Option audio actions, generating'
+    : hasAudio ? 'Option audio actions, audio attached' : 'Option audio actions';
+  trigger.innerHTML = `<span class="media-action-btn__icon${isGenerating ? ' media-action-btn__icon--spin' : ''}" aria-hidden="true">${createEditorIcon(iconName)}</span>`;
+  trigger.title = isPersisted
+    ? label
+    : 'Enter option text or click Add option before using audio actions';
+  trigger.setAttribute('aria-label', label);
+  trigger.setAttribute('aria-disabled', isPersisted ? 'false' : 'true');
+  trigger.dataset.audioState = isGenerating ? 'generating' : hasAudio ? 'attached' : 'empty';
+}
+
 async function loadContracts() {
   if (!contractsPromise) {
     contractsPromise = import('../app/contracts/index.js');
@@ -4599,15 +4632,24 @@ function renderEditorShell(session) {
     const removeOptionAudioBtn = row.querySelector('[data-option-remove-audio-btn="1"]');
     const optionT2AHint = row.querySelector('[data-option-t2a-hint="1"]');
     const optionAudioAttached = row.querySelector('[data-option-audio-attached="1"]');
+    const optionAudioMenuTrigger = row.querySelector('[data-option-audio-menu-trigger="1"]');
     const isPersistedOption = row.dataset.persistedOption === '1';
 
+    setOptionAudioMenuTriggerState(optionAudioMenuTrigger, {
+      hasAudio: Boolean(optionAudioRef),
+      isGenerating: isOptionT2AInFlight,
+      isPersisted: isPersistedOption,
+    });
     if (optionAudioBtn instanceof HTMLButtonElement) {
       optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
+      setMediaActionButtonContent(optionAudioBtn, 'upload', optionAudioRef ? 'Replace audio…' : 'Attach audio…');
     }
     if (optionT2ABtn instanceof HTMLButtonElement) {
-      optionT2ABtn.textContent = isOptionT2AInFlight
+      const optionT2ALabel = isOptionT2AInFlight
         ? 'Generating…'
         : optionAudioRef ? 'Regenerate audio' : 'Generate audio';
+      const optionT2AIcon = isOptionT2AInFlight ? 'loading' : optionAudioRef ? 'refresh' : 'generate';
+      setMediaActionButtonContent(optionT2ABtn, optionT2AIcon, optionT2ALabel);
       optionT2ABtn.disabled = !isPersistedOption || !optionTextState.eligible || isOptionT2AInFlight;
     }
     if (playOptionAudioBtn instanceof HTMLButtonElement) {
@@ -5079,14 +5121,25 @@ function renderEditorShell(session) {
           updateSummary({ preserveDetailEditor: true });
         });
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
+        const optionActionsMenu = document.createElement('details');
+        optionActionsMenu.className = 'option-actions-menu option-audio-menu';
+        const optionAudioMenuTrigger = document.createElement('summary');
+        optionAudioMenuTrigger.className = 'option-actions-menu__toggle option-audio-menu__toggle';
+        optionAudioMenuTrigger.dataset.optionAudioMenuTrigger = '1';
+        optionAudioMenuTrigger.setAttribute('role', 'button');
+        setOptionAudioMenuTriggerState(optionAudioMenuTrigger, {
+          hasAudio: Boolean(optionAudioRef),
+          isGenerating: isOptionT2AInFlight,
+          isPersisted: isPersistedOption,
+        });
         const optionActionsRow = document.createElement('div');
-        optionActionsRow.className = 'button-row';
+        optionActionsRow.className = 'option-actions-menu__list option-audio-menu__list';
 
         const optionAudioBtn = document.createElement('button');
         optionAudioBtn.type = 'button';
-        optionAudioBtn.className = 'media-action-btn';
+        optionAudioBtn.className = 'media-action-btn option-actions-menu__item';
         optionAudioBtn.dataset.optionAudioBtn = '1';
-        optionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${optionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
+        setMediaActionButtonContent(optionAudioBtn, 'upload', optionAudioRef ? 'Replace audio…' : 'Attach audio…');
         optionAudioBtn.title = isPersistedOption
           ? optionAudioRef ? 'Replace option audio' : 'Attach option audio'
           : 'Enter option text or click Add option before attaching audio';
@@ -5103,9 +5156,9 @@ function renderEditorShell(session) {
         });
         const removeOptionAudioBtn = document.createElement('button');
         removeOptionAudioBtn.type = 'button';
-        removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove';
+        removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove option-actions-menu__item';
         removeOptionAudioBtn.dataset.optionRemoveAudioBtn = '1';
-        removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
+        setMediaActionButtonContent(removeOptionAudioBtn, 'trash', 'Remove audio');
         removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
         removeOptionAudioBtn.addEventListener('click', async () => {
           await runMediaAction(async () => {
@@ -5124,9 +5177,9 @@ function renderEditorShell(session) {
         });
         const playOptionAudioBtn = document.createElement('button');
         playOptionAudioBtn.type = 'button';
-        playOptionAudioBtn.className = 'media-action-btn';
+        playOptionAudioBtn.className = 'media-action-btn option-actions-menu__item';
         playOptionAudioBtn.dataset.optionPlayBtn = '1';
-        playOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
+        setMediaActionButtonContent(playOptionAudioBtn, 'play', 'Play audio');
         playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
         playOptionAudioBtn.addEventListener('click', async () => {
           if (!optionAudioRef?.assetId || playOptionAudioBtn.disabled) return;
@@ -5149,11 +5202,16 @@ function renderEditorShell(session) {
         });
         const optionT2ABtn = document.createElement('button');
         optionT2ABtn.type = 'button';
-        optionT2ABtn.className = 'media-action-btn';
+        optionT2ABtn.className = 'media-action-btn option-actions-menu__item';
         optionT2ABtn.dataset.optionT2aBtn = '1';
-        optionT2ABtn.textContent = isOptionT2AInFlight
+        const optionT2ALabel = isOptionT2AInFlight
           ? 'Generating…'
           : optionAudioRef ? 'Regenerate audio' : 'Generate audio';
+        setMediaActionButtonContent(
+          optionT2ABtn,
+          isOptionT2AInFlight ? 'loading' : optionAudioRef ? 'refresh' : 'generate',
+          optionT2ALabel
+        );
         optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;
         optionT2ABtn.addEventListener('click', async () => {
           if (!isPersistedOption) {
@@ -5226,12 +5284,13 @@ function renderEditorShell(session) {
           }
         });
         optionActionsRow.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);
+        optionActionsMenu.append(optionAudioMenuTrigger, optionActionsRow);
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'icon-btn danger';
         removeBtn.title = 'Delete this option';
         removeBtn.setAttribute('aria-label', `Delete option ${optionIndex + 1}`);
-        removeBtn.textContent = '🗑';
+        removeBtn.innerHTML = createEditorIcon('trash');
         removeBtn.addEventListener('click', async () => {
           const outcome = session.removeQuestionOptionWithPolicy(selectedBlock.blockId, optionIndex);
           if (!outcome.ok && outcome.reason === 'confirm-delete-required') {
@@ -5253,7 +5312,7 @@ function renderEditorShell(session) {
           }
           updateSummary();
         });
-        row.append(correctToggle, optionInput, optionActionsRow, removeBtn);
+        row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);
         if (!isPersistedOption) {
           const optionAudioHint = document.createElement('span');
           optionAudioHint.className = 'muted option-row__meta';

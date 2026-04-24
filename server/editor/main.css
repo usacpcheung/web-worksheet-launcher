@@ -225,6 +225,18 @@ body {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
 }
 
+.icon-btn svg,
+.media-action-btn__icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .icon-btn.danger {
   color: #b42318;
   border-color: #fca5a5;
@@ -586,15 +598,26 @@ textarea.control {
 }
 
 .media-action-btn__icon {
-  font-size: 1rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 16px;
-  text-align: center;
+  height: 16px;
   opacity: 0.7;
+}
+
+.media-action-btn__icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.media-action-btn__icon--spin svg {
+  animation: editor-icon-spin 900ms linear infinite;
 }
 
 .option-actions-menu {
   position: relative;
+  flex: 0 0 auto;
 }
 
 .option-actions-menu[open] {
@@ -609,9 +632,40 @@ textarea.control {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.1rem;
   color: #334155;
+  border: 1px solid #c4cad7;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
   list-style: none;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.option-actions-menu__toggle:hover,
+.option-actions-menu__toggle:focus-visible {
+  border-color: #98a2b3;
+  background: #f8fafc;
+  outline: none;
+}
+
+.option-actions-menu__toggle:focus-visible {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+}
+
+.option-actions-menu__toggle[aria-disabled="true"] {
+  opacity: 0.55;
+  color: #98a2b3;
+  background: #f8fafc;
+}
+
+.option-audio-menu__toggle[data-audio-state="attached"] {
+  color: #1d4ed8;
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.option-audio-menu__toggle[data-audio-state="generating"] {
+  color: #475569;
 }
 
 .option-actions-menu__toggle::marker {
@@ -640,6 +694,12 @@ textarea.control {
 .option-actions-menu__item {
   width: 100%;
   justify-content: flex-start;
+}
+
+@keyframes editor-icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .option-add-btn {
