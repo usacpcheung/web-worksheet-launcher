@@ -456,10 +456,10 @@ textarea.control {
   width: 100%;
 }
 
-.action-column button:hover,
-.action-column button:focus-visible,
-.stacked-actions button:hover,
-.stacked-actions button:focus-visible,
+.action-column button:hover:not(:disabled),
+.action-column button:focus-visible:not(:disabled),
+.stacked-actions button:hover:not(:disabled),
+.stacked-actions button:focus-visible:not(:disabled),
 .sidebar-action-btn:hover:not(:disabled),
 .sidebar-action-btn:focus-visible:not(:disabled),
 .id-copy-menu__copy:hover:not(:disabled),
@@ -468,6 +468,15 @@ textarea.control {
 .option-add-btn:focus-visible:not(:disabled) {
   background: #eef2ff;
   border-color: #c7d2fe;
+}
+
+.action-column button:disabled,
+.stacked-actions button:disabled {
+  color: #98a2b3;
+  border-color: #d6d9e0;
+  background: #f8fafc;
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .uploaded-draft-row {

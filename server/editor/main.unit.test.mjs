@@ -893,8 +893,8 @@ test('editor uses live server upload/publish integration instead of protected-in
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("session.triggerProtectedAction('resumeDraftUploadAfterLogin')"), false);
   assert.equal(source.includes("session.triggerProtectedAction('resumePublishAfterLogin')"), false);
-  assert.equal(source.includes('await session.uploadCurrentDraftToServer();'), true);
-  assert.equal(source.includes('await session.publishUploadedDraftToServer('), true);
+  assert.equal(source.includes('session.uploadCurrentDraftToServer({ preflight: false })'), true);
+  assert.equal(source.includes('session.publishUploadedDraftToServer('), true);
   assert.equal(source.includes('await session.refreshServerSession();'), true);
 });
 
@@ -1047,6 +1047,23 @@ test('stage3: protected actions column no longer includes legacy rewrite/t2a stu
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
   assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    browsePublishedBtn,\n    loadUploadedDraftsBtn,\n    uploadedDraftList\n  );'), true);
+});
+
+test('editor server menu buttons stay disabled when session is not ready and preflight on click', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const css = await fs.readFile(path.resolve('server/editor/main.css'), 'utf8');
+
+  assert.equal(source.includes('syncDraftBtn.disabled = !serverReady || isUploadingDraft;'), true);
+  assert.equal(source.includes('browsePublishedBtn.disabled = !serverReady;'), true);
+  assert.equal(source.includes('loadUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;'), true);
+  assert.equal(source.includes('signInBtn.hidden = serverReady;'), true);
+  assert.equal(source.includes('async function guardServerMenuAction(button, action) {'), true);
+  assert.equal(source.includes('if (button?.disabled) return null;'), true);
+  assert.equal(source.includes('const sessionReady = await session.ensureServerSessionReady();'), true);
+  assert.equal(source.includes('await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));'), true);
+  assert.equal(source.includes('await guardServerMenuAction(loadUploadedDraftsBtn, () => session.loadUploadedDrafts({ preflight: false }));'), true);
+  assert.equal(css.includes('.action-column button:hover:not(:disabled),'), true);
+  assert.equal(css.includes('.action-column button:disabled,'), true);
 });
 
 test('detail signature includes media refs so media attach/remove rerenders immediately', async () => {

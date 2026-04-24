@@ -3899,6 +3899,16 @@ function renderEditorShell(session) {
     session.notifyStateChange();
   }
 
+  async function guardServerMenuAction(button, action) {
+    if (button?.disabled) return null;
+    const sessionReady = await session.ensureServerSessionReady();
+    if (!sessionReady.ok) {
+      updateSummary();
+      return sessionReady.result;
+    }
+    return action();
+  }
+
   function createCopyIdMenu({ triggerKind = 'info', triggerText = '', title, idValue, copyLabel, source }) {
     const details = document.createElement('details');
     details.className = `id-copy-menu id-copy-menu--${triggerKind}`;
@@ -5762,7 +5772,7 @@ function renderEditorShell(session) {
         openBtn.textContent = 'Open';
         openBtn.disabled = !serverReady;
         openBtn.addEventListener('click', async () => {
-          await session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
+          await guardServerMenuAction(openBtn, () => session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id));
           updateSummary();
         });
         const deleteBtn = document.createElement('button');
@@ -5771,19 +5781,21 @@ function renderEditorShell(session) {
         deleteBtn.textContent = 'Delete';
         deleteBtn.disabled = !serverReady;
         deleteBtn.addEventListener('click', async () => {
-          const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
-          const deleteDescription = publishedPackageId
-            ? `This deletes the uploaded draft slot only. The published package will remain available by published package ID (${publishedPackageId}).`
-            : 'This will permanently remove this uploaded draft from server storage.';
-          const confirmed = await showConfirmDialog({
-            title: 'Delete uploaded draft?',
-            entityLabel: isNonEmptyString(item.title) ? item.title.trim() : 'Untitled',
-            descriptionText: deleteDescription,
-            removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
-            confirmLabel: 'Delete draft',
+          await guardServerMenuAction(deleteBtn, async () => {
+            const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
+            const deleteDescription = publishedPackageId
+              ? `This deletes the uploaded draft slot only. The published package will remain available by published package ID (${publishedPackageId}).`
+              : 'This will permanently remove this uploaded draft from server storage.';
+            const confirmed = await showConfirmDialog({
+              title: 'Delete uploaded draft?',
+              entityLabel: isNonEmptyString(item.title) ? item.title.trim() : 'Untitled',
+              descriptionText: deleteDescription,
+              removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
+              confirmLabel: 'Delete draft',
+            });
+            if (!confirmed) return null;
+            return session.deleteUploadedDraft(item.uploaded_draft_id);
           });
-          if (!confirmed) return;
-          await session.deleteUploadedDraft(item.uploaded_draft_id);
           updateSummary();
         });
         const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
@@ -5799,13 +5811,15 @@ function renderEditorShell(session) {
           copyBtn.textContent = 'Copy Published ID';
           copyBtn.disabled = !serverReady;
           copyBtn.addEventListener('click', async () => {
-            const copied = await copyTextToClipboard(publishedPackageId);
-            emitServerNotification({
-              kind: copied ? 'success' : 'warn',
-              source: 'clipboard.publishedId',
-              text: copied
-                ? `Copied published ID ${publishedPackageId}.`
-                : 'Clipboard copy is unavailable in this browser.',
+            await guardServerMenuAction(copyBtn, async () => {
+              const copied = await copyTextToClipboard(publishedPackageId);
+              emitServerNotification({
+                kind: copied ? 'success' : 'warn',
+                source: 'clipboard.publishedId',
+                text: copied
+                  ? `Copied published ID ${publishedPackageId}.`
+                  : 'Clipboard copy is unavailable in this browser.',
+              });
             });
           });
           const details = document.createElement('details');
@@ -5839,11 +5853,13 @@ function renderEditorShell(session) {
           publishBtn.disabled = !serverReady || isPublishing;
           publishBtn.addEventListener('click', async () => {
             if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
-            const modal = await showPublishModal({ uploadedDraft: item });
-            if (!modal.confirmed) return;
-            await session.publishUploadedDraftToServer(item.uploaded_draft_id, {
-              title: modal.title,
-              subject: modal.subject,
+            await guardServerMenuAction(publishBtn, async () => {
+              const modal = await showPublishModal({ uploadedDraft: item });
+              if (!modal.confirmed) return null;
+              return session.publishUploadedDraftToServer(item.uploaded_draft_id, {
+                title: modal.title,
+                subject: modal.subject,
+              });
             });
             updateSummary();
           });
@@ -6090,25 +6106,22 @@ function renderEditorShell(session) {
     updateSummary();
   });
   syncDraftBtn.addEventListener('click', async () => {
-    await session.uploadCurrentDraftToServer();
+    await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));
     updateSummary();
   });
   browsePublishedBtn.addEventListener('click', async () => {
-    const sessionReady = await session.ensureServerSessionReady();
-    if (!sessionReady.ok) {
-      updateSummary();
-      return;
-    }
-    browsePublishedDialogOpen = true;
-    renderPublishedBrowserModal();
-    await runPublishedSearch();
+    await guardServerMenuAction(browsePublishedBtn, async () => {
+      browsePublishedDialogOpen = true;
+      renderPublishedBrowserModal();
+      await runPublishedSearch();
+    });
   });
   signInBtn.addEventListener('click', () => {
     session.beginServerSignIn();
     updateSummary();
   });
   loadUploadedDraftsBtn.addEventListener('click', async () => {
-    await session.loadUploadedDrafts();
+    await guardServerMenuAction(loadUploadedDraftsBtn, () => session.loadUploadedDrafts({ preflight: false }));
     updateSummary();
   });
   loadOlderActivityBtn.addEventListener('click', () => {
