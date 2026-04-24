@@ -330,6 +330,35 @@ button {
   border-radius: 8px;
 }
 
+select.control {
+  appearance: none;
+  min-height: 42px;
+  padding-right: 38px;
+  color: #1f2937;
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #334155 50%),
+    linear-gradient(135deg, #334155 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 18px,
+    calc(100% - 12px) 18px;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+select.control:hover:not(:disabled) {
+  border-color: #98a2b3;
+  background-color: #f8fafc;
+}
+
+select.control:focus-visible,
+.control:focus-visible {
+  outline: none;
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+
 .control-invalid {
   border-color: #f04438;
   box-shadow: 0 0 0 2px rgb(240 68 56 / 18%);
@@ -353,20 +382,14 @@ textarea.control {
   gap: 8px;
 }
 
-.primary-action-btn {
-  color: #fff;
-  border-color: #2563eb;
-  background: #3867d6;
-}
-
-.primary-action-btn:hover:not(:disabled),
-.primary-action-btn:focus-visible:not(:disabled) {
-  border-color: #1d4ed8;
-  background: #3159c4;
-}
-
 .sidebar-action-btn {
-  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #334155;
+  border-color: #cbd5e1;
+  background: #f8fafc;
 }
 
 .muted {
@@ -421,7 +444,6 @@ textarea.control {
 
 .action-column button {
   width: 100%;
-  background: #fff;
 }
 
 .stacked-actions {
@@ -432,15 +454,20 @@ textarea.control {
 
 .stacked-actions button {
   width: 100%;
-  background: #fff;
 }
 
 .action-column button:hover,
 .action-column button:focus-visible,
 .stacked-actions button:hover,
-.stacked-actions button:focus-visible {
-  background: #eff6ff;
-  border-color: #93c5fd;
+.stacked-actions button:focus-visible,
+.sidebar-action-btn:hover:not(:disabled),
+.sidebar-action-btn:focus-visible:not(:disabled),
+.id-copy-menu__copy:hover:not(:disabled),
+.id-copy-menu__copy:focus-visible:not(:disabled),
+.option-add-btn:hover:not(:disabled),
+.option-add-btn:focus-visible:not(:disabled) {
+  background: #eef2ff;
+  border-color: #c7d2fe;
 }
 
 .uploaded-draft-row {
@@ -649,7 +676,11 @@ textarea.control {
   margin-left: 46px;
 }
 
-.media-action-btn {
+.media-action-btn,
+.id-copy-menu__copy,
+.option-add-btn,
+.stacked-actions button,
+.action-column button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -812,7 +843,6 @@ textarea.control {
 
 .id-copy-menu__copy {
   width: 100%;
-  background: #fff;
 }
 
 .media-action-btn:hover:not(:disabled),

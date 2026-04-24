@@ -4329,7 +4329,7 @@ function renderEditorShell(session) {
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.textContent = 'Save Now';
-  saveBtn.className = 'primary-action-btn';
+  saveBtn.className = 'sidebar-action-btn';
   setMediaActionButtonContent(saveBtn, 'save', 'Save Now');
   const addContentBtn = document.createElement('button');
   addContentBtn.type = 'button';
