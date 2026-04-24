@@ -1157,6 +1157,15 @@ test('multiple-choice option action state rerenders while typing when option ids
   assert.equal(source.includes('replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);'), true);
 });
 
+test('multiple-choice option input defers state updates while IME composition is active', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('let isOptionInputComposing = false;'), true);
+  assert.equal(source.includes("optionInput.addEventListener('compositionstart'"), true);
+  assert.equal(source.includes("optionInput.addEventListener('compositionend'"), true);
+  assert.equal(source.includes('if (isOptionInputComposing || event.isComposing) return;'), true);
+  assert.equal(source.includes('commitOptionInputValue();'), true);
+});
+
 test('prompt typing updates T2A state without forcing detail-panel rerender on each keystroke', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('const updateSummary = ({ preserveDetailEditor = false } = {}) => {'), true);

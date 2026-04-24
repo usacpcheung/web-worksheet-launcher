@@ -298,15 +298,16 @@ function toValidGeneratedAudioBytes(candidate) {
 }
 
 function createEditorIcon(name) {
+  const svgAttrs = 'viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
   const icons = {
-    audio: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="17" cy="16" r="3"></circle></svg>',
-    audioAttached: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="17" cy="16" r="3"></circle><path d="M3.75 6.75 6 9l4-4"></path></svg>',
-    loading: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"></path></svg>',
-    play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>',
-    upload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4"></path><path d="m7 9 5-5 5 5"></path><path d="M5 20h14"></path></svg>',
-    generate: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 3 14h8l-1 8 10-12h-8z"></path></svg>',
-    refresh: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.25"></path><path d="M3 12A9 9 0 0 1 18.5 5.75"></path><path d="M18 2v4h-4"></path><path d="M6 22v-4h4"></path></svg>',
-    trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v5"></path><path d="M14 11v5"></path></svg>',
+    audio: `<svg ${svgAttrs}><path d="M11 5 6 9H3v6h3l5 4V5Z"></path><path d="M16 9.5a4 4 0 0 1 0 5"></path><path d="M19 7a8 8 0 0 1 0 10"></path></svg>`,
+    audioAttached: `<svg ${svgAttrs}><path d="M11 5 6 9H3v6h3l5 4V5Z"></path><path d="M16 9.5a4 4 0 0 1 0 5"></path><path d="M19 7a8 8 0 0 1 0 10"></path><path d="m15.5 18 1.7 1.7 3.3-3.7"></path></svg>`,
+    loading: `<svg ${svgAttrs}><path d="M21 12a9 9 0 1 1-9-9"></path></svg>`,
+    play: `<svg ${svgAttrs}><path d="M8 5v14l11-7Z"></path></svg>`,
+    upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
+    generate: `<svg ${svgAttrs}><path d="m13 2-2 7h7l-7 13 2-8H6l7-12Z"></path></svg>`,
+    refresh: `<svg ${svgAttrs}><path d="M21 12a9 9 0 0 1-14.9 6.8"></path><path d="M3 12A9 9 0 0 1 17.9 5.2"></path><path d="M18 2v4h-4"></path><path d="M6 22v-4h4"></path></svg>`,
+    trash: `<svg ${svgAttrs}><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="m19 6-.8 14.2a2 2 0 0 1-2 1.8H7.8a2 2 0 0 1-2-1.8L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>`,
   };
   return icons[name] || icons.audio;
 }
@@ -5115,10 +5116,22 @@ function renderEditorShell(session) {
         optionInput.className = 'control';
         optionInput.placeholder = `Option ${optionIndex + 1}`;
         optionInput.value = String(option?.label ?? option?.value ?? '');
-        optionInput.addEventListener('input', () => {
+        let isOptionInputComposing = false;
+        const commitOptionInputValue = () => {
           session.updateQuestionOptionAtIndex(selectedBlock.blockId, optionIndex, optionInput.value);
           refreshOptionRowT2AControls(selectedBlock.blockId, optionId, row);
           updateSummary({ preserveDetailEditor: true });
+        };
+        optionInput.addEventListener('compositionstart', () => {
+          isOptionInputComposing = true;
+        });
+        optionInput.addEventListener('compositionend', () => {
+          isOptionInputComposing = false;
+          commitOptionInputValue();
+        });
+        optionInput.addEventListener('input', (event) => {
+          if (isOptionInputComposing || event.isComposing) return;
+          commitOptionInputValue();
         });
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
         const optionActionsMenu = document.createElement('details');
@@ -5290,7 +5303,7 @@ function renderEditorShell(session) {
         removeBtn.className = 'icon-btn danger';
         removeBtn.title = 'Delete this option';
         removeBtn.setAttribute('aria-label', `Delete option ${optionIndex + 1}`);
-        removeBtn.innerHTML = createEditorIcon('trash');
+        removeBtn.textContent = '🗑';
         removeBtn.addEventListener('click', async () => {
           const outcome = session.removeQuestionOptionWithPolicy(selectedBlock.blockId, optionIndex);
           if (!outcome.ok && outcome.reason === 'confirm-delete-required') {
