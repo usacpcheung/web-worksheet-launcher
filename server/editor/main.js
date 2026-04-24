@@ -305,10 +305,17 @@ function createEditorIcon(name) {
     check: `<svg ${svgAttrs}><path d="M20 6 9 17l-5-5"></path></svg>`,
     chevronUp: `<svg ${svgAttrs}><path d="m18 15-6-6-6 6"></path></svg>`,
     chevronDown: `<svg ${svgAttrs}><path d="m6 9 6 6 6-6"></path></svg>`,
+    filePlus: `<svg ${svgAttrs}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M12 18v-6"></path><path d="M9 15h6"></path></svg>`,
     eye: `<svg ${svgAttrs}><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
+    info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
     image: `<svg ${svgAttrs}><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"></path></svg>`,
+    list: `<svg ${svgAttrs}><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>`,
     loading: `<svg ${svgAttrs}><path d="M21 12a9 9 0 1 1-9-9"></path></svg>`,
+    pencil: `<svg ${svgAttrs}><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg>`,
     play: `<svg ${svgAttrs}><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>`,
+    question: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M9.1 9a3 3 0 1 1 5.8 1c-.7 1.1-2 1.4-2.5 2.4"></path><path d="M12 17h.01"></path></svg>`,
+    save: `<svg ${svgAttrs}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path></svg>`,
+    shield: `<svg ${svgAttrs}><path d="M20 13c0 5-3.5 7.5-7.4 8.8a2 2 0 0 1-1.2 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.5a1.3 1.3 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg>`,
     upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
     generate: `<svg ${svgAttrs}><path d="M15 4V2"></path><path d="M15 16v-2"></path><path d="M8 9h2"></path><path d="M20 9h2"></path><path d="m17.8 11.8 1.4 1.4"></path><path d="m17.8 6.2 1.4-1.4"></path><path d="m3 21 9-9"></path><path d="M12.2 6.2 13.6 4.8"></path><path d="m4.8 19.2 1.4-1.4"></path></svg>`,
     refresh: `<svg ${svgAttrs}><path d="M3 12a9 9 0 0 1 15.2-6.5L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-15.2 6.5L3 16"></path><path d="M3 21v-5h5"></path></svg>`,
@@ -339,6 +346,34 @@ function setOptionAudioMenuTriggerState(trigger, { hasAudio = false, isGeneratin
   trigger.setAttribute('aria-label', label);
   trigger.setAttribute('aria-disabled', isPersisted ? 'false' : 'true');
   trigger.dataset.audioState = isGenerating ? 'generating' : hasAudio ? 'attached' : 'empty';
+}
+
+function toTitleCaseLabel(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function getBlockKindLabel(kind) {
+  if (kind === 'question') return 'Question';
+  if (kind === 'content') return 'Content';
+  return toTitleCaseLabel(kind || 'Block');
+}
+
+function getAnswerInputTypeLabel(inputType) {
+  const labels = {
+    text: 'Text',
+    number: 'Number',
+    boolean: 'True / False',
+    multiple_choice: 'Multiple choice',
+  };
+  return labels[inputType] || toTitleCaseLabel(inputType);
+}
+
+function getSelectionModeLabel(selectionMode) {
+  if (selectionMode === 'single') return 'Single';
+  if (selectionMode === 'multi') return 'Multiple';
+  return toTitleCaseLabel(selectionMode);
 }
 
 async function loadContracts() {
@@ -3504,7 +3539,7 @@ function renderEditorShell(session) {
   const metadataSection = document.createElement('section');
   metadataSection.className = 'editor-metadata-section';
   const metadataHeading = document.createElement('h3');
-  metadataHeading.textContent = 'Draft Metadata';
+  metadataHeading.textContent = 'Draft Info';
   const titleField = document.createElement('div');
   titleField.className = 'editor-field';
   const titleLabel = document.createElement('label');
@@ -3535,10 +3570,10 @@ function renderEditorShell(session) {
   questionInputType.id = 'editor-question-input-type';
   questionInputType.className = 'control';
   [
-    { value: 'text', label: 'text' },
-    { value: 'number', label: 'number' },
-    { value: 'boolean', label: 'True / False' },
-    { value: 'multiple_choice', label: 'multiple_choice' },
+    { value: 'text', label: getAnswerInputTypeLabel('text') },
+    { value: 'number', label: getAnswerInputTypeLabel('number') },
+    { value: 'boolean', label: getAnswerInputTypeLabel('boolean') },
+    { value: 'multiple_choice', label: getAnswerInputTypeLabel('multiple_choice') },
   ].forEach(({ value, label }) => {
     const option = document.createElement('option');
     option.value = value;
@@ -3549,8 +3584,8 @@ function renderEditorShell(session) {
   questionTextDisplayMode.id = 'editor-question-text-display-mode';
   questionTextDisplayMode.className = 'control';
   [
-    { value: 'single_line', label: 'single_line' },
-    { value: 'multi_line', label: 'multi_line' },
+    { value: 'single_line', label: 'Single line' },
+    { value: 'multi_line', label: 'Multi line' },
   ].forEach(({ value, label }) => {
     const option = document.createElement('option');
     option.value = value;
@@ -3578,8 +3613,8 @@ function renderEditorShell(session) {
   questionSelectionMode.id = 'editor-question-selection-mode';
   questionSelectionMode.className = 'control';
   [
-    { value: 'single', label: 'single' },
-    { value: 'multi', label: 'multi' },
+    { value: 'single', label: getSelectionModeLabel('single') },
+    { value: 'multi', label: getSelectionModeLabel('multi') },
   ].forEach(({ value, label }) => {
     const option = document.createElement('option');
     option.value = value;
@@ -3852,6 +3887,92 @@ function renderEditorShell(session) {
       }
     }
     return false;
+  }
+
+  function notifyClipboardResult({ copied, successText, failureText, source }) {
+    session.pushNotification({
+      kind: copied ? 'success' : 'warn',
+      category: 'editor',
+      source,
+      text: copied ? successText : failureText,
+    });
+    session.notifyStateChange();
+  }
+
+  function createCopyIdMenu({ triggerKind = 'info', triggerText = '', title, idValue, copyLabel, source }) {
+    const details = document.createElement('details');
+    details.className = `id-copy-menu id-copy-menu--${triggerKind}`;
+    const summary = document.createElement('summary');
+    summary.className = triggerKind === 'badge'
+      ? 'asset-status-badge'
+      : 'icon-btn id-copy-menu__summary';
+    summary.setAttribute('role', 'button');
+    summary.setAttribute('aria-label', `${title}: show copy action`);
+    if (triggerKind === 'badge') {
+      summary.textContent = triggerText || 'Attached';
+    } else {
+      summary.innerHTML = createEditorIcon('info');
+      summary.title = title;
+    }
+
+    const body = document.createElement('div');
+    body.className = 'id-copy-menu__body';
+    const label = document.createElement('p');
+    label.className = 'id-copy-menu__label';
+    label.textContent = title;
+    const value = document.createElement('p');
+    value.className = 'editor-id-value id-copy-menu__value';
+    value.textContent = idValue || 'n/a';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'id-copy-menu__copy';
+    copyBtn.textContent = copyLabel;
+    copyBtn.disabled = !isNonEmptyString(idValue);
+    copyBtn.addEventListener('click', async () => {
+      const copied = await copyTextToClipboard(idValue);
+      copyBtn.textContent = copied ? 'Copied' : copyLabel;
+      notifyClipboardResult({
+        copied,
+        source,
+        successText: `${title} copied.`,
+        failureText: 'Clipboard copy is unavailable in this browser.',
+      });
+      window.setTimeout(() => {
+        copyBtn.textContent = copyLabel;
+      }, 1400);
+    });
+    body.append(label, value, copyBtn);
+    details.append(summary, body);
+    return details;
+  }
+
+  function createEditorSectionHeader({ icon = 'info', title, className = '' }) {
+    const header = document.createElement('div');
+    header.className = `editor-section-header ${className}`.trim();
+    const iconWrap = document.createElement('span');
+    iconWrap.className = 'editor-section-header__icon';
+    iconWrap.setAttribute('aria-hidden', 'true');
+    iconWrap.innerHTML = createEditorIcon(icon);
+    const heading = document.createElement('h3');
+    heading.textContent = title;
+    header.append(iconWrap, heading);
+    return header;
+  }
+
+  function formatLastSavedLabel(lastSavedAt) {
+    if (!isNonEmptyString(lastSavedAt)) return 'Not yet saved';
+    const savedTime = new Date(lastSavedAt).getTime();
+    if (!Number.isFinite(savedTime)) return lastSavedAt;
+    const elapsedMs = Date.now() - savedTime;
+    if (elapsedMs < 0) return 'just now';
+    const elapsedSeconds = Math.floor(elapsedMs / 1000);
+    if (elapsedSeconds < 10) return 'just now';
+    if (elapsedSeconds < 60) return `${elapsedSeconds} seconds ago`;
+    const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+    if (elapsedMinutes < 60) return `${elapsedMinutes} minute${elapsedMinutes === 1 ? '' : 's'} ago`;
+    const elapsedHours = Math.floor(elapsedMinutes / 60);
+    if (elapsedHours < 24) return `${elapsedHours} hour${elapsedHours === 1 ? '' : 's'} ago`;
+    return lastSavedAt;
   }
 
   function emitServerNotification({ kind = 'info', text = '', source = 'editor.server' } = {}) {
@@ -4201,19 +4322,23 @@ function renderEditorShell(session) {
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
-    option.textContent = kind;
+    option.textContent = getBlockKindLabel(kind);
     blockKind.appendChild(option);
   });
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.textContent = 'Save Now';
+  saveBtn.className = 'primary-action-btn';
+  setMediaActionButtonContent(saveBtn, 'save', 'Save Now');
   const addContentBtn = document.createElement('button');
   addContentBtn.type = 'button';
-  addContentBtn.textContent = 'Add Content';
+  addContentBtn.className = 'sidebar-action-btn';
+  setMediaActionButtonContent(addContentBtn, 'filePlus', 'Add Content');
   const addQuestionBtn = document.createElement('button');
   addQuestionBtn.type = 'button';
-  addQuestionBtn.textContent = 'Add Question';
+  addQuestionBtn.className = 'sidebar-action-btn';
+  setMediaActionButtonContent(addQuestionBtn, 'question', 'Add Question');
   const openViewerBtn = document.createElement('button');
   openViewerBtn.type = 'button';
   openViewerBtn.textContent = 'Open in Viewer (same tab)';
@@ -4430,7 +4555,16 @@ function renderEditorShell(session) {
       const displayIndex = index + 1;
       const previewSource = block.kind === 'question' ? block?.prompt?.text : block?.content?.text;
       const preview = String(previewSource || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
-      button.textContent = `${displayIndex}. ${block.kind} — ${preview}`;
+      const blockIndex = document.createElement('span');
+      blockIndex.className = 'block-select__index';
+      blockIndex.textContent = `${displayIndex}.`;
+      const blockTitle = document.createElement('span');
+      blockTitle.className = 'block-select__title';
+      blockTitle.textContent = preview;
+      const blockBadge = document.createElement('span');
+      blockBadge.className = `block-kind-badge block-kind-badge--${block.kind}`;
+      blockBadge.textContent = block.kind;
+      button.append(blockIndex, blockTitle, blockBadge);
       button.addEventListener('click', () => {
         session.selectBlock(block.blockId);
         updateSummary();
@@ -4678,8 +4812,8 @@ function renderEditorShell(session) {
         : '';
     }
     if (optionAudioAttached instanceof HTMLElement) {
-      optionAudioAttached.hidden = !optionAudioRef;
-      optionAudioAttached.textContent = optionAudioRef ? `Option audio attached (${optionAudioRef.assetId})` : '';
+      optionAudioAttached.hidden = true;
+      optionAudioAttached.textContent = '';
     }
   };
 
@@ -4724,22 +4858,38 @@ function renderEditorShell(session) {
     detailSignature = nextSignature;
     optionActionSignature = nextOptionActionSignature;
     rightPanel.innerHTML = '';
-    rightPanel.append(rightHeading, statusRow);
+    const detailHeader = document.createElement('div');
+    detailHeader.className = 'block-detail-header';
+    const detailTitleGroup = document.createElement('div');
+    detailTitleGroup.className = 'block-detail-header__title';
+    detailTitleGroup.appendChild(rightHeading);
+    const detailActions = document.createElement('div');
+    detailActions.className = 'block-detail-header__actions';
     if (!selectedBlock) {
       promptT2AUiRefs = null;
       const empty = document.createElement('p');
       empty.textContent = 'Select a block to edit.';
+      detailHeader.append(detailTitleGroup);
+      rightPanel.append(detailHeader);
       rightPanel.appendChild(empty);
       return;
     }
 
-    const kindLabel = document.createElement('label');
-    kindLabel.textContent = 'Block kind';
-    kindLabel.htmlFor = 'editor-block-kind';
-    rightPanel.append(kindLabel, blockKind);
+    detailActions.append(
+      blockKind,
+      createCopyIdMenu({
+        title: 'Block ID',
+        idValue: selectedBlock.blockId,
+        copyLabel: 'Copy Block ID',
+        source: 'clipboard.blockId',
+      })
+    );
+    detailHeader.append(detailTitleGroup, detailActions);
+    rightPanel.append(detailHeader);
 
     if (selectedBlock.kind === 'content') {
       promptT2AUiRefs = null;
+      rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: 'Content' }));
       const contentLabel = document.createElement('label');
       contentLabel.textContent = 'Content text';
       contentLabel.htmlFor = 'editor-block-editor';
@@ -4748,8 +4898,9 @@ function renderEditorShell(session) {
       return;
     }
 
+    rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: 'Question' }));
     const promptLabel = document.createElement('label');
-    promptLabel.textContent = 'Question prompt';
+    promptLabel.textContent = 'Prompt';
     promptLabel.htmlFor = 'editor-block-editor';
     blockEditor.placeholder = 'Question prompt';
     rightPanel.append(promptLabel, blockEditor);
@@ -4758,25 +4909,49 @@ function renderEditorShell(session) {
     const currentQuestionImageRef = getSingleMediaRef(promptMediaRefs, 'question_image');
     const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
 
+    const mediaSection = document.createElement('section');
+    mediaSection.className = 'editor-detail-section media-section';
+    mediaSection.appendChild(createEditorSectionHeader({ icon: 'image', title: 'Media' }));
+    const mediaRows = document.createElement('div');
+    mediaRows.className = 'media-row-list';
     const questionImageRow = document.createElement('div');
-    questionImageRow.className = 'button-row';
-    const questionImageLabel = document.createElement('label');
-    questionImageLabel.textContent = currentQuestionImageRef
-      ? `Question image attached (${currentQuestionImageRef.assetId})`
-      : 'Question image: none attached';
+    questionImageRow.className = 'media-row';
+    const questionImageMeta = document.createElement('div');
+    questionImageMeta.className = 'media-row__meta';
+    const questionImageLabel = document.createElement('span');
+    questionImageLabel.className = 'media-row__title';
+    questionImageLabel.textContent = 'Image';
+    questionImageMeta.appendChild(questionImageLabel);
+    if (currentQuestionImageRef) {
+      questionImageMeta.appendChild(createCopyIdMenu({
+        triggerKind: 'badge',
+        triggerText: 'Attached',
+        title: 'Image Asset ID',
+        idValue: currentQuestionImageRef.assetId,
+        copyLabel: 'Copy Asset ID',
+        source: 'clipboard.imageAssetId',
+      }));
+    } else {
+      const emptyImageBadge = document.createElement('span');
+      emptyImageBadge.className = 'asset-status-badge asset-status-badge--empty';
+      emptyImageBadge.textContent = 'None';
+      questionImageMeta.appendChild(emptyImageBadge);
+    }
+    const questionImageActions = document.createElement('div');
+    questionImageActions.className = 'media-row__actions';
     const attachImageBtn = document.createElement('button');
     attachImageBtn.type = 'button';
     attachImageBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(attachImageBtn, 'image', currentQuestionImageRef ? 'Replace image…' : 'Attach image…');
+    setMediaActionButtonContent(attachImageBtn, 'image', currentQuestionImageRef ? 'Replace' : 'Attach');
     const removeImageBtn = document.createElement('button');
     removeImageBtn.type = 'button';
     removeImageBtn.className = 'media-action-btn media-action-btn--remove';
-    setMediaActionButtonContent(removeImageBtn, 'trash', 'Remove image');
+    setMediaActionButtonContent(removeImageBtn, 'trash', 'Remove');
     removeImageBtn.disabled = !currentQuestionImageRef;
     const viewImageBtn = document.createElement('button');
     viewImageBtn.type = 'button';
     viewImageBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(viewImageBtn, 'eye', 'View image');
+    setMediaActionButtonContent(viewImageBtn, 'eye', 'View');
     viewImageBtn.disabled = !currentQuestionImageRef;
     attachImageBtn.addEventListener('click', () => {
       questionImageInput.dataset.blockId = selectedBlock.blockId;
@@ -4805,15 +4980,34 @@ function renderEditorShell(session) {
       await session.openAssetImage(currentQuestionImageRef.assetId);
       updateSummary();
     });
-    questionImageRow.append(attachImageBtn, viewImageBtn, removeImageBtn);
-    rightPanel.append(questionImageLabel, questionImageRow);
+    questionImageActions.append(attachImageBtn, viewImageBtn, removeImageBtn);
+    questionImageRow.append(questionImageMeta, questionImageActions);
 
     const questionAudioRow = document.createElement('div');
-    questionAudioRow.className = 'button-row';
-    const questionAudioLabel = document.createElement('label');
-    questionAudioLabel.textContent = currentQuestionAudioRef
-      ? `Question audio attached (${currentQuestionAudioRef.assetId})`
-      : 'Question audio: none attached';
+    questionAudioRow.className = 'media-row';
+    const questionAudioMeta = document.createElement('div');
+    questionAudioMeta.className = 'media-row__meta';
+    const questionAudioLabel = document.createElement('span');
+    questionAudioLabel.className = 'media-row__title';
+    questionAudioLabel.textContent = 'Audio';
+    questionAudioMeta.appendChild(questionAudioLabel);
+    if (currentQuestionAudioRef) {
+      questionAudioMeta.appendChild(createCopyIdMenu({
+        triggerKind: 'badge',
+        triggerText: 'Attached',
+        title: 'Audio Asset ID',
+        idValue: currentQuestionAudioRef.assetId,
+        copyLabel: 'Copy Asset ID',
+        source: 'clipboard.audioAssetId',
+      }));
+    } else {
+      const emptyAudioBadge = document.createElement('span');
+      emptyAudioBadge.className = 'asset-status-badge asset-status-badge--empty';
+      emptyAudioBadge.textContent = 'None';
+      questionAudioMeta.appendChild(emptyAudioBadge);
+    }
+    const questionAudioActions = document.createElement('div');
+    questionAudioActions.className = 'media-row__actions';
     const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');
     const promptExceedsT2ALimit = promptTextState.exceedsLimit;
     const promptT2AEligible = promptTextState.eligible;
@@ -4822,16 +5016,16 @@ function renderEditorShell(session) {
     const attachQuestionAudioBtn = document.createElement('button');
     attachQuestionAudioBtn.type = 'button';
     attachQuestionAudioBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(attachQuestionAudioBtn, 'upload', currentQuestionAudioRef ? 'Replace audio…' : 'Attach audio…');
+    setMediaActionButtonContent(attachQuestionAudioBtn, 'upload', currentQuestionAudioRef ? 'Replace' : 'Attach');
     const removeQuestionAudioBtn = document.createElement('button');
     removeQuestionAudioBtn.type = 'button';
     removeQuestionAudioBtn.className = 'media-action-btn media-action-btn--remove';
-    setMediaActionButtonContent(removeQuestionAudioBtn, 'trash', 'Remove audio');
+    setMediaActionButtonContent(removeQuestionAudioBtn, 'trash', 'Remove');
     removeQuestionAudioBtn.disabled = !currentQuestionAudioRef;
     const playQuestionAudioBtn = document.createElement('button');
     playQuestionAudioBtn.type = 'button';
     playQuestionAudioBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(playQuestionAudioBtn, 'play', 'Play audio');
+    setMediaActionButtonContent(playQuestionAudioBtn, 'play', 'Play');
     playQuestionAudioBtn.disabled = !currentQuestionAudioRef;
     const generateQuestionAudioBtn = document.createElement('button');
     generateQuestionAudioBtn.type = 'button';
@@ -4839,7 +5033,7 @@ function renderEditorShell(session) {
     setMediaActionButtonContent(
       generateQuestionAudioBtn,
       isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate',
-      isPromptT2AInFlight ? 'Generating…' : currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio'
+      isPromptT2AInFlight ? 'Generating…' : currentQuestionAudioRef ? 'Regenerate' : 'Generate'
     );
     generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;
     const questionAudioHint = document.createElement('p');
@@ -4963,25 +5157,46 @@ function renderEditorShell(session) {
         updateSummary();
       }
     });
-    questionAudioRow.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
-    rightPanel.append(questionAudioLabel, questionAudioRow, questionAudioHint, mediaFeedback);
+    questionAudioActions.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
+    questionAudioRow.append(questionAudioMeta, questionAudioActions);
+    mediaRows.append(questionImageRow, questionAudioRow);
+    mediaSection.append(mediaRows, questionAudioHint, mediaFeedback);
+    rightPanel.appendChild(mediaSection);
 
+    const answerSection = document.createElement('section');
+    answerSection.className = 'editor-detail-section answer-section';
+    answerSection.appendChild(createEditorSectionHeader({ icon: 'list', title: 'Answer' }));
+    const answerGrid = document.createElement('div');
+    answerGrid.className = 'answer-grid';
     const inputTypeLabel = document.createElement('label');
     inputTypeLabel.textContent = 'Answer input type';
     inputTypeLabel.htmlFor = 'editor-question-input-type';
-    rightPanel.append(inputTypeLabel, questionInputType);
+    const inputTypeField = document.createElement('div');
+    inputTypeField.className = 'editor-field';
+    inputTypeField.append(inputTypeLabel, questionInputType);
+    answerGrid.appendChild(inputTypeField);
 
     const activeInputType = selectedBlock.responseConfig?.inputType || 'text';
+    if (activeInputType === 'multiple_choice') {
+      const selectionModeLabel = document.createElement('label');
+      selectionModeLabel.textContent = 'Selection mode';
+      selectionModeLabel.htmlFor = 'editor-question-selection-mode';
+      const selectionModeField = document.createElement('div');
+      selectionModeField.className = 'editor-field';
+      selectionModeField.append(selectionModeLabel, questionSelectionMode);
+      answerGrid.appendChild(selectionModeField);
+    }
+    answerSection.appendChild(answerGrid);
     if (TEXT_INPUT_TYPES.has(activeInputType)) {
       const maxLengthLabel = document.createElement('label');
       maxLengthLabel.textContent = 'Max length';
       maxLengthLabel.htmlFor = 'editor-question-max-length';
-      rightPanel.append(maxLengthLabel, questionMaxLength);
+      answerSection.append(maxLengthLabel, questionMaxLength);
 
       const displayModeLabel = document.createElement('label');
       displayModeLabel.textContent = 'Text display mode';
       displayModeLabel.htmlFor = 'editor-question-text-display-mode';
-      rightPanel.append(displayModeLabel, questionTextDisplayMode);
+      answerSection.append(displayModeLabel, questionTextDisplayMode);
     }
 
     if (activeInputType === 'number') {
@@ -4991,7 +5206,7 @@ function renderEditorShell(session) {
       const maxLabel = document.createElement('label');
       maxLabel.textContent = 'Max';
       maxLabel.htmlFor = 'editor-question-max';
-      rightPanel.append(minLabel, questionMin, questionMinError, maxLabel, questionMax, questionMaxError);
+      answerSection.append(minLabel, questionMin, questionMinError, maxLabel, questionMax, questionMaxError);
 
       const signedRow = document.createElement('label');
       signedRow.className = 'inline-toggle';
@@ -4999,44 +5214,41 @@ function renderEditorShell(session) {
       const signedText = document.createElement('span');
       signedText.textContent = 'Allow signed values (+/-)';
       signedRow.append(signedText, questionNumberAllowSigned);
-      rightPanel.append(signedRow);
+      answerSection.append(signedRow);
 
       const decimalPlacesLabel = document.createElement('label');
       decimalPlacesLabel.textContent = 'Decimal places allowed (blank = unlimited)';
       decimalPlacesLabel.htmlFor = 'editor-question-number-decimal-places-allowed';
-      rightPanel.append(decimalPlacesLabel, questionNumberDecimalPlacesAllowed, questionNumberDecimalPlacesAllowedError);
+      answerSection.append(decimalPlacesLabel, questionNumberDecimalPlacesAllowed, questionNumberDecimalPlacesAllowedError);
 
       const correctAnswerLabel = document.createElement('label');
       correctAnswerLabel.textContent = 'Correct answer';
       correctAnswerLabel.htmlFor = 'editor-question-correct-answer-number';
-      rightPanel.append(correctAnswerLabel, questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
+      answerSection.append(correctAnswerLabel, questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
     }
 
     if (activeInputType === 'boolean') {
       const correctAnswerLabel = document.createElement('label');
       correctAnswerLabel.textContent = 'Correct answer';
       correctAnswerLabel.htmlFor = 'editor-question-correct-answer-boolean';
-      rightPanel.append(correctAnswerLabel, questionCorrectAnswerBoolean);
+      answerSection.append(correctAnswerLabel, questionCorrectAnswerBoolean);
+    }
+
+    if (activeInputType !== 'multiple_choice') {
+      rightPanel.appendChild(answerSection);
     }
 
     if (activeInputType === 'multiple_choice') {
-      const selectionModeLabel = document.createElement('label');
-      selectionModeLabel.textContent = 'Selection mode';
-      selectionModeLabel.htmlFor = 'editor-question-selection-mode';
-      rightPanel.append(selectionModeLabel, questionSelectionMode);
-
       const shuffleRow = document.createElement('label');
       shuffleRow.className = 'inline-toggle';
       shuffleRow.htmlFor = 'editor-question-shuffle-options';
       const shuffleText = document.createElement('span');
       shuffleText.textContent = 'Shuffle options';
       shuffleRow.append(shuffleText, questionShuffleOptions);
-      rightPanel.append(shuffleRow);
+      answerSection.append(shuffleRow);
 
-      const optionsLabel = document.createElement('label');
-      optionsLabel.textContent = 'Options';
-      optionsLabel.htmlFor = 'editor-question-options';
-      rightPanel.append(optionsLabel);
+      rightPanel.appendChild(answerSection);
+      rightPanel.appendChild(createEditorSectionHeader({ icon: 'list', title: 'Options' }));
 
       const normalizedResponseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
       const normalizedOptions = (normalizedResponseConfig.options || []).map((option, index) =>
@@ -5354,19 +5566,11 @@ function renderEditorShell(session) {
           : '';
         optionT2AHint.hidden = !isPersistedOption || !optionTextExceedsT2ALimit;
         row.appendChild(optionT2AHint);
-        if (optionAudioRef) {
-          const optionAudioAttached = document.createElement('span');
-          optionAudioAttached.className = 'muted option-row__meta';
-          optionAudioAttached.dataset.optionAudioAttached = '1';
-          optionAudioAttached.textContent = `Option audio attached (${optionAudioRef.assetId})`;
-          row.appendChild(optionAudioAttached);
-        } else {
-          const optionAudioAttached = document.createElement('span');
-          optionAudioAttached.className = 'muted option-row__meta';
-          optionAudioAttached.dataset.optionAudioAttached = '1';
-          optionAudioAttached.hidden = true;
-          row.appendChild(optionAudioAttached);
-        }
+        const optionAudioAttached = document.createElement('span');
+        optionAudioAttached.className = 'muted option-row__meta';
+        optionAudioAttached.dataset.optionAudioAttached = '1';
+        optionAudioAttached.hidden = true;
+        row.appendChild(optionAudioAttached);
         questionOptionsList.appendChild(row);
       });
       rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
@@ -5402,11 +5606,14 @@ function renderEditorShell(session) {
         : 'Saved';
 
     const isSaved = saveState === 'Saved';
-    saveStateEl.innerHTML = `<span class="editor-label">State:</span> <span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}"><span class="editor-dot"></span>${isSaved ? 'Saved' : saveState}</span>`;
+    saveStateEl.innerHTML = `<span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}">${createEditorIcon('check')}${isSaved ? 'Saved' : saveState}</span>`;
     saveStateEl.title = session.state.lastPersistenceError || session.state.lastValidationWarning || '';
-    lastSavedEl.textContent = `Last saved: ${session.state.lastSavedAt || 'Not yet saved'}`;
+    const lastSavedLabel = document.createElement('span');
+    lastSavedLabel.className = 'editor-label';
+    lastSavedLabel.textContent = 'Last saved:';
+    lastSavedEl.replaceChildren(lastSavedLabel, document.createTextNode(` ${formatLastSavedLabel(session.state.lastSavedAt)}`));
     const validationIssues = session.state.lastSavedLocalValidationIssueCount + session.state.lastContractValidationIssueCount;
-    validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">Validation: ${validationIssues} issue${validationIssues === 1 ? '' : 's'}</span>`;
+    validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">${createEditorIcon('shield')}${validationIssues} issue${validationIssues === 1 ? '' : 's'}</span>`;
     const validationTooltip = [];
     if (session.state.lastValidationWarning) {
       validationTooltip.push(session.state.lastValidationWarning);
@@ -5910,8 +6117,6 @@ function renderEditorShell(session) {
     updateSummary();
   });
 
-  addContentBtn.textContent = '+ Add Content';
-  addQuestionBtn.textContent = '+ Add Question';
   controlsRow.append(addContentBtn, addQuestionBtn);
   metaRow.append(saveBtn, exportBtn, importBtn, openViewerBtn);
   protectedActionsColumn.append(

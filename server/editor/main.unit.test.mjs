@@ -1011,7 +1011,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    publishBtn,'), false);
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
   assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
-  assert.equal(source.includes("metadataHeading.textContent = 'Draft Metadata';"), true);
+  assert.equal(source.includes("metadataHeading.textContent = 'Draft Info';"), true);
   assert.equal(source.includes("titleLabel.textContent = 'Worksheet Title';"), true);
   assert.equal(source.includes("subjectLabel.textContent = 'Subject';"), true);
   assert.equal(source.includes("signInBtn.textContent = 'Sign in for server features';"), true);
@@ -1072,13 +1072,13 @@ test('question audio row adds contextual generate/regenerate control with prompt
   assert.equal(source.includes("generateQuestionAudioBtn,"), true);
   assert.equal(source.includes("isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate'"), true);
   assert.equal(source.includes("? 'Generating…'"), true);
-  assert.equal(source.includes(": currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio';"), true);
+  assert.equal(source.includes("isPromptT2AInFlight ? 'Generating…' : currentQuestionAudioRef ? 'Regenerate' : 'Generate'"), true);
   assert.equal(source.includes("generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;"), true);
   assert.equal(source.includes("Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters)."), true);
   assert.equal(source.includes("attachQuestionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("playQuestionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("removeQuestionAudioBtn.disabled = true;"), true);
-  assert.equal(source.includes("questionAudioRow.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);"), true);
+  assert.equal(source.includes("questionAudioActions.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);"), true);
 });
 
 test('stage3: prompt row triggers replace confirmation before prompt bridge generation when audio exists', async () => {
@@ -1093,7 +1093,7 @@ test('stage3: prompt row triggers replace confirmation before prompt bridge gene
   assert.equal(hasAudioConfirmIdx < promptBridgeCallIdx, true);
 });
 
-test('multiple-choice option row renders audio status menu and shows attached asset id', async () => {
+test('multiple-choice option row renders audio status menu without raw attached asset id text', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("const optionActionsMenu = document.createElement('details');"), true);
   assert.equal(source.includes("optionActionsMenu.className = 'option-actions-menu option-audio-menu';"), true);
@@ -1103,7 +1103,7 @@ test('multiple-choice option row renders audio status menu and shows attached as
   assert.equal(source.includes("optionActionsRow.className = 'option-actions-menu__list option-audio-menu__list';"), true);
   assert.equal(source.includes('optionActionsMenu.append(optionAudioMenuTrigger, optionActionsRow);'), true);
   assert.equal(source.includes('row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);'), true);
-  assert.equal(source.includes('Option audio attached ('), true);
+  assert.equal(source.includes('Option audio attached ('), false);
 });
 
 test('multiple-choice option actions include contextual generate/regenerate audio with text eligibility and row lock', async () => {
