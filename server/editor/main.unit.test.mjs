@@ -1068,7 +1068,9 @@ test('multiple-choice option audio controls gate placeholder options with helper
 test('question audio row adds contextual generate/regenerate control with prompt eligibility checks', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');"), true);
-  assert.equal(source.includes("generateQuestionAudioBtn.textContent = isPromptT2AInFlight"), true);
+  assert.equal(source.includes("setMediaActionButtonContent("), true);
+  assert.equal(source.includes("generateQuestionAudioBtn,"), true);
+  assert.equal(source.includes("isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate'"), true);
   assert.equal(source.includes("? 'Generating…'"), true);
   assert.equal(source.includes(": currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio';"), true);
   assert.equal(source.includes("generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;"), true);

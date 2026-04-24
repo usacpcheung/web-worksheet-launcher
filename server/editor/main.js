@@ -298,22 +298,32 @@ function toValidGeneratedAudioBytes(candidate) {
 }
 
 function createEditorIcon(name) {
-  const svgAttrs = 'viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
+  const svgAttrs = 'class="editor-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
   const icons = {
-    audio: `<svg ${svgAttrs}><path d="M11 5 6 9H3v6h3l5 4V5Z"></path><path d="M16 9.5a4 4 0 0 1 0 5"></path><path d="M19 7a8 8 0 0 1 0 10"></path></svg>`,
-    audioAttached: `<svg ${svgAttrs}><path d="M11 5 6 9H3v6h3l5 4V5Z"></path><path d="M16 9.5a4 4 0 0 1 0 5"></path><path d="M19 7a8 8 0 0 1 0 10"></path><path d="m15.5 18 1.7 1.7 3.3-3.7"></path></svg>`,
+    audio: `<svg ${svgAttrs}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>`,
+    audioAttached: `<svg ${svgAttrs}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="m16 19 2 2 4-4"></path></svg>`,
+    check: `<svg ${svgAttrs}><path d="M20 6 9 17l-5-5"></path></svg>`,
+    chevronUp: `<svg ${svgAttrs}><path d="m18 15-6-6-6 6"></path></svg>`,
+    chevronDown: `<svg ${svgAttrs}><path d="m6 9 6 6 6-6"></path></svg>`,
+    eye: `<svg ${svgAttrs}><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
+    image: `<svg ${svgAttrs}><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"></path></svg>`,
     loading: `<svg ${svgAttrs}><path d="M21 12a9 9 0 1 1-9-9"></path></svg>`,
-    play: `<svg ${svgAttrs}><path d="M8 5v14l11-7Z"></path></svg>`,
+    play: `<svg ${svgAttrs}><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>`,
     upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
-    generate: `<svg ${svgAttrs}><path d="m13 2-2 7h7l-7 13 2-8H6l7-12Z"></path></svg>`,
-    refresh: `<svg ${svgAttrs}><path d="M21 12a9 9 0 0 1-14.9 6.8"></path><path d="M3 12A9 9 0 0 1 17.9 5.2"></path><path d="M18 2v4h-4"></path><path d="M6 22v-4h4"></path></svg>`,
-    trash: `<svg ${svgAttrs}><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="m19 6-.8 14.2a2 2 0 0 1-2 1.8H7.8a2 2 0 0 1-2-1.8L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>`,
+    generate: `<svg ${svgAttrs}><path d="M15 4V2"></path><path d="M15 16v-2"></path><path d="M8 9h2"></path><path d="M20 9h2"></path><path d="m17.8 11.8 1.4 1.4"></path><path d="m17.8 6.2 1.4-1.4"></path><path d="m3 21 9-9"></path><path d="M12.2 6.2 13.6 4.8"></path><path d="m4.8 19.2 1.4-1.4"></path></svg>`,
+    refresh: `<svg ${svgAttrs}><path d="M3 12a9 9 0 0 1 15.2-6.5L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-15.2 6.5L3 16"></path><path d="M3 21v-5h5"></path></svg>`,
+    trash: `<svg ${svgAttrs}><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>`,
   };
   return icons[name] || icons.audio;
 }
 
+function setIconButtonContent(button, iconName) {
+  button.innerHTML = createEditorIcon(iconName);
+}
+
 function setMediaActionButtonContent(button, iconName, label) {
-  button.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">${createEditorIcon(iconName)}</span><span>${label}</span>`;
+  const spinClass = iconName === 'loading' ? ' media-action-btn__icon--spin' : '';
+  button.innerHTML = `<span class="media-action-btn__icon${spinClass}" aria-hidden="true">${createEditorIcon(iconName)}</span><span>${label}</span>`;
 }
 
 function setOptionAudioMenuTriggerState(trigger, { hasAudio = false, isGenerating = false, isPersisted = true } = {}) {
@@ -322,7 +332,7 @@ function setOptionAudioMenuTriggerState(trigger, { hasAudio = false, isGeneratin
   const label = isGenerating
     ? 'Option audio actions, generating'
     : hasAudio ? 'Option audio actions, audio attached' : 'Option audio actions';
-  trigger.innerHTML = `<span class="media-action-btn__icon${isGenerating ? ' media-action-btn__icon--spin' : ''}" aria-hidden="true">${createEditorIcon(iconName)}</span>`;
+  trigger.innerHTML = `<span class="option-actions-menu__icon${isGenerating ? ' option-actions-menu__icon--spin' : ''}" aria-hidden="true">${createEditorIcon(iconName)}</span>`;
   trigger.title = isPersisted
     ? label
     : 'Enter option text or click Add option before using audio actions';
@@ -4432,7 +4442,7 @@ function renderEditorShell(session) {
       moveUpBtn.className = 'icon-btn';
       moveUpBtn.title = `Move block ${displayIndex} up`;
       moveUpBtn.setAttribute('aria-label', `Move block ${displayIndex} up`);
-      moveUpBtn.textContent = '▲';
+      setIconButtonContent(moveUpBtn, 'chevronUp');
       moveUpBtn.disabled = isFirst;
       moveUpBtn.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -4444,7 +4454,7 @@ function renderEditorShell(session) {
       moveDownBtn.className = 'icon-btn';
       moveDownBtn.title = `Move block ${displayIndex} down`;
       moveDownBtn.setAttribute('aria-label', `Move block ${displayIndex} down`);
-      moveDownBtn.textContent = '▼';
+      setIconButtonContent(moveDownBtn, 'chevronDown');
       moveDownBtn.disabled = isLast;
       moveDownBtn.addEventListener('click', (event) => {
         event.stopPropagation();
@@ -4456,7 +4466,7 @@ function renderEditorShell(session) {
       deleteBtn.className = 'icon-btn danger';
       deleteBtn.title = 'Delete this block';
       deleteBtn.setAttribute('aria-label', `Delete block ${displayIndex}`);
-      deleteBtn.textContent = '🗑';
+      setIconButtonContent(deleteBtn, 'trash');
       deleteBtn.addEventListener('click', async (event) => {
         event.stopPropagation();
         const outcome = session.deleteBlockWithPolicy(block.blockId);
@@ -4599,9 +4609,11 @@ function renderEditorShell(session) {
     const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
     const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
       || promptT2AInFlightBlockId === selectedBlock.blockId;
-    promptT2AUiRefs.generateBtn.textContent = isPromptT2AInFlight
+    const promptT2ALabel = isPromptT2AInFlight
       ? 'Generating…'
       : currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio';
+    const promptT2AIcon = isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate';
+    setMediaActionButtonContent(promptT2AUiRefs.generateBtn, promptT2AIcon, promptT2ALabel);
     promptT2AUiRefs.generateBtn.disabled = !promptTextState.eligible || isPromptT2AInFlight;
     promptT2AUiRefs.hint.textContent = promptTextState.exceedsLimit
       ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
@@ -4755,16 +4767,16 @@ function renderEditorShell(session) {
     const attachImageBtn = document.createElement('button');
     attachImageBtn.type = 'button';
     attachImageBtn.className = 'media-action-btn';
-    attachImageBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">🖼</span><span>${currentQuestionImageRef ? 'Replace image…' : 'Attach image…'}</span>`;
+    setMediaActionButtonContent(attachImageBtn, 'image', currentQuestionImageRef ? 'Replace image…' : 'Attach image…');
     const removeImageBtn = document.createElement('button');
     removeImageBtn.type = 'button';
     removeImageBtn.className = 'media-action-btn media-action-btn--remove';
-    removeImageBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">🖼</span><span>Remove image</span>';
+    setMediaActionButtonContent(removeImageBtn, 'trash', 'Remove image');
     removeImageBtn.disabled = !currentQuestionImageRef;
     const viewImageBtn = document.createElement('button');
     viewImageBtn.type = 'button';
     viewImageBtn.className = 'media-action-btn';
-    viewImageBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">👁</span><span>View image</span>';
+    setMediaActionButtonContent(viewImageBtn, 'eye', 'View image');
     viewImageBtn.disabled = !currentQuestionImageRef;
     attachImageBtn.addEventListener('click', () => {
       questionImageInput.dataset.blockId = selectedBlock.blockId;
@@ -4810,23 +4822,25 @@ function renderEditorShell(session) {
     const attachQuestionAudioBtn = document.createElement('button');
     attachQuestionAudioBtn.type = 'button';
     attachQuestionAudioBtn.className = 'media-action-btn';
-    attachQuestionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${currentQuestionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
+    setMediaActionButtonContent(attachQuestionAudioBtn, 'upload', currentQuestionAudioRef ? 'Replace audio…' : 'Attach audio…');
     const removeQuestionAudioBtn = document.createElement('button');
     removeQuestionAudioBtn.type = 'button';
     removeQuestionAudioBtn.className = 'media-action-btn media-action-btn--remove';
-    removeQuestionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
+    setMediaActionButtonContent(removeQuestionAudioBtn, 'trash', 'Remove audio');
     removeQuestionAudioBtn.disabled = !currentQuestionAudioRef;
     const playQuestionAudioBtn = document.createElement('button');
     playQuestionAudioBtn.type = 'button';
     playQuestionAudioBtn.className = 'media-action-btn';
-    playQuestionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
+    setMediaActionButtonContent(playQuestionAudioBtn, 'play', 'Play audio');
     playQuestionAudioBtn.disabled = !currentQuestionAudioRef;
     const generateQuestionAudioBtn = document.createElement('button');
     generateQuestionAudioBtn.type = 'button';
     generateQuestionAudioBtn.className = 'media-action-btn';
-    generateQuestionAudioBtn.textContent = isPromptT2AInFlight
-      ? 'Generating…'
-      : currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio';
+    setMediaActionButtonContent(
+      generateQuestionAudioBtn,
+      isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate',
+      isPromptT2AInFlight ? 'Generating…' : currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio'
+    );
     generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;
     const questionAudioHint = document.createElement('p');
     questionAudioHint.className = 'muted';
@@ -5106,7 +5120,7 @@ function renderEditorShell(session) {
         const tickIcon = document.createElement('span');
         tickIcon.className = 'option-correct-toggle__tick';
         tickIcon.setAttribute('aria-hidden', 'true');
-        tickIcon.textContent = '✓';
+        tickIcon.innerHTML = createEditorIcon('check');
         correctToggle.appendChild(tickIcon);
 
         const optionInput = document.createElement('input');
@@ -5137,7 +5151,7 @@ function renderEditorShell(session) {
         const optionActionsMenu = document.createElement('details');
         optionActionsMenu.className = 'option-actions-menu option-audio-menu';
         const optionAudioMenuTrigger = document.createElement('summary');
-        optionAudioMenuTrigger.className = 'option-actions-menu__toggle option-audio-menu__toggle';
+        optionAudioMenuTrigger.className = 'icon-btn option-actions-menu__toggle option-audio-menu__toggle';
         optionAudioMenuTrigger.dataset.optionAudioMenuTrigger = '1';
         optionAudioMenuTrigger.setAttribute('role', 'button');
         setOptionAudioMenuTriggerState(optionAudioMenuTrigger, {
@@ -5303,7 +5317,7 @@ function renderEditorShell(session) {
         removeBtn.className = 'icon-btn danger';
         removeBtn.title = 'Delete this option';
         removeBtn.setAttribute('aria-label', `Delete option ${optionIndex + 1}`);
-        removeBtn.textContent = '🗑';
+        setIconButtonContent(removeBtn, 'trash');
         removeBtn.addEventListener('click', async () => {
           const outcome = session.removeQuestionOptionWithPolicy(selectedBlock.blockId, optionIndex);
           if (!outcome.ok && outcome.reason === 'confirm-delete-required') {
