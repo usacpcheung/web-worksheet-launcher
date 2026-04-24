@@ -4911,7 +4911,7 @@ function renderEditorShell(session) {
 
     const mediaSection = document.createElement('section');
     mediaSection.className = 'editor-detail-section media-section';
-    mediaSection.appendChild(createEditorSectionHeader({ icon: 'image', title: 'Media' }));
+    mediaSection.appendChild(createEditorSectionHeader({ icon: 'image', title: 'Prompt Media' }));
     const mediaRows = document.createElement('div');
     mediaRows.className = 'media-row-list';
     const questionImageRow = document.createElement('div');
@@ -4920,13 +4920,13 @@ function renderEditorShell(session) {
     questionImageMeta.className = 'media-row__meta';
     const questionImageLabel = document.createElement('span');
     questionImageLabel.className = 'media-row__title';
-    questionImageLabel.textContent = 'Image';
+    questionImageLabel.textContent = 'Prompt image';
     questionImageMeta.appendChild(questionImageLabel);
     if (currentQuestionImageRef) {
       questionImageMeta.appendChild(createCopyIdMenu({
         triggerKind: 'badge',
         triggerText: 'Attached',
-        title: 'Image Asset ID',
+        title: 'Prompt Image Asset ID',
         idValue: currentQuestionImageRef.assetId,
         copyLabel: 'Copy Asset ID',
         source: 'clipboard.imageAssetId',
@@ -4989,13 +4989,13 @@ function renderEditorShell(session) {
     questionAudioMeta.className = 'media-row__meta';
     const questionAudioLabel = document.createElement('span');
     questionAudioLabel.className = 'media-row__title';
-    questionAudioLabel.textContent = 'Audio';
+    questionAudioLabel.textContent = 'Prompt audio';
     questionAudioMeta.appendChild(questionAudioLabel);
     if (currentQuestionAudioRef) {
       questionAudioMeta.appendChild(createCopyIdMenu({
         triggerKind: 'badge',
         triggerText: 'Attached',
-        title: 'Audio Asset ID',
+        title: 'Prompt Audio Asset ID',
         idValue: currentQuestionAudioRef.assetId,
         copyLabel: 'Copy Asset ID',
         source: 'clipboard.audioAssetId',
