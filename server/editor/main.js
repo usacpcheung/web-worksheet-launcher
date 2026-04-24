@@ -3624,7 +3624,17 @@ function renderEditorShell(session) {
   const questionShuffleOptions = document.createElement('input');
   questionShuffleOptions.id = 'editor-question-shuffle-options';
   questionShuffleOptions.type = 'checkbox';
-  questionShuffleOptions.className = 'control';
+  questionShuffleOptions.hidden = true;
+  const questionShuffleToggle = document.createElement('button');
+  questionShuffleToggle.type = 'button';
+  questionShuffleToggle.className = 'option-correct-toggle inline-toggle__tick-btn';
+  questionShuffleToggle.setAttribute('aria-label', 'Toggle shuffle options');
+  questionShuffleToggle.setAttribute('aria-pressed', 'false');
+  const questionShuffleTick = document.createElement('span');
+  questionShuffleTick.className = 'option-correct-toggle__tick';
+  questionShuffleTick.setAttribute('aria-hidden', 'true');
+  questionShuffleTick.innerHTML = createEditorIcon('check');
+  questionShuffleToggle.appendChild(questionShuffleTick);
   const questionMin = document.createElement('input');
   questionMin.id = 'editor-question-min';
   questionMin.type = 'number';
@@ -4523,6 +4533,7 @@ function renderEditorShell(session) {
       if (activeElement !== questionShuffleOptions) {
         questionShuffleOptions.checked = Boolean(responseConfig.shuffleOptions);
       }
+      questionShuffleToggle.setAttribute('aria-pressed', questionShuffleOptions.checked ? 'true' : 'false');
       if (activeElement !== questionMin) questionMin.value = responseConfig.min ?? '';
       if (activeElement !== questionMax) questionMax.value = responseConfig.max ?? '';
       if (activeElement !== questionNumberAllowSigned) {
@@ -5249,12 +5260,11 @@ function renderEditorShell(session) {
     }
 
     if (activeInputType === 'multiple_choice') {
-      const shuffleRow = document.createElement('label');
-      shuffleRow.className = 'inline-toggle';
-      shuffleRow.htmlFor = 'editor-question-shuffle-options';
+      const shuffleRow = document.createElement('div');
+      shuffleRow.className = 'inline-toggle inline-toggle--custom';
       const shuffleText = document.createElement('span');
       shuffleText.textContent = 'Shuffle options';
-      shuffleRow.append(shuffleText, questionShuffleOptions);
+      shuffleRow.append(questionShuffleToggle, questionShuffleOptions, shuffleText);
       answerSection.append(shuffleRow);
 
       rightPanel.appendChild(answerSection);
@@ -5562,12 +5572,6 @@ function renderEditorShell(session) {
           updateSummary();
         });
         row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);
-        if (!isPersistedOption) {
-          const optionAudioHint = document.createElement('span');
-          optionAudioHint.className = 'muted option-row__meta';
-          optionAudioHint.textContent = 'Enter option text or click Add option before attaching audio.';
-          row.appendChild(optionAudioHint);
-        }
         const optionT2AHint = document.createElement('span');
         optionT2AHint.className = 'muted option-row__meta';
         optionT2AHint.dataset.optionT2aHint = '1';
@@ -5991,8 +5995,8 @@ function renderEditorShell(session) {
     session.updateQuestionSelectionMode(session.state.selectedBlockId, questionSelectionMode.value);
     updateSummary();
   });
-  questionShuffleOptions.addEventListener('change', () => {
-    session.updateQuestionShuffleOptions(session.state.selectedBlockId, questionShuffleOptions.checked);
+  questionShuffleToggle.addEventListener('click', () => {
+    session.updateQuestionShuffleOptions(session.state.selectedBlockId, !questionShuffleOptions.checked);
     updateSummary();
   });
   questionOptions.addEventListener('input', () => {
