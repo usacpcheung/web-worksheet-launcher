@@ -316,23 +316,11 @@ body {
 }
 
 .block-reorder-menu {
-  position: relative;
-}
-
-.block-reorder-menu[open] {
-  z-index: 6;
-}
-
-.block-reorder-menu__summary::marker,
-.block-reorder-menu__summary::-webkit-details-marker {
-  display: none;
-  content: '';
+  position: fixed;
+  z-index: 1000;
 }
 
 .block-reorder-menu__body {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
   display: flex;
   min-width: 132px;
   flex-direction: column;

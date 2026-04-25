@@ -4621,14 +4621,106 @@ function renderEditorShell(session) {
   };
 
   let draggedBlockId = null;
+  let closeActiveBlockReorderMenu = null;
+  let activeBlockReorderAnchor = null;
   const clearBlockDragState = () => {
     blockList.querySelectorAll('.block-item--dragging, .block-item--drop-before, .block-item--drop-after')
       .forEach((node) => {
         node.classList.remove('block-item--dragging', 'block-item--drop-before', 'block-item--drop-after');
       });
   };
+  const closeBlockReorderMenu = () => {
+    if (typeof closeActiveBlockReorderMenu === 'function') {
+      closeActiveBlockReorderMenu();
+      closeActiveBlockReorderMenu = null;
+    }
+    if (activeBlockReorderAnchor) {
+      activeBlockReorderAnchor.setAttribute('aria-expanded', 'false');
+      activeBlockReorderAnchor = null;
+    }
+  };
+  const positionBlockReorderMenu = (menu, anchor) => {
+    const anchorRect = anchor.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const viewportPadding = 8;
+    const belowTop = anchorRect.bottom + 6;
+    const aboveTop = anchorRect.top - menuRect.height - 6;
+    const hasRoomBelow = belowTop + menuRect.height <= window.innerHeight - viewportPadding;
+    const top = hasRoomBelow ? belowTop : Math.max(viewportPadding, aboveTop);
+    const left = Math.max(
+      viewportPadding,
+      Math.min(anchorRect.right - menuRect.width, window.innerWidth - menuRect.width - viewportPadding)
+    );
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  };
+  const openBlockReorderMenu = ({ anchor, block, displayIndex, isFirst, isLast }) => {
+    closeBlockReorderMenu();
+    const menu = document.createElement('div');
+    menu.className = 'block-reorder-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', `Reorder block ${displayIndex}`);
+
+    const moveUpBtn = document.createElement('button');
+    moveUpBtn.type = 'button';
+    moveUpBtn.className = 'block-reorder-menu__item';
+    moveUpBtn.title = `Move block ${displayIndex} up`;
+    moveUpBtn.textContent = 'Move up';
+    moveUpBtn.disabled = isFirst;
+    moveUpBtn.setAttribute('role', 'menuitem');
+    moveUpBtn.addEventListener('click', () => {
+      closeBlockReorderMenu();
+      session.reorderBlockByDelta(block.blockId, -1);
+      updateSummary();
+    });
+
+    const moveDownBtn = document.createElement('button');
+    moveDownBtn.type = 'button';
+    moveDownBtn.className = 'block-reorder-menu__item';
+    moveDownBtn.title = `Move block ${displayIndex} down`;
+    moveDownBtn.textContent = 'Move down';
+    moveDownBtn.disabled = isLast;
+    moveDownBtn.setAttribute('role', 'menuitem');
+    moveDownBtn.addEventListener('click', () => {
+      closeBlockReorderMenu();
+      session.reorderBlockByDelta(block.blockId, 1);
+      updateSummary();
+    });
+
+    const body = document.createElement('div');
+    body.className = 'block-reorder-menu__body';
+    body.append(moveUpBtn, moveDownBtn);
+    menu.appendChild(body);
+    document.body.appendChild(menu);
+    activeBlockReorderAnchor = anchor;
+    positionBlockReorderMenu(menu, anchor);
+
+    const onPointerDown = (event) => {
+      if (menu.contains(event.target) || anchor.contains(event.target)) return;
+      closeBlockReorderMenu();
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeBlockReorderMenu();
+      }
+    };
+    const onScrollOrResize = () => closeBlockReorderMenu();
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    closeActiveBlockReorderMenu = () => {
+      menu.remove();
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
+  };
 
   const renderBlockList = () => {
+    closeBlockReorderMenu();
     blockList.innerHTML = '';
     const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);
     blocks.forEach((block, index) => {
@@ -4715,42 +4807,23 @@ function renderEditorShell(session) {
       });
       const actions = document.createElement('div');
       actions.className = 'block-item-actions';
-      const reorderMenu = document.createElement('details');
-      reorderMenu.className = 'block-reorder-menu';
-      const reorderSummary = document.createElement('summary');
-      reorderSummary.className = 'icon-btn block-reorder-menu__summary';
-      reorderSummary.setAttribute('role', 'button');
-      reorderSummary.title = `More reorder actions for block ${displayIndex}`;
-      reorderSummary.setAttribute('aria-label', `More reorder actions for block ${displayIndex}`);
-      reorderSummary.innerHTML = createEditorIcon('moreHorizontal');
-      const moveUpBtn = document.createElement('button');
-      moveUpBtn.type = 'button';
-      moveUpBtn.className = 'block-reorder-menu__item';
-      moveUpBtn.title = `Move block ${displayIndex} up`;
-      moveUpBtn.textContent = 'Move up';
-      moveUpBtn.disabled = isFirst;
-      moveUpBtn.addEventListener('click', (event) => {
+      const reorderMenuBtn = document.createElement('button');
+      reorderMenuBtn.type = 'button';
+      reorderMenuBtn.className = 'icon-btn';
+      reorderMenuBtn.title = `More reorder actions for block ${displayIndex}`;
+      reorderMenuBtn.setAttribute('aria-label', `More reorder actions for block ${displayIndex}`);
+      reorderMenuBtn.setAttribute('aria-haspopup', 'menu');
+      reorderMenuBtn.setAttribute('aria-expanded', 'false');
+      reorderMenuBtn.innerHTML = createEditorIcon('moreHorizontal');
+      reorderMenuBtn.addEventListener('click', (event) => {
         event.stopPropagation();
-        session.reorderBlockByDelta(block.blockId, -1);
-        reorderMenu.open = false;
-        updateSummary();
+        const isOpenForThisButton = activeBlockReorderAnchor === reorderMenuBtn;
+        closeBlockReorderMenu();
+        if (!isOpenForThisButton) {
+          reorderMenuBtn.setAttribute('aria-expanded', 'true');
+          openBlockReorderMenu({ anchor: reorderMenuBtn, block, displayIndex, isFirst, isLast });
+        }
       });
-      const moveDownBtn = document.createElement('button');
-      moveDownBtn.type = 'button';
-      moveDownBtn.className = 'block-reorder-menu__item';
-      moveDownBtn.title = `Move block ${displayIndex} down`;
-      moveDownBtn.textContent = 'Move down';
-      moveDownBtn.disabled = isLast;
-      moveDownBtn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        session.reorderBlockByDelta(block.blockId, 1);
-        reorderMenu.open = false;
-        updateSummary();
-      });
-      const reorderMenuBody = document.createElement('div');
-      reorderMenuBody.className = 'block-reorder-menu__body';
-      reorderMenuBody.append(moveUpBtn, moveDownBtn);
-      reorderMenu.append(reorderSummary, reorderMenuBody);
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'icon-btn danger';
@@ -4779,7 +4852,7 @@ function renderEditorShell(session) {
         }
         updateSummary();
       });
-      actions.append(reorderMenu, deleteBtn);
+      actions.append(reorderMenuBtn, deleteBtn);
       row.append(dragHandle, button, actions);
       item.appendChild(row);
       blockList.appendChild(item);
