@@ -816,6 +816,14 @@ textarea.control {
   gap: 12px 16px;
 }
 
+.text-answer-settings {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) minmax(260px, max-content);
+  gap: 12px 16px;
+  align-items: end;
+}
+
+.answer-toggle,
 .boolean-answer-toggle {
   display: inline-flex;
   align-items: center;
@@ -823,6 +831,7 @@ textarea.control {
   width: fit-content;
 }
 
+.answer-toggle__btn,
 .boolean-answer-toggle__btn {
   position: relative;
   display: inline-flex;
@@ -842,6 +851,8 @@ textarea.control {
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
+.answer-toggle__btn:hover,
+.answer-toggle__btn:focus-visible,
 .boolean-answer-toggle__btn:hover,
 .boolean-answer-toggle__btn:focus-visible {
   border-color: #86efac;
@@ -849,17 +860,20 @@ textarea.control {
   color: #166534;
 }
 
+.answer-toggle__btn:focus-visible,
 .boolean-answer-toggle__btn:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 3px rgba(34, 197, 94, 0.28);
 }
 
+.answer-toggle__btn[aria-pressed="true"],
 .boolean-answer-toggle__btn[aria-pressed="true"] {
   border-color: #16a34a;
   background: #dcfce7;
   color: #166534;
 }
 
+.answer-toggle__tick,
 .boolean-answer-toggle__tick {
   position: absolute;
   left: 16px;
@@ -870,11 +884,13 @@ textarea.control {
   transition: opacity 120ms ease, transform 120ms ease;
 }
 
+.answer-toggle__tick .editor-icon,
 .boolean-answer-toggle__tick .editor-icon {
   width: 18px;
   height: 18px;
 }
 
+.answer-toggle__btn[aria-pressed="true"] .answer-toggle__tick,
 .boolean-answer-toggle__btn[aria-pressed="true"] .boolean-answer-toggle__tick {
   opacity: 1;
   transform: scale(1);
@@ -1407,7 +1423,8 @@ textarea.control {
 
   .block-detail-header__actions,
   .media-row__actions,
-  .answer-grid {
+  .answer-grid,
+  .text-answer-settings {
     width: 100%;
     grid-template-columns: 1fr;
   }

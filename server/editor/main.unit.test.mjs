@@ -1484,10 +1484,12 @@ test('question field updates map inputType, maxLength, and options through draft
   session.updateQuestionOptionsFromText(block.blockId, 'One\nTwo');
   session.updateQuestionInputType(block.blockId, 'text');
   session.updateQuestionMaxLength(block.blockId, '25');
+  session.updateQuestionTextDisplayMode(block.blockId, 'single_line');
 
   const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.equal(updated.responseConfig.inputType, 'text');
   assert.equal(updated.responseConfig.maxLength, 25);
+  assert.equal(updated.responseConfig.displayMode, 'single_line');
   assert.equal(updated.responseConfig.options, undefined);
 });
 

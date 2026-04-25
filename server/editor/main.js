@@ -3580,17 +3580,29 @@ function renderEditorShell(session) {
     option.textContent = label;
     questionInputType.appendChild(option);
   });
-  const questionTextDisplayMode = document.createElement('select');
+  const questionTextDisplayMode = document.createElement('div');
   questionTextDisplayMode.id = 'editor-question-text-display-mode';
-  questionTextDisplayMode.className = 'control';
-  [
+  questionTextDisplayMode.className = 'answer-toggle';
+  questionTextDisplayMode.setAttribute('role', 'group');
+  questionTextDisplayMode.setAttribute('aria-labelledby', 'editor-question-text-display-mode-label');
+  const questionTextDisplayModeButtons = [
     { value: 'single_line', label: 'Single line' },
     { value: 'multi_line', label: 'Multi line' },
-  ].forEach(({ value, label }) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    questionTextDisplayMode.appendChild(option);
+  ].map(({ value, label }) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'answer-toggle__btn';
+    button.dataset.textDisplayMode = value;
+    button.setAttribute('aria-pressed', 'false');
+    const tick = document.createElement('span');
+    tick.className = 'answer-toggle__tick';
+    tick.setAttribute('aria-hidden', 'true');
+    tick.innerHTML = createEditorIcon('check');
+    const text = document.createElement('span');
+    text.textContent = label;
+    button.append(tick, text);
+    questionTextDisplayMode.appendChild(button);
+    return button;
   });
   const questionMaxLength = document.createElement('input');
   questionMaxLength.id = 'editor-question-max-length';
@@ -4527,9 +4539,13 @@ function renderEditorShell(session) {
       if (activeElement !== questionMaxLength) {
         questionMaxLength.value = responseConfig.maxLength || 200;
       }
-      if (activeElement !== questionTextDisplayMode) {
-        questionTextDisplayMode.value = responseConfig.displayMode || 'multi_line';
-      }
+      const activeDisplayMode = responseConfig.displayMode === 'single_line' ? 'single_line' : 'multi_line';
+      questionTextDisplayModeButtons.forEach((button) => {
+        button.setAttribute(
+          'aria-pressed',
+          button.dataset.textDisplayMode === activeDisplayMode ? 'true' : 'false'
+        );
+      });
       if (activeElement !== questionOptions) {
         questionOptions.value = (responseConfig.options || [])
           .map((option) => String(option?.value ?? option?.label ?? ''))
@@ -5215,15 +5231,23 @@ function renderEditorShell(session) {
     }
     answerSection.appendChild(answerGrid);
     if (TEXT_INPUT_TYPES.has(activeInputType)) {
+      const textSettingsRow = document.createElement('div');
+      textSettingsRow.className = 'text-answer-settings';
+      const maxLengthField = document.createElement('div');
+      maxLengthField.className = 'editor-field';
       const maxLengthLabel = document.createElement('label');
       maxLengthLabel.textContent = 'Max length';
       maxLengthLabel.htmlFor = 'editor-question-max-length';
-      answerSection.append(maxLengthLabel, questionMaxLength);
+      maxLengthField.append(maxLengthLabel, questionMaxLength);
 
+      const displayModeField = document.createElement('div');
+      displayModeField.className = 'editor-field';
       const displayModeLabel = document.createElement('label');
-      displayModeLabel.textContent = 'Text display mode';
-      displayModeLabel.htmlFor = 'editor-question-text-display-mode';
-      answerSection.append(displayModeLabel, questionTextDisplayMode);
+      displayModeLabel.id = 'editor-question-text-display-mode-label';
+      displayModeLabel.textContent = 'Response format';
+      displayModeField.append(displayModeLabel, questionTextDisplayMode);
+      textSettingsRow.append(maxLengthField, displayModeField);
+      answerSection.appendChild(textSettingsRow);
     }
 
     if (activeInputType === 'number') {
@@ -5966,9 +5990,14 @@ function renderEditorShell(session) {
     session.updateQuestionMaxLength(session.state.selectedBlockId, questionMaxLength.value);
     updateSummary();
   });
-  questionTextDisplayMode.addEventListener('change', () => {
-    session.updateQuestionTextDisplayMode(session.state.selectedBlockId, questionTextDisplayMode.value);
-    updateSummary();
+  questionTextDisplayModeButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      session.updateQuestionTextDisplayMode(
+        session.state.selectedBlockId,
+        button.dataset.textDisplayMode || 'multi_line'
+      );
+      updateSummary();
+    });
   });
   questionMin.addEventListener('input', () => {
     session.updateQuestionNumberConfig(session.state.selectedBlockId, 'min', questionMin.value);
