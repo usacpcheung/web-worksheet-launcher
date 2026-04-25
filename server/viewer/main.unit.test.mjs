@@ -3274,6 +3274,16 @@ test('bootstrapViewer falls back to start panel when resume flag record is inval
   assert.equal(statusNode.textContent, '');
 });
 
+test('viewer launch intent gates include publishedPackageId links', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+
+  assert.equal(source.includes('function hasViewerLaunchIntent(params, options = {})'), true);
+  assert.equal(source.includes("params.has('publishedPackageId')"), true);
+  assert.equal(source.includes('const hasLaunchIntent = hasViewerLaunchIntent(params, { includeAuthReturn: true });'), true);
+  assert.equal(source.includes('const hasRealContentIntent = hasViewerLaunchIntent(params);'), true);
+  assert.equal(source.includes('const hasExplicitContentIntent = hasViewerContentIntent(params);'), true);
+});
+
 
 test('bootstrap hard-fails with parse-specific errors for malformed explicit payload params', async () => {
   const mod = await loadViewerModule({

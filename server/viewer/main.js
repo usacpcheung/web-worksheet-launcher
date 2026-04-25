@@ -100,6 +100,28 @@ function parseLaunchParamJson(params, key, parseErrorCode) {
   return { present: true, value: parsed };
 }
 
+function hasViewerLaunchIntent(params, options = {}) {
+  return Boolean(
+    params.has('localAttemptId')
+    || params.has('localDraftId')
+    || params.has('publishedPackageId')
+    || params.has('viewerPayload')
+    || params.has('snapshot')
+    || params.has('importedWorksheetId')
+    || (options.includeAuthReturn === true && params.get(AUTH_RETURN_PARAM) === '1')
+  );
+}
+
+function hasViewerContentIntent(params) {
+  return Boolean(
+    params.has('localDraftId')
+    || params.has('publishedPackageId')
+    || params.has('viewerPayload')
+    || params.has('snapshot')
+    || params.has('importedWorksheetId')
+  );
+}
+
 function isAuthSessionError(error) {
   const status = Number(error?.status);
   const code = String(error?.code || '').toUpperCase();
@@ -2036,12 +2058,7 @@ class ViewerAttemptSession {
     const params = new URLSearchParams(window.location.search);
     const previewIntent = this.parsePreviewIntent(params);
     const freshnessMarker = params.get('draftUpdatedAt') || null;
-    const hasExplicitContentIntent =
-      params.has('localDraftId')
-      || params.has('publishedPackageId')
-      || params.has('viewerPayload')
-      || params.has('snapshot')
-      || params.has('importedWorksheetId');
+    const hasExplicitContentIntent = hasViewerContentIntent(params);
 
     const explicitAttemptId = params.get('localAttemptId');
     if (explicitAttemptId) {
@@ -2254,7 +2271,7 @@ class ViewerAttemptSession {
 
     throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE, {
       userMessage: 'No worksheet launch content was provided.',
-      technicalMessage: 'No viewer launch parameter was provided (localAttemptId/localDraftId/importedWorksheetId/viewerPayload/snapshot).',
+      technicalMessage: 'No viewer launch parameter was provided (localAttemptId/localDraftId/publishedPackageId/importedWorksheetId/viewerPayload/snapshot).',
     });
   }
 
@@ -5047,13 +5064,7 @@ async function bootstrapViewer() {
   const hasAuthReturn = params.get(AUTH_RETURN_PARAM) === '1';
   const hasAuthCallback = params.get(VIEWER_AUTH_CALLBACK_PARAM) === '1';
   const isAuthCallbackMode = hasAuthReturn && hasAuthCallback;
-  const hasLaunchIntent =
-    params.has('localAttemptId')
-    || params.has('localDraftId')
-    || params.has('viewerPayload')
-    || params.has('snapshot')
-    || params.has('importedWorksheetId')
-    || hasAuthReturn;
+  const hasLaunchIntent = hasViewerLaunchIntent(params, { includeAuthReturn: true });
 
   if (!hasLaunchIntent) {
     await renderStartPanelFromResumeFlag(session.state.recoveryMessage);
@@ -5244,12 +5255,7 @@ async function bootstrapViewer() {
     return;
   }
 
-  const hasRealContentIntent =
-    params.has('localAttemptId')
-    || params.has('localDraftId')
-    || params.has('viewerPayload')
-    || params.has('snapshot')
-    || params.has('importedWorksheetId');
+  const hasRealContentIntent = hasViewerLaunchIntent(params);
 
   if (hasAuthReturn) {
     const restoreResult = await authGate.restoreAfterAuthReturn();

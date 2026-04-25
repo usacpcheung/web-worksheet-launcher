@@ -5,6 +5,7 @@ import {
   createWorksheetPackageFromDraft,
   mapLegacyJsonToPackageModel,
   parseWorksheetPackage,
+  rewriteWorksheetPackageTitle,
   PACKAGE_FORMAT,
   PACKAGE_VERSION,
 } from './worksheet-package.js';
@@ -72,6 +73,35 @@ test('mapLegacyJsonToPackageModel rejects invalid legacy JSON and maps valid leg
   assert.equal(mapped.worksheet.title, 'legacy');
   assert.equal(mapped.assets.length, 0);
   assert.equal(mapped.manifest.format, 'worksheet-package');
+});
+
+test('rewriteWorksheetPackageTitle updates manifest and worksheet title while preserving assets', () => {
+  const assetBytes = new Uint8Array([9, 8, 7, 6]);
+  const checksum = crc32(assetBytes).toString(16).padStart(8, '0');
+  const zipBytes = createStoredZip([
+    {
+      path: 'manifest.json',
+      data: JSON.stringify({
+        format: PACKAGE_FORMAT,
+        packageVersion: PACKAGE_VERSION,
+        assets: [
+          { assetId: 'img1', path: 'media/img1.png', kind: 'image', usage: 'question_image', byteLength: 4, crc32: checksum },
+        ],
+        worksheet: { title: 'Original title', localDraftId: 'draft_1' },
+      }),
+    },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Original title', blocks: [] }) },
+    { path: 'media/img1.png', data: assetBytes },
+  ]);
+
+  const rewritten = rewriteWorksheetPackageTitle(zipBytes, 'Original title (2)');
+  const parsed = parseWorksheetPackage(rewritten);
+
+  assert.equal(parsed.manifest.worksheet.title, 'Original title (2)');
+  assert.equal(parsed.manifest.worksheet.localDraftId, 'draft_1');
+  assert.equal(parsed.worksheet.title, 'Original title (2)');
+  assert.equal(parsed.assets.length, 1);
+  assert.deepEqual(Array.from(parsed.assets[0].binary), Array.from(assetBytes));
 });
 
 function makeMinimalZip({ manifestOverride, worksheetOverride, extraEntries = [] } = {}) {

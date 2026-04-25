@@ -4,6 +4,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PackageService } from './package-service.js';
+import { createStoredZip } from '../../editor/zip-utils.js';
+import { parseWorksheetPackage } from '../../editor/worksheet-package.js';
 
 function createFakeDb({
   draftCount = 0,
@@ -19,7 +21,7 @@ function createFakeDb({
     state,
     async connect() {
       return {
-        async query(sql) {
+        async query(sql, values = []) {
           state.queries.push(sql);
           if (sql.includes('SELECT pg_advisory_xact_lock(hashtext($1))')) {
             return { rows: [{ pg_advisory_xact_lock: '' }], rowCount: 1 };
@@ -31,7 +33,7 @@ function createFakeDb({
             return { rowCount: 0, rows: [] };
           }
           if (sql.includes('LEFT JOIN published_packages p') && sql.includes('lower(regexp_replace')) {
-            if (!uploadConflict) {
+            if (!uploadConflict || values[1] !== 't') {
               return { rowCount: 0, rows: [] };
             }
             return {
@@ -75,7 +77,27 @@ function createFakeDb({
             }
             return { rowCount: 0, rows: [] };
           }
-          if (sql.includes('INSERT INTO uploaded_drafts') || sql.includes('INSERT INTO published_packages')) {
+          if (sql.includes('INSERT INTO uploaded_drafts')) {
+            if (failInsert) {
+              throw new Error('insert failed');
+            }
+            return {
+              rowCount: 1,
+              rows: [
+                {
+                  uploaded_draft_id: values[0],
+                  owner_sub: values[1],
+                  owner_email: values[2],
+                  owner_name: values[3],
+                  title: values[4],
+                  subject: values[5],
+                  artifact_sha256: values[7],
+                  artifact_size_bytes: values[8],
+                },
+              ],
+            };
+          }
+          if (sql.includes('INSERT INTO published_packages')) {
             if (failInsert) {
               throw new Error('insert failed');
             }
@@ -204,6 +226,46 @@ test('uploadDraft returns conflict for same owner title and subject by default',
   assert.equal(result.statusCode, 409);
   assert.equal(result.error.code, 'DRAFT_NAME_CONFLICT');
   assert.equal(result.error.details.existingDraft.uploaded_draft_id, 'u');
+});
+
+test('uploadDraft save-as-copy stores artifact with server-selected copy title inside package', async () => {
+  let storedBytes = null;
+  const db = createFakeDb({ draftCount: 1, uploadConflict: true });
+  const service = createService({
+    db,
+    artifactStore: {
+      async storeArtifact({ bytes }) {
+        storedBytes = bytes;
+        return { artifactPath: 'drafts/copy.zip', absolutePath: '/tmp/copy.zip', artifactSha256: 'sha-copy', artifactSizeBytes: bytes.length };
+      },
+    },
+  });
+  const zipBytes = createStoredZip([
+    {
+      path: 'manifest.json',
+      data: JSON.stringify({
+        format: 'worksheet-package',
+        packageVersion: 1,
+        assets: [],
+        worksheet: { title: 'T' },
+      }),
+    },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'T', blocks: [] }) },
+  ]);
+
+  const result = await service.uploadDraft({
+    identity: { sub: 'oidc-sub', email: 'teacher@example.test', name: 'Teacher' },
+    title: 'T',
+    subject: 'S',
+    zipBytes,
+    conflictAction: 'copy',
+  });
+  const parsed = parseWorksheetPackage(storedBytes);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.title, 'T (2)');
+  assert.equal(parsed.manifest.worksheet.title, 'T (2)');
+  assert.equal(parsed.worksheet.title, 'T (2)');
 });
 
 test('deleteOwnPublishedPackage removes owner package artifact after row delete', async () => {

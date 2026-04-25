@@ -248,6 +248,29 @@ function parseWorksheetPackage(arrayBuffer) {
   };
 }
 
+function rewriteWorksheetPackageTitle(arrayBuffer, title) {
+  const parsed = parseWorksheetPackage(arrayBuffer);
+  const nextTitle = String(title || parsed.worksheet?.title || 'Untitled worksheet');
+  const manifest = {
+    ...parsed.manifest,
+    generatedAt: nowIso(),
+    worksheet: {
+      ...(isRecord(parsed.manifest?.worksheet) ? parsed.manifest.worksheet : {}),
+      title: nextTitle,
+    },
+  };
+  const worksheet = {
+    ...parsed.worksheet,
+    title: nextTitle,
+  };
+  const entries = [
+    { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) },
+    { path: 'content/worksheet.json', data: JSON.stringify(worksheet, null, 2) },
+    ...parsed.assets.map((asset) => ({ path: asset.path, data: asset.binary })),
+  ];
+  return createStoredZip(entries);
+}
+
 function mapLegacyJsonToPackageModel(parsedLegacy) {
   if (!isRecord(parsedLegacy)) {
     throw new Error('Legacy worksheet JSON must be an object.');
@@ -293,6 +316,7 @@ export {
   CONTENT_SCHEMA_VERSION,
   createWorksheetPackageFromDraft,
   parseWorksheetPackage,
+  rewriteWorksheetPackageTitle,
   mapLegacyJsonToPackageModel,
   normalizeWorksheetBlocks,
 };

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import { rewriteWorksheetPackageTitle } from '../../editor/worksheet-package.js';
 
 function normalizeText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -280,7 +281,10 @@ export class PackageService {
         ? await this.findAvailableCopyTitle({ client, identity, title: normalizedTitle, subject: normalizedSubject })
         : normalizedTitle;
       const uploadedDraftId = crypto.randomUUID();
-      artifact = await this.createDraftArtifact({ identity, uploadedDraftId, zipBytes });
+      const storedZipBytes = finalTitle !== normalizedTitle
+        ? rewriteWorksheetPackageTitle(zipBytes, finalTitle)
+        : zipBytes;
+      artifact = await this.createDraftArtifact({ identity, uploadedDraftId, zipBytes: storedZipBytes });
 
       const row = await client.query(
         `INSERT INTO uploaded_drafts(

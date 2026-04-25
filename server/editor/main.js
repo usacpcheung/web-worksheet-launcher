@@ -755,6 +755,7 @@ class EditorDraftSession {
       lastPublishedPackage: null,
       uploadedDrafts: [],
       isUploadingDraft: false,
+      isUploadDraftFlowActive: false,
       isLoadingUploadedDrafts: false,
       publishingDraftIds: new Set(),
       openingPublishedPackageIds: new Set(),
@@ -4236,27 +4237,33 @@ function renderEditorShell(session) {
       dialog.append(heading, description, details, warning, actions);
       overlay.appendChild(dialog);
       shell.appendChild(overlay);
+      let resolved = false;
       const cleanup = () => {
         overlay.remove();
         if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
       };
-      cancelBtn.addEventListener('click', () => {
+      const choose = (action) => {
+        if (resolved) return;
+        resolved = true;
+        cancelBtn.disabled = true;
+        copyBtn.disabled = true;
+        replaceBtn.disabled = true;
         cleanup();
-        resolve({ action: 'cancel' });
+        resolve({ action });
+      };
+      cancelBtn.addEventListener('click', () => {
+        choose('cancel');
       });
       copyBtn.addEventListener('click', () => {
-        cleanup();
-        resolve({ action: 'copy' });
+        choose('copy');
       });
       replaceBtn.addEventListener('click', () => {
-        cleanup();
-        resolve({ action: 'replace' });
+        choose('replace');
       });
       dialog.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') {
           event.preventDefault();
-          cleanup();
-          resolve({ action: 'cancel' });
+          choose('cancel');
         }
       });
       cancelBtn.focus();
@@ -6257,6 +6264,7 @@ function renderEditorShell(session) {
       serverSessionStatus.textContent = `Server session: not ready. ${session.state.serverSession?.error || 'Sign in for server features.'}`;
     }
     const isUploadingDraft = session.state.isUploadingDraft;
+    const isUploadDraftFlowActive = session.state.isUploadDraftFlowActive;
     const isRefreshingUploadedDrafts = session.state.isLoadingUploadedDrafts;
     const activePublishCount = session.state.publishingDraftIds?.size || 0;
 
@@ -6315,7 +6323,7 @@ function renderEditorShell(session) {
 
     const serverReady = sessionStatus === 'ready';
     syncDraftBtn.textContent = isUploadingDraft ? 'Uploading…' : 'Upload Draft';
-    syncDraftBtn.disabled = !serverReady || isUploadingDraft;
+    syncDraftBtn.disabled = !serverReady || isUploadingDraft || isUploadDraftFlowActive;
     browsePublishedBtn.disabled = !serverReady;
     manageUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? 'Refreshing…' : 'Manage Uploaded Drafts';
     manageUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;
@@ -6569,25 +6577,32 @@ function renderEditorShell(session) {
     updateSummary();
   });
   syncDraftBtn.addEventListener('click', async () => {
-    const result = await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));
-    if (!result?.ok && result?.error?.code === 'DRAFT_NAME_CONFLICT') {
-      const choice = await showUploadConflictModal({ existingDraft: result.error.details?.existingDraft });
-      if (choice.action === 'replace' || choice.action === 'copy') {
-        const retry = await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
-        if (!retry?.ok && retry?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
-          const slotChoice = await showSlotFullModal({ uploadedDrafts: retry.error.details?.uploadedDrafts });
-          if (slotChoice.deleted) {
-            await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
+    if (session.state.isUploadDraftFlowActive || session.state.isUploadingDraft) return;
+    session.state.isUploadDraftFlowActive = true;
+    updateSummary();
+    try {
+      const result = await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));
+      if (!result?.ok && result?.error?.code === 'DRAFT_NAME_CONFLICT') {
+        const choice = await showUploadConflictModal({ existingDraft: result.error.details?.existingDraft });
+        if (choice.action === 'replace' || choice.action === 'copy') {
+          const retry = await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
+          if (!retry?.ok && retry?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
+            const slotChoice = await showSlotFullModal({ uploadedDrafts: retry.error.details?.uploadedDrafts });
+            if (slotChoice.deleted) {
+              await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
+            }
           }
         }
+      } else if (!result?.ok && result?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
+        const slotChoice = await showSlotFullModal({ uploadedDrafts: result.error.details?.uploadedDrafts });
+        if (slotChoice.deleted) {
+          await session.uploadCurrentDraftToServer({ preflight: false });
+        }
       }
-    } else if (!result?.ok && result?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
-      const slotChoice = await showSlotFullModal({ uploadedDrafts: result.error.details?.uploadedDrafts });
-      if (slotChoice.deleted) {
-        await session.uploadCurrentDraftToServer({ preflight: false });
-      }
+    } finally {
+      session.state.isUploadDraftFlowActive = false;
+      updateSummary();
     }
-    updateSummary();
   });
   browsePublishedBtn.addEventListener('click', async () => {
     await guardServerMenuAction(browsePublishedBtn, async () => {

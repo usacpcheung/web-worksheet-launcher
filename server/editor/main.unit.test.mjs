@@ -1049,13 +1049,17 @@ test('editor server menu buttons stay disabled when session is not ready and pre
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   const css = await fs.readFile(path.resolve('server/editor/main.css'), 'utf8');
 
-  assert.equal(source.includes('syncDraftBtn.disabled = !serverReady || isUploadingDraft;'), true);
+  assert.equal(source.includes('isUploadDraftFlowActive: false,'), true);
+  assert.equal(source.includes('syncDraftBtn.disabled = !serverReady || isUploadingDraft || isUploadDraftFlowActive;'), true);
   assert.equal(source.includes('browsePublishedBtn.disabled = !serverReady;'), true);
   assert.equal(source.includes('manageUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;'), true);
   assert.equal(source.includes('signInBtn.hidden = serverReady;'), true);
   assert.equal(source.includes('async function guardServerMenuAction(button, action) {'), true);
   assert.equal(source.includes('if (button?.disabled) return null;'), true);
   assert.equal(source.includes('const sessionReady = await session.ensureServerSessionReady();'), true);
+  assert.equal(source.includes('if (session.state.isUploadDraftFlowActive || session.state.isUploadingDraft) return;'), true);
+  assert.equal(source.includes('session.state.isUploadDraftFlowActive = true;'), true);
+  assert.equal(source.includes('session.state.isUploadDraftFlowActive = false;'), true);
   assert.equal(source.includes('const result = await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));'), true);
   assert.equal(source.includes('await guardServerMenuAction(manageUploadedDraftsBtn, async () => {'), true);
   assert.equal(css.includes('.action-column button:hover:not(:disabled),'), true);
