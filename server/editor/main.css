@@ -824,6 +824,7 @@ textarea.control {
 }
 
 .boolean-answer-toggle__btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -860,6 +861,8 @@ textarea.control {
 }
 
 .boolean-answer-toggle__tick {
+  position: absolute;
+  left: 16px;
   display: inline-flex;
   width: 18px;
   opacity: 0;
