@@ -6,6 +6,16 @@ function normalizeText(value, fallback = '') {
   return normalized || fallback;
 }
 
+function normalizeConflictText(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normalizeUploadConflictAction(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'replace' || normalized === 'copy') return normalized;
+  return 'fail_on_conflict';
+}
+
 async function deleteArtifactIfPresent(artifact) {
   if (!artifact?.absolutePath) return;
   try {
@@ -39,78 +49,14 @@ export class PackageService {
     this.config = config;
   }
 
-  async uploadDraft({ identity, title, subject, zipBytes }) {
-    const client = await this.db.connect();
-    let artifact = null;
-
-    try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
-      const countRes = await client.query('SELECT COUNT(*)::int AS count FROM uploaded_drafts WHERE owner_sub = $1', [
-        identity.sub,
-      ]);
-      if (countRes.rows[0].count >= this.config.draftSlotLimit) {
-        await client.query('ROLLBACK');
-        return {
-          ok: false,
-          statusCode: 409,
-          error: {
-            code: 'DRAFT_SLOT_LIMIT_REACHED',
-            message: `You already have ${this.config.draftSlotLimit} uploaded drafts. Delete one before uploading another.`,
-          },
-        };
-      }
-
-      const uploadedDraftId = crypto.randomUUID();
-      artifact = await this.artifactStore.storeArtifact({
-        ownerSub: identity.sub,
-        bucket: 'drafts',
-        artifactId: uploadedDraftId,
-        bytes: zipBytes,
-      });
-
-      const row = await client.query(
-        `INSERT INTO uploaded_drafts(
-          uploaded_draft_id,
-          owner_sub,
-          owner_email,
-          owner_name,
-          title,
-          subject,
-          artifact_path,
-          artifact_sha256,
-          artifact_size_bytes
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        RETURNING uploaded_draft_id, owner_sub, title, subject, artifact_sha256, artifact_size_bytes, created_at`,
-        [
-          uploadedDraftId,
-          identity.sub,
-          identity.email,
-          identity.name,
-          normalizeText(title, 'Untitled draft'),
-          normalizeText(subject, ''),
-          artifact.artifactPath,
-          artifact.artifactSha256,
-          artifact.artifactSizeBytes,
-        ]
-      );
-
-      await client.query('COMMIT');
-      artifact = null;
-      return { ok: true, statusCode: 201, data: row.rows[0] };
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
-      await deleteArtifactIfPresent(artifact);
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  async listOwnDrafts(identity) {
-    const result = await this.db.query(
+  async listOwnDrafts(identity, clientOverride = null) {
+    const executor = clientOverride || this.db;
+    const result = await executor.query(
       `SELECT
         d.uploaded_draft_id,
+        d.owner_sub,
+        d.owner_email,
+        d.owner_name,
         d.title,
         d.subject,
         d.artifact_sha256,
@@ -132,6 +78,246 @@ export class PackageService {
     );
 
     return result.rows;
+  }
+
+  async findUploadConflict({ client, identity, title, subject }) {
+    const result = await client.query(
+      `SELECT
+        d.uploaded_draft_id,
+        d.owner_sub,
+        d.owner_email,
+        d.owner_name,
+        d.title,
+        d.subject,
+        d.artifact_path,
+        d.artifact_sha256,
+        d.artifact_size_bytes,
+        d.created_at,
+        d.updated_at,
+        p.published_package_id,
+        p.published_at
+       FROM uploaded_drafts d
+       LEFT JOIN published_packages p
+         ON p.source_uploaded_draft_id = d.uploaded_draft_id
+       WHERE d.owner_sub = $1
+         AND lower(regexp_replace(btrim(coalesce(d.title, '')), '\\s+', ' ', 'g')) = $2
+         AND lower(regexp_replace(btrim(coalesce(d.subject, '')), '\\s+', ' ', 'g')) = $3
+       ORDER BY d.created_at DESC
+       LIMIT 1`,
+      [identity.sub, normalizeConflictText(title), normalizeConflictText(subject)]
+    );
+    return result.rows[0] || null;
+  }
+
+  async createUploadedDraftRow({ client, identity, title, subject, artifact, uploadedDraftId = crypto.randomUUID() }) {
+    if (!artifact) {
+      throw new Error('createUploadedDraftRow requires a stored artifact.');
+    }
+    const row = await client.query(
+      `INSERT INTO uploaded_drafts(
+        uploaded_draft_id,
+        owner_sub,
+        owner_email,
+        owner_name,
+        title,
+        subject,
+        artifact_path,
+        artifact_sha256,
+        artifact_size_bytes
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      RETURNING uploaded_draft_id, owner_sub, owner_email, owner_name, title, subject, artifact_sha256, artifact_size_bytes, created_at, updated_at`,
+      [
+        uploadedDraftId,
+        identity.sub,
+        identity.email,
+        identity.name,
+        normalizeText(title, 'Untitled draft'),
+        normalizeText(subject, ''),
+        artifact.artifactPath,
+        artifact.artifactSha256,
+        artifact.artifactSizeBytes,
+      ]
+    );
+    return row.rows[0];
+  }
+
+  async createDraftArtifact({ identity, uploadedDraftId, zipBytes }) {
+    return this.artifactStore.storeArtifact({
+      ownerSub: identity.sub,
+      bucket: 'drafts',
+      artifactId: uploadedDraftId,
+      bytes: zipBytes,
+    });
+  }
+
+  async findAvailableCopyTitle({ client, identity, title, subject }) {
+    const baseTitle = normalizeText(title, 'Untitled draft');
+    for (let copyIndex = 2; copyIndex < 1000; copyIndex += 1) {
+      const candidate = `${baseTitle} (${copyIndex})`;
+      const existing = await this.findUploadConflict({ client, identity, title: candidate, subject });
+      if (!existing) return candidate;
+    }
+    return `${baseTitle} (${crypto.randomUUID().slice(0, 8)})`;
+  }
+
+  async uploadDraft({ identity, title, subject, zipBytes, conflictAction = 'fail_on_conflict' }) {
+    const client = await this.db.connect();
+    let artifact = null;
+    const cleanupArtifactPathsAfterCommit = [];
+    const action = normalizeUploadConflictAction(conflictAction);
+    const normalizedTitle = normalizeText(title, 'Untitled draft');
+    const normalizedSubject = normalizeText(subject, '');
+
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
+      const conflict = await this.findUploadConflict({
+        client,
+        identity,
+        title: normalizedTitle,
+        subject: normalizedSubject,
+      });
+
+      if (conflict && action === 'fail_on_conflict') {
+        const drafts = await this.listOwnDrafts(identity, client);
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 409,
+          error: {
+            code: 'DRAFT_NAME_CONFLICT',
+            message: 'An uploaded draft with the same worksheet name and subject already exists.',
+            details: {
+              existingDraft: conflict,
+              uploadedDrafts: drafts,
+            },
+          },
+        };
+      }
+
+      if (conflict && action === 'replace') {
+        const replacementId = crypto.randomUUID();
+        artifact = await this.createDraftArtifact({ identity, uploadedDraftId: replacementId, zipBytes });
+        if (conflict.published_package_id) {
+          const deleted = await client.query(
+            `DELETE FROM uploaded_drafts
+             WHERE uploaded_draft_id = $1 AND owner_sub = $2
+             RETURNING uploaded_draft_id, artifact_path`,
+            [conflict.uploaded_draft_id, identity.sub]
+          );
+          if (deleted.rowCount > 0) {
+            cleanupArtifactPathsAfterCommit.push(deleted.rows[0].artifact_path);
+          }
+          const row = await this.createUploadedDraftRow({
+            client,
+            identity,
+            title: normalizedTitle,
+            subject: normalizedSubject,
+            artifact,
+            uploadedDraftId: replacementId,
+          });
+          await client.query('COMMIT');
+          for (const artifactPath of cleanupArtifactPathsAfterCommit) {
+            await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
+          }
+          artifact = null;
+          return { ok: true, statusCode: 201, data: { ...row, replaced_uploaded_draft_id: conflict.uploaded_draft_id } };
+        }
+
+        const updated = await client.query(
+          `UPDATE uploaded_drafts
+           SET owner_email = $3,
+               owner_name = $4,
+               title = $5,
+               subject = $6,
+               artifact_path = $7,
+               artifact_sha256 = $8,
+               artifact_size_bytes = $9,
+               updated_at = now()
+           WHERE uploaded_draft_id = $1 AND owner_sub = $2
+           RETURNING uploaded_draft_id, owner_sub, owner_email, owner_name, title, subject, artifact_sha256, artifact_size_bytes, created_at, updated_at`,
+          [
+            conflict.uploaded_draft_id,
+            identity.sub,
+            identity.email,
+            identity.name,
+            normalizedTitle,
+            normalizedSubject,
+            artifact.artifactPath,
+            artifact.artifactSha256,
+            artifact.artifactSizeBytes,
+          ]
+        );
+        cleanupArtifactPathsAfterCommit.push(conflict.artifact_path);
+        await client.query('COMMIT');
+        for (const artifactPath of cleanupArtifactPathsAfterCommit) {
+          await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
+        }
+        artifact = null;
+        return { ok: true, statusCode: 200, data: { ...updated.rows[0], replaced_uploaded_draft_id: conflict.uploaded_draft_id } };
+      }
+
+      const countRes = await client.query('SELECT COUNT(*)::int AS count FROM uploaded_drafts WHERE owner_sub = $1', [
+        identity.sub,
+      ]);
+      if (countRes.rows[0].count >= this.config.draftSlotLimit) {
+        const drafts = await this.listOwnDrafts(identity, client);
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 409,
+          error: {
+            code: 'DRAFT_SLOT_LIMIT_REACHED',
+            message: `You already have ${this.config.draftSlotLimit} uploaded drafts. Delete one before uploading another.`,
+            details: {
+              uploadedDrafts: drafts,
+            },
+          },
+        };
+      }
+
+      const finalTitle = action === 'copy' && conflict
+        ? await this.findAvailableCopyTitle({ client, identity, title: normalizedTitle, subject: normalizedSubject })
+        : normalizedTitle;
+      const uploadedDraftId = crypto.randomUUID();
+      artifact = await this.createDraftArtifact({ identity, uploadedDraftId, zipBytes });
+
+      const row = await client.query(
+        `INSERT INTO uploaded_drafts(
+          uploaded_draft_id,
+          owner_sub,
+          owner_email,
+          owner_name,
+          title,
+          subject,
+          artifact_path,
+          artifact_sha256,
+          artifact_size_bytes
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING uploaded_draft_id, owner_sub, owner_email, owner_name, title, subject, artifact_sha256, artifact_size_bytes, created_at, updated_at`,
+        [
+          uploadedDraftId,
+          identity.sub,
+          identity.email,
+          identity.name,
+          finalTitle,
+          normalizedSubject,
+          artifact.artifactPath,
+          artifact.artifactSha256,
+          artifact.artifactSizeBytes,
+        ]
+      );
+
+      await client.query('COMMIT');
+      artifact = null;
+      return { ok: true, statusCode: 201, data: row.rows[0] };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      await deleteArtifactIfPresent(artifact);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async loadOwnDraftArtifact({ identity, uploadedDraftId }) {
@@ -184,6 +370,52 @@ export class PackageService {
         statusCode: 200,
         data: {
           uploaded_draft_id: deletedDraft.uploaded_draft_id,
+          deleted: true,
+        },
+      };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deleteOwnPublishedPackage({ identity, publishedPackageId }) {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const deleted = await client.query(
+        `DELETE FROM published_packages
+         WHERE published_package_id = $1 AND owner_sub = $2
+         RETURNING published_package_id, artifact_path`,
+        [publishedPackageId, identity.sub]
+      );
+
+      if (deleted.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 404,
+          error: {
+            code: 'PUBLISHED_PACKAGE_NOT_FOUND',
+            message: 'Published package was not found for this owner.',
+          },
+        };
+      }
+
+      await client.query('COMMIT');
+      const deletedPackage = deleted.rows[0];
+      await deleteArtifactBestEffort({
+        artifactStore: this.artifactStore,
+        artifactPath: deletedPackage.artifact_path,
+      });
+
+      return {
+        ok: true,
+        statusCode: 200,
+        data: {
+          published_package_id: deletedPackage.published_package_id,
           deleted: true,
         },
       };

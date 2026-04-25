@@ -324,6 +324,7 @@ function createServerApiClient(options = {}) {
         query: {
           title: metadata.title || '',
           subject: metadata.subject || '',
+          conflictAction: metadata.conflictAction || '',
         },
       });
     },
@@ -348,6 +349,9 @@ function createServerApiClient(options = {}) {
     },
     fetchPublishedPackageArtifact(publishedPackageId) {
       return requestZip(`/published/${publishedPackageId}/artifact`);
+    },
+    deletePublishedPackage(publishedPackageId) {
+      return requestJson(`/published/${publishedPackageId}`, { method: 'DELETE' });
     },
     async rewriteText(text) {
       let response;

@@ -227,6 +227,7 @@ Preferred source paths:
 
 Transitional terminology note:
 - `publishedPackageId` is the canonical published-viewer reference in the redesign direction.
+- Editor copy actions should share a full viewer URL containing `publishedPackageId`, not only the raw package id.
 - `snapshot`/`snapshotId` wording in viewer launch docs is compatibility-only terminology and should be treated as transitional alias language.
 
 Deterministic behavior requirements:

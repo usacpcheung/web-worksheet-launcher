@@ -46,6 +46,12 @@ function toUploadedDraftDisplay(item, locale = undefined) {
   };
 }
 
+function buildPublishedPackageViewerUrl(publishedPackageId) {
+  const url = new URL('../viewer/index.html', window.location.href);
+  url.searchParams.set('publishedPackageId', String(publishedPackageId || '').trim());
+  return url.toString();
+}
+
 function createLocalId(prefix = 'local') {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}_${crypto.randomUUID()}`;
@@ -2848,6 +2854,7 @@ class EditorDraftSession {
       const result = await this.apiClient.uploadDraftPackage(zipBytes, {
         title: this.state.draft?.title || '',
         subject: this.state.draft?.metadata?.subject || '',
+        conflictAction: options.conflictAction || '',
       });
       if (!result.ok) {
         this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: result.error.message });
@@ -3084,6 +3091,24 @@ class EditorDraftSession {
       ...result,
       refreshResult,
     };
+  }
+
+  async deletePublishedPackage(publishedPackageId) {
+    const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
+    if (!normalizedPublishedPackageId) {
+      return { ok: false, error: { message: 'Published package ID is required.' } };
+    }
+    const sessionReady = await this.ensureServerSessionReady();
+    if (!sessionReady.ok) return sessionReady.result;
+    const result = await this.apiClient.deletePublishedPackage(normalizedPublishedPackageId);
+    if (!result.ok) {
+      this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.delete', text: result.error.message });
+      this.notifyStateChange();
+      return result;
+    }
+    this.pushNotification({ kind: 'success', category: 'server', source: 'publishedPackage.delete', text: 'Published package deleted.' });
+    this.notifyStateChange();
+    return result;
   }
 
   touchDraft() {
@@ -4163,6 +4188,153 @@ function renderEditorShell(session) {
     });
   }
 
+  function showUploadConflictModal({ existingDraft }) {
+    return new Promise((resolve) => {
+      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-modal-overlay';
+      const dialog = document.createElement('section');
+      dialog.className = 'confirm-modal';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      const heading = document.createElement('h3');
+      heading.textContent = 'Uploaded draft already exists';
+      const description = document.createElement('p');
+      description.className = 'confirm-modal__description';
+      description.textContent = `A draft named "${existingDraft?.title || 'Untitled'}" already exists for this subject.`;
+      const details = document.createElement('div');
+      details.className = 'muted uploaded-draft-details-body';
+      const subjectLine = document.createElement('div');
+      subjectLine.textContent = `Subject: ${existingDraft?.subject || '-'}`;
+      const uploadedLine = document.createElement('div');
+      uploadedLine.textContent = `Uploaded: ${formatUploadedDraftTimestamp(existingDraft?.created_at)}`;
+      const statusLine = document.createElement('div');
+      statusLine.textContent = existingDraft?.published_package_id
+        ? 'Status: already published'
+        : 'Status: draft only';
+      details.append(subjectLine, uploadedLine, statusLine);
+      const warning = document.createElement('p');
+      warning.className = 'confirm-modal__warning';
+      warning.textContent = existingDraft?.published_package_id
+        ? 'The published package will not change. The old uploaded draft copy will be removed and this upload will become the new draft copy.'
+        : 'Replacing will update the existing uploaded draft artifact.';
+      const actions = document.createElement('div');
+      actions.className = 'confirm-modal__actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'confirm-modal__btn';
+      cancelBtn.textContent = 'Cancel';
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'confirm-modal__btn';
+      copyBtn.textContent = 'Save as New Copy';
+      const replaceBtn = document.createElement('button');
+      replaceBtn.type = 'button';
+      replaceBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+      replaceBtn.textContent = 'Replace Uploaded Draft';
+      actions.append(cancelBtn, copyBtn, replaceBtn);
+      dialog.append(heading, description, details, warning, actions);
+      overlay.appendChild(dialog);
+      shell.appendChild(overlay);
+      const cleanup = () => {
+        overlay.remove();
+        if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
+      };
+      cancelBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({ action: 'cancel' });
+      });
+      copyBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({ action: 'copy' });
+      });
+      replaceBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({ action: 'replace' });
+      });
+      dialog.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          cleanup();
+          resolve({ action: 'cancel' });
+        }
+      });
+      cancelBtn.focus();
+    });
+  }
+
+  async function showSlotFullModal({ uploadedDrafts = [] } = {}) {
+    const rows = Array.isArray(uploadedDrafts) && uploadedDrafts.length > 0
+      ? uploadedDrafts
+      : session.state.uploadedDrafts;
+    return new Promise((resolve) => {
+      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-modal-overlay';
+      const dialog = document.createElement('section');
+      dialog.className = 'confirm-modal browse-modal';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      const heading = document.createElement('h3');
+      heading.textContent = 'Draft slots are full';
+      const description = document.createElement('p');
+      description.className = 'confirm-modal__description';
+      description.textContent = 'Delete one uploaded draft to continue this upload.';
+      const list = document.createElement('div');
+      list.className = 'browse-results';
+      rows.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'published-result-row';
+        const title = document.createElement('strong');
+        title.className = 'published-result-title';
+        title.textContent = item.title || 'Untitled';
+        const meta = document.createElement('div');
+        meta.className = 'muted published-result-subject-owner';
+        meta.textContent = `${item.subject || '-'} • ${formatUploadedDraftTimestamp(item.created_at)}`;
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.addEventListener('click', async () => {
+          const confirmed = await showConfirmDialog({
+            title: 'Delete uploaded draft?',
+            entityLabel: item.title || 'Untitled',
+            descriptionText: item.published_package_id
+              ? 'This deletes the uploaded draft slot only. The published package remains unchanged.'
+              : 'This will permanently remove this uploaded draft from server storage.',
+            removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
+            confirmLabel: 'Delete draft',
+          });
+          if (!confirmed) return;
+          const result = await session.deleteUploadedDraft(item.uploaded_draft_id);
+          if (result?.ok) {
+            overlay.remove();
+            if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
+            resolve({ deleted: true });
+          }
+        });
+        row.append(title, meta, deleteBtn);
+        list.appendChild(row);
+      });
+      const actions = document.createElement('div');
+      actions.className = 'confirm-modal__actions';
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'confirm-modal__btn';
+      closeBtn.textContent = 'Cancel';
+      closeBtn.addEventListener('click', () => {
+        overlay.remove();
+        if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
+        resolve({ deleted: false });
+      });
+      actions.appendChild(closeBtn);
+      dialog.append(heading, description, list, actions);
+      overlay.appendChild(dialog);
+      shell.appendChild(overlay);
+      closeBtn.focus();
+    });
+  }
+
   async function runPublishedSearch(options = {}) {
     const append = options.append === true;
     const sessionReady = await session.ensureServerSessionReady();
@@ -4305,14 +4477,15 @@ function renderEditorShell(session) {
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
         copyBtn.className = 'uploaded-draft-action published-result-action';
-        copyBtn.textContent = 'Copy Published ID';
+        copyBtn.textContent = 'Copy Viewer Link';
         copyBtn.addEventListener('click', async () => {
-          const copied = await copyTextToClipboard(item.published_package_id);
+          const viewerUrl = buildPublishedPackageViewerUrl(item.published_package_id);
+          const copied = await copyTextToClipboard(viewerUrl);
           emitServerNotification({
             kind: copied ? 'success' : 'warn',
             source: 'clipboard.publishedId',
             text: copied
-              ? `Copied published ID ${item.published_package_id}.`
+              ? 'Copied viewer link.'
               : 'Clipboard copy is unavailable in this browser.',
           });
         });
@@ -4352,6 +4525,28 @@ function renderEditorShell(session) {
         const actionRow = document.createElement('div');
         actionRow.className = 'published-result-actions';
         actionRow.append(copyBtn, openInEditorBtn);
+        const currentUserSub = session.state.serverSession?.user?.sub || '';
+        if (currentUserSub && item.owner_sub === currentUserSub) {
+          const deletePublishedBtn = document.createElement('button');
+          deletePublishedBtn.type = 'button';
+          deletePublishedBtn.className = 'uploaded-draft-action uploaded-draft-action--danger published-result-action';
+          deletePublishedBtn.textContent = 'Delete';
+          deletePublishedBtn.addEventListener('click', async () => {
+            const confirmed = await showConfirmDialog({
+              title: 'Delete published package?',
+              entityLabel: item.title || 'Untitled',
+              descriptionText: 'This deletes the published package. Existing viewer links for this package will stop working.',
+              removalItems: ['Published package ZIP artifact', 'Published package metadata'],
+              confirmLabel: 'Delete package',
+            });
+            if (!confirmed) return;
+            const result = await session.deletePublishedPackage(item.published_package_id);
+            if (result?.ok) {
+              await runPublishedSearch();
+            }
+          });
+          actionRow.appendChild(deletePublishedBtn);
+        }
         row.appendChild(actionRow);
         results.appendChild(row);
       });
@@ -4428,12 +4623,12 @@ function renderEditorShell(session) {
   const browsePublishedBtn = document.createElement('button');
   browsePublishedBtn.type = 'button';
   browsePublishedBtn.textContent = 'Browse Published Packages';
+  const manageUploadedDraftsBtn = document.createElement('button');
+  manageUploadedDraftsBtn.type = 'button';
+  manageUploadedDraftsBtn.textContent = 'Manage Uploaded Drafts';
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.textContent = 'Sign in for server features';
-  const loadUploadedDraftsBtn = document.createElement('button');
-  loadUploadedDraftsBtn.type = 'button';
-  loadUploadedDraftsBtn.textContent = 'Refresh Uploaded Drafts';
   const serverSessionStatus = document.createElement('p');
   serverSessionStatus.className = 'muted';
   const activityFeed = document.createElement('section');
@@ -4454,9 +4649,8 @@ function renderEditorShell(session) {
   activityFeedToggle.append(activityFeedHeading, activityFeed);
   const toastContainer = document.createElement('div');
   toastContainer.className = 'notification-toast-container';
-  const uploadedDraftList = document.createElement('div');
-  uploadedDraftList.className = 'muted';
   const browsePublishedModalRoot = document.createElement('div');
+  const manageUploadedDraftsModalRoot = document.createElement('div');
   const protectedActionsColumn = document.createElement('div');
   protectedActionsColumn.className = 'action-column';
   let browsePublishedState = {
@@ -4470,6 +4664,7 @@ function renderEditorShell(session) {
     error: null,
   };
   let browsePublishedDialogOpen = false;
+  let manageUploadedDraftsDialogOpen = false;
   let detailSignature = null;
   let optionActionSignature = null;
   let visibleActivityCount = ACTIVITY_VISIBLE_INITIAL;
@@ -5842,6 +6037,169 @@ function renderEditorShell(session) {
     }
   };
 
+  function renderUploadedDraftRows(container) {
+    const serverReady = session.state.serverSession?.status === 'ready';
+    container.innerHTML = '';
+    if (session.state.uploadedDrafts.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = session.state.isLoadingUploadedDrafts ? 'Loading uploaded drafts…' : 'No uploaded drafts yet.';
+      container.appendChild(empty);
+      return;
+    }
+    session.state.uploadedDrafts.forEach((item) => {
+      const display = toUploadedDraftDisplay(item);
+      const row = document.createElement('div');
+      row.className = 'uploaded-draft-row';
+      const meta = document.createElement('div');
+      meta.className = 'uploaded-draft-meta';
+      const titleLine = document.createElement('strong');
+      titleLine.textContent = display.title;
+      const uploadedAtLine = document.createElement('div');
+      uploadedAtLine.className = 'muted uploaded-draft-uploaded-at';
+      uploadedAtLine.textContent = display.uploadedLabel;
+      const subjectLine = document.createElement('div');
+      subjectLine.className = 'muted uploaded-draft-uploaded-at';
+      subjectLine.textContent = `Subject: ${item.subject || '-'}`;
+      meta.append(titleLine, subjectLine, uploadedAtLine);
+      const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
+      const badge = document.createElement('span');
+      badge.className = publishedPackageId
+        ? 'editor-pill editor-pill--ok uploaded-draft-published-badge'
+        : 'editor-pill uploaded-draft-published-badge';
+      badge.textContent = publishedPackageId ? 'Published' : 'Draft only';
+      meta.appendChild(badge);
+      const details = document.createElement('details');
+      details.className = 'uploaded-draft-details uploaded-draft-details--draft';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Details';
+      const body = document.createElement('div');
+      body.className = 'muted uploaded-draft-details-body';
+      const draftIdLine = document.createElement('div');
+      draftIdLine.textContent = `Uploaded draft ID: ${item.uploaded_draft_id || '-'}`;
+      const publishedIdLine = document.createElement('div');
+      publishedIdLine.textContent = `Published ID: ${publishedPackageId || '-'}`;
+      body.append(draftIdLine, publishedIdLine);
+      details.append(summary, body);
+      meta.appendChild(details);
+      const actions = document.createElement('div');
+      actions.className = 'uploaded-draft-actions';
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'uploaded-draft-action uploaded-draft-action--secondary';
+      openBtn.textContent = 'Open';
+      openBtn.disabled = !serverReady;
+      openBtn.addEventListener('click', async () => {
+        await guardServerMenuAction(openBtn, () => session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id));
+        updateSummary();
+      });
+      actions.appendChild(openBtn);
+      if (publishedPackageId) {
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+        copyBtn.textContent = 'Copy Viewer Link';
+        copyBtn.disabled = !serverReady;
+        copyBtn.addEventListener('click', async () => {
+          const copied = await copyTextToClipboard(buildPublishedPackageViewerUrl(publishedPackageId));
+          emitServerNotification({
+            kind: copied ? 'success' : 'warn',
+            source: 'clipboard.publishedViewerLink',
+            text: copied ? 'Copied viewer link.' : 'Clipboard copy is unavailable in this browser.',
+          });
+        });
+        actions.appendChild(copyBtn);
+      } else {
+        const isPublishing = session.state.publishingDraftIds.has(item.uploaded_draft_id);
+        const publishBtn = document.createElement('button');
+        publishBtn.type = 'button';
+        publishBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+        publishBtn.textContent = isPublishing ? 'Publishing…' : 'Publish';
+        publishBtn.disabled = !serverReady || isPublishing;
+        publishBtn.addEventListener('click', async () => {
+          if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
+          await guardServerMenuAction(publishBtn, async () => {
+            const modal = await showPublishModal({ uploadedDraft: item });
+            if (!modal.confirmed) return null;
+            return session.publishUploadedDraftToServer(item.uploaded_draft_id, {
+              title: modal.title,
+              subject: modal.subject,
+            });
+          });
+          updateSummary();
+        });
+        actions.appendChild(publishBtn);
+      }
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.disabled = !serverReady;
+      deleteBtn.addEventListener('click', async () => {
+        await guardServerMenuAction(deleteBtn, async () => {
+          const confirmed = await showConfirmDialog({
+            title: 'Delete uploaded draft?',
+            entityLabel: isNonEmptyString(item.title) ? item.title.trim() : 'Untitled',
+            descriptionText: publishedPackageId
+              ? 'This deletes the uploaded draft slot only. The published package will remain available.'
+              : 'This will permanently remove this uploaded draft from server storage.',
+            removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
+            confirmLabel: 'Delete draft',
+          });
+          if (!confirmed) return null;
+          return session.deleteUploadedDraft(item.uploaded_draft_id);
+        });
+        updateSummary();
+      });
+      actions.appendChild(deleteBtn);
+      row.append(meta, actions);
+      container.appendChild(row);
+    });
+  }
+
+  function renderManageUploadedDraftsModal() {
+    manageUploadedDraftsModalRoot.innerHTML = '';
+    if (!manageUploadedDraftsDialogOpen) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay';
+    const dialog = document.createElement('section');
+    dialog.className = 'confirm-modal browse-modal';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    heading.textContent = 'Manage Uploaded Drafts';
+    const slotUsage = document.createElement('p');
+    slotUsage.className = 'confirm-modal__description';
+    slotUsage.textContent = `${session.state.uploadedDrafts.length} of 3 draft slots used.`;
+    const list = document.createElement('div');
+    list.className = 'browse-results';
+    renderUploadedDraftRows(list);
+    const actions = document.createElement('div');
+    actions.className = 'confirm-modal__actions';
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'confirm-modal__btn';
+    refreshBtn.textContent = session.state.isLoadingUploadedDrafts ? 'Refreshing…' : 'Refresh';
+    refreshBtn.disabled = session.state.isLoadingUploadedDrafts;
+    refreshBtn.addEventListener('click', async () => {
+      await session.loadUploadedDrafts({ preflight: false });
+      renderManageUploadedDraftsModal();
+    });
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'confirm-modal__btn';
+    closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', () => {
+      manageUploadedDraftsDialogOpen = false;
+      renderManageUploadedDraftsModal();
+    });
+    actions.append(refreshBtn, closeBtn);
+    dialog.append(heading, slotUsage, list, actions);
+    overlay.appendChild(dialog);
+    manageUploadedDraftsModalRoot.appendChild(overlay);
+    closeBtn.focus();
+  }
+
   const updateSummary = ({ preserveDetailEditor = false } = {}) => {
     session.pruneExpiredNotifications();
     session.validateCurrentDraft();
@@ -5959,167 +6317,19 @@ function renderEditorShell(session) {
     syncDraftBtn.textContent = isUploadingDraft ? 'Uploading…' : 'Upload Draft';
     syncDraftBtn.disabled = !serverReady || isUploadingDraft;
     browsePublishedBtn.disabled = !serverReady;
-    loadUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? 'Refreshing…' : 'Refresh Uploaded Drafts';
-    loadUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;
+    manageUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? 'Refreshing…' : 'Manage Uploaded Drafts';
+    manageUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;
     signInBtn.hidden = serverReady;
-    uploadedDraftList.innerHTML = '';
-    if (session.state.uploadedDrafts.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'muted';
-      empty.textContent = session.state.isLoadingUploadedDrafts ? 'Loading uploaded drafts…' : 'No uploaded drafts yet.';
-      uploadedDraftList.appendChild(empty);
-    } else {
-      session.state.uploadedDrafts.forEach((item) => {
-        const display = toUploadedDraftDisplay(item);
-        const row = document.createElement('div');
-        row.className = 'uploaded-draft-row';
-        const meta = document.createElement('div');
-        meta.className = 'uploaded-draft-meta';
-        const titleLine = document.createElement('strong');
-        titleLine.textContent = display.title;
-        const uploadedAtLine = document.createElement('div');
-        uploadedAtLine.className = 'muted uploaded-draft-uploaded-at';
-        uploadedAtLine.textContent = display.uploadedLabel;
-        meta.append(titleLine, uploadedAtLine);
-        const detailsGroup = document.createElement('div');
-        detailsGroup.className = 'uploaded-draft-details-group';
-        const draftDetails = document.createElement('details');
-        draftDetails.className = 'uploaded-draft-details uploaded-draft-details--draft';
-        const draftSummary = document.createElement('summary');
-        draftSummary.textContent = 'Draft details';
-        const draftBody = document.createElement('div');
-        draftBody.className = 'muted uploaded-draft-details-body';
-        const draftOwner = item.owner_email
-          || item.owner_name
-          || item.owner_sub
-          || session.state.serverSession?.user?.email
-          || session.state.serverSession?.user?.sub
-          || 'Unknown';
-        const draftIdLine = document.createElement('div');
-        draftIdLine.textContent = `Uploaded draft ID: ${item.uploaded_draft_id || '—'}`;
-        const draftUploadedLine = document.createElement('div');
-        draftUploadedLine.textContent = `Uploaded: ${formatUploadedDraftTimestamp(item.created_at)}`;
-        const draftTitleLine = document.createElement('div');
-        draftTitleLine.textContent = `Title: ${item.title || 'Untitled'}`;
-        const draftSubjectLine = document.createElement('div');
-        draftSubjectLine.textContent = `Subject: ${item.subject || '—'}`;
-        const draftOwnerLine = document.createElement('div');
-        draftOwnerLine.textContent = `Owner: ${draftOwner}`;
-        draftBody.append(draftIdLine, draftUploadedLine, draftTitleLine, draftSubjectLine, draftOwnerLine);
-        draftDetails.append(draftSummary, draftBody);
-        detailsGroup.appendChild(draftDetails);
-        const actions = document.createElement('div');
-        actions.className = 'uploaded-draft-actions';
-        const openBtn = document.createElement('button');
-        openBtn.type = 'button';
-        openBtn.className = 'uploaded-draft-action uploaded-draft-action--secondary';
-        openBtn.textContent = 'Open';
-        openBtn.disabled = !serverReady;
-        openBtn.addEventListener('click', async () => {
-          await guardServerMenuAction(openBtn, () => session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id));
-          updateSummary();
-        });
-        const deleteBtn = document.createElement('button');
-        deleteBtn.type = 'button';
-        deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
-        deleteBtn.textContent = 'Delete';
-        deleteBtn.disabled = !serverReady;
-        deleteBtn.addEventListener('click', async () => {
-          await guardServerMenuAction(deleteBtn, async () => {
-            const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
-            const deleteDescription = publishedPackageId
-              ? `This deletes the uploaded draft slot only. The published package will remain available by published package ID (${publishedPackageId}).`
-              : 'This will permanently remove this uploaded draft from server storage.';
-            const confirmed = await showConfirmDialog({
-              title: 'Delete uploaded draft?',
-              entityLabel: isNonEmptyString(item.title) ? item.title.trim() : 'Untitled',
-              descriptionText: deleteDescription,
-              removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
-              confirmLabel: 'Delete draft',
-            });
-            if (!confirmed) return null;
-            return session.deleteUploadedDraft(item.uploaded_draft_id);
-          });
-          updateSummary();
-        });
-        const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
-        if (publishedPackageId) {
-          actions.classList.add('uploaded-draft-actions--published');
-          const badge = document.createElement('span');
-          badge.className = 'editor-pill editor-pill--ok uploaded-draft-published-badge';
-          badge.textContent = 'Published';
-          meta.appendChild(badge);
-          const copyBtn = document.createElement('button');
-          copyBtn.type = 'button';
-          copyBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
-          copyBtn.textContent = 'Copy Published ID';
-          copyBtn.disabled = !serverReady;
-          copyBtn.addEventListener('click', async () => {
-            await guardServerMenuAction(copyBtn, async () => {
-              const copied = await copyTextToClipboard(publishedPackageId);
-              emitServerNotification({
-                kind: copied ? 'success' : 'warn',
-                source: 'clipboard.publishedId',
-                text: copied
-                  ? `Copied published ID ${publishedPackageId}.`
-                  : 'Clipboard copy is unavailable in this browser.',
-              });
-            });
-          });
-          const details = document.createElement('details');
-          details.className = 'uploaded-draft-details uploaded-draft-details--published';
-          const summary = document.createElement('summary');
-          summary.textContent = 'Published details';
-          const body = document.createElement('div');
-          body.className = 'muted uploaded-draft-details-body';
-          const publishedIdLine = document.createElement('div');
-          publishedIdLine.textContent = `Published ID: ${publishedPackageId}`;
-          const publishedTitleLine = document.createElement('div');
-          publishedTitleLine.textContent = `Title: ${item.published_title || item.title || 'Untitled'}`;
-          const publishedSubjectLine = document.createElement('div');
-          publishedSubjectLine.textContent = `Subject: ${item.published_subject || ''}`;
-          const publishedOwnerLine = document.createElement('div');
-          publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;
-          const publishedAtLine = document.createElement('div');
-          publishedAtLine.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)}`;
-          body.append(publishedIdLine, publishedTitleLine, publishedSubjectLine, publishedOwnerLine, publishedAtLine);
-          details.append(summary, body);
-          detailsGroup.appendChild(details);
-          meta.appendChild(detailsGroup);
-          actions.append(openBtn, copyBtn, deleteBtn);
-        } else {
-          actions.classList.add('uploaded-draft-actions--unpublished');
-          const isPublishing = session.state.publishingDraftIds.has(item.uploaded_draft_id);
-          const publishBtn = document.createElement('button');
-          publishBtn.type = 'button';
-          publishBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
-          publishBtn.textContent = isPublishing ? 'Publishing…' : 'Publish';
-          publishBtn.disabled = !serverReady || isPublishing;
-          publishBtn.addEventListener('click', async () => {
-            if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
-            await guardServerMenuAction(publishBtn, async () => {
-              const modal = await showPublishModal({ uploadedDraft: item });
-              if (!modal.confirmed) return null;
-              return session.publishUploadedDraftToServer(item.uploaded_draft_id, {
-                title: modal.title,
-                subject: modal.subject,
-              });
-            });
-            updateSummary();
-          });
-          meta.appendChild(detailsGroup);
-          actions.append(openBtn, publishBtn, deleteBtn);
-        }
-        row.append(meta, actions);
-        uploadedDraftList.appendChild(row);
-      });
-    }
+    if (manageUploadedDraftsDialogOpen) renderManageUploadedDraftsModal();
   };
 
   session.setOnStateChange(() => {
     updateSummary();
     if (browsePublishedDialogOpen) {
       renderPublishedBrowserModal();
+    }
+    if (manageUploadedDraftsDialogOpen) {
+      renderManageUploadedDraftsModal();
     }
   });
 
@@ -6359,7 +6569,24 @@ function renderEditorShell(session) {
     updateSummary();
   });
   syncDraftBtn.addEventListener('click', async () => {
-    await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));
+    const result = await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));
+    if (!result?.ok && result?.error?.code === 'DRAFT_NAME_CONFLICT') {
+      const choice = await showUploadConflictModal({ existingDraft: result.error.details?.existingDraft });
+      if (choice.action === 'replace' || choice.action === 'copy') {
+        const retry = await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
+        if (!retry?.ok && retry?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
+          const slotChoice = await showSlotFullModal({ uploadedDrafts: retry.error.details?.uploadedDrafts });
+          if (slotChoice.deleted) {
+            await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
+          }
+        }
+      }
+    } else if (!result?.ok && result?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
+      const slotChoice = await showSlotFullModal({ uploadedDrafts: result.error.details?.uploadedDrafts });
+      if (slotChoice.deleted) {
+        await session.uploadCurrentDraftToServer({ preflight: false });
+      }
+    }
     updateSummary();
   });
   browsePublishedBtn.addEventListener('click', async () => {
@@ -6373,8 +6600,13 @@ function renderEditorShell(session) {
     session.beginServerSignIn();
     updateSummary();
   });
-  loadUploadedDraftsBtn.addEventListener('click', async () => {
-    await guardServerMenuAction(loadUploadedDraftsBtn, () => session.loadUploadedDrafts({ preflight: false }));
+  manageUploadedDraftsBtn.addEventListener('click', async () => {
+    await guardServerMenuAction(manageUploadedDraftsBtn, async () => {
+      manageUploadedDraftsDialogOpen = true;
+      renderManageUploadedDraftsModal();
+      await session.loadUploadedDrafts({ preflight: false });
+      renderManageUploadedDraftsModal();
+    });
     updateSummary();
   });
   loadOlderActivityBtn.addEventListener('click', () => {
@@ -6389,9 +6621,8 @@ function renderEditorShell(session) {
     serverSessionStatus,
     signInBtn,
     syncDraftBtn,
-    browsePublishedBtn,
-    loadUploadedDraftsBtn,
-    uploadedDraftList
+    manageUploadedDraftsBtn,
+    browsePublishedBtn
   );
   moreActions.append(protectedActionsColumn);
   leftPanel.append(
@@ -6412,6 +6643,7 @@ function renderEditorShell(session) {
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);
   shell.append(topBar, layout);
   shell.appendChild(browsePublishedModalRoot);
+  shell.appendChild(manageUploadedDraftsModalRoot);
   shell.appendChild(toastContainer);
   app.innerHTML = '';
   app.append(shell);

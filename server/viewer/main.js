@@ -43,6 +43,7 @@ const VIEWER_BOOT_ERROR_CODES = Object.freeze({
   SNAPSHOT_PARSE_FAILED: 'SNAPSHOT_PARSE_FAILED',
   LOCAL_DRAFT_NOT_FOUND: 'LOCAL_DRAFT_NOT_FOUND',
   IMPORTED_WORKSHEET_NOT_FOUND: 'IMPORTED_WORKSHEET_NOT_FOUND',
+  PUBLISHED_PACKAGE_NOT_FOUND: 'PUBLISHED_PACKAGE_NOT_FOUND',
   INVALID_VIEWER_PAYLOAD: 'INVALID_VIEWER_PAYLOAD',
   VIEWER_BOOT_FAILED: 'VIEWER_BOOT_FAILED',
 });
@@ -2037,6 +2038,7 @@ class ViewerAttemptSession {
     const freshnessMarker = params.get('draftUpdatedAt') || null;
     const hasExplicitContentIntent =
       params.has('localDraftId')
+      || params.has('publishedPackageId')
       || params.has('viewerPayload')
       || params.has('snapshot')
       || params.has('importedWorksheetId');
@@ -2066,6 +2068,18 @@ class ViewerAttemptSession {
           return this.state;
         }
       }
+    }
+
+    const publishedPackageId = params.get('publishedPackageId');
+    if (publishedPackageId) {
+      const result = await this.startFromPublishedPackage(publishedPackageId);
+      if (!result?.ok) {
+        throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
+          userMessage: 'The requested published package was not found.',
+          technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+        });
+      }
+      return this.state;
     }
 
     const loadedPayload = await this.loadViewerPayloadFromSources(params, previewIntent);

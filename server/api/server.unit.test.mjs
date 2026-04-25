@@ -42,6 +42,9 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
       async listPublished() {
         return { items: [], limit: 20, offset: 0, hasMore: false };
       },
+      async deleteOwnPublishedPackage() {
+        return { ok: true, statusCode: 200, data: { published_package_id: 'x', deleted: true } };
+      },
       ...service,
     },
     artifactStore: {
@@ -193,6 +196,54 @@ test('GET /api/v1/published/:id/artifact rejects malformed publishedPackageId wi
     const payload = await res.json();
     assert.equal(payload.ok, false);
     assert.equal(payload.error.code, 'INVALID_PUBLISHED_PACKAGE_ID');
+  });
+});
+
+test('DELETE /api/v1/published/:id rejects malformed publishedPackageId with 400', async () => {
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/published/not-a-uuid`, {
+      method: 'DELETE',
+      headers: authHeaders,
+    });
+
+    assert.equal(res.status, 400);
+    const payload = await res.json();
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'INVALID_PUBLISHED_PACKAGE_ID');
+  });
+});
+
+test('DELETE /api/v1/published/:id forwards owner-scoped delete and returns payload', async () => {
+  let received = null;
+  await withServer(
+    {
+      service: {
+        async deleteOwnPublishedPackage({ identity, publishedPackageId }) {
+          received = { identity, publishedPackageId };
+          return {
+            ok: true,
+            statusCode: 200,
+            data: { published_package_id: publishedPackageId, deleted: true },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const publishedPackageId = '550e8400-e29b-41d4-a716-446655440000';
+      const res = await fetch(`${baseUrl}/api/v1/published/${publishedPackageId}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data, { published_package_id: publishedPackageId, deleted: true });
+    }
+  );
+
+  assert.deepEqual(received, {
+    identity: { sub: 'user-sub', email: null, name: null },
+    publishedPackageId: '550e8400-e29b-41d4-a716-446655440000',
   });
 });
 

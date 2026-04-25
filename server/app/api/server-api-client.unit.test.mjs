@@ -109,6 +109,48 @@ test('deleteUploadedDraft sends DELETE to canonical drafts path', async () => {
   assert.equal(requestedMethod, 'DELETE');
 });
 
+test('uploadDraftPackage sends metadata and conflict action as query params', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  let contentType = null;
+  globalThis.fetch = async (url, request = {}) => {
+    requestedUrl = url;
+    contentType = request.headers?.['content-type'];
+    return mockJsonResponse(201, { ok: true, data: { uploaded_draft_id: 'u1' } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.uploadDraftPackage(new Uint8Array([0x50, 0x4b]), {
+    title: 'Title',
+    subject: 'Math',
+    conflictAction: 'replace',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(
+    requestedUrl,
+    '/api/worksheet-launcher/v1/drafts/upload?title=Title&subject=Math&conflictAction=replace'
+  );
+  assert.equal(contentType, 'application/zip');
+});
+
+
+test('deletePublishedPackage sends DELETE to canonical published path', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  let requestedMethod = null;
+  globalThis.fetch = async (url, request = {}) => {
+    requestedUrl = url;
+    requestedMethod = request.method;
+    return mockJsonResponse(200, { ok: true, data: { deleted: true } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.deletePublishedPackage('550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/published/550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(requestedMethod, 'DELETE');
+});
+
 test('publishFromUploadedDraft sends uploadedDraftId with title and subject overrides', async () => {
   setTestWindow();
   let requestBody = null;

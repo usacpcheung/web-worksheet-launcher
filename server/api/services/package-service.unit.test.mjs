@@ -9,6 +9,7 @@ function createFakeDb({
   draftCount = 0,
   failInsert = false,
   draftExists = true,
+  uploadConflict = false,
   failDelete = false,
   existingPublished = null,
 } = {}) {
@@ -25,6 +26,29 @@ function createFakeDb({
           }
           if (sql.includes('COUNT(*)::int AS count FROM uploaded_drafts')) {
             return { rows: [{ count: state.draftCount }], rowCount: 1 };
+          }
+          if (sql.includes('FROM uploaded_drafts d') && sql.includes('ORDER BY d.created_at DESC') && !sql.includes('LIMIT 1')) {
+            return { rowCount: 0, rows: [] };
+          }
+          if (sql.includes('LEFT JOIN published_packages p') && sql.includes('lower(regexp_replace')) {
+            if (!uploadConflict) {
+              return { rowCount: 0, rows: [] };
+            }
+            return {
+              rowCount: 1,
+              rows: [
+                {
+                  uploaded_draft_id: 'u',
+                  owner_sub: 'oidc-sub',
+                  title: 'T',
+                  subject: 'S',
+                  artifact_path: 'drafts/a.zip',
+                  artifact_sha256: 'sha',
+                  artifact_size_bytes: 1,
+                  published_package_id: null,
+                },
+              ],
+            };
           }
           if (sql.includes('SELECT uploaded_draft_id')) {
             if (draftExists) {
@@ -154,6 +178,72 @@ test('uploadDraft removes artifact file when DB insert fails', async () => {
     /insert failed/
   );
 
+  await assert.rejects(() => fs.access(artifactPath));
+  await fs.rm(tempDir, { recursive: true, force: true });
+});
+
+test('uploadDraft returns conflict for same owner title and subject by default', async () => {
+  const db = createFakeDb({ draftCount: 1, uploadConflict: true });
+  const service = createService({
+    db,
+    artifactStore: {
+      async storeArtifact() {
+        throw new Error('storeArtifact should not be called for conflict path');
+      },
+    },
+  });
+
+  const result = await service.uploadDraft({
+    identity: { sub: 'oidc-sub' },
+    title: '  t  ',
+    subject: 's',
+    zipBytes: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 409);
+  assert.equal(result.error.code, 'DRAFT_NAME_CONFLICT');
+  assert.equal(result.error.details.existingDraft.uploaded_draft_id, 'u');
+});
+
+test('deleteOwnPublishedPackage removes owner package artifact after row delete', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-published-delete-'));
+  const artifactPath = path.join(tempDir, 'published.zip');
+  await fs.writeFile(artifactPath, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  const service = createService({
+    db: {
+      async connect() {
+        return {
+          async query(sql) {
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+              return { rows: [], rowCount: 0 };
+            }
+            if (sql.includes('DELETE FROM published_packages')) {
+              return {
+                rowCount: 1,
+                rows: [{ published_package_id: 'p1', artifact_path: 'published/a.zip' }],
+              };
+            }
+            throw new Error(`Unhandled query in deleteOwnPublishedPackage test: ${sql}`);
+          },
+          release() {},
+        };
+      },
+    },
+    artifactStore: {
+      resolveAbsolutePath() {
+        return artifactPath;
+      },
+    },
+  });
+
+  const result = await service.deleteOwnPublishedPackage({
+    identity: { sub: 'oidc-sub' },
+    publishedPackageId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.statusCode, 200);
   await assert.rejects(() => fs.access(artifactPath));
   await fs.rm(tempDir, { recursive: true, force: true });
 });

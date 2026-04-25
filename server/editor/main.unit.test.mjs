@@ -1016,11 +1016,11 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("subjectLabel.textContent = 'Subject';"), true);
   assert.equal(source.includes("signInBtn.textContent = 'Sign in for server features';"), true);
   assert.equal(source.includes("syncDraftBtn.textContent = 'Upload Draft';"), true);
-  assert.equal(source.includes("loadUploadedDraftsBtn.textContent = 'Refresh Uploaded Drafts';"), true);
+  assert.equal(source.includes("manageUploadedDraftsBtn.textContent = 'Manage Uploaded Drafts';"), true);
   assert.equal(source.includes("browsePublishedBtn.textContent = 'Browse Published Packages';"), true);
   assert.equal(source.includes("loadMoreBtn.textContent = browsePublishedState.loading ? 'Loading…' : 'Load more';"), true);
   assert.equal(source.includes("ownerFilter.placeholder = 'Filter by owner email';"), true);
-  assert.equal(source.includes("copyBtn.textContent = 'Copy Published ID';"), true);
+  assert.equal(source.includes("copyBtn.textContent = 'Copy Viewer Link';"), true);
   assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? 'Opening…' : 'Open in Editor';"), true);
   assert.equal(source.includes('if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;'), true);
   assert.equal(source.includes('const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);'), true);
@@ -1031,11 +1031,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.';"), true);
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
-  assert.equal(source.includes("summary.textContent = 'Published details';"), true);
-  assert.equal(
-    source.includes("publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;"),
-    true
-  );
+  assert.equal(source.includes("summary.textContent = 'Details';"), true);
   assert.equal(
     source.includes("subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;"),
     true
@@ -1046,7 +1042,7 @@ test('stage3: protected actions column no longer includes legacy rewrite/t2a stu
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
   assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
-  assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    browsePublishedBtn,\n    loadUploadedDraftsBtn,\n    uploadedDraftList\n  );'), true);
+  assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    manageUploadedDraftsBtn,\n    browsePublishedBtn\n  );'), true);
 });
 
 test('editor server menu buttons stay disabled when session is not ready and preflight on click', async () => {
@@ -1055,13 +1051,13 @@ test('editor server menu buttons stay disabled when session is not ready and pre
 
   assert.equal(source.includes('syncDraftBtn.disabled = !serverReady || isUploadingDraft;'), true);
   assert.equal(source.includes('browsePublishedBtn.disabled = !serverReady;'), true);
-  assert.equal(source.includes('loadUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;'), true);
+  assert.equal(source.includes('manageUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;'), true);
   assert.equal(source.includes('signInBtn.hidden = serverReady;'), true);
   assert.equal(source.includes('async function guardServerMenuAction(button, action) {'), true);
   assert.equal(source.includes('if (button?.disabled) return null;'), true);
   assert.equal(source.includes('const sessionReady = await session.ensureServerSessionReady();'), true);
-  assert.equal(source.includes('await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));'), true);
-  assert.equal(source.includes('await guardServerMenuAction(loadUploadedDraftsBtn, () => session.loadUploadedDrafts({ preflight: false }));'), true);
+  assert.equal(source.includes('const result = await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));'), true);
+  assert.equal(source.includes('await guardServerMenuAction(manageUploadedDraftsBtn, async () => {'), true);
   assert.equal(css.includes('.action-column button:hover:not(:disabled),'), true);
   assert.equal(css.includes('.action-column button:disabled,'), true);
 });

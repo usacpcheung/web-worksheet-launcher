@@ -96,9 +96,15 @@ export function createRequestHandler({ service, artifactStore, config }) {
         const zipBytes = await readRequestBody(req);
         const title = url.searchParams.get('title') || '';
         const subject = url.searchParams.get('subject') || '';
-        const result = await service.uploadDraft({ identity, title, subject, zipBytes });
+        const result = await service.uploadDraft({
+          identity,
+          title,
+          subject,
+          zipBytes,
+          conflictAction: url.searchParams.get('conflictAction') || '',
+        });
         if (!result.ok) {
-          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+          return json(res, result.statusCode, fail(result.error.code, result.error.message, result.error.details));
         }
         return json(res, result.statusCode, ok(result.data));
       }
@@ -224,6 +230,30 @@ export function createRequestHandler({ service, artifactStore, config }) {
         });
 
         return json(res, 200, ok(publishedBrowse));
+      }
+
+      if (req.method === 'DELETE' && isPublishedDetailRoute(segments)) {
+        if (segments.length !== 4) {
+          return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        }
+
+        const publishedPackageId = segments[3];
+        const validatedPublishedPackageId = assertUuid(publishedPackageId, {
+          code: 'INVALID_PUBLISHED_PACKAGE_ID',
+          message: 'publishedPackageId must be a valid UUID.',
+        });
+        if (!validatedPublishedPackageId.ok) {
+          return json(res, 400, fail(validatedPublishedPackageId.error.code, validatedPublishedPackageId.error.message));
+        }
+
+        const result = await service.deleteOwnPublishedPackage({
+          identity,
+          publishedPackageId: validatedPublishedPackageId.value,
+        });
+        if (!result.ok) {
+          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+        }
+        return json(res, result.statusCode, ok(result.data));
       }
 
       if (req.method === 'GET' && isPublishedDetailRoute(segments)) {
