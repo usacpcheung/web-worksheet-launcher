@@ -823,6 +823,30 @@ textarea.control {
   align-items: end;
 }
 
+.number-answer-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 12px 16px;
+}
+
+.number-answer-rules {
+  display: grid;
+  grid-template-columns: minmax(260px, max-content) minmax(140px, 220px);
+  gap: 12px 16px;
+  align-items: end;
+}
+
+.number-answer-signed-field {
+  justify-content: end;
+  min-height: 69px;
+}
+
+.number-answer-hint {
+  margin: -2px 0 0;
+  font-size: 0.86rem;
+  line-height: 1.3;
+}
+
 .answer-toggle,
 .boolean-answer-toggle {
   display: inline-flex;
@@ -1440,7 +1464,9 @@ textarea.control {
   .block-detail-header__actions,
   .media-row__actions,
   .answer-grid,
-  .text-answer-settings {
+  .text-answer-settings,
+  .number-answer-range,
+  .number-answer-rules {
     width: 100%;
     grid-template-columns: 1fr;
   }

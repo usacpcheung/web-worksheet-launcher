@@ -2430,6 +2430,23 @@ test('number validation helper reports min > max error', async () => {
   assert.equal(errors.max, 'Max must be greater than or equal to Min');
 });
 
+test('number validation helper suppresses correct answer range checks while min max range is invalid', async () => {
+  const mod = await loadEditorModule();
+  const errors = mod.getNumberQuestionValidationErrors(
+    {
+      inputType: 'number',
+      min: 10,
+      max: 5,
+      numberRules: { allowSigned: true, decimalPlacesAllowed: null },
+    },
+    { correctAnswer: '7' }
+  );
+
+  assert.equal(errors.min, 'Max must be greater than or equal to Min');
+  assert.equal(errors.max, 'Max must be greater than or equal to Min');
+  assert.equal(errors.correctAnswer, null);
+});
+
 test('number validation helper reports decimal-place violation', async () => {
   const mod = await loadEditorModule();
   const errors = mod.getNumberQuestionValidationErrors(
@@ -2441,6 +2458,20 @@ test('number validation helper reports decimal-place violation', async () => {
   );
 
   assert.equal(errors.correctAnswer, 'Correct answer has more decimal places than allowed');
+});
+
+test('number validation helper suppresses correct answer decimal checks while decimal rule is invalid', async () => {
+  const mod = await loadEditorModule();
+  const errors = mod.getNumberQuestionValidationErrors(
+    {
+      inputType: 'number',
+      numberRules: { allowSigned: true, decimalPlacesAllowed: null },
+    },
+    { correctAnswer: '1.23', decimalPlacesAllowed: 'abc' }
+  );
+
+  assert.equal(errors.decimalPlacesAllowed, 'Decimal places allowed must be a non-negative integer');
+  assert.equal(errors.correctAnswer, null);
 });
 
 test('number validation helper reports out-of-range correct answer', async () => {

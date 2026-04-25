@@ -538,6 +538,7 @@ function getNumberQuestionValidationErrors(config, rawValues = {}) {
     errors.min = rangeMessage;
     errors.max = rangeMessage;
   }
+  const hasRangeError = Boolean(errors.min || errors.max);
 
   const decimalPlacesRaw = rawValues.decimalPlacesAllowed;
   let decimalPlacesAllowed = normalizedConfig.numberRules?.decimalPlacesAllowed ?? null;
@@ -556,6 +557,7 @@ function getNumberQuestionValidationErrors(config, rawValues = {}) {
       }
     }
   }
+  const hasDecimalPlacesError = Boolean(errors.decimalPlacesAllowed);
 
   const rawCorrectAnswer = rawValues.correctAnswer;
   const hasRawCorrectAnswer = rawCorrectAnswer !== undefined;
@@ -576,16 +578,19 @@ function getNumberQuestionValidationErrors(config, rawValues = {}) {
       errors.correctAnswer = 'Correct answer must be positive when signed values are disabled';
       return errors;
     }
-    if (minValue !== null && correctAnswer < minValue) {
-      errors.correctAnswer = 'Correct answer must be greater than or equal to Min';
-      return errors;
-    }
-    if (maxValue !== null && correctAnswer > maxValue) {
-      errors.correctAnswer = 'Correct answer must be less than or equal to Max';
-      return errors;
+    if (!hasRangeError) {
+      if (minValue !== null && correctAnswer < minValue) {
+        errors.correctAnswer = 'Correct answer must be greater than or equal to Min';
+        return errors;
+      }
+      if (maxValue !== null && correctAnswer > maxValue) {
+        errors.correctAnswer = 'Correct answer must be less than or equal to Max';
+        return errors;
+      }
     }
     if (
-      decimalPlacesAllowed !== null
+      !hasDecimalPlacesError
+      && decimalPlacesAllowed !== null
       && Number.isInteger(decimalPlacesAllowed)
       && countDecimalPlaces(correctAnswer) > decimalPlacesAllowed
     ) {
@@ -3658,7 +3663,17 @@ function renderEditorShell(session) {
   const questionNumberAllowSigned = document.createElement('input');
   questionNumberAllowSigned.id = 'editor-question-number-allow-signed';
   questionNumberAllowSigned.type = 'checkbox';
-  questionNumberAllowSigned.className = 'control';
+  questionNumberAllowSigned.hidden = true;
+  const questionNumberAllowSignedToggle = document.createElement('button');
+  questionNumberAllowSignedToggle.type = 'button';
+  questionNumberAllowSignedToggle.className = 'option-correct-toggle inline-toggle__tick-btn';
+  questionNumberAllowSignedToggle.setAttribute('aria-label', 'Toggle signed values');
+  questionNumberAllowSignedToggle.setAttribute('aria-pressed', 'false');
+  const questionNumberAllowSignedTick = document.createElement('span');
+  questionNumberAllowSignedTick.className = 'option-correct-toggle__tick';
+  questionNumberAllowSignedTick.setAttribute('aria-hidden', 'true');
+  questionNumberAllowSignedTick.innerHTML = createEditorIcon('check');
+  questionNumberAllowSignedToggle.appendChild(questionNumberAllowSignedTick);
   const questionNumberDecimalPlacesAllowed = document.createElement('input');
   questionNumberDecimalPlacesAllowed.id = 'editor-question-number-decimal-places-allowed';
   questionNumberDecimalPlacesAllowed.type = 'number';
@@ -4563,6 +4578,10 @@ function renderEditorShell(session) {
       if (activeElement !== questionNumberAllowSigned) {
         questionNumberAllowSigned.checked = responseConfig.numberRules?.allowSigned !== false;
       }
+      questionNumberAllowSignedToggle.setAttribute(
+        'aria-pressed',
+        questionNumberAllowSigned.checked ? 'true' : 'false'
+      );
       if (activeElement !== questionNumberDecimalPlacesAllowed) {
         questionNumberDecimalPlacesAllowed.value = Number.isInteger(responseConfig.numberRules?.decimalPlacesAllowed)
           ? String(responseConfig.numberRules.decimalPlacesAllowed)
@@ -5254,23 +5273,47 @@ function renderEditorShell(session) {
       const minLabel = document.createElement('label');
       minLabel.textContent = 'Min';
       minLabel.htmlFor = 'editor-question-min';
+      const minField = document.createElement('div');
+      minField.className = 'editor-field';
+      minField.append(minLabel, questionMin, questionMinError);
       const maxLabel = document.createElement('label');
       maxLabel.textContent = 'Max';
       maxLabel.htmlFor = 'editor-question-max';
-      answerSection.append(minLabel, questionMin, questionMinError, maxLabel, questionMax, questionMaxError);
+      const maxField = document.createElement('div');
+      maxField.className = 'editor-field';
+      maxField.append(maxLabel, questionMax, questionMaxError);
+      const rangeRow = document.createElement('div');
+      rangeRow.className = 'number-answer-range';
+      rangeRow.append(minField, maxField);
+      answerSection.append(rangeRow);
 
-      const signedRow = document.createElement('label');
-      signedRow.className = 'inline-toggle';
-      signedRow.htmlFor = 'editor-question-number-allow-signed';
+      const rulesRow = document.createElement('div');
+      rulesRow.className = 'number-answer-rules';
+      const signedField = document.createElement('div');
+      signedField.className = 'editor-field number-answer-signed-field';
+      const signedRow = document.createElement('div');
+      signedRow.className = 'inline-toggle inline-toggle--custom';
       const signedText = document.createElement('span');
       signedText.textContent = 'Allow signed values (+/-)';
-      signedRow.append(signedText, questionNumberAllowSigned);
-      answerSection.append(signedRow);
+      signedRow.append(questionNumberAllowSignedToggle, questionNumberAllowSigned, signedText);
+      signedField.append(signedRow);
 
+      const decimalPlacesField = document.createElement('div');
+      decimalPlacesField.className = 'editor-field';
       const decimalPlacesLabel = document.createElement('label');
-      decimalPlacesLabel.textContent = 'Decimal places allowed (blank = unlimited)';
+      decimalPlacesLabel.textContent = 'Decimal places';
       decimalPlacesLabel.htmlFor = 'editor-question-number-decimal-places-allowed';
-      answerSection.append(decimalPlacesLabel, questionNumberDecimalPlacesAllowed, questionNumberDecimalPlacesAllowedError);
+      const decimalPlacesHint = document.createElement('p');
+      decimalPlacesHint.className = 'muted number-answer-hint';
+      decimalPlacesHint.textContent = 'Blank = unlimited';
+      decimalPlacesField.append(
+        decimalPlacesLabel,
+        questionNumberDecimalPlacesAllowed,
+        decimalPlacesHint,
+        questionNumberDecimalPlacesAllowedError
+      );
+      rulesRow.append(signedField, decimalPlacesField);
+      answerSection.append(rulesRow);
 
       const correctAnswerLabel = document.createElement('label');
       correctAnswerLabel.textContent = 'Correct answer';
@@ -6019,8 +6062,8 @@ function renderEditorShell(session) {
     session.updateQuestionCorrectAnswerNumber(session.state.selectedBlockId, questionCorrectAnswerNumber.value);
     updateSummary();
   });
-  questionNumberAllowSigned.addEventListener('change', () => {
-    session.updateQuestionNumberRulesAllowSigned(session.state.selectedBlockId, questionNumberAllowSigned.checked);
+  questionNumberAllowSignedToggle.addEventListener('click', () => {
+    session.updateQuestionNumberRulesAllowSigned(session.state.selectedBlockId, !questionNumberAllowSigned.checked);
     updateSummary();
   });
   questionNumberDecimalPlacesAllowed.addEventListener('input', () => {
