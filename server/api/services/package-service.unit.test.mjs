@@ -12,6 +12,7 @@ function createFakeDb({
   failInsert = false,
   draftExists = true,
   uploadConflict = false,
+  uploadConflictTitles = ['t'],
   failDelete = false,
   existingPublished = null,
 } = {}) {
@@ -33,7 +34,7 @@ function createFakeDb({
             return { rowCount: 0, rows: [] };
           }
           if (sql.includes('LEFT JOIN published_packages p') && sql.includes('lower(regexp_replace')) {
-            if (!uploadConflict || values[1] !== 't') {
+            if (!uploadConflict || !uploadConflictTitles.includes(values[1])) {
               return { rowCount: 0, rows: [] };
             }
             return {
@@ -42,7 +43,7 @@ function createFakeDb({
                 {
                   uploaded_draft_id: 'u',
                   owner_sub: 'oidc-sub',
-                  title: 'T',
+                  title: values[1] === 't (2)' ? 'T (2)' : 'T',
                   subject: 'S',
                   artifact_path: 'drafts/a.zip',
                   artifact_sha256: 'sha',
@@ -267,6 +268,46 @@ test('uploadDraft save-as-copy stores artifact with server-selected copy title i
   assert.equal(result.data.title, 'T (2)');
   assert.equal(parsed.manifest.worksheet.title, 'T (2)');
   assert.equal(parsed.worksheet.title, 'T (2)');
+});
+
+test('uploadDraft save-as-copy advances generated suffix instead of nesting suffixes', async () => {
+  let storedBytes = null;
+  const db = createFakeDb({ draftCount: 2, uploadConflict: true, uploadConflictTitles: ['t (2)', 't', 't (2)'] });
+  const service = createService({
+    db,
+    artifactStore: {
+      async storeArtifact({ bytes }) {
+        storedBytes = bytes;
+        return { artifactPath: 'drafts/copy.zip', absolutePath: '/tmp/copy.zip', artifactSha256: 'sha-copy', artifactSizeBytes: bytes.length };
+      },
+    },
+  });
+  const zipBytes = createStoredZip([
+    {
+      path: 'manifest.json',
+      data: JSON.stringify({
+        format: 'worksheet-package',
+        packageVersion: 1,
+        assets: [],
+        worksheet: { title: 'T (2)' },
+      }),
+    },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'T (2)', blocks: [] }) },
+  ]);
+
+  const result = await service.uploadDraft({
+    identity: { sub: 'oidc-sub', email: 'teacher@example.test', name: 'Teacher' },
+    title: 'T (2)',
+    subject: 'S',
+    zipBytes,
+    conflictAction: 'copy',
+  });
+  const parsed = parseWorksheetPackage(storedBytes);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.title, 'T (3)');
+  assert.equal(parsed.manifest.worksheet.title, 'T (3)');
+  assert.equal(parsed.worksheet.title, 'T (3)');
 });
 
 test('deleteOwnPublishedPackage removes owner package artifact after row delete', async () => {

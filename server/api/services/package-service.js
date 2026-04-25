@@ -17,6 +17,15 @@ function normalizeUploadConflictAction(value) {
   return 'fail_on_conflict';
 }
 
+function stripGeneratedCopySuffix(title) {
+  const normalizedTitle = normalizeText(title, 'Untitled draft');
+  const match = normalizedTitle.match(/^(.*)\s\((\d+)\)$/);
+  if (!match) return normalizedTitle;
+  const copyIndex = Number(match[2]);
+  const baseTitle = normalizeText(match[1], '');
+  return copyIndex >= 2 && baseTitle ? baseTitle : normalizedTitle;
+}
+
 async function deleteArtifactIfPresent(artifact) {
   if (!artifact?.absolutePath) return;
   try {
@@ -152,7 +161,7 @@ export class PackageService {
   }
 
   async findAvailableCopyTitle({ client, identity, title, subject }) {
-    const baseTitle = normalizeText(title, 'Untitled draft');
+    const baseTitle = stripGeneratedCopySuffix(title);
     for (let copyIndex = 2; copyIndex < 1000; copyIndex += 1) {
       const candidate = `${baseTitle} (${copyIndex})`;
       const existing = await this.findUploadConflict({ client, identity, title: candidate, subject });
