@@ -382,6 +382,12 @@ textarea.control {
   gap: 8px;
 }
 
+.sidebar-add-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .sidebar-action-btn {
   display: inline-flex;
   align-items: center;
@@ -390,6 +396,10 @@ textarea.control {
   color: #334155;
   border-color: #cbd5e1;
   background: #f8fafc;
+}
+
+.sidebar-add-actions .sidebar-action-btn {
+  width: 100%;
 }
 
 .muted {

@@ -3520,7 +3520,7 @@ function renderEditorShell(session) {
   blockList.className = 'block-list';
 
   const controlsRow = document.createElement('div');
-  controlsRow.className = 'button-row';
+  controlsRow.className = 'sidebar-add-actions';
 
   const metaRow = document.createElement('div');
   metaRow.className = 'button-row';
