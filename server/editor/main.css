@@ -851,6 +851,10 @@ textarea.control {
   transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
+.answer-toggle__btn {
+  min-width: 144px;
+}
+
 .answer-toggle__btn:hover,
 .answer-toggle__btn:focus-visible,
 .boolean-answer-toggle__btn:hover,
@@ -882,6 +886,11 @@ textarea.control {
   opacity: 0;
   transform: scale(0.7);
   transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.answer-toggle__tick {
+  position: static;
+  flex: 0 0 18px;
 }
 
 .answer-toggle__tick .editor-icon,
