@@ -305,6 +305,8 @@ function createEditorIcon(name) {
     check: `<svg ${svgAttrs}><path d="M20 6 9 17l-5-5"></path></svg>`,
     chevronUp: `<svg ${svgAttrs}><path d="m18 15-6-6-6 6"></path></svg>`,
     chevronDown: `<svg ${svgAttrs}><path d="m6 9 6 6 6-6"></path></svg>`,
+    grip: `<svg ${svgAttrs}><circle cx="9" cy="5" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>`,
+    moreHorizontal: `<svg ${svgAttrs}><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>`,
     filePlus: `<svg ${svgAttrs}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M12 18v-6"></path><path d="M9 15h6"></path></svg>`,
     eye: `<svg ${svgAttrs}><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
     info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
@@ -2074,6 +2076,23 @@ class EditorDraftSession {
     if (currentIndex < 0) return;
     const targetIndex = currentIndex + delta;
     if (targetIndex < 0 || targetIndex >= blocks.length) return;
+
+    this.reorderBlockToIndex(blockId, targetIndex);
+  }
+
+  reorderBlockToIndex(blockId, targetIndex) {
+    if (!this.state.draft || !blockId) return;
+    const blocks = (Array.isArray(this.state.draft.blocks) ? this.state.draft.blocks : [])
+      .slice()
+      .sort((a, b) => a.position - b.position);
+    const currentIndex = blocks.findIndex((block) => block.blockId === blockId);
+    if (
+      currentIndex < 0
+      || !Number.isInteger(targetIndex)
+      || targetIndex < 0
+      || targetIndex >= blocks.length
+      || targetIndex === currentIndex
+    ) return;
 
     const nextBlocks = blocks.slice();
     const [movedBlock] = nextBlocks.splice(currentIndex, 1);
@@ -4601,6 +4620,14 @@ function renderEditorShell(session) {
     updateNumberValidationFeedback(selectedBlock);
   };
 
+  let draggedBlockId = null;
+  const clearBlockDragState = () => {
+    blockList.querySelectorAll('.block-item--dragging, .block-item--drop-before, .block-item--drop-after')
+      .forEach((node) => {
+        node.classList.remove('block-item--dragging', 'block-item--drop-before', 'block-item--drop-after');
+      });
+  };
+
   const renderBlockList = () => {
     blockList.innerHTML = '';
     const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);
@@ -4609,8 +4636,63 @@ function renderEditorShell(session) {
       const isLast = index === blocks.length - 1;
       const item = document.createElement('li');
       item.className = `block-item ${block.blockId === session.state.selectedBlockId ? 'selected' : ''}`;
+      item.dataset.blockId = block.blockId;
+      item.dataset.blockIndex = String(index);
       const row = document.createElement('div');
       row.className = 'block-item-row';
+      const dragHandle = document.createElement('button');
+      dragHandle.type = 'button';
+      dragHandle.className = 'block-drag-handle';
+      dragHandle.title = `Drag block ${index + 1} to reorder`;
+      dragHandle.setAttribute('aria-label', `Drag block ${index + 1} to reorder`);
+      dragHandle.setAttribute('draggable', 'true');
+      dragHandle.innerHTML = createEditorIcon('grip');
+      dragHandle.addEventListener('click', (event) => {
+        event.stopPropagation();
+      });
+      dragHandle.addEventListener('dragstart', (event) => {
+        draggedBlockId = block.blockId;
+        item.classList.add('block-item--dragging');
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', block.blockId);
+        }
+      });
+      dragHandle.addEventListener('dragend', () => {
+        draggedBlockId = null;
+        clearBlockDragState();
+      });
+      item.addEventListener('dragover', (event) => {
+        if (!draggedBlockId || draggedBlockId === block.blockId) return;
+        event.preventDefault();
+        blockList.querySelectorAll('.block-item--drop-before, .block-item--drop-after')
+          .forEach((node) => {
+            if (node !== item) node.classList.remove('block-item--drop-before', 'block-item--drop-after');
+          });
+        const rect = item.getBoundingClientRect();
+        const dropAfter = event.clientY > rect.top + rect.height / 2;
+        item.classList.toggle('block-item--drop-before', !dropAfter);
+        item.classList.toggle('block-item--drop-after', dropAfter);
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      });
+      item.addEventListener('dragleave', () => {
+        item.classList.remove('block-item--drop-before', 'block-item--drop-after');
+      });
+      item.addEventListener('drop', (event) => {
+        if (!draggedBlockId || draggedBlockId === block.blockId) return;
+        event.preventDefault();
+        const sourceIndex = blocks.findIndex((entry) => entry.blockId === draggedBlockId);
+        if (sourceIndex < 0) return;
+        const rect = item.getBoundingClientRect();
+        const dropAfter = event.clientY > rect.top + rect.height / 2;
+        let targetIndex = dropAfter ? index + 1 : index;
+        if (sourceIndex < targetIndex) targetIndex -= 1;
+        targetIndex = Math.max(0, Math.min(targetIndex, blocks.length - 1));
+        session.reorderBlockToIndex(draggedBlockId, targetIndex);
+        draggedBlockId = null;
+        clearBlockDragState();
+        updateSummary();
+      });
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'block-select';
@@ -4633,30 +4715,42 @@ function renderEditorShell(session) {
       });
       const actions = document.createElement('div');
       actions.className = 'block-item-actions';
+      const reorderMenu = document.createElement('details');
+      reorderMenu.className = 'block-reorder-menu';
+      const reorderSummary = document.createElement('summary');
+      reorderSummary.className = 'icon-btn block-reorder-menu__summary';
+      reorderSummary.setAttribute('role', 'button');
+      reorderSummary.title = `More reorder actions for block ${displayIndex}`;
+      reorderSummary.setAttribute('aria-label', `More reorder actions for block ${displayIndex}`);
+      reorderSummary.innerHTML = createEditorIcon('moreHorizontal');
       const moveUpBtn = document.createElement('button');
       moveUpBtn.type = 'button';
-      moveUpBtn.className = 'icon-btn';
+      moveUpBtn.className = 'block-reorder-menu__item';
       moveUpBtn.title = `Move block ${displayIndex} up`;
-      moveUpBtn.setAttribute('aria-label', `Move block ${displayIndex} up`);
-      setIconButtonContent(moveUpBtn, 'chevronUp');
+      moveUpBtn.textContent = 'Move up';
       moveUpBtn.disabled = isFirst;
       moveUpBtn.addEventListener('click', (event) => {
         event.stopPropagation();
         session.reorderBlockByDelta(block.blockId, -1);
+        reorderMenu.open = false;
         updateSummary();
       });
       const moveDownBtn = document.createElement('button');
       moveDownBtn.type = 'button';
-      moveDownBtn.className = 'icon-btn';
+      moveDownBtn.className = 'block-reorder-menu__item';
       moveDownBtn.title = `Move block ${displayIndex} down`;
-      moveDownBtn.setAttribute('aria-label', `Move block ${displayIndex} down`);
-      setIconButtonContent(moveDownBtn, 'chevronDown');
+      moveDownBtn.textContent = 'Move down';
       moveDownBtn.disabled = isLast;
       moveDownBtn.addEventListener('click', (event) => {
         event.stopPropagation();
         session.reorderBlockByDelta(block.blockId, 1);
+        reorderMenu.open = false;
         updateSummary();
       });
+      const reorderMenuBody = document.createElement('div');
+      reorderMenuBody.className = 'block-reorder-menu__body';
+      reorderMenuBody.append(moveUpBtn, moveDownBtn);
+      reorderMenu.append(reorderSummary, reorderMenuBody);
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'icon-btn danger';
@@ -4685,8 +4779,8 @@ function renderEditorShell(session) {
         }
         updateSummary();
       });
-      actions.append(moveUpBtn, moveDownBtn, deleteBtn);
-      row.append(button, actions);
+      actions.append(reorderMenu, deleteBtn);
+      row.append(dragHandle, button, actions);
       item.appendChild(row);
       blockList.appendChild(item);
     });

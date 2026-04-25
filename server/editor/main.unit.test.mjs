@@ -1729,6 +1729,55 @@ test('reorderBlockByDelta moves middle block up/down and normalizes positions to
   });
 });
 
+test('reorderBlockToIndex moves blocks to absolute indexes and normalizes positions', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_reorder_to_index');
+  clearTimeout(session.autosaveTimer);
+
+  session.state.draft.blocks = [
+    { blockId: 'a', kind: 'content', position: 0, content: { text: 'A', format: 'plain_text' } },
+    { blockId: 'b', kind: 'content', position: 1, content: { text: 'B', format: 'plain_text' } },
+    { blockId: 'c', kind: 'content', position: 2, content: { text: 'C', format: 'plain_text' } },
+    { blockId: 'd', kind: 'content', position: 3, content: { text: 'D', format: 'plain_text' } },
+  ];
+  session.state.selectedBlockId = 'c';
+
+  session.reorderBlockToIndex('d', 1);
+
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['a', 'd', 'b', 'c']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2, 3]);
+  assert.equal(session.state.selectedBlockId, 'c');
+
+  session.reorderBlockToIndex('a', 3);
+
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['d', 'b', 'c', 'a']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2, 3]);
+  assert.equal(session.state.selectedBlockId, 'c');
+});
+
+test('reorderBlockToIndex no-ops for invalid targets and preserves revision', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_reorder_to_index_invalid');
+  clearTimeout(session.autosaveTimer);
+
+  session.state.draft.blocks = [
+    { blockId: 'a', kind: 'content', position: 0, content: { text: 'A', format: 'plain_text' } },
+    { blockId: 'b', kind: 'content', position: 1, content: { text: 'B', format: 'plain_text' } },
+  ];
+  const snapshot = session.state.draft.blocks.map((block) => structuredClone(block));
+  const revisionBefore = session.state.draftRevision;
+
+  session.reorderBlockToIndex('missing', 0);
+  session.reorderBlockToIndex('a', -1);
+  session.reorderBlockToIndex('a', 2);
+  session.reorderBlockToIndex('a', 0);
+
+  assert.deepEqual(session.state.draft.blocks, snapshot);
+  assert.equal(session.state.draftRevision, revisionBefore);
+});
+
 test('reorderBlockByDelta no-ops for out-of-bounds moves and preserves fields/selection', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());

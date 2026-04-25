@@ -181,6 +181,34 @@ body {
   overflow: auto;
 }
 
+.block-item {
+  position: relative;
+}
+
+.block-item--dragging {
+  opacity: 0.58;
+}
+
+.block-item--drop-before::before,
+.block-item--drop-after::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 999px;
+  background: #2563eb;
+  z-index: 2;
+}
+
+.block-item--drop-before::before {
+  top: -6px;
+}
+
+.block-item--drop-after::after {
+  bottom: -6px;
+}
+
 .block-select {
   display: flex;
   align-items: center;
@@ -257,6 +285,79 @@ body {
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+}
+
+.block-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  width: 32px;
+  height: 38px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  cursor: grab;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.block-drag-handle:hover,
+.block-drag-handle:focus-visible {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+}
+
+.block-drag-handle:active {
+  cursor: grabbing;
+}
+
+.block-reorder-menu {
+  position: relative;
+}
+
+.block-reorder-menu[open] {
+  z-index: 6;
+}
+
+.block-reorder-menu__summary::marker,
+.block-reorder-menu__summary::-webkit-details-marker {
+  display: none;
+  content: '';
+}
+
+.block-reorder-menu__body {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  min-width: 132px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid #d6d9e0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 18px rgb(16 24 40 / 14%);
+}
+
+.block-reorder-menu__item {
+  display: flex;
+  width: 100%;
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+  color: #334155;
+  text-align: left;
+}
+
+.block-reorder-menu__item:hover:not(:disabled),
+.block-reorder-menu__item:focus-visible:not(:disabled) {
+  border-color: #e5e7eb;
+  background: #f8fafc;
 }
 
 .icon-btn {
