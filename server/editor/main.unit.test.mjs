@@ -2201,6 +2201,9 @@ test('question correctAnswer helpers update typed answer keys', async () => {
   session.updateQuestionCorrectAnswerBoolean(block.blockId, 'true');
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.equal(updated.responseConfig.correctAnswer, true);
+  session.updateQuestionCorrectAnswerBoolean(block.blockId, '');
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
 
   session.updateQuestionInputType(block.blockId, 'number');
   session.updateQuestionCorrectAnswerNumber(block.blockId, '4.5');

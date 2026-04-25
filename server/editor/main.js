@@ -3653,18 +3653,26 @@ function renderEditorShell(session) {
   questionNumberDecimalPlacesAllowed.min = '0';
   questionNumberDecimalPlacesAllowed.step = '1';
   questionNumberDecimalPlacesAllowed.className = 'control';
-  const questionCorrectAnswerBoolean = document.createElement('select');
+  const questionCorrectAnswerBoolean = document.createElement('div');
   questionCorrectAnswerBoolean.id = 'editor-question-correct-answer-boolean';
-  questionCorrectAnswerBoolean.className = 'control';
-  [
-    { value: '', label: '— Unset —' },
-    { value: 'true', label: 'True' },
-    { value: 'false', label: 'False' },
-  ].forEach(({ value, label }) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    questionCorrectAnswerBoolean.appendChild(option);
+  questionCorrectAnswerBoolean.className = 'boolean-answer-toggle';
+  questionCorrectAnswerBoolean.setAttribute('role', 'group');
+  questionCorrectAnswerBoolean.setAttribute('aria-labelledby', 'editor-question-correct-answer-boolean-label');
+  const questionCorrectAnswerBooleanButtons = ['true', 'false'].map((value) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'boolean-answer-toggle__btn';
+    button.dataset.booleanAnswerValue = value;
+    button.setAttribute('aria-pressed', 'false');
+    const tick = document.createElement('span');
+    tick.className = 'boolean-answer-toggle__tick';
+    tick.setAttribute('aria-hidden', 'true');
+    tick.innerHTML = createEditorIcon('check');
+    const text = document.createElement('span');
+    text.textContent = value === 'true' ? 'True' : 'False';
+    button.append(tick, text);
+    questionCorrectAnswerBoolean.appendChild(button);
+    return button;
   });
   const questionCorrectAnswerNumber = document.createElement('input');
   questionCorrectAnswerNumber.id = 'editor-question-correct-answer-number';
@@ -4544,13 +4552,11 @@ function renderEditorShell(session) {
           ? String(responseConfig.numberRules.decimalPlacesAllowed)
           : '';
       }
-      if (activeElement !== questionCorrectAnswerBoolean) {
-        if (typeof responseConfig.correctAnswer === 'boolean') {
-          questionCorrectAnswerBoolean.value = responseConfig.correctAnswer ? 'true' : 'false';
-        } else {
-          questionCorrectAnswerBoolean.value = '';
-        }
-      }
+      questionCorrectAnswerBooleanButtons.forEach((button) => {
+        const isSelected = typeof responseConfig.correctAnswer === 'boolean'
+          && button.dataset.booleanAnswerValue === String(responseConfig.correctAnswer);
+        button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+      });
       if (activeElement !== questionCorrectAnswerNumber) {
         questionCorrectAnswerNumber.value = typeof responseConfig.correctAnswer === 'number'
           ? String(responseConfig.correctAnswer)
@@ -5250,8 +5256,8 @@ function renderEditorShell(session) {
 
     if (activeInputType === 'boolean') {
       const correctAnswerLabel = document.createElement('label');
+      correctAnswerLabel.id = 'editor-question-correct-answer-boolean-label';
       correctAnswerLabel.textContent = 'Correct answer';
-      correctAnswerLabel.htmlFor = 'editor-question-correct-answer-boolean';
       answerSection.append(correctAnswerLabel, questionCorrectAnswerBoolean);
     }
 
@@ -5972,9 +5978,13 @@ function renderEditorShell(session) {
     session.updateQuestionNumberConfig(session.state.selectedBlockId, 'max', questionMax.value);
     updateSummary();
   });
-  questionCorrectAnswerBoolean.addEventListener('change', () => {
-    session.updateQuestionCorrectAnswerBoolean(session.state.selectedBlockId, questionCorrectAnswerBoolean.value);
-    updateSummary();
+  questionCorrectAnswerBooleanButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const selectedValue = button.dataset.booleanAnswerValue || '';
+      const nextValue = button.getAttribute('aria-pressed') === 'true' ? '' : selectedValue;
+      session.updateQuestionCorrectAnswerBoolean(session.state.selectedBlockId, nextValue);
+      updateSummary();
+    });
   });
   questionCorrectAnswerNumber.addEventListener('input', () => {
     session.updateQuestionCorrectAnswerNumber(session.state.selectedBlockId, questionCorrectAnswerNumber.value);

@@ -816,6 +816,72 @@ textarea.control {
   gap: 12px 16px;
 }
 
+.boolean-answer-toggle {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.boolean-answer-toggle__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 112px;
+  min-height: 42px;
+  padding: 8px 16px;
+  border: 0;
+  border-right: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.boolean-answer-toggle__btn:last-child {
+  border-right: 0;
+}
+
+.boolean-answer-toggle__btn:hover,
+.boolean-answer-toggle__btn:focus-visible {
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.boolean-answer-toggle__btn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 3px rgba(34, 197, 94, 0.28);
+}
+
+.boolean-answer-toggle__btn[aria-pressed="true"] {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.boolean-answer-toggle__tick {
+  display: inline-flex;
+  width: 18px;
+  opacity: 0;
+  transform: scale(0.7);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.boolean-answer-toggle__tick .editor-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.boolean-answer-toggle__btn[aria-pressed="true"] .boolean-answer-toggle__tick {
+  opacity: 1;
+  transform: scale(1);
+}
+
 .id-copy-menu {
   position: relative;
 }
