@@ -890,7 +890,14 @@ textarea.control {
 
 .answer-toggle__tick {
   position: static;
-  flex: 0 0 18px;
+  flex: 0 0 0;
+  width: 0;
+  overflow: hidden;
+}
+
+.answer-toggle__btn[aria-pressed="true"] .answer-toggle__tick {
+  flex-basis: 18px;
+  width: 18px;
 }
 
 .answer-toggle__tick .editor-icon,
