@@ -235,6 +235,7 @@ test('uploadDraft save-as-copy stores artifact with server-selected copy title i
     db,
     artifactStore: {
       async storeArtifact({ bytes }) {
+        assert.equal(Buffer.isBuffer(bytes), true);
         storedBytes = bytes;
         return { artifactPath: 'drafts/copy.zip', absolutePath: '/tmp/copy.zip', artifactSha256: 'sha-copy', artifactSizeBytes: bytes.length };
       },

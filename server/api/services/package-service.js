@@ -282,7 +282,7 @@ export class PackageService {
         : normalizedTitle;
       const uploadedDraftId = crypto.randomUUID();
       const storedZipBytes = finalTitle !== normalizedTitle
-        ? rewriteWorksheetPackageTitle(zipBytes, finalTitle)
+        ? Buffer.from(rewriteWorksheetPackageTitle(zipBytes, finalTitle))
         : zipBytes;
       artifact = await this.createDraftArtifact({ identity, uploadedDraftId, zipBytes: storedZipBytes });
 
