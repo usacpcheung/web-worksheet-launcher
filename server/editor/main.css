@@ -819,11 +819,8 @@ textarea.control {
 .boolean-answer-toggle {
   display: inline-flex;
   align-items: center;
+  gap: 8px;
   width: fit-content;
-  overflow: hidden;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #fff;
 }
 
 .boolean-answer-toggle__btn {
@@ -834,22 +831,19 @@ textarea.control {
   min-width: 112px;
   min-height: 42px;
   padding: 8px 16px;
-  border: 0;
-  border-right: 1px solid #cbd5e1;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
   background: #fff;
   color: #334155;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
-}
-
-.boolean-answer-toggle__btn:last-child {
-  border-right: 0;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
 .boolean-answer-toggle__btn:hover,
 .boolean-answer-toggle__btn:focus-visible {
+  border-color: #86efac;
   background: #f0fdf4;
   color: #166534;
 }
@@ -860,6 +854,7 @@ textarea.control {
 }
 
 .boolean-answer-toggle__btn[aria-pressed="true"] {
+  border-color: #16a34a;
   background: #dcfce7;
   color: #166534;
 }
