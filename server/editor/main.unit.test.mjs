@@ -1058,9 +1058,11 @@ test('editor server menu buttons stay disabled when session is not ready and pre
   assert.equal(source.includes('if (button?.disabled) return null;'), true);
   assert.equal(source.includes('const sessionReady = await session.ensureServerSessionReady();'), true);
   assert.equal(source.includes('if (session.state.isUploadDraftFlowActive || session.state.isUploadingDraft) return;'), true);
+  assert.equal(source.includes('let uploadFlowStarted = false;'), true);
   assert.equal(source.includes('session.state.isUploadDraftFlowActive = true;'), true);
+  assert.equal(source.includes('uploadFlowStarted = true;'), true);
   assert.equal(source.includes('session.state.isUploadDraftFlowActive = false;'), true);
-  assert.equal(source.includes('const result = await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));'), true);
+  assert.equal(source.includes('return session.uploadCurrentDraftToServer({ preflight: false });'), true);
   assert.equal(source.includes('await guardServerMenuAction(manageUploadedDraftsBtn, async () => {'), true);
   assert.equal(css.includes('.action-column button:hover:not(:disabled),'), true);
   assert.equal(css.includes('.action-column button:disabled,'), true);

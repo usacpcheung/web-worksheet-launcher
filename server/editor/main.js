@@ -6578,10 +6578,14 @@ function renderEditorShell(session) {
   });
   syncDraftBtn.addEventListener('click', async () => {
     if (session.state.isUploadDraftFlowActive || session.state.isUploadingDraft) return;
-    session.state.isUploadDraftFlowActive = true;
-    updateSummary();
+    let uploadFlowStarted = false;
     try {
-      const result = await guardServerMenuAction(syncDraftBtn, () => session.uploadCurrentDraftToServer({ preflight: false }));
+      const result = await guardServerMenuAction(syncDraftBtn, () => {
+        session.state.isUploadDraftFlowActive = true;
+        uploadFlowStarted = true;
+        updateSummary();
+        return session.uploadCurrentDraftToServer({ preflight: false });
+      });
       if (!result?.ok && result?.error?.code === 'DRAFT_NAME_CONFLICT') {
         const choice = await showUploadConflictModal({ existingDraft: result.error.details?.existingDraft });
         if (choice.action === 'replace' || choice.action === 'copy') {
@@ -6600,7 +6604,9 @@ function renderEditorShell(session) {
         }
       }
     } finally {
-      session.state.isUploadDraftFlowActive = false;
+      if (uploadFlowStarted) {
+        session.state.isUploadDraftFlowActive = false;
+      }
       updateSummary();
     }
   });
