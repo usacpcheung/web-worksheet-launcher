@@ -372,7 +372,7 @@ test('deleteOwnPublishedPackage removes owner package artifact after row delete'
             if (sql.includes('DELETE FROM published_packages')) {
               return {
                 rowCount: 1,
-                rows: [{ published_package_id: 'p1', artifact_path: 'published/a.zip' }],
+                rows: [{ published_package_id: 'p1', artifact_path: 'published/a.zip', source_uploaded_draft_id: null }],
               };
             }
             throw new Error(`Unhandled query in deleteOwnPublishedPackage test: ${sql}`);
@@ -397,6 +397,130 @@ test('deleteOwnPublishedPackage removes owner package artifact after row delete'
   assert.equal(result.statusCode, 200);
   await assert.rejects(() => fs.access(artifactPath));
   await fs.rm(tempDir, { recursive: true, force: true });
+});
+
+test('deleteOwnPublishedPackage clears draft publish markers when deleted package was last for draft', async () => {
+  const queries = [];
+  const valuesSeen = [];
+  const service = createService({
+    db: {
+      async connect() {
+        return {
+          async query(sql, values = []) {
+            queries.push(sql);
+            valuesSeen.push(values);
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+              return { rows: [], rowCount: 0 };
+            }
+            if (sql.includes('DELETE FROM published_packages')) {
+              return {
+                rowCount: 1,
+                rows: [{
+                  published_package_id: 'p1',
+                  artifact_path: 'published/a.zip',
+                  source_uploaded_draft_id: 'u1',
+                }],
+              };
+            }
+            if (sql.includes('SELECT artifact_sha256, published_at') && sql.includes('FROM published_packages')) {
+              return { rowCount: 0, rows: [] };
+            }
+            if (sql.includes('UPDATE uploaded_drafts') && sql.includes('last_published_artifact_sha256 = NULL')) {
+              return { rowCount: 1, rows: [] };
+            }
+            throw new Error(`Unhandled query in marker clear test: ${sql}`);
+          },
+          release() {},
+        };
+      },
+    },
+    artifactStore: {
+      resolveAbsolutePath() {
+        return path.join(os.tmpdir(), 'nonexistent.zip');
+      },
+    },
+  });
+
+  const result = await service.deleteOwnPublishedPackage({
+    identity: { sub: 'oidc-sub' },
+    publishedPackageId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    queries.some((sql) => sql.includes('UPDATE uploaded_drafts') && sql.includes('last_published_artifact_sha256 = NULL')),
+    true
+  );
+  const markerClearValues = valuesSeen.find(
+    (values, index) =>
+      queries[index]?.includes('UPDATE uploaded_drafts')
+      && queries[index]?.includes('last_published_artifact_sha256 = NULL')
+  );
+  assert.deepEqual(markerClearValues, ['u1', 'oidc-sub']);
+});
+
+test('deleteOwnPublishedPackage recalculates draft publish markers from remaining published rows', async () => {
+  const queries = [];
+  const valuesSeen = [];
+  const publishedAt = '2026-04-28T08:00:00.000Z';
+  const service = createService({
+    db: {
+      async connect() {
+        return {
+          async query(sql, values = []) {
+            queries.push(sql);
+            valuesSeen.push(values);
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+              return { rows: [], rowCount: 0 };
+            }
+            if (sql.includes('DELETE FROM published_packages')) {
+              return {
+                rowCount: 1,
+                rows: [{
+                  published_package_id: 'p1',
+                  artifact_path: 'published/a.zip',
+                  source_uploaded_draft_id: 'u1',
+                }],
+              };
+            }
+            if (sql.includes('SELECT artifact_sha256, published_at') && sql.includes('FROM published_packages')) {
+              return {
+                rowCount: 1,
+                rows: [{ artifact_sha256: 'sha-latest', published_at: publishedAt }],
+              };
+            }
+            if (sql.includes('UPDATE uploaded_drafts') && sql.includes('last_published_artifact_sha256 = $3')) {
+              return { rowCount: 1, rows: [] };
+            }
+            throw new Error(`Unhandled query in marker recalc test: ${sql}`);
+          },
+          release() {},
+        };
+      },
+    },
+    artifactStore: {
+      resolveAbsolutePath() {
+        return path.join(os.tmpdir(), 'nonexistent.zip');
+      },
+    },
+  });
+
+  const result = await service.deleteOwnPublishedPackage({
+    identity: { sub: 'oidc-sub' },
+    publishedPackageId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    queries.some((sql) => sql.includes('UPDATE uploaded_drafts') && sql.includes('last_published_artifact_sha256 = $3')),
+    true
+  );
+  const markerRecalcValues = valuesSeen.find(
+    (values, index) =>
+      queries[index]?.includes('UPDATE uploaded_drafts')
+      && queries[index]?.includes('last_published_artifact_sha256 = $3')
+  );
+  assert.deepEqual(markerRecalcValues, ['u1', 'oidc-sub', 'sha-latest', publishedAt]);
 });
 
 test('publishFromDraft removes artifact file when DB insert fails', async () => {

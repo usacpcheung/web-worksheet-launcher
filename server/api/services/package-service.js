@@ -446,7 +446,7 @@ export class PackageService {
       const deleted = await client.query(
         `DELETE FROM published_packages
          WHERE published_package_id = $1 AND owner_sub = $2
-         RETURNING published_package_id, artifact_path`,
+         RETURNING published_package_id, artifact_path, source_uploaded_draft_id`,
         [publishedPackageId, identity.sub]
       );
 
@@ -462,8 +462,40 @@ export class PackageService {
         };
       }
 
-      await client.query('COMMIT');
       const deletedPackage = deleted.rows[0];
+      if (deletedPackage.source_uploaded_draft_id) {
+        const latestPublishedForDraft = await client.query(
+          `SELECT artifact_sha256, published_at
+           FROM published_packages
+           WHERE source_uploaded_draft_id = $1 AND owner_sub = $2
+           ORDER BY published_at DESC, created_at DESC, published_package_id DESC
+           LIMIT 1`,
+          [deletedPackage.source_uploaded_draft_id, identity.sub]
+        );
+
+        if (latestPublishedForDraft.rowCount > 0) {
+          const latest = latestPublishedForDraft.rows[0];
+          await client.query(
+            `UPDATE uploaded_drafts
+             SET last_published_artifact_sha256 = $3,
+                 last_published_at = $4,
+                 updated_at = now()
+             WHERE uploaded_draft_id = $1 AND owner_sub = $2`,
+            [deletedPackage.source_uploaded_draft_id, identity.sub, latest.artifact_sha256, latest.published_at]
+          );
+        } else {
+          await client.query(
+            `UPDATE uploaded_drafts
+             SET last_published_artifact_sha256 = NULL,
+                 last_published_at = NULL,
+                 updated_at = now()
+             WHERE uploaded_draft_id = $1 AND owner_sub = $2`,
+            [deletedPackage.source_uploaded_draft_id, identity.sub]
+          );
+        }
+      }
+
+      await client.query('COMMIT');
       await deleteArtifactBestEffort({
         artifactStore: this.artifactStore,
         artifactPath: deletedPackage.artifact_path,
