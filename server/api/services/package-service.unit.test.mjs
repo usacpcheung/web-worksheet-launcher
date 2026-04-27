@@ -366,8 +366,17 @@ test('deleteOwnPublishedPackage removes owner package artifact after row delete'
       async connect() {
         return {
           async query(sql) {
+            if (sql.includes('SELECT pg_advisory_xact_lock(hashtext($1))')) {
+              return { rows: [{ pg_advisory_xact_lock: '' }], rowCount: 1 };
+            }
             if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
               return { rows: [], rowCount: 0 };
+            }
+            if (sql.includes('SELECT published_package_id, artifact_path, source_uploaded_draft_id') && sql.includes('FROM published_packages')) {
+              return {
+                rowCount: 1,
+                rows: [{ published_package_id: 'p1', artifact_path: 'published/a.zip', source_uploaded_draft_id: null }],
+              };
             }
             if (sql.includes('DELETE FROM published_packages')) {
               return {
@@ -409,8 +418,24 @@ test('deleteOwnPublishedPackage clears draft publish markers when deleted packag
           async query(sql, values = []) {
             queries.push(sql);
             valuesSeen.push(values);
+            if (sql.includes('SELECT pg_advisory_xact_lock(hashtext($1))')) {
+              return { rows: [{ pg_advisory_xact_lock: '' }], rowCount: 1 };
+            }
             if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
               return { rows: [], rowCount: 0 };
+            }
+            if (sql.includes('SELECT published_package_id, artifact_path, source_uploaded_draft_id') && sql.includes('FROM published_packages')) {
+              return {
+                rowCount: 1,
+                rows: [{
+                  published_package_id: 'p1',
+                  artifact_path: 'published/a.zip',
+                  source_uploaded_draft_id: 'u1',
+                }],
+              };
+            }
+            if (sql.includes('SELECT uploaded_draft_id') && sql.includes('FROM uploaded_drafts') && sql.includes('FOR UPDATE')) {
+              return { rowCount: 1, rows: [{ uploaded_draft_id: 'u1' }] };
             }
             if (sql.includes('DELETE FROM published_packages')) {
               return {
@@ -447,6 +472,13 @@ test('deleteOwnPublishedPackage clears draft publish markers when deleted packag
   });
 
   assert.equal(result.ok, true);
+  const deleteIndex = queries.findIndex((sql) => sql.includes('DELETE FROM published_packages'));
+  const advisoryDraftIndex = valuesSeen.findIndex(
+    (values, index) => queries[index]?.includes('SELECT pg_advisory_xact_lock(hashtext($1))') && values[0] === 'publish:u1'
+  );
+  const draftLockIndex = queries.findIndex((sql) => sql.includes('FROM uploaded_drafts') && sql.includes('FOR UPDATE'));
+  assert.equal(advisoryDraftIndex !== -1 && advisoryDraftIndex < deleteIndex, true);
+  assert.equal(draftLockIndex !== -1 && draftLockIndex < deleteIndex, true);
   assert.equal(
     queries.some((sql) => sql.includes('UPDATE uploaded_drafts') && sql.includes('last_published_artifact_sha256 = NULL')),
     true
@@ -470,8 +502,24 @@ test('deleteOwnPublishedPackage recalculates draft publish markers from remainin
           async query(sql, values = []) {
             queries.push(sql);
             valuesSeen.push(values);
+            if (sql.includes('SELECT pg_advisory_xact_lock(hashtext($1))')) {
+              return { rows: [{ pg_advisory_xact_lock: '' }], rowCount: 1 };
+            }
             if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
               return { rows: [], rowCount: 0 };
+            }
+            if (sql.includes('SELECT published_package_id, artifact_path, source_uploaded_draft_id') && sql.includes('FROM published_packages')) {
+              return {
+                rowCount: 1,
+                rows: [{
+                  published_package_id: 'p1',
+                  artifact_path: 'published/a.zip',
+                  source_uploaded_draft_id: 'u1',
+                }],
+              };
+            }
+            if (sql.includes('SELECT uploaded_draft_id') && sql.includes('FROM uploaded_drafts') && sql.includes('FOR UPDATE')) {
+              return { rowCount: 1, rows: [{ uploaded_draft_id: 'u1' }] };
             }
             if (sql.includes('DELETE FROM published_packages')) {
               return {
@@ -511,6 +559,13 @@ test('deleteOwnPublishedPackage recalculates draft publish markers from remainin
   });
 
   assert.equal(result.ok, true);
+  const deleteIndex = queries.findIndex((sql) => sql.includes('DELETE FROM published_packages'));
+  const advisoryDraftIndex = valuesSeen.findIndex(
+    (values, index) => queries[index]?.includes('SELECT pg_advisory_xact_lock(hashtext($1))') && values[0] === 'publish:u1'
+  );
+  const draftLockIndex = queries.findIndex((sql) => sql.includes('FROM uploaded_drafts') && sql.includes('FOR UPDATE'));
+  assert.equal(advisoryDraftIndex !== -1 && advisoryDraftIndex < deleteIndex, true);
+  assert.equal(draftLockIndex !== -1 && draftLockIndex < deleteIndex, true);
   assert.equal(
     queries.some((sql) => sql.includes('UPDATE uploaded_drafts') && sql.includes('last_published_artifact_sha256 = $3')),
     true

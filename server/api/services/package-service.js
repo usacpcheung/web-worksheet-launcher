@@ -443,6 +443,41 @@ export class PackageService {
     const client = await this.db.connect();
     try {
       await client.query('BEGIN');
+
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`publish-owner:${identity.sub}`]);
+
+      const publishedPackageRes = await client.query(
+        `SELECT published_package_id, artifact_path, source_uploaded_draft_id
+         FROM published_packages
+         WHERE published_package_id = $1 AND owner_sub = $2`,
+        [publishedPackageId, identity.sub]
+      );
+
+      if (publishedPackageRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 404,
+          error: {
+            code: 'PUBLISHED_PACKAGE_NOT_FOUND',
+            message: 'Published package was not found for this owner.',
+          },
+        };
+      }
+
+      const publishedPackage = publishedPackageRes.rows[0];
+      if (publishedPackage.source_uploaded_draft_id) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`publish:${publishedPackage.source_uploaded_draft_id}`]);
+        await client.query(
+          `SELECT uploaded_draft_id
+           FROM uploaded_drafts
+           WHERE uploaded_draft_id = $1 AND owner_sub = $2
+           FOR UPDATE`,
+          [publishedPackage.source_uploaded_draft_id, identity.sub]
+        );
+      }
+
       const deleted = await client.query(
         `DELETE FROM published_packages
          WHERE published_package_id = $1 AND owner_sub = $2
