@@ -73,6 +73,28 @@ async function loadViewerModule(overrides = {}) {
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
       fetchPublishedPackageArtifact: async () => ({ ok: false, error: { message: 'not configured' } }),
     })),
+    DEFAULT_PUBLISHED_PACKAGE_LIMIT: overrides.DEFAULT_PUBLISHED_PACKAGE_LIMIT || 20,
+    normalizePublishedPackageFilters: overrides.normalizePublishedPackageFilters || ((filters = {}) => ({
+      title: String(filters?.title ?? ''),
+      subject: String(filters?.subject ?? ''),
+      owner: String(filters?.owner ?? ''),
+    })),
+    normalizePaginationState: overrides.normalizePaginationState || ((pagination = {}) => ({
+      limit: Number.isFinite(Number(pagination?.limit)) ? Number(pagination.limit) : 20,
+      offset: Number.isFinite(Number(pagination?.offset)) ? Number(pagination.offset) : 0,
+    })),
+    fetchPublishedPackagesPage: overrides.fetchPublishedPackagesPage || (async ({ apiClient, filters = {}, pagination = {} }) => (
+      apiClient.listPublishedPackages({
+        title: String(filters?.title ?? ''),
+        subject: String(filters?.subject ?? ''),
+        owner: String(filters?.owner ?? ''),
+        limit: Number.isFinite(Number(pagination?.limit)) ? Number(pagination.limit) : 20,
+        offset: Number.isFinite(Number(pagination?.offset)) ? Number(pagination.offset) : 0,
+      })
+    )),
+    mergePublishedPackageRows: overrides.mergePublishedPackageRows || (({ existingRows = [], incomingRows = [], append = false } = {}) => (
+      append ? [...existingRows, ...incomingRows] : incomingRows
+    )),
     mapLegacyJsonToPackageModel: overrides.mapLegacyJsonToPackageModel || ((value) => {
       if (!value || typeof value !== 'object' || !Array.isArray(value.blocks) || value.blocks.length === 0) {
         throw new Error('Imported worksheet must have a non-empty blocks array.');
@@ -123,6 +145,11 @@ async function loadViewerModule(overrides = {}) {
       replacement: 'const createServerApiClient = __testBag.createServerApiClient;',
     },
     {
+      name: 'replace published package service imports with test bag bindings',
+      pattern: /import\s*\{\s*DEFAULT_PUBLISHED_PACKAGE_LIMIT\s*,\s*fetchPublishedPackagesPage\s*,\s*mergePublishedPackageRows\s*,\s*normalizePaginationState\s*,\s*normalizePublishedPackageFilters\s*,\s*\}\s*from\s*['"]\.\.\/app\/api\/published-packages-service\.js['"];/,
+      replacement: 'const DEFAULT_PUBLISHED_PACKAGE_LIMIT = __testBag.DEFAULT_PUBLISHED_PACKAGE_LIMIT;\nconst fetchPublishedPackagesPage = __testBag.fetchPublishedPackagesPage;\nconst mergePublishedPackageRows = __testBag.mergePublishedPackageRows;\nconst normalizePaginationState = __testBag.normalizePaginationState;\nconst normalizePublishedPackageFilters = __testBag.normalizePublishedPackageFilters;',
+    },
+    {
       name: 'reroute renderViewerShell side effect',
       pattern: /renderViewerShell\(\s*session\s*\);/g,
       replacement: '__testBag.renderViewerShell(session);',
@@ -130,7 +157,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -191,7 +218,7 @@ test('viewer beginServerSignIn completes via shared popup flow and re-browses pa
   });
   session.beginServerSignIn();
   await new Promise((resolve) => setTimeout(resolve, 25));
-  assert.equal(session.state.serverSession.status, 'ready');
+  assert.equal(session.state.serverSession.status, 'logged_in');
   assert.deepEqual(session.state.publishedPackages, []);
 });
 
@@ -220,6 +247,477 @@ test('viewer beginServerSignIn shows popup blocked message when popup cannot ope
     session.state.serverActionMessage,
     'Sign-in popup was blocked. Allow popups for this site, then try again.'
   );
+});
+
+test('buildWorksheetPrintReportModel formats answers, grading, and question images for print', async () => {
+  const mod = await loadViewerModule();
+  const viewerPayload = {
+    title: 'Practice Worksheet',
+    blocks: [
+      {
+        blockId: 'q_text',
+        kind: 'question',
+        position: 0,
+        prompt: {
+          text: 'Explain the pattern.',
+          mediaRefs: [
+            { usage: 'question_audio', assetId: 'audio_should_be_ignored' },
+            { usage: 'question_image', assetId: 'img_1' },
+          ],
+        },
+        responseConfig: { inputType: 'text' },
+      },
+      {
+        blockId: 'q_multi',
+        kind: 'question',
+        position: 1,
+        prompt: { text: 'Choose all prime numbers.' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          selectionMode: 'multi',
+          options: [
+            { id: 'opt_a', value: '2', label: 'Two', mediaRefs: [{ usage: 'option_audio', assetId: 'opt_audio_1' }] },
+            { id: 'opt_b', value: '4', label: 'Four' },
+            { id: 'opt_c', value: '5', label: 'Five' },
+          ],
+          correctAnswer: ['2', '5'],
+        },
+      },
+      {
+        blockId: 'q_bool',
+        kind: 'question',
+        position: 2,
+        prompt: { text: 'The sun rises in the east.' },
+        responseConfig: {
+          inputType: 'boolean',
+          correctAnswer: true,
+        },
+      },
+    ],
+  };
+
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload,
+    answers: {
+      q_text: { value: 'It increases by 2 each line.' },
+      q_multi: { value: ['5', '2'] },
+      q_bool: { value: false },
+    },
+    studentName: 'Ada Lovelace',
+    completedAt: '2026-04-14T10:15:00Z',
+    checkResult: {
+      correctCount: 1,
+      totalQuestions: 2,
+      statusByBlockId: {
+        q_multi: 'correct',
+        q_bool: 'incorrect',
+      },
+    },
+    storage: {
+      localAssets: {
+        get: async (assetId) => assetId === 'img_1'
+          ? { binary: new Uint8Array([137, 80, 78, 71]), metadata: { mimeType: 'image/png' } }
+          : null,
+      },
+    },
+  });
+
+  assert.equal(report.title, 'Practice Worksheet');
+  assert.equal(report.studentName, 'Ada Lovelace');
+  assert.equal(report.checkedSummary, 'Checked 1/2 correct');
+  assert.equal(report.questions.length, 3);
+  assert.equal(report.questions[0].answerText, 'It increases by 2 each line.');
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/png;base64,/);
+  assert.equal(report.questions[0].layoutMode, 'keep-all');
+  assert.equal(report.questions[0].sectionBreakModes.prompt, 'keep');
+  assert.equal(report.questions[0].sectionBreakModes.answer, 'keep');
+  assert.equal(report.questions[1].answerText, 'Two\nFive');
+  assert.equal(report.questions[1].result.label, 'Correct');
+  assert.equal(report.questions[2].result.label, 'Incorrect');
+  assert.equal(report.questions[2].result.detail, 'Correct answer: True');
+  assert.equal(report.questions[2].sectionBreakModes.checkedAnswer, 'keep');
+});
+
+test('buildWorksheetPrintReportModel normalizes unsafe image mime types for data urls', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Prompt', mediaRefs: [{ usage: 'question_image', assetId: 'img_unsafe' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    storage: {
+      localAssets: {
+        get: async () => ({
+          binary: new Uint8Array([137, 80, 78, 71]),
+          metadata: { mimeType: 'image/png" onerror="alert(1)' },
+        }),
+      },
+    },
+  });
+
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/png;base64,/);
+  assert.equal(report.questions[0].image.src.includes('onerror='), false);
+});
+
+test('buildWorksheetPrintReportModel normalizes image/jpg to image/jpeg for print data urls', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Prompt', mediaRefs: [{ usage: 'question_image', assetId: 'img_jpg' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    storage: {
+      localAssets: {
+        get: async () => ({
+          binary: new Uint8Array([255, 216, 255, 224]),
+          metadata: { mimeType: 'image/jpg' },
+        }),
+      },
+    },
+  });
+
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/jpeg;base64,/);
+});
+
+test('classifyPrintQuestionLayout uses keep-all, keep-head, and flow thresholds conservatively', async () => {
+  const mod = await loadViewerModule();
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Short prompt',
+    answerText: 'Short answer',
+    result: null,
+    image: null,
+  }), 'keep-all');
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Prompt '.repeat(35),
+    answerText: 'Answer',
+    result: null,
+    image: null,
+  }), 'keep-head');
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Prompt',
+    answerText: 'Long answer paragraph '.repeat(30),
+    result: { detail: 'Correct answer: Example' },
+    image: null,
+  }), 'flow');
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Prompt with image',
+    answerText: 'Supporting answer text '.repeat(16),
+    result: null,
+    image: { status: 'ready', src: 'data:image/png;base64,abc' },
+  }), 'keep-head');
+});
+
+test('buildWorksheetPrintReportHtml omits empty student row and renders missing image note', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Describe the image.', mediaRefs: [{ usage: 'question_image', assetId: 'missing_img' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    answers: {},
+    studentName: '',
+    completedAt: '2026-04-14T10:15:00Z',
+    storage: {
+      localAssets: {
+        get: async () => null,
+      },
+    },
+  });
+
+  const html = mod.buildWorksheetPrintReportHtml(report);
+  assert.equal(html.includes('>Student<'), false);
+  assert.equal(html.includes('Question image unavailable.'), true);
+  assert.equal(html.includes('No answer submitted'), true);
+});
+
+test('buildWorksheetPrintReportHtml emits layout-mode classes for print pagination behavior', async () => {
+  const mod = await loadViewerModule();
+  const html = mod.buildWorksheetPrintReportHtml({
+    title: 'Worksheet',
+    studentName: '',
+    completedAtLabel: 'April 14, 2026, 18:00',
+    checkedSummary: '',
+    questions: [
+      {
+        questionNumber: 1,
+        promptText: 'Short prompt',
+        answerText: 'Short answer',
+        result: null,
+        image: null,
+        layoutMode: 'keep-all',
+        sectionBreakModes: { prompt: 'keep', answer: 'keep', checkedAnswer: null },
+      },
+      {
+        questionNumber: 2,
+        promptText: 'Medium prompt',
+        answerText: 'Answer',
+        result: null,
+        image: null,
+        layoutMode: 'keep-head',
+        sectionBreakModes: { prompt: 'keep', answer: 'flow', checkedAnswer: null },
+      },
+      {
+        questionNumber: 3,
+        promptText: 'Long prompt',
+        answerText: 'Long answer',
+        result: { status: 'incorrect', label: 'Incorrect', detail: 'Correct answer: Example' },
+        image: null,
+        layoutMode: 'flow',
+        sectionBreakModes: { prompt: 'flow', answer: 'flow', checkedAnswer: 'keep' },
+      },
+    ],
+  });
+
+  assert.equal(html.includes('print-question--keep-all'), true);
+  assert.equal(html.includes('print-question--keep-head'), true);
+  assert.equal(html.includes('print-question--flow'), true);
+  assert.equal(html.includes('print-question-section--prompt'), true);
+  assert.equal(html.includes('print-question-section--answer'), true);
+  assert.equal(html.includes('print-question-section--result'), true);
+  assert.equal(html.includes('print-question-section--keep'), true);
+  assert.equal(html.includes('print-question-section--flow'), true);
+  assert.equal(html.includes('>Question<'), true);
+  assert.equal(html.includes('>Checked answer<'), true);
+  assert.equal(html.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
+  assert.equal(html.includes('border-radius: 3mm;'), false);
+  assert.equal(html.includes('border-top: 1px solid #eceff3;'), false);
+  assert.equal(html.includes('border-bottom: 1px solid #dde2e8;'), false);
+});
+
+test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
+  const mod = await loadViewerModule();
+  const html = mod.buildWorksheetPrintReportHtml({
+    title: 'Worksheet',
+    studentName: '',
+    completedAtLabel: '',
+    checkedSummary: '',
+    questions: [
+      {
+        questionNumber: 1,
+        promptText: 'Prompt',
+        answerText: 'Answer',
+        result: null,
+        image: { status: 'ready', src: 'data:image/png;base64,abc" onerror="alert(1)', alt: 'Question image' },
+        layoutMode: 'keep-all',
+        sectionBreakModes: { prompt: 'keep', answer: 'keep', checkedAnswer: null },
+      },
+    ],
+  });
+  assert.equal(html.includes('onerror="alert(1)"'), false);
+  assert.equal(html.includes('&quot; onerror=&quot;alert(1)'), true);
+});
+
+test('buildWorksheetPrintReportModel marks oversized sections as flow to allow internal page breaks', async () => {
+  const mod = await loadViewerModule();
+  const longPrompt = `Prompt line\n`.repeat(90);
+  const longAnswer = `Answer line\n`.repeat(110);
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: longPrompt },
+          responseConfig: { inputType: 'text', correctAnswer: 'expected answer' },
+        },
+      ],
+    },
+    answers: { q1: { value: longAnswer } },
+    checkResult: {
+      correctCount: 0,
+      totalQuestions: 1,
+      statusByBlockId: { q1: 'incorrect' },
+    },
+  });
+
+  assert.equal(report.questions[0].sectionBreakModes.prompt, 'flow');
+  assert.equal(report.questions[0].sectionBreakModes.answer, 'flow');
+  assert.equal(report.questions[0].sectionBreakModes.checkedAnswer, 'keep');
+});
+
+test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
+  const mod = await loadViewerModule();
+  const result = await mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1' },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {},
+    },
+    openWindow: () => null,
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    message: 'Print window was blocked. Allow popups for this site, then try again.',
+  });
+});
+
+test('startWorksheetPrintFlow opens popup synchronously before async model work', async () => {
+  const mod = await loadViewerModule();
+  let openCalled = false;
+  let openerCleared = false;
+  let resolveGet;
+  const storageGetPromise = new Promise((resolve) => {
+    resolveGet = resolve;
+  });
+  const flowPromise = mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {
+        localAssets: {
+          get: async () => storageGetPromise,
+        },
+      },
+    },
+    openWindow: () => {
+      openCalled = true;
+      const popup = {
+        opener: { some: 'parent' },
+        document: {
+          open: () => {},
+          write: () => {},
+          close: () => {},
+        },
+      };
+      Object.defineProperty(popup, 'opener', {
+        get: () => null,
+        set: (value) => {
+          if (value === null) {
+            openerCleared = true;
+          }
+        },
+      });
+      return popup;
+    },
+  });
+
+  assert.equal(openCalled, true);
+  assert.equal(openerCleared, true);
+  resolveGet({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'image/png' } });
+  const result = await flowPromise;
+  assert.equal(result.ok, true);
+});
+
+test('startWorksheetPrintFlow returns friendly message when popup is closed before async model completes', async () => {
+  const mod = await loadViewerModule();
+  let resolveGet;
+  const storageGetPromise = new Promise((resolve) => {
+    resolveGet = resolve;
+  });
+  const popup = {
+    closed: false,
+    document: {
+      open: () => {},
+      write: () => {},
+      close: () => {},
+    },
+  };
+
+  const flowPromise = mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {
+        localAssets: {
+          get: async () => storageGetPromise,
+        },
+      },
+    },
+    openWindow: () => popup,
+  });
+
+  popup.closed = true;
+  resolveGet({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'image/png' } });
+  const result = await flowPromise;
+  assert.deepEqual(result, {
+    ok: false,
+    message: 'Print window was closed before the report finished loading. Try printing again.',
+  });
 });
 
 test('viewer beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
@@ -256,7 +754,7 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
   assert.equal(openedPopupUrl.includes('authFlowId='), true);
   await new Promise((resolve) => setTimeout(resolve, 40));
 
-  assert.equal(session.state.serverSession.status, 'ready');
+  assert.equal(session.state.serverSession.status, 'logged_in');
   assert.equal(session.state.serverActionMessage, null);
   assert.equal(session._activeAuthFlowId, null);
 });
@@ -269,7 +767,7 @@ test('viewer silent session probe updates readiness without forcing visible chec
       getSession: async () => ({ ok: false, error: { message: 'auth required', requiresSignIn: true } }),
     },
   });
-  session.state.serverSession = { status: 'ready', user: { email: 'learner@example.test' }, error: null };
+  session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' }, error: null };
   session.setOnStateChange((state) => {
     statuses.push(state.serverSession.status);
   });
@@ -277,7 +775,7 @@ test('viewer silent session probe updates readiness without forcing visible chec
   await session.probeServerSessionSilently();
 
   assert.equal(statuses.includes('checking'), false);
-  assert.equal(session.state.serverSession.status, 'not_ready');
+  assert.equal(session.state.serverSession.status, 'logged_out');
 });
 
 test('viewer popup fallback polling uses silent session probe path', async () => {
@@ -302,7 +800,7 @@ test('viewer popup fallback polling uses silent session probe path', async () =>
   };
   session.probeServerSessionSilently = async () => {
     silentProbeCalls += 1;
-    session.state.serverSession = { status: 'ready', user: { email: 'learner@example.test' }, error: null };
+    session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' }, error: null };
     return { ok: true, data: { user: { email: 'learner@example.test' } } };
   };
 
@@ -332,10 +830,10 @@ test('viewer browse action runs silent session preflight and blocks when session
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'Sign-in session expired. Please sign in again.');
+  assert.equal(session.state.serverActionMessage, 'Session expired. Please log in again.');
 });
 
-test('viewer browse preflight surfaces transient server/non-auth errors without expired-session copy', async () => {
+test('viewer browse preflight transitions to expired-session copy for invalid session responses', async () => {
   const calls = [];
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({}, {
@@ -363,7 +861,7 @@ test('viewer browse preflight surfaces transient server/non-auth errors without 
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'Server returned an unexpected non-JSON response.');
+  assert.equal(session.state.serverActionMessage, 'Session expired. Please log in again.');
 });
 
 
@@ -426,6 +924,7 @@ test('viewer browse append mode uses nextOffset and appends results', async () =
   });
   session.state.publishedPackages = [{ published_package_id: 'p1', title: 'Pack 1' }];
   session.state.publishedQuery = 'math';
+  session.state.publishedFilters = { title: 'math', subject: '', owner: '' };
   session.state.publishedNextOffset = 20;
 
   const result = await session.browsePublishedPackages('math', { preflight: false, append: true });
@@ -660,12 +1159,20 @@ test('normalizeViewerBlock preserves non-canonical plain_text/short_text inputTy
   assert.equal(Object.hasOwn(short.responseConfig, 'displayMode'), false);
 });
 
-test('viewer start panel includes session-ready published browse integration', async () => {
+test('viewer start panel includes logged_out/checking/logged_in server-state render rules', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('await session.refreshServerSession();'), true);
   assert.equal(source.includes('await session.browsePublishedPackages'), true);
+  assert.equal(source.includes("LOGGED_OUT: 'logged_out'"), true);
+  assert.equal(source.includes("CHECKING: 'checking'"), true);
+  assert.equal(source.includes("LOGGED_IN: 'logged_in'"), true);
+  assert.equal(source.includes("signInBtn.textContent = 'Log in to view published online worksheet';"), true);
+  assert.equal(source.includes('const canAccessPublished = isLoggedIn;'), true);
+  assert.equal(source.includes('publishedList.hidden = !canAccessPublished;'), true);
+  assert.equal(source.includes('signInBtn.disabled = isChecking;'), true);
+  assert.equal(source.includes("const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';"), true);
   assert.equal(source.includes("loadMoreBtn.textContent = 'Load more';"), true);
-  assert.equal(source.includes("await session.browsePublishedPackages(session.state.publishedQuery || '', { append: true });"), true);
+  assert.equal(source.includes("await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });"), true);
   assert.equal(source.includes('await session.startFromPublishedPackage'), true);
 });
 
@@ -2072,6 +2579,38 @@ test('getInputHelperText maps input types to guidance', async () => {
   assert.equal(mod.getInputHelperText('text'), 'Text response.');
 });
 
+test('buildTechnicalDetailsRows only shows current session ids', async () => {
+  const mod = await loadViewerModule();
+  const rows = mod.buildTechnicalDetailsRows({
+    localAttemptId: 'attempt_1',
+    sourceLocalDraftId: 'draft_11',
+    sourceImportedWorksheetId: 'imported_7',
+    viewerPayload: {
+      worksheetId: 'ws_legacy',
+      snapshotId: 'snap_legacy',
+    },
+    source: 'local_draft',
+    sourceType: 'local_draft_preview',
+  });
+
+  assert.deepEqual(rows, [
+    ['Local attempt ID', 'attempt_1'],
+    ['Local draft ID', 'draft_11'],
+    ['Imported worksheet ID', 'imported_7'],
+  ]);
+});
+
+test('buildTechnicalDetailsRows omits source ids that do not apply', async () => {
+  const mod = await loadViewerModule();
+  const rows = mod.buildTechnicalDetailsRows({
+    localAttemptId: 'attempt_2',
+  });
+
+  assert.deepEqual(rows, [
+    ['Local attempt ID', 'attempt_2'],
+  ]);
+});
+
 test('getNumberInputErrorMessage reports range and rule errors without coercion', async () => {
   const mod = await loadViewerModule();
   const responseConfig = {
@@ -2348,6 +2887,27 @@ function createFakeDom() {
   return { document, appRoot, bottomBarRoot };
 }
 
+function collectNodes(root) {
+  const result = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node || typeof node !== 'object') continue;
+    result.push(node);
+    const children = Array.isArray(node.children) ? node.children : [];
+    for (const child of children) stack.push(child);
+  }
+  return result;
+}
+
+function findNodeByClass(root, className) {
+  return collectNodes(root).find((node) => String(node.className || '').split(/\s+/).includes(className));
+}
+
+function findNodeByText(root, text) {
+  return collectNodes(root).find((node) => node.textContent === text);
+}
+
 test('bootstrapViewer on bare /viewer/ opens start panel with explicit resume action instead of auto-resume', { concurrency: false }, async () => {
   const { document } = createFakeDom();
   let renderedSession = null;
@@ -2492,6 +3052,200 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
     hour12: false,
   });
   assert.equal(resumeMeta.textContent, `Attempt attempt_resume_ms · ${expected}`);
+});
+
+test('renderViewerStartPanel hides published controls when server session is logged out', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
+  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
+  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
+  const publishedList = findNodeByClass(panel, 'viewer-published-list');
+  const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
+
+  assert.equal(signInBtn.hidden, false);
+  assert.equal(publishedHeading.hidden, true);
+  assert.equal(filterRow.hidden, true);
+  assert.equal(publishedList.hidden, true);
+  assert.equal(searchInputs.length, 3);
+  searchInputs.forEach((input) => assert.equal(input.hidden, true));
+});
+
+test('renderViewerStartPanel shows published controls only when server session is logged in', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'logged_in', user: { email: 'learner@example.test' } },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
+  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
+  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
+  const publishedList = findNodeByClass(panel, 'viewer-published-list');
+  const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
+
+  assert.equal(signInBtn.hidden, true);
+  assert.equal(publishedHeading.hidden, false);
+  assert.equal(filterRow.hidden, false);
+  assert.equal(publishedList.hidden, false);
+  assert.equal(searchInputs.length, 3);
+  searchInputs.forEach((input) => assert.equal(input.hidden, false));
+});
+
+test('renderViewerStartPanel treats unknown server state as not logged in for published controls', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'expired', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
+  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
+  const publishedList = findNodeByClass(panel, 'viewer-published-list');
+
+  assert.equal(publishedHeading.hidden, true);
+  assert.equal(filterRow.hidden, true);
+  assert.equal(publishedList.hidden, true);
+});
+
+test('renderViewerStartPanel orders controls as import then auth row then single status line', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const importRow = panel.children[2];
+  const authRow = panel.children[3];
+  const statusLine = panel.children[4];
+
+  assert.equal(importRow.className, 'viewer-start-actions');
+  assert.equal(importRow.children[0].textContent, 'Import worksheet package (.zip)');
+  assert.equal(authRow.className, 'viewer-start-actions');
+  assert.equal(authRow.children[0].textContent, 'Log in to view published online worksheet');
+  assert.equal(statusLine.className, 'muted viewer-session-status');
+  assert.equal(statusLine.textContent.includes('Server session:'), true);
+});
+
+test('renderViewerStartPanel renders one session-related message line without duplicate status text', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const duplicateText = 'Session expired. Please log in again.';
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: duplicateText },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: duplicateText,
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const matched = collectNodes(panel).filter((node) => String(node.textContent || '').includes(duplicateText));
+  assert.equal(matched.length, 1);
 });
 
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
