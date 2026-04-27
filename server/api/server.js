@@ -27,6 +27,13 @@ function fail(code, message, details = null) {
   };
 }
 
+class RequestBodyTooLargeError extends Error {
+  constructor(message = 'Request body too large.') {
+    super(message);
+    this.name = 'RequestBodyTooLargeError';
+  }
+}
+
 async function readRequestBody(req, maxBytes = 30 * 1024 * 1024) {
   const chunks = [];
   let total = 0;
@@ -34,7 +41,7 @@ async function readRequestBody(req, maxBytes = 30 * 1024 * 1024) {
     const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += part.length;
     if (total > maxBytes) {
-      throw new Error('Request body too large.');
+      throw new RequestBodyTooLargeError('Request body too large.');
     }
     chunks.push(part);
   }
@@ -93,7 +100,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
         if (!contentType.includes('application/zip')) {
           return json(res, 415, fail('UNSUPPORTED_MEDIA_TYPE', 'Upload draft requires Content-Type: application/zip'));
         }
-        const zipBytes = await readRequestBody(req);
+        const zipBytes = await readRequestBody(req, Number(config.packageUploadMaxBytes) || 30 * 1024 * 1024);
         const title = url.searchParams.get('title') || '';
         const subject = url.searchParams.get('subject') || '';
         const result = await service.uploadDraft({
@@ -303,6 +310,9 @@ export function createRequestHandler({ service, artifactStore, config }) {
     } catch (error) {
       if (error instanceof AuthError) {
         return json(res, error.statusCode, fail(error.code, error.message));
+      }
+      if (error instanceof RequestBodyTooLargeError) {
+        return json(res, 413, fail('PACKAGE_UPLOAD_TOO_LARGE', 'Uploaded package is too large.'));
       }
       if (error instanceof SyntaxError) {
         return json(res, 400, fail('INVALID_JSON', 'Malformed JSON body.'));

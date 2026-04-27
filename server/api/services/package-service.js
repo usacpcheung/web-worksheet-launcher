@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import { rewriteWorksheetPackageTitle } from '../../editor/worksheet-package.js';
+import { parseWorksheetPackage, rewriteWorksheetPackageTitle } from '../../editor/worksheet-package.js';
 
 function normalizeText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -15,6 +15,24 @@ function normalizeUploadConflictAction(value) {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'replace' || normalized === 'copy') return normalized;
   return 'fail_on_conflict';
+}
+
+function validateUploadedWorksheetPackage(zipBytes) {
+  try {
+    parseWorksheetPackage(zipBytes);
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_WORKSHEET_PACKAGE',
+        message: 'Uploaded worksheet package is invalid or corrupted.',
+        details: {
+          reason: error?.message || 'Package validation failed.',
+        },
+      },
+    };
+  }
 }
 
 function stripGeneratedCopySuffix(title) {
@@ -189,6 +207,15 @@ export class PackageService {
   }
 
   async uploadDraft({ identity, title, subject, zipBytes, conflictAction = 'fail_on_conflict' }) {
+    const packageValidation = validateUploadedWorksheetPackage(zipBytes);
+    if (!packageValidation.ok) {
+      return {
+        ok: false,
+        statusCode: 400,
+        error: packageValidation.error,
+      };
+    }
+
     const client = await this.db.connect();
     let artifact = null;
     const cleanupArtifactPathsAfterCommit = [];

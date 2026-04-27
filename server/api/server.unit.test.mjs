@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApiServer } from './server.js';
 
-async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }, fn) {
+async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test', configOverrides = {} }, fn) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-server-test-'));
   const api = await createApiServer({
     config: {
@@ -18,6 +18,8 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
       },
       browsePageLimitDefault: 20,
       browsePageLimitMax: 100,
+      packageUploadMaxBytes: 31457280,
+      ...configOverrides,
     },
     db: { async end() {} },
     service: {
@@ -68,6 +70,99 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
 }
 
 const authHeaders = { 'x-oidc-sub': 'user-sub' };
+
+test('POST /api/v1/drafts/upload forwards upload payload and returns success', async () => {
+  let received = null;
+  await withServer(
+    {
+      service: {
+        async uploadDraft(payload) {
+          received = payload;
+          return { ok: true, statusCode: 201, data: { uploaded_draft_id: 'u1' } };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const zipBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+      const res = await fetch(`${baseUrl}/api/v1/drafts/upload?title=Title&subject=Math&conflictAction=replace`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/zip' },
+        body: zipBytes,
+      });
+      assert.equal(res.status, 201);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.uploaded_draft_id, 'u1');
+    }
+  );
+
+  assert.equal(received.title, 'Title');
+  assert.equal(received.subject, 'Math');
+  assert.equal(received.conflictAction, 'replace');
+  assert.deepEqual(Array.from(received.zipBytes), [0x50, 0x4b, 0x03, 0x04]);
+});
+
+test('POST /api/v1/drafts/upload maps invalid package error to structured 400 payload', async () => {
+  await withServer(
+    {
+      service: {
+        async uploadDraft() {
+          return {
+            ok: false,
+            statusCode: 400,
+            error: {
+              code: 'INVALID_WORKSHEET_PACKAGE',
+              message: 'Uploaded worksheet package is invalid or corrupted.',
+            },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/drafts/upload`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/zip' },
+        body: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+      });
+      assert.equal(res.status, 400);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'INVALID_WORKSHEET_PACKAGE');
+      assert.equal(payload.error.message, 'Uploaded worksheet package is invalid or corrupted.');
+    }
+  );
+});
+
+test('POST /api/v1/drafts/upload returns 413 with PACKAGE_UPLOAD_TOO_LARGE when body exceeds configured max', async () => {
+  let uploadCalled = false;
+  await withServer(
+    {
+      configOverrides: {
+        packageUploadMaxBytes: 16,
+      },
+      service: {
+        async uploadDraft() {
+          uploadCalled = true;
+          return { ok: true, statusCode: 201, data: {} };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const oversized = new Uint8Array(32);
+      const res = await fetch(`${baseUrl}/api/v1/drafts/upload`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/zip' },
+        body: oversized,
+      });
+      assert.equal(res.status, 413);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'PACKAGE_UPLOAD_TOO_LARGE');
+      assert.equal(payload.error.message, 'Uploaded package is too large.');
+    }
+  );
+  assert.equal(uploadCalled, false);
+});
 
 test('GET /api/v1/session returns ready identity payload', async () => {
   await withServer({}, async (baseUrl) => {

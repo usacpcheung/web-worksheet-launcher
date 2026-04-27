@@ -152,6 +152,21 @@ function createService({ db, artifactStore }) {
   });
 }
 
+function createValidWorksheetZip({ title = 'T' } = {}) {
+  return createStoredZip([
+    {
+      path: 'manifest.json',
+      data: JSON.stringify({
+        format: 'worksheet-package',
+        packageVersion: 1,
+        assets: [],
+        worksheet: { title },
+      }),
+    },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title, blocks: [] }) },
+  ]);
+}
+
 test('uploadDraft acquires per-owner advisory lock before counting slots', async () => {
   const db = createFakeDb({ draftCount: 3 });
   const artifactStore = {
@@ -166,7 +181,7 @@ test('uploadDraft acquires per-owner advisory lock before counting slots', async
     identity: { sub: 'oidc-sub' },
     title: 'Title',
     subject: 'Math',
-    zipBytes: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+    zipBytes: createValidWorksheetZip({ title: 'Title' }),
   });
 
   assert.equal(result.ok, false);
@@ -200,7 +215,7 @@ test('uploadDraft removes artifact file when DB insert fails', async () => {
         identity: { sub: 'oidc-sub' },
         title: 'Title',
         subject: 'Math',
-        zipBytes: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+        zipBytes: createValidWorksheetZip({ title: 'Title' }),
       }),
     /insert failed/
   );
@@ -224,13 +239,41 @@ test('uploadDraft returns conflict for same owner title and subject by default',
     identity: { sub: 'oidc-sub' },
     title: '  t  ',
     subject: 's',
-    zipBytes: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+    zipBytes: createValidWorksheetZip({ title: 'T' }),
   });
 
   assert.equal(result.ok, false);
   assert.equal(result.statusCode, 409);
   assert.equal(result.error.code, 'DRAFT_NAME_CONFLICT');
   assert.equal(result.error.details.existingDraft.uploaded_draft_id, 'u');
+});
+
+test('uploadDraft rejects invalid worksheet package before DB transaction and artifact creation', async () => {
+  const db = createFakeDb({ draftCount: 0 });
+  let artifactStoreCalled = false;
+  const service = createService({
+    db,
+    artifactStore: {
+      async storeArtifact() {
+        artifactStoreCalled = true;
+        throw new Error('storeArtifact should not run for invalid package');
+      },
+    },
+  });
+
+  const result = await service.uploadDraft({
+    identity: { sub: 'oidc-sub' },
+    title: 'Bad',
+    subject: 'Math',
+    zipBytes: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.error.code, 'INVALID_WORKSHEET_PACKAGE');
+  assert.equal(result.error.message, 'Uploaded worksheet package is invalid or corrupted.');
+  assert.equal(artifactStoreCalled, false);
+  assert.equal(db.state.queries.length, 0);
 });
 
 test('uploadDraft save-as-copy stores artifact with server-selected copy title inside package', async () => {

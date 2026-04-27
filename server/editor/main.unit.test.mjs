@@ -484,7 +484,7 @@ test('uploadCurrentDraftToServer emits ordered notifications for progress, succe
       source: 'upload.status',
       kind: 'info',
       category: 'server',
-      text: 'Uploading…',
+      text: 'Uploading draft package...',
     },
     {
       source: 'upload.status',
@@ -496,15 +496,15 @@ test('uploadCurrentDraftToServer emits ordered notifications for progress, succe
       source: 'upload.refresh',
       kind: 'success',
       category: 'server',
-      text: 'Uploaded drafts refreshed.',
+      text: 'Upload succeeded. Draft list refreshed.',
     },
   ]);
   const uploadActivityTexts = session.state.activityLog
     .filter((item) => item.source === 'upload.status' || item.source === 'upload.refresh')
     .map((item) => item.text);
-  assert.equal(uploadActivityTexts.includes('Uploading…'), false);
+  assert.equal(uploadActivityTexts.includes('Uploading draft package...'), false);
   assert.equal(uploadActivityTexts.includes('Uploaded draft draft_upload_1.'), true);
-  assert.equal(uploadActivityTexts.includes('Uploaded drafts refreshed.'), true);
+  assert.equal(uploadActivityTexts.includes('Upload succeeded. Draft list refreshed.'), true);
 });
 
 test('uploadCurrentDraftToServer keeps in-progress notification visible while request is in flight', async () => {
@@ -523,14 +523,70 @@ test('uploadCurrentDraftToServer keeps in-progress notification visible while re
 
   const pendingUpload = session.uploadCurrentDraftToServer();
   const inflightNotification = session.state.notifications.find((item) => (
-    item.source === 'upload.status' && item.kind === 'info' && item.text === 'Uploading…'
+    item.source === 'upload.status' && item.kind === 'info' && item.text === 'Uploading draft package...'
   ));
   assert.equal(Boolean(inflightNotification), true);
-  assert.equal(session.state.activityLog.some((item) => item.text === 'Uploading…'), false);
+  assert.equal(session.state.activityLog.some((item) => item.text === 'Uploading draft package...'), false);
 
   resolveUpload({ ok: true, data: { uploaded_draft_id: 'draft_upload_inflight' } });
   const result = await pendingUpload;
   assert.equal(result.ok, true);
+});
+
+test('uploadCurrentDraftToServer blocks duplicate upload triggers while request is active', async () => {
+  const mod = await loadEditorModule();
+  let resolveUpload;
+  let uploadCallCount = 0;
+  const uploadPromise = new Promise((resolve) => { resolveUpload = resolve; });
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      uploadDraftPackage: async () => {
+        uploadCallCount += 1;
+        return uploadPromise;
+      },
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.state.draft = { localId: 'draft_local_dupe', title: 'Draft dup', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const first = session.uploadCurrentDraftToServer();
+  const second = await session.uploadCurrentDraftToServer();
+  assert.equal(second.ok, false);
+  assert.equal(second.skipped, true);
+  assert.equal(second.error.message, 'Upload already in progress.');
+
+  resolveUpload({ ok: true, data: { uploaded_draft_id: 'draft_upload_dupe' } });
+  const firstResult = await first;
+  assert.equal(firstResult.ok, true);
+  assert.equal(uploadCallCount, 1);
+});
+
+test('uploadCurrentDraftToServer shows retry-safe message for transport failures', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      uploadDraftPackage: async () => ({
+        ok: false,
+        error: {
+          code: 'NETWORK_ERROR',
+          message: 'socket disconnected',
+        },
+      }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.state.draft = { localId: 'draft_local_net', title: 'Draft net', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const result = await session.uploadCurrentDraftToServer();
+  assert.equal(result.ok, false);
+  assert.equal(
+    session.state.serverActionMessage,
+    'Upload failed before completion. Your local draft is still safe. Please retry when the network is stable.'
+  );
 });
 
 test('uploadCurrentDraftToServer emits refresh warning when uploaded drafts refresh fails', async () => {

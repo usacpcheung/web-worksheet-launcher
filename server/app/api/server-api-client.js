@@ -106,6 +106,50 @@ async function parseJsonResponse(response) {
   });
 }
 
+async function parseJsonResponseFromText({ status, contentType = '', text = '' }) {
+  const normalizedContentType = String(contentType || '').toLowerCase();
+  if (!normalizedContentType.includes('application/json')) {
+    if (authLikeStatus(status) || normalizedContentType.includes('text/html')) {
+      return toStructuredError({
+        code: 'AUTH_REQUIRED',
+        message: createAuthMessage(),
+        status,
+        requiresSignIn: true,
+      });
+    }
+    return toStructuredError({
+      code: 'UNEXPECTED_NON_JSON_RESPONSE',
+      message: 'Server returned an unexpected non-JSON response.',
+      status,
+      details: { contentType: normalizedContentType, bodyPreview: String(text || '').slice(0, 120) },
+    });
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(String(text || ''));
+  } catch {
+    return toStructuredError({
+      code: 'INVALID_JSON_RESPONSE',
+      message: 'Server returned malformed JSON.',
+      status,
+    });
+  }
+
+  if (status >= 200 && status < 300 && parsed?.ok === true) {
+    return { ok: true, data: parsed.data, status };
+  }
+
+  const errorCode = parsed?.error?.code || (authLikeStatus(status) ? 'AUTH_REQUIRED' : 'API_ERROR');
+  return toStructuredError({
+    code: errorCode,
+    message: parsed?.error?.message || (authLikeStatus(status) ? createAuthMessage() : 'API request failed.'),
+    status,
+    requiresSignIn: authLikeStatus(status),
+    details: parsed?.error?.details || null,
+  });
+}
+
 function createServerApiClient(options = {}) {
   const publicApiBase = buildPublicApiBase(options);
 
@@ -281,22 +325,105 @@ function createServerApiClient(options = {}) {
   }
 
   async function uploadZip(path, zipBytes, request = {}) {
-    const { query = null } = request;
-    let response;
-    try {
-      response = await fetch(buildUrl(path, query), {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/zip' },
-        body: zipBytes,
-      });
-    } catch (error) {
-      return toStructuredError({
-        code: 'NETWORK_ERROR',
-        message: `Unable to reach server API. ${error?.message || String(error)}`,
-      });
+    const { query = null, onProgress = null, signal = null } = request;
+    const targetUrl = buildUrl(path, query);
+    const shouldUseXhr = typeof XMLHttpRequest === 'function';
+
+    if (!shouldUseXhr) {
+      let response;
+      try {
+        response = await fetch(targetUrl, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/zip' },
+          body: zipBytes,
+          ...(signal ? { signal } : {}),
+        });
+      } catch (error) {
+        return toStructuredError({
+          code: 'NETWORK_ERROR',
+          message: `Unable to reach server API. ${error?.message || String(error)}`,
+        });
+      }
+      return parseJsonResponse(response);
     }
-    return parseJsonResponse(response);
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const xhr = new XMLHttpRequest();
+      const cleanupAbortListener = () => {
+        if (signal && typeof signal.removeEventListener === 'function' && abortHandler) {
+          signal.removeEventListener('abort', abortHandler);
+        }
+      };
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        cleanupAbortListener();
+        resolve(result);
+      };
+      const abortHandler = () => {
+        try {
+          xhr.abort();
+        } catch {}
+      };
+
+      xhr.open('POST', targetUrl, true);
+      xhr.withCredentials = true;
+      xhr.responseType = 'text';
+      xhr.setRequestHeader('content-type', 'application/zip');
+
+      if (typeof onProgress === 'function' && xhr.upload) {
+        xhr.upload.onprogress = (event) => {
+          onProgress({
+            loaded: Number(event?.loaded || 0),
+            total: Number(event?.total || 0),
+            lengthComputable: Boolean(event?.lengthComputable),
+          });
+        };
+      }
+
+      xhr.onerror = () => {
+        finish(toStructuredError({
+          code: 'NETWORK_ERROR',
+          message: 'Unable to reach server API. Network request failed.',
+        }));
+      };
+
+      xhr.onabort = () => {
+        finish(toStructuredError({
+          code: 'NETWORK_ERROR',
+          message: 'Unable to reach server API. Upload was canceled before completion.',
+        }));
+      };
+
+      xhr.onload = async () => {
+        const contentType = xhr.getResponseHeader('content-type') || '';
+        const parsed = await parseJsonResponseFromText({
+          status: Number(xhr.status || 0),
+          contentType,
+          text: xhr.responseText || '',
+        });
+        finish(parsed);
+      };
+
+      if (signal && typeof signal.addEventListener === 'function') {
+        if (signal.aborted) {
+          abortHandler();
+        } else {
+          signal.addEventListener('abort', abortHandler, { once: true });
+        }
+      }
+
+      try {
+        xhr.send(zipBytes);
+      } catch (error) {
+        finish(toStructuredError({
+          code: 'NETWORK_ERROR',
+          message: `Unable to reach server API. ${error?.message || String(error)}`,
+        }));
+      }
+    });
   }
 
   return {
@@ -319,13 +446,15 @@ function createServerApiClient(options = {}) {
     listUploadedDrafts() {
       return requestJson('/drafts');
     },
-    uploadDraftPackage(zipBytes, metadata = {}) {
+    uploadDraftPackage(zipBytes, metadata = {}, options = {}) {
       return uploadZip('/drafts/upload', zipBytes, {
         query: {
           title: metadata.title || '',
           subject: metadata.subject || '',
           conflictAction: metadata.conflictAction || '',
         },
+        onProgress: options.onProgress,
+        signal: options.signal,
       });
     },
     fetchUploadedDraftArtifact(uploadedDraftId) {

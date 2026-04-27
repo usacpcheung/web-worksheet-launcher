@@ -230,6 +230,11 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatMegabytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0.0 MB';
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function getAssetExtensionFallback(kind, mimeType) {
   const normalizedMime = typeof mimeType === 'string' ? mimeType.toLowerCase() : '';
   if (kind === 'image') {
@@ -768,6 +773,7 @@ class EditorDraftSession {
       lastPublishedPackage: null,
       uploadedDrafts: [],
       isUploadingDraft: false,
+      uploadDraftProgress: null,
       isUploadDraftFlowActive: false,
       isLoadingUploadedDrafts: false,
       publishingDraftIds: new Set(),
@@ -2857,7 +2863,14 @@ class EditorDraftSession {
       };
     }
     this.state.isUploadingDraft = true;
-    this.pushNotification({ kind: 'info', category: 'server', source: 'upload.status', text: 'Uploading…', logActivity: false });
+    this.state.uploadDraftProgress = null;
+    this.pushNotification({
+      kind: 'info',
+      category: 'server',
+      source: 'upload.status',
+      text: 'Uploading draft package...',
+      logActivity: false,
+    });
     this.notifyStateChange();
     try {
       if (options.preflight !== false) {
@@ -2869,9 +2882,25 @@ class EditorDraftSession {
         title: this.state.draft?.title || '',
         subject: this.state.draft?.metadata?.subject || '',
         conflictAction: options.conflictAction || '',
+      }, {
+        onProgress: (progress) => {
+          const loaded = Number(progress?.loaded || 0);
+          const total = Number(progress?.total || 0);
+          const lengthComputable = Boolean(progress?.lengthComputable) && total > 0;
+          this.state.uploadDraftProgress = {
+            loaded,
+            total: lengthComputable ? total : null,
+            lengthComputable,
+          };
+          this.notifyStateChange();
+        },
       });
       if (!result.ok) {
-        this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: result.error.message });
+        const isTransportFailure = String(result?.error?.code || '') === 'NETWORK_ERROR';
+        const errorText = isTransportFailure
+          ? 'Upload failed before completion. Your local draft is still safe. Please retry when the network is stable.'
+          : result.error.message;
+        this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: errorText });
         this.notifyStateChange();
         return result;
       }
@@ -2884,11 +2913,16 @@ class EditorDraftSession {
       });
       const refreshResult = await this.loadUploadedDrafts({ preflight: false });
       if (refreshResult?.ok) {
+        const uploadedDraftId = String(result.data?.uploaded_draft_id || '').trim();
+        const refreshedItems = Array.isArray(refreshResult?.data?.items) ? refreshResult.data.items : [];
+        const foundUploadedDraft = uploadedDraftId
+          ? refreshedItems.some((item) => String(item?.uploaded_draft_id || '').trim() === uploadedDraftId)
+          : false;
         this.pushNotification({
           kind: 'success',
           category: 'server',
           source: 'upload.refresh',
-          text: 'Uploaded drafts refreshed.',
+          text: foundUploadedDraft ? 'Uploaded drafts refreshed.' : 'Upload succeeded. Draft list refreshed.',
         });
       } else {
         this.pushNotification({
@@ -2902,6 +2936,7 @@ class EditorDraftSession {
       return result;
     } finally {
       this.state.isUploadingDraft = false;
+      this.state.uploadDraftProgress = null;
       this.notifyStateChange();
     }
   }
@@ -6439,7 +6474,19 @@ function renderEditorShell(session) {
     });
 
     const serverReady = sessionStatus === 'ready';
-    syncDraftBtn.textContent = isUploadingDraft ? 'Uploading…' : 'Upload Draft';
+    if (isUploadingDraft) {
+      const progress = session.state.uploadDraftProgress;
+      if (progress?.lengthComputable && Number(progress?.total) > 0) {
+        const percent = Math.max(0, Math.min(100, Math.round((progress.loaded / progress.total) * 100)));
+        syncDraftBtn.textContent = `Uploading draft package... ${percent}% (${formatMegabytes(progress.loaded)} / ${formatMegabytes(progress.total)})`;
+      } else if (Number(progress?.loaded) > 0) {
+        syncDraftBtn.textContent = `Uploading draft package... ${formatMegabytes(progress.loaded)}`;
+      } else {
+        syncDraftBtn.textContent = 'Uploading draft package...';
+      }
+    } else {
+      syncDraftBtn.textContent = 'Upload Draft';
+    }
     syncDraftBtn.disabled = !serverReady || isUploadingDraft || isUploadDraftFlowActive;
     browsePublishedBtn.disabled = !serverReady;
     manageUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? 'Refreshing…' : 'Manage Uploaded Drafts';

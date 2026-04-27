@@ -111,6 +111,7 @@ test('deleteUploadedDraft sends DELETE to canonical drafts path', async () => {
 
 test('uploadDraftPackage sends metadata and conflict action as query params', async () => {
   setTestWindow();
+  const previousXhr = globalThis.XMLHttpRequest;
   let requestedUrl = null;
   let contentType = null;
   globalThis.fetch = async (url, request = {}) => {
@@ -131,6 +132,80 @@ test('uploadDraftPackage sends metadata and conflict action as query params', as
     '/api/worksheet-launcher/v1/drafts/upload?title=Title&subject=Math&conflictAction=replace'
   );
   assert.equal(contentType, 'application/zip');
+  globalThis.XMLHttpRequest = previousXhr;
+});
+
+test('uploadDraftPackage emits upload progress when XHR progress events exist', async () => {
+  setTestWindow();
+  const previousXhr = globalThis.XMLHttpRequest;
+  const progressEvents = [];
+
+  class FakeXhr {
+    constructor() {
+      this.upload = {};
+      this.headers = {};
+      this.responseText = JSON.stringify({ ok: true, data: { uploaded_draft_id: 'u2' } });
+      this.status = 201;
+      this.withCredentials = false;
+    }
+    open(method, url) {
+      this.method = method;
+      this.url = url;
+    }
+    setRequestHeader(name, value) {
+      this.headers[name] = value;
+    }
+    getResponseHeader(name) {
+      if (String(name).toLowerCase() === 'content-type') return 'application/json; charset=utf-8';
+      return null;
+    }
+    send() {
+      this.upload.onprogress?.({ loaded: 1024, total: 4096, lengthComputable: true });
+      this.upload.onprogress?.({ loaded: 4096, total: 4096, lengthComputable: true });
+      this.onload?.();
+    }
+    abort() {}
+  }
+
+  globalThis.XMLHttpRequest = FakeXhr;
+  const client = createServerApiClient();
+  const result = await client.uploadDraftPackage(
+    new Uint8Array([0x50, 0x4b]),
+    { title: 'Title', subject: 'Math' },
+    { onProgress: (event) => progressEvents.push(event) }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(progressEvents.length, 2);
+  assert.deepEqual(progressEvents[0], { loaded: 1024, total: 4096, lengthComputable: true });
+  assert.deepEqual(progressEvents[1], { loaded: 4096, total: 4096, lengthComputable: true });
+  globalThis.XMLHttpRequest = previousXhr;
+});
+
+test('uploadDraftPackage returns structured network error on XHR transport failure', async () => {
+  setTestWindow();
+  const previousXhr = globalThis.XMLHttpRequest;
+
+  class FailingXhr {
+    constructor() {
+      this.upload = {};
+    }
+    open() {}
+    setRequestHeader() {}
+    send() {
+      this.onerror?.();
+    }
+    abort() {}
+  }
+
+  globalThis.XMLHttpRequest = FailingXhr;
+  const client = createServerApiClient();
+  const result = await client.uploadDraftPackage(new Uint8Array([0x50, 0x4b]), { title: 'Title', subject: 'Math' });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'NETWORK_ERROR');
+  assert.equal(result.error.message.includes('Unable to reach server API'), true);
+  globalThis.XMLHttpRequest = previousXhr;
 });
 
 
