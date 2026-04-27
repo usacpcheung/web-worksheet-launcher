@@ -498,21 +498,22 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
       },
     ],
   });
+  const normalizedHtml = String(html || '').replace(/\r\n/g, '\n');
 
-  assert.equal(html.includes('print-question--keep-all'), true);
-  assert.equal(html.includes('print-question--keep-head'), true);
-  assert.equal(html.includes('print-question--flow'), true);
-  assert.equal(html.includes('print-question-section--prompt'), true);
-  assert.equal(html.includes('print-question-section--answer'), true);
-  assert.equal(html.includes('print-question-section--result'), true);
-  assert.equal(html.includes('print-question-section--keep'), true);
-  assert.equal(html.includes('print-question-section--flow'), true);
-  assert.equal(html.includes('>Question<'), true);
-  assert.equal(html.includes('>Checked answer<'), true);
-  assert.equal(html.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
-  assert.equal(html.includes('border-radius: 3mm;'), false);
-  assert.equal(html.includes('border-top: 1px solid #eceff3;'), false);
-  assert.equal(html.includes('border-bottom: 1px solid #dde2e8;'), false);
+  assert.equal(normalizedHtml.includes('print-question--keep-all'), true);
+  assert.equal(normalizedHtml.includes('print-question--keep-head'), true);
+  assert.equal(normalizedHtml.includes('print-question--flow'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--prompt'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--answer'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--result'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--keep'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--flow'), true);
+  assert.equal(normalizedHtml.includes('>Question<'), true);
+  assert.equal(normalizedHtml.includes('>Checked answer<'), true);
+  assert.equal(normalizedHtml.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
+  assert.equal(normalizedHtml.includes('border-radius: 3mm;'), false);
+  assert.equal(normalizedHtml.includes('border-top: 1px solid #eceff3;'), false);
+  assert.equal(normalizedHtml.includes('border-bottom: 1px solid #dde2e8;'), false);
 });
 
 test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
@@ -3284,6 +3285,16 @@ test('viewer launch intent gates include publishedPackageId links', async () => 
   assert.equal(source.includes('const hasExplicitContentIntent = hasViewerContentIntent(params);'), true);
 });
 
+test('viewer source preserves non-not-found published package failures during bootstrap', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+
+  assert.equal(source.includes("const errorCode = String(result?.error?.code || '').trim().toUpperCase();"), true);
+  assert.equal(source.includes("if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND')"), true);
+  assert.equal(source.includes('userMessage: result?.error?.requiresSignIn'), true);
+  assert.equal(source.includes('VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED'), true);
+  assert.equal(source.includes('throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {'), true);
+});
+
 
 test('bootstrap hard-fails with parse-specific errors for malformed explicit payload params', async () => {
   const mod = await loadViewerModule({
@@ -3968,7 +3979,7 @@ test('viewer playback race condition: last request wins when fetches resolve out
 });
 
 test('question prompt audio handler toggles disable state and does not persist success text', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes("if (questionAudioBtn.disabled) return;"), true);
   assert.equal(source.includes("questionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("onEnded: () => {\n            questionAudioBtn.disabled = false;"), true);
@@ -3977,7 +3988,7 @@ test('question prompt audio handler toggles disable state and does not persist s
 });
 
 test('choice option audio handler matches icon-button lifecycle behavior', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes("optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';"), true);
   assert.equal(source.includes("optionAudioBtn.textContent = '🔊';"), true);
   assert.equal(source.includes("if (optionAudioBtn.disabled) return;"), true);

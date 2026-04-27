@@ -4077,7 +4077,7 @@ function renderEditorShell(session) {
     const savedTime = new Date(lastSavedAt).getTime();
     if (!Number.isFinite(savedTime)) return lastSavedAt;
     const elapsedMs = Date.now() - savedTime;
-    if (elapsedMs < 0) return 'just now';
+    if (elapsedMs < 0) return `${lastSavedAt} (in the future)`;
     const elapsedSeconds = Math.floor(elapsedMs / 1000);
     if (elapsedSeconds < 10) return 'just now';
     if (elapsedSeconds < 60) return `${elapsedSeconds} seconds ago`;
@@ -5071,7 +5071,7 @@ function renderEditorShell(session) {
       blockTitle.textContent = preview;
       const blockBadge = document.createElement('span');
       blockBadge.className = `block-kind-badge block-kind-badge--${block.kind}`;
-      blockBadge.textContent = block.kind;
+      blockBadge.textContent = getBlockKindLabel(block.kind);
       button.append(blockIndex, blockTitle, blockBadge);
       button.addEventListener('click', () => {
         session.selectBlock(block.blockId);
@@ -5372,6 +5372,7 @@ function renderEditorShell(session) {
       empty.textContent = 'Select a block to edit.';
       detailHeader.append(detailTitleGroup);
       rightPanel.append(detailHeader);
+      rightPanel.append(statusRow);
       rightPanel.appendChild(empty);
       return;
     }
@@ -5387,6 +5388,7 @@ function renderEditorShell(session) {
     );
     detailHeader.append(detailTitleGroup, detailActions);
     rightPanel.append(detailHeader);
+    rightPanel.append(statusRow);
 
     if (selectedBlock.kind === 'content') {
       promptT2AUiRefs = null;

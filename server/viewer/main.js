@@ -2091,8 +2091,17 @@ class ViewerAttemptSession {
     if (publishedPackageId) {
       const result = await this.startFromPublishedPackage(publishedPackageId);
       if (!result?.ok) {
-        throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
-          userMessage: 'The requested published package was not found.',
+        const errorCode = String(result?.error?.code || '').trim().toUpperCase();
+        if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND') {
+          throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
+            userMessage: 'The requested published package was not found.',
+            technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+          });
+        }
+        throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
+          userMessage: result?.error?.requiresSignIn
+            ? 'Sign in is required to open this published package, then retry the link.'
+            : 'The requested published package could not be opened right now.',
           technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
         });
       }

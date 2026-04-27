@@ -1006,7 +1006,7 @@ test('publishUploadedDraftToServer emits refresh warning when uploaded drafts re
 });
 
 test('editor source removes global Publish button and adds labeled metadata and browse controls', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes('await session.publishCurrentDraftToServer();'), false);
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    publishBtn,'), false);
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
@@ -1045,10 +1045,19 @@ test('editor source removes global Publish button and adds labeled metadata and 
 });
 
 test('stage3: protected actions column no longer includes legacy rewrite/t2a stub buttons', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
   assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    manageUploadedDraftsBtn,\n    browsePublishedBtn\n  );'), true);
+});
+
+test('editor source keeps detail status row visible and uses friendly block/saved labels', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+
+  assert.equal(source.includes("if (elapsedMs < 0) return `${lastSavedAt} (in the future)`;"), true);
+  assert.equal(source.includes("if (elapsedMs < 0) return 'just now';"), false);
+  assert.equal(source.includes('blockBadge.textContent = getBlockKindLabel(block.kind);'), true);
+  assert.equal(source.includes('rightPanel.append(statusRow);'), true);
 });
 
 test('editor server menu buttons stay disabled when session is not ready and preflight on click', async () => {
@@ -1164,7 +1173,7 @@ test('stage3: option row triggers replace confirmation before option bridge gene
 });
 
 test('stage3: in-flight lock is row-scoped by block/option key and leaves unrelated rows interactive', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes("const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;"), true);
   assert.equal(source.includes("const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);"), true);
   assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
@@ -1194,7 +1203,7 @@ test('multiple-choice option input defers state updates while IME composition is
 });
 
 test('prompt typing updates T2A state without forcing detail-panel rerender on each keystroke', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes('const updateSummary = ({ preserveDetailEditor = false } = {}) => {'), true);
   assert.equal(source.includes('if (!preserveDetailEditor) {\n      renderDetailEditor();\n    }'), true);
   assert.equal(source.includes('refreshPromptT2AControlsForSelectedBlock();'), true);

@@ -7,7 +7,7 @@ const popupHtmlPath = path.resolve('server/app/login/popup.html');
 const messageContractPath = path.resolve('docs/message-contract.md');
 
 async function readPopupSource() {
-  return fs.readFile(popupHtmlPath, 'utf8');
+  return (await fs.readFile(popupHtmlPath, 'utf8')).replace(/\r\n/g, '\n');
 }
 
 async function readMessageContractSource() {
