@@ -193,7 +193,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
           subject,
         });
         if (!result.ok) {
-          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+          return json(res, result.statusCode, fail(result.error.code, result.error.message, result.error.details));
         }
         return json(res, result.statusCode, ok(result.data));
       }

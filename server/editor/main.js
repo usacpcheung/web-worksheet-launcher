@@ -46,6 +46,19 @@ function toUploadedDraftDisplay(item, locale = undefined) {
   };
 }
 
+function normalizeDraftPublishState(item) {
+  const explicitState = isNonEmptyString(item?.publish_state) ? item.publish_state.trim() : '';
+  if (explicitState === 'current_version_published' || explicitState === 'unpublished_changes' || explicitState === 'draft_only') {
+    return explicitState;
+  }
+  const artifactSha = isNonEmptyString(item?.artifact_sha256) ? item.artifact_sha256.trim() : '';
+  const lastPublishedArtifactSha = isNonEmptyString(item?.last_published_artifact_sha256)
+    ? item.last_published_artifact_sha256.trim()
+    : '';
+  if (!lastPublishedArtifactSha) return 'draft_only';
+  return artifactSha && artifactSha === lastPublishedArtifactSha ? 'current_version_published' : 'unpublished_changes';
+}
+
 function buildPublishedPackageViewerUrl(publishedPackageId) {
   const url = new URL('../viewer/index.html', window.location.href);
   url.searchParams.set('publishedPackageId', String(publishedPackageId || '').trim());
@@ -4189,6 +4202,63 @@ function renderEditorShell(session) {
     });
   }
 
+  function showPublishedPackageConflictModal() {
+    return new Promise((resolve) => {
+      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-modal-overlay';
+      const dialog = document.createElement('section');
+      dialog.className = 'confirm-modal';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+
+      const heading = document.createElement('h3');
+      heading.textContent = 'Published package conflict';
+      const description = document.createElement('p');
+      description.className = 'confirm-modal__description';
+      description.textContent = 'A published package with this worksheet name and subject already exists.';
+      const warning = document.createElement('p');
+      warning.className = 'confirm-modal__warning';
+      warning.textContent = 'Existing viewer links may already be in use. This app will not replace or delete that package automatically.';
+
+      const actions = document.createElement('div');
+      actions.className = 'confirm-modal__actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'confirm-modal__btn';
+      cancelBtn.textContent = 'Cancel';
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+      editBtn.textContent = 'Edit Published Name/Subject';
+      actions.append(cancelBtn, editBtn);
+      dialog.append(heading, description, warning, actions);
+      overlay.appendChild(dialog);
+      shell.appendChild(overlay);
+
+      const cleanup = () => {
+        overlay.remove();
+        if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
+      };
+      cancelBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({ action: 'cancel' });
+      });
+      editBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({ action: 'edit' });
+      });
+      dialog.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          cleanup();
+          resolve({ action: 'cancel' });
+        }
+      });
+      editBtn.focus();
+    });
+  }
+
   function showUploadConflictModal({ existingDraft }) {
     return new Promise((resolve) => {
       const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -6070,11 +6140,16 @@ function renderEditorShell(session) {
       subjectLine.textContent = `Subject: ${item.subject || '-'}`;
       meta.append(titleLine, subjectLine, uploadedAtLine);
       const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
+      const publishState = normalizeDraftPublishState(item);
       const badge = document.createElement('span');
-      badge.className = publishedPackageId
+      badge.className = publishState === 'current_version_published'
         ? 'editor-pill editor-pill--ok uploaded-draft-published-badge'
         : 'editor-pill uploaded-draft-published-badge';
-      badge.textContent = publishedPackageId ? 'Published' : 'Draft only';
+      badge.textContent = publishState === 'current_version_published'
+        ? 'Published current version'
+        : publishState === 'unpublished_changes'
+          ? 'Unpublished changes'
+          : 'Draft only';
       meta.appendChild(badge);
       const details = document.createElement('details');
       details.className = 'uploaded-draft-details uploaded-draft-details--draft';
@@ -6086,7 +6161,9 @@ function renderEditorShell(session) {
       draftIdLine.textContent = `Uploaded draft ID: ${item.uploaded_draft_id || '-'}`;
       const publishedIdLine = document.createElement('div');
       publishedIdLine.textContent = `Published ID: ${publishedPackageId || '-'}`;
-      body.append(draftIdLine, publishedIdLine);
+      const publishStateLine = document.createElement('div');
+      publishStateLine.textContent = `Publish state: ${publishState}`;
+      body.append(draftIdLine, publishedIdLine, publishStateLine);
       details.append(summary, body);
       meta.appendChild(details);
       const actions = document.createElement('div');
@@ -6116,22 +6193,29 @@ function renderEditorShell(session) {
           });
         });
         actions.appendChild(copyBtn);
-      } else {
+      }
+
+      if (publishState !== 'current_version_published') {
         const isPublishing = session.state.publishingDraftIds.has(item.uploaded_draft_id);
         const publishBtn = document.createElement('button');
         publishBtn.type = 'button';
         publishBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
-        publishBtn.textContent = isPublishing ? 'Publishing…' : 'Publish';
+        publishBtn.textContent = isPublishing ? 'Publishing…' : publishState === 'unpublished_changes' ? 'Publish New Version' : 'Publish';
         publishBtn.disabled = !serverReady || isPublishing;
         publishBtn.addEventListener('click', async () => {
           if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
           await guardServerMenuAction(publishBtn, async () => {
-            const modal = await showPublishModal({ uploadedDraft: item });
-            if (!modal.confirmed) return null;
-            return session.publishUploadedDraftToServer(item.uploaded_draft_id, {
-              title: modal.title,
-              subject: modal.subject,
-            });
+            while (true) {
+              const modal = await showPublishModal({ uploadedDraft: item });
+              if (!modal.confirmed) return null;
+              const result = await session.publishUploadedDraftToServer(item.uploaded_draft_id, {
+                title: modal.title,
+                subject: modal.subject,
+              });
+              if (result?.ok || result?.error?.code !== 'PUBLISHED_PACKAGE_CONFLICT') return result;
+              const conflictAction = await showPublishedPackageConflictModal();
+              if (conflictAction?.action !== 'edit') return result;
+            }
           });
           updateSummary();
         });

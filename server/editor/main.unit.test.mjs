@@ -1032,6 +1032,12 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
   assert.equal(source.includes("summary.textContent = 'Details';"), true);
+  assert.equal(source.includes("badge.textContent = publishState === 'current_version_published'"), true);
+  assert.equal(source.includes("? 'Published current version'"), true);
+  assert.equal(source.includes("? 'Unpublished changes'"), true);
+  assert.equal(source.includes("publishBtn.textContent = isPublishing ? 'Publishing…' : publishState === 'unpublished_changes' ? 'Publish New Version' : 'Publish';"), true);
+  assert.equal(source.includes("heading.textContent = 'Published package conflict';"), true);
+  assert.equal(source.includes("editBtn.textContent = 'Edit Published Name/Subject';"), true);
   assert.equal(
     source.includes("subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;"),
     true

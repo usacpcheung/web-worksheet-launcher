@@ -185,8 +185,12 @@ Request JSON:
 Behavior:
 
 - Reads owner draft by id.
-- Copies canonical ZIP artifact into immutable published bucket on first publish.
-- Enforces one uploaded draft → one published package. Re-publish of the same uploaded draft returns the existing package instead of creating duplicates.
+- Copies canonical ZIP artifact into immutable published bucket on successful publish.
+- Uses uploaded-draft publish markers (`last_published_artifact_sha256`, `last_published_at`) to enforce one publish per current uploaded artifact hash.
+- Re-publish of the same unchanged uploaded artifact returns `409 DRAFT_ARTIFACT_ALREADY_PUBLISHED`.
+- Replacing the uploaded draft artifact allows publishing again (new immutable package id each successful publish).
+- Before insert, checks active published package conflicts by same owner + normalized title + normalized subject and returns `409 PUBLISHED_PACKAGE_CONFLICT` when matched.
+- Never auto-replaces or auto-deletes an existing published package when conflicts exist.
 - Stores provenance link to `source_uploaded_draft_id`.
 - Optional publish-time `title`/`subject` overrides apply to published package metadata only (uploaded draft metadata is unchanged).
 

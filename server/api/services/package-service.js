@@ -71,6 +71,13 @@ export class PackageService {
         d.subject,
         d.artifact_sha256,
         d.artifact_size_bytes,
+        d.last_published_artifact_sha256,
+        d.last_published_at,
+        CASE
+          WHEN d.last_published_artifact_sha256 IS NULL THEN 'draft_only'
+          WHEN d.artifact_sha256 = d.last_published_artifact_sha256 THEN 'current_version_published'
+          ELSE 'unpublished_changes'
+        END AS publish_state,
         d.created_at,
         d.updated_at,
         p.published_package_id,
@@ -80,8 +87,19 @@ export class PackageService {
         p.owner_name AS published_owner_name,
         p.published_at
        FROM uploaded_drafts d
-       LEFT JOIN published_packages p
-         ON p.source_uploaded_draft_id = d.uploaded_draft_id
+       LEFT JOIN LATERAL (
+         SELECT
+           published_package_id,
+           title,
+           subject,
+           owner_email,
+           owner_name,
+           published_at
+         FROM published_packages
+         WHERE source_uploaded_draft_id = d.uploaded_draft_id
+         ORDER BY published_at DESC
+         LIMIT 1
+       ) p ON TRUE
        WHERE d.owner_sub = $1
        ORDER BY d.created_at DESC`,
       [identity.sub]
@@ -135,7 +153,7 @@ export class PackageService {
         artifact_sha256,
         artifact_size_bytes
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-      RETURNING uploaded_draft_id, owner_sub, owner_email, owner_name, title, subject, artifact_sha256, artifact_size_bytes, created_at, updated_at`,
+      RETURNING uploaded_draft_id, owner_sub, owner_email, owner_name, title, subject, artifact_sha256, artifact_size_bytes, last_published_artifact_sha256, last_published_at, created_at, updated_at`,
       [
         uploadedDraftId,
         identity.sub,
@@ -245,7 +263,7 @@ export class PackageService {
                artifact_size_bytes = $9,
                updated_at = now()
            WHERE uploaded_draft_id = $1 AND owner_sub = $2
-           RETURNING uploaded_draft_id, owner_sub, owner_email, owner_name, title, subject, artifact_sha256, artifact_size_bytes, created_at, updated_at`,
+           RETURNING uploaded_draft_id, owner_sub, owner_email, owner_name, title, subject, artifact_sha256, artifact_size_bytes, last_published_artifact_sha256, last_published_at, created_at, updated_at`,
           [
             conflict.uploaded_draft_id,
             identity.sub,
@@ -307,7 +325,7 @@ export class PackageService {
           artifact_sha256,
           artifact_size_bytes
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        RETURNING uploaded_draft_id, owner_sub, owner_email, owner_name, title, subject, artifact_sha256, artifact_size_bytes, created_at, updated_at`,
+        RETURNING uploaded_draft_id, owner_sub, owner_email, owner_name, title, subject, artifact_sha256, artifact_size_bytes, last_published_artifact_sha256, last_published_at, created_at, updated_at`,
         [
           uploadedDraftId,
           identity.sub,
@@ -447,8 +465,9 @@ export class PackageService {
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`publish:${uploadedDraftId}`]);
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`publish-owner:${identity.sub}`]);
       const draftRes = await client.query(
-        `SELECT uploaded_draft_id, owner_sub, title, subject, artifact_path, artifact_sha256, artifact_size_bytes
+        `SELECT uploaded_draft_id, owner_sub, title, subject, artifact_path, artifact_sha256, artifact_size_bytes, last_published_artifact_sha256
          FROM uploaded_drafts
          WHERE uploaded_draft_id = $1 AND owner_sub = $2`,
         [uploadedDraftId, identity.sub]
@@ -467,17 +486,62 @@ export class PackageService {
       }
 
       const draft = draftRes.rows[0];
-      const existingRes = await client.query(
-        `SELECT published_package_id, title, subject, artifact_sha256, artifact_size_bytes, published_at, source_uploaded_draft_id, owner_email, owner_name
+
+      if (
+        normalizeText(draft.artifact_sha256, '') &&
+        draft.artifact_sha256 === draft.last_published_artifact_sha256
+      ) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 409,
+          error: {
+            code: 'DRAFT_ARTIFACT_ALREADY_PUBLISHED',
+            message: 'This uploaded draft artifact has already been published.',
+            details: {
+              uploadedDraftId: draft.uploaded_draft_id,
+              artifactSha256: draft.artifact_sha256,
+            },
+          },
+        };
+      }
+
+      const normalizedPublishedTitle = normalizeText(title, draft.title);
+      const normalizedPublishedSubject = normalizeText(subject, draft.subject || '');
+      const existingConflictRes = await client.query(
+        `SELECT
+          published_package_id,
+          title,
+          subject,
+          owner_sub,
+          owner_email,
+          owner_name,
+          published_at,
+          source_uploaded_draft_id
          FROM published_packages
-         WHERE source_uploaded_draft_id = $1 AND owner_sub = $2
+         WHERE owner_sub = $1
+           AND lower(regexp_replace(btrim(coalesce(title, '')), '\\s+', ' ', 'g')) = $2
+           AND lower(regexp_replace(btrim(coalesce(subject, '')), '\\s+', ' ', 'g')) = $3
          ORDER BY published_at DESC
          LIMIT 1`,
-        [draft.uploaded_draft_id, identity.sub]
+        [identity.sub, normalizeConflictText(normalizedPublishedTitle), normalizeConflictText(normalizedPublishedSubject)]
       );
-      if (existingRes.rowCount > 0) {
-        await client.query('COMMIT');
-        return { ok: true, statusCode: 200, data: existingRes.rows[0] };
+
+      if (existingConflictRes.rowCount > 0) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 409,
+          error: {
+            code: 'PUBLISHED_PACKAGE_CONFLICT',
+            message: 'A published package with this worksheet name and subject already exists.',
+            details: {
+              existingPackage: existingConflictRes.rows[0],
+              requestedTitle: normalizedPublishedTitle,
+              requestedSubject: normalizedPublishedSubject,
+            },
+          },
+        };
       }
 
       const bytes = await this.artifactStore.readArtifact(draft.artifact_path);
@@ -509,12 +573,20 @@ export class PackageService {
           identity.email,
           identity.name,
           draft.uploaded_draft_id,
-          normalizeText(title, draft.title),
-          normalizeText(subject, draft.subject || ''),
+          normalizedPublishedTitle,
+          normalizedPublishedSubject,
           artifact.artifactPath,
           artifact.artifactSha256,
           artifact.artifactSizeBytes,
         ]
+      );
+      await client.query(
+        `UPDATE uploaded_drafts
+         SET last_published_artifact_sha256 = $2,
+             last_published_at = now(),
+             updated_at = now()
+         WHERE uploaded_draft_id = $1 AND owner_sub = $3`,
+        [draft.uploaded_draft_id, draft.artifact_sha256, identity.sub]
       );
 
       await client.query('COMMIT');

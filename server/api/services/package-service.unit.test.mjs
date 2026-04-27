@@ -14,7 +14,8 @@ function createFakeDb({
   uploadConflict = false,
   uploadConflictTitles = ['t'],
   failDelete = false,
-  existingPublished = null,
+  draftRow = null,
+  publishConflict = null,
 } = {}) {
   const state = { draftCount, queries: [] };
 
@@ -30,7 +31,7 @@ function createFakeDb({
           if (sql.includes('COUNT(*)::int AS count FROM uploaded_drafts')) {
             return { rows: [{ count: state.draftCount }], rowCount: 1 };
           }
-          if (sql.includes('FROM uploaded_drafts d') && sql.includes('ORDER BY d.created_at DESC') && !sql.includes('LIMIT 1')) {
+          if (sql.includes('FROM uploaded_drafts d') && sql.includes('ORDER BY d.created_at DESC') && sql.includes('publish_state')) {
             return { rowCount: 0, rows: [] };
           }
           if (sql.includes('LEFT JOIN published_packages p') && sql.includes('lower(regexp_replace')) {
@@ -53,28 +54,28 @@ function createFakeDb({
               ],
             };
           }
-          if (sql.includes('SELECT uploaded_draft_id')) {
+          if (sql.includes('SELECT uploaded_draft_id') && sql.includes('FROM uploaded_drafts') && !sql.includes('d.created_at DESC')) {
             if (draftExists) {
+              const row = draftRow || {
+                uploaded_draft_id: 'u',
+                owner_sub: 'oidc-sub',
+                title: 'T',
+                subject: 'S',
+                artifact_path: 'drafts/a.zip',
+                artifact_sha256: 'sha',
+                artifact_size_bytes: 1,
+                last_published_artifact_sha256: null,
+              };
               return {
                 rowCount: 1,
-                rows: [
-                  {
-                    uploaded_draft_id: 'u',
-                    owner_sub: 'oidc-sub',
-                    title: 'T',
-                    subject: 'S',
-                    artifact_path: 'drafts/a.zip',
-                    artifact_sha256: 'sha',
-                    artifact_size_bytes: 1,
-                  },
-                ],
+                rows: [row],
               };
             }
             return { rowCount: 0, rows: [] };
           }
-          if (sql.includes('SELECT published_package_id, title, subject') && sql.includes('source_uploaded_draft_id')) {
-            if (existingPublished) {
-              return { rowCount: 1, rows: [existingPublished] };
+          if (sql.includes('FROM published_packages') && sql.includes("lower(regexp_replace(btrim(coalesce(title, ''))")) {
+            if (publishConflict) {
+              return { rowCount: 1, rows: [publishConflict] };
             }
             return { rowCount: 0, rows: [] };
           }
@@ -115,6 +116,9 @@ function createFakeDb({
                 },
               ],
             };
+          }
+          if (sql.includes('UPDATE uploaded_drafts') && sql.includes('last_published_artifact_sha256')) {
+            return { rowCount: 1, rows: [] };
           }
           if (sql.includes('DELETE FROM uploaded_drafts')) {
             if (failDelete) {
@@ -378,9 +382,9 @@ test('publishFromDraft removes artifact file when DB insert fails', async () => 
   await fs.rm(tempDir, { recursive: true, force: true });
 });
 
-test('publishFromDraft returns existing published package for same uploaded draft', async () => {
+test('publishFromDraft returns conflict when owner already has same normalized title + subject', async () => {
   const db = createFakeDb({
-    existingPublished: {
+    publishConflict: {
       published_package_id: 'p-existing',
       title: 'Existing title',
       subject: 'Existing subject',
@@ -406,11 +410,52 @@ test('publishFromDraft returns existing published package for same uploaded draf
   const result = await service.publishFromDraft({
     identity: { sub: 'oidc-sub' },
     uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Existing title',
+    subject: 'Existing subject',
   });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.statusCode, 200);
-  assert.equal(result.data.published_package_id, 'p-existing');
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 409);
+  assert.equal(result.error.code, 'PUBLISHED_PACKAGE_CONFLICT');
+  assert.equal(result.error.details.existingPackage.published_package_id, 'p-existing');
+  assert.equal(storeArtifactCalls, 0);
+});
+
+test('publishFromDraft blocks when current uploaded draft artifact hash was already published', async () => {
+  const db = createFakeDb({
+    draftRow: {
+      uploaded_draft_id: 'u',
+      owner_sub: 'oidc-sub',
+      title: 'T',
+      subject: 'S',
+      artifact_path: 'drafts/a.zip',
+      artifact_sha256: 'sha-current',
+      artifact_size_bytes: 1,
+      last_published_artifact_sha256: 'sha-current',
+    },
+  });
+  let storeArtifactCalls = 0;
+  const service = createService({
+    db,
+    artifactStore: {
+      async readArtifact() {
+        return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+      },
+      async storeArtifact() {
+        storeArtifactCalls += 1;
+        return { artifactPath: 'published/a.zip', absolutePath: '/tmp/a.zip', artifactSha256: 'sha', artifactSizeBytes: 4 };
+      },
+    },
+  });
+
+  const result = await service.publishFromDraft({
+    identity: { sub: 'oidc-sub' },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 409);
+  assert.equal(result.error.code, 'DRAFT_ARTIFACT_ALREADY_PUBLISHED');
   assert.equal(storeArtifactCalls, 0);
 });
 
@@ -579,6 +624,10 @@ test('listOwnDrafts returns published-state metadata fields for uploaded draft r
               uploaded_draft_id: 'u1',
               title: 'Draft 1',
               subject: 'Math',
+              artifact_sha256: 'sha-new',
+              last_published_artifact_sha256: 'sha-old',
+              last_published_at: '2026-04-01T00:00:00.000Z',
+              publish_state: 'unpublished_changes',
               published_package_id: 'p1',
               published_title: 'Released Draft 1',
               published_subject: 'Algebra',
@@ -598,6 +647,8 @@ test('listOwnDrafts returns published-state metadata fields for uploaded draft r
   assert.equal(rows[0].published_package_id, 'p1');
   assert.equal(rows[0].published_owner_email, 'teacher@example.test');
   assert.equal(rows[0].published_owner_name, 'Teacher Name');
+  assert.equal(rows[0].publish_state, 'unpublished_changes');
+  assert.equal(rows[0].last_published_artifact_sha256, 'sha-old');
 });
 
 test('listPublished owner filter uses owner_email-compatible predicate ordering', async () => {
