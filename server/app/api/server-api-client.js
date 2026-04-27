@@ -410,6 +410,11 @@ function createServerApiClient(options = {}) {
       if (signal && typeof signal.addEventListener === 'function') {
         if (signal.aborted) {
           abortHandler();
+          finish(toStructuredError({
+            code: 'NETWORK_ERROR',
+            message: 'Unable to reach server API. Upload was canceled before completion.',
+          }));
+          return;
         } else {
           signal.addEventListener('abort', abortHandler, { once: true });
         }

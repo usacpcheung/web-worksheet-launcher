@@ -617,6 +617,19 @@ test('uploadCurrentDraftToServer emits refresh warning when uploaded drafts refr
   ]);
 });
 
+test('upload progress updates skip redundant editor rerenders for unchanged display state', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('let lastProgressRenderKey = null;'), true);
+  assert.equal(source.includes('if (progressRenderKey === lastProgressRenderKey) {'), true);
+  assert.equal(source.includes('lastProgressRenderKey = progressRenderKey;'), true);
+});
+
+test('formatMegabytes reuses formatBytes with MB mode', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('function formatBytes(bytes, options = {}) {'), true);
+  assert.equal(source.includes("return formatBytes(bytes, { unit: 'mb', invalid: '0.0 MB' });"), true);
+});
+
 
 test('editor shell removes Retry session button from normal server controls', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');

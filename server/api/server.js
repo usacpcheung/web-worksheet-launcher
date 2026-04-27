@@ -100,7 +100,15 @@ export function createRequestHandler({ service, artifactStore, config }) {
         if (!contentType.includes('application/zip')) {
           return json(res, 415, fail('UNSUPPORTED_MEDIA_TYPE', 'Upload draft requires Content-Type: application/zip'));
         }
-        const zipBytes = await readRequestBody(req, Number(config.packageUploadMaxBytes) || 30 * 1024 * 1024);
+        let zipBytes;
+        try {
+          zipBytes = await readRequestBody(req, Number(config.packageUploadMaxBytes) || 30 * 1024 * 1024);
+        } catch (error) {
+          if (error instanceof RequestBodyTooLargeError) {
+            return json(res, 413, fail('PACKAGE_UPLOAD_TOO_LARGE', 'Uploaded package is too large.'));
+          }
+          throw error;
+        }
         const title = url.searchParams.get('title') || '';
         const subject = url.searchParams.get('subject') || '';
         const result = await service.uploadDraft({
@@ -312,7 +320,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
         return json(res, error.statusCode, fail(error.code, error.message));
       }
       if (error instanceof RequestBodyTooLargeError) {
-        return json(res, 413, fail('PACKAGE_UPLOAD_TOO_LARGE', 'Uploaded package is too large.'));
+        return json(res, 413, fail('REQUEST_BODY_TOO_LARGE', 'Request body is too large.'));
       }
       if (error instanceof SyntaxError) {
         return json(res, 400, fail('INVALID_JSON', 'Malformed JSON body.'));

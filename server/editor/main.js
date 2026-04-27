@@ -223,16 +223,18 @@ function fileLooksLikeType(file, mimeTypes, extensions) {
   return extensions.includes(ext);
 }
 
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+function formatBytes(bytes, options = {}) {
+  const unit = options?.unit === 'mb' ? 'mb' : 'auto';
+  const invalid = typeof options?.invalid === 'string' ? options.invalid : '0 B';
+  if (!Number.isFinite(bytes) || bytes < 0) return invalid;
+  if (unit === 'mb') return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatMegabytes(bytes) {
-  if (!Number.isFinite(bytes) || bytes < 0) return '0.0 MB';
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return formatBytes(bytes, { unit: 'mb', invalid: '0.0 MB' });
 }
 
 function getAssetExtensionFallback(kind, mimeType) {
@@ -2878,6 +2880,7 @@ class EditorDraftSession {
         if (!sessionReady.ok) return sessionReady.result;
       }
       const zipBytes = await this.buildCurrentDraftPackageZipBytes();
+      let lastProgressRenderKey = null;
       const result = await this.apiClient.uploadDraftPackage(zipBytes, {
         title: this.state.draft?.title || '',
         subject: this.state.draft?.metadata?.subject || '',
@@ -2887,6 +2890,14 @@ class EditorDraftSession {
           const loaded = Number(progress?.loaded || 0);
           const total = Number(progress?.total || 0);
           const lengthComputable = Boolean(progress?.lengthComputable) && total > 0;
+          const loadedInTenthsMb = Math.round((loaded / (1024 * 1024)) * 10);
+          const progressRenderKey = lengthComputable
+            ? `${Math.max(0, Math.min(100, Math.round((loaded / total) * 100)))}:${loadedInTenthsMb}:${Math.round((total / (1024 * 1024)) * 10)}`
+            : `${loadedInTenthsMb}`;
+          if (progressRenderKey === lastProgressRenderKey) {
+            return;
+          }
+          lastProgressRenderKey = progressRenderKey;
           this.state.uploadDraftProgress = {
             loaded,
             total: lengthComputable ? total : null,

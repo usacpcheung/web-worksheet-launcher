@@ -164,6 +164,45 @@ test('POST /api/v1/drafts/upload returns 413 with PACKAGE_UPLOAD_TOO_LARGE when 
   assert.equal(uploadCalled, false);
 });
 
+test('POST /api/v1/published returns 413 with REQUEST_BODY_TOO_LARGE when body exceeds configured max', async () => {
+  let publishCalled = false;
+  await withServer(
+    {
+      configOverrides: {
+        packageUploadMaxBytes: 16,
+      },
+      service: {
+        async publishFromDraft() {
+          publishCalled = true;
+          return { ok: true, statusCode: 201, data: {} };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const oversizedPayload = JSON.stringify({
+        uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+        x: 'a'.repeat((31 * 1024 * 1024) + 128),
+      });
+      const res = await fetch(`${baseUrl}/api/v1/published`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders,
+          'content-type': 'application/json',
+        },
+        body: oversizedPayload,
+      });
+
+      assert.equal(res.status, 413);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'REQUEST_BODY_TOO_LARGE');
+      assert.equal(payload.error.message, 'Request body is too large.');
+    }
+  );
+
+  assert.equal(publishCalled, false);
+});
+
 test('GET /api/v1/session returns ready identity payload', async () => {
   await withServer({}, async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/v1/session`, {

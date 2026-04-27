@@ -208,6 +208,42 @@ test('uploadDraftPackage returns structured network error on XHR transport failu
   globalThis.XMLHttpRequest = previousXhr;
 });
 
+test('uploadDraftPackage does not send when AbortSignal is already aborted', async () => {
+  setTestWindow();
+  const previousXhr = globalThis.XMLHttpRequest;
+  let sendCalled = false;
+
+  class AbortAwareXhr {
+    constructor() {
+      this.upload = {};
+    }
+    open() {}
+    setRequestHeader() {}
+    send() {
+      sendCalled = true;
+    }
+    abort() {}
+  }
+
+  globalThis.XMLHttpRequest = AbortAwareXhr;
+  const controller = new AbortController();
+  controller.abort();
+
+  const client = createServerApiClient();
+  const result = await client.uploadDraftPackage(
+    new Uint8Array([0x50, 0x4b]),
+    { title: 'Title', subject: 'Math' },
+    { signal: controller.signal }
+  );
+
+  assert.equal(sendCalled, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'NETWORK_ERROR');
+  assert.equal(result.error.message, 'Unable to reach server API. Upload was canceled before completion.');
+
+  globalThis.XMLHttpRequest = previousXhr;
+});
+
 
 test('deletePublishedPackage sends DELETE to canonical published path', async () => {
   setTestWindow();
