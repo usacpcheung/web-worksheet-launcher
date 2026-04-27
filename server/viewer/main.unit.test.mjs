@@ -3394,6 +3394,66 @@ test('bootstrapViewer renders start panel recovery warning for authReturn withou
   assert.match(statusNode.textContent, /restore failed/i);
 });
 
+test('bootstrapViewer callback mode uses dedicated recovery panel and passes preserve options to restore', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  let restoreOptions = null;
+  class FakeAuthGate {
+    constructor({ onRecoveryMessage }) {
+      this.onRecoveryMessage = onRecoveryMessage;
+    }
+    async restoreAfterAuthReturn(options = {}) {
+      restoreOptions = options;
+      if (this.onRecoveryMessage) {
+        this.onRecoveryMessage('Recovery ticket exists but cannot replay yet.');
+      }
+      return { status: 'no_pending_intent' };
+    }
+    clearPending() {}
+  }
+
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/?authReturn=1&authCallback=1', search: '?authReturn=1&authCallback=1' },
+      history: { replaceState: () => {} },
+    },
+    SharedAuthGate: FakeAuthGate,
+    renderViewerShell: () => {
+      throw new Error('should not render shell while callback recovery is unresolved');
+    },
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      pendingIntent: { get: () => null, set: () => {}, clear: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+  const panel = appRoot.children[0];
+  assert.equal(panel.className, 'viewer-auth-callback-panel');
+  assert.equal(restoreOptions?.preserveUrlOnAuthNotReady, true);
+  assert.equal(restoreOptions?.preservePendingOnAuthNotReady, true);
+});
+
+test('bootstrapViewer callback mode includes explicit cancel recovery escape-hatch behavior', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("cancelRecoveryBtn.textContent = 'Cancel recovery';"), true);
+  assert.equal(source.includes('authGate.clearPending();'), true);
+  assert.equal(source.includes('cleanupViewerAuthCallbackUrlParams();'), true);
+  assert.equal(source.includes('await renderStartPanelFromResumeFlag(session.state.recoveryMessage);'), true);
+});
+
+test('bootstrapViewer callback mode continue sign-in reuses popup auth flow and retries recovery', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('session.beginServerSignIn({'), true);
+  assert.equal(source.includes('onSessionReady: async ({ finalizeFlow }) => {'), true);
+  assert.equal(source.includes('await attemptRecovery({ manual: true });'), true);
+  assert.equal(source.includes('window.location.assign(buildViewerAuthCallbackSignInUrl({ forceNavigationToken: true }));'), false);
+  assert.equal(source.includes('function buildViewerAuthCallbackSignInUrl(options = {}) {'), false);
+});
+
 test('bootstrapViewer renders fatal panel for explicit localAttemptId resume failure and does not create synthetic attempt', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   let putCalls = 0;
@@ -3971,6 +4031,13 @@ test('bootstrapViewer validateIntent uses action-aware viewer rewrite payload ch
   assert.equal(source.includes('return false;'), true);
 });
 
+test('bootstrapViewer configures SharedAuthGate with live session probe check', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('checkSessionReady: async () => session.ensureServerSessionReady(),'), true);
+  assert.equal(source.includes("returnQueryParams: { [VIEWER_AUTH_CALLBACK_PARAM]: '1' },"), true);
+  assert.equal(source.includes("isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1'"), false);
+});
+
 test('viewer triggerProtectedAction forwards payload and remains functional without intentPayload', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
@@ -4008,8 +4075,232 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
 
 test('rewrite assist snapshots answer text from answer record value', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('const answerRecordAtClick = currentBlock?.blockId ? session.state.answers?.[currentBlock.blockId] : null;'), true);
-  assert.equal(source.includes('? answerRecordAtClick.value'), true);
+  assert.equal(source.includes('const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {'), true);
+  assert.equal(source.includes('const getRawAnswerTextForBlock = (blockId) => {'), true);
+  assert.equal(source.includes('answerTextRawAtClickTime: getRawAnswerTextForBlock(blockId),'), true);
+  assert.equal(source.includes("const protectedActionResult = await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);"), true);
+});
+
+test('rewrite click handler surfaces blocked protected-action statuses before touching cached answers', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("if (protectedActionResult?.status === 'redirected') {"), true);
+  assert.equal(source.includes("if (protectedActionResult?.status !== 'executed') {"), true);
+  assert.equal(source.includes("protectedActionResult?.status === 'blocked_session_probe'"), true);
+  assert.equal(source.includes('session.setRewriteMessage(block.blockId, blockedMessage);'), true);
+});
+
+test('rewrite controls remain always mounted for text questions and enforce disabled states by rules', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("if (inputType === 'text') {"), true);
+  assert.equal(source.includes("rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';"), true);
+  assert.equal(source.includes("undoButton.className = 'question-card__undo-btn icon-nav-btn';"), true);
+  assert.equal(source.includes('const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= 300;'), true);
+  assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;'), true);
+  assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
+  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
+  assert.equal(source.includes("rewriteHint.textContent = 'Enter text to rewrite.';"), true);
+  assert.equal(source.includes('Answer is too long to rewrite (max 300 characters).'), true);
+});
+
+test('render signature excludes rewrite-row dynamic flags to avoid remounting for text length transitions', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const trimmedAnswerLengthForCurrentBlock = currentBlockId'), false);
+  assert.equal(source.includes('const canShowRewriteButtonForCurrentBlock = Boolean('), false);
+  assert.equal(source.includes('const isAnswerTooLongToRewriteForCurrentBlock = trimmedAnswerLengthForCurrentBlock > 300;'), false);
+  assert.equal(source.includes('hasUndoForCurrentBlock,'), false);
+  assert.equal(source.includes('rewriteMessageForCard,'), false);
+  assert.equal(source.includes('canShowRewriteButtonForCurrentBlock,'), false);
+  assert.equal(source.includes('isAnswerTooLongToRewriteForCurrentBlock,'), false);
+});
+
+test('replayViewerRewriteIntent valid viewerRewrite context calls rewrite API and applies answer with undo snapshot', async () => {
+  const mod = await loadViewerModule();
+  const rewriteCalls = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async (text) => {
+        rewriteCalls.push(text);
+        return { ok: true, data: { text: 'rewritten answer' } };
+      },
+    },
+  });
+
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text' },
+    }],
+  };
+  session.state.answers = {
+    q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'original answer',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.deepEqual(rewriteCalls, ['original answer']);
+  assert.equal(session.state.undoBuffer.q1, 'original answer');
+  assert.equal(session.state.answers.q1.value, 'rewritten answer');
+});
+
+test('replayViewerRewriteIntent stores raw click snapshot for undo when provided', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'rewritten answer' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text', maxLength: 20 },
+    }],
+  };
+  session.state.answers = {
+    q1: { value: '01234567890123456789', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: '01234567890123456789EXTRA',
+    answerTextRawAtClickTime: '01234567890123456789EXTRA',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(session.state.undoBuffer.q1, '01234567890123456789EXTRA');
+});
+
+test('replayViewerRewriteIntent accepts unchanged answers that differ only by surrounding whitespace', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'clean rewrite' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: '  hello  ', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'hello',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(session.state.answers.q1.value, 'clean rewrite');
+});
+
+test('replayViewerRewriteIntent accepts auth-restore maxLength truncation when snapshot otherwise matches', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'rewritten text that is also long' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text', maxLength: 20 },
+    }],
+  };
+  session.state.answers = {
+    // Simulates save-phase truncation that occurred during auth redirect/restore.
+    q1: { value: '01234567890123456789', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: '01234567890123456789EXTRA_CHARS_TYPED_BEFORE_AUTH',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+});
+
+test('replayViewerRewriteIntent stale-check prefers raw snapshot and save-equivalent clamp-then-trim normalization', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'rewritten' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text', maxLength: 5 },
+    }],
+  };
+  // Simulates restored save-phase value for raw pre-auth text "   abcde".
+  session.state.answers = {
+    q1: { value: '   ab', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    // Legacy trimmed snapshot would not match restored value in this edge case.
+    answerTextAtClickTime: 'abcde',
+    // Raw snapshot should be used for comparison.
+    answerTextRawAtClickTime: '   abcde',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
 });
 
 test('viewer replayProtectedAction receives payload and avoids mutation on stale context', async () => {
@@ -4041,4 +4332,183 @@ test('viewer replayProtectedAction receives payload and avoids mutation on stale
   assert.equal(result.ok, false);
   assert.equal(result.status, 'invalid_context');
   assert.equal(JSON.stringify(session.state.answers), beforeAnswers);
+});
+
+test('stale replay context aborts without calling rewrite API or mutating answers', async () => {
+  const mod = await loadViewerModule();
+  let rewriteCallCount = 0;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => {
+        rewriteCallCount += 1;
+        return { ok: true, data: { text: 'should not apply' } };
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_active';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'keep me', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+  const before = JSON.stringify(session.state.answers);
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_stale',
+    blockId: 'q1',
+    answerTextAtClickTime: 'keep me',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'invalid_context');
+  assert.equal(rewriteCallCount, 0);
+  assert.equal(JSON.stringify(session.state.answers), before);
+});
+
+test('undo lifecycle wiring exists for post-rewrite visibility, restore, and manual input clear', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);'), true);
+  assert.equal(source.includes("undoButton.textContent = 'Undo';"), true);
+  assert.equal(source.includes('if (undoButton.disabled || isRewriteInFlight) {'), true);
+  assert.equal(source.includes("cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));"), true);
+  assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer);'), true);
+  assert.equal(source.includes('delete nextUndoBuffer[block.blockId];'), true);
+  assert.equal(source.includes("control.addEventListener('input', () => {"), true);
+  assert.equal(source.includes('session.state.undoBuffer = nextUndoBuffer;'), true);
+});
+
+test('text control sync prefers focused edit cache and falls back to canonical state when unfocused', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const isControlFocused = control === activeElement;'), true);
+  assert.equal(source.includes('const nextValue = isControlFocused && cachedRawValue !== undefined'), true);
+  assert.equal(source.includes("if (!isControlFocused && cachedRawValue !== undefined && String(cachedRawValue) !== stateValue) {"), true);
+});
+
+test('in-flight rewrite state renders loading label while preserving always-visible controls', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;'), true);
+  assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';"), true);
+  assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
+  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
+  assert.equal(source.includes('session.state.rewriteMessageByBlock?.[block.blockId]'), true);
+});
+
+test('rewrite row updates happen in place without mount/unmount checks', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("rewriteRow.append(rewriteButton, undoButton);"), true);
+  assert.equal(source.includes("rewriteMessages.append(textStatus, rewriteHint, rewriteError);"), true);
+  assert.equal(source.includes("textActionsRow.append(textCounter, rewriteRow);"), true);
+  assert.equal(source.includes("card.append(helper, control, mediaFeedback, textFooter, inputError);"), true);
+  assert.equal(source.includes('if (rewriteRow.childNodes.length > 0) {'), false);
+});
+
+test('rewrite API failure keeps original answer unchanged and clears in-flight flags', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: false, error: { message: 'bridge failed' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'original answer',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'rewrite_failed');
+  assert.equal(session.state.answers.q1.value, 'original answer');
+  assert.equal(session.state.isRewriting, false);
+  assert.equal(session.state.rewritingBlockId, null);
+  assert.equal(session.state.rewriteMessageByBlock.q1.includes('Rewrite could not be completed'), true);
+  assert.equal(session.state.recoveryMessage, null);
+});
+
+test('rewrite API thrown error keeps original answer unchanged and clears in-flight flags', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => {
+        throw new Error('unexpected parse error');
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'original answer',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'rewrite_failed');
+  assert.equal(session.state.answers.q1.value, 'original answer');
+  assert.equal(session.state.isRewriting, false);
+  assert.equal(session.state.rewritingBlockId, null);
+  assert.equal(session.state.rewriteMessageByBlock.q1.includes('Rewrite could not be completed'), true);
+});
+
+test('rewrite apply with unchanged resulting text is treated as success (not non-editable)', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'same answer' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'same answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+  session.state.undoBuffer = { q1: 'older answer' };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'same answer',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(session.state.answers.q1.value, 'same answer');
+  assert.equal(Object.prototype.hasOwnProperty.call(session.state.undoBuffer, 'q1'), false);
+  assert.equal(session.state.rewriteMessageByBlock.q1 || null, null);
 });
