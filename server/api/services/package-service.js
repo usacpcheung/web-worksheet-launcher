@@ -445,7 +445,6 @@ export class PackageService {
       await client.query('BEGIN');
 
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`publish-owner:${identity.sub}`]);
 
       const publishedPackageRes = await client.query(
         `SELECT published_package_id, artifact_path, source_uploaded_draft_id
@@ -469,6 +468,7 @@ export class PackageService {
       const publishedPackage = publishedPackageRes.rows[0];
       if (publishedPackage.source_uploaded_draft_id) {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`publish:${publishedPackage.source_uploaded_draft_id}`]);
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`publish-owner:${identity.sub}`]);
         await client.query(
           `SELECT uploaded_draft_id
            FROM uploaded_drafts

@@ -476,8 +476,12 @@ test('deleteOwnPublishedPackage clears draft publish markers when deleted packag
   const advisoryDraftIndex = valuesSeen.findIndex(
     (values, index) => queries[index]?.includes('SELECT pg_advisory_xact_lock(hashtext($1))') && values[0] === 'publish:u1'
   );
+  const advisoryPublishOwnerIndex = valuesSeen.findIndex(
+    (values, index) => queries[index]?.includes('SELECT pg_advisory_xact_lock(hashtext($1))') && values[0] === 'publish-owner:oidc-sub'
+  );
   const draftLockIndex = queries.findIndex((sql) => sql.includes('FROM uploaded_drafts') && sql.includes('FOR UPDATE'));
   assert.equal(advisoryDraftIndex !== -1 && advisoryDraftIndex < deleteIndex, true);
+  assert.equal(advisoryPublishOwnerIndex !== -1 && advisoryDraftIndex < advisoryPublishOwnerIndex, true);
   assert.equal(draftLockIndex !== -1 && draftLockIndex < deleteIndex, true);
   assert.equal(
     queries.some((sql) => sql.includes('UPDATE uploaded_drafts') && sql.includes('last_published_artifact_sha256 = NULL')),
@@ -563,8 +567,12 @@ test('deleteOwnPublishedPackage recalculates draft publish markers from remainin
   const advisoryDraftIndex = valuesSeen.findIndex(
     (values, index) => queries[index]?.includes('SELECT pg_advisory_xact_lock(hashtext($1))') && values[0] === 'publish:u1'
   );
+  const advisoryPublishOwnerIndex = valuesSeen.findIndex(
+    (values, index) => queries[index]?.includes('SELECT pg_advisory_xact_lock(hashtext($1))') && values[0] === 'publish-owner:oidc-sub'
+  );
   const draftLockIndex = queries.findIndex((sql) => sql.includes('FROM uploaded_drafts') && sql.includes('FOR UPDATE'));
   assert.equal(advisoryDraftIndex !== -1 && advisoryDraftIndex < deleteIndex, true);
+  assert.equal(advisoryPublishOwnerIndex !== -1 && advisoryDraftIndex < advisoryPublishOwnerIndex, true);
   assert.equal(draftLockIndex !== -1 && draftLockIndex < deleteIndex, true);
   assert.equal(
     queries.some((sql) => sql.includes('UPDATE uploaded_drafts') && sql.includes('last_published_artifact_sha256 = $3')),
