@@ -6,13 +6,17 @@ function mockJsonResponse(status, payload, headers = { 'content-type': 'applicat
   return new Response(JSON.stringify(payload), { status, headers });
 }
 
-test('createServerApiClient uses production public base path by default', async () => {
+function setTestWindow(search = '') {
   globalThis.window = {
     location: {
       origin: 'https://example.test',
-      search: '',
+      search,
     },
   };
+}
+
+test('createServerApiClient uses production public base path by default', async () => {
+  setTestWindow();
   globalThis.fetch = async () => mockJsonResponse(200, { ok: true, data: { ready: true } });
 
   const client = createServerApiClient();
@@ -21,12 +25,7 @@ test('createServerApiClient uses production public base path by default', async 
 });
 
 test('getSession builds canonical public API URL', async () => {
-  globalThis.window = {
-    location: {
-      origin: 'https://example.test',
-      search: '',
-    },
-  };
+  setTestWindow();
   let requestedUrl = null;
   globalThis.fetch = async (url) => {
     requestedUrl = url;
@@ -39,12 +38,7 @@ test('getSession builds canonical public API URL', async () => {
 });
 
 test('getSessionSignInUrl builds popup login path under app/login', async () => {
-  globalThis.window = {
-    location: {
-      origin: 'https://example.test',
-      search: '',
-    },
-  };
+  setTestWindow();
 
   const client = createServerApiClient();
   assert.equal(client.getSessionSignInUrl(), '/worksheet_launcher/app/login/popup.html');
@@ -59,12 +53,7 @@ test('getSessionSignInUrl builds popup login path under app/login', async () => 
 });
 
 test('listUploadedDrafts builds canonical public API URL', async () => {
-  globalThis.window = {
-    location: {
-      origin: 'https://example.test',
-      search: '',
-    },
-  };
+  setTestWindow();
   let requestedUrl = null;
   globalThis.fetch = async (url) => {
     requestedUrl = url;
@@ -77,12 +66,7 @@ test('listUploadedDrafts builds canonical public API URL', async () => {
 });
 
 test('getSession returns structured AUTH_REQUIRED for html auth redirect-like responses', async () => {
-  globalThis.window = {
-    location: {
-      origin: 'https://example.test',
-      search: '',
-    },
-  };
+  setTestWindow();
   globalThis.fetch = async () => new Response('<html>login</html>', {
     status: 200,
     headers: { 'content-type': 'text/html' },
@@ -96,12 +80,7 @@ test('getSession returns structured AUTH_REQUIRED for html auth redirect-like re
 });
 
 test('fetchPublishedPackageArtifact parses zip payload', async () => {
-  globalThis.window = {
-    location: {
-      origin: 'https://example.test',
-      search: '',
-    },
-  };
+  setTestWindow();
   globalThis.fetch = async () => new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
     status: 200,
     headers: { 'content-type': 'application/zip' },
@@ -114,12 +93,7 @@ test('fetchPublishedPackageArtifact parses zip payload', async () => {
 });
 
 test('deleteUploadedDraft sends DELETE to canonical drafts path', async () => {
-  globalThis.window = {
-    location: {
-      origin: 'https://example.test',
-      search: '',
-    },
-  };
+  setTestWindow();
   let requestedUrl = null;
   let requestedMethod = null;
   globalThis.fetch = async (url, request = {}) => {
@@ -135,13 +109,161 @@ test('deleteUploadedDraft sends DELETE to canonical drafts path', async () => {
   assert.equal(requestedMethod, 'DELETE');
 });
 
-test('publishFromUploadedDraft sends uploadedDraftId with title and subject overrides', async () => {
-  globalThis.window = {
-    location: {
-      origin: 'https://example.test',
-      search: '',
-    },
+test('uploadDraftPackage sends metadata and conflict action as query params', async () => {
+  setTestWindow();
+  const previousXhr = globalThis.XMLHttpRequest;
+  let requestedUrl = null;
+  let contentType = null;
+  globalThis.fetch = async (url, request = {}) => {
+    requestedUrl = url;
+    contentType = request.headers?.['content-type'];
+    return mockJsonResponse(201, { ok: true, data: { uploaded_draft_id: 'u1' } });
   };
+
+  const client = createServerApiClient();
+  const result = await client.uploadDraftPackage(new Uint8Array([0x50, 0x4b]), {
+    title: 'Title',
+    subject: 'Math',
+    conflictAction: 'replace',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(
+    requestedUrl,
+    '/api/worksheet-launcher/v1/drafts/upload?title=Title&subject=Math&conflictAction=replace'
+  );
+  assert.equal(contentType, 'application/zip');
+  globalThis.XMLHttpRequest = previousXhr;
+});
+
+test('uploadDraftPackage emits upload progress when XHR progress events exist', async () => {
+  setTestWindow();
+  const previousXhr = globalThis.XMLHttpRequest;
+  const progressEvents = [];
+
+  class FakeXhr {
+    constructor() {
+      this.upload = {};
+      this.headers = {};
+      this.responseText = JSON.stringify({ ok: true, data: { uploaded_draft_id: 'u2' } });
+      this.status = 201;
+      this.withCredentials = false;
+    }
+    open(method, url) {
+      this.method = method;
+      this.url = url;
+    }
+    setRequestHeader(name, value) {
+      this.headers[name] = value;
+    }
+    getResponseHeader(name) {
+      if (String(name).toLowerCase() === 'content-type') return 'application/json; charset=utf-8';
+      return null;
+    }
+    send() {
+      this.upload.onprogress?.({ loaded: 1024, total: 4096, lengthComputable: true });
+      this.upload.onprogress?.({ loaded: 4096, total: 4096, lengthComputable: true });
+      this.onload?.();
+    }
+    abort() {}
+  }
+
+  globalThis.XMLHttpRequest = FakeXhr;
+  const client = createServerApiClient();
+  const result = await client.uploadDraftPackage(
+    new Uint8Array([0x50, 0x4b]),
+    { title: 'Title', subject: 'Math' },
+    { onProgress: (event) => progressEvents.push(event) }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(progressEvents.length, 2);
+  assert.deepEqual(progressEvents[0], { loaded: 1024, total: 4096, lengthComputable: true });
+  assert.deepEqual(progressEvents[1], { loaded: 4096, total: 4096, lengthComputable: true });
+  globalThis.XMLHttpRequest = previousXhr;
+});
+
+test('uploadDraftPackage returns structured network error on XHR transport failure', async () => {
+  setTestWindow();
+  const previousXhr = globalThis.XMLHttpRequest;
+
+  class FailingXhr {
+    constructor() {
+      this.upload = {};
+    }
+    open() {}
+    setRequestHeader() {}
+    send() {
+      this.onerror?.();
+    }
+    abort() {}
+  }
+
+  globalThis.XMLHttpRequest = FailingXhr;
+  const client = createServerApiClient();
+  const result = await client.uploadDraftPackage(new Uint8Array([0x50, 0x4b]), { title: 'Title', subject: 'Math' });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'NETWORK_ERROR');
+  assert.equal(result.error.message.includes('Unable to reach server API'), true);
+  globalThis.XMLHttpRequest = previousXhr;
+});
+
+test('uploadDraftPackage does not send when AbortSignal is already aborted', async () => {
+  setTestWindow();
+  const previousXhr = globalThis.XMLHttpRequest;
+  let sendCalled = false;
+
+  class AbortAwareXhr {
+    constructor() {
+      this.upload = {};
+    }
+    open() {}
+    setRequestHeader() {}
+    send() {
+      sendCalled = true;
+    }
+    abort() {}
+  }
+
+  globalThis.XMLHttpRequest = AbortAwareXhr;
+  const controller = new AbortController();
+  controller.abort();
+
+  const client = createServerApiClient();
+  const result = await client.uploadDraftPackage(
+    new Uint8Array([0x50, 0x4b]),
+    { title: 'Title', subject: 'Math' },
+    { signal: controller.signal }
+  );
+
+  assert.equal(sendCalled, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'NETWORK_ERROR');
+  assert.equal(result.error.message, 'Unable to reach server API. Upload was canceled before completion.');
+
+  globalThis.XMLHttpRequest = previousXhr;
+});
+
+
+test('deletePublishedPackage sends DELETE to canonical published path', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  let requestedMethod = null;
+  globalThis.fetch = async (url, request = {}) => {
+    requestedUrl = url;
+    requestedMethod = request.method;
+    return mockJsonResponse(200, { ok: true, data: { deleted: true } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.deletePublishedPackage('550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/published/550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(requestedMethod, 'DELETE');
+});
+
+test('publishFromUploadedDraft sends uploadedDraftId with title and subject overrides', async () => {
+  setTestWindow();
   let requestBody = null;
   globalThis.fetch = async (_url, request = {}) => {
     requestBody = request.body;
@@ -159,4 +281,239 @@ test('publishFromUploadedDraft sends uploadedDraftId with title and subject over
     title: 'Published title',
     subject: 'Algebra',
   });
+});
+
+test('listPublishedPackages sends canonical query shape with title, subject, owner, limit, and offset', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return mockJsonResponse(200, { ok: true, data: { items: [] } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.listPublishedPackages({ title: 'math', subject: 'algebra', owner: 'owner@example.test' });
+  assert.equal(result.ok, true);
+  assert.equal(
+    requestedUrl,
+    '/api/worksheet-launcher/v1/published?title=math&subject=algebra&owner=owner%40example.test&limit=20&offset=0'
+  );
+});
+
+test('rewriteText returns success payload for non-empty result', async () => {
+  setTestWindow();
+  globalThis.fetch = async (url, request = {}) => {
+    assert.equal(url, '/api/rewrite-bridge/rewrite');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.credentials, 'include');
+    assert.equal(request.headers?.['content-type'], 'application/json');
+    assert.deepEqual(JSON.parse(request.body), { text: 'hello', stream: false });
+    return mockJsonResponse(200, { ok: true, result: ' rewritten ' });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.rewriteText('hello');
+  assert.equal(result.ok, true);
+  assert.equal(result.data.text, 'rewritten');
+});
+
+test('rewriteText returns BRIDGE_EMPTY_RESPONSE for empty/missing/whitespace result', async () => {
+  setTestWindow();
+  const payloads = [
+    { ok: true, result: '' },
+    { ok: true, result: '   ' },
+    { ok: true },
+  ];
+  let index = 0;
+  globalThis.fetch = async () => mockJsonResponse(200, payloads[index++]);
+
+  const client = createServerApiClient();
+  for (let i = 0; i < payloads.length; i += 1) {
+    const result = await client.rewriteText('hello');
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'BRIDGE_EMPTY_RESPONSE');
+  }
+});
+
+test('rewriteText maps auth statuses and auth-like html responses to AUTH_REQUIRED', async () => {
+  setTestWindow();
+  const responses = [
+    mockJsonResponse(401, { ok: false, error: { code: 'AUTH_REQUIRED', message: 'auth' } }),
+    mockJsonResponse(403, { ok: false, error: { code: 'AUTH_REQUIRED', message: 'auth' } }),
+    new Response('<html>login</html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+  ];
+  let index = 0;
+  globalThis.fetch = async () => responses[index++];
+
+  const client = createServerApiClient();
+  for (let i = 0; i < responses.length; i += 1) {
+    const result = await client.rewriteText('hello');
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'AUTH_REQUIRED');
+    assert.equal(result.error.requiresSignIn, true);
+    if (i === 2) {
+      assert.equal(result.error.details?.contentType, 'text/html');
+      assert.equal(typeof result.error.details?.bodyPreview, 'string');
+      assert.equal(result.error.details.bodyPreview.includes('login'), true);
+      assert.equal(result.error.details?.bodyLength > 0, true);
+      assert.equal(typeof result.error.details?.bodyTruncated, 'boolean');
+    }
+  }
+});
+
+test('rewriteText treats non-auth html responses as UNEXPECTED_NON_JSON_RESPONSE', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => new Response('<html><body>upstream failed</body></html>', {
+    status: 502,
+    headers: { 'content-type': 'text/html' },
+  });
+
+  const client = createServerApiClient();
+  const result = await client.rewriteText('hello');
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'UNEXPECTED_NON_JSON_RESPONSE');
+  assert.equal(result.error.requiresSignIn, false);
+  assert.equal(result.error.status, 502);
+  assert.equal(result.error.details?.contentType, 'text/html');
+  assert.equal(result.error.details?.bodyPreview.includes('upstream failed'), true);
+});
+
+test('rewriteText preserves backend auth error payload for JSON 401 responses', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => mockJsonResponse(401, {
+    ok: false,
+    error: {
+      code: 'BRIDGE_AUTH_HEADER_MISSING',
+      message: 'Missing X-Bridge-Auth header.',
+      details: { expectedHeader: 'X-Bridge-Auth' },
+    },
+  });
+
+  const client = createServerApiClient();
+  const result = await client.rewriteText('hello');
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'BRIDGE_AUTH_HEADER_MISSING');
+  assert.equal(result.error.message, 'Missing X-Bridge-Auth header.');
+  assert.equal(result.error.status, 401);
+  assert.equal(result.error.requiresSignIn, true);
+  assert.deepEqual(result.error.details, { expectedHeader: 'X-Bridge-Auth' });
+});
+
+test('rewriteText returns NETWORK_ERROR on fetch failure', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => {
+    throw new Error('socket hang up');
+  };
+
+  const client = createServerApiClient();
+  const result = await client.rewriteText('hello');
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'NETWORK_ERROR');
+});
+
+test('generateAudioFromText returns Uint8Array for audio/mpeg non-empty bytes', async () => {
+  setTestWindow();
+  globalThis.fetch = async (url, request = {}) => {
+    assert.equal(url, '/api/rewrite-bridge/t2a');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.credentials, 'include');
+    assert.equal(request.headers?.['content-type'], 'application/json');
+    assert.deepEqual(JSON.parse(request.body), {
+      text: 'hello',
+      format: 'mp3',
+      response_mode: 'binary',
+    });
+    return new Response(new Uint8Array([1, 2, 3]), {
+      status: 200,
+      headers: { 'content-type': 'audio/mpeg' },
+    });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.generateAudioFromText('hello');
+  assert.equal(result.ok, true);
+  assert.equal(result.data instanceof Uint8Array, true);
+  assert.deepEqual(Array.from(result.data), [1, 2, 3]);
+});
+
+test('generateAudioFromText returns BRIDGE_EMPTY_RESPONSE for zero-byte payload', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => new Response(new Uint8Array([]), {
+    status: 200,
+    headers: { 'content-type': 'audio/mpeg' },
+  });
+
+  const client = createServerApiClient();
+  const result = await client.generateAudioFromText('hello');
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'BRIDGE_EMPTY_RESPONSE');
+});
+
+test('generateAudioFromText returns UNEXPECTED_CONTENT_TYPE when mime does not match', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => new Response(new Uint8Array([1, 2]), {
+    status: 200,
+    headers: { 'content-type': 'application/octet-stream' },
+  });
+
+  const client = createServerApiClient();
+  const result = await client.generateAudioFromText('hello');
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'UNEXPECTED_CONTENT_TYPE');
+});
+
+test('generateAudioFromText maps auth statuses and auth-like html responses to AUTH_REQUIRED', async () => {
+  setTestWindow();
+  const responses = [
+    new Response('', { status: 401, headers: { 'content-type': 'audio/mpeg' } }),
+    new Response('', { status: 403, headers: { 'content-type': 'audio/mpeg' } }),
+    new Response('<html>login</html>', { status: 200, headers: { 'content-type': 'text/html' } }),
+  ];
+  let index = 0;
+  globalThis.fetch = async () => responses[index++];
+
+  const client = createServerApiClient();
+  for (let i = 0; i < responses.length; i += 1) {
+    const result = await client.generateAudioFromText('hello');
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'AUTH_REQUIRED');
+    assert.equal(result.error.requiresSignIn, true);
+  }
+});
+
+test('generateAudioFromText returns NETWORK_ERROR on fetch failure', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => {
+    throw new Error('bridge unreachable');
+  };
+
+  const client = createServerApiClient();
+  const result = await client.generateAudioFromText('hello');
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'NETWORK_ERROR');
+});
+
+test('bridge methods always use /api/rewrite-bridge urls regardless of apiBase override or query param', async () => {
+  setTestWindow('?apiBase=%2Fapi%2Foverride-from-query');
+  const requestedUrls = [];
+  globalThis.fetch = async (url) => {
+    requestedUrls.push(url);
+    if (url.endsWith('/rewrite')) {
+      return mockJsonResponse(200, { ok: true, data: { text: 'rewritten' } });
+    }
+    return new Response(new Uint8Array([7]), {
+      status: 200,
+      headers: { 'content-type': 'audio/mpeg' },
+    });
+  };
+
+  const client = createServerApiClient({ apiBase: '/api/override-from-options' });
+  await client.rewriteText('hello');
+  await client.generateAudioFromText('hello');
+
+  assert.deepEqual(requestedUrls, [
+    '/api/rewrite-bridge/rewrite',
+    '/api/rewrite-bridge/t2a',
+  ]);
+  assert.equal(client.publicApiBase, '/api/override-from-options');
 });

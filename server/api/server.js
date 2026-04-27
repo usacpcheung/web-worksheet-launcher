@@ -27,6 +27,13 @@ function fail(code, message, details = null) {
   };
 }
 
+class RequestBodyTooLargeError extends Error {
+  constructor(message = 'Request body too large.') {
+    super(message);
+    this.name = 'RequestBodyTooLargeError';
+  }
+}
+
 async function readRequestBody(req, maxBytes = 30 * 1024 * 1024) {
   const chunks = [];
   let total = 0;
@@ -34,7 +41,7 @@ async function readRequestBody(req, maxBytes = 30 * 1024 * 1024) {
     const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += part.length;
     if (total > maxBytes) {
-      throw new Error('Request body too large.');
+      throw new RequestBodyTooLargeError('Request body too large.');
     }
     chunks.push(part);
   }
@@ -93,12 +100,26 @@ export function createRequestHandler({ service, artifactStore, config }) {
         if (!contentType.includes('application/zip')) {
           return json(res, 415, fail('UNSUPPORTED_MEDIA_TYPE', 'Upload draft requires Content-Type: application/zip'));
         }
-        const zipBytes = await readRequestBody(req);
+        let zipBytes;
+        try {
+          zipBytes = await readRequestBody(req, Number(config.packageUploadMaxBytes) || 30 * 1024 * 1024);
+        } catch (error) {
+          if (error instanceof RequestBodyTooLargeError) {
+            return json(res, 413, fail('PACKAGE_UPLOAD_TOO_LARGE', 'Uploaded package is too large.'));
+          }
+          throw error;
+        }
         const title = url.searchParams.get('title') || '';
         const subject = url.searchParams.get('subject') || '';
-        const result = await service.uploadDraft({ identity, title, subject, zipBytes });
+        const result = await service.uploadDraft({
+          identity,
+          title,
+          subject,
+          zipBytes,
+          conflictAction: url.searchParams.get('conflictAction') || '',
+        });
         if (!result.ok) {
-          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+          return json(res, result.statusCode, fail(result.error.code, result.error.message, result.error.details));
         }
         return json(res, result.statusCode, ok(result.data));
       }
@@ -187,7 +208,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
           subject,
         });
         if (!result.ok) {
-          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+          return json(res, result.statusCode, fail(result.error.code, result.error.message, result.error.details));
         }
         return json(res, result.statusCode, ok(result.data));
       }
@@ -201,6 +222,9 @@ export function createRequestHandler({ service, artifactStore, config }) {
         if (!parsedLimit.ok) {
           return json(res, 400, fail(parsedLimit.error.code, parsedLimit.error.message));
         }
+        if (parsedLimit.value === 0) {
+          return json(res, 400, fail('INVALID_QUERY_PARAM', 'limit must be greater than 0.'));
+        }
 
         const parsedOffset = parseOptionalNonNegativeInt(url.searchParams.get('offset'), {
           field: 'offset',
@@ -211,7 +235,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
           return json(res, 400, fail(parsedOffset.error.code, parsedOffset.error.message));
         }
 
-        const rows = await service.listPublished({
+        const publishedBrowse = await service.listPublished({
           query: url.searchParams.get('q') || '',
           title: url.searchParams.get('title') || '',
           subject: url.searchParams.get('subject') || '',
@@ -220,7 +244,31 @@ export function createRequestHandler({ service, artifactStore, config }) {
           offset: parsedOffset.value,
         });
 
-        return json(res, 200, ok({ items: rows }));
+        return json(res, 200, ok(publishedBrowse));
+      }
+
+      if (req.method === 'DELETE' && isPublishedDetailRoute(segments)) {
+        if (segments.length !== 4) {
+          return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        }
+
+        const publishedPackageId = segments[3];
+        const validatedPublishedPackageId = assertUuid(publishedPackageId, {
+          code: 'INVALID_PUBLISHED_PACKAGE_ID',
+          message: 'publishedPackageId must be a valid UUID.',
+        });
+        if (!validatedPublishedPackageId.ok) {
+          return json(res, 400, fail(validatedPublishedPackageId.error.code, validatedPublishedPackageId.error.message));
+        }
+
+        const result = await service.deleteOwnPublishedPackage({
+          identity,
+          publishedPackageId: validatedPublishedPackageId.value,
+        });
+        if (!result.ok) {
+          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+        }
+        return json(res, result.statusCode, ok(result.data));
       }
 
       if (req.method === 'GET' && isPublishedDetailRoute(segments)) {
@@ -270,6 +318,9 @@ export function createRequestHandler({ service, artifactStore, config }) {
     } catch (error) {
       if (error instanceof AuthError) {
         return json(res, error.statusCode, fail(error.code, error.message));
+      }
+      if (error instanceof RequestBodyTooLargeError) {
+        return json(res, 413, fail('REQUEST_BODY_TOO_LARGE', 'Request body is too large.'));
       }
       if (error instanceof SyntaxError) {
         return json(res, 400, fail('INVALID_JSON', 'Malformed JSON body.'));

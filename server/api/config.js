@@ -27,6 +27,15 @@ function parsePort(value, fallback) {
   return parsed;
 }
 
+function parsePositiveInt(value, fallback, name) {
+  const raw = value ?? fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${name} value: ${raw}`);
+  }
+  return parsed;
+}
+
 export function loadConfig(env = process.env) {
   const databaseUrl = requireNonEmpty('DATABASE_URL', env.DATABASE_URL);
   const storageRoot = path.resolve(requireNonEmpty('STORAGE_ROOT', env.STORAGE_ROOT));
@@ -44,5 +53,6 @@ export function loadConfig(env = process.env) {
     draftSlotLimit: 3,
     browsePageLimitDefault: 20,
     browsePageLimitMax: 100,
+    packageUploadMaxBytes: parsePositiveInt(env.PACKAGE_UPLOAD_MAX_BYTES, '31457280', 'PACKAGE_UPLOAD_MAX_BYTES'),
   };
 }

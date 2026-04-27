@@ -16,6 +16,7 @@ const AUTOSAVE_MS = 1000;
 const ACTIVITY_VISIBLE_INITIAL = 30;
 const ACTIVITY_MAX_STORED = 200;
 const ACTIVE_NOTIFICATIONS_MAX_STORED = 200;
+const T2A_TEXT_MAX_LENGTH = 200;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
 let contractsPromise;
@@ -43,6 +44,25 @@ function toUploadedDraftDisplay(item, locale = undefined) {
     title,
     uploadedLabel: `Uploaded: ${formatUploadedDraftTimestamp(item?.created_at, locale)}`,
   };
+}
+
+function normalizeDraftPublishState(item) {
+  const explicitState = isNonEmptyString(item?.publish_state) ? item.publish_state.trim() : '';
+  if (explicitState === 'current_version_published' || explicitState === 'unpublished_changes' || explicitState === 'draft_only') {
+    return explicitState;
+  }
+  const artifactSha = isNonEmptyString(item?.artifact_sha256) ? item.artifact_sha256.trim() : '';
+  const lastPublishedArtifactSha = isNonEmptyString(item?.last_published_artifact_sha256)
+    ? item.last_published_artifact_sha256.trim()
+    : '';
+  if (!lastPublishedArtifactSha) return 'draft_only';
+  return artifactSha && artifactSha === lastPublishedArtifactSha ? 'current_version_published' : 'unpublished_changes';
+}
+
+function buildPublishedPackageViewerUrl(publishedPackageId) {
+  const url = new URL('../viewer/index.html', window.location.href);
+  url.searchParams.set('publishedPackageId', String(publishedPackageId || '').trim());
+  return url.toString();
 }
 
 function createLocalId(prefix = 'local') {
@@ -120,6 +140,18 @@ function hasTypedText(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function getT2ATextEligibility(text, maxLength = T2A_TEXT_MAX_LENGTH) {
+  const trimmedText = String(text ?? '').trim();
+  const hasText = trimmedText.length > 0;
+  const exceedsLimit = trimmedText.length > maxLength;
+  return {
+    trimmedText,
+    hasText,
+    exceedsLimit,
+    eligible: hasText && !exceedsLimit,
+  };
+}
+
 function getBlockDeletePolicy(block) {
   if (!isRecord(block)) {
     return { mode: 'safe_direct_delete', hasTypedContent: false, hasAssets: false };
@@ -191,11 +223,18 @@ function fileLooksLikeType(file, mimeTypes, extensions) {
   return extensions.includes(ext);
 }
 
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+function formatBytes(bytes, options = {}) {
+  const unit = options?.unit === 'mb' ? 'mb' : 'auto';
+  const invalid = typeof options?.invalid === 'string' ? options.invalid : '0 B';
+  if (!Number.isFinite(bytes) || bytes < 0) return invalid;
+  if (unit === 'mb') return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatMegabytes(bytes) {
+  return formatBytes(bytes, { unit: 'mb', invalid: '0.0 MB' });
 }
 
 function getAssetExtensionFallback(kind, mimeType) {
@@ -263,6 +302,106 @@ function createZipFileFromBytes(bytes, name) {
     configurable: true,
   });
   return blob;
+}
+
+function createAudioFileFromBytes(bytes, name = 'generated-question-audio.mp3') {
+  if (typeof File === 'function') {
+    return new File([bytes], name, { type: 'audio/mpeg' });
+  }
+  const blob = new Blob([bytes], { type: 'audio/mpeg' });
+  Object.defineProperty(blob, 'name', {
+    value: String(name || 'generated-question-audio.mp3'),
+    configurable: true,
+  });
+  return blob;
+}
+
+function toValidGeneratedAudioBytes(candidate) {
+  if (!(candidate instanceof Uint8Array) || candidate.byteLength <= 0) {
+    return null;
+  }
+  return candidate;
+}
+
+function createEditorIcon(name) {
+  const svgAttrs = 'class="editor-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
+  const icons = {
+    audio: `<svg ${svgAttrs}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>`,
+    audioAttached: `<svg ${svgAttrs}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="m16 19 2 2 4-4"></path></svg>`,
+    check: `<svg ${svgAttrs}><path d="M20 6 9 17l-5-5"></path></svg>`,
+    chevronUp: `<svg ${svgAttrs}><path d="m18 15-6-6-6 6"></path></svg>`,
+    chevronDown: `<svg ${svgAttrs}><path d="m6 9 6 6 6-6"></path></svg>`,
+    grip: `<svg ${svgAttrs}><circle cx="9" cy="5" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>`,
+    moreHorizontal: `<svg ${svgAttrs}><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>`,
+    filePlus: `<svg ${svgAttrs}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M12 18v-6"></path><path d="M9 15h6"></path></svg>`,
+    eye: `<svg ${svgAttrs}><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
+    info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
+    image: `<svg ${svgAttrs}><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"></path></svg>`,
+    list: `<svg ${svgAttrs}><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>`,
+    loading: `<svg ${svgAttrs}><path d="M21 12a9 9 0 1 1-9-9"></path></svg>`,
+    pencil: `<svg ${svgAttrs}><path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path><path d="m15 5 4 4"></path></svg>`,
+    play: `<svg ${svgAttrs}><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>`,
+    question: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M9.1 9a3 3 0 1 1 5.8 1c-.7 1.1-2 1.4-2.5 2.4"></path><path d="M12 17h.01"></path></svg>`,
+    save: `<svg ${svgAttrs}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path></svg>`,
+    shield: `<svg ${svgAttrs}><path d="M20 13c0 5-3.5 7.5-7.4 8.8a2 2 0 0 1-1.2 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.5a1.3 1.3 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg>`,
+    upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
+    generate: `<svg ${svgAttrs}><path d="M15 4V2"></path><path d="M15 16v-2"></path><path d="M8 9h2"></path><path d="M20 9h2"></path><path d="m17.8 11.8 1.4 1.4"></path><path d="m17.8 6.2 1.4-1.4"></path><path d="m3 21 9-9"></path><path d="M12.2 6.2 13.6 4.8"></path><path d="m4.8 19.2 1.4-1.4"></path></svg>`,
+    refresh: `<svg ${svgAttrs}><path d="M3 12a9 9 0 0 1 15.2-6.5L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-15.2 6.5L3 16"></path><path d="M3 21v-5h5"></path></svg>`,
+    trash: `<svg ${svgAttrs}><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>`,
+  };
+  return icons[name] || icons.audio;
+}
+
+function setIconButtonContent(button, iconName) {
+  button.innerHTML = createEditorIcon(iconName);
+}
+
+function setMediaActionButtonContent(button, iconName, label) {
+  const spinClass = iconName === 'loading' ? ' media-action-btn__icon--spin' : '';
+  button.innerHTML = `<span class="media-action-btn__icon${spinClass}" aria-hidden="true">${createEditorIcon(iconName)}</span><span>${label}</span>`;
+}
+
+function setOptionAudioMenuTriggerState(trigger, { hasAudio = false, isGenerating = false, isPersisted = true } = {}) {
+  if (!(trigger instanceof HTMLElement)) return;
+  const iconName = isGenerating ? 'loading' : hasAudio ? 'audioAttached' : 'audio';
+  const label = isGenerating
+    ? 'Option audio actions, generating'
+    : hasAudio ? 'Option audio actions, audio attached' : 'Option audio actions';
+  trigger.innerHTML = `<span class="option-actions-menu__icon${isGenerating ? ' option-actions-menu__icon--spin' : ''}" aria-hidden="true">${createEditorIcon(iconName)}</span>`;
+  trigger.title = isPersisted
+    ? label
+    : 'Enter option text or click Add option before using audio actions';
+  trigger.setAttribute('aria-label', label);
+  trigger.setAttribute('aria-disabled', isPersisted ? 'false' : 'true');
+  trigger.dataset.audioState = isGenerating ? 'generating' : hasAudio ? 'attached' : 'empty';
+}
+
+function toTitleCaseLabel(value) {
+  return String(value || '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function getBlockKindLabel(kind) {
+  if (kind === 'question') return 'Question';
+  if (kind === 'content') return 'Content';
+  return toTitleCaseLabel(kind || 'Block');
+}
+
+function getAnswerInputTypeLabel(inputType) {
+  const labels = {
+    text: 'Text',
+    number: 'Number',
+    boolean: 'True / False',
+    multiple_choice: 'Multiple choice',
+  };
+  return labels[inputType] || toTitleCaseLabel(inputType);
+}
+
+function getSelectionModeLabel(selectionMode) {
+  if (selectionMode === 'single') return 'Single';
+  if (selectionMode === 'multi') return 'Multiple';
+  return toTitleCaseLabel(selectionMode);
 }
 
 async function loadContracts() {
@@ -427,6 +566,7 @@ function getNumberQuestionValidationErrors(config, rawValues = {}) {
     errors.min = rangeMessage;
     errors.max = rangeMessage;
   }
+  const hasRangeError = Boolean(errors.min || errors.max);
 
   const decimalPlacesRaw = rawValues.decimalPlacesAllowed;
   let decimalPlacesAllowed = normalizedConfig.numberRules?.decimalPlacesAllowed ?? null;
@@ -445,6 +585,7 @@ function getNumberQuestionValidationErrors(config, rawValues = {}) {
       }
     }
   }
+  const hasDecimalPlacesError = Boolean(errors.decimalPlacesAllowed);
 
   const rawCorrectAnswer = rawValues.correctAnswer;
   const hasRawCorrectAnswer = rawCorrectAnswer !== undefined;
@@ -465,16 +606,19 @@ function getNumberQuestionValidationErrors(config, rawValues = {}) {
       errors.correctAnswer = 'Correct answer must be positive when signed values are disabled';
       return errors;
     }
-    if (minValue !== null && correctAnswer < minValue) {
-      errors.correctAnswer = 'Correct answer must be greater than or equal to Min';
-      return errors;
-    }
-    if (maxValue !== null && correctAnswer > maxValue) {
-      errors.correctAnswer = 'Correct answer must be less than or equal to Max';
-      return errors;
+    if (!hasRangeError) {
+      if (minValue !== null && correctAnswer < minValue) {
+        errors.correctAnswer = 'Correct answer must be greater than or equal to Min';
+        return errors;
+      }
+      if (maxValue !== null && correctAnswer > maxValue) {
+        errors.correctAnswer = 'Correct answer must be less than or equal to Max';
+        return errors;
+      }
     }
     if (
-      decimalPlacesAllowed !== null
+      !hasDecimalPlacesError
+      && decimalPlacesAllowed !== null
       && Number.isInteger(decimalPlacesAllowed)
       && countDecimalPlaces(correctAnswer) > decimalPlacesAllowed
     ) {
@@ -631,6 +775,8 @@ class EditorDraftSession {
       lastPublishedPackage: null,
       uploadedDrafts: [],
       isUploadingDraft: false,
+      uploadDraftProgress: null,
+      isUploadDraftFlowActive: false,
       isLoadingUploadedDrafts: false,
       publishingDraftIds: new Set(),
       openingPublishedPackageIds: new Set(),
@@ -651,6 +797,8 @@ class EditorDraftSession {
     this._loadUploadedDraftsWithPreflightPromise = null;
     this._loadUploadedDraftsWithoutPreflightPromise = null;
     this._loadUploadedDraftsActiveCount = 0;
+    this._promptT2AInFlightTargets = new Set();
+    this._optionT2AInFlightTargets = new Set();
   }
 
   setOnStateChange(handler) {
@@ -1957,6 +2105,23 @@ class EditorDraftSession {
     const targetIndex = currentIndex + delta;
     if (targetIndex < 0 || targetIndex >= blocks.length) return;
 
+    this.reorderBlockToIndex(blockId, targetIndex);
+  }
+
+  reorderBlockToIndex(blockId, targetIndex) {
+    if (!this.state.draft || !blockId) return;
+    const blocks = (Array.isArray(this.state.draft.blocks) ? this.state.draft.blocks : [])
+      .slice()
+      .sort((a, b) => a.position - b.position);
+    const currentIndex = blocks.findIndex((block) => block.blockId === blockId);
+    if (
+      currentIndex < 0
+      || !Number.isInteger(targetIndex)
+      || targetIndex < 0
+      || targetIndex >= blocks.length
+      || targetIndex === currentIndex
+    ) return;
+
     const nextBlocks = blocks.slice();
     const [movedBlock] = nextBlocks.splice(currentIndex, 1);
     nextBlocks.splice(targetIndex, 0, movedBlock);
@@ -2700,7 +2865,14 @@ class EditorDraftSession {
       };
     }
     this.state.isUploadingDraft = true;
-    this.pushNotification({ kind: 'info', category: 'server', source: 'upload.status', text: 'Uploading…', logActivity: false });
+    this.state.uploadDraftProgress = null;
+    this.pushNotification({
+      kind: 'info',
+      category: 'server',
+      source: 'upload.status',
+      text: 'Uploading draft package...',
+      logActivity: false,
+    });
     this.notifyStateChange();
     try {
       if (options.preflight !== false) {
@@ -2708,12 +2880,38 @@ class EditorDraftSession {
         if (!sessionReady.ok) return sessionReady.result;
       }
       const zipBytes = await this.buildCurrentDraftPackageZipBytes();
+      let lastProgressRenderKey = null;
       const result = await this.apiClient.uploadDraftPackage(zipBytes, {
         title: this.state.draft?.title || '',
         subject: this.state.draft?.metadata?.subject || '',
+        conflictAction: options.conflictAction || '',
+      }, {
+        onProgress: (progress) => {
+          const loaded = Number(progress?.loaded || 0);
+          const total = Number(progress?.total || 0);
+          const lengthComputable = Boolean(progress?.lengthComputable) && total > 0;
+          const loadedInTenthsMb = Math.round((loaded / (1024 * 1024)) * 10);
+          const progressRenderKey = lengthComputable
+            ? `${Math.max(0, Math.min(100, Math.round((loaded / total) * 100)))}:${loadedInTenthsMb}:${Math.round((total / (1024 * 1024)) * 10)}`
+            : `${loadedInTenthsMb}`;
+          if (progressRenderKey === lastProgressRenderKey) {
+            return;
+          }
+          lastProgressRenderKey = progressRenderKey;
+          this.state.uploadDraftProgress = {
+            loaded,
+            total: lengthComputable ? total : null,
+            lengthComputable,
+          };
+          this.notifyStateChange();
+        },
       });
       if (!result.ok) {
-        this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: result.error.message });
+        const isTransportFailure = String(result?.error?.code || '') === 'NETWORK_ERROR';
+        const errorText = isTransportFailure
+          ? 'Upload failed before completion. Your local draft is still safe. Please retry when the network is stable.'
+          : result.error.message;
+        this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: errorText });
         this.notifyStateChange();
         return result;
       }
@@ -2726,11 +2924,16 @@ class EditorDraftSession {
       });
       const refreshResult = await this.loadUploadedDrafts({ preflight: false });
       if (refreshResult?.ok) {
+        const uploadedDraftId = String(result.data?.uploaded_draft_id || '').trim();
+        const refreshedItems = Array.isArray(refreshResult?.data?.items) ? refreshResult.data.items : [];
+        const foundUploadedDraft = uploadedDraftId
+          ? refreshedItems.some((item) => String(item?.uploaded_draft_id || '').trim() === uploadedDraftId)
+          : false;
         this.pushNotification({
           kind: 'success',
           category: 'server',
           source: 'upload.refresh',
-          text: 'Uploaded drafts refreshed.',
+          text: foundUploadedDraft ? 'Uploaded drafts refreshed.' : 'Upload succeeded. Draft list refreshed.',
         });
       } else {
         this.pushNotification({
@@ -2744,6 +2947,7 @@ class EditorDraftSession {
       return result;
     } finally {
       this.state.isUploadingDraft = false;
+      this.state.uploadDraftProgress = null;
       this.notifyStateChange();
     }
   }
@@ -2949,6 +3153,24 @@ class EditorDraftSession {
     };
   }
 
+  async deletePublishedPackage(publishedPackageId) {
+    const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
+    if (!normalizedPublishedPackageId) {
+      return { ok: false, error: { message: 'Published package ID is required.' } };
+    }
+    const sessionReady = await this.ensureServerSessionReady();
+    if (!sessionReady.ok) return sessionReady.result;
+    const result = await this.apiClient.deletePublishedPackage(normalizedPublishedPackageId);
+    if (!result.ok) {
+      this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.delete', text: result.error.message });
+      this.notifyStateChange();
+      return result;
+    }
+    this.pushNotification({ kind: 'success', category: 'server', source: 'publishedPackage.delete', text: 'Published package deleted.' });
+    this.notifyStateChange();
+    return result;
+  }
+
   touchDraft() {
     if (!this.state.draft) return;
     this.state.isPristineDraft = false;
@@ -3019,21 +3241,327 @@ class EditorDraftSession {
   }
 
   async replayProtectedAction(intent) {
-    this.state.lastProtectedAction = intent.actionId;
-    this.setRecoveryMessage(null);
+    const actionId = typeof intent?.actionId === 'string' ? intent.actionId : '';
+    const payload = intent?.payload && typeof intent.payload === 'object' ? intent.payload : {};
+    this.state.lastProtectedAction = actionId || null;
+
+    switch (actionId) {
+      case 'editorPromptT2A':
+      case 'resumeT2AAfterLogin':
+        return this.replayEditorPromptT2AIntent(payload);
+      case 'editorOptionT2A':
+        return this.replayEditorOptionT2AIntent(payload);
+      case 'resumeRewriteAfterLogin':
+        this.setRecoveryMessage('Rewrite recovery is not available yet. Please run Rewrite again.');
+        return { ok: true, status: 'deferred_editor_rewrite' };
+      default:
+        this.setRecoveryMessage(null);
+        return { ok: true, status: 'noop_unsupported_action' };
+    }
   }
 
-  async triggerProtectedAction(actionId) {
+  validateEditorPromptT2AIntentPayload(payload = {}) {
+    const localDraftId = this.state.draft?.localId || null;
+    const intentDraftId = typeof payload.localDraftId === 'string' ? payload.localDraftId : null;
+    if (!localDraftId || !intentDraftId || localDraftId !== intentDraftId) {
+      return {
+        ok: false,
+        message: 'Audio recovery context is stale. Please retry from the current draft.',
+      };
+    }
+    if (payload.target !== 'question_prompt') {
+      return {
+        ok: false,
+        message: 'Audio recovery target mismatch. Please retry from the prompt control.',
+      };
+    }
+    const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
+    const block = blockId ? this.findBlock(blockId) : null;
+    if (!block || block.kind !== 'question') {
+      return {
+        ok: false,
+        message: 'Audio recovery target block is no longer available.',
+      };
+    }
+    return { ok: true };
+  }
+
+  async replayEditorPromptT2AIntent(payload = {}) {
+    const validation = this.validateEditorPromptT2AIntentPayload(payload);
+    if (!validation.ok) {
+      this.setRecoveryMessage(validation.message);
+      console.warn('[editor] Ignoring stale/invalid prompt t2a recovery intent.', {
+        action: 'editorPromptT2A',
+        payload,
+      });
+      return { ok: false, status: 'invalid_context' };
+    }
+    const blockId = String(payload.blockId);
+    const block = this.findBlock(blockId);
+    const promptText = String(block?.prompt?.text || '').trim();
+    const inFlightKey = `prompt:${blockId}`;
+    if (this._promptT2AInFlightTargets.has(inFlightKey)) {
+      const message = 'Question prompt audio generation is already in progress.';
+      this.setRecoveryMessage(message);
+      this.pushNotification({
+        kind: 'info',
+        category: 'editor',
+        source: 'prompt.t2a',
+        text: message,
+      });
+      this.notifyStateChange();
+      return { ok: false, status: 'already_in_flight', error: { message } };
+    }
+    if (!promptText) {
+      const message = 'Enter a prompt before generating audio.';
+      this.setRecoveryMessage(message);
+      this.notifyStateChange();
+      return {
+        ok: false,
+        status: 'missing_prompt_text',
+        error: { message },
+      };
+    }
+    if (promptText.length > T2A_TEXT_MAX_LENGTH) {
+      const message = `Prompt must be ${T2A_TEXT_MAX_LENGTH} characters or fewer to generate audio.`;
+      this.setRecoveryMessage(message);
+      this.notifyStateChange();
+      return {
+        ok: false,
+        status: 'prompt_too_long',
+        error: { message },
+      };
+    }
+    this._promptT2AInFlightTargets.add(inFlightKey);
+    try {
+      const audioResult = await this.apiClient.generateAudioFromText(promptText);
+      if (!audioResult?.ok) {
+        const detail = String(audioResult?.error?.message || '').trim();
+        const message = detail
+          ? `Audio generation failed. Existing audio is unchanged. ${detail}`
+          : 'Audio generation failed. Existing audio is unchanged.';
+        this.setRecoveryMessage(message);
+        this.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'prompt.t2a',
+          text: message,
+        });
+        this.notifyStateChange();
+        return { ok: false, status: 'generation_failed', error: { message } };
+      }
+      const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
+      if (!audioBytes) {
+        const message = 'Audio generation failed. Existing audio is unchanged. Bridge returned invalid audio data.';
+        this.setRecoveryMessage(message);
+        this.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'prompt.t2a',
+          text: message,
+        });
+        this.notifyStateChange();
+        return { ok: false, status: 'generation_failed', error: { message } };
+      }
+      const generatedFile = createAudioFileFromBytes(audioBytes, `${blockId}_prompt.mp3`);
+      const hasExistingQuestionAudio = Boolean(getSingleMediaRef(block?.prompt?.mediaRefs, 'question_audio'));
+      const attachResult = await this.attachQuestionMedia(blockId, 'question_audio', generatedFile, {
+        confirmReplace: hasExistingQuestionAudio,
+      });
+      if (!attachResult?.ok) {
+        const message = String(attachResult?.error?.message || '').trim() || 'Could not attach generated audio to this question.';
+        this.setRecoveryMessage(message);
+        this.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'prompt.t2a',
+          text: message,
+        });
+        this.notifyStateChange();
+        return { ok: false, status: 'attach_failed', error: { message } };
+      }
+      this.setRecoveryMessage('Question prompt audio generated and attached.');
+      this.pushNotification({
+        kind: 'success',
+        category: 'editor',
+        source: 'prompt.t2a',
+        text: 'Question prompt audio generated and attached.',
+      });
+      this.notifyStateChange();
+      return { ok: true, status: 'generated_editor_prompt_t2a', data: { blockId } };
+    } finally {
+      this._promptT2AInFlightTargets.delete(inFlightKey);
+    }
+  }
+
+  validateEditorOptionT2AIntentPayload(payload = {}) {
+    const localDraftId = this.state.draft?.localId || null;
+    const intentDraftId = typeof payload.localDraftId === 'string' ? payload.localDraftId : null;
+    if (!localDraftId || !intentDraftId || localDraftId !== intentDraftId) {
+      return {
+        ok: false,
+        message: 'Option audio recovery context is stale. Please retry from the current draft.',
+      };
+    }
+    if (payload.target !== 'option') {
+      return {
+        ok: false,
+        message: 'Option audio recovery target mismatch. Please retry from an option control.',
+      };
+    }
+    const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
+    const optionId = typeof payload.optionId === 'string' ? payload.optionId : null;
+    const block = blockId ? this.findBlock(blockId) : null;
+    if (!block || block.kind !== 'question') {
+      return {
+        ok: false,
+        message: 'Option audio recovery block is no longer available.',
+      };
+    }
+    const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+    const options = Array.isArray(responseConfig.options) ? responseConfig.options : [];
+    const hasOption = Boolean(
+      optionId
+      && options
+        .map((item, index) => normalizeResponseOption(item, `option_${index}`))
+        .find((item) => item.id === optionId)
+    );
+    if (!hasOption) {
+      return {
+        ok: false,
+        message: 'Option audio recovery target is no longer available.',
+      };
+    }
+    return { ok: true };
+  }
+
+  async replayEditorOptionT2AIntent(payload = {}) {
+    const validation = this.validateEditorOptionT2AIntentPayload(payload);
+    if (!validation.ok) {
+      this.setRecoveryMessage(validation.message);
+      console.warn('[editor] Ignoring stale/invalid option t2a recovery intent.', {
+        action: 'editorOptionT2A',
+        payload,
+      });
+      return { ok: false, status: 'invalid_context' };
+    }
+    const blockId = String(payload.blockId);
+    const optionId = String(payload.optionId);
+    const inFlightKey = `option:${blockId}:${optionId}`;
+    if (this._optionT2AInFlightTargets.has(inFlightKey)) {
+      const message = 'Option audio generation is already in progress.';
+      this.setRecoveryMessage(message);
+      this.pushNotification({
+        kind: 'info',
+        category: 'editor',
+        source: 'option.t2a',
+        text: message,
+      });
+      this.notifyStateChange();
+      return { ok: false, status: 'already_in_flight', error: { message } };
+    }
+    const block = this.findBlock(blockId);
+    const responseConfig = normalizeQuestionResponseConfig(block?.responseConfig);
+    const normalizedOptions = (responseConfig.options || []).map((item, index) =>
+      normalizeResponseOption(item, `option_${index}`));
+    const selectedOption = normalizedOptions.find((item) => item.id === optionId) || null;
+    const optionText = String(selectedOption?.label ?? selectedOption?.value ?? '').trim();
+    if (!optionText) {
+      const message = 'Enter option text before generating audio.';
+      this.setRecoveryMessage(message);
+      this.notifyStateChange();
+      return {
+        ok: false,
+        status: 'missing_option_text',
+        error: { message },
+      };
+    }
+    if (optionText.length > T2A_TEXT_MAX_LENGTH) {
+      const message = `Option text must be ${T2A_TEXT_MAX_LENGTH} characters or fewer to generate audio.`;
+      this.setRecoveryMessage(message);
+      this.notifyStateChange();
+      return {
+        ok: false,
+        status: 'option_text_too_long',
+        error: { message },
+      };
+    }
+    this._optionT2AInFlightTargets.add(inFlightKey);
+    try {
+      const audioResult = await this.apiClient.generateAudioFromText(optionText);
+      if (!audioResult?.ok) {
+        const detail = String(audioResult?.error?.message || '').trim();
+        const message = detail
+          ? `Audio generation failed. Existing audio is unchanged. ${detail}`
+          : 'Audio generation failed. Existing audio is unchanged.';
+        this.setRecoveryMessage(message);
+        this.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'option.t2a',
+          text: message,
+        });
+        this.notifyStateChange();
+        return { ok: false, status: 'generation_failed', error: { message } };
+      }
+      const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
+      if (!audioBytes) {
+        const message = 'Audio generation failed. Existing audio is unchanged. Bridge returned invalid audio data.';
+        this.setRecoveryMessage(message);
+        this.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'option.t2a',
+          text: message,
+        });
+        this.notifyStateChange();
+        return { ok: false, status: 'generation_failed', error: { message } };
+      }
+      const generatedFile = createAudioFileFromBytes(audioBytes, `${blockId}_${optionId}.mp3`);
+      const hasExistingOptionAudio = Boolean(getSingleMediaRef(selectedOption?.mediaRefs, 'option_audio'));
+      const attachResult = await this.attachOptionAudio(blockId, optionId, generatedFile, {
+        confirmReplace: hasExistingOptionAudio,
+      });
+      if (!attachResult?.ok) {
+        const message = String(attachResult?.error?.message || '').trim() || 'Could not attach generated audio to this option.';
+        this.setRecoveryMessage(message);
+        this.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'option.t2a',
+          text: message,
+        });
+        this.notifyStateChange();
+        return { ok: false, status: 'attach_failed', error: { message } };
+      }
+      this.setRecoveryMessage('Option audio generated and attached.');
+      this.pushNotification({
+        kind: 'success',
+        category: 'editor',
+        source: 'option.t2a',
+        text: 'Option audio generated and attached.',
+      });
+      this.notifyStateChange();
+      return { ok: true, status: 'generated_editor_option_t2a', data: { blockId, optionId } };
+    } finally {
+      this._optionT2AInFlightTargets.delete(inFlightKey);
+    }
+  }
+
+  async triggerProtectedAction(actionId, intentPayload = {}) {
     if (!this.authGate) {
       throw new Error('Auth gate is not configured for editor session.');
     }
 
+    const payload = {
+      ...(intentPayload && typeof intentPayload === 'object' ? intentPayload : {}),
+      localDraftId: this.state.draft?.localId || null,
+    };
+
     return this.authGate.runProtectedAction({
       actionId,
       recordStore: 'localDrafts',
-      payload: {
-        localDraftId: this.state.draft?.localId || null,
-      },
+      payload,
     });
   }
 
@@ -3096,7 +3624,7 @@ function renderEditorShell(session) {
   blockList.className = 'block-list';
 
   const controlsRow = document.createElement('div');
-  controlsRow.className = 'button-row';
+  controlsRow.className = 'sidebar-add-actions';
 
   const metaRow = document.createElement('div');
   metaRow.className = 'button-row';
@@ -3120,7 +3648,7 @@ function renderEditorShell(session) {
   const metadataSection = document.createElement('section');
   metadataSection.className = 'editor-metadata-section';
   const metadataHeading = document.createElement('h3');
-  metadataHeading.textContent = 'Draft Metadata';
+  metadataHeading.textContent = 'Draft Info';
   const titleField = document.createElement('div');
   titleField.className = 'editor-field';
   const titleLabel = document.createElement('label');
@@ -3151,27 +3679,39 @@ function renderEditorShell(session) {
   questionInputType.id = 'editor-question-input-type';
   questionInputType.className = 'control';
   [
-    { value: 'text', label: 'text' },
-    { value: 'number', label: 'number' },
-    { value: 'boolean', label: 'True / False' },
-    { value: 'multiple_choice', label: 'multiple_choice' },
+    { value: 'text', label: getAnswerInputTypeLabel('text') },
+    { value: 'number', label: getAnswerInputTypeLabel('number') },
+    { value: 'boolean', label: getAnswerInputTypeLabel('boolean') },
+    { value: 'multiple_choice', label: getAnswerInputTypeLabel('multiple_choice') },
   ].forEach(({ value, label }) => {
     const option = document.createElement('option');
     option.value = value;
     option.textContent = label;
     questionInputType.appendChild(option);
   });
-  const questionTextDisplayMode = document.createElement('select');
+  const questionTextDisplayMode = document.createElement('div');
   questionTextDisplayMode.id = 'editor-question-text-display-mode';
-  questionTextDisplayMode.className = 'control';
-  [
-    { value: 'single_line', label: 'single_line' },
-    { value: 'multi_line', label: 'multi_line' },
-  ].forEach(({ value, label }) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    questionTextDisplayMode.appendChild(option);
+  questionTextDisplayMode.className = 'answer-toggle';
+  questionTextDisplayMode.setAttribute('role', 'group');
+  questionTextDisplayMode.setAttribute('aria-labelledby', 'editor-question-text-display-mode-label');
+  const questionTextDisplayModeButtons = [
+    { value: 'single_line', label: 'Single line' },
+    { value: 'multi_line', label: 'Multi line' },
+  ].map(({ value, label }) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'answer-toggle__btn';
+    button.dataset.textDisplayMode = value;
+    button.setAttribute('aria-pressed', 'false');
+    const tick = document.createElement('span');
+    tick.className = 'answer-toggle__tick';
+    tick.setAttribute('aria-hidden', 'true');
+    tick.innerHTML = createEditorIcon('check');
+    const text = document.createElement('span');
+    text.textContent = label;
+    button.append(tick, text);
+    questionTextDisplayMode.appendChild(button);
+    return button;
   });
   const questionMaxLength = document.createElement('input');
   questionMaxLength.id = 'editor-question-max-length';
@@ -3194,8 +3734,8 @@ function renderEditorShell(session) {
   questionSelectionMode.id = 'editor-question-selection-mode';
   questionSelectionMode.className = 'control';
   [
-    { value: 'single', label: 'single' },
-    { value: 'multi', label: 'multi' },
+    { value: 'single', label: getSelectionModeLabel('single') },
+    { value: 'multi', label: getSelectionModeLabel('multi') },
   ].forEach(({ value, label }) => {
     const option = document.createElement('option');
     option.value = value;
@@ -3205,7 +3745,17 @@ function renderEditorShell(session) {
   const questionShuffleOptions = document.createElement('input');
   questionShuffleOptions.id = 'editor-question-shuffle-options';
   questionShuffleOptions.type = 'checkbox';
-  questionShuffleOptions.className = 'control';
+  questionShuffleOptions.hidden = true;
+  const questionShuffleToggle = document.createElement('button');
+  questionShuffleToggle.type = 'button';
+  questionShuffleToggle.className = 'option-correct-toggle inline-toggle__tick-btn';
+  questionShuffleToggle.setAttribute('aria-label', 'Toggle shuffle options');
+  questionShuffleToggle.setAttribute('aria-pressed', 'false');
+  const questionShuffleTick = document.createElement('span');
+  questionShuffleTick.className = 'option-correct-toggle__tick';
+  questionShuffleTick.setAttribute('aria-hidden', 'true');
+  questionShuffleTick.innerHTML = createEditorIcon('check');
+  questionShuffleToggle.appendChild(questionShuffleTick);
   const questionMin = document.createElement('input');
   questionMin.id = 'editor-question-min';
   questionMin.type = 'number';
@@ -3217,25 +3767,43 @@ function renderEditorShell(session) {
   const questionNumberAllowSigned = document.createElement('input');
   questionNumberAllowSigned.id = 'editor-question-number-allow-signed';
   questionNumberAllowSigned.type = 'checkbox';
-  questionNumberAllowSigned.className = 'control';
+  questionNumberAllowSigned.hidden = true;
+  const questionNumberAllowSignedToggle = document.createElement('button');
+  questionNumberAllowSignedToggle.type = 'button';
+  questionNumberAllowSignedToggle.className = 'option-correct-toggle inline-toggle__tick-btn';
+  questionNumberAllowSignedToggle.setAttribute('aria-label', 'Toggle signed values');
+  questionNumberAllowSignedToggle.setAttribute('aria-pressed', 'false');
+  const questionNumberAllowSignedTick = document.createElement('span');
+  questionNumberAllowSignedTick.className = 'option-correct-toggle__tick';
+  questionNumberAllowSignedTick.setAttribute('aria-hidden', 'true');
+  questionNumberAllowSignedTick.innerHTML = createEditorIcon('check');
+  questionNumberAllowSignedToggle.appendChild(questionNumberAllowSignedTick);
   const questionNumberDecimalPlacesAllowed = document.createElement('input');
   questionNumberDecimalPlacesAllowed.id = 'editor-question-number-decimal-places-allowed';
   questionNumberDecimalPlacesAllowed.type = 'number';
   questionNumberDecimalPlacesAllowed.min = '0';
   questionNumberDecimalPlacesAllowed.step = '1';
   questionNumberDecimalPlacesAllowed.className = 'control';
-  const questionCorrectAnswerBoolean = document.createElement('select');
+  const questionCorrectAnswerBoolean = document.createElement('div');
   questionCorrectAnswerBoolean.id = 'editor-question-correct-answer-boolean';
-  questionCorrectAnswerBoolean.className = 'control';
-  [
-    { value: '', label: '— Unset —' },
-    { value: 'true', label: 'True' },
-    { value: 'false', label: 'False' },
-  ].forEach(({ value, label }) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    questionCorrectAnswerBoolean.appendChild(option);
+  questionCorrectAnswerBoolean.className = 'boolean-answer-toggle';
+  questionCorrectAnswerBoolean.setAttribute('role', 'group');
+  questionCorrectAnswerBoolean.setAttribute('aria-labelledby', 'editor-question-correct-answer-boolean-label');
+  const questionCorrectAnswerBooleanButtons = ['true', 'false'].map((value) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'boolean-answer-toggle__btn';
+    button.dataset.booleanAnswerValue = value;
+    button.setAttribute('aria-pressed', 'false');
+    const tick = document.createElement('span');
+    tick.className = 'boolean-answer-toggle__tick';
+    tick.setAttribute('aria-hidden', 'true');
+    tick.innerHTML = createEditorIcon('check');
+    const text = document.createElement('span');
+    text.textContent = value === 'true' ? 'True' : 'False';
+    button.append(tick, text);
+    questionCorrectAnswerBoolean.appendChild(button);
+    return button;
   });
   const questionCorrectAnswerNumber = document.createElement('input');
   questionCorrectAnswerNumber.id = 'editor-question-correct-answer-number';
@@ -3266,7 +3834,21 @@ function renderEditorShell(session) {
   optionAudioInput.accept = '.mp3,audio/mpeg';
   optionAudioInput.style.display = 'none';
   let pendingOptionAudioTarget = null;
+  let promptT2AInFlightBlockId = null;
+  let optionT2AInFlightKey = null;
+  const promptT2AInFlightBlockIds = new Set();
+  const optionT2AInFlightKeys = new Set();
+  let promptT2AUiRefs = null;
   let activeConfirmDialog = null;
+  let mediaActionInFlight = false;
+
+  const restoreLegacyPromptInFlightMarker = () => {
+    promptT2AInFlightBlockId = promptT2AInFlightBlockIds.values().next().value || null;
+  };
+
+  const restoreLegacyOptionInFlightMarker = () => {
+    optionT2AInFlightKey = optionT2AInFlightKeys.values().next().value || null;
+  };
 
   function closeActiveConfirmDialog(confirmed = false) {
     const dialog = activeConfirmDialog;
@@ -3278,10 +3860,13 @@ function renderEditorShell(session) {
 
   function showConfirmDialog({
     title,
+    bodyText,
     entityLabel,
     descriptionText,
     removalItems = [],
     confirmLabel = 'Delete',
+    cancelLabel = 'Cancel',
+    variant = 'danger',
   }) {
     if (activeConfirmDialog) {
       closeActiveConfirmDialog(false);
@@ -3301,9 +3886,13 @@ function renderEditorShell(session) {
     dialog.setAttribute('aria-labelledby', titleId);
     const description = document.createElement('p');
     description.className = 'confirm-modal__description';
-    description.textContent = isNonEmptyString(descriptionText)
-      ? descriptionText
-      : `You are deleting ${entityLabel}.`;
+    const resolvedBodyText = isNonEmptyString(bodyText) ? bodyText : descriptionText;
+    const fallbackDescription = isNonEmptyString(entityLabel)
+      ? `You are deleting ${entityLabel}.`
+      : 'Are you sure you want to continue?';
+    description.textContent = isNonEmptyString(resolvedBodyText)
+      ? resolvedBodyText
+      : fallbackDescription;
     const detailsHeading = document.createElement('p');
     detailsHeading.className = 'confirm-modal__details-heading';
     detailsHeading.textContent = 'This will remove:';
@@ -3322,10 +3911,12 @@ function renderEditorShell(session) {
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
     cancelBtn.className = 'confirm-modal__btn';
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = cancelLabel;
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
-    deleteBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+    deleteBtn.className = variant === 'danger'
+      ? 'confirm-modal__btn confirm-modal__btn--destructive'
+      : 'confirm-modal__btn';
     deleteBtn.textContent = confirmLabel;
     actionRow.append(cancelBtn, deleteBtn);
     dialog.append(heading, description, detailsHeading, detailsList, warning, actionRow);
@@ -3382,6 +3973,57 @@ function renderEditorShell(session) {
     });
   }
 
+  // Launcher editor policy: do not use native window.confirm in UI flows.
+  // Always route confirmations through showConfirmDialog for consistent keyboard/focus behavior.
+  async function confirmDangerAction({
+    title,
+    bodyText,
+    confirmLabel,
+    removalItems = [],
+  }) {
+    if (!isNonEmptyString(bodyText)) {
+      return false;
+    }
+    return showConfirmDialog({
+      title,
+      bodyText,
+      removalItems,
+      confirmLabel,
+      cancelLabel: 'Cancel',
+      variant: 'danger',
+      entityLabel: '',
+    });
+  }
+
+  async function runMediaAction(action) {
+    if (mediaActionInFlight) return false;
+    mediaActionInFlight = true;
+    try {
+      await action();
+      return true;
+    } finally {
+      mediaActionInFlight = false;
+    }
+  }
+
+  function getProtectedActionErrorMessage(result, fallbackText) {
+    const status = String(result?.status || '').trim();
+    const detail = String(result?.error?.message || result?.result?.error?.message || '').trim();
+    if (detail) {
+      return detail;
+    }
+    if (status === 'blocked_no_local_id') {
+      return 'Could not continue because no local draft is active. Please refresh and try again.';
+    }
+    if (status === 'blocked_session_probe') {
+      return 'Unable to verify sign-in status right now. Please try again.';
+    }
+    if (status === 'invalid_context' || status === 'invalid_intent' || status === 'intent_invalid') {
+      return 'Could not continue this action because the draft context changed. Please refresh and try again.';
+    }
+    return fallbackText;
+  }
+
   async function copyTextToClipboard(text) {
     const value = String(text || '').trim();
     if (!value) return false;
@@ -3394,6 +4036,102 @@ function renderEditorShell(session) {
       }
     }
     return false;
+  }
+
+  function notifyClipboardResult({ copied, successText, failureText, source }) {
+    session.pushNotification({
+      kind: copied ? 'success' : 'warn',
+      category: 'editor',
+      source,
+      text: copied ? successText : failureText,
+    });
+    session.notifyStateChange();
+  }
+
+  async function guardServerMenuAction(button, action) {
+    if (button?.disabled) return null;
+    const sessionReady = await session.ensureServerSessionReady();
+    if (!sessionReady.ok) {
+      updateSummary();
+      return sessionReady.result;
+    }
+    return action();
+  }
+
+  function createCopyIdMenu({ triggerKind = 'info', triggerText = '', title, idValue, copyLabel, source }) {
+    const details = document.createElement('details');
+    details.className = `id-copy-menu id-copy-menu--${triggerKind}`;
+    const summary = document.createElement('summary');
+    summary.className = triggerKind === 'badge'
+      ? 'asset-status-badge'
+      : 'icon-btn id-copy-menu__summary';
+    summary.setAttribute('role', 'button');
+    summary.setAttribute('aria-label', `${title}: show copy action`);
+    if (triggerKind === 'badge') {
+      summary.textContent = triggerText || 'Attached';
+    } else {
+      summary.innerHTML = createEditorIcon('info');
+      summary.title = title;
+    }
+
+    const body = document.createElement('div');
+    body.className = 'id-copy-menu__body';
+    const label = document.createElement('p');
+    label.className = 'id-copy-menu__label';
+    label.textContent = title;
+    const value = document.createElement('p');
+    value.className = 'editor-id-value id-copy-menu__value';
+    value.textContent = idValue || 'n/a';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'id-copy-menu__copy';
+    copyBtn.textContent = copyLabel;
+    copyBtn.disabled = !isNonEmptyString(idValue);
+    copyBtn.addEventListener('click', async () => {
+      const copied = await copyTextToClipboard(idValue);
+      copyBtn.textContent = copied ? 'Copied' : copyLabel;
+      notifyClipboardResult({
+        copied,
+        source,
+        successText: `${title} copied.`,
+        failureText: 'Clipboard copy is unavailable in this browser.',
+      });
+      window.setTimeout(() => {
+        copyBtn.textContent = copyLabel;
+      }, 1400);
+    });
+    body.append(label, value, copyBtn);
+    details.append(summary, body);
+    return details;
+  }
+
+  function createEditorSectionHeader({ icon = 'info', title, className = '' }) {
+    const header = document.createElement('div');
+    header.className = `editor-section-header ${className}`.trim();
+    const iconWrap = document.createElement('span');
+    iconWrap.className = 'editor-section-header__icon';
+    iconWrap.setAttribute('aria-hidden', 'true');
+    iconWrap.innerHTML = createEditorIcon(icon);
+    const heading = document.createElement('h3');
+    heading.textContent = title;
+    header.append(iconWrap, heading);
+    return header;
+  }
+
+  function formatLastSavedLabel(lastSavedAt) {
+    if (!isNonEmptyString(lastSavedAt)) return 'Not yet saved';
+    const savedTime = new Date(lastSavedAt).getTime();
+    if (!Number.isFinite(savedTime)) return lastSavedAt;
+    const elapsedMs = Date.now() - savedTime;
+    if (elapsedMs < 0) return `${lastSavedAt} (in the future)`;
+    const elapsedSeconds = Math.floor(elapsedMs / 1000);
+    if (elapsedSeconds < 10) return 'just now';
+    if (elapsedSeconds < 60) return `${elapsedSeconds} seconds ago`;
+    const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+    if (elapsedMinutes < 60) return `${elapsedMinutes} minute${elapsedMinutes === 1 ? '' : 's'} ago`;
+    const elapsedHours = Math.floor(elapsedMinutes / 60);
+    if (elapsedHours < 24) return `${elapsedHours} hour${elapsedHours === 1 ? '' : 's'} ago`;
+    return lastSavedAt;
   }
 
   function emitServerNotification({ kind = 'info', text = '', source = 'editor.server' } = {}) {
@@ -3412,7 +4150,7 @@ function renderEditorShell(session) {
     emitServerNotification({ kind, text, source });
   }
 
-  function showPublishModal({ uploadedDraft }) {
+  function showPublishModal({ uploadedDraft, initialTitle = null, initialSubject = null }) {
     return new Promise((resolve) => {
       const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const overlay = document.createElement('div');
@@ -3432,7 +4170,9 @@ function renderEditorShell(session) {
       publishTitleLabel.textContent = 'Published Title';
       const publishTitleInput = document.createElement('input');
       publishTitleInput.className = 'control';
-      publishTitleInput.value = String(uploadedDraft?.title || '');
+      publishTitleInput.value = initialTitle !== null
+        ? String(initialTitle)
+        : String(uploadedDraft?.title || '');
       publishTitleField.append(publishTitleLabel, publishTitleInput);
       const publishSubjectField = document.createElement('div');
       publishSubjectField.className = 'editor-field';
@@ -3440,7 +4180,9 @@ function renderEditorShell(session) {
       publishSubjectLabel.textContent = 'Published Subject';
       const publishSubjectInput = document.createElement('input');
       publishSubjectInput.className = 'control';
-      publishSubjectInput.value = String(uploadedDraft?.subject || '');
+      publishSubjectInput.value = initialSubject !== null
+        ? String(initialSubject)
+        : String(uploadedDraft?.subject || '');
       publishSubjectField.append(publishSubjectLabel, publishSubjectInput);
       const actions = document.createElement('div');
       actions.className = 'confirm-modal__actions';
@@ -3510,7 +4252,237 @@ function renderEditorShell(session) {
     });
   }
 
-  async function runPublishedSearch() {
+  function showPublishedPackageConflictModal() {
+    return new Promise((resolve) => {
+      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-modal-overlay';
+      const dialog = document.createElement('section');
+      dialog.className = 'confirm-modal';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+
+      const heading = document.createElement('h3');
+      heading.textContent = 'Published package conflict';
+      const description = document.createElement('p');
+      description.className = 'confirm-modal__description';
+      description.textContent = 'A published package with this worksheet name and subject already exists.';
+      const warning = document.createElement('p');
+      warning.className = 'confirm-modal__warning';
+      warning.textContent = 'Existing viewer links may already be in use. This app will not replace or delete that package automatically.';
+
+      const actions = document.createElement('div');
+      actions.className = 'confirm-modal__actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'confirm-modal__btn';
+      cancelBtn.textContent = 'Cancel';
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+      editBtn.textContent = 'Edit Published Name/Subject';
+      actions.append(cancelBtn, editBtn);
+      dialog.append(heading, description, warning, actions);
+      overlay.appendChild(dialog);
+      shell.appendChild(overlay);
+
+      const getFocusable = () => [cancelBtn, editBtn].filter((node) => !node.disabled);
+      const cleanup = () => {
+        dialog.removeEventListener('keydown', onKeyDown);
+        overlay.remove();
+        if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
+      };
+      const onKeyDown = (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          cleanup();
+          resolve({ action: 'cancel' });
+          return;
+        }
+        if (event.key !== 'Tab') return;
+        const focusable = getFocusable();
+        if (focusable.length === 0) return;
+        const currentIndex = focusable.indexOf(document.activeElement);
+        if (event.shiftKey) {
+          if (currentIndex <= 0) {
+            event.preventDefault();
+            focusable[focusable.length - 1].focus();
+          }
+          return;
+        }
+        if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+          event.preventDefault();
+          focusable[0].focus();
+        }
+      };
+      cancelBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({ action: 'cancel' });
+      });
+      editBtn.addEventListener('click', () => {
+        cleanup();
+        resolve({ action: 'edit' });
+      });
+      dialog.addEventListener('keydown', onKeyDown);
+      editBtn.focus();
+    });
+  }
+
+  function showUploadConflictModal({ existingDraft }) {
+    return new Promise((resolve) => {
+      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-modal-overlay';
+      const dialog = document.createElement('section');
+      dialog.className = 'confirm-modal';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      const heading = document.createElement('h3');
+      heading.textContent = 'Uploaded draft already exists';
+      const description = document.createElement('p');
+      description.className = 'confirm-modal__description';
+      description.textContent = `A draft named "${existingDraft?.title || 'Untitled'}" already exists for this subject.`;
+      const details = document.createElement('div');
+      details.className = 'muted uploaded-draft-details-body';
+      const subjectLine = document.createElement('div');
+      subjectLine.textContent = `Subject: ${existingDraft?.subject || '-'}`;
+      const uploadedLine = document.createElement('div');
+      uploadedLine.textContent = `Uploaded: ${formatUploadedDraftTimestamp(existingDraft?.created_at)}`;
+      const statusLine = document.createElement('div');
+      statusLine.textContent = existingDraft?.published_package_id
+        ? 'Status: already published'
+        : 'Status: draft only';
+      details.append(subjectLine, uploadedLine, statusLine);
+      const warning = document.createElement('p');
+      warning.className = 'confirm-modal__warning';
+      warning.textContent = existingDraft?.published_package_id
+        ? 'The published package will not change. The old uploaded draft copy will be removed and this upload will become the new draft copy.'
+        : 'Replacing will update the existing uploaded draft artifact.';
+      const actions = document.createElement('div');
+      actions.className = 'confirm-modal__actions';
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'confirm-modal__btn';
+      cancelBtn.textContent = 'Cancel';
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'confirm-modal__btn';
+      copyBtn.textContent = 'Save as New Copy';
+      const replaceBtn = document.createElement('button');
+      replaceBtn.type = 'button';
+      replaceBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+      replaceBtn.textContent = 'Replace Uploaded Draft';
+      actions.append(cancelBtn, copyBtn, replaceBtn);
+      dialog.append(heading, description, details, warning, actions);
+      overlay.appendChild(dialog);
+      shell.appendChild(overlay);
+      let resolved = false;
+      const cleanup = () => {
+        overlay.remove();
+        if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
+      };
+      const choose = (action) => {
+        if (resolved) return;
+        resolved = true;
+        cancelBtn.disabled = true;
+        copyBtn.disabled = true;
+        replaceBtn.disabled = true;
+        cleanup();
+        resolve({ action });
+      };
+      cancelBtn.addEventListener('click', () => {
+        choose('cancel');
+      });
+      copyBtn.addEventListener('click', () => {
+        choose('copy');
+      });
+      replaceBtn.addEventListener('click', () => {
+        choose('replace');
+      });
+      dialog.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          choose('cancel');
+        }
+      });
+      cancelBtn.focus();
+    });
+  }
+
+  async function showSlotFullModal({ uploadedDrafts = [] } = {}) {
+    const rows = Array.isArray(uploadedDrafts) && uploadedDrafts.length > 0
+      ? uploadedDrafts
+      : session.state.uploadedDrafts;
+    return new Promise((resolve) => {
+      const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-modal-overlay';
+      const dialog = document.createElement('section');
+      dialog.className = 'confirm-modal browse-modal';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-modal', 'true');
+      const heading = document.createElement('h3');
+      heading.textContent = 'Draft slots are full';
+      const description = document.createElement('p');
+      description.className = 'confirm-modal__description';
+      description.textContent = 'Delete one uploaded draft to continue this upload.';
+      const list = document.createElement('div');
+      list.className = 'browse-results';
+      rows.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'published-result-row';
+        const title = document.createElement('strong');
+        title.className = 'published-result-title';
+        title.textContent = item.title || 'Untitled';
+        const meta = document.createElement('div');
+        meta.className = 'muted published-result-subject-owner';
+        meta.textContent = `${item.subject || '-'} • ${formatUploadedDraftTimestamp(item.created_at)}`;
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.addEventListener('click', async () => {
+          const confirmed = await showConfirmDialog({
+            title: 'Delete uploaded draft?',
+            entityLabel: item.title || 'Untitled',
+            descriptionText: item.published_package_id
+              ? 'This deletes the uploaded draft slot only. The published package remains unchanged.'
+              : 'This will permanently remove this uploaded draft from server storage.',
+            removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
+            confirmLabel: 'Delete draft',
+          });
+          if (!confirmed) return;
+          const result = await session.deleteUploadedDraft(item.uploaded_draft_id);
+          if (result?.ok) {
+            overlay.remove();
+            if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
+            resolve({ deleted: true });
+          }
+        });
+        row.append(title, meta, deleteBtn);
+        list.appendChild(row);
+      });
+      const actions = document.createElement('div');
+      actions.className = 'confirm-modal__actions';
+      const closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'confirm-modal__btn';
+      closeBtn.textContent = 'Cancel';
+      closeBtn.addEventListener('click', () => {
+        overlay.remove();
+        if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
+        resolve({ deleted: false });
+      });
+      actions.appendChild(closeBtn);
+      dialog.append(heading, description, list, actions);
+      overlay.appendChild(dialog);
+      shell.appendChild(overlay);
+      closeBtn.focus();
+    });
+  }
+
+  async function runPublishedSearch(options = {}) {
+    const append = options.append === true;
     const sessionReady = await session.ensureServerSessionReady();
     if (!sessionReady.ok) {
       const notReadyMessage = session.state.serverActionMessage || 'Sign in for server features, then retry this action.';
@@ -3519,6 +4491,8 @@ function renderEditorShell(session) {
         loading: false,
         error: notReadyMessage,
         items: [],
+        hasMore: false,
+        nextOffset: null,
       };
       emitPublishedBrowseNotification({
         kind: 'warn',
@@ -3539,13 +4513,17 @@ function renderEditorShell(session) {
       subject: browsePublishedState.subject,
       owner: browsePublishedState.owner,
       limit: 20,
-      offset: 0,
+      offset: append && Number.isFinite(Number(browsePublishedState.nextOffset))
+        ? Number(browsePublishedState.nextOffset)
+        : 0,
     });
     if (!result.ok) {
       browsePublishedState = {
         ...browsePublishedState,
         loading: false,
         error: result.error.message,
+        hasMore: false,
+        nextOffset: null,
       };
       emitPublishedBrowseNotification({
         kind: 'error',
@@ -3559,13 +4537,17 @@ function renderEditorShell(session) {
     browsePublishedState = {
       ...browsePublishedState,
       loading: false,
-      items: resultItems,
+      items: append ? [...browsePublishedState.items, ...resultItems] : resultItems,
+      hasMore: result.data?.hasMore === true,
+      nextOffset: Number.isFinite(Number(result.data?.nextOffset)) ? Number(result.data.nextOffset) : null,
       error: null,
     };
     emitPublishedBrowseNotification({
       kind: 'success',
       source: 'browse.published.search',
-      text: `Found ${resultItems.length} published package${resultItems.length === 1 ? '' : 's'}.`,
+      text: append
+        ? `Loaded ${resultItems.length} more published package${resultItems.length === 1 ? '' : 's'}.`
+        : `Found ${resultItems.length} published package${resultItems.length === 1 ? '' : 's'}.`,
     });
     renderPublishedBrowserModal();
   }
@@ -3581,7 +4563,7 @@ function renderEditorShell(session) {
     const heading = document.createElement('h3');
     heading.textContent = 'Browse Published Packages';
     const filterRow = document.createElement('div');
-    filterRow.className = 'button-row';
+    filterRow.className = 'browse-modal__filters';
     const titleFilter = document.createElement('input');
     titleFilter.className = 'control';
     titleFilter.placeholder = 'Filter by title';
@@ -3596,7 +4578,9 @@ function renderEditorShell(session) {
     ownerFilter.value = browsePublishedState.owner;
     const searchBtn = document.createElement('button');
     searchBtn.type = 'button';
-    searchBtn.textContent = 'Search';
+    searchBtn.className = 'browse-modal__search-btn';
+    searchBtn.innerHTML = '<svg class="browse-modal__search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.25" stroke="currentColor" stroke-width="1.6"></circle><path d="M12.5 12.5L16.25 16.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg>';
+    searchBtn.setAttribute('aria-label', 'Search published packages');
     searchBtn.disabled = browsePublishedState.loading;
     filterRow.append(titleFilter, subjectFilter, ownerFilter, searchBtn);
     const results = document.createElement('div');
@@ -3620,32 +4604,40 @@ function renderEditorShell(session) {
       browsePublishedState.items.forEach((item) => {
         const row = document.createElement('div');
         row.className = 'published-result-row';
+        const titleLine = document.createElement('div');
+        titleLine.className = 'published-result-title-line';
         const title = document.createElement('strong');
+        title.className = 'published-result-title';
         title.textContent = item.title || 'Untitled';
+        const publishedDate = document.createElement('span');
+        publishedDate.className = 'published-result-date muted';
+        publishedDate.textContent = formatUploadedDraftTimestamp(item.published_at);
+        titleLine.append(title, publishedDate);
         const subjectOwner = document.createElement('div');
-        subjectOwner.className = 'muted';
+        subjectOwner.className = 'muted published-result-subject-owner';
         subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;
         const publishedMeta = document.createElement('div');
-        publishedMeta.className = 'muted';
-        publishedMeta.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)} • ID: ${item.published_package_id}`;
-        row.append(title, subjectOwner, publishedMeta);
+        publishedMeta.className = 'muted published-result-id';
+        publishedMeta.textContent = `Package ID: ${item.published_package_id}`;
+        row.append(titleLine, subjectOwner, publishedMeta);
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
-        copyBtn.className = 'uploaded-draft-action uploaded-draft-action--secondary';
-        copyBtn.textContent = 'Copy Published ID';
+        copyBtn.className = 'uploaded-draft-action published-result-action';
+        copyBtn.textContent = 'Copy Viewer Link';
         copyBtn.addEventListener('click', async () => {
-          const copied = await copyTextToClipboard(item.published_package_id);
+          const viewerUrl = buildPublishedPackageViewerUrl(item.published_package_id);
+          const copied = await copyTextToClipboard(viewerUrl);
           emitServerNotification({
             kind: copied ? 'success' : 'warn',
             source: 'clipboard.publishedId',
             text: copied
-              ? `Copied published ID ${item.published_package_id}.`
+              ? 'Copied viewer link.'
               : 'Clipboard copy is unavailable in this browser.',
           });
         });
         const openInEditorBtn = document.createElement('button');
         openInEditorBtn.type = 'button';
-        openInEditorBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+        openInEditorBtn.className = 'uploaded-draft-action published-result-action';
         const isOpening = session.state.openingPublishedPackageIds.has(item.published_package_id);
         openInEditorBtn.textContent = isOpening ? 'Opening…' : 'Open in Editor';
         openInEditorBtn.disabled = !serverReady || browsePublishedState.loading || isOpening;
@@ -3679,17 +4671,45 @@ function renderEditorShell(session) {
         const actionRow = document.createElement('div');
         actionRow.className = 'published-result-actions';
         actionRow.append(copyBtn, openInEditorBtn);
+        const currentUserSub = session.state.serverSession?.user?.sub || '';
+        if (currentUserSub && item.owner_sub === currentUserSub) {
+          const deletePublishedBtn = document.createElement('button');
+          deletePublishedBtn.type = 'button';
+          deletePublishedBtn.className = 'uploaded-draft-action uploaded-draft-action--danger published-result-action';
+          deletePublishedBtn.textContent = 'Delete';
+          deletePublishedBtn.addEventListener('click', async () => {
+            const confirmed = await showConfirmDialog({
+              title: 'Delete published package?',
+              entityLabel: item.title || 'Untitled',
+              descriptionText: 'This deletes the published package. Existing viewer links for this package will stop working.',
+              removalItems: ['Published package ZIP artifact', 'Published package metadata'],
+              confirmLabel: 'Delete package',
+            });
+            if (!confirmed) return;
+            const result = await session.deletePublishedPackage(item.published_package_id);
+            if (result?.ok) {
+              await runPublishedSearch();
+            }
+          });
+          actionRow.appendChild(deletePublishedBtn);
+        }
         row.appendChild(actionRow);
         results.appendChild(row);
       });
     }
     const actions = document.createElement('div');
     actions.className = 'confirm-modal__actions';
+    const loadMoreBtn = document.createElement('button');
+    loadMoreBtn.type = 'button';
+    loadMoreBtn.className = 'confirm-modal__btn';
+    loadMoreBtn.textContent = browsePublishedState.loading ? 'Loading…' : 'Load more';
+    loadMoreBtn.hidden = !browsePublishedState.hasMore;
+    loadMoreBtn.disabled = browsePublishedState.loading || !serverReady;
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'confirm-modal__btn';
     closeBtn.textContent = 'Close';
-    actions.append(closeBtn);
+    actions.append(loadMoreBtn, closeBtn);
     dialog.append(heading, filterRow, results, actions);
     overlay.appendChild(dialog);
     browsePublishedModalRoot.appendChild(overlay);
@@ -3706,6 +4726,9 @@ function renderEditorShell(session) {
       captureFilters();
       await runPublishedSearch();
     });
+    loadMoreBtn.addEventListener('click', async () => {
+      await runPublishedSearch({ append: true });
+    });
     closeBtn.addEventListener('click', () => {
       browsePublishedDialogOpen = false;
       renderPublishedBrowserModal();
@@ -3714,19 +4737,23 @@ function renderEditorShell(session) {
   ['content', 'question'].forEach((kind) => {
     const option = document.createElement('option');
     option.value = kind;
-    option.textContent = kind;
+    option.textContent = getBlockKindLabel(kind);
     blockKind.appendChild(option);
   });
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
-  saveBtn.textContent = 'Save Now';
+  saveBtn.textContent = 'Save Local Draft';
+  saveBtn.className = 'sidebar-action-btn';
+  setMediaActionButtonContent(saveBtn, 'save', 'Save Local Draft');
   const addContentBtn = document.createElement('button');
   addContentBtn.type = 'button';
-  addContentBtn.textContent = 'Add Content';
+  addContentBtn.className = 'sidebar-action-btn';
+  setMediaActionButtonContent(addContentBtn, 'filePlus', 'Add Content');
   const addQuestionBtn = document.createElement('button');
   addQuestionBtn.type = 'button';
-  addQuestionBtn.textContent = 'Add Question';
+  addQuestionBtn.className = 'sidebar-action-btn';
+  setMediaActionButtonContent(addQuestionBtn, 'question', 'Add Question');
   const openViewerBtn = document.createElement('button');
   openViewerBtn.type = 'button';
   openViewerBtn.textContent = 'Open in Viewer (same tab)';
@@ -3736,24 +4763,18 @@ function renderEditorShell(session) {
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
   exportBtn.textContent = 'Export package (.zip)';
-  const rewriteBtn = document.createElement('button');
-  rewriteBtn.type = 'button';
-  rewriteBtn.textContent = 'Rewrite (Sign-in required)';
-  const t2aBtn = document.createElement('button');
-  t2aBtn.type = 'button';
-  t2aBtn.textContent = 'T2A (Sign-in required)';
   const syncDraftBtn = document.createElement('button');
   syncDraftBtn.type = 'button';
   syncDraftBtn.textContent = 'Upload Draft';
   const browsePublishedBtn = document.createElement('button');
   browsePublishedBtn.type = 'button';
   browsePublishedBtn.textContent = 'Browse Published Packages';
+  const manageUploadedDraftsBtn = document.createElement('button');
+  manageUploadedDraftsBtn.type = 'button';
+  manageUploadedDraftsBtn.textContent = 'Manage Uploaded Drafts';
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.textContent = 'Sign in for server features';
-  const loadUploadedDraftsBtn = document.createElement('button');
-  loadUploadedDraftsBtn.type = 'button';
-  loadUploadedDraftsBtn.textContent = 'Refresh Uploaded Drafts';
   const serverSessionStatus = document.createElement('p');
   serverSessionStatus.className = 'muted';
   const activityFeed = document.createElement('section');
@@ -3774,9 +4795,8 @@ function renderEditorShell(session) {
   activityFeedToggle.append(activityFeedHeading, activityFeed);
   const toastContainer = document.createElement('div');
   toastContainer.className = 'notification-toast-container';
-  const uploadedDraftList = document.createElement('div');
-  uploadedDraftList.className = 'muted';
   const browsePublishedModalRoot = document.createElement('div');
+  const manageUploadedDraftsModalRoot = document.createElement('div');
   const protectedActionsColumn = document.createElement('div');
   protectedActionsColumn.className = 'action-column';
   let browsePublishedState = {
@@ -3785,9 +4805,12 @@ function renderEditorShell(session) {
     owner: '',
     loading: false,
     items: [],
+    hasMore: false,
+    nextOffset: null,
     error: null,
   };
   let browsePublishedDialogOpen = false;
+  let manageUploadedDraftsDialogOpen = false;
   let detailSignature = null;
   let optionActionSignature = null;
   let visibleActivityCount = ACTIVITY_VISIBLE_INITIAL;
@@ -3891,9 +4914,13 @@ function renderEditorShell(session) {
       if (activeElement !== questionMaxLength) {
         questionMaxLength.value = responseConfig.maxLength || 200;
       }
-      if (activeElement !== questionTextDisplayMode) {
-        questionTextDisplayMode.value = responseConfig.displayMode || 'multi_line';
-      }
+      const activeDisplayMode = responseConfig.displayMode === 'single_line' ? 'single_line' : 'multi_line';
+      questionTextDisplayModeButtons.forEach((button) => {
+        button.setAttribute(
+          'aria-pressed',
+          button.dataset.textDisplayMode === activeDisplayMode ? 'true' : 'false'
+        );
+      });
       if (activeElement !== questionOptions) {
         questionOptions.value = (responseConfig.options || [])
           .map((option) => String(option?.value ?? option?.label ?? ''))
@@ -3905,23 +4932,26 @@ function renderEditorShell(session) {
       if (activeElement !== questionShuffleOptions) {
         questionShuffleOptions.checked = Boolean(responseConfig.shuffleOptions);
       }
+      questionShuffleToggle.setAttribute('aria-pressed', questionShuffleOptions.checked ? 'true' : 'false');
       if (activeElement !== questionMin) questionMin.value = responseConfig.min ?? '';
       if (activeElement !== questionMax) questionMax.value = responseConfig.max ?? '';
       if (activeElement !== questionNumberAllowSigned) {
         questionNumberAllowSigned.checked = responseConfig.numberRules?.allowSigned !== false;
       }
+      questionNumberAllowSignedToggle.setAttribute(
+        'aria-pressed',
+        questionNumberAllowSigned.checked ? 'true' : 'false'
+      );
       if (activeElement !== questionNumberDecimalPlacesAllowed) {
         questionNumberDecimalPlacesAllowed.value = Number.isInteger(responseConfig.numberRules?.decimalPlacesAllowed)
           ? String(responseConfig.numberRules.decimalPlacesAllowed)
           : '';
       }
-      if (activeElement !== questionCorrectAnswerBoolean) {
-        if (typeof responseConfig.correctAnswer === 'boolean') {
-          questionCorrectAnswerBoolean.value = responseConfig.correctAnswer ? 'true' : 'false';
-        } else {
-          questionCorrectAnswerBoolean.value = '';
-        }
-      }
+      questionCorrectAnswerBooleanButtons.forEach((button) => {
+        const isSelected = typeof responseConfig.correctAnswer === 'boolean'
+          && button.dataset.booleanAnswerValue === String(responseConfig.correctAnswer);
+        button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+      });
       if (activeElement !== questionCorrectAnswerNumber) {
         questionCorrectAnswerNumber.value = typeof responseConfig.correctAnswer === 'number'
           ? String(responseConfig.correctAnswer)
@@ -3931,7 +4961,107 @@ function renderEditorShell(session) {
     updateNumberValidationFeedback(selectedBlock);
   };
 
+  let draggedBlockId = null;
+  let closeActiveBlockReorderMenu = null;
+  let activeBlockReorderAnchor = null;
+  const clearBlockDragState = () => {
+    blockList.querySelectorAll('.block-item--dragging, .block-item--drop-before, .block-item--drop-after')
+      .forEach((node) => {
+        node.classList.remove('block-item--dragging', 'block-item--drop-before', 'block-item--drop-after');
+      });
+  };
+  const closeBlockReorderMenu = () => {
+    if (typeof closeActiveBlockReorderMenu === 'function') {
+      closeActiveBlockReorderMenu();
+      closeActiveBlockReorderMenu = null;
+    }
+    if (activeBlockReorderAnchor) {
+      activeBlockReorderAnchor.setAttribute('aria-expanded', 'false');
+      activeBlockReorderAnchor = null;
+    }
+  };
+  const positionBlockReorderMenu = (menu, anchor) => {
+    const anchorRect = anchor.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const viewportPadding = 8;
+    const belowTop = anchorRect.bottom + 6;
+    const aboveTop = anchorRect.top - menuRect.height - 6;
+    const hasRoomBelow = belowTop + menuRect.height <= window.innerHeight - viewportPadding;
+    const top = hasRoomBelow ? belowTop : Math.max(viewportPadding, aboveTop);
+    const left = Math.max(
+      viewportPadding,
+      Math.min(anchorRect.right - menuRect.width, window.innerWidth - menuRect.width - viewportPadding)
+    );
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  };
+  const openBlockReorderMenu = ({ anchor, block, displayIndex, isFirst, isLast }) => {
+    closeBlockReorderMenu();
+    const menu = document.createElement('div');
+    menu.className = 'block-reorder-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', `Reorder block ${displayIndex}`);
+
+    const moveUpBtn = document.createElement('button');
+    moveUpBtn.type = 'button';
+    moveUpBtn.className = 'block-reorder-menu__item';
+    moveUpBtn.title = `Move block ${displayIndex} up`;
+    moveUpBtn.textContent = 'Move up';
+    moveUpBtn.disabled = isFirst;
+    moveUpBtn.setAttribute('role', 'menuitem');
+    moveUpBtn.addEventListener('click', () => {
+      closeBlockReorderMenu();
+      session.reorderBlockByDelta(block.blockId, -1);
+      updateSummary();
+    });
+
+    const moveDownBtn = document.createElement('button');
+    moveDownBtn.type = 'button';
+    moveDownBtn.className = 'block-reorder-menu__item';
+    moveDownBtn.title = `Move block ${displayIndex} down`;
+    moveDownBtn.textContent = 'Move down';
+    moveDownBtn.disabled = isLast;
+    moveDownBtn.setAttribute('role', 'menuitem');
+    moveDownBtn.addEventListener('click', () => {
+      closeBlockReorderMenu();
+      session.reorderBlockByDelta(block.blockId, 1);
+      updateSummary();
+    });
+
+    const body = document.createElement('div');
+    body.className = 'block-reorder-menu__body';
+    body.append(moveUpBtn, moveDownBtn);
+    menu.appendChild(body);
+    document.body.appendChild(menu);
+    activeBlockReorderAnchor = anchor;
+    positionBlockReorderMenu(menu, anchor);
+
+    const onPointerDown = (event) => {
+      if (menu.contains(event.target) || anchor.contains(event.target)) return;
+      closeBlockReorderMenu();
+    };
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeBlockReorderMenu();
+      }
+    };
+    const onScrollOrResize = () => closeBlockReorderMenu();
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    closeActiveBlockReorderMenu = () => {
+      menu.remove();
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
+  };
+
   const renderBlockList = () => {
+    closeBlockReorderMenu();
     blockList.innerHTML = '';
     const blocks = (session.state.draft?.blocks || []).slice().sort((a, b) => a.position - b.position);
     blocks.forEach((block, index) => {
@@ -3939,51 +5069,108 @@ function renderEditorShell(session) {
       const isLast = index === blocks.length - 1;
       const item = document.createElement('li');
       item.className = `block-item ${block.blockId === session.state.selectedBlockId ? 'selected' : ''}`;
+      item.dataset.blockId = block.blockId;
+      item.dataset.blockIndex = String(index);
       const row = document.createElement('div');
       row.className = 'block-item-row';
+      const dragHandle = document.createElement('button');
+      dragHandle.type = 'button';
+      dragHandle.className = 'block-drag-handle';
+      dragHandle.title = `Drag block ${index + 1} to reorder`;
+      dragHandle.setAttribute('aria-label', `Drag block ${index + 1} to reorder`);
+      dragHandle.setAttribute('draggable', 'true');
+      dragHandle.innerHTML = createEditorIcon('grip');
+      dragHandle.addEventListener('click', (event) => {
+        event.stopPropagation();
+      });
+      dragHandle.addEventListener('dragstart', (event) => {
+        draggedBlockId = block.blockId;
+        item.classList.add('block-item--dragging');
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', block.blockId);
+        }
+      });
+      dragHandle.addEventListener('dragend', () => {
+        draggedBlockId = null;
+        clearBlockDragState();
+      });
+      item.addEventListener('dragover', (event) => {
+        if (!draggedBlockId || draggedBlockId === block.blockId) return;
+        event.preventDefault();
+        blockList.querySelectorAll('.block-item--drop-before, .block-item--drop-after')
+          .forEach((node) => {
+            if (node !== item) node.classList.remove('block-item--drop-before', 'block-item--drop-after');
+          });
+        const rect = item.getBoundingClientRect();
+        const dropAfter = event.clientY > rect.top + rect.height / 2;
+        item.classList.toggle('block-item--drop-before', !dropAfter);
+        item.classList.toggle('block-item--drop-after', dropAfter);
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      });
+      item.addEventListener('dragleave', () => {
+        item.classList.remove('block-item--drop-before', 'block-item--drop-after');
+      });
+      item.addEventListener('drop', (event) => {
+        if (!draggedBlockId || draggedBlockId === block.blockId) return;
+        event.preventDefault();
+        const sourceIndex = blocks.findIndex((entry) => entry.blockId === draggedBlockId);
+        if (sourceIndex < 0) return;
+        const rect = item.getBoundingClientRect();
+        const dropAfter = event.clientY > rect.top + rect.height / 2;
+        let targetIndex = dropAfter ? index + 1 : index;
+        if (sourceIndex < targetIndex) targetIndex -= 1;
+        targetIndex = Math.max(0, Math.min(targetIndex, blocks.length - 1));
+        session.reorderBlockToIndex(draggedBlockId, targetIndex);
+        draggedBlockId = null;
+        clearBlockDragState();
+        updateSummary();
+      });
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'block-select';
       const displayIndex = index + 1;
       const previewSource = block.kind === 'question' ? block?.prompt?.text : block?.content?.text;
       const preview = String(previewSource || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
-      button.textContent = `${displayIndex}. ${block.kind} — ${preview}`;
+      const blockIndex = document.createElement('span');
+      blockIndex.className = 'block-select__index';
+      blockIndex.textContent = `${displayIndex}.`;
+      const blockTitle = document.createElement('span');
+      blockTitle.className = 'block-select__title';
+      blockTitle.textContent = preview;
+      const blockBadge = document.createElement('span');
+      blockBadge.className = `block-kind-badge block-kind-badge--${block.kind}`;
+      blockBadge.textContent = getBlockKindLabel(block.kind);
+      button.append(blockIndex, blockTitle, blockBadge);
       button.addEventListener('click', () => {
         session.selectBlock(block.blockId);
         updateSummary();
       });
       const actions = document.createElement('div');
       actions.className = 'block-item-actions';
-      const moveUpBtn = document.createElement('button');
-      moveUpBtn.type = 'button';
-      moveUpBtn.className = 'icon-btn';
-      moveUpBtn.title = `Move block ${displayIndex} up`;
-      moveUpBtn.setAttribute('aria-label', `Move block ${displayIndex} up`);
-      moveUpBtn.textContent = '▲';
-      moveUpBtn.disabled = isFirst;
-      moveUpBtn.addEventListener('click', (event) => {
+      const reorderMenuBtn = document.createElement('button');
+      reorderMenuBtn.type = 'button';
+      reorderMenuBtn.className = 'icon-btn';
+      reorderMenuBtn.title = `More reorder actions for block ${displayIndex}`;
+      reorderMenuBtn.setAttribute('aria-label', `More reorder actions for block ${displayIndex}`);
+      reorderMenuBtn.setAttribute('aria-haspopup', 'menu');
+      reorderMenuBtn.setAttribute('aria-expanded', 'false');
+      reorderMenuBtn.innerHTML = createEditorIcon('moreHorizontal');
+      reorderMenuBtn.addEventListener('click', (event) => {
         event.stopPropagation();
-        session.reorderBlockByDelta(block.blockId, -1);
-        updateSummary();
-      });
-      const moveDownBtn = document.createElement('button');
-      moveDownBtn.type = 'button';
-      moveDownBtn.className = 'icon-btn';
-      moveDownBtn.title = `Move block ${displayIndex} down`;
-      moveDownBtn.setAttribute('aria-label', `Move block ${displayIndex} down`);
-      moveDownBtn.textContent = '▼';
-      moveDownBtn.disabled = isLast;
-      moveDownBtn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        session.reorderBlockByDelta(block.blockId, 1);
-        updateSummary();
+        const isOpenForThisButton = activeBlockReorderAnchor === reorderMenuBtn;
+        closeBlockReorderMenu();
+        if (!isOpenForThisButton) {
+          reorderMenuBtn.setAttribute('aria-expanded', 'true');
+          openBlockReorderMenu({ anchor: reorderMenuBtn, block, displayIndex, isFirst, isLast });
+        }
       });
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'icon-btn danger';
       deleteBtn.title = 'Delete this block';
       deleteBtn.setAttribute('aria-label', `Delete block ${displayIndex}`);
-      deleteBtn.textContent = '🗑';
+      setIconButtonContent(deleteBtn, 'trash');
       deleteBtn.addEventListener('click', async (event) => {
         event.stopPropagation();
         const outcome = session.deleteBlockWithPolicy(block.blockId);
@@ -4006,8 +5193,8 @@ function renderEditorShell(session) {
         }
         updateSummary();
       });
-      actions.append(moveUpBtn, moveDownBtn, deleteBtn);
-      row.append(button, actions);
+      actions.append(reorderMenuBtn, deleteBtn);
+      row.append(dragHandle, button, actions);
       item.appendChild(row);
       blockList.appendChild(item);
     });
@@ -4054,6 +5241,24 @@ function renderEditorShell(session) {
       }
       return '';
     })();
+    const scopedPromptT2AInFlight = selectedBlock.kind === 'question'
+      && (
+        promptT2AInFlightBlockIds.has(selectedBlock.blockId)
+        || promptT2AInFlightBlockId === selectedBlock.blockId
+      )
+      ? '1'
+      : '0';
+    const scopedOptionT2AInFlight = selectedBlock.kind === 'question'
+      && (normalizeQuestionResponseConfig(selectedBlock.responseConfig).options || [])
+        .map((opt, index) => normalizeResponseOption(opt, `option_${index}`))
+        .some((opt) => {
+          const optionId = String(opt?.id || '');
+          if (!optionId) return false;
+          const key = `${selectedBlock.blockId}:${optionId}`;
+          return optionT2AInFlightKeys.has(key) || optionT2AInFlightKey === key;
+        })
+      ? '1'
+      : '0';
     return [
       selectedBlock.blockId,
       selectedBlock.kind,
@@ -4068,6 +5273,8 @@ function renderEditorShell(session) {
       ])),
       normalizedOptionMediaRefs,
       normalizedCorrectAnswer,
+      scopedPromptT2AInFlight,
+      scopedOptionT2AInFlight,
     ].join(':');
   };
 
@@ -4081,11 +5288,103 @@ function renderEditorShell(session) {
     }
     return JSON.stringify((normalizedResponseConfig.options || []).map((option, index) => {
       const normalized = normalizeResponseOption(option, `option_${index}`);
+      const optionTextState = getT2ATextEligibility(normalized?.label ?? normalized?.value ?? '');
+      const optionT2AKey = `${selectedBlock.blockId}:${String(normalized?.id ?? '')}`;
+      const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey
+        || optionT2AInFlightKeys.has(optionT2AKey);
       return [
         String(normalized.id ?? ''),
         ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
+        optionTextState.eligible ? '1' : '0',
+        optionTextState.exceedsLimit ? '1' : '0',
+        isOptionT2AInFlight ? '1' : '0',
       ];
     }));
+  };
+
+  const refreshPromptT2AControlsForSelectedBlock = () => {
+    if (!promptT2AUiRefs) return;
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
+    if (!selectedBlock || selectedBlock.kind !== 'question' || selectedBlock.blockId !== promptT2AUiRefs.blockId) {
+      return;
+    }
+    const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');
+    const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
+    const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
+    const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
+      || promptT2AInFlightBlockId === selectedBlock.blockId;
+    const promptT2ALabel = isPromptT2AInFlight
+      ? 'Generating…'
+      : currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio';
+    const promptT2AIcon = isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate';
+    setMediaActionButtonContent(promptT2AUiRefs.generateBtn, promptT2AIcon, promptT2ALabel);
+    promptT2AUiRefs.generateBtn.disabled = !promptTextState.eligible || isPromptT2AInFlight;
+    promptT2AUiRefs.hint.textContent = promptTextState.exceedsLimit
+      ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+      : '';
+    promptT2AUiRefs.hint.hidden = !promptTextState.exceedsLimit;
+    promptT2AUiRefs.attachBtn.disabled = isPromptT2AInFlight;
+    promptT2AUiRefs.playBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
+    promptT2AUiRefs.removeBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
+  };
+
+  const refreshOptionRowT2AControls = (selectedBlockId, optionId, row) => {
+    if (!row || !selectedBlockId || !optionId) return;
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlockId);
+    if (!selectedBlock || selectedBlock.kind !== 'question') return;
+    const responseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
+    if (responseConfig.inputType !== 'multiple_choice') return;
+    const normalizedOptions = (responseConfig.options || []).map((option, index) =>
+      normalizeResponseOption(option, `option_${index}`));
+    const option = normalizedOptions.find((item) => String(item?.id || '') === optionId) || null;
+    if (!option) return;
+    const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
+    const optionTextState = getT2ATextEligibility(option?.label ?? option?.value ?? '');
+    const optionT2AKey = `${selectedBlockId}:${optionId}`;
+    const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);
+
+    const optionAudioBtn = row.querySelector('[data-option-audio-btn="1"]');
+    const optionT2ABtn = row.querySelector('[data-option-t2a-btn="1"]');
+    const playOptionAudioBtn = row.querySelector('[data-option-play-btn="1"]');
+    const removeOptionAudioBtn = row.querySelector('[data-option-remove-audio-btn="1"]');
+    const optionT2AHint = row.querySelector('[data-option-t2a-hint="1"]');
+    const optionAudioAttached = row.querySelector('[data-option-audio-attached="1"]');
+    const optionAudioMenuTrigger = row.querySelector('[data-option-audio-menu-trigger="1"]');
+    const isPersistedOption = row.dataset.persistedOption === '1';
+
+    setOptionAudioMenuTriggerState(optionAudioMenuTrigger, {
+      hasAudio: Boolean(optionAudioRef),
+      isGenerating: isOptionT2AInFlight,
+      isPersisted: isPersistedOption,
+    });
+    if (optionAudioBtn instanceof HTMLButtonElement) {
+      optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
+      setMediaActionButtonContent(optionAudioBtn, 'upload', optionAudioRef ? 'Replace audio…' : 'Attach audio…');
+    }
+    if (optionT2ABtn instanceof HTMLButtonElement) {
+      const optionT2ALabel = isOptionT2AInFlight
+        ? 'Generating…'
+        : optionAudioRef ? 'Regenerate audio' : 'Generate audio';
+      const optionT2AIcon = isOptionT2AInFlight ? 'loading' : optionAudioRef ? 'refresh' : 'generate';
+      setMediaActionButtonContent(optionT2ABtn, optionT2AIcon, optionT2ALabel);
+      optionT2ABtn.disabled = !isPersistedOption || !optionTextState.eligible || isOptionT2AInFlight;
+    }
+    if (playOptionAudioBtn instanceof HTMLButtonElement) {
+      playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
+    }
+    if (removeOptionAudioBtn instanceof HTMLButtonElement) {
+      removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
+    }
+    if (optionT2AHint instanceof HTMLElement) {
+      optionT2AHint.hidden = !isPersistedOption || !optionTextState.exceedsLimit;
+      optionT2AHint.textContent = optionTextState.exceedsLimit
+        ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+        : '';
+    }
+    if (optionAudioAttached instanceof HTMLElement) {
+      optionAudioAttached.hidden = true;
+      optionAudioAttached.textContent = '';
+    }
   };
 
   const renderDetailEditor = ({ force = false } = {}) => {
@@ -4112,36 +5411,57 @@ function renderEditorShell(session) {
       document.activeElement instanceof HTMLInputElement &&
       document.activeElement.dataset.optionInput === '1';
     const nextOptionActionSignature = computeOptionActionSignature(selectedBlock);
+    const nextSignature = computeDetailSignature(selectedBlock);
     if (
       !force &&
       isOptionInputActive &&
       selectedBlock?.responseConfig?.inputType === 'multiple_choice' &&
       questionOptionsList.contains(document.activeElement) &&
-      nextOptionActionSignature === optionActionSignature
+      nextOptionActionSignature === optionActionSignature &&
+      nextSignature === detailSignature
     ) {
       return;
     }
-    const nextSignature = computeDetailSignature(selectedBlock);
     if (!force && nextSignature === detailSignature) {
       return;
     }
     detailSignature = nextSignature;
     optionActionSignature = nextOptionActionSignature;
     rightPanel.innerHTML = '';
-    rightPanel.append(rightHeading, statusRow);
+    const detailHeader = document.createElement('div');
+    detailHeader.className = 'block-detail-header';
+    const detailTitleGroup = document.createElement('div');
+    detailTitleGroup.className = 'block-detail-header__title';
+    detailTitleGroup.appendChild(rightHeading);
+    const detailActions = document.createElement('div');
+    detailActions.className = 'block-detail-header__actions';
     if (!selectedBlock) {
+      promptT2AUiRefs = null;
       const empty = document.createElement('p');
       empty.textContent = 'Select a block to edit.';
+      detailHeader.append(detailTitleGroup);
+      rightPanel.append(detailHeader);
+      rightPanel.append(statusRow);
       rightPanel.appendChild(empty);
       return;
     }
 
-    const kindLabel = document.createElement('label');
-    kindLabel.textContent = 'Block kind';
-    kindLabel.htmlFor = 'editor-block-kind';
-    rightPanel.append(kindLabel, blockKind);
+    detailActions.append(
+      blockKind,
+      createCopyIdMenu({
+        title: 'Block ID',
+        idValue: selectedBlock.blockId,
+        copyLabel: 'Copy Block ID',
+        source: 'clipboard.blockId',
+      })
+    );
+    detailHeader.append(detailTitleGroup, detailActions);
+    rightPanel.append(detailHeader);
+    rightPanel.append(statusRow);
 
     if (selectedBlock.kind === 'content') {
+      promptT2AUiRefs = null;
+      rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: 'Content' }));
       const contentLabel = document.createElement('label');
       contentLabel.textContent = 'Content text';
       contentLabel.htmlFor = 'editor-block-editor';
@@ -4150,8 +5470,9 @@ function renderEditorShell(session) {
       return;
     }
 
+    rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: 'Question' }));
     const promptLabel = document.createElement('label');
-    promptLabel.textContent = 'Question prompt';
+    promptLabel.textContent = 'Prompt';
     promptLabel.htmlFor = 'editor-block-editor';
     blockEditor.placeholder = 'Question prompt';
     rightPanel.append(promptLabel, blockEditor);
@@ -4160,25 +5481,49 @@ function renderEditorShell(session) {
     const currentQuestionImageRef = getSingleMediaRef(promptMediaRefs, 'question_image');
     const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
 
+    const mediaSection = document.createElement('section');
+    mediaSection.className = 'editor-detail-section media-section';
+    mediaSection.appendChild(createEditorSectionHeader({ icon: 'image', title: 'Prompt Media' }));
+    const mediaRows = document.createElement('div');
+    mediaRows.className = 'media-row-list';
     const questionImageRow = document.createElement('div');
-    questionImageRow.className = 'button-row';
-    const questionImageLabel = document.createElement('label');
-    questionImageLabel.textContent = currentQuestionImageRef
-      ? `Question image attached (${currentQuestionImageRef.assetId})`
-      : 'Question image: none attached';
+    questionImageRow.className = 'media-row';
+    const questionImageMeta = document.createElement('div');
+    questionImageMeta.className = 'media-row__meta';
+    const questionImageLabel = document.createElement('span');
+    questionImageLabel.className = 'media-row__title';
+    questionImageLabel.textContent = 'Prompt image';
+    questionImageMeta.appendChild(questionImageLabel);
+    if (currentQuestionImageRef) {
+      questionImageMeta.appendChild(createCopyIdMenu({
+        triggerKind: 'badge',
+        triggerText: 'Attached',
+        title: 'Prompt Image Asset ID',
+        idValue: currentQuestionImageRef.assetId,
+        copyLabel: 'Copy Asset ID',
+        source: 'clipboard.imageAssetId',
+      }));
+    } else {
+      const emptyImageBadge = document.createElement('span');
+      emptyImageBadge.className = 'asset-status-badge asset-status-badge--empty';
+      emptyImageBadge.textContent = 'None';
+      questionImageMeta.appendChild(emptyImageBadge);
+    }
+    const questionImageActions = document.createElement('div');
+    questionImageActions.className = 'media-row__actions';
     const attachImageBtn = document.createElement('button');
     attachImageBtn.type = 'button';
     attachImageBtn.className = 'media-action-btn';
-    attachImageBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">🖼</span><span>${currentQuestionImageRef ? 'Replace image…' : 'Attach image…'}</span>`;
+    setMediaActionButtonContent(attachImageBtn, 'image', currentQuestionImageRef ? 'Replace' : 'Attach');
     const removeImageBtn = document.createElement('button');
     removeImageBtn.type = 'button';
     removeImageBtn.className = 'media-action-btn media-action-btn--remove';
-    removeImageBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">🖼</span><span>Remove image</span>';
+    setMediaActionButtonContent(removeImageBtn, 'trash', 'Remove');
     removeImageBtn.disabled = !currentQuestionImageRef;
     const viewImageBtn = document.createElement('button');
     viewImageBtn.type = 'button';
     viewImageBtn.className = 'media-action-btn';
-    viewImageBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">👁</span><span>View image</span>';
+    setMediaActionButtonContent(viewImageBtn, 'eye', 'View');
     viewImageBtn.disabled = !currentQuestionImageRef;
     attachImageBtn.addEventListener('click', () => {
       questionImageInput.dataset.blockId = selectedBlock.blockId;
@@ -4186,53 +5531,123 @@ function renderEditorShell(session) {
       questionImageInput.click();
     });
     removeImageBtn.addEventListener('click', async () => {
-      const confirmed = window.confirm('Remove the current question image attachment?');
-      const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_image', { confirmRemove: confirmed });
-      if (!result.ok && result.reason !== 'confirm-remove-required') {
-        updateSummary();
-      } else if (result.ok) {
-        updateSummary();
-      }
+      await runMediaAction(async () => {
+        const confirmed = await confirmDangerAction({
+          title: 'Remove question image?',
+          bodyText: 'This will remove the current question image attachment.',
+          confirmLabel: 'Remove image',
+          removalItems: ['Current image file attachment for this question.'],
+        });
+        if (!confirmed) return;
+        const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_image', { confirmRemove: true });
+        if (!result.ok && result.reason !== 'confirm-remove-required') {
+          updateSummary();
+        } else if (result.ok) {
+          updateSummary();
+        }
+      });
     });
     viewImageBtn.addEventListener('click', async () => {
       if (!currentQuestionImageRef?.assetId) return;
       await session.openAssetImage(currentQuestionImageRef.assetId);
       updateSummary();
     });
-    questionImageRow.append(attachImageBtn, viewImageBtn, removeImageBtn);
-    rightPanel.append(questionImageLabel, questionImageRow);
+    questionImageActions.append(attachImageBtn, viewImageBtn, removeImageBtn);
+    questionImageRow.append(questionImageMeta, questionImageActions);
 
     const questionAudioRow = document.createElement('div');
-    questionAudioRow.className = 'button-row';
-    const questionAudioLabel = document.createElement('label');
-    questionAudioLabel.textContent = currentQuestionAudioRef
-      ? `Question audio attached (${currentQuestionAudioRef.assetId})`
-      : 'Question audio: none attached';
+    questionAudioRow.className = 'media-row';
+    const questionAudioMeta = document.createElement('div');
+    questionAudioMeta.className = 'media-row__meta';
+    const questionAudioLabel = document.createElement('span');
+    questionAudioLabel.className = 'media-row__title';
+    questionAudioLabel.textContent = 'Prompt audio';
+    questionAudioMeta.appendChild(questionAudioLabel);
+    if (currentQuestionAudioRef) {
+      questionAudioMeta.appendChild(createCopyIdMenu({
+        triggerKind: 'badge',
+        triggerText: 'Attached',
+        title: 'Prompt Audio Asset ID',
+        idValue: currentQuestionAudioRef.assetId,
+        copyLabel: 'Copy Asset ID',
+        source: 'clipboard.audioAssetId',
+      }));
+    } else {
+      const emptyAudioBadge = document.createElement('span');
+      emptyAudioBadge.className = 'asset-status-badge asset-status-badge--empty';
+      emptyAudioBadge.textContent = 'None';
+      questionAudioMeta.appendChild(emptyAudioBadge);
+    }
+    const questionAudioActions = document.createElement('div');
+    questionAudioActions.className = 'media-row__actions';
+    const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');
+    const promptExceedsT2ALimit = promptTextState.exceedsLimit;
+    const promptT2AEligible = promptTextState.eligible;
+    const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
+      || promptT2AInFlightBlockId === selectedBlock.blockId;
     const attachQuestionAudioBtn = document.createElement('button');
     attachQuestionAudioBtn.type = 'button';
     attachQuestionAudioBtn.className = 'media-action-btn';
-    attachQuestionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${currentQuestionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
+    setMediaActionButtonContent(attachQuestionAudioBtn, 'upload', currentQuestionAudioRef ? 'Replace' : 'Attach');
     const removeQuestionAudioBtn = document.createElement('button');
     removeQuestionAudioBtn.type = 'button';
     removeQuestionAudioBtn.className = 'media-action-btn media-action-btn--remove';
-    removeQuestionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
+    setMediaActionButtonContent(removeQuestionAudioBtn, 'trash', 'Remove');
     removeQuestionAudioBtn.disabled = !currentQuestionAudioRef;
     const playQuestionAudioBtn = document.createElement('button');
     playQuestionAudioBtn.type = 'button';
     playQuestionAudioBtn.className = 'media-action-btn';
-    playQuestionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
+    setMediaActionButtonContent(playQuestionAudioBtn, 'play', 'Play');
     playQuestionAudioBtn.disabled = !currentQuestionAudioRef;
+    const generateQuestionAudioBtn = document.createElement('button');
+    generateQuestionAudioBtn.type = 'button';
+    generateQuestionAudioBtn.className = 'media-action-btn';
+    setMediaActionButtonContent(
+      generateQuestionAudioBtn,
+      isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate',
+      isPromptT2AInFlight ? 'Generating…' : currentQuestionAudioRef ? 'Regenerate' : 'Generate'
+    );
+    generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;
+    const questionAudioHint = document.createElement('p');
+    questionAudioHint.className = 'muted';
+    questionAudioHint.textContent = promptExceedsT2ALimit
+      ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+      : '';
+    if (!promptExceedsT2ALimit) {
+      questionAudioHint.hidden = true;
+    }
+    if (isPromptT2AInFlight) {
+      attachQuestionAudioBtn.disabled = true;
+      playQuestionAudioBtn.disabled = true;
+      removeQuestionAudioBtn.disabled = true;
+    }
+    promptT2AUiRefs = {
+      blockId: selectedBlock.blockId,
+      attachBtn: attachQuestionAudioBtn,
+      generateBtn: generateQuestionAudioBtn,
+      playBtn: playQuestionAudioBtn,
+      removeBtn: removeQuestionAudioBtn,
+      hint: questionAudioHint,
+    };
     attachQuestionAudioBtn.addEventListener('click', () => {
       questionAudioInput.dataset.blockId = selectedBlock.blockId;
       questionAudioInput.value = '';
       questionAudioInput.click();
     });
     removeQuestionAudioBtn.addEventListener('click', async () => {
-      const confirmed = window.confirm('Remove the current question audio attachment?');
-      const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: confirmed });
-      if (result.ok || result.reason !== 'confirm-remove-required') {
-        updateSummary();
-      }
+      await runMediaAction(async () => {
+        const confirmed = await confirmDangerAction({
+          title: 'Remove question audio?',
+          bodyText: 'This will remove the current question audio attachment.',
+          confirmLabel: 'Remove audio',
+          removalItems: ['Current audio file attachment for this question.'],
+        });
+        if (!confirmed) return;
+        const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: true });
+        if (result.ok || result.reason !== 'confirm-remove-required') {
+          updateSummary();
+        }
+      });
     });
     playQuestionAudioBtn.addEventListener('click', async () => {
       if (!currentQuestionAudioRef?.assetId || playQuestionAudioBtn.disabled) return;
@@ -4253,80 +5668,190 @@ function renderEditorShell(session) {
       }
       updateSummary();
     });
-    questionAudioRow.append(attachQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
-    rightPanel.append(questionAudioLabel, questionAudioRow, mediaFeedback);
+    generateQuestionAudioBtn.addEventListener('click', async () => {
+      const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlock.blockId);
+      const latestPromptState = getT2ATextEligibility(latestBlock?.prompt?.text || '');
+      if (!latestPromptState.eligible || promptT2AInFlightBlockIds.has(selectedBlock.blockId)) return;
+      const sessionReady = await session.ensureServerSessionReady();
+      if (!sessionReady.ok) {
+        return;
+      }
+      promptT2AInFlightBlockIds.add(selectedBlock.blockId);
+      promptT2AInFlightBlockId = selectedBlock.blockId;
+      updateSummary();
+      if (currentQuestionAudioRef) {
+        const confirmed = await confirmDangerAction({
+          title: 'Regenerate question audio?',
+          bodyText: 'Regenerating will discard the currently attached question audio.',
+          confirmLabel: 'Regenerate audio',
+          removalItems: ['Current audio file attachment for this question.'],
+        });
+        if (!confirmed) {
+          promptT2AInFlightBlockIds.delete(selectedBlock.blockId);
+          restoreLegacyPromptInFlightMarker();
+          session.setMediaFeedback('Audio regeneration canceled.');
+          updateSummary();
+          return;
+        }
+      }
 
+      try {
+        const result = await session.triggerProtectedAction('editorPromptT2A', {
+          blockId: selectedBlock.blockId,
+          target: 'question_prompt',
+          localDraftId: session.state.draft?.localId || null,
+        });
+        const status = String(result?.status || '').trim();
+        if (status !== 'executed' && status !== 'redirected' && result?.ok !== true) {
+          session.pushNotification({
+            kind: 'error',
+            category: 'editor',
+            source: 'prompt.t2a',
+            text: getProtectedActionErrorMessage(result, 'Unable to start audio generation. Please try again.'),
+          });
+          session.notifyStateChange();
+        }
+      } catch (error) {
+        const detail = String(error?.message || '').trim();
+        const text = detail
+          ? `Audio generation failed. Existing audio is unchanged. ${detail}`
+          : 'Audio generation failed. Existing audio is unchanged.';
+        session.pushNotification({
+          kind: 'error',
+          category: 'editor',
+          source: 'prompt.t2a',
+          text,
+        });
+        session.notifyStateChange();
+      } finally {
+        promptT2AInFlightBlockIds.delete(selectedBlock.blockId);
+        restoreLegacyPromptInFlightMarker();
+        updateSummary();
+      }
+    });
+    questionAudioActions.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
+    questionAudioRow.append(questionAudioMeta, questionAudioActions);
+    mediaRows.append(questionImageRow, questionAudioRow);
+    mediaSection.append(mediaRows, questionAudioHint, mediaFeedback);
+    rightPanel.appendChild(mediaSection);
+
+    const answerSection = document.createElement('section');
+    answerSection.className = 'editor-detail-section answer-section';
+    answerSection.appendChild(createEditorSectionHeader({ icon: 'list', title: 'Answer' }));
+    const answerGrid = document.createElement('div');
+    answerGrid.className = 'answer-grid';
     const inputTypeLabel = document.createElement('label');
     inputTypeLabel.textContent = 'Answer input type';
     inputTypeLabel.htmlFor = 'editor-question-input-type';
-    rightPanel.append(inputTypeLabel, questionInputType);
+    const inputTypeField = document.createElement('div');
+    inputTypeField.className = 'editor-field';
+    inputTypeField.append(inputTypeLabel, questionInputType);
+    answerGrid.appendChild(inputTypeField);
 
     const activeInputType = selectedBlock.responseConfig?.inputType || 'text';
+    if (activeInputType === 'multiple_choice') {
+      const selectionModeLabel = document.createElement('label');
+      selectionModeLabel.textContent = 'Selection mode';
+      selectionModeLabel.htmlFor = 'editor-question-selection-mode';
+      const selectionModeField = document.createElement('div');
+      selectionModeField.className = 'editor-field';
+      selectionModeField.append(selectionModeLabel, questionSelectionMode);
+      answerGrid.appendChild(selectionModeField);
+    }
+    answerSection.appendChild(answerGrid);
     if (TEXT_INPUT_TYPES.has(activeInputType)) {
+      const textSettingsRow = document.createElement('div');
+      textSettingsRow.className = 'text-answer-settings';
+      const maxLengthField = document.createElement('div');
+      maxLengthField.className = 'editor-field';
       const maxLengthLabel = document.createElement('label');
       maxLengthLabel.textContent = 'Max length';
       maxLengthLabel.htmlFor = 'editor-question-max-length';
-      rightPanel.append(maxLengthLabel, questionMaxLength);
+      maxLengthField.append(maxLengthLabel, questionMaxLength);
 
+      const displayModeField = document.createElement('div');
+      displayModeField.className = 'editor-field';
       const displayModeLabel = document.createElement('label');
-      displayModeLabel.textContent = 'Text display mode';
-      displayModeLabel.htmlFor = 'editor-question-text-display-mode';
-      rightPanel.append(displayModeLabel, questionTextDisplayMode);
+      displayModeLabel.id = 'editor-question-text-display-mode-label';
+      displayModeLabel.textContent = 'Response format';
+      displayModeField.append(displayModeLabel, questionTextDisplayMode);
+      textSettingsRow.append(maxLengthField, displayModeField);
+      answerSection.appendChild(textSettingsRow);
     }
 
     if (activeInputType === 'number') {
       const minLabel = document.createElement('label');
       minLabel.textContent = 'Min';
       minLabel.htmlFor = 'editor-question-min';
+      const minField = document.createElement('div');
+      minField.className = 'editor-field';
+      minField.append(minLabel, questionMin, questionMinError);
       const maxLabel = document.createElement('label');
       maxLabel.textContent = 'Max';
       maxLabel.htmlFor = 'editor-question-max';
-      rightPanel.append(minLabel, questionMin, questionMinError, maxLabel, questionMax, questionMaxError);
+      const maxField = document.createElement('div');
+      maxField.className = 'editor-field';
+      maxField.append(maxLabel, questionMax, questionMaxError);
+      const rangeRow = document.createElement('div');
+      rangeRow.className = 'number-answer-range';
+      rangeRow.append(minField, maxField);
+      answerSection.append(rangeRow);
 
-      const signedRow = document.createElement('label');
-      signedRow.className = 'inline-toggle';
-      signedRow.htmlFor = 'editor-question-number-allow-signed';
+      const rulesRow = document.createElement('div');
+      rulesRow.className = 'number-answer-rules';
+      const signedField = document.createElement('div');
+      signedField.className = 'editor-field number-answer-signed-field';
+      const signedRow = document.createElement('div');
+      signedRow.className = 'inline-toggle inline-toggle--custom';
       const signedText = document.createElement('span');
       signedText.textContent = 'Allow signed values (+/-)';
-      signedRow.append(signedText, questionNumberAllowSigned);
-      rightPanel.append(signedRow);
+      signedRow.append(questionNumberAllowSignedToggle, questionNumberAllowSigned, signedText);
+      signedField.append(signedRow);
 
+      const decimalPlacesField = document.createElement('div');
+      decimalPlacesField.className = 'editor-field';
       const decimalPlacesLabel = document.createElement('label');
-      decimalPlacesLabel.textContent = 'Decimal places allowed (blank = unlimited)';
+      decimalPlacesLabel.textContent = 'Decimal places';
       decimalPlacesLabel.htmlFor = 'editor-question-number-decimal-places-allowed';
-      rightPanel.append(decimalPlacesLabel, questionNumberDecimalPlacesAllowed, questionNumberDecimalPlacesAllowedError);
+      const decimalPlacesHint = document.createElement('p');
+      decimalPlacesHint.className = 'muted number-answer-hint';
+      decimalPlacesHint.textContent = 'Blank = unlimited';
+      decimalPlacesField.append(
+        decimalPlacesLabel,
+        questionNumberDecimalPlacesAllowed,
+        decimalPlacesHint,
+        questionNumberDecimalPlacesAllowedError
+      );
+      rulesRow.append(signedField, decimalPlacesField);
+      answerSection.append(rulesRow);
 
       const correctAnswerLabel = document.createElement('label');
       correctAnswerLabel.textContent = 'Correct answer';
       correctAnswerLabel.htmlFor = 'editor-question-correct-answer-number';
-      rightPanel.append(correctAnswerLabel, questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
+      answerSection.append(correctAnswerLabel, questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
     }
 
     if (activeInputType === 'boolean') {
       const correctAnswerLabel = document.createElement('label');
+      correctAnswerLabel.id = 'editor-question-correct-answer-boolean-label';
       correctAnswerLabel.textContent = 'Correct answer';
-      correctAnswerLabel.htmlFor = 'editor-question-correct-answer-boolean';
-      rightPanel.append(correctAnswerLabel, questionCorrectAnswerBoolean);
+      answerSection.append(correctAnswerLabel, questionCorrectAnswerBoolean);
+    }
+
+    if (activeInputType !== 'multiple_choice') {
+      rightPanel.appendChild(answerSection);
     }
 
     if (activeInputType === 'multiple_choice') {
-      const selectionModeLabel = document.createElement('label');
-      selectionModeLabel.textContent = 'Selection mode';
-      selectionModeLabel.htmlFor = 'editor-question-selection-mode';
-      rightPanel.append(selectionModeLabel, questionSelectionMode);
-
-      const shuffleRow = document.createElement('label');
-      shuffleRow.className = 'inline-toggle';
-      shuffleRow.htmlFor = 'editor-question-shuffle-options';
+      const shuffleRow = document.createElement('div');
+      shuffleRow.className = 'inline-toggle inline-toggle--custom';
       const shuffleText = document.createElement('span');
       shuffleText.textContent = 'Shuffle options';
-      shuffleRow.append(shuffleText, questionShuffleOptions);
-      rightPanel.append(shuffleRow);
+      shuffleRow.append(questionShuffleToggle, questionShuffleOptions, shuffleText);
+      answerSection.append(shuffleRow);
 
-      const optionsLabel = document.createElement('label');
-      optionsLabel.textContent = 'Options';
-      optionsLabel.htmlFor = 'editor-question-options';
-      rightPanel.append(optionsLabel);
+      rightPanel.appendChild(answerSection);
+      rightPanel.appendChild(createEditorSectionHeader({ icon: 'list', title: 'Options' }));
 
       const normalizedResponseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
       const normalizedOptions = (normalizedResponseConfig.options || []).map((option, index) =>
@@ -4360,9 +5885,17 @@ function renderEditorShell(session) {
       optionList.forEach((option, optionIndex) => {
         const optionId = String(option?.id || '');
         const optionValue = String(option?.value ?? '');
+        const optionDisplayText = String(option?.label ?? option?.value ?? '');
+        const optionTextState = getT2ATextEligibility(optionDisplayText);
         const isPersistedOption = persistedOptionIds.has(optionId);
+        const optionTextExceedsT2ALimit = optionTextState.exceedsLimit;
+        const optionTextEligibleForT2A = optionTextState.eligible;
+        const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;
+        const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);
         const row = document.createElement('div');
         row.className = 'option-row';
+        row.dataset.persistedOption = isPersistedOption ? '1' : '0';
+        row.dataset.optionId = optionId;
 
         const isSelected = isMultiSelect
           ? selectedOptionIds.has(optionId)
@@ -4402,7 +5935,7 @@ function renderEditorShell(session) {
         const tickIcon = document.createElement('span');
         tickIcon.className = 'option-correct-toggle__tick';
         tickIcon.setAttribute('aria-hidden', 'true');
-        tickIcon.textContent = '✓';
+        tickIcon.innerHTML = createEditorIcon('check');
         correctToggle.appendChild(tickIcon);
 
         const optionInput = document.createElement('input');
@@ -4412,30 +5945,47 @@ function renderEditorShell(session) {
         optionInput.className = 'control';
         optionInput.placeholder = `Option ${optionIndex + 1}`;
         optionInput.value = String(option?.label ?? option?.value ?? '');
-        optionInput.addEventListener('input', () => {
+        let isOptionInputComposing = false;
+        const commitOptionInputValue = () => {
           session.updateQuestionOptionAtIndex(selectedBlock.blockId, optionIndex, optionInput.value);
+          refreshOptionRowT2AControls(selectedBlock.blockId, optionId, row);
+          updateSummary({ preserveDetailEditor: true });
+        };
+        optionInput.addEventListener('compositionstart', () => {
+          isOptionInputComposing = true;
+        });
+        optionInput.addEventListener('compositionend', () => {
+          isOptionInputComposing = false;
+          commitOptionInputValue();
+        });
+        optionInput.addEventListener('input', (event) => {
+          if (isOptionInputComposing || event.isComposing) return;
+          commitOptionInputValue();
         });
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
         const optionActionsMenu = document.createElement('details');
-        optionActionsMenu.className = 'option-actions-menu';
-        const optionActionsToggle = document.createElement('summary');
-        optionActionsToggle.className = 'icon-btn option-actions-menu__toggle';
-        optionActionsToggle.setAttribute('role', 'button');
-        optionActionsToggle.setAttribute('aria-label', `More actions for option ${optionIndex + 1}`);
-        optionActionsToggle.title = 'More actions';
-        optionActionsToggle.textContent = '⋯';
-        optionActionsMenu.appendChild(optionActionsToggle);
-        const optionActionsList = document.createElement('div');
-        optionActionsList.className = 'option-actions-menu__list';
+        optionActionsMenu.className = 'option-actions-menu option-audio-menu';
+        const optionAudioMenuTrigger = document.createElement('summary');
+        optionAudioMenuTrigger.className = 'icon-btn option-actions-menu__toggle option-audio-menu__toggle';
+        optionAudioMenuTrigger.dataset.optionAudioMenuTrigger = '1';
+        optionAudioMenuTrigger.setAttribute('role', 'button');
+        setOptionAudioMenuTriggerState(optionAudioMenuTrigger, {
+          hasAudio: Boolean(optionAudioRef),
+          isGenerating: isOptionT2AInFlight,
+          isPersisted: isPersistedOption,
+        });
+        const optionActionsRow = document.createElement('div');
+        optionActionsRow.className = 'option-actions-menu__list option-audio-menu__list';
 
         const optionAudioBtn = document.createElement('button');
         optionAudioBtn.type = 'button';
         optionAudioBtn.className = 'media-action-btn option-actions-menu__item';
-        optionAudioBtn.innerHTML = `<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>${optionAudioRef ? 'Replace audio…' : 'Attach audio…'}</span>`;
+        optionAudioBtn.dataset.optionAudioBtn = '1';
+        setMediaActionButtonContent(optionAudioBtn, 'upload', optionAudioRef ? 'Replace audio…' : 'Attach audio…');
         optionAudioBtn.title = isPersistedOption
           ? optionAudioRef ? 'Replace option audio' : 'Attach option audio'
           : 'Enter option text or click Add option before attaching audio';
-        optionAudioBtn.disabled = !isPersistedOption;
+        optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
         optionAudioBtn.addEventListener('click', () => {
           if (!isPersistedOption) {
             session.setMediaFeedback('Enter option text or click Add option before attaching audio.');
@@ -4443,28 +5993,36 @@ function renderEditorShell(session) {
             return;
           }
           pendingOptionAudioTarget = { blockId: selectedBlock.blockId, optionId };
-          optionActionsMenu.open = false;
           optionAudioInput.value = '';
           optionAudioInput.click();
         });
         const removeOptionAudioBtn = document.createElement('button');
         removeOptionAudioBtn.type = 'button';
         removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove option-actions-menu__item';
-        removeOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">♪</span><span>Remove audio</span>';
-        removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
+        removeOptionAudioBtn.dataset.optionRemoveAudioBtn = '1';
+        setMediaActionButtonContent(removeOptionAudioBtn, 'trash', 'Remove audio');
+        removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
         removeOptionAudioBtn.addEventListener('click', async () => {
-          const confirmed = window.confirm(`Remove audio from option ${optionIndex + 1}?`);
-          const result = await session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: confirmed });
-          if (result.ok || result.reason !== 'confirm-remove-required') {
-            updateSummary();
-          }
-          optionActionsMenu.open = false;
+          await runMediaAction(async () => {
+            const confirmed = await confirmDangerAction({
+              title: `Remove option ${optionIndex + 1} audio?`,
+              bodyText: `This will remove the audio attachment for option ${optionIndex + 1}.`,
+              confirmLabel: 'Remove audio',
+              removalItems: ['Current audio file attachment for this option.'],
+            });
+            if (!confirmed) return;
+            const result = await session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: true });
+            if (result.ok || result.reason !== 'confirm-remove-required') {
+              updateSummary();
+            }
+          });
         });
         const playOptionAudioBtn = document.createElement('button');
         playOptionAudioBtn.type = 'button';
         playOptionAudioBtn.className = 'media-action-btn option-actions-menu__item';
-        playOptionAudioBtn.innerHTML = '<span class="media-action-btn__icon" aria-hidden="true">▶</span><span>Play audio</span>';
-        playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption;
+        playOptionAudioBtn.dataset.optionPlayBtn = '1';
+        setMediaActionButtonContent(playOptionAudioBtn, 'play', 'Play audio');
+        playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
         playOptionAudioBtn.addEventListener('click', async () => {
           if (!optionAudioRef?.assetId || playOptionAudioBtn.disabled) return;
           playOptionAudioBtn.disabled = true;
@@ -4482,17 +6040,99 @@ function renderEditorShell(session) {
           if (!result.ok) {
             playOptionAudioBtn.disabled = false;
           }
-          optionActionsMenu.open = false;
           updateSummary();
         });
-        optionActionsList.append(optionAudioBtn, playOptionAudioBtn, removeOptionAudioBtn);
-        optionActionsMenu.appendChild(optionActionsList);
+        const optionT2ABtn = document.createElement('button');
+        optionT2ABtn.type = 'button';
+        optionT2ABtn.className = 'media-action-btn option-actions-menu__item';
+        optionT2ABtn.dataset.optionT2aBtn = '1';
+        const optionT2ALabel = isOptionT2AInFlight
+          ? 'Generating…'
+          : optionAudioRef ? 'Regenerate audio' : 'Generate audio';
+        setMediaActionButtonContent(
+          optionT2ABtn,
+          isOptionT2AInFlight ? 'loading' : optionAudioRef ? 'refresh' : 'generate',
+          optionT2ALabel
+        );
+        optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;
+        optionT2ABtn.addEventListener('click', async () => {
+          if (!isPersistedOption) {
+            session.setMediaFeedback('Enter option text or click Add option before attaching audio.');
+            updateSummary();
+            return;
+          }
+          const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlock.blockId);
+          const latestResponseConfig = normalizeQuestionResponseConfig(latestBlock?.responseConfig);
+          const latestOptions = (latestResponseConfig.options || []).map((item, index) =>
+            normalizeResponseOption(item, `option_${index}`));
+          const latestOption = latestOptions.find((item) => String(item?.id || '') === optionId) || null;
+          const latestOptionTextState = getT2ATextEligibility(latestOption?.label ?? latestOption?.value ?? '');
+          if (!latestOptionTextState.eligible || optionT2AInFlightKeys.has(optionT2AKey)) return;
+          const sessionReady = await session.ensureServerSessionReady();
+          if (!sessionReady.ok) {
+            return;
+          }
+          optionT2AInFlightKeys.add(optionT2AKey);
+          optionT2AInFlightKey = optionT2AKey;
+          updateSummary();
+          if (optionAudioRef) {
+            const confirmed = await confirmDangerAction({
+              title: `Regenerate option ${optionIndex + 1} audio?`,
+              bodyText: `Regenerating will discard the current audio attachment for option ${optionIndex + 1}.`,
+              confirmLabel: 'Regenerate audio',
+              removalItems: ['Current audio file attachment for this option.'],
+            });
+            if (!confirmed) {
+              optionT2AInFlightKeys.delete(optionT2AKey);
+              restoreLegacyOptionInFlightMarker();
+              session.setMediaFeedback('Option audio regeneration canceled.');
+              updateSummary();
+              return;
+            }
+          }
+          try {
+            const result = await session.triggerProtectedAction('editorOptionT2A', {
+              blockId: selectedBlock.blockId,
+              optionId,
+              target: 'option',
+              localDraftId: session.state.draft?.localId || null,
+            });
+            const status = String(result?.status || '').trim();
+            if (status !== 'executed' && status !== 'redirected' && result?.ok !== true) {
+              session.pushNotification({
+                kind: 'error',
+                category: 'editor',
+                source: 'option.t2a',
+                text: getProtectedActionErrorMessage(result, 'Unable to start audio generation. Please try again.'),
+              });
+              session.notifyStateChange();
+            }
+          } catch (error) {
+            const detail = String(error?.message || '').trim();
+            const text = detail
+              ? `Audio generation failed. Existing audio is unchanged. ${detail}`
+              : 'Audio generation failed. Existing audio is unchanged.';
+            session.pushNotification({
+              kind: 'error',
+              category: 'editor',
+              source: 'option.t2a',
+              text,
+            });
+            session.notifyStateChange();
+          } finally {
+            optionT2AInFlightKeys.delete(optionT2AKey);
+            restoreLegacyOptionInFlightMarker();
+            updateSummary();
+          }
+        });
+        optionActionsRow.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);
+        optionActionsMenu.append(optionAudioMenuTrigger, optionActionsRow);
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'icon-btn danger';
         removeBtn.title = 'Delete this option';
         removeBtn.setAttribute('aria-label', `Delete option ${optionIndex + 1}`);
-        removeBtn.textContent = '🗑';
+        setIconButtonContent(removeBtn, 'trash');
         removeBtn.addEventListener('click', async () => {
           const outcome = session.removeQuestionOptionWithPolicy(selectedBlock.blockId, optionIndex);
           if (!outcome.ok && outcome.reason === 'confirm-delete-required') {
@@ -4515,18 +6155,19 @@ function renderEditorShell(session) {
           updateSummary();
         });
         row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);
-        if (!isPersistedOption) {
-          const optionAudioHint = document.createElement('span');
-          optionAudioHint.className = 'muted option-row__meta';
-          optionAudioHint.textContent = 'Enter option text or click Add option before attaching audio.';
-          row.appendChild(optionAudioHint);
-        }
-        if (optionAudioRef) {
-          const optionAudioAttached = document.createElement('span');
-          optionAudioAttached.className = 'muted option-row__meta';
-          optionAudioAttached.textContent = `Option audio attached (${optionAudioRef.assetId})`;
-          row.appendChild(optionAudioAttached);
-        }
+        const optionT2AHint = document.createElement('span');
+        optionT2AHint.className = 'muted option-row__meta';
+        optionT2AHint.dataset.optionT2aHint = '1';
+        optionT2AHint.textContent = optionTextExceedsT2ALimit
+          ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+          : '';
+        optionT2AHint.hidden = !isPersistedOption || !optionTextExceedsT2ALimit;
+        row.appendChild(optionT2AHint);
+        const optionAudioAttached = document.createElement('span');
+        optionAudioAttached.className = 'muted option-row__meta';
+        optionAudioAttached.dataset.optionAudioAttached = '1';
+        optionAudioAttached.hidden = true;
+        row.appendChild(optionAudioAttached);
         questionOptionsList.appendChild(row);
       });
       rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
@@ -4544,12 +6185,199 @@ function renderEditorShell(session) {
     }
   };
 
-  const updateSummary = () => {
+  function renderUploadedDraftRows(container) {
+    const serverReady = session.state.serverSession?.status === 'ready';
+    container.innerHTML = '';
+    if (session.state.uploadedDrafts.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = session.state.isLoadingUploadedDrafts ? 'Loading uploaded drafts…' : 'No uploaded drafts yet.';
+      container.appendChild(empty);
+      return;
+    }
+    session.state.uploadedDrafts.forEach((item) => {
+      const display = toUploadedDraftDisplay(item);
+      const row = document.createElement('div');
+      row.className = 'uploaded-draft-row';
+      const meta = document.createElement('div');
+      meta.className = 'uploaded-draft-meta';
+      const titleLine = document.createElement('strong');
+      titleLine.textContent = display.title;
+      const uploadedAtLine = document.createElement('div');
+      uploadedAtLine.className = 'muted uploaded-draft-uploaded-at';
+      uploadedAtLine.textContent = display.uploadedLabel;
+      const subjectLine = document.createElement('div');
+      subjectLine.className = 'muted uploaded-draft-uploaded-at';
+      subjectLine.textContent = `Subject: ${item.subject || '-'}`;
+      meta.append(titleLine, subjectLine, uploadedAtLine);
+      const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
+      const publishState = normalizeDraftPublishState(item);
+      const badge = document.createElement('span');
+      badge.className = publishState === 'current_version_published'
+        ? 'editor-pill editor-pill--ok uploaded-draft-published-badge'
+        : 'editor-pill uploaded-draft-published-badge';
+      badge.textContent = publishState === 'current_version_published'
+        ? 'Published current version'
+        : publishState === 'unpublished_changes'
+          ? 'Unpublished changes'
+          : 'Draft only';
+      meta.appendChild(badge);
+      const details = document.createElement('details');
+      details.className = 'uploaded-draft-details uploaded-draft-details--draft';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Details';
+      const body = document.createElement('div');
+      body.className = 'muted uploaded-draft-details-body';
+      const draftIdLine = document.createElement('div');
+      draftIdLine.textContent = `Uploaded draft ID: ${item.uploaded_draft_id || '-'}`;
+      const publishedIdLine = document.createElement('div');
+      publishedIdLine.textContent = `Published ID: ${publishedPackageId || '-'}`;
+      const publishStateLine = document.createElement('div');
+      publishStateLine.textContent = `Publish state: ${publishState}`;
+      body.append(draftIdLine, publishedIdLine, publishStateLine);
+      details.append(summary, body);
+      meta.appendChild(details);
+      const actions = document.createElement('div');
+      actions.className = 'uploaded-draft-actions';
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'uploaded-draft-action uploaded-draft-action--secondary';
+      openBtn.textContent = 'Open';
+      openBtn.disabled = !serverReady;
+      openBtn.addEventListener('click', async () => {
+        await guardServerMenuAction(openBtn, () => session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id));
+        updateSummary();
+      });
+      actions.appendChild(openBtn);
+      if (publishedPackageId) {
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+        copyBtn.textContent = 'Copy Viewer Link';
+        copyBtn.disabled = !serverReady;
+        copyBtn.addEventListener('click', async () => {
+          const copied = await copyTextToClipboard(buildPublishedPackageViewerUrl(publishedPackageId));
+          emitServerNotification({
+            kind: copied ? 'success' : 'warn',
+            source: 'clipboard.publishedViewerLink',
+            text: copied ? 'Copied viewer link.' : 'Clipboard copy is unavailable in this browser.',
+          });
+        });
+        actions.appendChild(copyBtn);
+      }
+
+      if (publishState !== 'current_version_published') {
+        const isPublishing = session.state.publishingDraftIds.has(item.uploaded_draft_id);
+        const publishBtn = document.createElement('button');
+        publishBtn.type = 'button';
+        publishBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+        publishBtn.textContent = isPublishing ? 'Publishing…' : publishState === 'unpublished_changes' ? 'Publish New Version' : 'Publish';
+        publishBtn.disabled = !serverReady || isPublishing;
+        publishBtn.addEventListener('click', async () => {
+          if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
+          await guardServerMenuAction(publishBtn, async () => {
+            let attemptedTitle = String(item?.title || '');
+            let attemptedSubject = String(item?.subject || '');
+            while (true) {
+              const modal = await showPublishModal({
+                uploadedDraft: item,
+                initialTitle: attemptedTitle,
+                initialSubject: attemptedSubject,
+              });
+              if (!modal.confirmed) return null;
+              attemptedTitle = String(modal.title ?? '');
+              attemptedSubject = String(modal.subject ?? '');
+              const result = await session.publishUploadedDraftToServer(item.uploaded_draft_id, {
+                title: attemptedTitle,
+                subject: attemptedSubject,
+              });
+              if (result?.ok || result?.error?.code !== 'PUBLISHED_PACKAGE_CONFLICT') return result;
+              const conflictAction = await showPublishedPackageConflictModal();
+              if (conflictAction?.action !== 'edit') return result;
+            }
+          });
+          updateSummary();
+        });
+        actions.appendChild(publishBtn);
+      }
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.disabled = !serverReady;
+      deleteBtn.addEventListener('click', async () => {
+        await guardServerMenuAction(deleteBtn, async () => {
+          const confirmed = await showConfirmDialog({
+            title: 'Delete uploaded draft?',
+            entityLabel: isNonEmptyString(item.title) ? item.title.trim() : 'Untitled',
+            descriptionText: publishedPackageId
+              ? 'This deletes the uploaded draft slot only. The published package will remain available.'
+              : 'This will permanently remove this uploaded draft from server storage.',
+            removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
+            confirmLabel: 'Delete draft',
+          });
+          if (!confirmed) return null;
+          return session.deleteUploadedDraft(item.uploaded_draft_id);
+        });
+        updateSummary();
+      });
+      actions.appendChild(deleteBtn);
+      row.append(meta, actions);
+      container.appendChild(row);
+    });
+  }
+
+  function renderManageUploadedDraftsModal() {
+    manageUploadedDraftsModalRoot.innerHTML = '';
+    if (!manageUploadedDraftsDialogOpen) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay';
+    const dialog = document.createElement('section');
+    dialog.className = 'confirm-modal browse-modal';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    heading.textContent = 'Manage Uploaded Drafts';
+    const slotUsage = document.createElement('p');
+    slotUsage.className = 'confirm-modal__description';
+    slotUsage.textContent = `${session.state.uploadedDrafts.length} of 3 draft slots used.`;
+    const list = document.createElement('div');
+    list.className = 'browse-results';
+    renderUploadedDraftRows(list);
+    const actions = document.createElement('div');
+    actions.className = 'confirm-modal__actions';
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'confirm-modal__btn';
+    refreshBtn.textContent = session.state.isLoadingUploadedDrafts ? 'Refreshing…' : 'Refresh';
+    refreshBtn.disabled = session.state.isLoadingUploadedDrafts;
+    refreshBtn.addEventListener('click', async () => {
+      await session.loadUploadedDrafts({ preflight: false });
+      renderManageUploadedDraftsModal();
+    });
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'confirm-modal__btn';
+    closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', () => {
+      manageUploadedDraftsDialogOpen = false;
+      renderManageUploadedDraftsModal();
+    });
+    actions.append(refreshBtn, closeBtn);
+    dialog.append(heading, slotUsage, list, actions);
+    overlay.appendChild(dialog);
+    manageUploadedDraftsModalRoot.appendChild(overlay);
+    closeBtn.focus();
+  }
+
+  const updateSummary = ({ preserveDetailEditor = false } = {}) => {
     session.pruneExpiredNotifications();
     session.validateCurrentDraft();
     syncFormControls();
     renderBlockList();
-    renderDetailEditor();
+    if (!preserveDetailEditor) {
+      renderDetailEditor();
+    }
 
     const saveState = session.state.lastPersistenceError
       ? 'Save error'
@@ -4560,11 +6388,14 @@ function renderEditorShell(session) {
         : 'Saved';
 
     const isSaved = saveState === 'Saved';
-    saveStateEl.innerHTML = `<span class="editor-label">State:</span> <span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}"><span class="editor-dot"></span>${isSaved ? 'Saved' : saveState}</span>`;
+    saveStateEl.innerHTML = `<span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}">${createEditorIcon('check')}${isSaved ? 'Saved' : saveState}</span>`;
     saveStateEl.title = session.state.lastPersistenceError || session.state.lastValidationWarning || '';
-    lastSavedEl.textContent = `Last saved: ${session.state.lastSavedAt || 'Not yet saved'}`;
+    const lastSavedLabel = document.createElement('span');
+    lastSavedLabel.className = 'editor-label';
+    lastSavedLabel.textContent = 'Last saved:';
+    lastSavedEl.replaceChildren(lastSavedLabel, document.createTextNode(` ${formatLastSavedLabel(session.state.lastSavedAt)}`));
     const validationIssues = session.state.lastSavedLocalValidationIssueCount + session.state.lastContractValidationIssueCount;
-    validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">Validation: ${validationIssues} issue${validationIssues === 1 ? '' : 's'}</span>`;
+    validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">${createEditorIcon('shield')}${validationIssues} issue${validationIssues === 1 ? '' : 's'}</span>`;
     const validationTooltip = [];
     if (session.state.lastValidationWarning) {
       validationTooltip.push(session.state.lastValidationWarning);
@@ -4596,6 +6427,7 @@ function renderEditorShell(session) {
       serverSessionStatus.textContent = `Server session: not ready. ${session.state.serverSession?.error || 'Sign in for server features.'}`;
     }
     const isUploadingDraft = session.state.isUploadingDraft;
+    const isUploadDraftFlowActive = session.state.isUploadDraftFlowActive;
     const isRefreshingUploadedDrafts = session.state.isLoadingUploadedDrafts;
     const activePublishCount = session.state.publishingDraftIds?.size || 0;
 
@@ -4653,164 +6485,34 @@ function renderEditorShell(session) {
     });
 
     const serverReady = sessionStatus === 'ready';
-    syncDraftBtn.textContent = isUploadingDraft ? 'Uploading…' : 'Upload Draft';
-    syncDraftBtn.disabled = !serverReady || isUploadingDraft;
-    browsePublishedBtn.disabled = !serverReady;
-    loadUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? 'Refreshing…' : 'Refresh Uploaded Drafts';
-    loadUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;
-    signInBtn.hidden = serverReady;
-    uploadedDraftList.innerHTML = '';
-    if (session.state.uploadedDrafts.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'muted';
-      empty.textContent = session.state.isLoadingUploadedDrafts ? 'Loading uploaded drafts…' : 'No uploaded drafts yet.';
-      uploadedDraftList.appendChild(empty);
+    if (isUploadingDraft) {
+      const progress = session.state.uploadDraftProgress;
+      if (progress?.lengthComputable && Number(progress?.total) > 0) {
+        const percent = Math.max(0, Math.min(100, Math.round((progress.loaded / progress.total) * 100)));
+        syncDraftBtn.textContent = `Uploading draft package... ${percent}% (${formatMegabytes(progress.loaded)} / ${formatMegabytes(progress.total)})`;
+      } else if (Number(progress?.loaded) > 0) {
+        syncDraftBtn.textContent = `Uploading draft package... ${formatMegabytes(progress.loaded)}`;
+      } else {
+        syncDraftBtn.textContent = 'Uploading draft package...';
+      }
     } else {
-      session.state.uploadedDrafts.forEach((item) => {
-        const display = toUploadedDraftDisplay(item);
-        const row = document.createElement('div');
-        row.className = 'uploaded-draft-row';
-        const meta = document.createElement('div');
-        meta.className = 'uploaded-draft-meta';
-        const titleLine = document.createElement('strong');
-        titleLine.textContent = display.title;
-        const uploadedAtLine = document.createElement('div');
-        uploadedAtLine.className = 'muted uploaded-draft-uploaded-at';
-        uploadedAtLine.textContent = display.uploadedLabel;
-        meta.append(titleLine, uploadedAtLine);
-        const detailsGroup = document.createElement('div');
-        detailsGroup.className = 'uploaded-draft-details-group';
-        const draftDetails = document.createElement('details');
-        draftDetails.className = 'uploaded-draft-details uploaded-draft-details--draft';
-        const draftSummary = document.createElement('summary');
-        draftSummary.textContent = 'Draft details';
-        const draftBody = document.createElement('div');
-        draftBody.className = 'muted uploaded-draft-details-body';
-        const draftOwner = item.owner_email
-          || item.owner_name
-          || item.owner_sub
-          || session.state.serverSession?.user?.email
-          || session.state.serverSession?.user?.sub
-          || 'Unknown';
-        const draftIdLine = document.createElement('div');
-        draftIdLine.textContent = `Uploaded draft ID: ${item.uploaded_draft_id || '—'}`;
-        const draftUploadedLine = document.createElement('div');
-        draftUploadedLine.textContent = `Uploaded: ${formatUploadedDraftTimestamp(item.created_at)}`;
-        const draftTitleLine = document.createElement('div');
-        draftTitleLine.textContent = `Title: ${item.title || 'Untitled'}`;
-        const draftSubjectLine = document.createElement('div');
-        draftSubjectLine.textContent = `Subject: ${item.subject || '—'}`;
-        const draftOwnerLine = document.createElement('div');
-        draftOwnerLine.textContent = `Owner: ${draftOwner}`;
-        draftBody.append(draftIdLine, draftUploadedLine, draftTitleLine, draftSubjectLine, draftOwnerLine);
-        draftDetails.append(draftSummary, draftBody);
-        detailsGroup.appendChild(draftDetails);
-        const actions = document.createElement('div');
-        actions.className = 'uploaded-draft-actions';
-        const openBtn = document.createElement('button');
-        openBtn.type = 'button';
-        openBtn.className = 'uploaded-draft-action uploaded-draft-action--secondary';
-        openBtn.textContent = 'Open';
-        openBtn.disabled = !serverReady;
-        openBtn.addEventListener('click', async () => {
-          await session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
-          updateSummary();
-        });
-        const deleteBtn = document.createElement('button');
-        deleteBtn.type = 'button';
-        deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
-        deleteBtn.textContent = 'Delete';
-        deleteBtn.disabled = !serverReady;
-        deleteBtn.addEventListener('click', async () => {
-          const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
-          const deleteDescription = publishedPackageId
-            ? `This deletes the uploaded draft slot only. The published package will remain available by published package ID (${publishedPackageId}).`
-            : 'This will permanently remove this uploaded draft from server storage.';
-          const confirmed = await showConfirmDialog({
-            title: 'Delete uploaded draft?',
-            entityLabel: isNonEmptyString(item.title) ? item.title.trim() : 'Untitled',
-            descriptionText: deleteDescription,
-            removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
-            confirmLabel: 'Delete draft',
-          });
-          if (!confirmed) return;
-          await session.deleteUploadedDraft(item.uploaded_draft_id);
-          updateSummary();
-        });
-        const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
-        if (publishedPackageId) {
-          actions.classList.add('uploaded-draft-actions--published');
-          const badge = document.createElement('span');
-          badge.className = 'editor-pill editor-pill--ok uploaded-draft-published-badge';
-          badge.textContent = 'Published';
-          meta.appendChild(badge);
-          const copyBtn = document.createElement('button');
-          copyBtn.type = 'button';
-          copyBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
-          copyBtn.textContent = 'Copy Published ID';
-          copyBtn.disabled = !serverReady;
-          copyBtn.addEventListener('click', async () => {
-            const copied = await copyTextToClipboard(publishedPackageId);
-            emitServerNotification({
-              kind: copied ? 'success' : 'warn',
-              source: 'clipboard.publishedId',
-              text: copied
-                ? `Copied published ID ${publishedPackageId}.`
-                : 'Clipboard copy is unavailable in this browser.',
-            });
-          });
-          const details = document.createElement('details');
-          details.className = 'uploaded-draft-details uploaded-draft-details--published';
-          const summary = document.createElement('summary');
-          summary.textContent = 'Published details';
-          const body = document.createElement('div');
-          body.className = 'muted uploaded-draft-details-body';
-          const publishedIdLine = document.createElement('div');
-          publishedIdLine.textContent = `Published ID: ${publishedPackageId}`;
-          const publishedTitleLine = document.createElement('div');
-          publishedTitleLine.textContent = `Title: ${item.published_title || item.title || 'Untitled'}`;
-          const publishedSubjectLine = document.createElement('div');
-          publishedSubjectLine.textContent = `Subject: ${item.published_subject || ''}`;
-          const publishedOwnerLine = document.createElement('div');
-          publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;
-          const publishedAtLine = document.createElement('div');
-          publishedAtLine.textContent = `Published: ${formatUploadedDraftTimestamp(item.published_at)}`;
-          body.append(publishedIdLine, publishedTitleLine, publishedSubjectLine, publishedOwnerLine, publishedAtLine);
-          details.append(summary, body);
-          detailsGroup.appendChild(details);
-          meta.appendChild(detailsGroup);
-          actions.append(openBtn, copyBtn, deleteBtn);
-        } else {
-          actions.classList.add('uploaded-draft-actions--unpublished');
-          const isPublishing = session.state.publishingDraftIds.has(item.uploaded_draft_id);
-          const publishBtn = document.createElement('button');
-          publishBtn.type = 'button';
-          publishBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
-          publishBtn.textContent = isPublishing ? 'Publishing…' : 'Publish';
-          publishBtn.disabled = !serverReady || isPublishing;
-          publishBtn.addEventListener('click', async () => {
-            if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
-            const modal = await showPublishModal({ uploadedDraft: item });
-            if (!modal.confirmed) return;
-            await session.publishUploadedDraftToServer(item.uploaded_draft_id, {
-              title: modal.title,
-              subject: modal.subject,
-            });
-            updateSummary();
-          });
-          meta.appendChild(detailsGroup);
-          actions.append(openBtn, publishBtn, deleteBtn);
-        }
-        row.append(meta, actions);
-        uploadedDraftList.appendChild(row);
-      });
+      syncDraftBtn.textContent = 'Upload Draft';
     }
+    syncDraftBtn.disabled = !serverReady || isUploadingDraft || isUploadDraftFlowActive;
+    browsePublishedBtn.disabled = !serverReady;
+    manageUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? 'Refreshing…' : 'Manage Uploaded Drafts';
+    manageUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;
+    signInBtn.hidden = serverReady;
+    if (manageUploadedDraftsDialogOpen) renderManageUploadedDraftsModal();
   };
 
   session.setOnStateChange(() => {
     updateSummary();
     if (browsePublishedDialogOpen) {
       renderPublishedBrowserModal();
+    }
+    if (manageUploadedDraftsDialogOpen) {
+      renderManageUploadedDraftsModal();
     }
   });
 
@@ -4827,7 +6529,13 @@ function renderEditorShell(session) {
     updateSummary();
   });
   blockEditor.addEventListener('input', () => {
+    const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
     session.updateBlockContent(session.state.selectedBlockId, blockEditor.value);
+    if (selectedBlock?.kind === 'question') {
+      refreshPromptT2AControlsForSelectedBlock();
+      updateSummary({ preserveDetailEditor: true });
+      return;
+    }
     updateSummary();
   });
   saveBtn.addEventListener('click', async () => {
@@ -4885,9 +6593,14 @@ function renderEditorShell(session) {
     session.updateQuestionMaxLength(session.state.selectedBlockId, questionMaxLength.value);
     updateSummary();
   });
-  questionTextDisplayMode.addEventListener('change', () => {
-    session.updateQuestionTextDisplayMode(session.state.selectedBlockId, questionTextDisplayMode.value);
-    updateSummary();
+  questionTextDisplayModeButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      session.updateQuestionTextDisplayMode(
+        session.state.selectedBlockId,
+        button.dataset.textDisplayMode || 'multi_line'
+      );
+      updateSummary();
+    });
   });
   questionMin.addEventListener('input', () => {
     session.updateQuestionNumberConfig(session.state.selectedBlockId, 'min', questionMin.value);
@@ -4897,16 +6610,20 @@ function renderEditorShell(session) {
     session.updateQuestionNumberConfig(session.state.selectedBlockId, 'max', questionMax.value);
     updateSummary();
   });
-  questionCorrectAnswerBoolean.addEventListener('change', () => {
-    session.updateQuestionCorrectAnswerBoolean(session.state.selectedBlockId, questionCorrectAnswerBoolean.value);
-    updateSummary();
+  questionCorrectAnswerBooleanButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const selectedValue = button.dataset.booleanAnswerValue || '';
+      const nextValue = button.getAttribute('aria-pressed') === 'true' ? '' : selectedValue;
+      session.updateQuestionCorrectAnswerBoolean(session.state.selectedBlockId, nextValue);
+      updateSummary();
+    });
   });
   questionCorrectAnswerNumber.addEventListener('input', () => {
     session.updateQuestionCorrectAnswerNumber(session.state.selectedBlockId, questionCorrectAnswerNumber.value);
     updateSummary();
   });
-  questionNumberAllowSigned.addEventListener('change', () => {
-    session.updateQuestionNumberRulesAllowSigned(session.state.selectedBlockId, questionNumberAllowSigned.checked);
+  questionNumberAllowSignedToggle.addEventListener('click', () => {
+    session.updateQuestionNumberRulesAllowSigned(session.state.selectedBlockId, !questionNumberAllowSigned.checked);
     updateSummary();
   });
   questionNumberDecimalPlacesAllowed.addEventListener('input', () => {
@@ -4920,8 +6637,8 @@ function renderEditorShell(session) {
     session.updateQuestionSelectionMode(session.state.selectedBlockId, questionSelectionMode.value);
     updateSummary();
   });
-  questionShuffleOptions.addEventListener('change', () => {
-    session.updateQuestionShuffleOptions(session.state.selectedBlockId, questionShuffleOptions.checked);
+  questionShuffleToggle.addEventListener('click', () => {
+    session.updateQuestionShuffleOptions(session.state.selectedBlockId, !questionShuffleOptions.checked);
     updateSummary();
   });
   questionOptions.addEventListener('input', () => {
@@ -4933,49 +6650,85 @@ function renderEditorShell(session) {
     updateSummary();
   });
   questionImageInput.addEventListener('change', async () => {
-    const [file] = questionImageInput.files || [];
-    const blockId = questionImageInput.dataset.blockId;
-    if (!file || !blockId) return;
-    const currentBlock = session.findBlock(blockId);
-    const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_image'));
-    const confirmed = !hasExisting || window.confirm('Replace existing question image?');
-    const result = await session.attachQuestionMedia(blockId, 'question_image', file, { confirmReplace: confirmed });
-    if (result.reason === 'confirm-replace-required') {
-      session.setMediaFeedback('Image replacement canceled.');
-    }
-    questionImageInput.value = '';
-    updateSummary();
+    await runMediaAction(async () => {
+      const [file] = questionImageInput.files || [];
+      const blockId = questionImageInput.dataset.blockId;
+      if (!file || !blockId) return;
+      const currentBlock = session.findBlock(blockId);
+      const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_image'));
+      if (hasExisting) {
+        const confirmed = await confirmDangerAction({
+          title: 'Replace question image?',
+          bodyText: 'Replacing will discard the currently attached question image.',
+          confirmLabel: 'Replace image',
+          removalItems: ['Current image file attachment for this question.'],
+        });
+        if (!confirmed) {
+          session.setMediaFeedback('Image replacement canceled.');
+          questionImageInput.value = '';
+          updateSummary();
+          return;
+        }
+      }
+      await session.attachQuestionMedia(blockId, 'question_image', file, { confirmReplace: true });
+      questionImageInput.value = '';
+      updateSummary();
+    });
   });
   questionAudioInput.addEventListener('change', async () => {
-    const [file] = questionAudioInput.files || [];
-    const blockId = questionAudioInput.dataset.blockId;
-    if (!file || !blockId) return;
-    const currentBlock = session.findBlock(blockId);
-    const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_audio'));
-    const confirmed = !hasExisting || window.confirm('Replace existing question audio?');
-    const result = await session.attachQuestionMedia(blockId, 'question_audio', file, { confirmReplace: confirmed });
-    if (result.reason === 'confirm-replace-required') {
-      session.setMediaFeedback('Audio replacement canceled.');
-    }
-    questionAudioInput.value = '';
-    updateSummary();
+    await runMediaAction(async () => {
+      const [file] = questionAudioInput.files || [];
+      const blockId = questionAudioInput.dataset.blockId;
+      if (!file || !blockId) return;
+      const currentBlock = session.findBlock(blockId);
+      const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_audio'));
+      if (hasExisting) {
+        const confirmed = await confirmDangerAction({
+          title: 'Replace question audio?',
+          bodyText: 'Replacing will discard the currently attached question audio.',
+          confirmLabel: 'Replace audio',
+          removalItems: ['Current audio file attachment for this question.'],
+        });
+        if (!confirmed) {
+          session.setMediaFeedback('Audio replacement canceled.');
+          questionAudioInput.value = '';
+          updateSummary();
+          return;
+        }
+      }
+      await session.attachQuestionMedia(blockId, 'question_audio', file, { confirmReplace: true });
+      questionAudioInput.value = '';
+      updateSummary();
+    });
   });
   optionAudioInput.addEventListener('change', async () => {
-    const [file] = optionAudioInput.files || [];
-    if (!file || !pendingOptionAudioTarget) return;
-    const { blockId, optionId } = pendingOptionAudioTarget;
-    pendingOptionAudioTarget = null;
-    const block = session.findBlock(blockId);
-    const config = normalizeQuestionResponseConfig(block?.responseConfig);
-    const option = (config.options || []).map((item) => normalizeResponseOption(item)).find((item) => item.id === optionId);
-    const hasExisting = Boolean(getSingleMediaRef(option?.mediaRefs, 'option_audio'));
-    const confirmed = !hasExisting || window.confirm('Replace existing option audio?');
-    const result = await session.attachOptionAudio(blockId, optionId, file, { confirmReplace: confirmed });
-    if (result.reason === 'confirm-replace-required') {
-      session.setMediaFeedback('Option audio replacement canceled.');
-    }
-    optionAudioInput.value = '';
-    updateSummary();
+    await runMediaAction(async () => {
+      const [file] = optionAudioInput.files || [];
+      if (!file || !pendingOptionAudioTarget) return;
+      const { blockId, optionId } = pendingOptionAudioTarget;
+      pendingOptionAudioTarget = null;
+      const block = session.findBlock(blockId);
+      const config = normalizeQuestionResponseConfig(block?.responseConfig);
+      const option = (config.options || []).map((item) => normalizeResponseOption(item)).find((item) => item.id === optionId);
+      const hasExisting = Boolean(getSingleMediaRef(option?.mediaRefs, 'option_audio'));
+      if (hasExisting) {
+        const confirmed = await confirmDangerAction({
+          title: 'Replace option audio?',
+          bodyText: 'Replacing will discard the currently attached option audio.',
+          confirmLabel: 'Replace audio',
+          removalItems: ['Current audio file attachment for this option.'],
+        });
+        if (!confirmed) {
+          session.setMediaFeedback('Option audio replacement canceled.');
+          optionAudioInput.value = '';
+          updateSummary();
+          return;
+        }
+      }
+      await session.attachOptionAudio(blockId, optionId, file, { confirmReplace: true });
+      optionAudioInput.value = '';
+      updateSummary();
+    });
   });
 
   importBtn.addEventListener('click', () => {
@@ -4998,34 +6751,58 @@ function renderEditorShell(session) {
     await session.exportCurrentDraftToPackageFile();
     updateSummary();
   });
-  rewriteBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeRewriteAfterLogin');
-    updateSummary();
-  });
-  t2aBtn.addEventListener('click', async () => {
-    await session.triggerProtectedAction('resumeT2AAfterLogin');
-    updateSummary();
-  });
   syncDraftBtn.addEventListener('click', async () => {
-    await session.uploadCurrentDraftToServer();
-    updateSummary();
+    if (session.state.isUploadDraftFlowActive || session.state.isUploadingDraft) return;
+    let uploadFlowStarted = false;
+    try {
+      const result = await guardServerMenuAction(syncDraftBtn, () => {
+        session.state.isUploadDraftFlowActive = true;
+        uploadFlowStarted = true;
+        updateSummary();
+        return session.uploadCurrentDraftToServer({ preflight: false });
+      });
+      if (!result?.ok && result?.error?.code === 'DRAFT_NAME_CONFLICT') {
+        const choice = await showUploadConflictModal({ existingDraft: result.error.details?.existingDraft });
+        if (choice.action === 'replace' || choice.action === 'copy') {
+          const retry = await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
+          if (!retry?.ok && retry?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
+            const slotChoice = await showSlotFullModal({ uploadedDrafts: retry.error.details?.uploadedDrafts });
+            if (slotChoice.deleted) {
+              await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
+            }
+          }
+        }
+      } else if (!result?.ok && result?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
+        const slotChoice = await showSlotFullModal({ uploadedDrafts: result.error.details?.uploadedDrafts });
+        if (slotChoice.deleted) {
+          await session.uploadCurrentDraftToServer({ preflight: false });
+        }
+      }
+    } finally {
+      if (uploadFlowStarted) {
+        session.state.isUploadDraftFlowActive = false;
+      }
+      updateSummary();
+    }
   });
   browsePublishedBtn.addEventListener('click', async () => {
-    const sessionReady = await session.ensureServerSessionReady();
-    if (!sessionReady.ok) {
-      updateSummary();
-      return;
-    }
-    browsePublishedDialogOpen = true;
-    renderPublishedBrowserModal();
-    await runPublishedSearch();
+    await guardServerMenuAction(browsePublishedBtn, async () => {
+      browsePublishedDialogOpen = true;
+      renderPublishedBrowserModal();
+      await runPublishedSearch();
+    });
   });
   signInBtn.addEventListener('click', () => {
     session.beginServerSignIn();
     updateSummary();
   });
-  loadUploadedDraftsBtn.addEventListener('click', async () => {
-    await session.loadUploadedDrafts();
+  manageUploadedDraftsBtn.addEventListener('click', async () => {
+    await guardServerMenuAction(manageUploadedDraftsBtn, async () => {
+      manageUploadedDraftsDialogOpen = true;
+      renderManageUploadedDraftsModal();
+      await session.loadUploadedDrafts({ preflight: false });
+      renderManageUploadedDraftsModal();
+    });
     updateSummary();
   });
   loadOlderActivityBtn.addEventListener('click', () => {
@@ -5034,19 +6811,14 @@ function renderEditorShell(session) {
     updateSummary();
   });
 
-  addContentBtn.textContent = '+ Add Content';
-  addQuestionBtn.textContent = '+ Add Question';
   controlsRow.append(addContentBtn, addQuestionBtn);
   metaRow.append(saveBtn, exportBtn, importBtn, openViewerBtn);
   protectedActionsColumn.append(
     serverSessionStatus,
     signInBtn,
     syncDraftBtn,
-    browsePublishedBtn,
-    loadUploadedDraftsBtn,
-    uploadedDraftList,
-    rewriteBtn,
-    t2aBtn
+    manageUploadedDraftsBtn,
+    browsePublishedBtn
   );
   moreActions.append(protectedActionsColumn);
   leftPanel.append(
@@ -5067,6 +6839,7 @@ function renderEditorShell(session) {
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);
   shell.append(topBar, layout);
   shell.appendChild(browsePublishedModalRoot);
+  shell.appendChild(manageUploadedDraftsModalRoot);
   shell.appendChild(toastContainer);
   app.innerHTML = '';
   app.append(shell);
@@ -5086,17 +6859,60 @@ async function bootstrapEditor() {
     scrollToken: initialRestore?.scrollToken || null,
   });
 
+  const hasOnlyAllowedKeys = (payload, allowedKeys) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    return Object.keys(payload).every((key) => allowedKeys.has(key));
+  };
+  const validateEditorIntent = (intent) => {
+    const actionId = typeof intent?.actionId === 'string' ? intent.actionId : '';
+    if (!actionId || !session.state.draft?.localId) return false;
+    const payload = intent?.payload;
+
+    if (actionId === 'editorPromptT2A' || actionId === 'resumeT2AAfterLogin') {
+      const allowed = new Set(['localDraftId', 'blockId', 'target']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      if (typeof payload.localDraftId !== 'string' || typeof payload.blockId !== 'string') return false;
+      if (payload.target !== 'question_prompt') return false;
+      return session.validateEditorPromptT2AIntentPayload(payload).ok;
+    }
+
+    if (actionId === 'editorOptionT2A') {
+      const allowed = new Set(['localDraftId', 'blockId', 'target', 'optionId']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      if (
+        typeof payload.localDraftId !== 'string'
+        || typeof payload.blockId !== 'string'
+        || typeof payload.optionId !== 'string'
+      ) {
+        return false;
+      }
+      if (payload.target !== 'option') return false;
+      return session.validateEditorOptionT2AIntentPayload(payload).ok;
+    }
+
+    if (actionId === 'resumeRewriteAfterLogin') {
+      const allowed = new Set(['localDraftId', 'blockId', 'target']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      if (typeof payload.localDraftId !== 'string' || typeof payload.blockId !== 'string') return false;
+      if (payload.target !== 'question_prompt') return false;
+      const block = session.findBlock(payload.blockId);
+      return payload.localDraftId === session.state.draft?.localId && Boolean(block && block.kind === 'question');
+    }
+
+    return false;
+  };
+
   const authGate = new SharedAuthGate({
     appArea: 'editor',
     resumeFlagKey: RESUME_FLAG_KEY,
     storage: session.storage,
-    isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1',
+    checkSessionReady: async () => session.ensureServerSessionReady(),
     getCurrentLocalId: () => session.state.draft?.localId || null,
     getCurrentUiState: () => session.getUiRestoreState(),
     persistLocalRecord: () => session.flushLocalStateForAuthRedirect(),
     restoreByLocalId: (localIdToRestore) => session.restoreByLocalId(localIdToRestore),
     restoreUiState: (uiState) => session.applyUiRestoreState(uiState),
-    validateIntent: (intent) => Boolean(intent?.actionId && session.state.draft?.localId),
+    validateIntent: (intent) => validateEditorIntent(intent),
     replayIntent: (intent) => session.replayProtectedAction(intent),
     onRecoveryMessage: (message) => session.setRecoveryMessage(message),
     redirectToAuth: ({ redirectTo }) => {

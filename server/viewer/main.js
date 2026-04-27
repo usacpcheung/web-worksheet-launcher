@@ -7,6 +7,13 @@ import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
 import { mapLegacyJsonToPackageModel, parseWorksheetPackage } from '../editor/worksheet-package.js';
 import { createServerApiClient } from '../app/api/server-api-client.js';
+import {
+  DEFAULT_PUBLISHED_PACKAGE_LIMIT,
+  fetchPublishedPackagesPage,
+  mergePublishedPackageRows,
+  normalizePaginationState,
+  normalizePublishedPackageFilters,
+} from '../app/api/published-packages-service.js';
 
 const app = document.getElementById('app');
 const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
@@ -15,6 +22,17 @@ const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
 const DEFAULT_LEARNER_ID = 'local_learner';
 const TEXT_WARNING_THRESHOLD_RATIO = 0.1;
+const VIEWER_SERVER_SESSION_STATES = Object.freeze({
+  LOGGED_OUT: 'logged_out',
+  CHECKING: 'checking',
+  LOGGED_IN: 'logged_in',
+});
+const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';
+const AUTH_RETURN_PARAM = 'authReturn';
+const VIEWER_AUTH_CALLBACK_PARAM = 'authCallback';
+const AUTH_CALLBACK_RETRY_BASE_MS = 1000;
+const AUTH_CALLBACK_RETRY_MAX_MS = 10000;
+const AUTH_CALLBACK_RETRY_BUDGET_MS = 60000;
 let activeViewerShellAbortController = null;
 
 
@@ -25,6 +43,7 @@ const VIEWER_BOOT_ERROR_CODES = Object.freeze({
   SNAPSHOT_PARSE_FAILED: 'SNAPSHOT_PARSE_FAILED',
   LOCAL_DRAFT_NOT_FOUND: 'LOCAL_DRAFT_NOT_FOUND',
   IMPORTED_WORKSHEET_NOT_FOUND: 'IMPORTED_WORKSHEET_NOT_FOUND',
+  PUBLISHED_PACKAGE_NOT_FOUND: 'PUBLISHED_PACKAGE_NOT_FOUND',
   INVALID_VIEWER_PAYLOAD: 'INVALID_VIEWER_PAYLOAD',
   VIEWER_BOOT_FAILED: 'VIEWER_BOOT_FAILED',
 });
@@ -81,6 +100,39 @@ function parseLaunchParamJson(params, key, parseErrorCode) {
   return { present: true, value: parsed };
 }
 
+function hasViewerLaunchIntent(params, options = {}) {
+  return Boolean(
+    params.has('localAttemptId')
+    || params.has('localDraftId')
+    || params.has('publishedPackageId')
+    || params.has('viewerPayload')
+    || params.has('snapshot')
+    || params.has('importedWorksheetId')
+    || (options.includeAuthReturn === true && params.get(AUTH_RETURN_PARAM) === '1')
+  );
+}
+
+function hasViewerContentIntent(params) {
+  return Boolean(
+    params.has('localDraftId')
+    || params.has('publishedPackageId')
+    || params.has('viewerPayload')
+    || params.has('snapshot')
+    || params.has('importedWorksheetId')
+  );
+}
+
+function isAuthSessionError(error) {
+  const status = Number(error?.status);
+  const code = String(error?.code || '').toUpperCase();
+  return Boolean(
+    error?.requiresSignIn
+    || status === 401
+    || status === 403
+    || code === 'AUTH_REQUIRED'
+  );
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -100,6 +152,24 @@ function formatTimestampForDisplay(timestamp) {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatTimestampForReportHeader(timestamp) {
+  if (typeof timestamp !== 'string' || !timestamp.trim()) {
+    return '';
+  }
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp;
+  }
+  return parsed.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
     hour12: false,
   });
 }
@@ -232,6 +302,21 @@ function computeViewerPayloadFingerprint(payload) {
     })),
   };
   return computeStableHash(projection);
+}
+
+function buildTechnicalDetailsRows(state = {}) {
+  const rows = [
+    ['Local attempt ID', state.localAttemptId || 'n/a'],
+  ];
+
+  if (state.sourceLocalDraftId) {
+    rows.push(['Local draft ID', state.sourceLocalDraftId]);
+  }
+  if (state.sourceImportedWorksheetId) {
+    rows.push(['Imported worksheet ID', state.sourceImportedWorksheetId]);
+  }
+
+  return rows;
 }
 
 function isSnapshotLikeWorksheet(value) {
@@ -402,6 +487,13 @@ function clampTextAnswer(rawValue, maxLength) {
   const max = Number.isFinite(maxLength) && maxLength > 0 ? Math.trunc(maxLength) : 0;
   if (max <= 0) return value;
   return value.slice(0, max);
+}
+
+function normalizeTextForRewriteSnapshotCompare(questionBlock, rawValue) {
+  // Match save semantics: clamp first, then trim for comparison.
+  const value = String(rawValue ?? '');
+  const responseConfig = isRecord(questionBlock?.responseConfig) ? questionBlock.responseConfig : {};
+  return clampTextAnswer(value, responseConfig.maxLength).trim();
 }
 
 function computeTextLengthFeedback(rawValue, maxLength, warningThresholdRatio = TEXT_WARNING_THRESHOLD_RATIO) {
@@ -911,6 +1003,694 @@ function computeAnswerSummary(viewerPayload, answers) {
   return { answered, total: questions.length };
 }
 
+function getQuestionBlocksInOrder(viewerPayload) {
+  return Array.isArray(viewerPayload?.blocks)
+    ? viewerPayload.blocks
+      .filter((block) => block?.kind === 'question')
+      .sort((a, b) => a.position - b.position)
+    : [];
+}
+
+function getQuestionImageRefForPrint(block) {
+  const promptMediaRefs = normalizePromptMediaRefs(block?.prompt?.mediaRefs);
+  return promptMediaRefs.find((ref) => ref.usage === 'question_image') || null;
+}
+
+function getOptionLabelByValue(block, rawValue) {
+  const options = Array.isArray(block?.responseConfig?.options)
+    ? block.responseConfig.options
+    : [];
+  const normalizedValue = String(rawValue ?? '');
+  const matched = options.find((option) => String(option?.value ?? option?.label ?? '') === normalizedValue);
+  return matched ? String(matched.label ?? matched.value ?? normalizedValue) : normalizedValue;
+}
+
+function formatAnswerValueForPrint(block, rawValue) {
+  const inputType = block?.responseConfig?.inputType || 'text';
+  if (inputType === 'multiple_choice') {
+    const selectionMode = block?.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
+    if (selectionMode === 'multi') {
+      const normalizedValues = Array.isArray(rawValue)
+        ? rawValue.map((value) => String(value))
+        : [];
+      if (normalizedValues.length === 0) {
+        return 'No answer submitted';
+      }
+      const options = Array.isArray(block?.responseConfig?.options)
+        ? block.responseConfig.options
+        : [];
+      const optionOrder = options.map((option) => String(option?.value ?? option?.label ?? ''));
+      const orderedValues = optionOrder.filter((value) => normalizedValues.includes(value));
+      const remainingValues = normalizedValues.filter((value) => !orderedValues.includes(value));
+      return [...orderedValues, ...remainingValues]
+        .map((value) => getOptionLabelByValue(block, value))
+        .join('\n');
+    }
+
+    if (rawValue === null || rawValue === undefined || String(rawValue).trim() === '') {
+      return 'No answer submitted';
+    }
+    return getOptionLabelByValue(block, rawValue);
+  }
+
+  if (inputType === 'boolean') {
+    const normalized = coerceAnswerValueByInputType('boolean', rawValue);
+    if (normalized === true) return 'True';
+    if (normalized === false) return 'False';
+    return 'No answer submitted';
+  }
+
+  if (inputType === 'number') {
+    if (rawValue === '' || rawValue === null || rawValue === undefined) {
+      return 'No answer submitted';
+    }
+    return String(rawValue);
+  }
+
+  const textValue = String(rawValue ?? '');
+  return textValue.trim() ? textValue : 'No answer submitted';
+}
+
+function formatCorrectAnswerForPrint(block) {
+  const inputType = block?.responseConfig?.inputType || 'text';
+  const correctAnswer = block?.responseConfig?.correctAnswer;
+
+  if (inputType === 'multiple_choice') {
+    const selectionMode = block?.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
+    if (selectionMode === 'multi') {
+      const normalizedValues = Array.isArray(correctAnswer)
+        ? correctAnswer.map((value) => String(value))
+        : [];
+      return normalizedValues.length > 0
+        ? normalizedValues.map((value) => getOptionLabelByValue(block, value)).join('\n')
+        : '';
+    }
+    return typeof correctAnswer === 'string' && correctAnswer.trim()
+      ? getOptionLabelByValue(block, correctAnswer)
+      : '';
+  }
+
+  if (inputType === 'boolean') {
+    const normalized = coerceAnswerValueByInputType('boolean', correctAnswer);
+    if (normalized === true) return 'True';
+    if (normalized === false) return 'False';
+    return '';
+  }
+
+  if (inputType === 'number') {
+    return correctAnswer === '' || correctAnswer === null || correctAnswer === undefined
+      ? ''
+      : String(correctAnswer);
+  }
+
+  return '';
+}
+
+function buildPrintQuestionResult(block, checkResult) {
+  if (!checkResult) {
+    return null;
+  }
+
+  const status = checkResult?.statusByBlockId?.[block?.blockId] || null;
+  if (!status) {
+    return null;
+  }
+
+  if (status === 'correct') {
+    return {
+      status,
+      label: 'Correct',
+      detail: '',
+    };
+  }
+
+  if (status === 'incorrect') {
+    const correctAnswerText = formatCorrectAnswerForPrint(block);
+    return {
+      status,
+      label: 'Incorrect',
+      detail: correctAnswerText ? `Correct answer: ${correctAnswerText}` : '',
+    };
+  }
+
+  return {
+    status,
+    label: 'Not graded',
+    detail: '',
+  };
+}
+
+function classifyPrintQuestionLayout(question) {
+  const promptText = String(question?.promptText || '');
+  const answerText = String(question?.answerText || '');
+  const resultDetail = String(question?.result?.detail || '');
+  const hasImage = question?.image?.status === 'ready';
+  const combinedText = [promptText, answerText, resultDetail].join('\n');
+  const lineCount = combinedText.split(/\r?\n/).length;
+  const answerLineBreaks = (answerText.match(/\n/g) || []).length;
+  const estimatedBlockChars = promptText.length + answerText.length + resultDetail.length;
+  const hasVisibleResultDetail = resultDetail.trim().length > 0;
+
+  if (
+    estimatedBlockChars > 900
+    || lineCount > 18
+    || answerText.length > 450
+    || answerLineBreaks >= 3
+  ) {
+    return 'flow';
+  }
+
+  if (
+    promptText.length > 240
+    || answerText.length > 260
+    || lineCount > 10
+    || (hasImage && estimatedBlockChars > 260)
+    || (hasVisibleResultDetail && estimatedBlockChars > 320)
+  ) {
+    return 'keep-head';
+  }
+
+  return 'keep-all';
+}
+
+function classifyPrintSectionBreakMode({
+  text = '',
+  hasImage = false,
+  lineThreshold = 28,
+  charThreshold = 1200,
+} = {}) {
+  const normalizedText = String(text || '');
+  const lineCount = normalizedText.split(/\r?\n/).length;
+  const effectiveCharThreshold = hasImage ? Math.max(700, charThreshold - 220) : charThreshold;
+  if (normalizedText.length > effectiveCharThreshold || lineCount > lineThreshold) {
+    return 'flow';
+  }
+  return 'keep';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function formatMultilineTextForHtml(value) {
+  return escapeHtml(value).replace(/\r?\n/g, '<br>');
+}
+
+function encodeBytesToBase64(bytes) {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes).toString('base64');
+  }
+
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+const PRINT_IMAGE_MIME_TYPE_ALLOWLIST = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+]);
+
+function normalizePrintImageMimeType(mimeType, fallback = 'image/png') {
+  if (typeof mimeType !== 'string') {
+    return fallback;
+  }
+  const normalized = mimeType.trim().toLowerCase().split(';')[0];
+  if (normalized === 'image/jpg') {
+    return 'image/jpeg';
+  }
+  if (!PRINT_IMAGE_MIME_TYPE_ALLOWLIST.has(normalized)) {
+    return fallback;
+  }
+  return normalized;
+}
+
+function binaryToDataUrl(binary, mimeType = 'image/png') {
+  if (!(binary instanceof Uint8Array) || binary.byteLength === 0) {
+    return null;
+  }
+  const safeMimeType = normalizePrintImageMimeType(mimeType, 'image/png');
+  const encoded = encodeBytesToBase64(binary);
+  return `data:${safeMimeType};base64,${encoded}`;
+}
+
+async function resolvePrintQuestionImage(questionImageRef, storage) {
+  if (!questionImageRef?.assetId || !storage?.localAssets?.get) {
+    return null;
+  }
+
+  try {
+    const asset = await storage.localAssets.get(questionImageRef.assetId);
+    if (!(asset?.binary instanceof Uint8Array) || asset.binary.byteLength === 0) {
+      return {
+        status: 'missing',
+        message: 'Question image unavailable.',
+      };
+    }
+    const mimeType = normalizePrintImageMimeType(asset?.metadata?.mimeType, 'image/png');
+    const src = binaryToDataUrl(asset.binary, mimeType);
+    if (!src) {
+      return {
+        status: 'missing',
+        message: 'Question image unavailable.',
+      };
+    }
+    return {
+      status: 'ready',
+      src,
+      alt: 'Question image',
+    };
+  } catch {
+    return {
+      status: 'missing',
+      message: 'Question image unavailable.',
+    };
+  }
+}
+
+async function buildWorksheetPrintReportModel({
+  viewerPayload,
+  answers = {},
+  studentName = '',
+  completedAt = '',
+  checkResult = null,
+  storage = null,
+} = {}) {
+  const orderedQuestions = getQuestionBlocksInOrder(viewerPayload);
+  const checkedSummary = checkResult
+    ? `Checked ${checkResult.correctCount}/${checkResult.totalQuestions} correct`
+    : '';
+
+  const questions = await Promise.all(orderedQuestions.map(async (block, index) => {
+    const learnerValue = answers?.[block.blockId]?.value;
+    const questionImage = await resolvePrintQuestionImage(getQuestionImageRefForPrint(block), storage);
+    const question = {
+      blockId: block.blockId,
+      questionNumber: index + 1,
+      promptText: String(block?.prompt?.text || '').trim(),
+      answerText: formatAnswerValueForPrint(block, learnerValue),
+      result: buildPrintQuestionResult(block, checkResult),
+      image: questionImage,
+    };
+    const promptSectionMode = classifyPrintSectionBreakMode({
+      text: question.promptText,
+      hasImage: question.image?.status === 'ready',
+      lineThreshold: 20,
+      charThreshold: 850,
+    });
+    const answerSectionMode = classifyPrintSectionBreakMode({
+      text: question.answerText,
+      lineThreshold: 30,
+      charThreshold: 1400,
+    });
+    const checkedAnswerSectionMode = question.result
+      ? classifyPrintSectionBreakMode({
+        text: [question.result.label, question.result.detail || ''].join('\n'),
+        lineThreshold: 22,
+        charThreshold: 1000,
+      })
+      : null;
+    return {
+      ...question,
+      layoutMode: classifyPrintQuestionLayout(question),
+      sectionBreakModes: {
+        prompt: promptSectionMode,
+        answer: answerSectionMode,
+        checkedAnswer: checkedAnswerSectionMode,
+      },
+    };
+  }));
+
+  return {
+    title: String(viewerPayload?.title || 'Worksheet'),
+    studentName: String(studentName || '').trim(),
+    completedAtLabel: formatTimestampForReportHeader(completedAt),
+    checkedSummary,
+    questions,
+  };
+}
+
+function buildWorksheetPrintReportHtml(reportModel) {
+  const studentRow = reportModel.studentName
+    ? `
+      <div class="print-meta-row">
+        <dt>Student</dt>
+        <dd>${escapeHtml(reportModel.studentName)}</dd>
+      </div>
+    `
+    : '';
+  const completedRow = reportModel.completedAtLabel
+    ? `
+      <div class="print-meta-row">
+        <dt>Completed</dt>
+        <dd>${escapeHtml(reportModel.completedAtLabel)}</dd>
+      </div>
+    `
+    : '';
+  const checkedRow = reportModel.checkedSummary
+    ? `
+      <div class="print-meta-row">
+        <dt>Check result</dt>
+        <dd>${escapeHtml(reportModel.checkedSummary)}</dd>
+      </div>
+    `
+    : '';
+
+  const questionsHtml = reportModel.questions.map((question) => {
+    const imageHtml = question.image?.status === 'ready' && question.image?.src
+      ? `
+        <div class="print-question-image-wrap">
+          <img class="print-question-image" src="${escapeHtml(question.image.src)}" alt="${escapeHtml(question.image.alt || 'Question image')}">
+        </div>
+      `
+      : question.image?.status === 'missing'
+        ? `<p class="print-question-media-note">${escapeHtml(question.image.message || 'Question image unavailable.')}</p>`
+        : '';
+
+    const checkedAnswerSectionClass = `print-question-section--${escapeHtml(question.sectionBreakModes?.checkedAnswer || 'keep')}`;
+    const resultHtml = question.result
+      ? `
+        <section class="print-question-section print-question-section--result ${checkedAnswerSectionClass} print-result-${escapeHtml(question.result.status || 'neutral')}">
+          <h3>Checked answer</h3>
+          <p class="print-result-label">${escapeHtml(question.result.label)}</p>
+          ${question.result.detail ? `<p class="print-result-detail">${formatMultilineTextForHtml(question.result.detail)}</p>` : ''}
+        </section>
+      `
+      : '';
+
+    return `
+      <article class="print-question print-question--${escapeHtml(question.layoutMode || 'keep-all')}">
+        <header class="print-question-header">
+          <div class="print-question-number">Question ${question.questionNumber}</div>
+        </header>
+        <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
+          <h3>Question</h3>
+          <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || 'No prompt text provided.')}</p>
+          ${imageHtml}
+        </section>
+        <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
+          <h3>Answer</h3>
+          <p class="print-answer-text">${formatMultilineTextForHtml(question.answerText)}</p>
+        </section>
+        ${resultHtml}
+      </article>
+    `;
+  }).join('');
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(reportModel.title)} - Print Report</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 16mm 14mm 18mm 14mm;
+    }
+
+    :root {
+      color-scheme: light;
+      font-family: "Georgia", "Times New Roman", serif;
+      color: #111;
+      background: #fff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: #111;
+      background: #fff;
+      font-size: 11.5pt;
+      line-height: 1.45;
+    }
+
+    .print-report {
+      width: 100%;
+    }
+
+    .print-header {
+      border-bottom: 1px solid #b8bcc4;
+      padding-bottom: 10mm;
+      margin-bottom: 9mm;
+      break-after: avoid;
+    }
+
+    .print-title {
+      margin: 0 0 5mm;
+      font-size: 20pt;
+      line-height: 1.15;
+      font-weight: 700;
+    }
+
+    .print-meta {
+      display: grid;
+      gap: 2.5mm;
+      margin: 0;
+    }
+
+    .print-meta-row {
+      display: grid;
+      grid-template-columns: 32mm 1fr;
+      gap: 4mm;
+    }
+
+    .print-meta-row dt {
+      font-weight: 700;
+    }
+
+    .print-meta-row dd {
+      margin: 0;
+    }
+
+    .print-question {
+      margin: 0 0 9mm;
+      padding: 0 0 4mm;
+      background: transparent;
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
+    .print-question--keep-all,
+    .print-question--keep-head,
+    .print-question--flow {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
+    .print-question-header {
+      break-after: avoid;
+      page-break-after: avoid;
+      margin-bottom: 3mm;
+    }
+
+    .print-question-number {
+      font-size: 13pt;
+      font-weight: 700;
+    }
+
+    .print-question-section {
+      margin-top: 0;
+      padding-top: 0;
+    }
+
+    .print-question-section + .print-question-section {
+      margin-top: 4.5mm;
+      padding-top: 0;
+    }
+
+    .print-question-section--keep {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .print-question-section--flow {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
+    .print-question-section h3 {
+      margin: 0 0 2mm;
+      font-size: 10pt;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #444;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+
+    .print-question-text,
+    .print-answer-text,
+    .print-result-detail,
+    .print-question-media-note,
+    .print-result-label {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .print-question-image-wrap {
+      margin-top: 4mm;
+    }
+
+    .print-question-image {
+      display: block;
+      max-width: 100%;
+      max-height: 60mm;
+      border: 1px solid #d7dbe2;
+      border-radius: 2mm;
+    }
+
+    .print-question-media-note {
+      color: #666;
+      font-style: italic;
+    }
+
+    .print-question-section--result .print-result-label {
+      margin-bottom: 1.5mm;
+    }
+
+    .print-result-correct .print-result-label {
+      font-weight: 700;
+    }
+
+    .print-result-incorrect .print-result-label,
+    .print-result-ungraded_missing_or_invalid_key .print-result-label {
+      font-weight: 700;
+    }
+
+    @media print {
+      body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="print-report">
+    <header class="print-header">
+      <h1 class="print-title">${escapeHtml(reportModel.title)}</h1>
+      <dl class="print-meta">
+        ${studentRow}
+        ${completedRow}
+        ${checkedRow}
+      </dl>
+    </header>
+    ${questionsHtml}
+  </main>
+  <script>
+    (function () {
+      const images = Array.from(document.images || []);
+      const waitForImages = images.length === 0
+        ? Promise.resolve()
+        : Promise.all(images.map((img) => (
+          img.complete
+            ? Promise.resolve()
+            : new Promise((resolve) => {
+              img.addEventListener('load', resolve, { once: true });
+              img.addEventListener('error', resolve, { once: true });
+            })
+        )));
+
+      waitForImages.then(() => {
+        if (typeof window.focus === 'function') {
+          window.focus();
+        }
+        if (typeof window.print === 'function') {
+          window.print();
+        }
+      });
+
+      window.addEventListener('afterprint', () => {
+        if (typeof window.close === 'function') {
+          window.close();
+        }
+      });
+    }());
+  </script>
+</body>
+</html>`;
+}
+
+async function startWorksheetPrintFlow({
+  session,
+  openWindow = (...args) => window.open(...args),
+} = {}) {
+  if (!session?.state?.viewerPayload || session.state.status !== 'completed') {
+    return {
+      ok: false,
+      message: 'Submit the worksheet before printing the report.',
+    };
+  }
+
+  const printWindow = openWindow('', 'worksheet_print_report', 'width=960,height=720,resizable=yes,scrollbars=yes');
+  if (!printWindow || !printWindow.document || typeof printWindow.document.open !== 'function') {
+    return {
+      ok: false,
+      message: 'Print window was blocked. Allow popups for this site, then try again.',
+    };
+  }
+  try {
+    printWindow.opener = null;
+  } catch {
+    // Ignore environments that prevent mutating opener.
+  }
+
+  const reportModel = await buildWorksheetPrintReportModel({
+    viewerPayload: session.state.viewerPayload,
+    answers: session.state.answers,
+    studentName: session.state.studentName,
+    completedAt: session.state.completedAt,
+    checkResult: session.state.checkResult,
+    storage: session.storage,
+  });
+
+  if (
+    printWindow.closed
+    || !printWindow.document
+    || typeof printWindow.document.open !== 'function'
+    || typeof printWindow.document.write !== 'function'
+    || typeof printWindow.document.close !== 'function'
+  ) {
+    return {
+      ok: false,
+      message: 'Print window was closed before the report finished loading. Try printing again.',
+    };
+  }
+
+  const html = buildWorksheetPrintReportHtml(reportModel);
+  try {
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+  } catch {
+    return {
+      ok: false,
+      message: 'Unable to load the print report window. Try printing again.',
+    };
+  }
+  return {
+    ok: true,
+    reportModel,
+  };
+}
+
 function pickAttemptStudentName(attemptRecord) {
   const direct = typeof attemptRecord?.studentName === 'string' ? attemptRecord.studentName.trim() : '';
   if (direct) return direct;
@@ -1135,15 +1915,28 @@ class ViewerAttemptSession {
       lastSavedRevision: 0,
       recoveryMessage: null,
       checkResult: null,
+      utilityMessage: null,
+      undoBuffer: {},
+      isRewriting: false,
+      rewritingBlockId: null,
+      rewriteMessageByBlock: {},
       lastProtectedAction: null,
       serverSession: {
-        status: 'checking',
+        status: VIEWER_SERVER_SESSION_STATES.CHECKING,
         user: null,
         error: null,
       },
       serverActionMessage: null,
       publishedPackages: [],
+      publishedHasMore: false,
+      publishedNextOffset: null,
       publishedQuery: '',
+      publishedFilters: {
+        title: '',
+        subject: '',
+        owner: '',
+      },
+      publishedListError: null,
       isLoadingPublishedPackages: false,
     };
 
@@ -1157,6 +1950,8 @@ class ViewerAttemptSession {
     this._authPopupWindow = null;
     this._authPopupFlow = null;
     this._activeAuthFlowId = null;
+    this._authAutoLoadInFlightByFlowId = new Set();
+    this._openingPublishedPackageIds = new Set();
   }
 
   setOnStateChange(handler) {
@@ -1263,11 +2058,7 @@ class ViewerAttemptSession {
     const params = new URLSearchParams(window.location.search);
     const previewIntent = this.parsePreviewIntent(params);
     const freshnessMarker = params.get('draftUpdatedAt') || null;
-    const hasExplicitContentIntent =
-      params.has('localDraftId')
-      || params.has('viewerPayload')
-      || params.has('snapshot')
-      || params.has('importedWorksheetId');
+    const hasExplicitContentIntent = hasViewerContentIntent(params);
 
     const explicitAttemptId = params.get('localAttemptId');
     if (explicitAttemptId) {
@@ -1294,6 +2085,27 @@ class ViewerAttemptSession {
           return this.state;
         }
       }
+    }
+
+    const publishedPackageId = params.get('publishedPackageId');
+    if (publishedPackageId) {
+      const result = await this.startFromPublishedPackage(publishedPackageId);
+      if (!result?.ok) {
+        const errorCode = String(result?.error?.code || '').trim().toUpperCase();
+        if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND') {
+          throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
+            userMessage: 'The requested published package was not found.',
+            technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+          });
+        }
+        throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
+          userMessage: result?.error?.requiresSignIn
+            ? 'Sign in is required to open this published package, then retry the link.'
+            : 'The requested published package could not be opened right now.',
+          technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+        });
+      }
+      return this.state;
     }
 
     const loadedPayload = await this.loadViewerPayloadFromSources(params, previewIntent);
@@ -1468,7 +2280,7 @@ class ViewerAttemptSession {
 
     throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE, {
       userMessage: 'No worksheet launch content was provided.',
-      technicalMessage: 'No viewer launch parameter was provided (localAttemptId/localDraftId/importedWorksheetId/viewerPayload/snapshot).',
+      technicalMessage: 'No viewer launch parameter was provided (localAttemptId/localDraftId/publishedPackageId/importedWorksheetId/viewerPayload/snapshot).',
     });
   }
 
@@ -1559,6 +2371,10 @@ class ViewerAttemptSession {
     this.state.isFinalizing = false;
     this.state.lastFinalizeError = null;
     this.state.checkResult = null;
+    this.state.undoBuffer = {};
+    this.state.isRewriting = false;
+    this.state.rewritingBlockId = null;
+    this.state.rewriteMessageByBlock = {};
 
     if (options.markDirty) {
       this.state.attemptRevision += 1;
@@ -1891,26 +2707,288 @@ class ViewerAttemptSession {
     this.state.recoveryMessage = message || null;
   }
 
-  async replayProtectedAction(intent) {
-    this.state.lastProtectedAction = intent.actionId;
-    this.setRecoveryMessage(null);
+  setRewriteMessage(blockId, message) {
+    if (typeof blockId !== 'string' || !blockId) {
+      return;
+    }
+    const nextMessages = { ...(this.state.rewriteMessageByBlock || {}) };
+    if (message) {
+      nextMessages[blockId] = String(message);
+    } else {
+      delete nextMessages[blockId];
+    }
+    this.state.rewriteMessageByBlock = nextMessages;
   }
 
-  async triggerProtectedAction(actionId) {
+  async replayProtectedAction(intent) {
+    const actionId = typeof intent?.actionId === 'string' ? intent.actionId : '';
+    const payload = intent?.payload && typeof intent.payload === 'object' ? intent.payload : {};
+    this.state.lastProtectedAction = actionId || null;
+
+    switch (actionId) {
+      case 'viewerRewrite':
+      case 'resumeViewerRewriteAfterLogin':
+        return this.replayViewerRewriteIntent(payload);
+      case 'resumeAttemptServerResumeAfterLogin':
+        this.setRecoveryMessage(null);
+        return { ok: true, status: 'noop_resume_attempt' };
+      default:
+        this.setRecoveryMessage(null);
+        return { ok: true, status: 'noop_unsupported_action' };
+    }
+  }
+
+  validateViewerRewriteIntentPayload(payload = {}) {
+    const currentAttemptId = this.state.localAttemptId || null;
+    const intentAttemptId = typeof payload.localAttemptId === 'string' ? payload.localAttemptId : null;
+    if (!currentAttemptId || !intentAttemptId || intentAttemptId !== currentAttemptId) {
+      return {
+        ok: false,
+        message: 'Rewrite recovery context is stale. Please retry from the current attempt.',
+      };
+    }
+
+    const intentBlockId = typeof payload.blockId === 'string' ? payload.blockId : null;
+    const blocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
+    const matchingBlock = intentBlockId
+      ? blocks.find((block) => block?.blockId === intentBlockId)
+      : null;
+    if (!intentBlockId || !matchingBlock) {
+      return {
+        ok: false,
+        message: 'Rewrite recovery target is no longer available for this worksheet.',
+      };
+    }
+
+    if (this.state.lastActiveBlockId && this.state.lastActiveBlockId !== intentBlockId) {
+      return {
+        ok: false,
+        message: 'Rewrite recovery target is stale. Navigate to the target question and retry.',
+      };
+    }
+
+    return { ok: true };
+  }
+
+  async replayViewerRewriteIntent(payload = {}) {
+    const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
+    const validation = this.validateViewerRewriteIntentPayload(payload);
+    if (!validation.ok) {
+      if (blockId) {
+        this.setRewriteMessage(blockId, validation.message);
+      } else {
+        this.setRecoveryMessage(validation.message);
+      }
+      console.warn('[viewer] Ignoring stale/invalid rewrite recovery intent.', {
+        action: 'viewerRewrite',
+        payload,
+      });
+      return { ok: false, status: 'invalid_context' };
+    }
+
+    const blocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
+    const targetBlock = blockId ? blocks.find((block) => block?.blockId === blockId) : null;
+    const isRewriteTargetSupported = Boolean(
+      targetBlock
+      && targetBlock.kind === 'question'
+      && targetBlock.responseConfig?.inputType === 'text'
+    );
+    if (!isRewriteTargetSupported) {
+      this.setRewriteMessage(blockId, 'Rewrite is only available for text-response questions.');
+      return { ok: false, status: 'unsupported_target' };
+    }
+
+    const answerTextAtClickTime = typeof payload.answerTextAtClickTime === 'string'
+      ? payload.answerTextAtClickTime
+      : String(payload.answerTextAtClickTime ?? '');
+    const trimmedClickText = answerTextAtClickTime.trim();
+    if (!trimmedClickText) {
+      this.setRewriteMessage(blockId, 'Nothing to rewrite yet. Enter a response first, then try Rewrite again.');
+      return { ok: false, status: 'empty_source_text' };
+    }
+
+    this.state.isRewriting = true;
+    this.state.rewritingBlockId = blockId;
+    this.setRewriteMessage(blockId, null);
+    this.setRecoveryMessage(null);
+    this.notifyStateChange();
+
+    const clearRewriteFlags = () => {
+      this.state.isRewriting = false;
+      this.state.rewritingBlockId = null;
+    };
+
+    const currentAnswerValue = (attemptBlockId) => {
+      const answerRecord = attemptBlockId ? this.state.answers?.[attemptBlockId] : null;
+      const rawValue = answerRecord && typeof answerRecord === 'object'
+        ? answerRecord.value
+        : answerRecord;
+      return typeof rawValue === 'string' ? rawValue : String(rawValue ?? '');
+    };
+
+    try {
+      const rewriteResult = await this.apiClient.rewriteText(trimmedClickText);
+      if (!rewriteResult?.ok) {
+        const rewriteError = rewriteResult?.error || rewriteResult || null;
+        const errorCode = typeof rewriteError?.code === 'string' && rewriteError.code.trim()
+          ? rewriteError.code.trim()
+          : 'UNKNOWN_ERROR';
+        const errorStatus = Number.isFinite(Number(rewriteError?.status))
+          ? Number(rewriteError.status)
+          : null;
+        const errorMessage = typeof rewriteError?.message === 'string' && rewriteError.message.trim()
+          ? rewriteError.message.trim()
+          : 'No additional error message provided.';
+        const errorDetails = rewriteError?.details;
+        const detailsPreviewLimit = 1200;
+        const rawDetailsText = errorDetails == null
+          ? ''
+          : String(typeof errorDetails === 'object' ? JSON.stringify(errorDetails) : errorDetails);
+        const detailsText = rawDetailsText.length > detailsPreviewLimit
+          ? `${rawDetailsText.slice(0, detailsPreviewLimit)}...`
+          : rawDetailsText;
+
+        this.setRewriteMessage(
+          blockId,
+          `Rewrite could not be completed. code=${errorCode}${errorStatus !== null ? ` | status=${errorStatus}` : ''} | message=${errorMessage}${detailsText ? ` | details=${detailsText}` : ''}`
+        );
+        console.error('[viewer] Rewrite request failed.', {
+          blockId,
+          sourceLength: trimmedClickText.length,
+          error: rewriteError,
+        });
+        return {
+          ok: false,
+          status: 'rewrite_failed',
+          error: rewriteError,
+        };
+      }
+
+      const currentAttemptId = this.state.localAttemptId || null;
+      const intentAttemptId = typeof payload.localAttemptId === 'string' ? payload.localAttemptId : null;
+      const refreshedBlocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
+      const refreshedBlock = blockId ? refreshedBlocks.find((block) => block?.blockId === blockId) : null;
+      const isFreshContext = Boolean(
+        currentAttemptId
+        && intentAttemptId
+        && currentAttemptId === intentAttemptId
+        && refreshedBlock
+        && refreshedBlock.kind === 'question'
+        && refreshedBlock.responseConfig?.inputType === 'text'
+        && this.state.status !== 'completed'
+        && (!this.state.lastActiveBlockId || this.state.lastActiveBlockId === blockId)
+      );
+      const normalizedCurrentAnswer = normalizeTextForRewriteSnapshotCompare(
+        refreshedBlock,
+        currentAnswerValue(blockId)
+      );
+      const snapshotCompareSource = typeof payload.answerTextRawAtClickTime === 'string'
+        ? payload.answerTextRawAtClickTime
+        : answerTextAtClickTime;
+      const normalizedSnapshotAnswer = normalizeTextForRewriteSnapshotCompare(
+        refreshedBlock,
+        snapshotCompareSource
+      );
+      const answerMatchesSnapshot = normalizedCurrentAnswer === normalizedSnapshotAnswer;
+
+      if (!isFreshContext || !answerMatchesSnapshot) {
+        this.setRewriteMessage(
+          blockId,
+          'Your answer changed before rewrite finished, so we did not apply the rewrite. Please review and try again.'
+        );
+        return { ok: false, status: 'rewrite_stale_context' };
+      }
+
+      const preRewriteAnswer = typeof payload.answerTextRawAtClickTime === 'string'
+        ? payload.answerTextRawAtClickTime
+        : currentAnswerValue(blockId);
+      const rewrittenText = String(rewriteResult.data?.text ?? '').trim();
+      this.state.undoBuffer = {
+        ...this.state.undoBuffer,
+        [blockId]: preRewriteAnswer,
+      };
+      const beforeApplyAnswer = currentAnswerValue(blockId);
+      this.setAnswer(blockId, rewrittenText);
+      const afterApplyAnswer = currentAnswerValue(blockId);
+      if (this.state.status === 'completed') {
+        const nextUndoBuffer = { ...(this.state.undoBuffer || {}) };
+        delete nextUndoBuffer[blockId];
+        this.state.undoBuffer = nextUndoBuffer;
+        this.setRewriteMessage(
+          blockId,
+          'Rewrite finished, but your answer could not be updated because this attempt is no longer editable.'
+        );
+        return { ok: false, status: 'rewrite_not_applied' };
+      }
+      if (afterApplyAnswer === beforeApplyAnswer) {
+        const nextUndoBuffer = { ...(this.state.undoBuffer || {}) };
+        delete nextUndoBuffer[blockId];
+        this.state.undoBuffer = nextUndoBuffer;
+      }
+      this.setRewriteMessage(blockId, null);
+      this.setRecoveryMessage(null);
+      return { ok: true, status: 'rewrite_applied' };
+    } catch (error) {
+      const thrownError = error && typeof error === 'object'
+        ? error
+        : { message: String(error) };
+      const errorCode = typeof thrownError?.code === 'string' && thrownError.code.trim()
+        ? thrownError.code.trim()
+        : 'UNEXPECTED_REWRITE_ERROR';
+      const errorMessage = typeof thrownError?.message === 'string' && thrownError.message.trim()
+        ? thrownError.message.trim()
+        : 'No additional error message provided.';
+      this.setRewriteMessage(
+        blockId,
+        `Rewrite could not be completed. code=${errorCode} | message=${errorMessage}`
+      );
+      console.error('[viewer] Rewrite request threw an unexpected error.', {
+        blockId,
+        sourceLength: trimmedClickText.length,
+        error: thrownError,
+      });
+      return {
+        ok: false,
+        status: 'rewrite_failed',
+        error: thrownError,
+      };
+    } finally {
+      clearRewriteFlags();
+      this.notifyStateChange();
+    }
+  }
+
+  async triggerProtectedAction(actionId, intentPayload = {}) {
     if (!this.authGate) {
       throw new Error('Auth gate is not configured for viewer session.');
     }
 
+    const payload = {
+      ...(intentPayload && typeof intentPayload === 'object' ? intentPayload : {}),
+      localAttemptId: this.state.localAttemptId || null,
+    };
+
     return this.authGate.runProtectedAction({
       actionId,
       recordStore: 'localAttempts',
-      payload: {
-        localAttemptId: this.state.localAttemptId || null,
-      },
+      payload,
     });
   }
 
-  beginServerSignIn() {
+  beginServerSignIn(signInOptions = {}) {
+    const onPopupBlockedOverride = typeof signInOptions.onPopupBlocked === 'function'
+      ? signInOptions.onPopupBlocked
+      : null;
+    const onStatusMessageOverride = typeof signInOptions.onStatusMessage === 'function'
+      ? signInOptions.onStatusMessage
+      : null;
+    const onSessionReadyOverride = typeof signInOptions.onSessionReady === 'function'
+      ? signInOptions.onSessionReady
+      : null;
+    const onSessionNotReadyOverride = typeof signInOptions.onSessionNotReady === 'function'
+      ? signInOptions.onSessionNotReady
+      : null;
+
     if (this._authPopupFlow?.cancel) {
       this._authPopupFlow.cancel();
     }
@@ -1933,34 +3011,58 @@ class ViewerAttemptSession {
       pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
       shouldContinue: () => this._activeAuthFlowId === authFlowId,
       onPopupBlocked: () => {
+        if (this._activeAuthFlowId !== authFlowId) return;
+        if (onPopupBlockedOverride) {
+          onPopupBlockedOverride({ authFlowId, finalizeFlow });
+          return;
+        }
         this.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
         this.notifyStateChange();
       },
       onStatusMessage: (message) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        if (onStatusMessageOverride) {
+          onStatusMessageOverride({ message, authFlowId, finalizeFlow });
+          return;
+        }
         if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
           this.state.serverActionMessage = message;
           this.notifyStateChange();
         }
       },
-      onSessionReady: async () => {
+      onSessionReady: async (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
-        this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
-        this.notifyStateChange();
-        const result = await this.probeServerSessionSilently({ force: true });
-        if (result.ok && this.state.serverSession.status === 'ready') {
-          await this.browsePublishedPackages(this.state.publishedQuery || '', { preflight: false });
-          this.state.serverActionMessage = null;
-          this.notifyStateChange();
-          finalizeFlow();
+        if (onSessionReadyOverride) {
+          await onSessionReadyOverride({ result, authFlowId, finalizeFlow });
           return;
         }
-        this.state.serverActionMessage = result.error?.message || 'Sign-in completed, but session is still not ready.';
-        this.notifyStateChange();
-        finalizeFlow();
+        if (this._authAutoLoadInFlightByFlowId.has(authFlowId)) return;
+        this._authAutoLoadInFlightByFlowId.add(authFlowId);
+        try {
+          this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
+          this.notifyStateChange();
+          const result = await this.preflightPublishedSession();
+          if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+            await this.browsePublishedPackages(this.state.publishedFilters || {}, { preflight: false, reset: true });
+            this.state.serverActionMessage = null;
+            this.notifyStateChange();
+            finalizeFlow();
+            return;
+          }
+          const fallbackMessage = result?.result?.error?.message || this.state.serverSession?.error || 'Sign-in completed, but session is still not ready.';
+          this.state.serverActionMessage = fallbackMessage;
+          this.notifyStateChange();
+          finalizeFlow();
+        } finally {
+          this._authAutoLoadInFlightByFlowId.delete(authFlowId);
+        }
       },
       onSessionNotReady: (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        if (onSessionNotReadyOverride) {
+          onSessionNotReadyOverride({ result, authFlowId, finalizeFlow });
+          return;
+        }
         if (result?.final === false && result?.waitingForCallback === true) {
           this.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
           this.notifyStateChange();
@@ -1977,6 +3079,7 @@ class ViewerAttemptSession {
         this.state.serverActionMessage = result?.error?.message || this.state.serverActionMessage;
         this.notifyStateChange();
         finalizeFlow();
+        this._authAutoLoadInFlightByFlowId.delete(authFlowId);
       },
     });
     this._authPopupWindow = this._authPopupFlow?.popupWindow || null;
@@ -1984,7 +3087,7 @@ class ViewerAttemptSession {
 
   async refreshServerSession() {
     this.state.serverSession = {
-      status: 'checking',
+      status: VIEWER_SERVER_SESSION_STATES.CHECKING,
       user: null,
       error: null,
     };
@@ -1992,19 +3095,36 @@ class ViewerAttemptSession {
     return this.probeServerSessionSilently({ force: true });
   }
 
+  transitionServerSessionToLoggedOut(message = SESSION_EXPIRED_MESSAGE) {
+    const resolvedMessage = String(message || '').trim() || SESSION_EXPIRED_MESSAGE;
+    this.state.serverSession = {
+      status: VIEWER_SERVER_SESSION_STATES.LOGGED_OUT,
+      user: null,
+      error: resolvedMessage,
+    };
+    this.state.serverActionMessage = resolvedMessage;
+    this.notifyStateChange();
+  }
+
   async probeServerSessionSilently({ force = false } = {}) {
     const result = await probeSession({ apiClient: this.apiClient, force });
     if (result.status !== 'ready') {
-      this.state.serverSession = {
-        status: result.status === 'error' ? 'error' : 'not_ready',
-        user: null,
-        error: result.error?.message || 'Sign-in is required before using server features.',
-      };
-      this.notifyStateChange();
+      const message = result.error?.message || 'Sign-in is required before using server features.';
+      if (isAuthSessionError(result.error)) {
+        this.transitionServerSessionToLoggedOut(SESSION_EXPIRED_MESSAGE);
+      } else {
+        this.state.serverSession = {
+          status: VIEWER_SERVER_SESSION_STATES.CHECKING,
+          user: null,
+          error: message,
+        };
+        this.state.serverActionMessage = message;
+        this.notifyStateChange();
+      }
       return result;
     }
     this.state.serverSession = {
-      status: 'ready',
+      status: VIEWER_SERVER_SESSION_STATES.LOGGED_IN,
       user: result.user || null,
       error: null,
     };
@@ -2014,66 +3134,121 @@ class ViewerAttemptSession {
 
   async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.') {
     const result = await this.probeServerSessionSilently({ force: true });
-    if (result.ok && this.state.serverSession.status === 'ready') {
+    if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
       return { ok: true, result };
     }
-    const hasAuthStatus = Number.isFinite(Number(result.error?.status));
-    const authErrorCode = String(result.error?.code || '').toUpperCase();
-    const authStatus = Number(result.error?.status);
-    const isExplicitAuthFailure = result.status === 'not_ready' && (
-      authErrorCode === 'AUTH_REQUIRED'
-      || (result.error?.requiresSignIn && (!hasAuthStatus || authStatus === 401 || authStatus === 403))
-      || authStatus === 401
-      || authStatus === 403
-    );
-    const authMessage = isExplicitAuthFailure
-      ? 'Sign-in session expired. Please sign in again.'
-      : (result.error?.message || notReadyMessage);
-    this.state.serverActionMessage = authMessage;
-    this.notifyStateChange();
+    const message = result.error?.message || notReadyMessage;
+    if (result.status === 'not_ready' && isAuthSessionError(result.error)) {
+      this.transitionServerSessionToLoggedOut(SESSION_EXPIRED_MESSAGE);
+    } else {
+      this.state.serverSession = {
+        status: VIEWER_SERVER_SESSION_STATES.CHECKING,
+        user: null,
+        error: message,
+      };
+      this.state.serverActionMessage = message;
+      this.notifyStateChange();
+    }
     return { ok: false, result };
   }
 
+  async preflightPublishedSession() {
+    return this.ensureServerSessionReady();
+  }
+
   async browsePublishedPackages(query = '', options = {}) {
-    const normalizedQuery = String(query ?? '');
-    const shouldNotifyQueryChange = this.state.publishedQuery !== normalizedQuery;
-    this.state.publishedQuery = normalizedQuery;
-    if (shouldNotifyQueryChange) {
-      this.notifyStateChange();
+    const requestedFilters = typeof query === 'object' && query !== null
+      ? query
+      : { title: query, subject: '', owner: '' };
+    const normalizedFilters = normalizePublishedPackageFilters(requestedFilters);
+    const previousFilters = normalizePublishedPackageFilters(this.state.publishedFilters || {});
+    const filtersChanged = (
+      previousFilters.title !== normalizedFilters.title
+      || previousFilters.subject !== normalizedFilters.subject
+      || previousFilters.owner !== normalizedFilters.owner
+    );
+    const isAppend = options.append === true && !filtersChanged && options.reset !== true;
+
+    this.state.publishedFilters = normalizedFilters;
+    this.state.publishedQuery = normalizedFilters.title;
+    if (filtersChanged || options.reset === true) {
+      this.state.publishedPackages = [];
+      this.state.publishedHasMore = false;
+      this.state.publishedNextOffset = null;
+      this.state.publishedListError = null;
     }
+    this.notifyStateChange();
 
     if (options.preflight !== false) {
-      const sessionReady = await this.ensureServerSessionReady();
+      const sessionReady = await this.preflightPublishedSession();
       if (!sessionReady.ok) return sessionReady.result;
     }
     this.state.isLoadingPublishedPackages = true;
     this.notifyStateChange();
-    const result = await this.apiClient.listPublishedPackages({ q: normalizedQuery || '', limit: 20, offset: 0 });
+    const requestOffset = isAppend && Number.isFinite(Number(this.state.publishedNextOffset))
+      ? Number(this.state.publishedNextOffset)
+      : 0;
+    const filters = normalizePublishedPackageFilters(normalizedFilters);
+    const pagination = normalizePaginationState({
+      limit: DEFAULT_PUBLISHED_PACKAGE_LIMIT,
+      offset: requestOffset,
+    });
+    const result = await fetchPublishedPackagesPage({
+      apiClient: this.apiClient,
+      filters,
+      pagination,
+    });
     this.state.isLoadingPublishedPackages = false;
     if (!result.ok) {
       this.state.serverActionMessage = result.error.message;
+      this.state.publishedListError = result.error.message;
       this.notifyStateChange();
       return result;
     }
-    this.state.publishedPackages = Array.isArray(result.data?.items) ? result.data.items : [];
+    const nextItems = Array.isArray(result.data?.items) ? result.data.items : [];
+    this.state.publishedPackages = mergePublishedPackageRows({
+      existingRows: this.state.publishedPackages,
+      incomingRows: nextItems,
+      append: isAppend,
+    });
+    this.state.publishedHasMore = result.data?.hasMore === true;
+    this.state.publishedNextOffset = Number.isFinite(Number(result.data?.nextOffset))
+      ? Number(result.data.nextOffset)
+      : null;
+    this.state.publishedListError = null;
     this.state.serverActionMessage = null;
     this.notifyStateChange();
     return result;
   }
 
   async startFromPublishedPackage(publishedPackageId) {
-    const sessionReady = await this.ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-    const artifact = await this.apiClient.fetchPublishedPackageArtifact(publishedPackageId);
-    if (!artifact.ok) {
-      this.state.serverActionMessage = artifact.error.message;
+    const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
+    if (!normalizedPublishedPackageId) {
+      const message = 'Published package ID is required.';
+      this.state.serverActionMessage = message;
       this.notifyStateChange();
-      return artifact;
+      return { ok: false, error: { message } };
     }
-    const started = await this.startImportedWorksheetFromPackageFile(artifact.data);
-    this.state.serverActionMessage = `Imported published package ${publishedPackageId} into local viewer runtime.`;
-    this.notifyStateChange();
-    return { ok: true, data: started };
+    if (this._openingPublishedPackageIds.has(normalizedPublishedPackageId)) {
+      return { ok: false, skipped: true, error: { message: `Open already in progress for ${normalizedPublishedPackageId}.` } };
+    }
+    this._openingPublishedPackageIds.add(normalizedPublishedPackageId);
+    try {
+      const sessionReady = await this.preflightPublishedSession();
+      if (!sessionReady.ok) return sessionReady.result;
+      const artifact = await this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId);
+      if (!artifact.ok) {
+        this.state.serverActionMessage = artifact.error.message;
+        this.notifyStateChange();
+        return artifact;
+      }
+      const started = await this.startImportedWorksheetFromPackageFile(artifact.data);
+      this.state.serverActionMessage = `Imported published package ${normalizedPublishedPackageId} into local viewer runtime.`;
+      this.notifyStateChange();
+      return { ok: true, data: started };
+    } finally {
+      this._openingPublishedPackageIds.delete(normalizedPublishedPackageId);
+    }
   }
 
   persistResumeMetadata() {
@@ -2125,6 +3300,8 @@ function renderViewerShell(session) {
   answerSummary.className = 'answer-summary';
   const resumeWarning = document.createElement('p');
   resumeWarning.className = 'answer-summary';
+  const utilityFeedback = document.createElement('p');
+  utilityFeedback.className = 'viewer-utility-feedback';
   const status = document.createElement('p');
   let studentName = session.state.studentName || '';
 
@@ -2210,12 +3387,12 @@ function renderViewerShell(session) {
   syncResumeBtn.setAttribute('role', 'menuitem');
   syncResumeBtn.textContent = 'Server Resume (Sign-in required)';
 
-  const rewriteAssistBtn = document.createElement('button');
-  rewriteAssistBtn.type = 'button';
-  rewriteAssistBtn.className = 'viewer-utility-menu__item';
-  rewriteAssistBtn.setAttribute('role', 'menuitem');
-  rewriteAssistBtn.textContent = 'Rewrite Assist (Sign-in required)';
-  utilityMenuList.append(syncResumeBtn, rewriteAssistBtn);
+  const printReportBtn = document.createElement('button');
+  printReportBtn.type = 'button';
+  printReportBtn.className = 'viewer-utility-menu__item';
+  printReportBtn.setAttribute('role', 'menuitem');
+  printReportBtn.textContent = 'Print worksheet report';
+  utilityMenuList.append(syncResumeBtn, printReportBtn);
   utilityMenu.append(utilityMenuBtn, utilityMenuList);
   headerActions.append(infoBtn, utilityMenu);
 
@@ -2314,12 +3491,7 @@ function renderViewerShell(session) {
   };
 
   const renderTechnicalDetails = () => {
-    const technicalRows = [
-      ['Worksheet ID', session.state.viewerPayload?.worksheetId || 'n/a'],
-      ['Snapshot ID', session.state.viewerPayload?.snapshotId || 'n/a'],
-      ['Local attempt ID', session.state.localAttemptId || 'n/a'],
-      ['Source', session.state.source || 'n/a'],
-    ];
+    const technicalRows = buildTechnicalDetailsRows(session.state);
     learnerNameInput.value = studentName;
     detailsList.innerHTML = '';
     technicalRows.forEach(([label, value]) => {
@@ -2668,6 +3840,50 @@ function renderViewerShell(session) {
     localInputCache.set(blockId, value);
   };
 
+  const getTrimmedAnswerTextForBlock = (blockId) => {
+    if (!blockId) return '';
+    const answerRecord = session.state.answers?.[blockId];
+    const rawAnswer = answerRecord && typeof answerRecord === 'object'
+      ? answerRecord.value
+      : answerRecord;
+    return typeof rawAnswer === 'string'
+      ? rawAnswer.trim()
+      : String(rawAnswer ?? '').trim();
+  };
+
+  const getRawAnswerTextForBlock = (blockId) => {
+    if (!blockId) return '';
+    const answerRecord = session.state.answers?.[blockId];
+    const rawAnswer = answerRecord && typeof answerRecord === 'object'
+      ? answerRecord.value
+      : answerRecord;
+    return typeof rawAnswer === 'string'
+      ? rawAnswer
+      : String(rawAnswer ?? '');
+  };
+
+  const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {
+    const localAttemptId = typeof session.state.localAttemptId === 'string'
+      ? session.state.localAttemptId
+      : null;
+    const blockId = typeof questionBlock?.blockId === 'string' ? questionBlock.blockId : null;
+    const isTextQuestion = Boolean(
+      questionBlock
+      && questionBlock.kind === 'question'
+      && questionBlock.responseConfig?.inputType === 'text'
+      && blockId
+    );
+    if (!localAttemptId || !isTextQuestion) {
+      return null;
+    }
+    return {
+      localAttemptId,
+      blockId,
+      answerTextAtClickTime: getTrimmedAnswerTextForBlock(blockId),
+      answerTextRawAtClickTime: getRawAnswerTextForBlock(blockId),
+    };
+  };
+
   const renderCurrentBlockCard = (currentBlock) => {
     const currentBlockCheckStatus = currentBlock?.blockId
       ? session.state.checkResult?.statusByBlockId?.[currentBlock.blockId]
@@ -2676,12 +3892,14 @@ function renderViewerShell(session) {
     const currentBlockIsCheckable = isSupportedCheckQuestionBlock(currentBlock);
     const hasCurrentBlockCheckStatus = typeof currentBlockCheckStatus === 'string';
     const shouldShowCheckFeedback = hasGlobalCheckResult && currentBlockIsCheckable && hasCurrentBlockCheckStatus;
+    const currentBlockId = currentBlock?.blockId || null;
+    const currentBlockInputType = currentBlock?.responseConfig?.inputType || null;
 
     const nextSignature = JSON.stringify({
-      blockId: currentBlock?.blockId || null,
+      blockId: currentBlockId,
       prompt: currentBlock?.prompt?.text || '',
       content: currentBlock?.content?.text || '',
-      inputType: currentBlock?.responseConfig?.inputType || null,
+      inputType: currentBlockInputType,
       maxLength: currentBlock?.responseConfig?.maxLength || null,
       options: Array.isArray(currentBlock?.responseConfig?.options)
         ? currentBlock.responseConfig.options.map((opt) => [
@@ -2906,6 +4124,11 @@ function renderViewerShell(session) {
         control.type = 'text';
         control.addEventListener('input', () => {
           cacheRawControlValue(block.blockId, control.value);
+          if (Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId)) {
+            const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
+            delete nextUndoBuffer[block.blockId];
+            session.state.undoBuffer = nextUndoBuffer;
+          }
           session.setAnswer(block.blockId, control.value);
           const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
@@ -3018,6 +4241,11 @@ function renderViewerShell(session) {
         control.rows = 5;
         control.addEventListener('input', () => {
           cacheRawControlValue(block.blockId, control.value);
+          if (Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId)) {
+            const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
+            delete nextUndoBuffer[block.blockId];
+            session.state.undoBuffer = nextUndoBuffer;
+          }
           session.setAnswer(block.blockId, control.value);
           const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
@@ -3045,11 +4273,91 @@ function renderViewerShell(session) {
           counter: textCounter,
           status: textStatus,
         });
+        const textFooter = document.createElement('div');
+        textFooter.className = 'question-card__text-footer';
+        const textActionsRow = document.createElement('div');
+        textActionsRow.className = 'question-card__text-actions-row';
+        const rewriteRow = document.createElement('div');
+        rewriteRow.className = 'question-card__rewrite-row';
+        const rewriteMessages = document.createElement('div');
+        rewriteMessages.className = 'question-card__rewrite-messages';
+
+        const rewriteButton = document.createElement('button');
+        rewriteButton.type = 'button';
+        rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';
+        rewriteButton.textContent = 'Rewrite';
+        rewriteButton.addEventListener('click', async () => {
+          if (rewriteButton.disabled) {
+            return;
+          }
+          const rewriteIntentPayload = buildViewerRewriteIntentPayloadForBlock(block);
+          if (!rewriteIntentPayload) {
+            session.state.utilityMessage = 'Rewrite is available only for text-response questions.';
+            renderUI();
+            return;
+          }
+          session.state.utilityMessage = null;
+          const protectedActionResult = await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);
+          if (protectedActionResult?.status === 'redirected') {
+            return;
+          }
+          if (protectedActionResult?.status !== 'executed') {
+            let blockedMessage = 'Rewrite could not be started. Please try again.';
+            if (protectedActionResult?.status === 'blocked_session_probe') {
+              const probeFailureMessage = protectedActionResult?.result?.error?.message
+                || protectedActionResult?.result?.result?.error?.message
+                || '';
+              blockedMessage = probeFailureMessage
+                ? `Rewrite is temporarily unavailable: ${probeFailureMessage}`
+                : 'Rewrite is temporarily unavailable because session verification failed. Please try again.';
+            } else if (protectedActionResult?.status === 'blocked_no_local_id') {
+              blockedMessage = 'Rewrite could not start because no active local attempt was found.';
+            }
+            session.state.utilityMessage = blockedMessage;
+            session.setRewriteMessage(block.blockId, blockedMessage);
+            renderUI();
+            return;
+          }
+          const rewrittenValue = session.state.answers?.[block.blockId]?.value;
+          cacheRawControlValue(block.blockId, String(rewrittenValue ?? ''));
+          renderUI();
+        });
+
+        const undoButton = document.createElement('button');
+        undoButton.type = 'button';
+        undoButton.className = 'question-card__undo-btn icon-nav-btn';
+        undoButton.textContent = 'Undo';
+        undoButton.addEventListener('click', () => {
+          const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
+          if (undoButton.disabled || isRewriteInFlight) {
+            return;
+          }
+          const savedUndoAnswer = session.state.undoBuffer?.[block.blockId];
+          if (savedUndoAnswer === undefined) {
+            return;
+          }
+          session.setAnswer(block.blockId, savedUndoAnswer);
+          cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));
+          const nextUndoBuffer = { ...(session.state.undoBuffer || {}) };
+          delete nextUndoBuffer[block.blockId];
+          session.state.undoBuffer = nextUndoBuffer;
+          renderUI();
+        });
+
+        const rewriteHint = document.createElement('p');
+        rewriteHint.className = 'question-card__rewrite-hint';
+        const rewriteError = document.createElement('p');
+        rewriteError.className = 'question-card__rewrite-error';
+        rewriteRow.append(rewriteButton, undoButton);
+        rewriteMessages.append(textStatus, rewriteHint, rewriteError);
+        textActionsRow.append(textCounter, rewriteRow);
+        textFooter.append(textActionsRow, rewriteMessages);
+
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
           card.append(checkBanner, checkReveal);
         }
-        card.append(helper, control, mediaFeedback, textCounter, textStatus, inputError);
+        card.append(helper, control, mediaFeedback, textFooter, inputError);
       } else {
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
@@ -3069,13 +4377,15 @@ function renderViewerShell(session) {
       const inputType = block.responseConfig?.inputType || 'text';
       const storedValue = session.state.answers?.[block.blockId]?.value;
       const cachedRawValue = localInputCache.get(block.blockId);
-      const nextValue = cachedRawValue !== undefined
-        ? String(cachedRawValue)
-        : inputType === 'number'
+      const stateValue = inputType === 'number'
         ? (storedValue === '' || storedValue === null || storedValue === undefined ? '' : String(storedValue))
         : inputType === 'boolean'
           ? (storedValue === true ? 'true' : storedValue === false ? 'false' : '')
           : String(storedValue || '');
+      const isControlFocused = control === activeElement;
+      const nextValue = isControlFocused && cachedRawValue !== undefined
+        ? String(cachedRawValue)
+        : stateValue;
       if (inputType === 'multiple_choice') {
         applyChoiceButtonGroupState(
           control,
@@ -3085,13 +4395,48 @@ function renderViewerShell(session) {
         );
       } else if (inputType === 'boolean') {
         applyBooleanGroupState(control, storedValue, session.state.status === 'completed');
-      } else if (control !== activeElement && control.value !== nextValue) {
+      } else if (!isControlFocused && control.value !== nextValue) {
         control.value = nextValue;
+      }
+      if (!isControlFocused && cachedRawValue !== undefined && String(cachedRawValue) !== stateValue) {
+        cacheRawControlValue(block.blockId, stateValue);
       }
       if (inputType === 'text') {
         const feedbackNodes = textControlFeedback.get(block.blockId);
         const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
         updateTextCounterUI(feedbackNodes?.counter, feedbackNodes?.status, feedback);
+        const card = control.closest('.question-card');
+        const rewriteButton = card?.querySelector('.question-card__rewrite-btn');
+        const undoButton = card?.querySelector('.question-card__undo-btn');
+        const rewriteHint = card?.querySelector('.question-card__rewrite-hint');
+        const rewriteError = card?.querySelector('.question-card__rewrite-error');
+        const trimmedAnswerLength = getTrimmedAnswerTextForBlock(block.blockId).length;
+        const isAttemptCompleted = session.state.status === 'completed';
+        const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);
+        const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
+        const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= 300;
+        const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;
+
+        if (rewriteButton) {
+          rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';
+          rewriteButton.disabled = !canRewrite;
+        }
+        if (undoButton) {
+          undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;
+        }
+        if (rewriteHint) {
+          if (trimmedAnswerLength === 0) {
+            rewriteHint.textContent = 'Enter text to rewrite.';
+          } else if (trimmedAnswerLength > 300) {
+            rewriteHint.textContent = 'Answer is too long to rewrite (max 300 characters).';
+          } else {
+            rewriteHint.textContent = '';
+          }
+        }
+        if (rewriteError) {
+          const rewriteInlineMessage = String(session.state.rewriteMessageByBlock?.[block.blockId] || '');
+          rewriteError.textContent = rewriteInlineMessage ? `⚠️ ${rewriteInlineMessage}` : '';
+        }
       }
       if (inputType !== 'multiple_choice' && inputType !== 'boolean') {
         control.disabled = session.state.status === 'completed';
@@ -3158,11 +4503,15 @@ function renderViewerShell(session) {
               : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
     resumeWarning.textContent = session.state.recoveryMessage ? `⚠️ ${session.state.recoveryMessage}` : '';
     resumeWarning.hidden = !session.state.recoveryMessage;
+    utilityFeedback.textContent = session.state.utilityMessage ? `⚠️ ${session.state.utilityMessage}` : '';
+    utilityFeedback.hidden = !session.state.utilityMessage;
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     const checkAvailable = session.state.status === 'completed';
     checkBtn.hidden = !checkAvailable;
     checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
+    printReportBtn.hidden = !checkAvailable;
+    printReportBtn.disabled = session.state.isFinalizing || !checkAvailable;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
     const normalizedAttemptStatus = session.state.status
@@ -3196,9 +4545,13 @@ function renderViewerShell(session) {
     renderUI();
   });
 
-  rewriteAssistBtn.addEventListener('click', async () => {
+  printReportBtn.addEventListener('click', async () => {
     closeUtilityMenu({ returnFocus: true });
-    await session.triggerProtectedAction('resumeViewerRewriteAfterLogin');
+    session.state.utilityMessage = null;
+    const result = await startWorksheetPrintFlow({ session });
+    if (!result.ok) {
+      session.state.utilityMessage = result.message;
+    }
     renderUI();
   });
   window.addEventListener('resize', () => {
@@ -3211,7 +4564,7 @@ function renderViewerShell(session) {
   nextBtn.addEventListener('click', goNext);
 
   headerTop.append(heading, headerActions);
-  header.append(headerTop, answerSummary, resumeWarning);
+  header.append(headerTop, answerSummary, resumeWarning, utilityFeedback);
   blockSection.append(blockHeading, stepper, blockList);
   shell.append(header, blockSection);
   app.innerHTML = '';
@@ -3219,6 +4572,78 @@ function renderViewerShell(session) {
   app.append(shell, detailsModal);
   bottomBarRoot.append(bottomBar);
   renderUI();
+}
+
+function cleanupViewerAuthCallbackUrlParams() {
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.delete(AUTH_RETURN_PARAM);
+  nextUrl.searchParams.delete(VIEWER_AUTH_CALLBACK_PARAM);
+  nextUrl.searchParams.delete('intent');
+  window.history.replaceState({}, '', nextUrl.toString());
+}
+
+function renderViewerAuthCallbackPanel(session, options = {}) {
+  if (!app || !bottomBarRoot) {
+    return;
+  }
+  const panel = document.createElement('section');
+  panel.className = 'viewer-auth-callback-panel';
+
+  const heading = document.createElement('h1');
+  heading.textContent = 'Restoring your session';
+
+  const description = document.createElement('p');
+  description.className = 'muted viewer-auth-callback-panel__status';
+  description.textContent = options.statusText || 'Checking sign-in status and restoring your previous action…';
+
+  const message = document.createElement('p');
+  message.className = 'viewer-start-error';
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  message.textContent = options.message || '';
+
+  const progress = document.createElement('p');
+  progress.className = 'muted viewer-auth-callback-panel__progress';
+  progress.textContent = options.progressText || '';
+
+  const actions = document.createElement('div');
+  actions.className = 'viewer-start-actions';
+  const retryNowBtn = document.createElement('button');
+  retryNowBtn.type = 'button';
+  retryNowBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  retryNowBtn.textContent = 'Retry now';
+  retryNowBtn.disabled = options.retryDisabled === true;
+  retryNowBtn.addEventListener('click', async () => {
+    if (typeof options.onRetryNow === 'function') {
+      await options.onRetryNow();
+    }
+  });
+  const continueSignInBtn = document.createElement('button');
+  continueSignInBtn.type = 'button';
+  continueSignInBtn.className = 'viewer-start-btn';
+  continueSignInBtn.textContent = 'Continue sign-in';
+  continueSignInBtn.disabled = options.continueSignInDisabled === true;
+  continueSignInBtn.addEventListener('click', async () => {
+    if (typeof options.onContinueSignIn === 'function') {
+      await options.onContinueSignIn();
+    }
+  });
+  const cancelRecoveryBtn = document.createElement('button');
+  cancelRecoveryBtn.type = 'button';
+  cancelRecoveryBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
+  cancelRecoveryBtn.textContent = 'Cancel recovery';
+  cancelRecoveryBtn.disabled = options.cancelDisabled === true;
+  cancelRecoveryBtn.addEventListener('click', async () => {
+    if (typeof options.onCancelRecovery === 'function') {
+      await options.onCancelRecovery();
+    }
+  });
+  actions.append(retryNowBtn, continueSignInBtn, cancelRecoveryBtn);
+
+  panel.append(heading, description, message, progress, actions);
+  app.innerHTML = '';
+  bottomBarRoot.innerHTML = '';
+  app.append(panel);
 }
 
 
@@ -3277,7 +4702,7 @@ function renderViewerStartPanel(session, options = {}) {
   heading.textContent = 'Start Viewer';
   const description = document.createElement('p');
   description.className = 'muted';
-  description.textContent = 'Import a worksheet package (.zip) to start a local attempt, or resume a previous local attempt.';
+  description.textContent = 'Resume local attempts, import a worksheet, or load a published online version.';
   const resumeAttempt = options.resumeAttempt || null;
   const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
   const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
@@ -3294,21 +4719,40 @@ function renderViewerStartPanel(session, options = {}) {
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.className = 'viewer-start-btn';
-  signInBtn.textContent = 'Sign in for server features';
-  const browseBtn = document.createElement('button');
-  browseBtn.type = 'button';
-  browseBtn.className = 'viewer-start-btn';
-  browseBtn.textContent = 'Browse published packages';
-  const searchInput = document.createElement('input');
-  searchInput.type = 'search';
-  searchInput.placeholder = 'Search published title';
-  searchInput.className = 'viewer-details-form__input';
+  signInBtn.textContent = 'Log in to view published online worksheet';
+  const loadMoreBtn = document.createElement('button');
+  loadMoreBtn.type = 'button';
+  loadMoreBtn.className = 'viewer-start-btn viewer-load-more-btn';
+  loadMoreBtn.textContent = 'Load more';
+  loadMoreBtn.hidden = true;
+  const loadMoreRow = document.createElement('div');
+  loadMoreRow.className = 'viewer-load-more-row';
+  loadMoreRow.append(loadMoreBtn);
+  const filterRow = document.createElement('div');
+  filterRow.className = 'viewer-start-actions viewer-published-filters';
+  const publishedHeading = document.createElement('h2');
+  publishedHeading.className = 'viewer-published-heading';
+  publishedHeading.textContent = 'Published Packages';
+  const titleFilterInput = document.createElement('input');
+  titleFilterInput.type = 'search';
+  titleFilterInput.placeholder = 'Filter by title';
+  titleFilterInput.className = 'viewer-details-form__input';
+  titleFilterInput.setAttribute('aria-label', 'Filter published packages by title');
+  const subjectFilterInput = document.createElement('input');
+  subjectFilterInput.type = 'search';
+  subjectFilterInput.placeholder = 'Filter by subject';
+  subjectFilterInput.className = 'viewer-details-form__input';
+  subjectFilterInput.setAttribute('aria-label', 'Filter published packages by subject');
+  const ownerFilterInput = document.createElement('input');
+  ownerFilterInput.type = 'search';
+  ownerFilterInput.placeholder = 'Filter by owner';
+  ownerFilterInput.className = 'viewer-details-form__input';
+  ownerFilterInput.setAttribute('aria-label', 'Filter published packages by owner');
+  filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput);
   const sessionStatus = document.createElement('p');
-  sessionStatus.className = 'muted';
-  const serverStatus = document.createElement('p');
-  serverStatus.className = 'muted';
+  sessionStatus.className = 'muted viewer-session-status';
   const publishedList = document.createElement('div');
-  publishedList.className = 'muted';
+  publishedList.className = 'muted viewer-published-list';
 
   const packageFileInput = document.createElement('input');
   packageFileInput.type = 'file';
@@ -3326,7 +4770,7 @@ function renderViewerStartPanel(session, options = {}) {
     resumeCard = document.createElement('div');
     resumeCard.className = 'viewer-resume-card';
     const resumeTitle = document.createElement('h2');
-    resumeTitle.textContent = 'Resumable local attempt found';
+    resumeTitle.textContent = 'Resume previous attempt';
     const resumeMeta = document.createElement('p');
     resumeMeta.className = 'muted';
     const resumeUpdatedAt =
@@ -3347,7 +4791,7 @@ function renderViewerStartPanel(session, options = {}) {
     });
     const discardBtn = document.createElement('button');
     discardBtn.type = 'button';
-    discardBtn.className = 'viewer-start-btn';
+    discardBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
     discardBtn.textContent = 'Discard attempt';
     discardBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
@@ -3387,8 +4831,27 @@ function renderViewerStartPanel(session, options = {}) {
     session.beginServerSignIn();
     renderServerControls();
   });
-  browseBtn.addEventListener('click', async () => {
-    await session.browsePublishedPackages(searchInput.value.trim());
+  const scheduleDebouncedBrowse = (() => {
+    let debounceTimer = null;
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        await session.browsePublishedPackages({
+          title: titleFilterInput.value,
+          subject: subjectFilterInput.value,
+          owner: ownerFilterInput.value,
+        });
+        renderServerControls();
+      }, 300);
+    };
+  })();
+  [titleFilterInput, subjectFilterInput, ownerFilterInput].forEach((input) => {
+    input.addEventListener('input', () => {
+      scheduleDebouncedBrowse();
+    });
+  });
+  loadMoreBtn.addEventListener('click', async () => {
+    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });
     renderServerControls();
   });
 
@@ -3408,20 +4871,62 @@ function renderViewerStartPanel(session, options = {}) {
   }
 
   function renderServerControls() {
-    const sessionState = session.state.serverSession?.status || 'checking';
+    const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const canAccessPublished = isLoggedIn;
     const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
-    if (sessionState === 'ready') {
-      sessionStatus.textContent = `Server session: ready (${userLabel})`;
-    } else if (sessionState === 'checking') {
-      sessionStatus.textContent = 'Server session: checking…';
+    let defaultSessionMessage = '';
+    if (isLoggedIn) {
+      defaultSessionMessage = `Server session: ready (${userLabel})`;
+    } else if (isChecking) {
+      defaultSessionMessage = 'Server session: checking…';
     } else {
-      sessionStatus.textContent = `Server session: not ready. ${session.state.serverSession?.error || 'Sign in for server features.'}`;
+      defaultSessionMessage = `Server session: logged out. ${session.state.serverSession?.error || 'Log in to view published online worksheet.'}`;
     }
-    signInBtn.hidden = sessionState === 'ready';
-    browseBtn.disabled = sessionState !== 'ready';
-    serverStatus.textContent = session.state.serverActionMessage || '';
+    const actionMessage = typeof session.state.serverActionMessage === 'string'
+      ? session.state.serverActionMessage.trim()
+      : '';
+    sessionStatus.textContent = actionMessage || defaultSessionMessage;
+    signInBtn.hidden = isLoggedIn;
+    signInBtn.disabled = isChecking;
+    publishedHeading.hidden = !canAccessPublished;
+    filterRow.hidden = !canAccessPublished;
+    titleFilterInput.hidden = !canAccessPublished;
+    subjectFilterInput.hidden = !canAccessPublished;
+    ownerFilterInput.hidden = !canAccessPublished;
+    titleFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
+    subjectFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
+    ownerFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
+    const activeFilters = session.state.publishedFilters || {};
+    if (document.activeElement !== titleFilterInput) titleFilterInput.value = String(activeFilters.title || '');
+    if (document.activeElement !== subjectFilterInput) subjectFilterInput.value = String(activeFilters.subject || '');
+    if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
+    loadMoreBtn.hidden = !canAccessPublished || !session.state.publishedHasMore;
+    loadMoreBtn.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
+    loadMoreRow.hidden = loadMoreBtn.hidden;
     publishedList.innerHTML = '';
+    publishedList.hidden = !canAccessPublished;
+    if (!canAccessPublished) {
+      return;
+    }
     const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];
+    if (session.state.publishedListError) {
+      const errorRow = document.createElement('p');
+      errorRow.className = 'viewer-list-error';
+      errorRow.appendChild(document.createTextNode('Could not load packages. '));
+      const retryBtn = document.createElement('button');
+      retryBtn.type = 'button';
+      retryBtn.className = 'viewer-list-retry-btn';
+      retryBtn.textContent = 'Retry';
+      retryBtn.addEventListener('click', async () => {
+        await session.browsePublishedPackages(session.state.publishedFilters || {}, { reset: true });
+        renderServerControls();
+      });
+      errorRow.appendChild(retryBtn);
+      publishedList.appendChild(errorRow);
+      return;
+    }
     if (publishedItems.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'muted';
@@ -3431,19 +4936,28 @@ function renderViewerStartPanel(session, options = {}) {
     }
     publishedItems.forEach((item) => {
       const row = document.createElement('div');
-      row.className = 'viewer-start-actions';
-      const meta = document.createElement('span');
-      meta.className = 'muted';
-      meta.textContent = `${item.title || 'Untitled'} · ${item.published_package_id}`;
+      row.className = 'viewer-published-row';
+      const meta = document.createElement('div');
+      meta.className = 'muted viewer-published-meta';
+      const publishedAtLabel = item.published_at ? formatTimestampForDisplay(item.published_at) : 'unknown time';
+      const ownerLabel = item.owner_email || item.owner_name || item.owner_sub || '—';
+      meta.textContent = `Title: ${item.title || 'Untitled'} · Subject: ${item.subject || '—'} · Owner: ${ownerLabel} · Published: ${publishedAtLabel}`;
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
-      openBtn.className = 'viewer-start-btn';
+      openBtn.className = 'viewer-start-btn viewer-published-open-btn';
       openBtn.textContent = 'Open package';
-      openBtn.disabled = sessionState !== 'ready';
+      openBtn.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages || !item.published_package_id;
       openBtn.addEventListener('click', async () => {
         await openPublishedPackage(item.published_package_id);
       });
-      row.append(meta, openBtn);
+      if (item.published_package_id) {
+        const idLine = document.createElement('div');
+        idLine.className = 'muted viewer-published-id';
+        idLine.textContent = `Publish ID: ${item.published_package_id}`;
+        row.append(meta, openBtn, idLine);
+      } else {
+        row.append(meta, openBtn);
+      }
       publishedList.appendChild(row);
     });
   }
@@ -3452,30 +4966,60 @@ function renderViewerStartPanel(session, options = {}) {
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  serverActions.append(signInBtn, browseBtn);
-  panel.append(importActions, sessionStatus, serverActions, searchInput, publishedList, serverStatus, packageFileInput, errorMessage);
+  serverActions.append(signInBtn);
+  panel.append(importActions, serverActions, sessionStatus, publishedHeading, filterRow, publishedList, loadMoreRow, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
   renderServerControls();
+  if (typeof session.setOnStateChange === 'function') {
+    session.setOnStateChange(() => renderServerControls());
+  }
 }
 
 async function bootstrapViewer() {
   const session = new ViewerAttemptSession(viewerStorage);
+  const hasOnlyAllowedKeys = (payload, allowedKeys) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    return Object.keys(payload).every((key) => allowedKeys.has(key));
+  };
+  const validateViewerIntent = (intent) => {
+    const actionId = typeof intent?.actionId === 'string' ? intent.actionId : '';
+    if (!actionId || !session.state.localAttemptId) return false;
+    const payload = intent?.payload;
+
+    if (actionId === 'viewerRewrite' || actionId === 'resumeViewerRewriteAfterLogin') {
+      const allowed = new Set(['localAttemptId', 'blockId', 'answerTextAtClickTime', 'answerTextRawAtClickTime']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      if (typeof payload.localAttemptId !== 'string' || typeof payload.blockId !== 'string') return false;
+      if (payload.answerTextAtClickTime !== undefined && typeof payload.answerTextAtClickTime !== 'string') return false;
+      if (payload.answerTextRawAtClickTime !== undefined && typeof payload.answerTextRawAtClickTime !== 'string') return false;
+      return session.validateViewerRewriteIntentPayload(payload).ok;
+    }
+
+    if (actionId === 'resumeAttemptServerResumeAfterLogin') {
+      const allowed = new Set(['localAttemptId']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      return typeof payload.localAttemptId === 'string' && payload.localAttemptId === session.state.localAttemptId;
+    }
+
+    return false;
+  };
 
   const authGate = new SharedAuthGate({
     appArea: 'viewer',
     resumeFlagKey: RESUME_FLAG_KEY,
     storage: session.storage,
-    isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1',
+    checkSessionReady: async () => session.ensureServerSessionReady(),
     getCurrentLocalId: () => session.state.localAttemptId || null,
     getCurrentUiState: () => session.getUiRestoreState(),
     persistLocalRecord: () => session.flushLocalStateForAuthRedirect(),
     restoreByLocalId: (localIdToRestore) => session.restoreByLocalId(localIdToRestore),
     restoreUiState: (uiState) => session.applyUiRestoreState(uiState),
-    validateIntent: (intent) => Boolean(intent?.actionId && session.state.localAttemptId),
+    validateIntent: (intent) => validateViewerIntent(intent),
     replayIntent: (intent) => session.replayProtectedAction(intent),
     onRecoveryMessage: (message) => session.setRecoveryMessage(message),
+    returnQueryParams: { [VIEWER_AUTH_CALLBACK_PARAM]: '1' },
     redirectToAuth: ({ redirectTo }) => {
       const url = new URL(redirectTo);
       url.searchParams.set('auth', '1');
@@ -3485,21 +5029,11 @@ async function bootstrapViewer() {
 
   session.authGate = authGate;
   await session.refreshServerSession();
-  if (session.state.serverSession.status === 'ready') {
+  if (session.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
     await session.browsePublishedPackages('');
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const hasAuthReturn = params.get('authReturn') === '1';
-  const hasLaunchIntent =
-    params.has('localAttemptId')
-    || params.has('localDraftId')
-    || params.has('viewerPayload')
-    || params.has('snapshot')
-    || params.has('importedWorksheetId')
-    || hasAuthReturn;
-
-  if (!hasLaunchIntent) {
+  const renderStartPanelFromResumeFlag = async (warningMessage = session.state.recoveryMessage) => {
     const flaggedAttempt = session.storage.resumeFlags.get(RESUME_FLAG_KEY);
     const resumeAttempt = flaggedAttempt?.localId
       ? await session.storage.attempts.get(flaggedAttempt.localId)
@@ -3529,19 +5063,208 @@ async function bootstrapViewer() {
       },
     };
     renderViewerStartPanel(session, {
-      warningMessage: session.state.recoveryMessage,
+      warningMessage,
       resumeAttempt: resumeAttempt || null,
       ...startPanelHandlers,
     });
+  };
+
+  const params = new URLSearchParams(window.location.search);
+  const hasAuthReturn = params.get(AUTH_RETURN_PARAM) === '1';
+  const hasAuthCallback = params.get(VIEWER_AUTH_CALLBACK_PARAM) === '1';
+  const isAuthCallbackMode = hasAuthReturn && hasAuthCallback;
+  const hasLaunchIntent = hasViewerLaunchIntent(params, { includeAuthReturn: true });
+
+  if (!hasLaunchIntent) {
+    await renderStartPanelFromResumeFlag(session.state.recoveryMessage);
     return;
   }
 
-  const hasRealContentIntent =
-    params.has('localAttemptId')
-    || params.has('localDraftId')
-    || params.has('viewerPayload')
-    || params.has('snapshot')
-    || params.has('importedWorksheetId');
+  if (isAuthCallbackMode) {
+    const callbackState = {
+      attemptCount: 0,
+      inFlight: false,
+      signInPopupInFlight: false,
+      nextRetryDelayMs: 0,
+      timedOut: false,
+      retryTimer: null,
+      stopped: false,
+      startedAtMs: Date.now(),
+      lastStatus: 'initial',
+      lastMessage: '',
+    };
+
+    const clearRetryTimer = () => {
+      if (callbackState.retryTimer) {
+        clearTimeout(callbackState.retryTimer);
+        callbackState.retryTimer = null;
+      }
+    };
+
+    const scheduleRetry = (delayMs) => {
+      callbackState.nextRetryDelayMs = delayMs;
+      clearRetryTimer();
+      callbackState.retryTimer = setTimeout(() => {
+        callbackState.retryTimer = null;
+        void attemptRecovery({ manual: false });
+      }, delayMs);
+    };
+
+    const renderCallbackPanel = (overrideMessage = '') => {
+      const fallbackStatusMessage = callbackState.inFlight
+        ? 'Checking sign-in status and restoring your previous action…'
+        : callbackState.lastStatus === 'replayed'
+          ? 'Session recovered successfully.'
+          : callbackState.lastStatus === 'not_authenticated'
+            ? 'Sign-in is still pending. You can continue sign-in or retry.'
+            : callbackState.lastStatus === 'blocked_session_probe'
+              ? 'Temporary session-check issue. We will retry automatically.'
+              : 'Waiting to recover your previous protected action.';
+      const progressText = callbackState.timedOut
+        ? `Automatic retries paused after ${Math.round(AUTH_CALLBACK_RETRY_BUDGET_MS / 1000)} seconds.`
+        : callbackState.signInPopupInFlight
+          ? 'Waiting for sign-in confirmation from popup…'
+        : callbackState.inFlight
+          ? 'Recovery attempt in progress…'
+          : callbackState.nextRetryDelayMs > 0
+            ? `Next automatic retry in ${Math.max(1, Math.ceil(callbackState.nextRetryDelayMs / 1000))} seconds.`
+            : '';
+      renderViewerAuthCallbackPanel(session, {
+        statusText: fallbackStatusMessage,
+        message: overrideMessage || callbackState.lastMessage || session.state.recoveryMessage || '',
+        progressText,
+        retryDisabled: callbackState.inFlight || callbackState.signInPopupInFlight,
+        continueSignInDisabled: callbackState.inFlight || callbackState.signInPopupInFlight,
+        cancelDisabled: callbackState.inFlight,
+        onRetryNow: async () => {
+          callbackState.timedOut = false;
+          callbackState.nextRetryDelayMs = 0;
+          callbackState.startedAtMs = Date.now();
+          callbackState.attemptCount = 0;
+          clearRetryTimer();
+          await attemptRecovery({ manual: true });
+        },
+        onContinueSignIn: async () => {
+          clearRetryTimer();
+          callbackState.timedOut = false;
+          callbackState.nextRetryDelayMs = 0;
+          callbackState.signInPopupInFlight = true;
+          callbackState.lastMessage = 'Opening sign-in popup…';
+          renderCallbackPanel();
+          session.beginServerSignIn({
+            onPopupBlocked: () => {
+              callbackState.signInPopupInFlight = false;
+              callbackState.lastMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+              renderCallbackPanel();
+            },
+            onStatusMessage: ({ message }) => {
+              callbackState.lastMessage = message || callbackState.lastMessage;
+              renderCallbackPanel();
+            },
+            onSessionReady: async ({ finalizeFlow }) => {
+              callbackState.signInPopupInFlight = false;
+              callbackState.timedOut = false;
+              callbackState.startedAtMs = Date.now();
+              callbackState.attemptCount = 0;
+              callbackState.lastMessage = 'Sign-in completed. Retrying recovery…';
+              renderCallbackPanel();
+              finalizeFlow();
+              await attemptRecovery({ manual: true });
+            },
+            onSessionNotReady: ({ result, finalizeFlow }) => {
+              if (result?.final === false && result?.waitingForCallback === true) {
+                callbackState.lastMessage = 'Still waiting for sign-in confirmation from the popup…';
+                renderCallbackPanel();
+                return;
+              }
+              callbackState.signInPopupInFlight = false;
+              callbackState.lastMessage = result?.error?.message || 'Sign-in did not complete. Retry to continue.';
+              finalizeFlow();
+              renderCallbackPanel();
+            },
+          });
+          if (!session._authPopupWindow) {
+            callbackState.signInPopupInFlight = false;
+            if (!callbackState.lastMessage) {
+              callbackState.lastMessage = 'Unable to open sign-in popup. Please retry or cancel recovery.';
+            }
+            renderCallbackPanel();
+          }
+        },
+        onCancelRecovery: async () => {
+          clearRetryTimer();
+          if (session._authPopupFlow?.cancel) {
+            session._authPopupFlow.cancel();
+          }
+          callbackState.signInPopupInFlight = false;
+          callbackState.stopped = true;
+          authGate.clearPending();
+          cleanupViewerAuthCallbackUrlParams();
+          session.setRecoveryMessage('Sign-in recovery was cancelled. You can resume manually from start.');
+          await renderStartPanelFromResumeFlag(session.state.recoveryMessage);
+        },
+      });
+    };
+
+    const attemptRecovery = async ({ manual = false } = {}) => {
+      if (callbackState.stopped || callbackState.inFlight) return;
+      if (manual) {
+        callbackState.startedAtMs = Date.now();
+      }
+      callbackState.inFlight = true;
+      callbackState.nextRetryDelayMs = 0;
+      renderCallbackPanel();
+      try {
+        const restoreResult = await authGate.restoreAfterAuthReturn({
+          preserveUrlOnAuthNotReady: true,
+          preservePendingOnAuthNotReady: true,
+        });
+        callbackState.lastStatus = restoreResult?.status || 'unknown';
+        callbackState.lastMessage = session.state.recoveryMessage || '';
+
+        if (session.state.viewerPayload || restoreResult?.status === 'replayed') {
+          clearRetryTimer();
+          callbackState.stopped = true;
+          renderViewerShell(session);
+          window.viewerSession = session;
+          return;
+        }
+
+        const shouldAutoRetry = restoreResult?.status === 'blocked_session_probe' || restoreResult?.status === 'not_authenticated';
+        if (shouldAutoRetry) {
+          const elapsedMs = Date.now() - callbackState.startedAtMs;
+          if (elapsedMs >= AUTH_CALLBACK_RETRY_BUDGET_MS) {
+            callbackState.timedOut = true;
+            callbackState.lastMessage = session.state.recoveryMessage
+              || 'Automatic retries timed out. You can retry now or continue sign-in.';
+            return;
+          }
+          callbackState.timedOut = false;
+          const delayMs = Math.min(
+            AUTH_CALLBACK_RETRY_BASE_MS * (2 ** callbackState.attemptCount),
+            AUTH_CALLBACK_RETRY_MAX_MS
+          );
+          callbackState.attemptCount += 1;
+          scheduleRetry(delayMs);
+          return;
+        }
+
+        callbackState.timedOut = false;
+        callbackState.nextRetryDelayMs = 0;
+      } finally {
+        callbackState.inFlight = false;
+        if (!callbackState.stopped && !session.state.viewerPayload) {
+          renderCallbackPanel();
+        }
+      }
+    };
+
+    renderCallbackPanel();
+    await attemptRecovery({ manual: true });
+    return;
+  }
+
+  const hasRealContentIntent = hasViewerLaunchIntent(params);
 
   if (hasAuthReturn) {
     const restoreResult = await authGate.restoreAfterAuthReturn();
@@ -3603,6 +5326,10 @@ export {
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
+  classifyPrintQuestionLayout,
+  buildWorksheetPrintReportModel,
+  buildWorksheetPrintReportHtml,
+  startWorksheetPrintFlow,
   renderViewerFatalError,
   ViewerBootError,
   VIEWER_BOOT_ERROR_CODES,

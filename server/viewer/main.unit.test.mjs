@@ -73,6 +73,28 @@ async function loadViewerModule(overrides = {}) {
       listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
       fetchPublishedPackageArtifact: async () => ({ ok: false, error: { message: 'not configured' } }),
     })),
+    DEFAULT_PUBLISHED_PACKAGE_LIMIT: overrides.DEFAULT_PUBLISHED_PACKAGE_LIMIT || 20,
+    normalizePublishedPackageFilters: overrides.normalizePublishedPackageFilters || ((filters = {}) => ({
+      title: String(filters?.title ?? ''),
+      subject: String(filters?.subject ?? ''),
+      owner: String(filters?.owner ?? ''),
+    })),
+    normalizePaginationState: overrides.normalizePaginationState || ((pagination = {}) => ({
+      limit: Number.isFinite(Number(pagination?.limit)) ? Number(pagination.limit) : 20,
+      offset: Number.isFinite(Number(pagination?.offset)) ? Number(pagination.offset) : 0,
+    })),
+    fetchPublishedPackagesPage: overrides.fetchPublishedPackagesPage || (async ({ apiClient, filters = {}, pagination = {} }) => (
+      apiClient.listPublishedPackages({
+        title: String(filters?.title ?? ''),
+        subject: String(filters?.subject ?? ''),
+        owner: String(filters?.owner ?? ''),
+        limit: Number.isFinite(Number(pagination?.limit)) ? Number(pagination.limit) : 20,
+        offset: Number.isFinite(Number(pagination?.offset)) ? Number(pagination.offset) : 0,
+      })
+    )),
+    mergePublishedPackageRows: overrides.mergePublishedPackageRows || (({ existingRows = [], incomingRows = [], append = false } = {}) => (
+      append ? [...existingRows, ...incomingRows] : incomingRows
+    )),
     mapLegacyJsonToPackageModel: overrides.mapLegacyJsonToPackageModel || ((value) => {
       if (!value || typeof value !== 'object' || !Array.isArray(value.blocks) || value.blocks.length === 0) {
         throw new Error('Imported worksheet must have a non-empty blocks array.');
@@ -123,6 +145,11 @@ async function loadViewerModule(overrides = {}) {
       replacement: 'const createServerApiClient = __testBag.createServerApiClient;',
     },
     {
+      name: 'replace published package service imports with test bag bindings',
+      pattern: /import\s*\{\s*DEFAULT_PUBLISHED_PACKAGE_LIMIT\s*,\s*fetchPublishedPackagesPage\s*,\s*mergePublishedPackageRows\s*,\s*normalizePaginationState\s*,\s*normalizePublishedPackageFilters\s*,\s*\}\s*from\s*['"]\.\.\/app\/api\/published-packages-service\.js['"];/,
+      replacement: 'const DEFAULT_PUBLISHED_PACKAGE_LIMIT = __testBag.DEFAULT_PUBLISHED_PACKAGE_LIMIT;\nconst fetchPublishedPackagesPage = __testBag.fetchPublishedPackagesPage;\nconst mergePublishedPackageRows = __testBag.mergePublishedPackageRows;\nconst normalizePaginationState = __testBag.normalizePaginationState;\nconst normalizePublishedPackageFilters = __testBag.normalizePublishedPackageFilters;',
+    },
+    {
       name: 'reroute renderViewerShell side effect',
       pattern: /renderViewerShell\(\s*session\s*\);/g,
       replacement: '__testBag.renderViewerShell(session);',
@@ -130,7 +157,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -191,7 +218,7 @@ test('viewer beginServerSignIn completes via shared popup flow and re-browses pa
   });
   session.beginServerSignIn();
   await new Promise((resolve) => setTimeout(resolve, 25));
-  assert.equal(session.state.serverSession.status, 'ready');
+  assert.equal(session.state.serverSession.status, 'logged_in');
   assert.deepEqual(session.state.publishedPackages, []);
 });
 
@@ -220,6 +247,478 @@ test('viewer beginServerSignIn shows popup blocked message when popup cannot ope
     session.state.serverActionMessage,
     'Sign-in popup was blocked. Allow popups for this site, then try again.'
   );
+});
+
+test('buildWorksheetPrintReportModel formats answers, grading, and question images for print', async () => {
+  const mod = await loadViewerModule();
+  const viewerPayload = {
+    title: 'Practice Worksheet',
+    blocks: [
+      {
+        blockId: 'q_text',
+        kind: 'question',
+        position: 0,
+        prompt: {
+          text: 'Explain the pattern.',
+          mediaRefs: [
+            { usage: 'question_audio', assetId: 'audio_should_be_ignored' },
+            { usage: 'question_image', assetId: 'img_1' },
+          ],
+        },
+        responseConfig: { inputType: 'text' },
+      },
+      {
+        blockId: 'q_multi',
+        kind: 'question',
+        position: 1,
+        prompt: { text: 'Choose all prime numbers.' },
+        responseConfig: {
+          inputType: 'multiple_choice',
+          selectionMode: 'multi',
+          options: [
+            { id: 'opt_a', value: '2', label: 'Two', mediaRefs: [{ usage: 'option_audio', assetId: 'opt_audio_1' }] },
+            { id: 'opt_b', value: '4', label: 'Four' },
+            { id: 'opt_c', value: '5', label: 'Five' },
+          ],
+          correctAnswer: ['2', '5'],
+        },
+      },
+      {
+        blockId: 'q_bool',
+        kind: 'question',
+        position: 2,
+        prompt: { text: 'The sun rises in the east.' },
+        responseConfig: {
+          inputType: 'boolean',
+          correctAnswer: true,
+        },
+      },
+    ],
+  };
+
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload,
+    answers: {
+      q_text: { value: 'It increases by 2 each line.' },
+      q_multi: { value: ['5', '2'] },
+      q_bool: { value: false },
+    },
+    studentName: 'Ada Lovelace',
+    completedAt: '2026-04-14T10:15:00Z',
+    checkResult: {
+      correctCount: 1,
+      totalQuestions: 2,
+      statusByBlockId: {
+        q_multi: 'correct',
+        q_bool: 'incorrect',
+      },
+    },
+    storage: {
+      localAssets: {
+        get: async (assetId) => assetId === 'img_1'
+          ? { binary: new Uint8Array([137, 80, 78, 71]), metadata: { mimeType: 'image/png' } }
+          : null,
+      },
+    },
+  });
+
+  assert.equal(report.title, 'Practice Worksheet');
+  assert.equal(report.studentName, 'Ada Lovelace');
+  assert.equal(report.checkedSummary, 'Checked 1/2 correct');
+  assert.equal(report.questions.length, 3);
+  assert.equal(report.questions[0].answerText, 'It increases by 2 each line.');
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/png;base64,/);
+  assert.equal(report.questions[0].layoutMode, 'keep-all');
+  assert.equal(report.questions[0].sectionBreakModes.prompt, 'keep');
+  assert.equal(report.questions[0].sectionBreakModes.answer, 'keep');
+  assert.equal(report.questions[1].answerText, 'Two\nFive');
+  assert.equal(report.questions[1].result.label, 'Correct');
+  assert.equal(report.questions[2].result.label, 'Incorrect');
+  assert.equal(report.questions[2].result.detail, 'Correct answer: True');
+  assert.equal(report.questions[2].sectionBreakModes.checkedAnswer, 'keep');
+});
+
+test('buildWorksheetPrintReportModel normalizes unsafe image mime types for data urls', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Prompt', mediaRefs: [{ usage: 'question_image', assetId: 'img_unsafe' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    storage: {
+      localAssets: {
+        get: async () => ({
+          binary: new Uint8Array([137, 80, 78, 71]),
+          metadata: { mimeType: 'image/png" onerror="alert(1)' },
+        }),
+      },
+    },
+  });
+
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/png;base64,/);
+  assert.equal(report.questions[0].image.src.includes('onerror='), false);
+});
+
+test('buildWorksheetPrintReportModel normalizes image/jpg to image/jpeg for print data urls', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Prompt', mediaRefs: [{ usage: 'question_image', assetId: 'img_jpg' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    storage: {
+      localAssets: {
+        get: async () => ({
+          binary: new Uint8Array([255, 216, 255, 224]),
+          metadata: { mimeType: 'image/jpg' },
+        }),
+      },
+    },
+  });
+
+  assert.equal(report.questions[0].image.status, 'ready');
+  assert.match(report.questions[0].image.src, /^data:image\/jpeg;base64,/);
+});
+
+test('classifyPrintQuestionLayout uses keep-all, keep-head, and flow thresholds conservatively', async () => {
+  const mod = await loadViewerModule();
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Short prompt',
+    answerText: 'Short answer',
+    result: null,
+    image: null,
+  }), 'keep-all');
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Prompt '.repeat(35),
+    answerText: 'Answer',
+    result: null,
+    image: null,
+  }), 'keep-head');
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Prompt',
+    answerText: 'Long answer paragraph '.repeat(30),
+    result: { detail: 'Correct answer: Example' },
+    image: null,
+  }), 'flow');
+
+  assert.equal(mod.classifyPrintQuestionLayout({
+    promptText: 'Prompt with image',
+    answerText: 'Supporting answer text '.repeat(16),
+    result: null,
+    image: { status: 'ready', src: 'data:image/png;base64,abc' },
+  }), 'keep-head');
+});
+
+test('buildWorksheetPrintReportHtml omits empty student row and renders missing image note', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Describe the image.', mediaRefs: [{ usage: 'question_image', assetId: 'missing_img' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    },
+    answers: {},
+    studentName: '',
+    completedAt: '2026-04-14T10:15:00Z',
+    storage: {
+      localAssets: {
+        get: async () => null,
+      },
+    },
+  });
+
+  const html = mod.buildWorksheetPrintReportHtml(report);
+  assert.equal(html.includes('>Student<'), false);
+  assert.equal(html.includes('Question image unavailable.'), true);
+  assert.equal(html.includes('No answer submitted'), true);
+});
+
+test('buildWorksheetPrintReportHtml emits layout-mode classes for print pagination behavior', async () => {
+  const mod = await loadViewerModule();
+  const html = mod.buildWorksheetPrintReportHtml({
+    title: 'Worksheet',
+    studentName: '',
+    completedAtLabel: 'April 14, 2026, 18:00',
+    checkedSummary: '',
+    questions: [
+      {
+        questionNumber: 1,
+        promptText: 'Short prompt',
+        answerText: 'Short answer',
+        result: null,
+        image: null,
+        layoutMode: 'keep-all',
+        sectionBreakModes: { prompt: 'keep', answer: 'keep', checkedAnswer: null },
+      },
+      {
+        questionNumber: 2,
+        promptText: 'Medium prompt',
+        answerText: 'Answer',
+        result: null,
+        image: null,
+        layoutMode: 'keep-head',
+        sectionBreakModes: { prompt: 'keep', answer: 'flow', checkedAnswer: null },
+      },
+      {
+        questionNumber: 3,
+        promptText: 'Long prompt',
+        answerText: 'Long answer',
+        result: { status: 'incorrect', label: 'Incorrect', detail: 'Correct answer: Example' },
+        image: null,
+        layoutMode: 'flow',
+        sectionBreakModes: { prompt: 'flow', answer: 'flow', checkedAnswer: 'keep' },
+      },
+    ],
+  });
+  const normalizedHtml = String(html || '').replace(/\r\n/g, '\n');
+
+  assert.equal(normalizedHtml.includes('print-question--keep-all'), true);
+  assert.equal(normalizedHtml.includes('print-question--keep-head'), true);
+  assert.equal(normalizedHtml.includes('print-question--flow'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--prompt'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--answer'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--result'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--keep'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--flow'), true);
+  assert.equal(normalizedHtml.includes('>Question<'), true);
+  assert.equal(normalizedHtml.includes('>Checked answer<'), true);
+  assert.equal(normalizedHtml.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
+  assert.equal(normalizedHtml.includes('border-radius: 3mm;'), false);
+  assert.equal(normalizedHtml.includes('border-top: 1px solid #eceff3;'), false);
+  assert.equal(normalizedHtml.includes('border-bottom: 1px solid #dde2e8;'), false);
+});
+
+test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
+  const mod = await loadViewerModule();
+  const html = mod.buildWorksheetPrintReportHtml({
+    title: 'Worksheet',
+    studentName: '',
+    completedAtLabel: '',
+    checkedSummary: '',
+    questions: [
+      {
+        questionNumber: 1,
+        promptText: 'Prompt',
+        answerText: 'Answer',
+        result: null,
+        image: { status: 'ready', src: 'data:image/png;base64,abc" onerror="alert(1)', alt: 'Question image' },
+        layoutMode: 'keep-all',
+        sectionBreakModes: { prompt: 'keep', answer: 'keep', checkedAnswer: null },
+      },
+    ],
+  });
+  assert.equal(html.includes('onerror="alert(1)"'), false);
+  assert.equal(html.includes('&quot; onerror=&quot;alert(1)'), true);
+});
+
+test('buildWorksheetPrintReportModel marks oversized sections as flow to allow internal page breaks', async () => {
+  const mod = await loadViewerModule();
+  const longPrompt = `Prompt line\n`.repeat(90);
+  const longAnswer = `Answer line\n`.repeat(110);
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: longPrompt },
+          responseConfig: { inputType: 'text', correctAnswer: 'expected answer' },
+        },
+      ],
+    },
+    answers: { q1: { value: longAnswer } },
+    checkResult: {
+      correctCount: 0,
+      totalQuestions: 1,
+      statusByBlockId: { q1: 'incorrect' },
+    },
+  });
+
+  assert.equal(report.questions[0].sectionBreakModes.prompt, 'flow');
+  assert.equal(report.questions[0].sectionBreakModes.answer, 'flow');
+  assert.equal(report.questions[0].sectionBreakModes.checkedAnswer, 'keep');
+});
+
+test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
+  const mod = await loadViewerModule();
+  const result = await mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1' },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {},
+    },
+    openWindow: () => null,
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    message: 'Print window was blocked. Allow popups for this site, then try again.',
+  });
+});
+
+test('startWorksheetPrintFlow opens popup synchronously before async model work', async () => {
+  const mod = await loadViewerModule();
+  let openCalled = false;
+  let openerCleared = false;
+  let resolveGet;
+  const storageGetPromise = new Promise((resolve) => {
+    resolveGet = resolve;
+  });
+  const flowPromise = mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {
+        localAssets: {
+          get: async () => storageGetPromise,
+        },
+      },
+    },
+    openWindow: () => {
+      openCalled = true;
+      const popup = {
+        opener: { some: 'parent' },
+        document: {
+          open: () => {},
+          write: () => {},
+          close: () => {},
+        },
+      };
+      Object.defineProperty(popup, 'opener', {
+        get: () => null,
+        set: (value) => {
+          if (value === null) {
+            openerCleared = true;
+          }
+        },
+      });
+      return popup;
+    },
+  });
+
+  assert.equal(openCalled, true);
+  assert.equal(openerCleared, true);
+  resolveGet({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'image/png' } });
+  const result = await flowPromise;
+  assert.equal(result.ok, true);
+});
+
+test('startWorksheetPrintFlow returns friendly message when popup is closed before async model completes', async () => {
+  const mod = await loadViewerModule();
+  let resolveGet;
+  const storageGetPromise = new Promise((resolve) => {
+    resolveGet = resolve;
+  });
+  const popup = {
+    closed: false,
+    document: {
+      open: () => {},
+      write: () => {},
+      close: () => {},
+    },
+  };
+
+  const flowPromise = mod.startWorksheetPrintFlow({
+    session: {
+      state: {
+        status: 'completed',
+        viewerPayload: {
+          title: 'Worksheet',
+          blocks: [
+            {
+              blockId: 'q1',
+              kind: 'question',
+              position: 0,
+              prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+              responseConfig: { inputType: 'text' },
+            },
+          ],
+        },
+        answers: { q1: { value: 'Answer' } },
+        studentName: 'Student',
+        completedAt: '2026-04-14T10:15:00Z',
+        checkResult: null,
+      },
+      storage: {
+        localAssets: {
+          get: async () => storageGetPromise,
+        },
+      },
+    },
+    openWindow: () => popup,
+  });
+
+  popup.closed = true;
+  resolveGet({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'image/png' } });
+  const result = await flowPromise;
+  assert.deepEqual(result, {
+    ok: false,
+    message: 'Print window was closed before the report finished loading. Try printing again.',
+  });
 });
 
 test('viewer beginServerSignIn stores popup handle and fallback polling can recover missed callback', async () => {
@@ -256,7 +755,7 @@ test('viewer beginServerSignIn stores popup handle and fallback polling can reco
   assert.equal(openedPopupUrl.includes('authFlowId='), true);
   await new Promise((resolve) => setTimeout(resolve, 40));
 
-  assert.equal(session.state.serverSession.status, 'ready');
+  assert.equal(session.state.serverSession.status, 'logged_in');
   assert.equal(session.state.serverActionMessage, null);
   assert.equal(session._activeAuthFlowId, null);
 });
@@ -269,7 +768,7 @@ test('viewer silent session probe updates readiness without forcing visible chec
       getSession: async () => ({ ok: false, error: { message: 'auth required', requiresSignIn: true } }),
     },
   });
-  session.state.serverSession = { status: 'ready', user: { email: 'learner@example.test' }, error: null };
+  session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' }, error: null };
   session.setOnStateChange((state) => {
     statuses.push(state.serverSession.status);
   });
@@ -277,7 +776,7 @@ test('viewer silent session probe updates readiness without forcing visible chec
   await session.probeServerSessionSilently();
 
   assert.equal(statuses.includes('checking'), false);
-  assert.equal(session.state.serverSession.status, 'not_ready');
+  assert.equal(session.state.serverSession.status, 'logged_out');
 });
 
 test('viewer popup fallback polling uses silent session probe path', async () => {
@@ -302,7 +801,7 @@ test('viewer popup fallback polling uses silent session probe path', async () =>
   };
   session.probeServerSessionSilently = async () => {
     silentProbeCalls += 1;
-    session.state.serverSession = { status: 'ready', user: { email: 'learner@example.test' }, error: null };
+    session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' }, error: null };
     return { ok: true, data: { user: { email: 'learner@example.test' } } };
   };
 
@@ -332,10 +831,10 @@ test('viewer browse action runs silent session preflight and blocks when session
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'Sign-in session expired. Please sign in again.');
+  assert.equal(session.state.serverActionMessage, 'Session expired. Please log in again.');
 });
 
-test('viewer browse preflight surfaces transient server/non-auth errors without expired-session copy', async () => {
+test('viewer browse preflight transitions to expired-session copy for invalid session responses', async () => {
   const calls = [];
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({}, {
@@ -363,7 +862,7 @@ test('viewer browse preflight surfaces transient server/non-auth errors without 
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'Server returned an unexpected non-JSON response.');
+  assert.equal(session.state.serverActionMessage, 'Session expired. Please log in again.');
 });
 
 
@@ -381,6 +880,68 @@ test('viewer browse action persists requested publishedQuery before preflight fa
 
   assert.equal(result.ok, false);
   assert.equal(session.state.publishedQuery, 'new-query');
+});
+
+test('viewer browse action sends published query using canonical title/subject/owner shape', async () => {
+  const requests = [];
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      listPublishedPackages: async (query) => {
+        requests.push(query);
+        return { ok: true, data: { items: [] } };
+      },
+    },
+  });
+
+  const result = await session.browsePublishedPackages('math', { preflight: false });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(requests, [{
+    title: 'math',
+    subject: '',
+    owner: '',
+    limit: 20,
+    offset: 0,
+  }]);
+});
+
+test('viewer browse append mode uses nextOffset and appends results', async () => {
+  const requests = [];
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({}, {
+    apiClient: {
+      listPublishedPackages: async (query) => {
+        requests.push(query);
+        return {
+          ok: true,
+          data: {
+            items: [{ published_package_id: 'p2', title: 'Pack 2' }],
+            hasMore: false,
+          },
+        };
+      },
+    },
+  });
+  session.state.publishedPackages = [{ published_package_id: 'p1', title: 'Pack 1' }];
+  session.state.publishedQuery = 'math';
+  session.state.publishedFilters = { title: 'math', subject: '', owner: '' };
+  session.state.publishedNextOffset = 20;
+
+  const result = await session.browsePublishedPackages('math', { preflight: false, append: true });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(requests, [{
+    title: 'math',
+    subject: '',
+    owner: '',
+    limit: 20,
+    offset: 20,
+  }]);
+  assert.deepEqual(session.state.publishedPackages, [
+    { published_package_id: 'p1', title: 'Pack 1' },
+    { published_package_id: 'p2', title: 'Pack 2' },
+  ]);
 });
 
 test('viewer start panel removes Retry session button from normal server controls', async () => {
@@ -599,10 +1160,20 @@ test('normalizeViewerBlock preserves non-canonical plain_text/short_text inputTy
   assert.equal(Object.hasOwn(short.responseConfig, 'displayMode'), false);
 });
 
-test('viewer start panel includes session-ready published browse integration', async () => {
+test('viewer start panel includes logged_out/checking/logged_in server-state render rules', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('await session.refreshServerSession();'), true);
   assert.equal(source.includes('await session.browsePublishedPackages'), true);
+  assert.equal(source.includes("LOGGED_OUT: 'logged_out'"), true);
+  assert.equal(source.includes("CHECKING: 'checking'"), true);
+  assert.equal(source.includes("LOGGED_IN: 'logged_in'"), true);
+  assert.equal(source.includes("signInBtn.textContent = 'Log in to view published online worksheet';"), true);
+  assert.equal(source.includes('const canAccessPublished = isLoggedIn;'), true);
+  assert.equal(source.includes('publishedList.hidden = !canAccessPublished;'), true);
+  assert.equal(source.includes('signInBtn.disabled = isChecking;'), true);
+  assert.equal(source.includes("const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';"), true);
+  assert.equal(source.includes("loadMoreBtn.textContent = 'Load more';"), true);
+  assert.equal(source.includes("await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });"), true);
   assert.equal(source.includes('await session.startFromPublishedPackage'), true);
 });
 
@@ -2009,6 +2580,38 @@ test('getInputHelperText maps input types to guidance', async () => {
   assert.equal(mod.getInputHelperText('text'), 'Text response.');
 });
 
+test('buildTechnicalDetailsRows only shows current session ids', async () => {
+  const mod = await loadViewerModule();
+  const rows = mod.buildTechnicalDetailsRows({
+    localAttemptId: 'attempt_1',
+    sourceLocalDraftId: 'draft_11',
+    sourceImportedWorksheetId: 'imported_7',
+    viewerPayload: {
+      worksheetId: 'ws_legacy',
+      snapshotId: 'snap_legacy',
+    },
+    source: 'local_draft',
+    sourceType: 'local_draft_preview',
+  });
+
+  assert.deepEqual(rows, [
+    ['Local attempt ID', 'attempt_1'],
+    ['Local draft ID', 'draft_11'],
+    ['Imported worksheet ID', 'imported_7'],
+  ]);
+});
+
+test('buildTechnicalDetailsRows omits source ids that do not apply', async () => {
+  const mod = await loadViewerModule();
+  const rows = mod.buildTechnicalDetailsRows({
+    localAttemptId: 'attempt_2',
+  });
+
+  assert.deepEqual(rows, [
+    ['Local attempt ID', 'attempt_2'],
+  ]);
+});
+
 test('getNumberInputErrorMessage reports range and rule errors without coercion', async () => {
   const mod = await loadViewerModule();
   const responseConfig = {
@@ -2285,6 +2888,27 @@ function createFakeDom() {
   return { document, appRoot, bottomBarRoot };
 }
 
+function collectNodes(root) {
+  const result = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node || typeof node !== 'object') continue;
+    result.push(node);
+    const children = Array.isArray(node.children) ? node.children : [];
+    for (const child of children) stack.push(child);
+  }
+  return result;
+}
+
+function findNodeByClass(root, className) {
+  return collectNodes(root).find((node) => String(node.className || '').split(/\s+/).includes(className));
+}
+
+function findNodeByText(root, text) {
+  return collectNodes(root).find((node) => node.textContent === text);
+}
+
 test('bootstrapViewer on bare /viewer/ opens start panel with explicit resume action instead of auto-resume', { concurrency: false }, async () => {
   const { document } = createFakeDom();
   let renderedSession = null;
@@ -2431,6 +3055,200 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
   assert.equal(resumeMeta.textContent, `Attempt attempt_resume_ms · ${expected}`);
 });
 
+test('renderViewerStartPanel hides published controls when server session is logged out', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
+  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
+  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
+  const publishedList = findNodeByClass(panel, 'viewer-published-list');
+  const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
+
+  assert.equal(signInBtn.hidden, false);
+  assert.equal(publishedHeading.hidden, true);
+  assert.equal(filterRow.hidden, true);
+  assert.equal(publishedList.hidden, true);
+  assert.equal(searchInputs.length, 3);
+  searchInputs.forEach((input) => assert.equal(input.hidden, true));
+});
+
+test('renderViewerStartPanel shows published controls only when server session is logged in', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'logged_in', user: { email: 'learner@example.test' } },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
+  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
+  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
+  const publishedList = findNodeByClass(panel, 'viewer-published-list');
+  const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
+
+  assert.equal(signInBtn.hidden, true);
+  assert.equal(publishedHeading.hidden, false);
+  assert.equal(filterRow.hidden, false);
+  assert.equal(publishedList.hidden, false);
+  assert.equal(searchInputs.length, 3);
+  searchInputs.forEach((input) => assert.equal(input.hidden, false));
+});
+
+test('renderViewerStartPanel treats unknown server state as not logged in for published controls', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'expired', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
+  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
+  const publishedList = findNodeByClass(panel, 'viewer-published-list');
+
+  assert.equal(publishedHeading.hidden, true);
+  assert.equal(filterRow.hidden, true);
+  assert.equal(publishedList.hidden, true);
+});
+
+test('renderViewerStartPanel orders controls as import then auth row then single status line', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const importRow = panel.children[2];
+  const authRow = panel.children[3];
+  const statusLine = panel.children[4];
+
+  assert.equal(importRow.className, 'viewer-start-actions');
+  assert.equal(importRow.children[0].textContent, 'Import worksheet package (.zip)');
+  assert.equal(authRow.className, 'viewer-start-actions');
+  assert.equal(authRow.children[0].textContent, 'Log in to view published online worksheet');
+  assert.equal(statusLine.className, 'muted viewer-session-status');
+  assert.equal(statusLine.textContent.includes('Server session:'), true);
+});
+
+test('renderViewerStartPanel renders one session-related message line without duplicate status text', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const duplicateText = 'Session expired. Please log in again.';
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: duplicateText },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: duplicateText,
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const matched = collectNodes(panel).filter((node) => String(node.textContent || '').includes(duplicateText));
+  assert.equal(matched.length, 1);
+});
+
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({
@@ -2455,6 +3273,26 @@ test('bootstrapViewer falls back to start panel when resume flag record is inval
   const panel = appRoot.children[0];
   const statusNode = panel.children.find((child) => child.className === 'viewer-start-error');
   assert.equal(statusNode.textContent, '');
+});
+
+test('viewer launch intent gates include publishedPackageId links', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+
+  assert.equal(source.includes('function hasViewerLaunchIntent(params, options = {})'), true);
+  assert.equal(source.includes("params.has('publishedPackageId')"), true);
+  assert.equal(source.includes('const hasLaunchIntent = hasViewerLaunchIntent(params, { includeAuthReturn: true });'), true);
+  assert.equal(source.includes('const hasRealContentIntent = hasViewerLaunchIntent(params);'), true);
+  assert.equal(source.includes('const hasExplicitContentIntent = hasViewerContentIntent(params);'), true);
+});
+
+test('viewer source preserves non-not-found published package failures during bootstrap', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+
+  assert.equal(source.includes("const errorCode = String(result?.error?.code || '').trim().toUpperCase();"), true);
+  assert.equal(source.includes("if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND')"), true);
+  assert.equal(source.includes('userMessage: result?.error?.requiresSignIn'), true);
+  assert.equal(source.includes('VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED'), true);
+  assert.equal(source.includes('throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {'), true);
 });
 
 
@@ -2575,6 +3413,66 @@ test('bootstrapViewer renders start panel recovery warning for authReturn withou
   const panel = appRoot.children[0];
   const statusNode = panel.children.find((child) => child.className === 'viewer-start-error');
   assert.match(statusNode.textContent, /restore failed/i);
+});
+
+test('bootstrapViewer callback mode uses dedicated recovery panel and passes preserve options to restore', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  let restoreOptions = null;
+  class FakeAuthGate {
+    constructor({ onRecoveryMessage }) {
+      this.onRecoveryMessage = onRecoveryMessage;
+    }
+    async restoreAfterAuthReturn(options = {}) {
+      restoreOptions = options;
+      if (this.onRecoveryMessage) {
+        this.onRecoveryMessage('Recovery ticket exists but cannot replay yet.');
+      }
+      return { status: 'no_pending_intent' };
+    }
+    clearPending() {}
+  }
+
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/?authReturn=1&authCallback=1', search: '?authReturn=1&authCallback=1' },
+      history: { replaceState: () => {} },
+    },
+    SharedAuthGate: FakeAuthGate,
+    renderViewerShell: () => {
+      throw new Error('should not render shell while callback recovery is unresolved');
+    },
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      pendingIntent: { get: () => null, set: () => {}, clear: () => {} },
+      importedWorksheets: { get: async () => null },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+  const panel = appRoot.children[0];
+  assert.equal(panel.className, 'viewer-auth-callback-panel');
+  assert.equal(restoreOptions?.preserveUrlOnAuthNotReady, true);
+  assert.equal(restoreOptions?.preservePendingOnAuthNotReady, true);
+});
+
+test('bootstrapViewer callback mode includes explicit cancel recovery escape-hatch behavior', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("cancelRecoveryBtn.textContent = 'Cancel recovery';"), true);
+  assert.equal(source.includes('authGate.clearPending();'), true);
+  assert.equal(source.includes('cleanupViewerAuthCallbackUrlParams();'), true);
+  assert.equal(source.includes('await renderStartPanelFromResumeFlag(session.state.recoveryMessage);'), true);
+});
+
+test('bootstrapViewer callback mode continue sign-in reuses popup auth flow and retries recovery', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('session.beginServerSignIn({'), true);
+  assert.equal(source.includes('onSessionReady: async ({ finalizeFlow }) => {'), true);
+  assert.equal(source.includes('await attemptRecovery({ manual: true });'), true);
+  assert.equal(source.includes('window.location.assign(buildViewerAuthCallbackSignInUrl({ forceNavigationToken: true }));'), false);
+  assert.equal(source.includes('function buildViewerAuthCallbackSignInUrl(options = {}) {'), false);
 });
 
 test('bootstrapViewer renders fatal panel for explicit localAttemptId resume failure and does not create synthetic attempt', { concurrency: false }, async () => {
@@ -3081,7 +3979,7 @@ test('viewer playback race condition: last request wins when fetches resolve out
 });
 
 test('question prompt audio handler toggles disable state and does not persist success text', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes("if (questionAudioBtn.disabled) return;"), true);
   assert.equal(source.includes("questionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("onEnded: () => {\n            questionAudioBtn.disabled = false;"), true);
@@ -3090,7 +3988,7 @@ test('question prompt audio handler toggles disable state and does not persist s
 });
 
 test('choice option audio handler matches icon-button lifecycle behavior', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes("optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';"), true);
   assert.equal(source.includes("optionAudioBtn.textContent = '🔊';"), true);
   assert.equal(source.includes("if (optionAudioBtn.disabled) return;"), true);
@@ -3113,4 +4011,525 @@ test('viewer source binding blocks resume when source fingerprint or identity dr
   assert.equal(source.includes('expectedSourceId && expectedSourceId !== actualSourceId'), true);
   assert.equal(source.includes('expectedFingerprint && expectedFingerprint !== actualFingerprint'), true);
   assert.equal(source.includes('Saved attempt no longer matches this worksheet source. Start a new attempt.'), true);
+});
+
+test('viewer rewrite payload validator rejects stale or malformed payload context', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'b1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'b1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+
+  assert.equal(session.validateViewerRewriteIntentPayload({
+    localAttemptId: 'attempt_1',
+    blockId: 'b1',
+    answerTextAtClickTime: 'answer',
+  }).ok, true);
+  assert.equal(session.validateViewerRewriteIntentPayload({
+    localAttemptId: 'attempt_stale',
+    blockId: 'b1',
+    answerTextAtClickTime: 'answer',
+  }).ok, false);
+  assert.equal(session.validateViewerRewriteIntentPayload({
+    localAttemptId: 'attempt_1',
+    blockId: 'missing',
+    answerTextAtClickTime: 'answer',
+  }).ok, false);
+});
+
+test('bootstrapViewer validateIntent uses action-aware viewer rewrite payload checks', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("actionId === 'viewerRewrite' || actionId === 'resumeViewerRewriteAfterLogin'"), true);
+  assert.equal(source.includes("actionId === 'resumeAttemptServerResumeAfterLogin'"), true);
+  assert.equal(source.includes('hasOnlyAllowedKeys(payload, allowed)'), true);
+  assert.equal(source.includes('session.validateViewerRewriteIntentPayload(payload).ok'), true);
+  assert.equal(source.includes('return false;'), true);
+});
+
+test('bootstrapViewer configures SharedAuthGate with live session probe check', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('checkSessionReady: async () => session.ensureServerSessionReady(),'), true);
+  assert.equal(source.includes("returnQueryParams: { [VIEWER_AUTH_CALLBACK_PARAM]: '1' },"), true);
+  assert.equal(source.includes("isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1'"), false);
+});
+
+test('viewer triggerProtectedAction forwards payload and remains functional without intentPayload', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  const calls = [];
+  session.authGate = {
+    runProtectedAction: async (intent) => {
+      calls.push(intent);
+      return { status: 'executed' };
+    },
+  };
+
+  const noPayloadResult = await session.triggerProtectedAction('resumeAttemptServerResumeAfterLogin');
+  const withPayloadResult = await session.triggerProtectedAction('viewerRewrite', {
+    localAttemptId: 'attempt_stale',
+    blockId: 'b1',
+    answerTextAtClickTime: 'typed',
+  });
+
+  assert.equal(noPayloadResult.status, 'executed');
+  assert.equal(withPayloadResult.status, 'executed');
+  assert.deepEqual(calls[0], {
+    actionId: 'resumeAttemptServerResumeAfterLogin',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1' },
+  });
+  assert.deepEqual(calls[1], {
+    actionId: 'viewerRewrite',
+    recordStore: 'localAttempts',
+    payload: { localAttemptId: 'attempt_1', blockId: 'b1', answerTextAtClickTime: 'typed' },
+  });
+});
+
+test('rewrite assist snapshots answer text from answer record value', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {'), true);
+  assert.equal(source.includes('const getRawAnswerTextForBlock = (blockId) => {'), true);
+  assert.equal(source.includes('answerTextRawAtClickTime: getRawAnswerTextForBlock(blockId),'), true);
+  assert.equal(source.includes("const protectedActionResult = await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);"), true);
+});
+
+test('rewrite click handler surfaces blocked protected-action statuses before touching cached answers', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("if (protectedActionResult?.status === 'redirected') {"), true);
+  assert.equal(source.includes("if (protectedActionResult?.status !== 'executed') {"), true);
+  assert.equal(source.includes("protectedActionResult?.status === 'blocked_session_probe'"), true);
+  assert.equal(source.includes('session.setRewriteMessage(block.blockId, blockedMessage);'), true);
+});
+
+test('rewrite controls remain always mounted for text questions and enforce disabled states by rules', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("if (inputType === 'text') {"), true);
+  assert.equal(source.includes("rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';"), true);
+  assert.equal(source.includes("undoButton.className = 'question-card__undo-btn icon-nav-btn';"), true);
+  assert.equal(source.includes('const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= 300;'), true);
+  assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;'), true);
+  assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
+  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
+  assert.equal(source.includes("rewriteHint.textContent = 'Enter text to rewrite.';"), true);
+  assert.equal(source.includes('Answer is too long to rewrite (max 300 characters).'), true);
+});
+
+test('render signature excludes rewrite-row dynamic flags to avoid remounting for text length transitions', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const trimmedAnswerLengthForCurrentBlock = currentBlockId'), false);
+  assert.equal(source.includes('const canShowRewriteButtonForCurrentBlock = Boolean('), false);
+  assert.equal(source.includes('const isAnswerTooLongToRewriteForCurrentBlock = trimmedAnswerLengthForCurrentBlock > 300;'), false);
+  assert.equal(source.includes('hasUndoForCurrentBlock,'), false);
+  assert.equal(source.includes('rewriteMessageForCard,'), false);
+  assert.equal(source.includes('canShowRewriteButtonForCurrentBlock,'), false);
+  assert.equal(source.includes('isAnswerTooLongToRewriteForCurrentBlock,'), false);
+});
+
+test('replayViewerRewriteIntent valid viewerRewrite context calls rewrite API and applies answer with undo snapshot', async () => {
+  const mod = await loadViewerModule();
+  const rewriteCalls = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async (text) => {
+        rewriteCalls.push(text);
+        return { ok: true, data: { text: 'rewritten answer' } };
+      },
+    },
+  });
+
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text' },
+    }],
+  };
+  session.state.answers = {
+    q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'original answer',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.deepEqual(rewriteCalls, ['original answer']);
+  assert.equal(session.state.undoBuffer.q1, 'original answer');
+  assert.equal(session.state.answers.q1.value, 'rewritten answer');
+});
+
+test('replayViewerRewriteIntent stores raw click snapshot for undo when provided', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'rewritten answer' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text', maxLength: 20 },
+    }],
+  };
+  session.state.answers = {
+    q1: { value: '01234567890123456789', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: '01234567890123456789EXTRA',
+    answerTextRawAtClickTime: '01234567890123456789EXTRA',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(session.state.undoBuffer.q1, '01234567890123456789EXTRA');
+});
+
+test('replayViewerRewriteIntent accepts unchanged answers that differ only by surrounding whitespace', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'clean rewrite' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: '  hello  ', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'hello',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(session.state.answers.q1.value, 'clean rewrite');
+});
+
+test('replayViewerRewriteIntent accepts auth-restore maxLength truncation when snapshot otherwise matches', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'rewritten text that is also long' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text', maxLength: 20 },
+    }],
+  };
+  session.state.answers = {
+    // Simulates save-phase truncation that occurred during auth redirect/restore.
+    q1: { value: '01234567890123456789', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: '01234567890123456789EXTRA_CHARS_TYPED_BEFORE_AUTH',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+});
+
+test('replayViewerRewriteIntent stale-check prefers raw snapshot and save-equivalent clamp-then-trim normalization', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'rewritten' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q1' },
+      responseConfig: { inputType: 'text', maxLength: 5 },
+    }],
+  };
+  // Simulates restored save-phase value for raw pre-auth text "   abcde".
+  session.state.answers = {
+    q1: { value: '   ab', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    // Legacy trimmed snapshot would not match restored value in this edge case.
+    answerTextAtClickTime: 'abcde',
+    // Raw snapshot should be used for comparison.
+    answerTextRawAtClickTime: '   abcde',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+});
+
+test('viewer replayProtectedAction receives payload and avoids mutation on stale context', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_active';
+  session.state.lastActiveBlockId = 'b1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'b1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    b1: { value: 'original', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+  const beforeAnswers = JSON.stringify(session.state.answers);
+
+  const result = await session.replayProtectedAction({
+    actionId: 'viewerRewrite',
+    payload: {
+      localAttemptId: 'attempt_stale',
+      blockId: 'b1',
+      answerTextAtClickTime: 'new value',
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'invalid_context');
+  assert.equal(JSON.stringify(session.state.answers), beforeAnswers);
+});
+
+test('stale replay context aborts without calling rewrite API or mutating answers', async () => {
+  const mod = await loadViewerModule();
+  let rewriteCallCount = 0;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => {
+        rewriteCallCount += 1;
+        return { ok: true, data: { text: 'should not apply' } };
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_active';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'keep me', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+  const before = JSON.stringify(session.state.answers);
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_stale',
+    blockId: 'q1',
+    answerTextAtClickTime: 'keep me',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'invalid_context');
+  assert.equal(rewriteCallCount, 0);
+  assert.equal(JSON.stringify(session.state.answers), before);
+});
+
+test('undo lifecycle wiring exists for post-rewrite visibility, restore, and manual input clear', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);'), true);
+  assert.equal(source.includes("undoButton.textContent = 'Undo';"), true);
+  assert.equal(source.includes('if (undoButton.disabled || isRewriteInFlight) {'), true);
+  assert.equal(source.includes("cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));"), true);
+  assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer);'), true);
+  assert.equal(source.includes('delete nextUndoBuffer[block.blockId];'), true);
+  assert.equal(source.includes("control.addEventListener('input', () => {"), true);
+  assert.equal(source.includes('session.state.undoBuffer = nextUndoBuffer;'), true);
+});
+
+test('text control sync prefers focused edit cache and falls back to canonical state when unfocused', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const isControlFocused = control === activeElement;'), true);
+  assert.equal(source.includes('const nextValue = isControlFocused && cachedRawValue !== undefined'), true);
+  assert.equal(source.includes("if (!isControlFocused && cachedRawValue !== undefined && String(cachedRawValue) !== stateValue) {"), true);
+});
+
+test('in-flight rewrite state renders loading label while preserving always-visible controls', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;'), true);
+  assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';"), true);
+  assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
+  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
+  assert.equal(source.includes('session.state.rewriteMessageByBlock?.[block.blockId]'), true);
+});
+
+test('rewrite row updates happen in place without mount/unmount checks', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("rewriteRow.append(rewriteButton, undoButton);"), true);
+  assert.equal(source.includes("rewriteMessages.append(textStatus, rewriteHint, rewriteError);"), true);
+  assert.equal(source.includes("textActionsRow.append(textCounter, rewriteRow);"), true);
+  assert.equal(source.includes("card.append(helper, control, mediaFeedback, textFooter, inputError);"), true);
+  assert.equal(source.includes('if (rewriteRow.childNodes.length > 0) {'), false);
+});
+
+test('rewrite API failure keeps original answer unchanged and clears in-flight flags', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: false, error: { message: 'bridge failed' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'original answer',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'rewrite_failed');
+  assert.equal(session.state.answers.q1.value, 'original answer');
+  assert.equal(session.state.isRewriting, false);
+  assert.equal(session.state.rewritingBlockId, null);
+  assert.equal(session.state.rewriteMessageByBlock.q1.includes('Rewrite could not be completed'), true);
+  assert.equal(session.state.recoveryMessage, null);
+});
+
+test('rewrite API thrown error keeps original answer unchanged and clears in-flight flags', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => {
+        throw new Error('unexpected parse error');
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'original answer',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'rewrite_failed');
+  assert.equal(session.state.answers.q1.value, 'original answer');
+  assert.equal(session.state.isRewriting, false);
+  assert.equal(session.state.rewritingBlockId, null);
+  assert.equal(session.state.rewriteMessageByBlock.q1.includes('Rewrite could not be completed'), true);
+});
+
+test('rewrite apply with unchanged resulting text is treated as success (not non-editable)', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      rewriteText: async () => ({ ok: true, data: { text: 'same answer' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.lastActiveBlockId = 'q1';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = {
+    q1: { value: 'same answer', answeredAt: '2026-04-01T00:00:00.000Z' },
+  };
+  session.state.undoBuffer = { q1: 'older answer' };
+
+  const result = await session.replayViewerRewriteIntent({
+    localAttemptId: 'attempt_1',
+    blockId: 'q1',
+    answerTextAtClickTime: 'same answer',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(session.state.answers.q1.value, 'same answer');
+  assert.equal(Object.prototype.hasOwnProperty.call(session.state.undoBuffer, 'q1'), false);
+  assert.equal(session.state.rewriteMessageByBlock.q1 || null, null);
 });

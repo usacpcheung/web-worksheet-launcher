@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { createApiServer } from './server.js';
 
-async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }, fn) {
+async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test', configOverrides = {} }, fn) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-server-test-'));
+  const openSockets = new Set();
   const api = await createApiServer({
     config: {
       nodeEnv,
@@ -18,6 +20,8 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
       },
       browsePageLimitDefault: 20,
       browsePageLimitMax: 100,
+      packageUploadMaxBytes: 31457280,
+      ...configOverrides,
     },
     db: { async end() {} },
     service: {
@@ -40,7 +44,10 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
         return null;
       },
       async listPublished() {
-        return [];
+        return { items: [], limit: 20, offset: 0, hasMore: false };
+      },
+      async deleteOwnPublishedPackage() {
+        return { ok: true, statusCode: 200, data: { published_package_id: 'x', deleted: true } };
       },
       ...service,
     },
@@ -52,6 +59,13 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
     },
   });
 
+  api.server.on('connection', (socket) => {
+    openSockets.add(socket);
+    socket.on('close', () => {
+      openSockets.delete(socket);
+    });
+  });
+
   await new Promise((resolve) => api.server.listen(0, '127.0.0.1', resolve));
   const addr = api.server.address();
   const baseUrl = `http://127.0.0.1:${addr.port}`;
@@ -59,12 +73,151 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test' }
   try {
     await fn(baseUrl, tempDir);
   } finally {
+    // Undici/fetch may keep sockets alive; force-close any remaining sockets
+    // so server.close() resolves consistently across Node/OS environments.
+    for (const socket of openSockets) {
+      if (socket instanceof net.Socket && !socket.destroyed) {
+        socket.destroy();
+      }
+    }
     await api.close();
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 }
 
 const authHeaders = { 'x-oidc-sub': 'user-sub' };
+
+test('POST /api/v1/drafts/upload forwards upload payload and returns success', async () => {
+  let received = null;
+  await withServer(
+    {
+      service: {
+        async uploadDraft(payload) {
+          received = payload;
+          return { ok: true, statusCode: 201, data: { uploaded_draft_id: 'u1' } };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const zipBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+      const res = await fetch(`${baseUrl}/api/v1/drafts/upload?title=Title&subject=Math&conflictAction=replace`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/zip' },
+        body: zipBytes,
+      });
+      assert.equal(res.status, 201);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.uploaded_draft_id, 'u1');
+    }
+  );
+
+  assert.equal(received.title, 'Title');
+  assert.equal(received.subject, 'Math');
+  assert.equal(received.conflictAction, 'replace');
+  assert.deepEqual(Array.from(received.zipBytes), [0x50, 0x4b, 0x03, 0x04]);
+});
+
+test('POST /api/v1/drafts/upload maps invalid package error to structured 400 payload', async () => {
+  await withServer(
+    {
+      service: {
+        async uploadDraft() {
+          return {
+            ok: false,
+            statusCode: 400,
+            error: {
+              code: 'INVALID_WORKSHEET_PACKAGE',
+              message: 'Uploaded worksheet package is invalid or corrupted.',
+            },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/drafts/upload`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/zip' },
+        body: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+      });
+      assert.equal(res.status, 400);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'INVALID_WORKSHEET_PACKAGE');
+      assert.equal(payload.error.message, 'Uploaded worksheet package is invalid or corrupted.');
+    }
+  );
+});
+
+test('POST /api/v1/drafts/upload returns 413 with PACKAGE_UPLOAD_TOO_LARGE when body exceeds configured max', async () => {
+  let uploadCalled = false;
+  await withServer(
+    {
+      configOverrides: {
+        packageUploadMaxBytes: 16,
+      },
+      service: {
+        async uploadDraft() {
+          uploadCalled = true;
+          return { ok: true, statusCode: 201, data: {} };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const oversized = new Uint8Array(32);
+      const res = await fetch(`${baseUrl}/api/v1/drafts/upload`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/zip' },
+        body: oversized,
+      });
+      assert.equal(res.status, 413);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'PACKAGE_UPLOAD_TOO_LARGE');
+      assert.equal(payload.error.message, 'Uploaded package is too large.');
+    }
+  );
+  assert.equal(uploadCalled, false);
+});
+
+test('POST /api/v1/published returns 413 with REQUEST_BODY_TOO_LARGE when body exceeds configured max', async () => {
+  let publishCalled = false;
+  await withServer(
+    {
+      configOverrides: {
+        packageUploadMaxBytes: 16,
+      },
+      service: {
+        async publishFromDraft() {
+          publishCalled = true;
+          return { ok: true, statusCode: 201, data: {} };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const oversizedPayload = JSON.stringify({
+        uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+        x: 'a'.repeat((31 * 1024 * 1024) + 128),
+      });
+      const res = await fetch(`${baseUrl}/api/v1/published`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders,
+          'content-type': 'application/json',
+        },
+        body: oversizedPayload,
+      });
+
+      assert.equal(res.status, 413);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'REQUEST_BODY_TOO_LARGE');
+      assert.equal(payload.error.message, 'Request body is too large.');
+    }
+  );
+
+  assert.equal(publishCalled, false);
+});
 
 test('GET /api/v1/session returns ready identity payload', async () => {
   await withServer({}, async (baseUrl) => {
@@ -196,6 +349,54 @@ test('GET /api/v1/published/:id/artifact rejects malformed publishedPackageId wi
   });
 });
 
+test('DELETE /api/v1/published/:id rejects malformed publishedPackageId with 400', async () => {
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/published/not-a-uuid`, {
+      method: 'DELETE',
+      headers: authHeaders,
+    });
+
+    assert.equal(res.status, 400);
+    const payload = await res.json();
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'INVALID_PUBLISHED_PACKAGE_ID');
+  });
+});
+
+test('DELETE /api/v1/published/:id forwards owner-scoped delete and returns payload', async () => {
+  let received = null;
+  await withServer(
+    {
+      service: {
+        async deleteOwnPublishedPackage({ identity, publishedPackageId }) {
+          received = { identity, publishedPackageId };
+          return {
+            ok: true,
+            statusCode: 200,
+            data: { published_package_id: publishedPackageId, deleted: true },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const publishedPackageId = '550e8400-e29b-41d4-a716-446655440000';
+      const res = await fetch(`${baseUrl}/api/v1/published/${publishedPackageId}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data, { published_package_id: publishedPackageId, deleted: true });
+    }
+  );
+
+  assert.deepEqual(received, {
+    identity: { sub: 'user-sub', email: null, name: null },
+    publishedPackageId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+});
+
 test('GET /api/v1/published rejects invalid limit query with 400', async () => {
   await withServer({}, async (baseUrl) => {
     const res = await fetch(`${baseUrl}/api/v1/published?limit=abc`, {
@@ -209,20 +410,33 @@ test('GET /api/v1/published rejects invalid limit query with 400', async () => {
   });
 });
 
-test('GET /api/v1/published forwards title/subject/owner filters (owner email value)', async () => {
+test('GET /api/v1/published rejects zero limit query with 400', async () => {
+  await withServer({}, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/published?limit=0`, {
+      headers: authHeaders,
+    });
+
+    assert.equal(res.status, 400);
+    const payload = await res.json();
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'INVALID_QUERY_PARAM');
+  });
+});
+
+test('GET /api/v1/published forwards q/title/subject/owner filters (owner email value)', async () => {
   let received = null;
   await withServer(
     {
       service: {
         async listPublished(filters) {
           received = filters;
-          return [];
+          return { items: [], limit: 5, offset: 2, hasMore: false };
         },
       },
     },
     async (baseUrl) => {
       const res = await fetch(
-        `${baseUrl}/api/v1/published?title=Algebra&subject=Math&owner=teacher%40example.com&limit=5&offset=2`,
+        `${baseUrl}/api/v1/published?q=fractions&title=Algebra&subject=Math&owner=teacher%40example.com&limit=5&offset=2`,
         { headers: authHeaders }
       );
       assert.equal(res.status, 200);
@@ -230,13 +444,44 @@ test('GET /api/v1/published forwards title/subject/owner filters (owner email va
   );
 
   assert.deepEqual(received, {
-    query: '',
+    query: 'fractions',
     title: 'Algebra',
     subject: 'Math',
     owner: 'teacher@example.com',
     limit: 5,
     offset: 2,
   });
+});
+
+test('GET /api/v1/published returns pagination metadata payload', async () => {
+  await withServer(
+    {
+      service: {
+        async listPublished() {
+          return {
+            items: [{ published_package_id: 'p1', title: 'Pack 1' }],
+            limit: 1,
+            offset: 0,
+            hasMore: true,
+            nextOffset: 1,
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/published?limit=1&offset=0`, { headers: authHeaders });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data, {
+        items: [{ published_package_id: 'p1', title: 'Pack 1' }],
+        limit: 1,
+        offset: 0,
+        hasMore: true,
+        nextOffset: 1,
+      });
+    }
+  );
 });
 
 test('GET /api/v1/drafts/:id/artifact rejects malformed uploadedDraftId with 400', async () => {

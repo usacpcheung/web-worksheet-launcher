@@ -484,7 +484,7 @@ test('uploadCurrentDraftToServer emits ordered notifications for progress, succe
       source: 'upload.status',
       kind: 'info',
       category: 'server',
-      text: 'Uploading…',
+      text: 'Uploading draft package...',
     },
     {
       source: 'upload.status',
@@ -496,15 +496,15 @@ test('uploadCurrentDraftToServer emits ordered notifications for progress, succe
       source: 'upload.refresh',
       kind: 'success',
       category: 'server',
-      text: 'Uploaded drafts refreshed.',
+      text: 'Upload succeeded. Draft list refreshed.',
     },
   ]);
   const uploadActivityTexts = session.state.activityLog
     .filter((item) => item.source === 'upload.status' || item.source === 'upload.refresh')
     .map((item) => item.text);
-  assert.equal(uploadActivityTexts.includes('Uploading…'), false);
+  assert.equal(uploadActivityTexts.includes('Uploading draft package...'), false);
   assert.equal(uploadActivityTexts.includes('Uploaded draft draft_upload_1.'), true);
-  assert.equal(uploadActivityTexts.includes('Uploaded drafts refreshed.'), true);
+  assert.equal(uploadActivityTexts.includes('Upload succeeded. Draft list refreshed.'), true);
 });
 
 test('uploadCurrentDraftToServer keeps in-progress notification visible while request is in flight', async () => {
@@ -523,14 +523,70 @@ test('uploadCurrentDraftToServer keeps in-progress notification visible while re
 
   const pendingUpload = session.uploadCurrentDraftToServer();
   const inflightNotification = session.state.notifications.find((item) => (
-    item.source === 'upload.status' && item.kind === 'info' && item.text === 'Uploading…'
+    item.source === 'upload.status' && item.kind === 'info' && item.text === 'Uploading draft package...'
   ));
   assert.equal(Boolean(inflightNotification), true);
-  assert.equal(session.state.activityLog.some((item) => item.text === 'Uploading…'), false);
+  assert.equal(session.state.activityLog.some((item) => item.text === 'Uploading draft package...'), false);
 
   resolveUpload({ ok: true, data: { uploaded_draft_id: 'draft_upload_inflight' } });
   const result = await pendingUpload;
   assert.equal(result.ok, true);
+});
+
+test('uploadCurrentDraftToServer blocks duplicate upload triggers while request is active', async () => {
+  const mod = await loadEditorModule();
+  let resolveUpload;
+  let uploadCallCount = 0;
+  const uploadPromise = new Promise((resolve) => { resolveUpload = resolve; });
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      uploadDraftPackage: async () => {
+        uploadCallCount += 1;
+        return uploadPromise;
+      },
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.state.draft = { localId: 'draft_local_dupe', title: 'Draft dup', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const first = session.uploadCurrentDraftToServer();
+  const second = await session.uploadCurrentDraftToServer();
+  assert.equal(second.ok, false);
+  assert.equal(second.skipped, true);
+  assert.equal(second.error.message, 'Upload already in progress.');
+
+  resolveUpload({ ok: true, data: { uploaded_draft_id: 'draft_upload_dupe' } });
+  const firstResult = await first;
+  assert.equal(firstResult.ok, true);
+  assert.equal(uploadCallCount, 1);
+});
+
+test('uploadCurrentDraftToServer shows retry-safe message for transport failures', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      uploadDraftPackage: async () => ({
+        ok: false,
+        error: {
+          code: 'NETWORK_ERROR',
+          message: 'socket disconnected',
+        },
+      }),
+      listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+    },
+  });
+  session.state.draft = { localId: 'draft_local_net', title: 'Draft net', metadata: { subject: '' }, blocks: [] };
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1, 2, 3]);
+
+  const result = await session.uploadCurrentDraftToServer();
+  assert.equal(result.ok, false);
+  assert.equal(
+    session.state.serverActionMessage,
+    'Upload failed before completion. Your local draft is still safe. Please retry when the network is stable.'
+  );
 });
 
 test('uploadCurrentDraftToServer emits refresh warning when uploaded drafts refresh fails', async () => {
@@ -559,6 +615,19 @@ test('uploadCurrentDraftToServer emits refresh warning when uploaded drafts refr
       text: 'Unable to refresh uploaded drafts.',
     },
   ]);
+});
+
+test('upload progress updates skip redundant editor rerenders for unchanged display state', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('let lastProgressRenderKey = null;'), true);
+  assert.equal(source.includes('if (progressRenderKey === lastProgressRenderKey) {'), true);
+  assert.equal(source.includes('lastProgressRenderKey = progressRenderKey;'), true);
+});
+
+test('formatMegabytes reuses formatBytes with MB mode', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('function formatBytes(bytes, options = {}) {'), true);
+  assert.equal(source.includes("return formatBytes(bytes, { unit: 'mb', invalid: '0.0 MB' });"), true);
 });
 
 
@@ -893,8 +962,8 @@ test('editor uses live server upload/publish integration instead of protected-in
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("session.triggerProtectedAction('resumeDraftUploadAfterLogin')"), false);
   assert.equal(source.includes("session.triggerProtectedAction('resumePublishAfterLogin')"), false);
-  assert.equal(source.includes('await session.uploadCurrentDraftToServer();'), true);
-  assert.equal(source.includes('await session.publishUploadedDraftToServer('), true);
+  assert.equal(source.includes('session.uploadCurrentDraftToServer({ preflight: false })'), true);
+  assert.equal(source.includes('session.publishUploadedDraftToServer('), true);
   assert.equal(source.includes('await session.refreshServerSession();'), true);
 });
 
@@ -1006,15 +1075,21 @@ test('publishUploadedDraftToServer emits refresh warning when uploaded drafts re
 });
 
 test('editor source removes global Publish button and adds labeled metadata and browse controls', async () => {
-  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes('await session.publishCurrentDraftToServer();'), false);
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    publishBtn,'), false);
-  assert.equal(source.includes("metadataHeading.textContent = 'Draft Metadata';"), true);
+  assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
+  assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
+  assert.equal(source.includes("metadataHeading.textContent = 'Draft Info';"), true);
   assert.equal(source.includes("titleLabel.textContent = 'Worksheet Title';"), true);
   assert.equal(source.includes("subjectLabel.textContent = 'Subject';"), true);
+  assert.equal(source.includes("signInBtn.textContent = 'Sign in for server features';"), true);
+  assert.equal(source.includes("syncDraftBtn.textContent = 'Upload Draft';"), true);
+  assert.equal(source.includes("manageUploadedDraftsBtn.textContent = 'Manage Uploaded Drafts';"), true);
   assert.equal(source.includes("browsePublishedBtn.textContent = 'Browse Published Packages';"), true);
+  assert.equal(source.includes("loadMoreBtn.textContent = browsePublishedState.loading ? 'Loading…' : 'Load more';"), true);
   assert.equal(source.includes("ownerFilter.placeholder = 'Filter by owner email';"), true);
-  assert.equal(source.includes("copyBtn.textContent = 'Copy Published ID';"), true);
+  assert.equal(source.includes("copyBtn.textContent = 'Copy Viewer Link';"), true);
   assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? 'Opening…' : 'Open in Editor';"), true);
   assert.equal(source.includes('if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;'), true);
   assert.equal(source.includes('const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);'), true);
@@ -1024,15 +1099,65 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
   assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.';"), true);
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
-  assert.equal(source.includes("summary.textContent = 'Published details';"), true);
-  assert.equal(
-    source.includes("publishedOwnerLine.textContent = `Owner: ${item.published_owner_email || item.published_owner_name || session.state.serverSession?.user?.email || 'Unknown'}`;"),
-    true
-  );
+  assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
+  assert.equal(source.includes("summary.textContent = 'Details';"), true);
+  assert.equal(source.includes("badge.textContent = publishState === 'current_version_published'"), true);
+  assert.equal(source.includes("? 'Published current version'"), true);
+  assert.equal(source.includes("? 'Unpublished changes'"), true);
+  assert.equal(source.includes("publishBtn.textContent = isPublishing ? 'Publishing…' : publishState === 'unpublished_changes' ? 'Publish New Version' : 'Publish';"), true);
+  assert.equal(source.includes("heading.textContent = 'Published package conflict';"), true);
+  assert.equal(source.includes("editBtn.textContent = 'Edit Published Name/Subject';"), true);
+  assert.equal(source.includes("let attemptedTitle = String(item?.title || '');"), true);
+  assert.equal(source.includes("let attemptedSubject = String(item?.subject || '');"), true);
+  assert.equal(source.includes('initialTitle: attemptedTitle,'), true);
+  assert.equal(source.includes('initialSubject: attemptedSubject,'), true);
+  assert.equal(source.includes("attemptedTitle = String(modal.title ?? '');"), true);
+  assert.equal(source.includes("attemptedSubject = String(modal.subject ?? '');"), true);
+  assert.equal(source.includes("if (event.key !== 'Tab') return;"), true);
+  assert.equal(source.includes("dialog.removeEventListener('keydown', onKeyDown);"), true);
   assert.equal(
     source.includes("subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;"),
     true
   );
+});
+
+test('stage3: protected actions column no longer includes legacy rewrite/t2a stub buttons', async () => {
+  const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
+  assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
+  assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
+  assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    manageUploadedDraftsBtn,\n    browsePublishedBtn\n  );'), true);
+});
+
+test('editor source keeps detail status row visible and uses friendly block/saved labels', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+
+  assert.equal(source.includes("if (elapsedMs < 0) return `${lastSavedAt} (in the future)`;"), true);
+  assert.equal(source.includes("if (elapsedMs < 0) return 'just now';"), false);
+  assert.equal(source.includes('blockBadge.textContent = getBlockKindLabel(block.kind);'), true);
+  assert.equal(source.includes('rightPanel.append(statusRow);'), true);
+});
+
+test('editor server menu buttons stay disabled when session is not ready and preflight on click', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const css = await fs.readFile(path.resolve('server/editor/main.css'), 'utf8');
+
+  assert.equal(source.includes('isUploadDraftFlowActive: false,'), true);
+  assert.equal(source.includes('syncDraftBtn.disabled = !serverReady || isUploadingDraft || isUploadDraftFlowActive;'), true);
+  assert.equal(source.includes('browsePublishedBtn.disabled = !serverReady;'), true);
+  assert.equal(source.includes('manageUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;'), true);
+  assert.equal(source.includes('signInBtn.hidden = serverReady;'), true);
+  assert.equal(source.includes('async function guardServerMenuAction(button, action) {'), true);
+  assert.equal(source.includes('if (button?.disabled) return null;'), true);
+  assert.equal(source.includes('const sessionReady = await session.ensureServerSessionReady();'), true);
+  assert.equal(source.includes('if (session.state.isUploadDraftFlowActive || session.state.isUploadingDraft) return;'), true);
+  assert.equal(source.includes('let uploadFlowStarted = false;'), true);
+  assert.equal(source.includes('session.state.isUploadDraftFlowActive = true;'), true);
+  assert.equal(source.includes('uploadFlowStarted = true;'), true);
+  assert.equal(source.includes('session.state.isUploadDraftFlowActive = false;'), true);
+  assert.equal(source.includes('return session.uploadCurrentDraftToServer({ preflight: false });'), true);
+  assert.equal(source.includes('await guardServerMenuAction(manageUploadedDraftsBtn, async () => {'), true);
+  assert.equal(css.includes('.action-column button:hover:not(:disabled),'), true);
+  assert.equal(css.includes('.action-column button:disabled,'), true);
 });
 
 test('detail signature includes media refs so media attach/remove rerenders immediately', async () => {
@@ -1047,16 +1172,93 @@ test('multiple-choice option audio controls gate placeholder options with helper
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('const persistedOptionIds = new Set(normalizedOptions.map((option) => String(option?.id || \'\')));'), true);
   assert.equal(source.includes('const isPersistedOption = persistedOptionIds.has(optionId);'), true);
-  assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption;"), true);
+  assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("Enter option text or click Add option before attaching audio."), true);
 });
 
-test('multiple-choice option row collapses audio actions into a more-menu and shows attached asset id', async () => {
+test('question audio row adds contextual generate/regenerate control with prompt eligibility checks', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("optionActionsMenu.className = 'option-actions-menu';"), true);
-  assert.equal(source.includes("optionActionsToggle.textContent = '⋯';"), true);
+  assert.equal(source.includes("const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');"), true);
+  assert.equal(source.includes("setMediaActionButtonContent("), true);
+  assert.equal(source.includes("generateQuestionAudioBtn,"), true);
+  assert.equal(source.includes("isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate'"), true);
+  assert.equal(source.includes("? 'Generating…'"), true);
+  assert.equal(source.includes("isPromptT2AInFlight ? 'Generating…' : currentQuestionAudioRef ? 'Regenerate' : 'Generate'"), true);
+  assert.equal(source.includes("generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;"), true);
+  assert.equal(source.includes("Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters)."), true);
+  assert.equal(source.includes("attachQuestionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("playQuestionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("removeQuestionAudioBtn.disabled = true;"), true);
+  assert.equal(source.includes("questionAudioActions.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);"), true);
+});
+
+test('stage3: prompt row triggers replace confirmation before prompt bridge generation when audio exists', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const hasAudioConfirmIdx = source.indexOf("title: 'Regenerate question audio?'");
+  const promptBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorPromptT2A', {");
+  const sessionReadyIdx = source.indexOf("const sessionReady = await session.ensureServerSessionReady();");
+  assert.equal(hasAudioConfirmIdx >= 0, true);
+  assert.equal(sessionReadyIdx >= 0, true);
+  assert.equal(promptBridgeCallIdx >= 0, true);
+  assert.equal(sessionReadyIdx < promptBridgeCallIdx, true);
+  assert.equal(hasAudioConfirmIdx < promptBridgeCallIdx, true);
+});
+
+test('multiple-choice option row renders audio status menu without raw attached asset id text', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("const optionActionsMenu = document.createElement('details');"), true);
+  assert.equal(source.includes("optionActionsMenu.className = 'option-actions-menu option-audio-menu';"), true);
+  assert.equal(source.includes("const optionAudioMenuTrigger = document.createElement('summary');"), true);
+  assert.equal(source.includes("optionAudioMenuTrigger.dataset.optionAudioMenuTrigger = '1';"), true);
+  assert.equal(source.includes("const optionActionsRow = document.createElement('div');"), true);
+  assert.equal(source.includes("optionActionsRow.className = 'option-actions-menu__list option-audio-menu__list';"), true);
+  assert.equal(source.includes('optionActionsMenu.append(optionAudioMenuTrigger, optionActionsRow);'), true);
   assert.equal(source.includes('row.append(correctToggle, optionInput, optionActionsMenu, removeBtn);'), true);
-  assert.equal(source.includes('Option audio attached ('), true);
+  assert.equal(source.includes('Option audio attached ('), false);
+});
+
+test('multiple-choice option actions include contextual generate/regenerate audio with text eligibility and row lock', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("const optionDisplayText = String(option?.label ?? option?.value ?? '');"), true);
+  assert.equal(source.includes("const optionTextState = getT2ATextEligibility(optionDisplayText);"), true);
+  assert.equal(source.includes("const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;"), true);
+  assert.equal(source.includes("const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);"), true);
+  assert.equal(source.includes("const optionT2ALabel = isOptionT2AInFlight"), true);
+  assert.equal(source.includes(": optionAudioRef ? 'Regenerate audio' : 'Generate audio';"), true);
+  assert.equal(source.includes("setMediaActionButtonContent("), true);
+  assert.equal(source.includes("optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("optionT2AInFlightKey = optionT2AKey;"), true);
+  assert.equal(source.includes("optionT2AInFlightKey = null;"), true);
+  assert.equal(source.includes("actionId: 'editorOptionT2A'"), false);
+  assert.equal(source.includes("await session.triggerProtectedAction('editorOptionT2A', {"), true);
+  assert.equal(source.includes("text: getProtectedActionErrorMessage(result, 'Unable to start audio generation. Please try again.'),"), true);
+  assert.equal(source.includes('Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).'), true);
+  assert.equal(source.includes("optionActionsRow.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);"), true);
+  assert.equal(source.includes("setOptionAudioMenuTriggerState(optionAudioMenuTrigger"), true);
+});
+
+test('stage3: option row triggers replace confirmation before option bridge generation when audio exists', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const hasAudioConfirmIdx = source.indexOf("title: `Regenerate option ${optionIndex + 1} audio?`");
+  const optionBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorOptionT2A', {");
+  const optionSessionReadyIdx = source.indexOf("const sessionReady = await session.ensureServerSessionReady();");
+  assert.equal(hasAudioConfirmIdx >= 0, true);
+  assert.equal(optionSessionReadyIdx >= 0, true);
+  assert.equal(optionBridgeCallIdx >= 0, true);
+  assert.equal(optionSessionReadyIdx < optionBridgeCallIdx, true);
+  assert.equal(hasAudioConfirmIdx < optionBridgeCallIdx, true);
+});
+
+test('stage3: in-flight lock is row-scoped by block/option key and leaves unrelated rows interactive', async () => {
+  const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
+  assert.equal(source.includes("const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;"), true);
+  assert.equal(source.includes("const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);"), true);
+  assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("await runMediaAction(async () => {\n            if (optionAudioRef)"), false);
+  assert.equal(source.includes("await runMediaAction(async () => {\n        if (currentQuestionAudioRef)"), false);
+  assert.equal(source.includes("status !== 'executed' && status !== 'redirected'"), true);
 });
 
 test('multiple-choice option action state rerenders while typing when option ids/media refs change and restores caret', async () => {
@@ -1066,6 +1268,24 @@ test('multiple-choice option action state rerenders while typing when option ids
   assert.equal(source.includes("optionInput.dataset.optionIndex = String(optionIndex);"), true);
   assert.equal(source.includes('queueMicrotask(() => {'), true);
   assert.equal(source.includes('replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);'), true);
+});
+
+test('multiple-choice option input defers state updates while IME composition is active', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('let isOptionInputComposing = false;'), true);
+  assert.equal(source.includes("optionInput.addEventListener('compositionstart'"), true);
+  assert.equal(source.includes("optionInput.addEventListener('compositionend'"), true);
+  assert.equal(source.includes('if (isOptionInputComposing || event.isComposing) return;'), true);
+  assert.equal(source.includes('commitOptionInputValue();'), true);
+});
+
+test('prompt typing updates T2A state without forcing detail-panel rerender on each keystroke', async () => {
+  const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
+  assert.equal(source.includes('const updateSummary = ({ preserveDetailEditor = false } = {}) => {'), true);
+  assert.equal(source.includes('if (!preserveDetailEditor) {\n      renderDetailEditor();\n    }'), true);
+  assert.equal(source.includes('refreshPromptT2AControlsForSelectedBlock();'), true);
+  assert.equal(source.includes('updateSummary({ preserveDetailEditor: true });'), true);
+  assert.equal(source.includes('promptTextSignature'), false);
 });
 
 test('localDraftId render path avoids innerHTML interpolation for untrusted ids', async () => {
@@ -1358,10 +1578,12 @@ test('question field updates map inputType, maxLength, and options through draft
   session.updateQuestionOptionsFromText(block.blockId, 'One\nTwo');
   session.updateQuestionInputType(block.blockId, 'text');
   session.updateQuestionMaxLength(block.blockId, '25');
+  session.updateQuestionTextDisplayMode(block.blockId, 'single_line');
 
   const updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.equal(updated.responseConfig.inputType, 'text');
   assert.equal(updated.responseConfig.maxLength, 25);
+  assert.equal(updated.responseConfig.displayMode, 'single_line');
   assert.equal(updated.responseConfig.options, undefined);
 });
 
@@ -1377,9 +1599,51 @@ test('question input type change flow routes destructive switches through in-app
 
 test('confirm modal uses configurable description copy and defaults initial focus to cancel', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes('descriptionText,'), true);
-  assert.equal(source.includes('description.textContent = isNonEmptyString(descriptionText)'), true);
+  assert.match(source, /function showConfirmDialog\(\{\s*title,\s*bodyText,\s*entityLabel,\s*descriptionText,/m);
+  assert.match(source, /cancelLabel\s*=\s*'Cancel'/);
+  assert.match(source, /variant\s*=\s*'danger'/);
+  assert.match(source, /resolvedBodyText\s*=\s*isNonEmptyString\(bodyText\)\s*\?\s*bodyText\s*:\s*descriptionText/);
+  assert.match(source, /fallbackDescription\s*=\s*isNonEmptyString\(entityLabel\)/);
+  assert.match(source, /'Are you sure you want to continue\?'/);
   assert.equal(source.includes('cancelBtn.focus();'), true);
+});
+
+test('replace/delete image flows use shared confirm modal and avoid native confirm', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.match(source, /title:\s*'Replace question image\?'/);
+  assert.match(source, /confirmLabel:\s*'Replace image'/);
+  assert.match(source, /title:\s*'Remove question image\?'/);
+  assert.match(source, /confirmLabel:\s*'Remove image'/);
+  assert.match(source, /await\s+confirmDangerAction\(\{/);
+  assert.equal(source.includes('window.confirm('), false);
+});
+
+test('delete block baseline confirm parity uses shared danger modal labels', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("title: `Delete block ${displayIndex}?`"), true);
+  assert.equal(source.includes("confirmLabel: 'Delete block'"), true);
+  assert.equal(source.includes('await showConfirmDialog({'), true);
+});
+
+test('media confirmation actions gate duplicate submissions while busy', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.match(source, /let mediaActionInFlight\s*=\s*false/);
+  assert.match(source, /if\s*\(mediaActionInFlight\)\s*return false/);
+  assert.match(source, /mediaActionInFlight\s*=\s*true/);
+  assert.match(source, /mediaActionInFlight\s*=\s*false/);
+});
+
+test('browse modal filters are decoupled from generic button-row card styling and search button has one naming source', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.match(source, /filterRow\.className\s*=\s*'browse-modal__filters'/);
+  assert.equal(source.includes("filterRow.className = 'button-row browse-modal__filters'"), false);
+  assert.match(source, /searchBtn\.setAttribute\('aria-label', 'Search published packages'\)/);
+  assert.equal(source.includes('<span class="sr-only">Search</span>'), false);
+});
+
+test('confirmDangerAction safely no-ops when body text is missing', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.match(source, /if\s*\(!isNonEmptyString\(bodyText\)\)\s*\{\s*return false;\s*\}/m);
 });
 
 test('non-destructive type switch does not require confirmation', async () => {
@@ -1557,6 +1821,55 @@ test('reorderBlockByDelta moves middle block up/down and normalizes positions to
   session.state.draft.blocks.forEach((block) => {
     assert.deepEqual(toBlockFieldsWithoutPosition(block), beforeById.get(block.blockId));
   });
+});
+
+test('reorderBlockToIndex moves blocks to absolute indexes and normalizes positions', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_reorder_to_index');
+  clearTimeout(session.autosaveTimer);
+
+  session.state.draft.blocks = [
+    { blockId: 'a', kind: 'content', position: 0, content: { text: 'A', format: 'plain_text' } },
+    { blockId: 'b', kind: 'content', position: 1, content: { text: 'B', format: 'plain_text' } },
+    { blockId: 'c', kind: 'content', position: 2, content: { text: 'C', format: 'plain_text' } },
+    { blockId: 'd', kind: 'content', position: 3, content: { text: 'D', format: 'plain_text' } },
+  ];
+  session.state.selectedBlockId = 'c';
+
+  session.reorderBlockToIndex('d', 1);
+
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['a', 'd', 'b', 'c']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2, 3]);
+  assert.equal(session.state.selectedBlockId, 'c');
+
+  session.reorderBlockToIndex('a', 3);
+
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.blockId), ['d', 'b', 'c', 'a']);
+  assert.deepEqual(session.state.draft.blocks.map((block) => block.position), [0, 1, 2, 3]);
+  assert.equal(session.state.selectedBlockId, 'c');
+});
+
+test('reorderBlockToIndex no-ops for invalid targets and preserves revision', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_reorder_to_index_invalid');
+  clearTimeout(session.autosaveTimer);
+
+  session.state.draft.blocks = [
+    { blockId: 'a', kind: 'content', position: 0, content: { text: 'A', format: 'plain_text' } },
+    { blockId: 'b', kind: 'content', position: 1, content: { text: 'B', format: 'plain_text' } },
+  ];
+  const snapshot = session.state.draft.blocks.map((block) => structuredClone(block));
+  const revisionBefore = session.state.draftRevision;
+
+  session.reorderBlockToIndex('missing', 0);
+  session.reorderBlockToIndex('a', -1);
+  session.reorderBlockToIndex('a', 2);
+  session.reorderBlockToIndex('a', 0);
+
+  assert.deepEqual(session.state.draft.blocks, snapshot);
+  assert.equal(session.state.draftRevision, revisionBefore);
 });
 
 test('reorderBlockByDelta no-ops for out-of-bounds moves and preserves fields/selection', async () => {
@@ -2033,6 +2346,9 @@ test('question correctAnswer helpers update typed answer keys', async () => {
   session.updateQuestionCorrectAnswerBoolean(block.blockId, 'true');
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.equal(updated.responseConfig.correctAnswer, true);
+  session.updateQuestionCorrectAnswerBoolean(block.blockId, '');
+  updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(Object.hasOwn(updated.responseConfig, 'correctAnswer'), false);
 
   session.updateQuestionInputType(block.blockId, 'number');
   session.updateQuestionCorrectAnswerNumber(block.blockId, '4.5');
@@ -2257,6 +2573,23 @@ test('number validation helper reports min > max error', async () => {
   assert.equal(errors.max, 'Max must be greater than or equal to Min');
 });
 
+test('number validation helper suppresses correct answer range checks while min max range is invalid', async () => {
+  const mod = await loadEditorModule();
+  const errors = mod.getNumberQuestionValidationErrors(
+    {
+      inputType: 'number',
+      min: 10,
+      max: 5,
+      numberRules: { allowSigned: true, decimalPlacesAllowed: null },
+    },
+    { correctAnswer: '7' }
+  );
+
+  assert.equal(errors.min, 'Max must be greater than or equal to Min');
+  assert.equal(errors.max, 'Max must be greater than or equal to Min');
+  assert.equal(errors.correctAnswer, null);
+});
+
 test('number validation helper reports decimal-place violation', async () => {
   const mod = await loadEditorModule();
   const errors = mod.getNumberQuestionValidationErrors(
@@ -2268,6 +2601,20 @@ test('number validation helper reports decimal-place violation', async () => {
   );
 
   assert.equal(errors.correctAnswer, 'Correct answer has more decimal places than allowed');
+});
+
+test('number validation helper suppresses correct answer decimal checks while decimal rule is invalid', async () => {
+  const mod = await loadEditorModule();
+  const errors = mod.getNumberQuestionValidationErrors(
+    {
+      inputType: 'number',
+      numberRules: { allowSigned: true, decimalPlacesAllowed: null },
+    },
+    { correctAnswer: '1.23', decimalPlacesAllowed: 'abc' }
+  );
+
+  assert.equal(errors.decimalPlacesAllowed, 'Decimal places allowed must be a non-negative integer');
+  assert.equal(errors.correctAnswer, null);
 });
 
 test('number validation helper reports out-of-range correct answer', async () => {
@@ -3583,4 +3930,572 @@ test('toUploadedDraftDisplay includes fallback title and uploaded label', async 
   } finally {
     Intl.DateTimeFormat = originalFormatter;
   }
+});
+
+test('editor intent payload validators reject stale or malformed prompt/option t2a payloads', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Question 1' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: 'A', label: 'A' }],
+      },
+    }],
+  });
+
+  assert.equal(
+    session.validateEditorPromptT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'q1',
+      target: 'question_prompt',
+    }).ok,
+    true
+  );
+  assert.equal(
+    session.validateEditorPromptT2AIntentPayload({
+      localDraftId: 'draft_stale',
+      blockId: 'q1',
+      target: 'question_prompt',
+    }).ok,
+    false
+  );
+  assert.equal(
+    session.validateEditorPromptT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'missing',
+      target: 'question_prompt',
+    }).ok,
+    false
+  );
+  assert.equal(
+    session.validateEditorPromptT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'q1',
+      target: 'option',
+    }).ok,
+    false
+  );
+
+  assert.equal(
+    session.validateEditorOptionT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'q1',
+      target: 'option',
+      optionId: 'opt_1',
+    }).ok,
+    true
+  );
+  assert.equal(
+    session.validateEditorOptionT2AIntentPayload({
+      localDraftId: 'draft_stale',
+      blockId: 'q1',
+      target: 'option',
+      optionId: 'opt_1',
+    }).ok,
+    false
+  );
+  assert.equal(
+    session.validateEditorOptionT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'q1',
+      target: 'option',
+      optionId: 'missing_opt',
+    }).ok,
+    false
+  );
+  assert.equal(
+    session.validateEditorOptionT2AIntentPayload({
+      localDraftId: 'draft_active',
+      blockId: 'q1',
+      target: 'question_prompt',
+      optionId: 'opt_1',
+    }).ok,
+    false
+  );
+});
+
+test('bootstrapEditor validateIntent uses action-aware payload validation', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("actionId === 'editorPromptT2A' || actionId === 'resumeT2AAfterLogin'"), true);
+  assert.equal(source.includes("actionId === 'editorOptionT2A'"), true);
+  assert.equal(source.includes("actionId === 'resumeRewriteAfterLogin'"), true);
+  assert.equal(source.includes('hasOnlyAllowedKeys(payload, allowed)'), true);
+  assert.equal(source.includes('session.validateEditorPromptT2AIntentPayload(payload).ok'), true);
+  assert.equal(source.includes('session.validateEditorOptionT2AIntentPayload(payload).ok'), true);
+});
+
+test('bootstrapEditor configures SharedAuthGate with live session probe check', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes('checkSessionReady: async () => session.ensureServerSessionReady(),'), true);
+  assert.equal(source.includes("isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1'"), false);
+});
+
+test('editor triggerProtectedAction forwards payload and remains functional without intentPayload', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = mod.createDraftRecord({ localId: 'draft_1' });
+  const calls = [];
+  session.authGate = {
+    runProtectedAction: async (intent) => {
+      calls.push(intent);
+      return { status: 'executed' };
+    },
+  };
+
+  const noPayloadResult = await session.triggerProtectedAction('resumeRewriteAfterLogin');
+  const withPayloadResult = await session.triggerProtectedAction('editorPromptT2A', {
+    localDraftId: 'draft_stale',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+
+  assert.equal(noPayloadResult.status, 'executed');
+  assert.equal(withPayloadResult.status, 'executed');
+  assert.deepEqual(calls[0], {
+    actionId: 'resumeRewriteAfterLogin',
+    recordStore: 'localDrafts',
+    payload: { localDraftId: 'draft_1' },
+  });
+  assert.deepEqual(calls[1], {
+    actionId: 'editorPromptT2A',
+    recordStore: 'localDrafts',
+    payload: { localDraftId: 'draft_1', blockId: 'q1', target: 'question_prompt' },
+  });
+});
+
+test('editor replayProtectedAction receives payload and avoids mutation on stale context', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Question 1' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: 'A', label: 'A' }],
+      },
+    }],
+  });
+  const beforeDraft = JSON.stringify(session.state.draft);
+
+  const result = await session.replayProtectedAction({
+    actionId: 'editorOptionT2A',
+    payload: {
+      localDraftId: 'draft_stale',
+      blockId: 'q1',
+      target: 'option',
+      optionId: 'opt_1',
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'invalid_context');
+  assert.equal(JSON.stringify(session.state.draft), beforeDraft);
+});
+
+test('editor replayEditorPromptT2AIntent generates audio and attaches via canonical question media path', async () => {
+  const mod = await loadEditorModule();
+  const attachCalls = [];
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async (text) => ({
+        ok: true,
+        data: new Uint8Array([1, 2, 3]),
+      }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt audio text' } }],
+  });
+  session.attachQuestionMedia = async (...args) => {
+    attachCalls.push(args);
+    return { ok: true };
+  };
+
+  const result = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'generated_editor_prompt_t2a');
+  assert.equal(attachCalls.length, 1);
+  assert.equal(attachCalls[0][0], 'q1');
+  assert.equal(attachCalls[0][1], 'question_audio');
+  assert.equal(typeof attachCalls[0][2]?.arrayBuffer, 'function');
+  assert.equal(attachCalls[0][3]?.confirmReplace, false);
+});
+
+test('editor replayEditorPromptT2AIntent returns plain-language errors for invalid prompt generation states', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async () => ({ ok: false, error: { message: '' } }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: '' } }],
+  });
+
+  const missingPrompt = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  assert.equal(missingPrompt.ok, false);
+  assert.equal(missingPrompt.error.message, 'Enter a prompt before generating audio.');
+
+  session.state.draft.blocks[0].prompt.text = 'a'.repeat(201);
+  const tooLong = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  assert.equal(tooLong.ok, false);
+  assert.equal(tooLong.error.message, 'Prompt must be 200 characters or fewer to generate audio.');
+
+  session.state.draft.blocks[0].prompt.text = 'short prompt';
+  const generationFailure = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  assert.equal(generationFailure.ok, false);
+  assert.equal(generationFailure.error.message, 'Audio generation failed. Existing audio is unchanged.');
+  const promptRecoveryNotification = session.state.notifications
+    .find((item) => item.source === 'prompt.t2a' && item.kind === 'error');
+  assert.equal(Boolean(promptRecoveryNotification), true);
+});
+
+test('editor replayEditorOptionT2AIntent generates audio and attaches via canonical option media path', async () => {
+  const mod = await loadEditorModule();
+  const attachCalls = [];
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async (text) => ({
+        ok: true,
+        data: new Uint8Array([4, 5, 6]),
+      }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Q1' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: 'Option one', label: 'Option one' }],
+      },
+    }],
+  });
+  session.attachOptionAudio = async (...args) => {
+    attachCalls.push(args);
+    return { ok: true };
+  };
+
+  const result = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 'generated_editor_option_t2a');
+  assert.equal(attachCalls.length, 1);
+  assert.equal(attachCalls[0][0], 'q1');
+  assert.equal(attachCalls[0][1], 'opt_1');
+  assert.equal(typeof attachCalls[0][2]?.arrayBuffer, 'function');
+  assert.equal(attachCalls[0][3]?.confirmReplace, false);
+});
+
+test('editor replayEditorOptionT2AIntent returns plain-language errors for invalid option generation states', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async () => ({ ok: false, error: { message: '' } }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Q1' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: '', label: '' }],
+      },
+    }],
+  });
+
+  const missingText = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+  assert.equal(missingText.ok, false);
+  assert.equal(missingText.error.message, 'Enter option text before generating audio.');
+
+  session.state.draft.blocks[0].responseConfig.options[0].label = 'a'.repeat(201);
+  const tooLong = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+  assert.equal(tooLong.ok, false);
+  assert.equal(tooLong.error.message, 'Option text must be 200 characters or fewer to generate audio.');
+
+  session.state.draft.blocks[0].responseConfig.options[0].label = 'short option';
+  const generationFailure = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+  assert.equal(generationFailure.ok, false);
+  assert.equal(generationFailure.error.message, 'Audio generation failed. Existing audio is unchanged.');
+  const optionRecoveryNotification = session.state.notifications
+    .find((item) => item.source === 'option.t2a' && item.kind === 'error');
+  assert.equal(Boolean(optionRecoveryNotification), true);
+});
+
+test('stage3: replay T2A rejects invalid binary payload shape without replacing existing audio', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async () => ({ ok: true, data: { bytes: new Uint8Array([1, 2, 3]) } }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: {
+        text: 'Prompt for audio',
+        mediaRefs: [{ usage: 'question_audio', assetId: 'asset_prompt_existing' }],
+      },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{
+          id: 'opt_1',
+          value: 'Option one',
+          label: 'Option one',
+          mediaRefs: [{ usage: 'option_audio', assetId: 'asset_option_existing' }],
+        }],
+      },
+    }],
+  });
+
+  const promptResult = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  const optionResult = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+
+  assert.equal(promptResult.ok, false);
+  assert.equal(optionResult.ok, false);
+  assert.equal(promptResult.error.message.includes('Bridge returned invalid audio data.'), true);
+  assert.equal(optionResult.error.message.includes('Bridge returned invalid audio data.'), true);
+  assert.equal(session.findBlock('q1').prompt.mediaRefs[0].assetId, 'asset_prompt_existing');
+  assert.equal(
+    mod.normalizeBlocks(session.state.draft.blocks)[0].responseConfig.options[0].mediaRefs[0].assetId,
+    'asset_option_existing'
+  );
+});
+
+test('prompt/option replay T2A guards duplicate in-flight requests per target', async () => {
+  const mod = await loadEditorModule();
+  let resolvePrompt;
+  let resolveOption;
+  const promptPending = new Promise((resolve) => { resolvePrompt = resolve; });
+  const optionPending = new Promise((resolve) => { resolveOption = resolve; });
+  const apiCalls = [];
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async (text) => {
+        apiCalls.push(text);
+        if (text === 'Prompt text') return promptPending;
+        return optionPending;
+      },
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Prompt text' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: 'Option text', label: 'Option text' }],
+      },
+    }],
+  });
+  session.attachQuestionMedia = async () => ({ ok: true });
+  session.attachOptionAudio = async () => ({ ok: true });
+
+  const firstPrompt = session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  const duplicatePrompt = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  assert.equal(duplicatePrompt.ok, false);
+  assert.equal(duplicatePrompt.status, 'already_in_flight');
+  resolvePrompt({ ok: true, data: new Uint8Array([1]) });
+  await firstPrompt;
+
+  const firstOption = session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+  const duplicateOption = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+  assert.equal(duplicateOption.ok, false);
+  assert.equal(duplicateOption.status, 'already_in_flight');
+  resolveOption({ ok: true, data: new Uint8Array([2]) });
+  await firstOption;
+  assert.equal(apiCalls.length, 2);
+});
+
+test('stage3: api failure keeps existing prompt/option audio refs unchanged and emits plain-language notifications', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async () => ({ ok: false, error: { message: '' } }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: {
+        text: 'Prompt for audio',
+        mediaRefs: [{ usage: 'question_audio', assetId: 'asset_prompt_existing' }],
+      },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{
+          id: 'opt_1',
+          value: 'Option one',
+          label: 'Option one',
+          mediaRefs: [{ usage: 'option_audio', assetId: 'asset_option_existing' }],
+        }],
+      },
+    }],
+  });
+  const before = JSON.stringify(session.state.draft);
+
+  const promptResult = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  const optionResult = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+
+  assert.equal(promptResult.ok, false);
+  assert.equal(optionResult.ok, false);
+  assert.equal(session.findBlock('q1').prompt.mediaRefs[0].assetId, 'asset_prompt_existing');
+  assert.equal(
+    mod.normalizeBlocks(session.state.draft.blocks)[0].responseConfig.options[0].mediaRefs[0].assetId,
+    'asset_option_existing'
+  );
+  assert.equal(JSON.parse(before).blocks[0].prompt.mediaRefs[0].assetId, 'asset_prompt_existing');
+  assert.equal(
+    session.state.notifications.some((item) => item.text === 'Audio generation failed. Existing audio is unchanged.'),
+    true
+  );
+  assert.equal(
+    session.state.notifications.filter((item) => item.text === 'Audio generation failed. Existing audio is unchanged.').length >= 2,
+    true
+  );
+});
+
+test('stage3: successful replay T2A attaches mp3 bytes through canonical media helpers and updates refs', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      generateAudioFromText: async (text) => ({
+        ok: true,
+        data: new Uint8Array([7, 8, 9]),
+      }),
+    },
+  });
+  session.state.draft = mod.createDraftRecord({
+    localId: 'draft_active',
+    blocks: [{
+      blockId: 'q1',
+      kind: 'question',
+      prompt: { text: 'Prompt success path' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{ id: 'opt_1', value: 'Option success', label: 'Option success' }],
+      },
+    }],
+  });
+
+  const promptResult = await session.replayEditorPromptT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    target: 'question_prompt',
+  });
+  const optionResult = await session.replayEditorOptionT2AIntent({
+    localDraftId: 'draft_active',
+    blockId: 'q1',
+    optionId: 'opt_1',
+    target: 'option',
+  });
+
+  const block = session.findBlock('q1');
+  const promptAudioRef = block.prompt.mediaRefs.find((ref) => ref.usage === 'question_audio');
+  const optionAudioRef = mod.normalizeBlocks([block])[0].responseConfig.options[0].mediaRefs.find((ref) => ref.usage === 'option_audio');
+  const promptAsset = session.state.draft.assets.find((asset) => asset.assetId === promptAudioRef.assetId);
+  const optionAsset = session.state.draft.assets.find((asset) => asset.assetId === optionAudioRef.assetId);
+
+  assert.equal(promptResult.ok, true);
+  assert.equal(optionResult.ok, true);
+  assert.equal(Boolean(promptAudioRef?.assetId), true);
+  assert.equal(Boolean(optionAudioRef?.assetId), true);
+  assert.equal(promptAsset.kind, 'audio');
+  assert.equal(optionAsset.kind, 'audio');
+  assert.equal(promptAsset.mimeType, 'audio/mpeg');
+  assert.equal(optionAsset.mimeType, 'audio/mpeg');
 });
