@@ -502,6 +502,41 @@ test('publishFromDraft supports published title/subject overrides without mutati
   assert.equal(insertQueries[0][6], 'Final release subject');
 });
 
+test('publishFromDraft acquires owner lock and reads uploaded draft row FOR UPDATE', async () => {
+  const db = createFakeDb();
+  const service = createService({
+    db,
+    artifactStore: {
+      async readArtifact() {
+        return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+      },
+      async storeArtifact() {
+        return {
+          artifactPath: 'published/a.zip',
+          absolutePath: '/tmp/a.zip',
+          artifactSha256: 'sha',
+          artifactSizeBytes: 4,
+        };
+      },
+    },
+  });
+
+  const result = await service.publishFromDraft({
+    identity: { sub: 'oidc-sub', email: 'teacher@example.test', name: 'Teacher Name' },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+
+  assert.equal(result.ok, true);
+  const advisoryLockQueryCount = db.state.queries
+    .filter((sql) => sql.includes('SELECT pg_advisory_xact_lock(hashtext($1))'))
+    .length;
+  assert.equal(advisoryLockQueryCount >= 3, true);
+  assert.equal(
+    db.state.queries.some((sql) => sql.includes('FROM uploaded_drafts') && sql.includes('FOR UPDATE')),
+    true
+  );
+});
+
 test('deleteOwnDraft removes artifact file after deleting owner draft row', async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-delete-cleanup-'));
   const artifactPath = path.join(tempDir, 'draft.zip');

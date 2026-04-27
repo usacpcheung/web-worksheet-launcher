@@ -1038,6 +1038,14 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("publishBtn.textContent = isPublishing ? 'Publishing…' : publishState === 'unpublished_changes' ? 'Publish New Version' : 'Publish';"), true);
   assert.equal(source.includes("heading.textContent = 'Published package conflict';"), true);
   assert.equal(source.includes("editBtn.textContent = 'Edit Published Name/Subject';"), true);
+  assert.equal(source.includes("let attemptedTitle = String(item?.title || '');"), true);
+  assert.equal(source.includes("let attemptedSubject = String(item?.subject || '');"), true);
+  assert.equal(source.includes('initialTitle: attemptedTitle,'), true);
+  assert.equal(source.includes('initialSubject: attemptedSubject,'), true);
+  assert.equal(source.includes("attemptedTitle = String(modal.title ?? '');"), true);
+  assert.equal(source.includes("attemptedSubject = String(modal.subject ?? '');"), true);
+  assert.equal(source.includes("if (event.key !== 'Tab') return;"), true);
+  assert.equal(source.includes("dialog.removeEventListener('keydown', onKeyDown);"), true);
   assert.equal(
     source.includes("subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;"),
     true

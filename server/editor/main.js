@@ -4104,7 +4104,7 @@ function renderEditorShell(session) {
     emitServerNotification({ kind, text, source });
   }
 
-  function showPublishModal({ uploadedDraft }) {
+  function showPublishModal({ uploadedDraft, initialTitle = null, initialSubject = null }) {
     return new Promise((resolve) => {
       const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const overlay = document.createElement('div');
@@ -4124,7 +4124,9 @@ function renderEditorShell(session) {
       publishTitleLabel.textContent = 'Published Title';
       const publishTitleInput = document.createElement('input');
       publishTitleInput.className = 'control';
-      publishTitleInput.value = String(uploadedDraft?.title || '');
+      publishTitleInput.value = initialTitle !== null
+        ? String(initialTitle)
+        : String(uploadedDraft?.title || '');
       publishTitleField.append(publishTitleLabel, publishTitleInput);
       const publishSubjectField = document.createElement('div');
       publishSubjectField.className = 'editor-field';
@@ -4132,7 +4134,9 @@ function renderEditorShell(session) {
       publishSubjectLabel.textContent = 'Published Subject';
       const publishSubjectInput = document.createElement('input');
       publishSubjectInput.className = 'control';
-      publishSubjectInput.value = String(uploadedDraft?.subject || '');
+      publishSubjectInput.value = initialSubject !== null
+        ? String(initialSubject)
+        : String(uploadedDraft?.subject || '');
       publishSubjectField.append(publishSubjectLabel, publishSubjectInput);
       const actions = document.createElement('div');
       actions.className = 'confirm-modal__actions';
@@ -4236,9 +4240,34 @@ function renderEditorShell(session) {
       overlay.appendChild(dialog);
       shell.appendChild(overlay);
 
+      const getFocusable = () => [cancelBtn, editBtn].filter((node) => !node.disabled);
       const cleanup = () => {
+        dialog.removeEventListener('keydown', onKeyDown);
         overlay.remove();
         if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
+      };
+      const onKeyDown = (event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          cleanup();
+          resolve({ action: 'cancel' });
+          return;
+        }
+        if (event.key !== 'Tab') return;
+        const focusable = getFocusable();
+        if (focusable.length === 0) return;
+        const currentIndex = focusable.indexOf(document.activeElement);
+        if (event.shiftKey) {
+          if (currentIndex <= 0) {
+            event.preventDefault();
+            focusable[focusable.length - 1].focus();
+          }
+          return;
+        }
+        if (currentIndex === focusable.length - 1 || currentIndex === -1) {
+          event.preventDefault();
+          focusable[0].focus();
+        }
       };
       cancelBtn.addEventListener('click', () => {
         cleanup();
@@ -4248,13 +4277,7 @@ function renderEditorShell(session) {
         cleanup();
         resolve({ action: 'edit' });
       });
-      dialog.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          cleanup();
-          resolve({ action: 'cancel' });
-        }
-      });
+      dialog.addEventListener('keydown', onKeyDown);
       editBtn.focus();
     });
   }
@@ -6207,12 +6230,20 @@ function renderEditorShell(session) {
         publishBtn.addEventListener('click', async () => {
           if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
           await guardServerMenuAction(publishBtn, async () => {
+            let attemptedTitle = String(item?.title || '');
+            let attemptedSubject = String(item?.subject || '');
             while (true) {
-              const modal = await showPublishModal({ uploadedDraft: item });
+              const modal = await showPublishModal({
+                uploadedDraft: item,
+                initialTitle: attemptedTitle,
+                initialSubject: attemptedSubject,
+              });
               if (!modal.confirmed) return null;
+              attemptedTitle = String(modal.title ?? '');
+              attemptedSubject = String(modal.subject ?? '');
               const result = await session.publishUploadedDraftToServer(item.uploaded_draft_id, {
-                title: modal.title,
-                subject: modal.subject,
+                title: attemptedTitle,
+                subject: attemptedSubject,
               });
               if (result?.ok || result?.error?.code !== 'PUBLISHED_PACKAGE_CONFLICT') return result;
               const conflictAction = await showPublishedPackageConflictModal();

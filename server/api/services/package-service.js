@@ -97,7 +97,7 @@ export class PackageService {
            published_at
          FROM published_packages
          WHERE source_uploaded_draft_id = d.uploaded_draft_id
-         ORDER BY published_at DESC
+          ORDER BY published_at DESC, created_at DESC, published_package_id DESC
          LIMIT 1
        ) p ON TRUE
        WHERE d.owner_sub = $1
@@ -464,12 +464,14 @@ export class PackageService {
 
     try {
       await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`publish:${uploadedDraftId}`]);
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`publish-owner:${identity.sub}`]);
       const draftRes = await client.query(
         `SELECT uploaded_draft_id, owner_sub, title, subject, artifact_path, artifact_sha256, artifact_size_bytes, last_published_artifact_sha256
          FROM uploaded_drafts
-         WHERE uploaded_draft_id = $1 AND owner_sub = $2`,
+         WHERE uploaded_draft_id = $1 AND owner_sub = $2
+         FOR UPDATE`,
         [uploadedDraftId, identity.sub]
       );
 
@@ -522,7 +524,7 @@ export class PackageService {
          WHERE owner_sub = $1
            AND lower(regexp_replace(btrim(coalesce(title, '')), '\\s+', ' ', 'g')) = $2
            AND lower(regexp_replace(btrim(coalesce(subject, '')), '\\s+', ' ', 'g')) = $3
-         ORDER BY published_at DESC
+         ORDER BY published_at DESC, created_at DESC, published_package_id DESC
          LIMIT 1`,
         [identity.sub, normalizeConflictText(normalizedPublishedTitle), normalizeConflictText(normalizedPublishedSubject)]
       );
