@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { createApiServer } from './server.js';
 
 async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test', configOverrides = {} }, fn) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-server-test-'));
+  const openSockets = new Set();
   const api = await createApiServer({
     config: {
       nodeEnv,
@@ -57,6 +59,13 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test', 
     },
   });
 
+  api.server.on('connection', (socket) => {
+    openSockets.add(socket);
+    socket.on('close', () => {
+      openSockets.delete(socket);
+    });
+  });
+
   await new Promise((resolve) => api.server.listen(0, '127.0.0.1', resolve));
   const addr = api.server.address();
   const baseUrl = `http://127.0.0.1:${addr.port}`;
@@ -64,6 +73,13 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test', 
   try {
     await fn(baseUrl, tempDir);
   } finally {
+    // Undici/fetch may keep sockets alive; force-close any remaining sockets
+    // so server.close() resolves consistently across Node/OS environments.
+    for (const socket of openSockets) {
+      if (socket instanceof net.Socket && !socket.destroyed) {
+        socket.destroy();
+      }
+    }
     await api.close();
     await fs.rm(tempDir, { recursive: true, force: true });
   }
