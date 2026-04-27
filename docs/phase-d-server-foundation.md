@@ -74,6 +74,7 @@ Optional env variables:
 - `AUTH_HEADER_SUB` (default `x-oidc-sub`)
 - `AUTH_HEADER_EMAIL` (default `x-oidc-email`)
 - `AUTH_HEADER_NAME` (default `x-oidc-name`)
+- `PACKAGE_UPLOAD_MAX_BYTES` (default `31457280` = `30 MB`)
 
 Reference file: `.env.example`.
 
