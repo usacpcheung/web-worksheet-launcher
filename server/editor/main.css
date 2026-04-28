@@ -19,6 +19,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .editor-topbar,
@@ -50,6 +51,7 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
+  min-width: 0;
 }
 
 .editor-label {
@@ -106,6 +108,7 @@ body {
   display: grid;
   grid-template-columns: minmax(340px, 420px) minmax(640px, 1fr);
   gap: 16px;
+  min-width: 0;
 }
 
 .editor-panel {
@@ -113,6 +116,7 @@ body {
   flex-direction: column;
   gap: 12px;
   min-height: 460px;
+  min-width: 0;
 }
 
 .editor-panel h2 {
@@ -139,6 +143,7 @@ body {
   flex-direction: column;
   gap: 8px;
   background: #f8fafc;
+  min-width: 0;
 }
 
 .editor-metadata-section h3 {
@@ -179,10 +184,12 @@ body {
   gap: 10px;
   max-height: 380px;
   overflow: auto;
+  min-width: 0;
 }
 
 .block-item {
   position: relative;
+  min-width: 0;
 }
 
 .block-item--dragging {
@@ -413,6 +420,7 @@ body {
 
 .control,
 button {
+  box-sizing: border-box;
   font: inherit;
   padding: 9px 11px;
   border: 1px solid #c4cad7;
@@ -1572,6 +1580,18 @@ textarea.control {
 @media (max-width: 1100px) {
   .editor-layout {
     grid-template-columns: 1fr;
+  }
+
+  .sidebar-add-actions,
+  .answer-grid,
+  .text-answer-settings,
+  .number-answer-range,
+  .number-answer-rules {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .option-row .control {
+    min-width: 0;
   }
 }
 
