@@ -1292,6 +1292,10 @@ textarea.control {
   gap: 8px;
 }
 
+.confirm-modal__actions--publish {
+  margin-top: 16px;
+}
+
 .confirm-modal__btn {
   background: #fff;
   border-color: #b7c0cf;

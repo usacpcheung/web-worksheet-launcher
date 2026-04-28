@@ -4213,7 +4213,7 @@ function renderEditorShell(session) {
         : String(uploadedDraft?.subject || '');
       publishSubjectField.append(publishSubjectLabel, publishSubjectInput);
       const actions = document.createElement('div');
-      actions.className = 'confirm-modal__actions';
+      actions.className = 'confirm-modal__actions confirm-modal__actions--publish';
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.className = 'confirm-modal__btn';
