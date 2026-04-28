@@ -1457,6 +1457,25 @@ textarea.control {
   border-color: #5f8ee8;
 }
 
+.published-result-action.uploaded-draft-action--danger {
+  color: #b42318;
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.published-result-action.uploaded-draft-action--danger:hover:not(:disabled),
+.published-result-action.uploaded-draft-action--danger:focus-visible:not(:disabled) {
+  color: #912018;
+  border-color: #f87171;
+  background: #fee2e2;
+}
+
+.published-result-action.uploaded-draft-action--danger:active:not(:disabled) {
+  color: #7a271a;
+  border-color: #ef4444;
+  background: #fecaca;
+}
+
 @media (max-width: 960px) {
   .browse-modal__filters {
     grid-template-columns: minmax(0, 1fr);
