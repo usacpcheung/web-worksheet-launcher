@@ -59,6 +59,34 @@ function normalizeDraftPublishState(item) {
   return artifactSha && artifactSha === lastPublishedArtifactSha ? 'current_version_published' : 'unpublished_changes';
 }
 
+function getUploadedDraftPublishBadge(item) {
+  const publishState = normalizeDraftPublishState(item);
+  const hasPublishedPackage = isNonEmptyString(item?.published_package_id);
+  if (publishState === 'current_version_published') {
+    return {
+      className: hasPublishedPackage
+        ? 'editor-pill editor-pill--ok uploaded-draft-published-badge'
+        : 'editor-pill editor-pill--warn uploaded-draft-published-badge',
+      text: hasPublishedPackage ? 'Published — package live' : 'Published — package deleted',
+      helperText: hasPublishedPackage
+        ? 'This version is published and can be opened with the viewer link.'
+        : 'This version was already published, but the published package has been deleted. Replace or upload an updated draft to publish again.',
+    };
+  }
+  if (publishState === 'unpublished_changes') {
+    return {
+      className: 'editor-pill editor-pill--warn uploaded-draft-published-badge',
+      text: 'Updated — ready to publish',
+      helperText: '',
+    };
+  }
+  return {
+    className: 'editor-pill uploaded-draft-published-badge',
+    text: 'Not published',
+    helperText: '',
+  };
+}
+
 function buildPublishedPackageViewerUrl(publishedPackageId) {
   const url = new URL('../viewer/index.html', window.location.href);
   url.searchParams.set('publishedPackageId', String(publishedPackageId || '').trim());
@@ -6212,15 +6240,10 @@ function renderEditorShell(session) {
       meta.append(titleLine, subjectLine, uploadedAtLine);
       const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
       const publishState = normalizeDraftPublishState(item);
+      const badgeConfig = getUploadedDraftPublishBadge(item);
       const badge = document.createElement('span');
-      badge.className = publishState === 'current_version_published'
-        ? 'editor-pill editor-pill--ok uploaded-draft-published-badge'
-        : 'editor-pill uploaded-draft-published-badge';
-      badge.textContent = publishState === 'current_version_published'
-        ? 'Published current version'
-        : publishState === 'unpublished_changes'
-          ? 'Unpublished changes'
-          : 'Draft only';
+      badge.className = badgeConfig.className;
+      badge.textContent = badgeConfig.text;
       meta.appendChild(badge);
       const details = document.createElement('details');
       details.className = 'uploaded-draft-details uploaded-draft-details--draft';
@@ -6235,6 +6258,11 @@ function renderEditorShell(session) {
       const publishStateLine = document.createElement('div');
       publishStateLine.textContent = `Publish state: ${publishState}`;
       body.append(draftIdLine, publishedIdLine, publishStateLine);
+      if (badgeConfig.helperText) {
+        const helperLine = document.createElement('div');
+        helperLine.textContent = badgeConfig.helperText;
+        body.appendChild(helperLine);
+      }
       details.append(summary, body);
       meta.appendChild(details);
       const actions = document.createElement('div');

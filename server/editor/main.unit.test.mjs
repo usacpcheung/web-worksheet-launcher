@@ -133,7 +133,7 @@ function createEmptyQuestionBlock`,
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapEditor\(\)\.catch\([\s\S]*?\);\s*export\s*\{[^}]+\};/,
-      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay };',
+      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay, normalizeDraftPublishState, getUploadedDraftPublishBadge };',
     },
   ]);
 
@@ -1101,9 +1101,10 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
   assert.equal(source.includes("summary.textContent = 'Details';"), true);
-  assert.equal(source.includes("badge.textContent = publishState === 'current_version_published'"), true);
-  assert.equal(source.includes("? 'Published current version'"), true);
-  assert.equal(source.includes("? 'Unpublished changes'"), true);
+  assert.equal(source.includes("text: hasPublishedPackage ? 'Published — package live' : 'Published — package deleted'"), true);
+  assert.equal(source.includes("text: 'Updated — ready to publish'"), true);
+  assert.equal(source.includes("text: 'Not published'"), true);
+  assert.equal(source.includes('This version was already published, but the published package has been deleted. Replace or upload an updated draft to publish again.'), true);
   assert.equal(source.includes("publishBtn.textContent = isPublishing ? 'Publishing…' : publishState === 'unpublished_changes' ? 'Publish New Version' : 'Publish';"), true);
   assert.equal(source.includes("heading.textContent = 'Published package conflict';"), true);
   assert.equal(source.includes("editBtn.textContent = 'Edit Published Name/Subject';"), true);
@@ -3569,6 +3570,39 @@ test('formatUploadedDraftTimestamp uses local browser formatting and handles inv
   } finally {
     Intl.DateTimeFormat = originalFormatter;
   }
+});
+
+test('uploaded draft publish badge labels distinguish live and deleted published packages', async () => {
+  const mod = await loadEditorModule();
+  assert.equal(
+    mod.getUploadedDraftPublishBadge({ publish_state: 'draft_only' }).text,
+    'Not published'
+  );
+  assert.equal(
+    mod.getUploadedDraftPublishBadge({
+      publish_state: 'current_version_published',
+      published_package_id: 'p-live',
+    }).text,
+    'Published — package live'
+  );
+  assert.equal(
+    mod.getUploadedDraftPublishBadge({
+      publish_state: 'current_version_published',
+      published_package_id: '',
+    }).text,
+    'Published — package deleted'
+  );
+  assert.equal(
+    mod.getUploadedDraftPublishBadge({ publish_state: 'unpublished_changes' }).text,
+    'Updated — ready to publish'
+  );
+  assert.equal(
+    mod.getUploadedDraftPublishBadge({
+      artifact_sha256: 'sha',
+      last_published_artifact_sha256: 'sha',
+    }).text,
+    'Published — package deleted'
+  );
 });
 
 test('deleteUploadedDraft refreshes uploaded drafts list and leaves local draft intact', async () => {

@@ -129,6 +129,9 @@ All endpoints below are authenticated except `/healthz`.
 - Required `Content-Type`: `application/zip`
 - Body: ZIP bytes
 - Enforces owner slot cap of 3 uploaded drafts.
+- `conflictAction=replace` handles an owner/title/subject conflict explicitly:
+  - When the conflicting uploaded draft still has a live published package, the server updates the uploaded draft artifact without deleting or breaking the public package and preserves historical publish markers.
+  - When the conflicting uploaded draft has no live published package, the server deletes the old uploaded draft row, cleans up its old draft artifact after commit, and creates a fresh uploaded draft row with `last_published_artifact_sha256 = null` and `last_published_at = null`.
 
 Success: `201`
 
@@ -187,9 +190,11 @@ Behavior:
 
 - Reads owner draft by id.
 - Copies canonical ZIP artifact into immutable published bucket on successful publish.
-- Uses uploaded-draft publish markers (`last_published_artifact_sha256`, `last_published_at`) to enforce one publish per current uploaded artifact hash.
+- Uses uploaded-draft publish markers (`last_published_artifact_sha256`, `last_published_at`) as historical records to enforce one publish per current uploaded artifact hash.
 - Re-publish of the same unchanged uploaded artifact returns `409 DRAFT_ARTIFACT_ALREADY_PUBLISHED`.
-- Replacing the uploaded draft artifact allows publishing again (new immutable package id each successful publish).
+- Deleting a published package does not clear those uploaded-draft publish markers and does not automatically unlock re-publishing of the same uploaded draft artifact.
+- Replacing an uploaded draft artifact can allow publishing again (new immutable package id each successful publish).
+- If an accidental published-package deletion leaves an uploaded draft whose current artifact has already been published, recovery requires an explicit upload with `conflictAction=replace`; when no live published package is linked to that uploaded draft, the server removes the old uploaded draft row and creates a fresh row with empty publish markers.
 - Before insert, checks active published package conflicts by same owner + normalized title + normalized subject and returns `409 PUBLISHED_PACKAGE_CONFLICT` when matched.
 - Never auto-replaces or auto-deletes an existing published package when conflicts exist.
 - Stores provenance link to `source_uploaded_draft_id`.
@@ -200,6 +205,17 @@ Behavior:
 `GET /api/v1/published/:publishedPackageId`
 
 - Returns metadata for viewer/server integration.
+
+### 4b) Delete owner published package by id
+
+`DELETE /api/v1/published/:publishedPackageId`
+
+- Owner-scoped delete only (`published_package_id` + authenticated `owner_sub`).
+- Removes the public published package row and deletes the stored published ZIP artifact.
+- Does **not** clear or recalculate `uploaded_drafts.last_published_artifact_sha256`.
+- Does **not** clear or recalculate `uploaded_drafts.last_published_at`.
+- Does **not** automatically make the source uploaded draft publishable again; the historical marker still blocks another publish of the same uploaded draft artifact.
+- Recovery after accidental deletion is explicit: upload the draft again with `conflictAction=replace`. If no live published package exists for the conflicting uploaded draft, the server creates a fresh uploaded draft row with empty publish markers.
 
 ### 5) Download published package ZIP by id
 
