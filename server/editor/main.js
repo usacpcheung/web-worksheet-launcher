@@ -6269,7 +6269,7 @@ function renderEditorShell(session) {
       actions.className = 'uploaded-draft-actions';
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
-      openBtn.className = 'uploaded-draft-action uploaded-draft-action--secondary';
+      openBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
       openBtn.textContent = 'Open';
       openBtn.disabled = !serverReady;
       openBtn.addEventListener('click', async () => {
