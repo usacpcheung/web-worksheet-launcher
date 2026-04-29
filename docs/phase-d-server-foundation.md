@@ -333,3 +333,5 @@ npm run start:api
 - Published detail route strictness: only `/api/v1/published/:publishedPackageId` and `/api/v1/published/:publishedPackageId/artifact` are valid; unknown nested subroutes return 404.
 - Production/internal-error behavior now returns a generic 500 message while logging full server error details.
 - Migration `002_published_search_trgm.sql` adds `pg_trgm` GIN indexes on `lower(title)` / `lower(subject)` for efficient `%term%` search semantics.
+
+- Uploaded attempts are private owner-scoped ZIP artifacts and restore from embedded content/worksheet.json + content/attempt.json only.
