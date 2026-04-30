@@ -3293,6 +3293,12 @@ test('renderViewerStartPanel shows Manage server attempts action', { concurrency
   assert.equal(Boolean(manageBtn), true);
 });
 
+test('renderViewerStartPanel only fetches uploaded attempts when session is logged in', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {'), true);
+  assert.equal(source.includes('await session.listUploadedAttempts();'), true);
+});
+
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({
@@ -4524,10 +4530,31 @@ test('listUploadedAttempts stores rows and slot limit for management UI', async 
       }),
     },
   });
+  session.state.serverSession = { status: 'logged_in', user: { sub: 'learner' }, error: null };
   const result = await session.listUploadedAttempts();
   assert.equal(result.ok, true);
   assert.equal(session.state.uploadedAttempts.length, 1);
   assert.equal(session.state.uploadedAttemptSlotLimit, 3);
+});
+
+test('listUploadedAttempts skips network call when viewer session is logged out', async () => {
+  const mod = await loadViewerModule();
+  let callCount = 0;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      listUploadedAttempts: async () => {
+        callCount += 1;
+        return { ok: true, data: { uploadedAttempts: [] } };
+      },
+    },
+  });
+  session.state.serverSession = { status: 'logged_out', user: null, error: 'auth required' };
+  const result = await session.listUploadedAttempts();
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'AUTH_REQUIRED');
+  assert.equal(callCount, 0);
 });
 
 test('deleteUploadedAttemptAndRefresh calls delete then refreshes list', async () => {
@@ -4547,6 +4574,7 @@ test('deleteUploadedAttemptAndRefresh calls delete then refreshes list', async (
       },
     },
   });
+  session.state.serverSession = { status: 'logged_in', user: { sub: 'learner' }, error: null };
   const result = await session.deleteUploadedAttemptAndRefresh('attempt_1');
   assert.equal(result.ok, true);
   assert.deepEqual(calls, ['delete:attempt_1', 'list']);
@@ -4576,6 +4604,63 @@ test('resumeUploadedAttempt restores uploaded package into a new local attempt',
   assert.equal(savedAttempts.length, 1);
   assert.equal(session.state.status, 'completed');
   assert.equal(session.state.checkResult, null);
+});
+
+test('mapUploadedAttemptCheckResult restores string enum statuses for viewer and print flows', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  const restored = session.mapUploadedAttemptCheckResult({
+    correctCount: 1,
+    totalQuestions: 2,
+    items: {
+      q1: { result: 'correct' },
+      q2: { result: false },
+      q3: { result: 'ungraded_missing_or_invalid_key' },
+    },
+  });
+  assert.equal(restored.statusByBlockId.q1, 'correct');
+  assert.equal(restored.statusByBlockId.q2, 'incorrect');
+  assert.equal(restored.statusByBlockId.q3, 'ungraded_missing_or_invalid_key');
+  assert.equal(restored.byBlockId.q1, true);
+  assert.equal(restored.byBlockId.q2, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(restored.byBlockId, 'q3'), false);
+});
+
+test('resumeUploadedAttempt surfaces failure message through serverActionMessage for start-panel visibility', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      fetchUploadedAttemptArtifact: async () => ({ ok: true, data: new Uint8Array([0x00]) }),
+    },
+  });
+  const result = await session.resumeUploadedAttempt({ uploaded_attempt_id: 'a1' });
+  assert.equal(result.ok, false);
+  assert.equal(typeof session.state.serverActionMessage, 'string');
+  assert.equal(session.state.serverActionMessage.includes('Unable to resume uploaded attempt.'), true);
+});
+
+test('downloadUploadedAttempt surfaces API errors through serverActionMessage', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      fetchUploadedAttemptArtifact: async () => ({ ok: false, error: { code: 'NOT_FOUND', message: 'artifact missing' } }),
+    },
+  });
+  const result = await session.downloadUploadedAttempt({ uploaded_attempt_id: 'attempt_a', title: 'Sheet A' });
+  assert.equal(result.ok, false);
+  assert.equal(session.state.serverActionMessage, 'artifact missing');
+});
+
+test('downloadUploadedAttempt defers object URL revocation to avoid browser race', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('setTimeout(() => {'), true);
+  assert.equal(source.includes('URL.revokeObjectURL(url);'), true);
 });
 
 test('rewrite assist snapshots answer text from answer record value', async () => {

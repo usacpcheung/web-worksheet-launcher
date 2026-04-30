@@ -319,6 +319,20 @@ function parseUploadedAttemptPackage(zipBytes) {
   return { manifest, worksheet, attempt, assets };
 }
 
+function normalizeRestoredCheckStatus(value) {
+  if (value === true) return 'correct';
+  if (value === false) return 'incorrect';
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'correct' || normalized === 'incorrect') {
+    return normalized;
+  }
+  if (normalized === 'ungraded_missing_or_invalid_key' || normalized === 'ungraded_missing_key') {
+    return normalized;
+  }
+  return null;
+}
+
 function normalizeOptionMediaRefs(mediaRefs) {
   if (!Array.isArray(mediaRefs)) return [];
   return mediaRefs
@@ -3090,6 +3104,13 @@ class ViewerAttemptSession {
   }
 
   async listUploadedAttempts() {
+    const sessionState = this.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    if (sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+      this.state.isLoadingUploadedAttempts = false;
+      this.state.uploadedAttemptsError = null;
+      this.notifyStateChange();
+      return { ok: false, error: { code: 'AUTH_REQUIRED', message: 'Sign in to manage uploaded attempts.' } };
+    }
     this.state.isLoadingUploadedAttempts = true;
     this.state.uploadedAttemptsError = null;
     this.notifyStateChange();
@@ -3145,10 +3166,15 @@ class ViewerAttemptSession {
     this.notifyStateChange();
     try {
       const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
-      if (!artifact?.ok) return artifact;
+      if (!artifact?.ok) {
+        this.state.serverActionMessage = artifact?.error?.message || 'Unable to download uploaded attempt.';
+        return artifact;
+      }
       const bytes = ensureUint8Array(artifact?.data);
       if (!bytes) {
-        return { ok: false, error: { code: 'INVALID_ARTIFACT', message: 'Uploaded attempt artifact is empty.' } };
+        const result = { ok: false, error: { code: 'INVALID_ARTIFACT', message: 'Uploaded attempt artifact is empty.' } };
+        this.state.serverActionMessage = result.error.message;
+        return result;
       }
       const blob = new Blob([bytes], { type: 'application/zip' });
       const url = URL.createObjectURL(blob);
@@ -3158,7 +3184,10 @@ class ViewerAttemptSession {
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(url);
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+      }, 1000);
+      this.state.serverActionMessage = `Downloaded uploaded attempt "${uploadedAttemptRow?.title || uploadedAttemptId}".`;
       return { ok: true };
     } finally {
       const next = { ...this.state.uploadedAttemptActionInFlightById };
@@ -3171,15 +3200,20 @@ class ViewerAttemptSession {
   mapUploadedAttemptCheckResult(checking) {
     if (!checking || typeof checking !== 'object') return null;
     const items = checking.items && typeof checking.items === 'object' ? checking.items : {};
+    const byBlockId = {};
     const statusByBlockId = {};
     Object.entries(items).forEach(([blockId, item]) => {
-      const result = item?.result;
       if (typeof blockId !== 'string' || !blockId) return;
-      statusByBlockId[blockId] = result === true || result === 'correct' ? true : false;
+      const status = normalizeRestoredCheckStatus(item?.result);
+      if (!status) return;
+      statusByBlockId[blockId] = status;
+      if (status === 'correct' || status === 'incorrect') {
+        byBlockId[blockId] = status === 'correct';
+      }
     });
     return {
       statusByBlockId,
-      byBlockId: { ...statusByBlockId },
+      byBlockId,
       correctCount: Number(checking.correctCount) || 0,
       totalQuestions: Number(checking.totalQuestions) || 0,
       checkedAt: checking.checkedAt || nowIso(),
@@ -3287,6 +3321,7 @@ class ViewerAttemptSession {
       return { ok: true, data: { localAttemptId: restoredLocalAttemptId } };
     } catch (error) {
       this.state.utilityMessage = `Unable to resume uploaded attempt. ${error?.message || String(error)}`;
+      this.state.serverActionMessage = this.state.utilityMessage;
       this.notifyStateChange();
       return { ok: false, error: { code: 'UPLOAD_ATTEMPT_RESTORE_FAILED', message: this.state.utilityMessage } };
     } finally {
@@ -5483,7 +5518,10 @@ function renderViewerStartPanel(session, options = {}) {
   manageAttemptsBtn.addEventListener('click', async () => {
     session.state.isManagingUploadedAttempts = !session.state.isManagingUploadedAttempts;
     if (session.state.isManagingUploadedAttempts) {
-      await session.listUploadedAttempts();
+      const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+      if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+        await session.listUploadedAttempts();
+      }
     }
     renderServerControls();
   });
