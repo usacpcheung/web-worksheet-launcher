@@ -42,6 +42,12 @@ function validateUploadedAttemptPackage(zipBytes) {
     const worksheet = files.get('content/worksheet.json');
     const attempt = files.get('content/attempt.json');
     if (!manifest || !worksheet || !attempt) throw new Error('Missing required files.');
+    const manifestJson = JSON.parse(decodeUtf8(manifest));
+    if (manifestJson?.format !== 'worksheet-attempt-package') throw new Error('Unsupported manifest format.');
+    if (manifestJson?.packageVersion !== 1) throw new Error('Unsupported manifest packageVersion.');
+    if (manifestJson?.schemaVersion !== undefined && manifestJson?.schemaVersion !== 1) {
+      throw new Error('Unsupported manifest schemaVersion.');
+    }
     const worksheetJson = JSON.parse(decodeUtf8(worksheet));
     const attemptJson = JSON.parse(decodeUtf8(attempt));
     if (attemptJson?.schemaVersion !== 1 || attemptJson?.kind !== 'worksheet-attempt') throw new Error('Unsupported attempt schema.');
@@ -292,7 +298,6 @@ export class PackageService {
 
     const client = await this.db.connect();
     let artifact = null;
-    let uploadedAttemptId = null;
     const cleanupArtifactPathsAfterCommit = [];
     const action = normalizeUploadConflictAction(conflictAction);
     const normalizedTitle = normalizeText(title, 'Untitled draft');
@@ -577,7 +582,18 @@ export class PackageService {
       if (willCreateNewRow && countRes.rows[0].count >= this.config.attemptSlotLimit) {
         const attempts = await this.listOwnAttempts(identity, client);
         await client.query('ROLLBACK');
-        return { ok: false, statusCode: 409, error: { code: 'ATTEMPT_SLOT_LIMIT_REACHED', message: `You already have ${this.config.attemptSlotLimit} uploaded attempts.`, details: { uploadedAttempts: attempts } } };
+        return {
+          ok: false,
+          statusCode: 409,
+          error: {
+            code: 'ATTEMPT_SLOT_LIMIT_REACHED',
+            message: `You already have ${this.config.attemptSlotLimit} uploaded attempts.`,
+            details: {
+              slotLimit: this.config.attemptSlotLimit,
+              uploadedAttempts: attempts,
+            },
+          },
+        };
       }
       const attempt = validation.attempt;
       if (conflict && action === 'replace') {

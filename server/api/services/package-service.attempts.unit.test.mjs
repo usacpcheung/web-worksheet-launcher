@@ -8,8 +8,9 @@ function createValidAttemptZip() {
     {
       path: 'manifest.json',
       data: JSON.stringify({
-        format: 'worksheet-package',
+        format: 'worksheet-attempt-package',
         packageVersion: 1,
+        schemaVersion: 1,
         worksheet: { title: 'Attempt Worksheet' },
       }),
     },
@@ -163,8 +164,53 @@ test('uploadAttempt slot limit with copy rolls back and returns ATTEMPT_SLOT_LIM
 
   assert.equal(result.ok, false);
   assert.equal(result.error.code, 'ATTEMPT_SLOT_LIMIT_REACHED');
+  assert.equal(result.error.details.slotLimit, 3);
   assert.equal(db.state.rollbacks, 1);
   assert.equal(db.state.commits, 0);
+});
+
+test('uploadAttempt rejects packages with non-attempt manifest format', async () => {
+  const zipBytes = createStoredZip([
+    {
+      path: 'manifest.json',
+      data: JSON.stringify({
+        format: 'worksheet-package',
+        packageVersion: 1,
+        schemaVersion: 1,
+      }),
+    },
+    {
+      path: 'content/worksheet.json',
+      data: JSON.stringify({
+        title: 'Attempt Worksheet',
+        blocks: [{ blockId: 'q1', kind: 'question' }],
+      }),
+    },
+    {
+      path: 'content/attempt.json',
+      data: JSON.stringify({
+        schemaVersion: 1,
+        kind: 'worksheet-attempt',
+        status: 'submitted',
+        answers: { q1: { value: 'A' } },
+        submittedAt: '2026-04-30T00:00:00.000Z',
+      }),
+    },
+  ]);
+
+  const db = createAttemptDb();
+  const service = createService({ db });
+  const result = await service.uploadAttempt({
+    identity: { sub: 'oidc-sub', email: null, name: null },
+    title: 'A',
+    subject: 'S',
+    zipBytes,
+    conflictAction: 'fail_on_conflict',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.error.code, 'INVALID_ATTEMPT_PACKAGE');
 });
 
 test('uploadAttempt replace stores a new artifact id and updates existing row id', async () => {

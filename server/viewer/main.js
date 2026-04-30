@@ -36,7 +36,6 @@ const AUTH_CALLBACK_RETRY_MAX_MS = 10000;
 const AUTH_CALLBACK_RETRY_BUDGET_MS = 60000;
 const ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE = 'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.';
 const ATTEMPT_UPLOAD_CONFLICT_MESSAGE = 'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.';
-const ATTEMPT_UPLOAD_SLOT_LIMIT_MESSAGE = 'You already have 3 uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.';
 let activeViewerShellAbortController = null;
 
 
@@ -236,6 +235,14 @@ function formatUploadProgressText(progress = {}) {
     return 'Saving attempt to server...';
   }
   return 'Preparing upload...';
+}
+
+function formatAttemptSlotLimitMessage(slotLimit) {
+  const normalizedLimit = Number(slotLimit);
+  if (Number.isInteger(normalizedLimit) && normalizedLimit > 0) {
+    return `You already have ${normalizedLimit} uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.`;
+  }
+  return 'You already have uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.';
 }
 
 function normalizeOptionMediaRefs(mediaRefs) {
@@ -2944,7 +2951,7 @@ class ViewerAttemptSession {
         if (errorCode === 'ATTEMPT_NAME_CONFLICT') {
           message = ATTEMPT_UPLOAD_CONFLICT_MESSAGE;
         } else if (errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED') {
-          message = ATTEMPT_UPLOAD_SLOT_LIMIT_MESSAGE;
+          message = formatAttemptSlotLimitMessage(uploadResult?.error?.details?.slotLimit);
         } else if (errorCode === 'INVALID_ATTEMPT_PACKAGE') {
           message = 'The attempt package format is invalid. Your local attempt is still safe. Please refresh and retry.';
         } else if (errorCode === 'AUTH_REQUIRED') {
