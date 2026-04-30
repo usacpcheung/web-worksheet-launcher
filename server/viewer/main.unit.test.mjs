@@ -106,6 +106,8 @@ async function loadViewerModule(overrides = {}) {
     parseWorksheetPackage: overrides.parseWorksheetPackage || (() => ({ worksheet: { title: 'Imported package', blocks: [] } })),
     createStoredZip: overrides.createStoredZip || createStoredZip,
     crc32: overrides.crc32 || crc32,
+    parseStoredZip: overrides.parseStoredZip || parseStoredZip,
+    decodeUtf8: overrides.decodeUtf8 || decodeUtf8,
     validateViewerPayloadSchema: overrides.validateViewerPayloadSchema || (() => ({ valid: true, errors: [] })),
     renderViewerShell: overrides.renderViewerShell || (() => {}),
     document: overrides.document || { getElementById: () => null },
@@ -145,8 +147,8 @@ async function loadViewerModule(overrides = {}) {
     },
     {
       name: 'replace zip utils imports with test bag bindings',
-      pattern: /import\s*\{\s*createStoredZip\s*,\s*crc32\s*\}\s*from\s*['"]\.\.\/editor\/zip-utils\.js['"];/,
-      replacement: 'const createStoredZip = __testBag.createStoredZip;\nconst crc32 = __testBag.crc32;',
+      pattern: /import\s*\{\s*createStoredZip\s*,\s*crc32\s*,\s*parseStoredZip\s*,\s*decodeUtf8\s*\}\s*from\s*['"]\.\.\/editor\/zip-utils\.js['"];/,
+      replacement: 'const createStoredZip = __testBag.createStoredZip;\nconst crc32 = __testBag.crc32;\nconst parseStoredZip = __testBag.parseStoredZip;\nconst decodeUtf8 = __testBag.decodeUtf8;',
     },
     {
       name: 'replace createServerApiClient import with test bag binding',
@@ -3258,6 +3260,39 @@ test('renderViewerStartPanel renders one session-related message line without du
   assert.equal(matched.length, 1);
 });
 
+test('renderViewerStartPanel shows Manage server attempts action', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+      isManagingUploadedAttempts: false,
+      uploadedAttempts: [],
+      uploadedAttemptActionInFlightById: {},
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    listUploadedAttempts: async () => ({ ok: true }),
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+  mod.renderViewerStartPanel(session);
+  const panel = appRoot.children[0];
+  const manageBtn = findNodeByText(panel, 'Manage server attempts');
+  assert.equal(Boolean(manageBtn), true);
+});
+
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({
@@ -4430,6 +4465,117 @@ test('uploadCurrentAttemptPackage slot-limit message falls back when slotLimit d
     session.state.utilityMessage,
     'You already have uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
   );
+});
+
+test('uploadCurrentAttemptPackage sets conflict context for replace/copy recovery UI', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({ ok: false, error: { code: 'ATTEMPT_NAME_CONFLICT', message: 'raw conflict' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_conflict_ctx';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, false);
+  assert.equal(Boolean(session.state.uploadAttemptConflictContext), true);
+});
+
+test('retryAttemptUploadFromConflict uses replace and copy actions', async () => {
+  const mod = await loadViewerModule();
+  const conflictActions = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async (_bytes, metadata) => {
+        conflictActions.push(metadata.conflictAction);
+        return { ok: true };
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_conflict_retry';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  await session.retryAttemptUploadFromConflict('replace');
+  await session.retryAttemptUploadFromConflict('copy');
+  assert.deepEqual(conflictActions, ['replace', 'copy']);
+});
+
+test('listUploadedAttempts stores rows and slot limit for management UI', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      listUploadedAttempts: async () => ({
+        ok: true,
+        data: {
+          attemptSlotLimit: 3,
+          uploadedAttempts: [{ uploaded_attempt_id: 'a1', title: 'Sheet 1', subject: 'Math', status: 'in_progress' }],
+        },
+      }),
+    },
+  });
+  const result = await session.listUploadedAttempts();
+  assert.equal(result.ok, true);
+  assert.equal(session.state.uploadedAttempts.length, 1);
+  assert.equal(session.state.uploadedAttemptSlotLimit, 3);
+});
+
+test('deleteUploadedAttemptAndRefresh calls delete then refreshes list', async () => {
+  const mod = await loadViewerModule();
+  const calls = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      deleteUploadedAttempt: async (id) => {
+        calls.push(`delete:${id}`);
+        return { ok: true };
+      },
+      listUploadedAttempts: async () => {
+        calls.push('list');
+        return { ok: true, data: { uploadedAttempts: [] } };
+      },
+    },
+  });
+  const result = await session.deleteUploadedAttemptAndRefresh('attempt_1');
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['delete:attempt_1', 'list']);
+});
+
+test('resumeUploadedAttempt restores uploaded package into a new local attempt', async () => {
+  const mod = await loadViewerModule();
+  const packageBytes = createStoredZip([
+    { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion: 1, assets: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Restored', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] }) },
+    { path: 'content/attempt.json', data: JSON.stringify({ status: 'submitted', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', submittedAt: '2026-01-02T00:00:00.000Z', answers: { q1: { value: 'A' } }, checking: null }) },
+  ]);
+  const savedAttempts = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+    importedWorksheets: { put: async () => {}, remove: async () => {} },
+    localAssets: { put: async () => {}, remove: async () => {} },
+    attempts: { put: async (record) => { savedAttempts.push(record); return record; } },
+  }, {
+    apiClient: {
+      fetchUploadedAttemptArtifact: async () => ({ ok: true, data: packageBytes }),
+    },
+  });
+  session.validateViewerPayload = async () => {};
+  const result = await session.resumeUploadedAttempt({ uploaded_attempt_id: 'a1' });
+  assert.equal(result.ok, true);
+  assert.equal(savedAttempts.length, 1);
+  assert.equal(session.state.status, 'completed');
+  assert.equal(session.state.checkResult, null);
 });
 
 test('rewrite assist snapshots answer text from answer record value', async () => {

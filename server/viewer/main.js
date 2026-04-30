@@ -6,7 +6,7 @@ import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
 import { mapLegacyJsonToPackageModel, parseWorksheetPackage } from '../editor/worksheet-package.js';
-import { createStoredZip, crc32 } from '../editor/zip-utils.js';
+import { createStoredZip, crc32, parseStoredZip, decodeUtf8 } from '../editor/zip-utils.js';
 import { createServerApiClient } from '../app/api/server-api-client.js';
 import {
   DEFAULT_PUBLISHED_PACKAGE_LIMIT,
@@ -36,6 +36,7 @@ const AUTH_CALLBACK_RETRY_MAX_MS = 10000;
 const AUTH_CALLBACK_RETRY_BUDGET_MS = 60000;
 const ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE = 'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.';
 const ATTEMPT_UPLOAD_CONFLICT_MESSAGE = 'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.';
+const UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION = 'Open Manage server attempts to free slots or review existing uploads.';
 let activeViewerShellAbortController = null;
 
 
@@ -243,6 +244,79 @@ function formatAttemptSlotLimitMessage(slotLimit) {
     return `You already have ${normalizedLimit} uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.`;
   }
   return 'You already have uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.';
+}
+
+function sanitizeFilenameSegment(value, fallback = 'worksheet') {
+  const normalized = String(value || '')
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized || fallback;
+}
+
+function formatAttemptDownloadFilename(row = {}) {
+  const title = sanitizeFilenameSegment(row.title, 'worksheet');
+  const stampSource = row.updated_at || row.updatedAt || null;
+  const date = stampSource ? new Date(stampSource) : null;
+  const stamp = date && !Number.isNaN(date.getTime())
+    ? date.toISOString().replace(/[:.]/g, '-')
+    : nowIso().replace(/[:.]/g, '-');
+  return `${title}__attempt__${stamp}.zip`;
+}
+
+function normalizeUploadedAttemptRows(list) {
+  const rows = Array.isArray(list) ? list : [];
+  return rows
+    .map((row) => (row && typeof row === 'object' ? row : null))
+    .filter(Boolean)
+    .map((row) => ({
+      ...row,
+      uploaded_attempt_id: row.uploaded_attempt_id || row.id || null,
+      title: String(row.title || 'Untitled worksheet'),
+      subject: String(row.subject || ''),
+      status: String(row.status || 'in_progress'),
+      updated_at: row.updated_at || row.updatedAt || null,
+      submitted_at: row.submitted_at || row.submittedAt || null,
+      checked_at: row.checked_at || row.checkedAt || null,
+      artifact_size_bytes: Number.isFinite(Number(row.artifact_size_bytes || row.artifactSizeBytes))
+        ? Number(row.artifact_size_bytes || row.artifactSizeBytes)
+        : null,
+    }))
+    .filter((row) => typeof row.uploaded_attempt_id === 'string' && row.uploaded_attempt_id);
+}
+
+function parseUploadedAttemptPackage(zipBytes) {
+  const files = parseStoredZip(zipBytes);
+  const manifestEntry = files.get('manifest.json');
+  const worksheetEntry = files.get('content/worksheet.json');
+  const attemptEntry = files.get('content/attempt.json');
+  if (!manifestEntry || !worksheetEntry || !attemptEntry) {
+    throw new Error('Uploaded attempt package is missing required files.');
+  }
+  const manifest = JSON.parse(decodeUtf8(manifestEntry));
+  if (manifest?.format !== 'worksheet-attempt-package' || manifest?.packageVersion !== 1) {
+    throw new Error('Uploaded attempt package format is not supported.');
+  }
+  const worksheet = JSON.parse(decodeUtf8(worksheetEntry));
+  const attempt = JSON.parse(decodeUtf8(attemptEntry));
+  const assets = [];
+  const assetManifest = Array.isArray(manifest?.assets) ? manifest.assets : [];
+  assetManifest.forEach((asset) => {
+    const assetId = typeof asset?.assetId === 'string' ? asset.assetId : '';
+    const path = typeof asset?.path === 'string' ? asset.path : '';
+    if (!assetId || !path || !path.startsWith('media/')) return;
+    const binary = files.get(path);
+    if (!binary) return;
+    assets.push({
+      assetId,
+      path,
+      mimeType: typeof asset?.mimeType === 'string' ? asset.mimeType : null,
+      kind: asset?.kind || null,
+      usage: asset?.usage || null,
+      binary,
+    });
+  });
+  return { manifest, worksheet, attempt, assets };
 }
 
 function normalizeOptionMediaRefs(mediaRefs) {
@@ -1962,6 +2036,14 @@ class ViewerAttemptSession {
       serverActionMessage: null,
       isUploadingAttemptPackage: false,
       uploadAttemptProgress: null,
+      uploadAttemptConflictContext: null,
+      uploadAttemptRecoveryHint: null,
+      uploadedAttempts: [],
+      uploadedAttemptSlotLimit: null,
+      isLoadingUploadedAttempts: false,
+      uploadedAttemptsError: null,
+      isManagingUploadedAttempts: false,
+      uploadedAttemptActionInFlightById: {},
       publishedPackages: [],
       publishedHasMore: false,
       publishedNextOffset: null,
@@ -2892,7 +2974,7 @@ class ViewerAttemptSession {
     };
   }
 
-  async uploadCurrentAttemptPackage(intentPayload = {}) {
+  async uploadCurrentAttemptPackage(intentPayload = {}, options = {}) {
     if (!this.state.localAttemptId || !this.state.viewerPayload) {
       const message = 'No active local attempt is available for upload.';
       this.state.utilityMessage = message;
@@ -2917,6 +2999,8 @@ class ViewerAttemptSession {
     }
 
     this.state.isUploadingAttemptPackage = true;
+    this.state.uploadAttemptConflictContext = null;
+    this.state.uploadAttemptRecoveryHint = null;
     this.state.uploadAttemptProgress = { loaded: 0, total: 0, lengthComputable: false };
     this.state.utilityMessage = 'Preparing upload...';
     this.state.serverActionMessage = this.state.utilityMessage;
@@ -2930,7 +3014,7 @@ class ViewerAttemptSession {
       const uploadResult = await this.apiClient.uploadAttemptPackage(packageResult.bytes, {
         title: uploadTitle,
         subject: uploadSubject,
-        conflictAction: 'fail_on_conflict',
+        conflictAction: options.conflictAction || 'fail_on_conflict',
       }, {
         onProgress: (progress) => {
           this.state.uploadAttemptProgress = {
@@ -2950,8 +3034,17 @@ class ViewerAttemptSession {
         let message = uploadResult?.error?.message || 'Attempt upload failed.';
         if (errorCode === 'ATTEMPT_NAME_CONFLICT') {
           message = ATTEMPT_UPLOAD_CONFLICT_MESSAGE;
+          this.state.uploadAttemptConflictContext = {
+            title: uploadTitle,
+            subject: uploadSubject,
+          };
         } else if (errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED') {
           message = formatAttemptSlotLimitMessage(uploadResult?.error?.details?.slotLimit);
+          this.state.uploadAttemptRecoveryHint = {
+            kind: 'slot_limit',
+            slotLimit: uploadResult?.error?.details?.slotLimit,
+          };
+          this.state.uploadedAttemptSlotLimit = Number(uploadResult?.error?.details?.slotLimit) || this.state.uploadedAttemptSlotLimit;
         } else if (errorCode === 'INVALID_ATTEMPT_PACKAGE') {
           message = 'The attempt package format is invalid. Your local attempt is still safe. Please refresh and retry.';
         } else if (errorCode === 'AUTH_REQUIRED') {
@@ -2967,6 +3060,8 @@ class ViewerAttemptSession {
 
       this.state.utilityMessage = 'Attempt saved to server.';
       this.state.serverActionMessage = this.state.utilityMessage;
+      this.state.uploadAttemptConflictContext = null;
+      this.state.uploadAttemptRecoveryHint = null;
       this.notifyStateChange();
       return uploadResult;
     } catch (error) {
@@ -2978,6 +3073,226 @@ class ViewerAttemptSession {
     } finally {
       this.state.isUploadingAttemptPackage = false;
       this.state.uploadAttemptProgress = null;
+      this.notifyStateChange();
+    }
+  }
+
+  async retryAttemptUploadFromConflict(conflictAction) {
+    const action = conflictAction === 'replace' ? 'replace' : conflictAction === 'copy' ? 'copy' : null;
+    if (!action) return { ok: false, status: 'invalid_conflict_action' };
+    return this.uploadCurrentAttemptPackage({}, { conflictAction: action });
+  }
+
+  clearAttemptUploadConflictPrompt() {
+    this.state.uploadAttemptConflictContext = null;
+    this.state.uploadAttemptRecoveryHint = null;
+    this.notifyStateChange();
+  }
+
+  async listUploadedAttempts() {
+    this.state.isLoadingUploadedAttempts = true;
+    this.state.uploadedAttemptsError = null;
+    this.notifyStateChange();
+    try {
+      const result = await this.apiClient.listUploadedAttempts();
+      if (!result?.ok) {
+        this.state.uploadedAttemptsError = result?.error?.message || 'Unable to load uploaded attempts.';
+        return result;
+      }
+      const rows = normalizeUploadedAttemptRows(result?.data?.uploadedAttempts || result?.data?.attempts || result?.data || []);
+      this.state.uploadedAttempts = rows;
+      const limit = Number(result?.data?.attemptSlotLimit || result?.data?.slotLimit);
+      if (Number.isFinite(limit) && limit > 0) {
+        this.state.uploadedAttemptSlotLimit = limit;
+      }
+      return result;
+    } catch (error) {
+      this.state.uploadedAttemptsError = error?.message || 'Unable to load uploaded attempts.';
+      return { ok: false, error: { code: 'NETWORK_ERROR', message: this.state.uploadedAttemptsError } };
+    } finally {
+      this.state.isLoadingUploadedAttempts = false;
+      this.notifyStateChange();
+    }
+  }
+
+  async deleteUploadedAttemptAndRefresh(uploadedAttemptId) {
+    if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
+    this.state.uploadedAttemptActionInFlightById = {
+      ...this.state.uploadedAttemptActionInFlightById,
+      [uploadedAttemptId]: 'delete',
+    };
+    this.notifyStateChange();
+    try {
+      const result = await this.apiClient.deleteUploadedAttempt(uploadedAttemptId);
+      if (!result?.ok) return result;
+      await this.listUploadedAttempts();
+      return result;
+    } finally {
+      const next = { ...this.state.uploadedAttemptActionInFlightById };
+      delete next[uploadedAttemptId];
+      this.state.uploadedAttemptActionInFlightById = next;
+      this.notifyStateChange();
+    }
+  }
+
+  async downloadUploadedAttempt(uploadedAttemptRow) {
+    const uploadedAttemptId = uploadedAttemptRow?.uploaded_attempt_id || null;
+    if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
+    this.state.uploadedAttemptActionInFlightById = {
+      ...this.state.uploadedAttemptActionInFlightById,
+      [uploadedAttemptId]: 'download',
+    };
+    this.notifyStateChange();
+    try {
+      const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
+      if (!artifact?.ok) return artifact;
+      const bytes = ensureUint8Array(artifact?.data);
+      if (!bytes) {
+        return { ok: false, error: { code: 'INVALID_ARTIFACT', message: 'Uploaded attempt artifact is empty.' } };
+      }
+      const blob = new Blob([bytes], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = formatAttemptDownloadFilename(uploadedAttemptRow);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      return { ok: true };
+    } finally {
+      const next = { ...this.state.uploadedAttemptActionInFlightById };
+      delete next[uploadedAttemptId];
+      this.state.uploadedAttemptActionInFlightById = next;
+      this.notifyStateChange();
+    }
+  }
+
+  mapUploadedAttemptCheckResult(checking) {
+    if (!checking || typeof checking !== 'object') return null;
+    const items = checking.items && typeof checking.items === 'object' ? checking.items : {};
+    const statusByBlockId = {};
+    Object.entries(items).forEach(([blockId, item]) => {
+      const result = item?.result;
+      if (typeof blockId !== 'string' || !blockId) return;
+      statusByBlockId[blockId] = result === true || result === 'correct' ? true : false;
+    });
+    return {
+      statusByBlockId,
+      byBlockId: { ...statusByBlockId },
+      correctCount: Number(checking.correctCount) || 0,
+      totalQuestions: Number(checking.totalQuestions) || 0,
+      checkedAt: checking.checkedAt || nowIso(),
+    };
+  }
+
+  async resumeUploadedAttempt(uploadedAttemptRow) {
+    const uploadedAttemptId = uploadedAttemptRow?.uploaded_attempt_id || null;
+    if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
+    this.state.uploadedAttemptActionInFlightById = {
+      ...this.state.uploadedAttemptActionInFlightById,
+      [uploadedAttemptId]: 'resume',
+    };
+    this.notifyStateChange();
+    try {
+      const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
+      if (!artifact?.ok) return artifact;
+      const packageModel = parseUploadedAttemptPackage(artifact.data);
+      const importedAt = nowIso();
+      const importedRecord = {
+        localId: createLocalId('imported'),
+        worksheet: packageModel.worksheet,
+        importedAt,
+        metadata: {
+          localId: null,
+          origin: 'uploaded_attempt_restore',
+          updatedAt: importedAt,
+        },
+      };
+      importedRecord.metadata.localId = importedRecord.localId;
+      const payload = resolveImportedWorksheetPayload(importedRecord);
+      await this.validateViewerPayload(payload);
+
+      const persistedAssetIds = [];
+      try {
+        await this.storage.importedWorksheets.put(importedRecord);
+        for (const asset of packageModel.assets) {
+          if (!asset?.assetId || !(asset.binary instanceof Uint8Array)) continue;
+          await this.storage.localAssets.put({
+            localId: asset.assetId,
+            binary: asset.binary,
+            metadata: {
+              localId: asset.assetId,
+              origin: 'uploaded_attempt_restore',
+              updatedAt: importedAt,
+              mimeType: asset.mimeType || null,
+              kind: asset.kind || null,
+              usage: asset.usage || null,
+              path: asset.path || null,
+            },
+          });
+          persistedAssetIds.push(asset.assetId);
+        }
+      } catch (error) {
+        await Promise.all(persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {})));
+        await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
+        throw error;
+      }
+
+      const rawAttempt = packageModel.attempt && typeof packageModel.attempt === 'object' ? packageModel.attempt : {};
+      const attemptStatus = String(rawAttempt.status || 'in_progress');
+      const restoredLocalAttemptId = createLocalId('attempt');
+      const restoredStartedAt = rawAttempt.createdAt || nowIso();
+      const restoredUpdatedAt = rawAttempt.updatedAt || nowIso();
+      const isInProgress = attemptStatus === 'in_progress';
+      const isChecked = attemptStatus === 'checked';
+      const isSubmitted = attemptStatus === 'submitted';
+      if (!isInProgress && !isChecked && !isSubmitted) {
+        throw new Error('Uploaded attempt status is not supported.');
+      }
+      const checkResult = isChecked ? this.mapUploadedAttemptCheckResult(rawAttempt.checking) : null;
+      const restoredAttemptRecord = {
+        localId: restoredLocalAttemptId,
+        localAttemptId: restoredLocalAttemptId,
+        viewerPayload: payload,
+        learnerId: DEFAULT_LEARNER_ID,
+        worksheetId: payload?.worksheetId || null,
+        snapshotId: payload?.snapshotId || null,
+        sourceType: 'imported_worksheet',
+        sourceId: getSourceIdentity('imported_worksheet', { sourceImportedWorksheetId: importedRecord.localId }),
+        sourceFingerprint: computeViewerPayloadFingerprint(payload),
+        sourceLocalDraftId: null,
+        sourceImportedWorksheetId: importedRecord.localId,
+        lastActiveBlockId: payload?.blocks?.[0]?.blockId || null,
+        lastActiveIndex: 0,
+        studentName: '',
+        status: isInProgress ? 'in_progress' : 'completed',
+        startedAt: restoredStartedAt,
+        lastSavedAt: restoredUpdatedAt,
+        completedAt: isInProgress ? null : (rawAttempt.submittedAt || restoredUpdatedAt),
+        answers: rawAttempt.answers && typeof rawAttempt.answers === 'object' ? rawAttempt.answers : {},
+        metadata: {
+          localId: restoredLocalAttemptId,
+          origin: 'imported_worksheet',
+          sourceImportedWorksheetId: importedRecord.localId,
+          sourceId: getSourceIdentity('imported_worksheet', { sourceImportedWorksheetId: importedRecord.localId }),
+          sourceFingerprint: computeViewerPayloadFingerprint(payload),
+          updatedAt: restoredUpdatedAt,
+        },
+      };
+      await this.storage.attempts.put(restoredAttemptRecord);
+      this.applyAttemptState(restoredAttemptRecord, { markDirty: false });
+      this.state.checkResult = checkResult;
+      this.persistResumeMetadata();
+      return { ok: true, data: { localAttemptId: restoredLocalAttemptId } };
+    } catch (error) {
+      this.state.utilityMessage = `Unable to resume uploaded attempt. ${error?.message || String(error)}`;
+      this.notifyStateChange();
+      return { ok: false, error: { code: 'UPLOAD_ATTEMPT_RESTORE_FAILED', message: this.state.utilityMessage } };
+    } finally {
+      const next = { ...this.state.uploadedAttemptActionInFlightById };
+      delete next[uploadedAttemptId];
+      this.state.uploadedAttemptActionInFlightById = next;
       this.notifyStateChange();
     }
   }
@@ -3546,6 +3861,26 @@ function renderViewerShell(session) {
   resumeWarning.className = 'answer-summary';
   const utilityFeedback = document.createElement('p');
   utilityFeedback.className = 'viewer-utility-feedback';
+  const uploadRecoveryActions = document.createElement('div');
+  uploadRecoveryActions.className = 'viewer-start-actions';
+  uploadRecoveryActions.hidden = true;
+  const conflictReplaceBtn = document.createElement('button');
+  conflictReplaceBtn.type = 'button';
+  conflictReplaceBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  conflictReplaceBtn.textContent = 'Replace existing attempt';
+  const conflictCopyBtn = document.createElement('button');
+  conflictCopyBtn.type = 'button';
+  conflictCopyBtn.className = 'viewer-start-btn';
+  conflictCopyBtn.textContent = 'Save as copy';
+  const conflictCancelBtn = document.createElement('button');
+  conflictCancelBtn.type = 'button';
+  conflictCancelBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
+  conflictCancelBtn.textContent = 'Cancel';
+  const openManageAttemptsBtn = document.createElement('button');
+  openManageAttemptsBtn.type = 'button';
+  openManageAttemptsBtn.className = 'viewer-start-btn';
+  openManageAttemptsBtn.textContent = 'Open Manage server attempts';
+  uploadRecoveryActions.append(conflictReplaceBtn, conflictCopyBtn, conflictCancelBtn, openManageAttemptsBtn);
   const status = document.createElement('p');
   let studentName = session.state.studentName || '';
 
@@ -4755,6 +5090,18 @@ function renderViewerShell(session) {
     resumeWarning.hidden = !session.state.recoveryMessage;
     utilityFeedback.textContent = session.state.utilityMessage || '';
     utilityFeedback.hidden = !session.state.utilityMessage;
+    const showConflictActions = Boolean(session.state.uploadAttemptConflictContext);
+    const showSlotRecoveryAction = Boolean(session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit');
+    conflictReplaceBtn.hidden = !showConflictActions;
+    conflictCopyBtn.hidden = !showConflictActions;
+    conflictCancelBtn.hidden = !showConflictActions;
+    openManageAttemptsBtn.hidden = !showSlotRecoveryAction;
+    uploadRecoveryActions.hidden = !showConflictActions && !showSlotRecoveryAction;
+    const disableRecoveryButtons = session.state.isUploadingAttemptPackage;
+    conflictReplaceBtn.disabled = disableRecoveryButtons;
+    conflictCopyBtn.disabled = disableRecoveryButtons;
+    conflictCancelBtn.disabled = disableRecoveryButtons;
+    openManageAttemptsBtn.disabled = disableRecoveryButtons;
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     const checkAvailable = session.state.status === 'completed';
@@ -4814,6 +5161,31 @@ function renderViewerShell(session) {
     }
     renderUI();
   });
+  conflictReplaceBtn.addEventListener('click', async () => {
+    const result = await session.retryAttemptUploadFromConflict('replace');
+    if (!result?.ok) {
+      session.state.utilityMessage = result?.error?.message || session.state.utilityMessage;
+    }
+    renderUI();
+  });
+  conflictCopyBtn.addEventListener('click', async () => {
+    const result = await session.retryAttemptUploadFromConflict('copy');
+    if (!result?.ok) {
+      session.state.utilityMessage = result?.error?.message || session.state.utilityMessage;
+    }
+    renderUI();
+  });
+  conflictCancelBtn.addEventListener('click', () => {
+    session.clearAttemptUploadConflictPrompt();
+    renderUI();
+  });
+  openManageAttemptsBtn.addEventListener('click', async () => {
+    session.state.utilityMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
+    session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
+    session.state.isManagingUploadedAttempts = true;
+    await session.listUploadedAttempts();
+    renderViewerStartPanel(session, { warningMessage: null });
+  });
 
   printReportBtn.addEventListener('click', async () => {
     closeUtilityMenu({ returnFocus: true });
@@ -4834,7 +5206,7 @@ function renderViewerShell(session) {
   nextBtn.addEventListener('click', goNext);
 
   headerTop.append(heading, headerActions);
-  header.append(headerTop, answerSummary, resumeWarning, utilityFeedback);
+  header.append(headerTop, answerSummary, resumeWarning, utilityFeedback, uploadRecoveryActions);
   blockSection.append(blockHeading, stepper, blockList);
   shell.append(header, blockSection);
   app.innerHTML = '';
@@ -5021,8 +5393,15 @@ function renderViewerStartPanel(session, options = {}) {
   filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput);
   const sessionStatus = document.createElement('p');
   sessionStatus.className = 'muted viewer-session-status';
+  const manageAttemptsBtn = document.createElement('button');
+  manageAttemptsBtn.type = 'button';
+  manageAttemptsBtn.className = 'viewer-start-btn';
+  manageAttemptsBtn.textContent = 'Manage server attempts';
   const publishedList = document.createElement('div');
   publishedList.className = 'muted viewer-published-list';
+  const uploadedAttemptsPanel = document.createElement('div');
+  uploadedAttemptsPanel.className = 'muted viewer-published-list';
+  uploadedAttemptsPanel.hidden = true;
 
   const packageFileInput = document.createElement('input');
   packageFileInput.type = 'file';
@@ -5101,6 +5480,13 @@ function renderViewerStartPanel(session, options = {}) {
     session.beginServerSignIn();
     renderServerControls();
   });
+  manageAttemptsBtn.addEventListener('click', async () => {
+    session.state.isManagingUploadedAttempts = !session.state.isManagingUploadedAttempts;
+    if (session.state.isManagingUploadedAttempts) {
+      await session.listUploadedAttempts();
+    }
+    renderServerControls();
+  });
   const scheduleDebouncedBrowse = (() => {
     let debounceTimer = null;
     return () => {
@@ -5140,6 +5526,23 @@ function renderViewerStartPanel(session, options = {}) {
     window.viewerSession = session;
   }
 
+  async function openUploadedAttempt(row) {
+    const result = await session.resumeUploadedAttempt(row);
+    if (!result?.ok) {
+      renderServerControls();
+      return;
+    }
+    if (session.state.localAttemptId) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+      nextUrl.searchParams.delete('viewerPayload');
+      nextUrl.searchParams.delete('snapshot');
+      window.history.replaceState({}, '', nextUrl);
+    }
+    renderViewerShell(session);
+    window.viewerSession = session;
+  }
+
   function renderServerControls() {
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
@@ -5160,6 +5563,8 @@ function renderViewerStartPanel(session, options = {}) {
     sessionStatus.textContent = actionMessage || defaultSessionMessage;
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking;
+    manageAttemptsBtn.hidden = false;
+    manageAttemptsBtn.disabled = isChecking;
     publishedHeading.hidden = !canAccessPublished;
     filterRow.hidden = !canAccessPublished;
     titleFilterInput.hidden = !canAccessPublished;
@@ -5177,6 +5582,96 @@ function renderViewerStartPanel(session, options = {}) {
     loadMoreRow.hidden = loadMoreBtn.hidden;
     publishedList.innerHTML = '';
     publishedList.hidden = !canAccessPublished;
+    uploadedAttemptsPanel.hidden = !session.state.isManagingUploadedAttempts;
+    uploadedAttemptsPanel.innerHTML = '';
+    manageAttemptsBtn.textContent = session.state.isManagingUploadedAttempts ? 'Hide server attempts' : 'Manage server attempts';
+    if (session.state.isManagingUploadedAttempts) {
+      const attemptHeader = document.createElement('h2');
+      attemptHeader.className = 'viewer-published-heading';
+      attemptHeader.textContent = 'Uploaded Attempts';
+      uploadedAttemptsPanel.append(attemptHeader);
+      if (!isLoggedIn) {
+        const signedOut = document.createElement('p');
+        signedOut.className = 'muted';
+        signedOut.textContent = 'Sign in to manage uploaded attempts.';
+        uploadedAttemptsPanel.append(signedOut);
+      } else if (session.state.uploadedAttemptsError) {
+        const errorRow = document.createElement('p');
+        errorRow.className = 'viewer-list-error';
+        errorRow.textContent = session.state.uploadedAttemptsError;
+        const retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.className = 'viewer-list-retry-btn';
+        retryBtn.textContent = 'Retry';
+        retryBtn.addEventListener('click', async () => {
+          await session.listUploadedAttempts();
+          renderServerControls();
+        });
+        errorRow.append(' ', retryBtn);
+        uploadedAttemptsPanel.append(errorRow);
+      } else {
+        const rows = Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : [];
+        const slotLimit = Number(session.state.uploadedAttemptSlotLimit) || 3;
+        const slotUsage = document.createElement('p');
+        slotUsage.className = 'muted';
+        slotUsage.textContent = `Slot usage: ${rows.length} / ${slotLimit}`;
+        uploadedAttemptsPanel.append(slotUsage);
+        if (rows.length === 0) {
+          const empty = document.createElement('p');
+          empty.className = 'muted';
+          empty.textContent = session.state.isLoadingUploadedAttempts ? 'Loading uploaded attempts...' : 'No uploaded attempts saved yet.';
+          uploadedAttemptsPanel.append(empty);
+        } else {
+          rows.forEach((row) => {
+            const attemptRow = document.createElement('div');
+            attemptRow.className = 'viewer-published-row';
+            const meta = document.createElement('div');
+            meta.className = 'muted viewer-published-meta';
+            const submittedLabel = row.submitted_at ? `Submitted ${formatTimestampForDisplay(row.submitted_at)}` : 'Not submitted';
+            const checkedLabel = row.checked_at ? `Checked ${formatTimestampForDisplay(row.checked_at)}` : 'Not checked';
+            const sizeLabel = Number.isFinite(row.artifact_size_bytes) ? `${Math.max(1, Math.round(row.artifact_size_bytes / 1024))} KB` : 'size n/a';
+            meta.textContent = `Title: ${row.title} · Subject: ${row.subject || '—'} · Status: ${row.status} · ${submittedLabel} · ${checkedLabel} · ${sizeLabel}`;
+            const actions = document.createElement('div');
+            actions.className = 'viewer-start-actions';
+            const inFlightAction = session.state.uploadedAttemptActionInFlightById?.[row.uploaded_attempt_id] || '';
+            const resumeBtn = document.createElement('button');
+            resumeBtn.type = 'button';
+            resumeBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+            resumeBtn.textContent = inFlightAction === 'resume' ? 'Resuming...' : 'Resume';
+            resumeBtn.disabled = Boolean(inFlightAction);
+            resumeBtn.addEventListener('click', async () => {
+              await openUploadedAttempt(row);
+            });
+            const downloadBtn = document.createElement('button');
+            downloadBtn.type = 'button';
+            downloadBtn.className = 'viewer-start-btn';
+            downloadBtn.textContent = inFlightAction === 'download' ? 'Downloading...' : 'Download';
+            downloadBtn.disabled = Boolean(inFlightAction);
+            downloadBtn.addEventListener('click', async () => {
+              await session.downloadUploadedAttempt(row);
+              renderServerControls();
+            });
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
+            deleteBtn.textContent = inFlightAction === 'delete' ? 'Deleting...' : 'Delete';
+            deleteBtn.disabled = Boolean(inFlightAction);
+            deleteBtn.addEventListener('click', async () => {
+              const shouldDelete = window.confirm(`Delete uploaded attempt "${row.title}" from server?`);
+              if (!shouldDelete) return;
+              const deleteResult = await session.deleteUploadedAttemptAndRefresh(row.uploaded_attempt_id);
+              if (!deleteResult?.ok) {
+                session.state.serverActionMessage = deleteResult?.error?.message || 'Failed to delete uploaded attempt.';
+              }
+              renderServerControls();
+            });
+            actions.append(resumeBtn, downloadBtn, deleteBtn);
+            attemptRow.append(meta, actions);
+            uploadedAttemptsPanel.append(attemptRow);
+          });
+        }
+      }
+    }
     if (!canAccessPublished) {
       return;
     }
@@ -5236,8 +5731,8 @@ function renderViewerStartPanel(session, options = {}) {
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  serverActions.append(signInBtn);
-  panel.append(importActions, serverActions, sessionStatus, publishedHeading, filterRow, publishedList, loadMoreRow, packageFileInput, errorMessage);
+  serverActions.append(signInBtn, manageAttemptsBtn);
+  panel.append(importActions, serverActions, sessionStatus, uploadedAttemptsPanel, publishedHeading, filterRow, publishedList, loadMoreRow, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
