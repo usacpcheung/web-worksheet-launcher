@@ -231,3 +231,50 @@ test('listOwnAttempts does not select artifact_path', async () => {
   assert.equal(sqlSeen[0].includes('artifact_path'), false);
   assert.equal(sqlSeen[0].includes('SELECT *'), false);
 });
+
+test('uploadAttempt validator accepts checking block ids from worksheet.blockId shape', async () => {
+  const zipBytes = createStoredZip([
+    {
+      path: 'manifest.json',
+      data: JSON.stringify({
+        format: 'worksheet-attempt-package',
+        packageVersion: 1,
+        worksheet: { title: 'Attempt Worksheet' },
+      }),
+    },
+    {
+      path: 'content/worksheet.json',
+      data: JSON.stringify({
+        title: 'Attempt Worksheet',
+        blocks: [{ blockId: 'q1', kind: 'question' }],
+      }),
+    },
+    {
+      path: 'content/attempt.json',
+      data: JSON.stringify({
+        schemaVersion: 1,
+        kind: 'worksheet-attempt',
+        status: 'checked',
+        answers: { q1: { value: 'A' } },
+        submittedAt: '2026-04-30T00:00:00.000Z',
+        checking: {
+          checkedAt: '2026-04-30T00:00:01.000Z',
+          items: { q1: { result: 'correct' } },
+        },
+      }),
+    },
+  ]);
+
+  const db = createAttemptDb();
+  const service = createService({ db });
+  const result = await service.uploadAttempt({
+    identity: { sub: 'oidc-sub', email: null, name: null },
+    title: 'A',
+    subject: 'S',
+    zipBytes,
+    conflictAction: 'fail_on_conflict',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.statusCode, 201);
+});

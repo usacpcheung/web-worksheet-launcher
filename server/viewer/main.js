@@ -34,6 +34,9 @@ const VIEWER_AUTH_CALLBACK_PARAM = 'authCallback';
 const AUTH_CALLBACK_RETRY_BASE_MS = 1000;
 const AUTH_CALLBACK_RETRY_MAX_MS = 10000;
 const AUTH_CALLBACK_RETRY_BUDGET_MS = 60000;
+const ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE = 'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.';
+const ATTEMPT_UPLOAD_CONFLICT_MESSAGE = 'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.';
+const ATTEMPT_UPLOAD_SLOT_LIMIT_MESSAGE = 'You already have 3 uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.';
 let activeViewerShellAbortController = null;
 
 
@@ -220,6 +223,19 @@ function ensureUint8Array(value) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   }
   return null;
+}
+
+function formatUploadProgressText(progress = {}) {
+  const loaded = Number(progress.loaded || 0);
+  const total = Number(progress.total || 0);
+  if (progress.lengthComputable && total > 0) {
+    const percent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+    return `Saving attempt to server... ${percent}%`;
+  }
+  if (loaded > 0) {
+    return 'Saving attempt to server...';
+  }
+  return 'Preparing upload...';
 }
 
 function normalizeOptionMediaRefs(mediaRefs) {
@@ -1937,6 +1953,8 @@ class ViewerAttemptSession {
         error: null,
       },
       serverActionMessage: null,
+      isUploadingAttemptPackage: false,
+      uploadAttemptProgress: null,
       publishedPackages: [],
       publishedHasMore: false,
       publishedNextOffset: null,
@@ -2799,21 +2817,12 @@ class ViewerAttemptSession {
     return {
       schemaVersion: 1,
       kind: 'worksheet-attempt',
-      localAttemptId: this.state.localAttemptId || null,
       status: packageStatus,
       createdAt: this.state.startedAt || updatedAt,
       updatedAt,
       submittedAt: packageStatus === 'in_progress' ? null : (this.state.completedAt || updatedAt),
       answers: this.state.answers || {},
       checking,
-      metadata: {
-        sourceType: this.state.sourceType || this.state.source || 'unknown',
-        sourceId: this.state.sourceId || null,
-        sourceFingerprint: this.state.sourceFingerprint || null,
-        sourceLocalDraftId: this.state.sourceLocalDraftId || null,
-        sourceImportedWorksheetId: this.state.sourceImportedWorksheetId || null,
-        studentName: this.state.studentName || '',
-      },
     };
   }
 
@@ -2884,6 +2893,13 @@ class ViewerAttemptSession {
       this.notifyStateChange();
       return { ok: false, status: 'no_active_attempt', error: { message } };
     }
+    if (this.state.isUploadingAttemptPackage) {
+      const message = 'Upload already in progress.';
+      this.state.utilityMessage = message;
+      this.state.serverActionMessage = message;
+      this.notifyStateChange();
+      return { ok: false, status: 'upload_in_progress', error: { message } };
+    }
     const intentAttemptId = typeof intentPayload?.localAttemptId === 'string' ? intentPayload.localAttemptId : null;
     if (intentAttemptId && intentAttemptId !== this.state.localAttemptId) {
       const message = 'Attempt upload target is stale. Please retry from the current attempt.';
@@ -2892,25 +2908,71 @@ class ViewerAttemptSession {
       this.notifyStateChange();
       return { ok: false, status: 'stale_intent', error: { message } };
     }
-    await this.flushLocalStateForAuthRedirect();
-    const packageResult = await this.buildUploadedAttemptPackage();
-    const uploadTitle = String(this.state.viewerPayload?.title || 'Untitled worksheet');
-    const uploadSubject = String(this.state.viewerPayload?.subject || '').trim();
-    const uploadResult = await this.apiClient.uploadAttemptPackage(packageResult.bytes, {
-      title: uploadTitle,
-      subject: uploadSubject,
-      conflictAction: 'fail_on_conflict',
-    });
-    if (!uploadResult?.ok) {
-      this.state.utilityMessage = uploadResult?.error?.message || 'Attempt upload failed.';
+
+    this.state.isUploadingAttemptPackage = true;
+    this.state.uploadAttemptProgress = { loaded: 0, total: 0, lengthComputable: false };
+    this.state.utilityMessage = 'Preparing upload...';
+    this.state.serverActionMessage = this.state.utilityMessage;
+    this.notifyStateChange();
+
+    try {
+      await this.flushLocalStateForAuthRedirect();
+      const packageResult = await this.buildUploadedAttemptPackage();
+      const uploadTitle = String(this.state.viewerPayload?.title || 'Untitled worksheet');
+      const uploadSubject = String(this.state.viewerPayload?.subject || '').trim();
+      const uploadResult = await this.apiClient.uploadAttemptPackage(packageResult.bytes, {
+        title: uploadTitle,
+        subject: uploadSubject,
+        conflictAction: 'fail_on_conflict',
+      }, {
+        onProgress: (progress) => {
+          this.state.uploadAttemptProgress = {
+            loaded: Number(progress?.loaded || 0),
+            total: Number(progress?.total || 0),
+            lengthComputable: Boolean(progress?.lengthComputable),
+          };
+          const progressMessage = formatUploadProgressText(this.state.uploadAttemptProgress);
+          this.state.utilityMessage = progressMessage;
+          this.state.serverActionMessage = progressMessage;
+          this.notifyStateChange();
+        },
+      });
+
+      if (!uploadResult?.ok) {
+        const errorCode = String(uploadResult?.error?.code || '').toUpperCase();
+        let message = uploadResult?.error?.message || 'Attempt upload failed.';
+        if (errorCode === 'ATTEMPT_NAME_CONFLICT') {
+          message = ATTEMPT_UPLOAD_CONFLICT_MESSAGE;
+        } else if (errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED') {
+          message = ATTEMPT_UPLOAD_SLOT_LIMIT_MESSAGE;
+        } else if (errorCode === 'INVALID_ATTEMPT_PACKAGE') {
+          message = 'The attempt package format is invalid. Your local attempt is still safe. Please refresh and retry.';
+        } else if (errorCode === 'AUTH_REQUIRED') {
+          message = 'Sign-in is required before saving attempts to server.';
+        } else if (errorCode === 'NETWORK_ERROR') {
+          message = ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE;
+        }
+        this.state.utilityMessage = message;
+        this.state.serverActionMessage = message;
+        this.notifyStateChange();
+        return uploadResult;
+      }
+
+      this.state.utilityMessage = 'Attempt saved to server.';
       this.state.serverActionMessage = this.state.utilityMessage;
       this.notifyStateChange();
       return uploadResult;
+    } catch (error) {
+      console.error('[viewer] Attempt package upload failed unexpectedly.', error);
+      this.state.utilityMessage = ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE;
+      this.state.serverActionMessage = this.state.utilityMessage;
+      this.notifyStateChange();
+      return { ok: false, status: 'upload_failed_unexpected', error: { code: 'NETWORK_ERROR', message: ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE } };
+    } finally {
+      this.state.isUploadingAttemptPackage = false;
+      this.state.uploadAttemptProgress = null;
+      this.notifyStateChange();
     }
-    this.state.utilityMessage = 'Uploaded attempt package to server.';
-    this.state.serverActionMessage = this.state.utilityMessage;
-    this.notifyStateChange();
-    return uploadResult;
   }
 
   validateViewerRewriteIntentPayload(payload = {}) {
@@ -3566,7 +3628,7 @@ function renderViewerShell(session) {
   uploadAttemptBtn.type = 'button';
   uploadAttemptBtn.className = 'viewer-utility-menu__item';
   uploadAttemptBtn.setAttribute('role', 'menuitem');
-  uploadAttemptBtn.textContent = 'Upload Attempt (Sign-in required)';
+  uploadAttemptBtn.textContent = 'Save attempt to server';
 
   const printReportBtn = document.createElement('button');
   printReportBtn.type = 'button';
@@ -4684,7 +4746,7 @@ function renderViewerShell(session) {
               : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
     resumeWarning.textContent = session.state.recoveryMessage ? `⚠️ ${session.state.recoveryMessage}` : '';
     resumeWarning.hidden = !session.state.recoveryMessage;
-    utilityFeedback.textContent = session.state.utilityMessage ? `⚠️ ${session.state.utilityMessage}` : '';
+    utilityFeedback.textContent = session.state.utilityMessage || '';
     utilityFeedback.hidden = !session.state.utilityMessage;
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
@@ -4693,6 +4755,10 @@ function renderViewerShell(session) {
     checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
     printReportBtn.hidden = !checkAvailable;
     printReportBtn.disabled = session.state.isFinalizing || !checkAvailable;
+    uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
+    uploadAttemptBtn.textContent = session.state.isUploadingAttemptPackage
+      ? 'Saving attempt to server...'
+      : 'Save attempt to server';
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
     const normalizedAttemptStatus = session.state.status
@@ -4739,7 +4805,6 @@ function renderViewerShell(session) {
       renderUI();
       return;
     }
-    await session.uploadCurrentAttemptPackage();
     renderUI();
   });
 

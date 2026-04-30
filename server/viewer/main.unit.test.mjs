@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
 import { createStoredZip, parseStoredZip, decodeUtf8, crc32 } from '../editor/zip-utils.js';
+import { PackageService } from '../api/services/package-service.js';
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
@@ -4105,8 +4106,9 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
 
 test('viewer utility menu includes upload attempt action and protected upload intent hook', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("uploadAttemptBtn.textContent = 'Upload Attempt (Sign-in required)';"), true);
+  assert.equal(source.includes("uploadAttemptBtn.textContent = 'Save attempt to server';"), true);
   assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
+  assert.equal(source.includes('await session.uploadCurrentAttemptPackage();'), false);
 });
 
 test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and media entries', async () => {
@@ -4167,6 +4169,238 @@ test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and medi
   assert.equal(attempt.status, 'checked');
   assert.equal(attempt.answers.q1.value, 'A');
   assert.equal(attempt.checking.items.q1.result, 'correct');
+  assert.equal(JSON.stringify(attempt).includes('correctAnswer'), false);
+  assert.equal(JSON.stringify(attempt).includes('responseConfig'), false);
+  assert.equal(JSON.stringify(attempt).includes('mediaRefs'), false);
+});
+
+test('buildUploadedAttemptPackage output is accepted by server upload attempt package validator', async () => {
+  const mod = await loadViewerModule();
+  const assetBytes = new Uint8Array([10, 20, 30]);
+  const session = new mod.ViewerAttemptSession({
+    localAssets: {
+      async get(localId) {
+        if (localId !== 'img_1') return null;
+        return {
+          localId: 'img_1',
+          binary: assetBytes,
+          metadata: { mimeType: 'image/png' },
+        };
+      },
+    },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_compat';
+  session.state.status = 'completed';
+  session.state.startedAt = '2026-04-30T00:00:00.000Z';
+  session.state.lastSavedAt = '2026-04-30T00:05:00.000Z';
+  session.state.completedAt = '2026-04-30T00:06:00.000Z';
+  session.state.answers = { q1: { value: 'A' } };
+  session.state.checkResult = {
+    correctCount: 1,
+    totalQuestions: 1,
+    statusByBlockId: { q1: 'correct' },
+  };
+  session.state.viewerPayload = {
+    title: 'Compatibility Worksheet',
+    worksheetId: 'ws_compat',
+    snapshotId: 'snap_compat',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+        responseConfig: { inputType: 'text', correctAnswer: 'A' },
+      },
+    ],
+  };
+
+  const pkg = await session.buildUploadedAttemptPackage();
+
+  const db = {
+    async connect() {
+      const client = {
+        async query(sql) {
+          if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 };
+          if (sql.includes('SELECT pg_advisory_xact_lock')) return { rows: [{ ok: true }], rowCount: 1 };
+          if (sql.includes('FROM uploaded_attempts') && sql.includes('LIMIT 1')) return { rows: [], rowCount: 0 };
+          if (sql.includes('COUNT(*)::int AS count FROM uploaded_attempts')) return { rows: [{ count: 0 }], rowCount: 1 };
+          if (sql.includes('INSERT INTO uploaded_attempts')) return { rows: [], rowCount: 1 };
+          throw new Error(`Unhandled SQL in compatibility test: ${sql}`);
+        },
+        release() {},
+      };
+      return client;
+    },
+  };
+  const service = new PackageService({
+    db,
+    artifactStore: {
+      async storeArtifact({ artifactId }) {
+        return {
+          artifactPath: `attempts/oidc-sub/${artifactId}.zip`,
+          absolutePath: `/tmp/${artifactId}.zip`,
+          artifactSha256: 'sha',
+          artifactSizeBytes: 128,
+        };
+      },
+      resolveAbsolutePath() {
+        return '/tmp/unused.zip';
+      },
+    },
+    config: {
+      draftSlotLimit: 3,
+      attemptSlotLimit: 3,
+    },
+  });
+
+  const uploadResult = await service.uploadAttempt({
+    identity: { sub: 'oidc-sub', email: 'learner@example.test', name: 'Learner' },
+    title: 'Compatibility Worksheet',
+    subject: 'Math',
+    zipBytes: pkg.bytes,
+    conflictAction: 'fail_on_conflict',
+  });
+
+  assert.equal(uploadResult.ok, true);
+  assert.equal(uploadResult.statusCode, 201);
+});
+
+test('uploadCurrentAttemptPackage prevents duplicate upload while one upload is in progress', async () => {
+  const mod = await loadViewerModule();
+  let resolveUpload;
+  let uploadCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => {
+        uploadCalls += 1;
+        return new Promise((resolve) => {
+          resolveUpload = resolve;
+        });
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_dup';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const firstUpload = session.uploadCurrentAttemptPackage();
+  const secondResult = await session.uploadCurrentAttemptPackage();
+
+  assert.equal(secondResult.ok, false);
+  assert.equal(secondResult.status, 'upload_in_progress');
+  await Promise.resolve();
+  assert.equal(uploadCalls <= 1, true);
+  if (uploadCalls === 0) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.equal(uploadCalls, 1);
+  resolveUpload({ ok: true, data: { uploaded_attempt_id: 'attempt_server_1' } });
+  const firstResult = await firstUpload;
+  assert.equal(firstResult.ok, true);
+  assert.equal(session.state.isUploadingAttemptPackage, false);
+});
+
+test('uploadCurrentAttemptPackage reports progress text while upload runs', async () => {
+  const mod = await loadViewerModule();
+  const observedMessages = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async (_bytes, _metadata, options = {}) => {
+        options.onProgress?.({ loaded: 200, total: 1000, lengthComputable: true });
+        options.onProgress?.({ loaded: 1000, total: 1000, lengthComputable: true });
+        return { ok: true, data: { uploaded_attempt_id: 'attempt_server_2' } };
+      },
+    },
+  });
+  session.setOnStateChange((state) => {
+    observedMessages.push(state.utilityMessage);
+  });
+  session.state.localAttemptId = 'attempt_progress';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, true);
+  assert.equal(observedMessages.some((msg) => String(msg || '').includes('Saving attempt to server...')), true);
+  assert.equal(session.state.utilityMessage, 'Attempt saved to server.');
+});
+
+test('uploadCurrentAttemptPackage leaves local attempt state safe on network failure', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({ ok: false, error: { code: 'NETWORK_ERROR', message: 'transport error' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_safe';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.state.answers = { q1: { value: 'A' } };
+  const answersBefore = JSON.stringify(session.state.answers);
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, false);
+  assert.equal(session.state.localAttemptId, 'attempt_safe');
+  assert.equal(JSON.stringify(session.state.answers), answersBefore);
+  assert.equal(
+    session.state.utilityMessage,
+    'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.'
+  );
+});
+
+test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_NAME_CONFLICT message', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({ ok: false, error: { code: 'ATTEMPT_NAME_CONFLICT', message: 'raw conflict' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_conflict';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, false);
+  assert.equal(
+    session.state.utilityMessage,
+    'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.'
+  );
+});
+
+test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_SLOT_LIMIT_REACHED message', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({ ok: false, error: { code: 'ATTEMPT_SLOT_LIMIT_REACHED', message: 'raw slot' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_limit';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, false);
+  assert.equal(
+    session.state.utilityMessage,
+    'You already have 3 uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
+  );
 });
 
 test('rewrite assist snapshots answer text from answer record value', async () => {

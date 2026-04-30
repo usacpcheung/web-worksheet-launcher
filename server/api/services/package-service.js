@@ -48,7 +48,17 @@ function validateUploadedAttemptPackage(zipBytes) {
     if (!['in_progress', 'submitted', 'checked'].includes(attemptJson?.status)) throw new Error('Invalid attempt status.');
     if (typeof attemptJson.answers !== 'object' || Array.isArray(attemptJson.answers) || !attemptJson.answers) throw new Error('answers must be an object.');
     if ((attemptJson.status === 'submitted' || attemptJson.status === 'checked') && !attemptJson.submittedAt) throw new Error('submittedAt required.');
-    const blockIds = new Set((Array.isArray(worksheetJson?.blocks) ? worksheetJson.blocks : []).map((b) => b?.id).filter(Boolean));
+    const blockIds = new Set(
+      (Array.isArray(worksheetJson?.blocks) ? worksheetJson.blocks : [])
+        .map((block) => {
+          if (!block || typeof block !== 'object') return null;
+          const blockId = typeof block.blockId === 'string' ? block.blockId.trim() : '';
+          if (blockId) return blockId;
+          const legacyId = typeof block.id === 'string' ? block.id.trim() : '';
+          return legacyId || null;
+        })
+        .filter(Boolean)
+    );
     const checkingItems = attemptJson?.checking?.items;
     if (checkingItems && typeof checkingItems === 'object') {
       for (const key of Object.keys(checkingItems)) if (!blockIds.has(key)) throw new Error(`checking item references unknown blockId: ${key}`);
