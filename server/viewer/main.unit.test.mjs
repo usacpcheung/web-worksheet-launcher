@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
+import { createStoredZip, parseStoredZip, decodeUtf8, crc32 } from '../editor/zip-utils.js';
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
@@ -102,6 +103,8 @@ async function loadViewerModule(overrides = {}) {
       return { worksheet: value };
     }),
     parseWorksheetPackage: overrides.parseWorksheetPackage || (() => ({ worksheet: { title: 'Imported package', blocks: [] } })),
+    createStoredZip: overrides.createStoredZip || createStoredZip,
+    crc32: overrides.crc32 || crc32,
     validateViewerPayloadSchema: overrides.validateViewerPayloadSchema || (() => ({ valid: true, errors: [] })),
     renderViewerShell: overrides.renderViewerShell || (() => {}),
     document: overrides.document || { getElementById: () => null },
@@ -138,6 +141,11 @@ async function loadViewerModule(overrides = {}) {
       name: 'replace worksheet package imports with test bag bindings',
       pattern: /import\s*\{\s*mapLegacyJsonToPackageModel\s*,\s*parseWorksheetPackage\s*\}\s*from\s*['"]\.\.\/editor\/worksheet-package\.js['"];/,
       replacement: 'const mapLegacyJsonToPackageModel = __testBag.mapLegacyJsonToPackageModel;\nconst parseWorksheetPackage = __testBag.parseWorksheetPackage;',
+    },
+    {
+      name: 'replace zip utils imports with test bag bindings',
+      pattern: /import\s*\{\s*createStoredZip\s*,\s*crc32\s*\}\s*from\s*['"]\.\.\/editor\/zip-utils\.js['"];/,
+      replacement: 'const createStoredZip = __testBag.createStoredZip;\nconst crc32 = __testBag.crc32;',
     },
     {
       name: 'replace createServerApiClient import with test bag binding',
@@ -4047,6 +4055,7 @@ test('bootstrapViewer validateIntent uses action-aware viewer rewrite payload ch
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("actionId === 'viewerRewrite' || actionId === 'resumeViewerRewriteAfterLogin'"), true);
   assert.equal(source.includes("actionId === 'resumeAttemptServerResumeAfterLogin'"), true);
+  assert.equal(source.includes("actionId === 'uploadAttemptPackageAfterLogin'"), true);
   assert.equal(source.includes('hasOnlyAllowedKeys(payload, allowed)'), true);
   assert.equal(source.includes('session.validateViewerRewriteIntentPayload(payload).ok'), true);
   assert.equal(source.includes('return false;'), true);
@@ -4092,6 +4101,72 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
     recordStore: 'localAttempts',
     payload: { localAttemptId: 'attempt_1', blockId: 'b1', answerTextAtClickTime: 'typed' },
   });
+});
+
+test('viewer utility menu includes upload attempt action and protected upload intent hook', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("uploadAttemptBtn.textContent = 'Upload Attempt (Sign-in required)';"), true);
+  assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
+});
+
+test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and media entries', async () => {
+  const mod = await loadViewerModule();
+  const assetBytes = new Uint8Array([1, 2, 3, 4]);
+  const session = new mod.ViewerAttemptSession({
+    localAssets: {
+      async get(localId) {
+        if (localId !== 'img_1') return null;
+        return {
+          localId: 'img_1',
+          binary: assetBytes,
+          metadata: { mimeType: 'image/png' },
+        };
+      },
+    },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.status = 'completed';
+  session.state.startedAt = '2026-04-30T00:00:00.000Z';
+  session.state.lastSavedAt = '2026-04-30T00:05:00.000Z';
+  session.state.completedAt = '2026-04-30T00:06:00.000Z';
+  session.state.answers = { q1: { value: 'A' } };
+  session.state.checkResult = {
+    correctCount: 1,
+    totalQuestions: 1,
+    statusByBlockId: { q1: 'correct' },
+  };
+  session.state.viewerPayload = {
+    title: 'Worksheet A',
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+        responseConfig: { inputType: 'text' },
+      },
+    ],
+  };
+
+  const pkg = await session.buildUploadedAttemptPackage();
+  const files = parseStoredZip(pkg.bytes);
+  assert.equal(files.has('manifest.json'), true);
+  assert.equal(files.has('content/worksheet.json'), true);
+  assert.equal(files.has('content/attempt.json'), true);
+  assert.equal(files.has('media/img_1'), true);
+
+  const manifest = JSON.parse(decodeUtf8(files.get('manifest.json')));
+  const attempt = JSON.parse(decodeUtf8(files.get('content/attempt.json')));
+  assert.equal(manifest.format, 'worksheet-attempt-package');
+  assert.equal(Array.isArray(manifest.assets), true);
+  assert.equal(manifest.assets.length, 1);
+  assert.equal(attempt.kind, 'worksheet-attempt');
+  assert.equal(attempt.status, 'checked');
+  assert.equal(attempt.answers.q1.value, 'A');
+  assert.equal(attempt.checking.items.q1.result, 'correct');
 });
 
 test('rewrite assist snapshots answer text from answer record value', async () => {
