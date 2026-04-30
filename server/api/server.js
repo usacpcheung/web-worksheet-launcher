@@ -134,7 +134,15 @@ export function createRequestHandler({ service, artifactStore, config }) {
       if (req.method === 'POST' && url.pathname === '/api/v1/attempts/upload') {
         const contentType = String(req.headers['content-type'] || '').toLowerCase();
         if (!contentType.includes('application/zip')) return json(res, 415, fail('UNSUPPORTED_MEDIA_TYPE', 'Upload attempt requires Content-Type: application/zip'));
-        const zipBytes = await readRequestBody(req, Number(config.packageUploadMaxBytes) || 30 * 1024 * 1024);
+        let zipBytes;
+        try {
+          zipBytes = await readRequestBody(req, Number(config.packageUploadMaxBytes) || 30 * 1024 * 1024);
+        } catch (error) {
+          if (error instanceof RequestBodyTooLargeError) {
+            return json(res, 413, fail('PACKAGE_UPLOAD_TOO_LARGE', 'Uploaded package is too large.'));
+          }
+          throw error;
+        }
         const result = await service.uploadAttempt({
           identity, zipBytes, title: url.searchParams.get('title') || '', subject: url.searchParams.get('subject') || '', conflictAction: url.searchParams.get('conflictAction') || '',
         });
@@ -146,6 +154,7 @@ export function createRequestHandler({ service, artifactStore, config }) {
         return json(res, 200, ok({ items: rows }));
       }
       if (req.method === 'DELETE' && isAttemptDetailRoute(segments)) {
+        if (segments.length !== 4) return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
         const validated = assertUuid(segments[3], { code: 'INVALID_UPLOADED_ATTEMPT_ID', message: 'uploadedAttemptId must be a valid UUID.' });
         if (!validated.ok) return json(res, 400, fail(validated.error.code, validated.error.message));
         const result = await service.deleteOwnAttempt({ identity, uploadedAttemptId: validated.value });
