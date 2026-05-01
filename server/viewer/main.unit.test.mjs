@@ -2421,14 +2421,20 @@ test('createLocalAttemptState persists sourceDraftUpdatedAt in attempt metadata'
   const payload = mod.normalizeViewerPayload({
     worksheetId: 'ws_1',
     snapshotId: 'snap_1',
+    subject: 'ICT',
     blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
   });
   const attempt = session.createLocalAttemptState(payload, 'local_draft_preview', {
     sourceDraftUpdatedAt: '2026-03-31T11:00:00.000Z',
     sourceLocalDraftId: 'draft_11',
+    sourceOwner: 'owner@example.test',
   });
 
   assert.equal(attempt.metadata.sourceDraftUpdatedAt, '2026-03-31T11:00:00.000Z');
+  assert.equal(attempt.metadata.subject, 'ICT');
+  assert.equal(attempt.metadata.owner, 'owner@example.test');
+  assert.equal(attempt.subject, 'ICT');
+  assert.equal(attempt.owner, 'owner@example.test');
   assert.equal(attempt.sourceType, 'local_draft_preview');
   assert.equal(attempt.sourceLocalDraftId, 'draft_11');
   assert.equal(attempt.worksheetId, 'ws_1');

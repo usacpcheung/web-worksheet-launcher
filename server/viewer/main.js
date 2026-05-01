@@ -2416,6 +2416,8 @@ class ViewerAttemptSession {
         sourceDraftUpdatedAt: loadedPayload.sourceDraftUpdatedAt,
         sourceLocalDraftId: loadedPayload.sourceLocalDraftId || null,
         sourceImportedWorksheetId: loadedPayload.sourceImportedWorksheetId || null,
+        sourceSubject: loadedPayload.sourceSubject || '',
+        sourceOwner: loadedPayload.sourceOwner || '',
       }
     );
     attempt.checkResult = null;
@@ -2519,6 +2521,8 @@ class ViewerAttemptSession {
         sourceLocalDraftId: previewIntent.localDraftId,
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || previewIntent.sourceDraftUpdatedAt || null,
+        sourceSubject: draftRecord?.subject || '',
+        sourceOwner: draftRecord?.owner_email || draftRecord?.owner_name || draftRecord?.owner_sub || '',
       };
     }
 
@@ -2531,6 +2535,8 @@ class ViewerAttemptSession {
       return {
         sourceType: 'inline_payload',
         payload: normalizeViewerPayload(inlinePayload, 'Local worksheet'),
+        sourceSubject: inlinePayload?.subject || '',
+        sourceOwner: inlinePayload?.owner || inlinePayload?.owner_email || inlinePayload?.owner_name || inlinePayload?.owner_sub || '',
       };
     }
 
@@ -2539,6 +2545,8 @@ class ViewerAttemptSession {
       return {
         sourceType: 'snapshot_derived',
         payload: normalizeViewerPayload(mapSnapshotToViewerPayload(snapshotParam.value), 'Snapshot worksheet'),
+        sourceSubject: snapshotParam.value?.subject || '',
+        sourceOwner: snapshotParam.value?.owner || snapshotParam.value?.owner_email || snapshotParam.value?.owner_name || snapshotParam.value?.owner_sub || '',
       };
     }
 
@@ -2556,6 +2564,8 @@ class ViewerAttemptSession {
         sourceType: 'imported_worksheet',
         sourceImportedWorksheetId: importedWorksheetId,
         payload: resolveImportedWorksheetPayload(importedRecord),
+        sourceSubject: importedRecord?.worksheet?.subject || importedRecord?.subject || '',
+        sourceOwner: importedRecord?.worksheet?.owner || importedRecord?.owner || '',
       };
     }
 
@@ -2574,6 +2584,8 @@ class ViewerAttemptSession {
         sourceLocalDraftId: localDraftId,
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || null,
+        sourceSubject: draftRecord?.subject || '',
+        sourceOwner: draftRecord?.owner_email || draftRecord?.owner_name || draftRecord?.owner_sub || '',
       };
     }
 
@@ -2603,6 +2615,19 @@ class ViewerAttemptSession {
     const localAttemptId = createLocalId('attempt');
     const startedAt = nowIso();
     const sourceDraftUpdatedAt = options.sourceDraftUpdatedAt || null;
+    const sourceSubject = String(
+      options.sourceSubject
+      ?? viewerPayload?.subject
+      ?? ''
+    ).trim();
+    const sourceOwner = String(
+      options.sourceOwner
+      ?? viewerPayload?.owner
+      ?? viewerPayload?.owner_email
+      ?? viewerPayload?.owner_name
+      ?? viewerPayload?.owner_sub
+      ?? ''
+    ).trim();
 
     const sourceId = getSourceIdentity(source || 'inline_payload', {
       sourceLocalDraftId: options.sourceLocalDraftId || null,
@@ -2633,6 +2658,8 @@ class ViewerAttemptSession {
       completedAt: null,
       answers: {},
       checkResult: null,
+      subject: sourceSubject || '',
+      owner: sourceOwner || '',
       metadata: {
         localId: localAttemptId,
         origin: source || 'local_source',
@@ -2642,6 +2669,8 @@ class ViewerAttemptSession {
         sourceImportedWorksheetId: options.sourceImportedWorksheetId || null,
         studentName: options.studentName || '',
         sourceDraftUpdatedAt,
+        subject: sourceSubject || '',
+        owner: sourceOwner || '',
         updatedAt: startedAt,
       },
     };
@@ -2906,17 +2935,17 @@ class ViewerAttemptSession {
     return this.startImportedWorksheetFromPackageModel(mappedPackage);
   }
 
-  async startImportedWorksheetFromPackageFile(fileOrBytes) {
+  async startImportedWorksheetFromPackageFile(fileOrBytes, options = {}) {
     let packageModel;
     try {
       packageModel = parseWorksheetPackage(fileOrBytes);
     } catch (error) {
       throw new Error(`Unable to import worksheet package. ${error?.message || String(error)}`);
     }
-    return this.startImportedWorksheetFromPackageModel(packageModel);
+    return this.startImportedWorksheetFromPackageModel(packageModel, options);
   }
 
-  async startImportedWorksheetFromPackageModel(packageModel) {
+  async startImportedWorksheetFromPackageModel(packageModel, options = {}) {
     const worksheet = packageModel?.worksheet;
     if (!worksheet || typeof worksheet !== 'object') {
       throw new Error('Imported worksheet package is missing worksheet content.');
@@ -2984,6 +3013,8 @@ class ViewerAttemptSession {
     try {
       const attempt = this.createLocalAttemptState(payload, 'imported_worksheet', {
         sourceImportedWorksheetId: importedRecord.localId,
+        sourceSubject: options?.sourceSubject || worksheet?.subject || '',
+        sourceOwner: options?.sourceOwner || worksheet?.owner || '',
       });
       attempt.checkResult = null;
       this.applyAttemptState(attempt, { markDirty: true });
@@ -3543,12 +3574,16 @@ class ViewerAttemptSession {
         lastSavedAt: restoredUpdatedAt,
         completedAt: isInProgress ? null : (rawAttempt.submittedAt || restoredUpdatedAt),
         answers: rawAttempt.answers && typeof rawAttempt.answers === 'object' ? rawAttempt.answers : {},
+        subject: String(uploadedAttemptRow?.subject || '').trim(),
+        owner: String(uploadedAttemptRow?.owner_email || uploadedAttemptRow?.owner_name || uploadedAttemptRow?.owner_sub || '').trim(),
         metadata: {
           localId: restoredLocalAttemptId,
           origin: 'imported_worksheet',
           sourceImportedWorksheetId: importedRecord.localId,
           sourceId: getSourceIdentity('imported_worksheet', { sourceImportedWorksheetId: importedRecord.localId }),
           sourceFingerprint: computeViewerPayloadFingerprint(payload),
+          subject: String(uploadedAttemptRow?.subject || '').trim(),
+          owner: String(uploadedAttemptRow?.owner_email || uploadedAttemptRow?.owner_name || uploadedAttemptRow?.owner_sub || '').trim(),
           updatedAt: restoredUpdatedAt,
         },
       };
@@ -4066,7 +4101,7 @@ class ViewerAttemptSession {
     return result;
   }
 
-  async startFromPublishedPackage(publishedPackageId) {
+  async startFromPublishedPackage(publishedPackageId, options = {}) {
     const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
     if (!normalizedPublishedPackageId) {
       const message = 'Published package ID is required.';
@@ -4087,7 +4122,10 @@ class ViewerAttemptSession {
         this.notifyStateChange();
         return artifact;
       }
-      const started = await this.startImportedWorksheetFromPackageFile(artifact.data);
+      const started = await this.startImportedWorksheetFromPackageFile(artifact.data, {
+        sourceSubject: options?.sourceSubject || '',
+        sourceOwner: options?.sourceOwner || '',
+      });
       this.state.serverActionMessage = `Imported published package ${normalizedPublishedPackageId} into local viewer runtime.`;
       this.notifyStateChange();
       return { ok: true, data: started };
@@ -4800,7 +4838,10 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       openBtn.textContent = 'Open package';
       openBtn.disabled = !item.published_package_id;
       openBtn.addEventListener('click', async () => {
-        const result = await session.startFromPublishedPackage(item.published_package_id);
+        const result = await session.startFromPublishedPackage(item.published_package_id, {
+          sourceSubject: item.subject || '',
+          sourceOwner: item.owner_email || item.owner_name || item.owner_sub || '',
+        });
         if (!result.ok) {
           renderRows();
           return;
@@ -6363,6 +6404,7 @@ function renderViewerStartPanel(session, options = {}) {
       || resumeAttempt?.metadata?.owner_email
       || resumeAttempt?.metadata?.owner_name
       || resumeAttempt?.metadata?.owner_sub
+      || resumeAttempt?.metadata?.owner
       || '—'
     ).trim() || '—';
     resumeMeta.textContent = `Title: ${worksheetTitle} · Subject: ${worksheetSubject} · Owner: ${worksheetOwner} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
