@@ -4733,11 +4733,16 @@ function renderEditorShell(session) {
     loadMoreBtn.textContent = browsePublishedState.loading ? 'Loading…' : 'Load more';
     loadMoreBtn.hidden = !browsePublishedState.hasMore;
     loadMoreBtn.disabled = browsePublishedState.loading || !serverReady;
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'confirm-modal__btn';
+    refreshBtn.textContent = 'Refresh';
+    refreshBtn.disabled = browsePublishedState.loading || !serverReady;
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'confirm-modal__btn';
     closeBtn.textContent = 'Close';
-    actions.append(loadMoreBtn, closeBtn);
+    actions.append(loadMoreBtn, refreshBtn, closeBtn);
     dialog.append(heading, filterRow, results, actions);
     overlay.appendChild(dialog);
     browsePublishedModalRoot.appendChild(overlay);
@@ -4756,6 +4761,10 @@ function renderEditorShell(session) {
     });
     loadMoreBtn.addEventListener('click', async () => {
       await runPublishedSearch({ append: true });
+    });
+    refreshBtn.addEventListener('click', async () => {
+      captureFilters();
+      await runPublishedSearch();
     });
     closeBtn.addEventListener('click', () => {
       browsePublishedDialogOpen = false;
