@@ -41,6 +41,8 @@ const UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION = 'Open Manage server attempts to f
 const VIEWER_NOTIFICATION_DEFAULT_TTL_MS = 5000;
 const VIEWER_NOTIFICATION_ERROR_TTL_MS = 8000;
 const VIEWER_NOTIFICATION_UPLOAD_SOURCE = 'attempt.upload';
+const VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY = 'worksheetLauncher.viewer.printSchoolName';
+const DEFAULT_VIEWER_PRINT_SCHOOL_NAME = 'Hong Kong Red Cross Hospital Schools';
 let activeViewerShellAbortController = null;
 
 
@@ -174,7 +176,7 @@ function formatTimestampForDisplay(timestamp) {
 
 function formatTimestampForReportHeader(timestamp) {
   if (typeof timestamp !== 'string' || !timestamp.trim()) {
-    return '';
+    return 'Not recorded';
   }
   const parsed = new Date(timestamp);
   if (Number.isNaN(parsed.getTime())) {
@@ -188,6 +190,28 @@ function formatTimestampForReportHeader(timestamp) {
     minute: '2-digit',
     hour12: false,
   });
+}
+
+function normalizeViewerPrintSchoolName(value) {
+  return firstNonBlankString(value, DEFAULT_VIEWER_PRINT_SCHOOL_NAME);
+}
+
+function readViewerPrintSchoolNamePreference(storage = globalThis.localStorage) {
+  try {
+    return normalizeViewerPrintSchoolName(storage?.getItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY));
+  } catch {
+    return DEFAULT_VIEWER_PRINT_SCHOOL_NAME;
+  }
+}
+
+function writeViewerPrintSchoolNamePreference(value, storage = globalThis.localStorage) {
+  const schoolName = normalizeViewerPrintSchoolName(value);
+  try {
+    storage?.setItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY, schoolName);
+  } catch {
+    // Printing should still work if localStorage is unavailable.
+  }
+  return schoolName;
 }
 
 function createLocalId(prefix = 'local') {
@@ -1234,13 +1258,17 @@ function getQuestionImageRefForPrint(block) {
   return promptMediaRefs.find((ref) => ref.usage === 'question_image') || null;
 }
 
-function getOptionLabelByValue(block, rawValue) {
+function getOptionDisplayTextByValue(block, rawValue) {
   const options = Array.isArray(block?.responseConfig?.options)
     ? block.responseConfig.options
     : [];
   const normalizedValue = String(rawValue ?? '');
-  const matched = options.find((option) => String(option?.value ?? option?.label ?? '') === normalizedValue);
-  return matched ? String(matched.label ?? matched.value ?? normalizedValue) : normalizedValue;
+  const matchedIndex = options.findIndex((option) => String(option?.value ?? option?.label ?? '') === normalizedValue);
+  if (matchedIndex < 0) {
+    return normalizedValue;
+  }
+  const label = String(options[matchedIndex]?.label ?? options[matchedIndex]?.value ?? normalizedValue);
+  return `${getChoicePrefix(matchedIndex)} ${label}`;
 }
 
 function formatAnswerValueForPrint(block, rawValue) {
@@ -1252,7 +1280,7 @@ function formatAnswerValueForPrint(block, rawValue) {
         ? rawValue.map((value) => String(value))
         : [];
       if (normalizedValues.length === 0) {
-        return 'No answer submitted';
+        return 'Not answered';
       }
       const options = Array.isArray(block?.responseConfig?.options)
         ? block.responseConfig.options
@@ -1261,32 +1289,32 @@ function formatAnswerValueForPrint(block, rawValue) {
       const orderedValues = optionOrder.filter((value) => normalizedValues.includes(value));
       const remainingValues = normalizedValues.filter((value) => !orderedValues.includes(value));
       return [...orderedValues, ...remainingValues]
-        .map((value) => getOptionLabelByValue(block, value))
+        .map((value) => getOptionDisplayTextByValue(block, value))
         .join('\n');
     }
 
     if (rawValue === null || rawValue === undefined || String(rawValue).trim() === '') {
-      return 'No answer submitted';
+      return 'Not answered';
     }
-    return getOptionLabelByValue(block, rawValue);
+    return getOptionDisplayTextByValue(block, rawValue);
   }
 
   if (inputType === 'boolean') {
     const normalized = coerceAnswerValueByInputType('boolean', rawValue);
     if (normalized === true) return 'True';
     if (normalized === false) return 'False';
-    return 'No answer submitted';
+    return 'Not answered';
   }
 
   if (inputType === 'number') {
     if (rawValue === '' || rawValue === null || rawValue === undefined) {
-      return 'No answer submitted';
+      return 'Not answered';
     }
     return String(rawValue);
   }
 
   const textValue = String(rawValue ?? '');
-  return textValue.trim() ? textValue : 'No answer submitted';
+  return textValue.trim() ? textValue : 'Not answered';
 }
 
 function formatCorrectAnswerForPrint(block) {
@@ -1300,11 +1328,11 @@ function formatCorrectAnswerForPrint(block) {
         ? correctAnswer.map((value) => String(value))
         : [];
       return normalizedValues.length > 0
-        ? normalizedValues.map((value) => getOptionLabelByValue(block, value)).join('\n')
+        ? normalizedValues.map((value) => getOptionDisplayTextByValue(block, value)).join('\n')
         : '';
     }
     return typeof correctAnswer === 'string' && correctAnswer.trim()
-      ? getOptionLabelByValue(block, correctAnswer)
+      ? getOptionDisplayTextByValue(block, correctAnswer)
       : '';
   }
 
@@ -1503,7 +1531,9 @@ async function buildWorksheetPrintReportModel({
   viewerPayload,
   answers = {},
   studentName = '',
-  completedAt = '',
+  submittedAt = '',
+  schoolName = DEFAULT_VIEWER_PRINT_SCHOOL_NAME,
+  subject = '',
   checkResult = null,
   storage = null,
 } = {}) {
@@ -1553,34 +1583,42 @@ async function buildWorksheetPrintReportModel({
   }));
 
   return {
+    schoolName: normalizeViewerPrintSchoolName(schoolName),
     title: String(viewerPayload?.title || 'Worksheet'),
+    subject: firstNonBlankString(subject, viewerPayload?.subject, viewerPayload?.metadata?.subject),
     studentName: String(studentName || '').trim(),
-    completedAtLabel: formatTimestampForReportHeader(completedAt),
+    submittedAtLabel: formatTimestampForReportHeader(submittedAt),
     checkedSummary,
     questions,
   };
 }
 
 function buildWorksheetPrintReportHtml(reportModel) {
-  const studentRow = reportModel.studentName
+  const studentMeta = reportModel.studentName
     ? `
-      <div class="print-meta-row">
+      <div class="print-meta-item">
         <dt>Student</dt>
         <dd>${escapeHtml(reportModel.studentName)}</dd>
       </div>
     `
     : '';
-  const completedRow = reportModel.completedAtLabel
+  const subjectMeta = reportModel.subject
     ? `
-      <div class="print-meta-row">
-        <dt>Completed</dt>
-        <dd>${escapeHtml(reportModel.completedAtLabel)}</dd>
+      <div class="print-meta-item">
+        <dt>Subject</dt>
+        <dd>${escapeHtml(reportModel.subject)}</dd>
       </div>
     `
     : '';
+  const submittedMeta = `
+      <div class="print-meta-item print-meta-item--wide">
+        <dt>Submitted at</dt>
+        <dd>${escapeHtml(reportModel.submittedAtLabel || 'Not recorded')}</dd>
+      </div>
+  `;
   const checkedRow = reportModel.checkedSummary
     ? `
-      <div class="print-meta-row">
+      <div class="print-meta-item print-meta-item--wide">
         <dt>Check result</dt>
         <dd>${escapeHtml(reportModel.checkedSummary)}</dd>
       </div>
@@ -1602,7 +1640,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
     const resultHtml = question.result
       ? `
         <section class="print-question-section print-question-section--result ${checkedAnswerSectionClass} print-result-${escapeHtml(question.result.status || 'neutral')}">
-          <h3>Checked answer</h3>
+          <h3>Checked result</h3>
           <p class="print-result-label">${escapeHtml(question.result.label)}</p>
           ${question.result.detail ? `<p class="print-result-detail">${formatMultilineTextForHtml(question.result.detail)}</p>` : ''}
         </section>
@@ -1621,7 +1659,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
         </section>
         <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
           <h3>Answer</h3>
-          <p class="print-answer-text">${formatMultilineTextForHtml(question.answerText)}</p>
+          <p class="print-answer-text">Answer: ${formatMultilineTextForHtml(question.answerText)}</p>
         </section>
         ${resultHtml}
       </article>
@@ -1635,7 +1673,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
   <title>${escapeHtml(reportModel.title)} - Print Report</title>
   <style>
     @page {
-      size: A4;
+      size: A4 portrait;
       margin: 16mm 14mm 18mm 14mm;
     }
 
@@ -1663,36 +1701,50 @@ function buildWorksheetPrintReportHtml(reportModel) {
     }
 
     .print-header {
-      border-bottom: 1px solid #b8bcc4;
-      padding-bottom: 10mm;
-      margin-bottom: 9mm;
+      border-bottom: 1px solid #9aa1ad;
+      padding-bottom: 6mm;
+      margin-bottom: 6mm;
       break-after: avoid;
     }
 
+    .print-school {
+      margin: 0 0 2mm;
+      font-size: 11pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
     .print-title {
-      margin: 0 0 5mm;
-      font-size: 20pt;
+      margin: 0 0 4mm;
+      font-size: 18pt;
       line-height: 1.15;
       font-weight: 700;
     }
 
     .print-meta {
       display: grid;
-      gap: 2.5mm;
+      grid-template-columns: 1fr 1fr;
+      column-gap: 10mm;
+      row-gap: 1.5mm;
       margin: 0;
     }
 
-    .print-meta-row {
+    .print-meta-item {
       display: grid;
-      grid-template-columns: 32mm 1fr;
-      gap: 4mm;
+      grid-template-columns: 28mm 1fr;
+      gap: 3mm;
     }
 
-    .print-meta-row dt {
+    .print-meta-item--wide {
+      grid-column: 1 / -1;
+    }
+
+    .print-meta-item dt {
       font-weight: 700;
     }
 
-    .print-meta-row dd {
+    .print-meta-item dd {
       margin: 0;
     }
 
@@ -1769,9 +1821,9 @@ function buildWorksheetPrintReportHtml(reportModel) {
     .print-question-image {
       display: block;
       max-width: 100%;
-      max-height: 60mm;
+      max-height: 75mm;
+      object-fit: contain;
       border: 1px solid #d7dbe2;
-      border-radius: 2mm;
     }
 
     .print-question-media-note {
@@ -1803,10 +1855,12 @@ function buildWorksheetPrintReportHtml(reportModel) {
 <body>
   <main class="print-report">
     <header class="print-header">
+      <p class="print-school">${escapeHtml(reportModel.schoolName || DEFAULT_VIEWER_PRINT_SCHOOL_NAME)}</p>
       <h1 class="print-title">${escapeHtml(reportModel.title)}</h1>
       <dl class="print-meta">
-        ${studentRow}
-        ${completedRow}
+        ${studentMeta}
+        ${subjectMeta}
+        ${submittedMeta}
         ${checkedRow}
       </dl>
     </header>
@@ -1874,7 +1928,9 @@ async function startWorksheetPrintFlow({
     viewerPayload: session.state.viewerPayload,
     answers: session.state.answers,
     studentName: session.state.studentName,
-    completedAt: session.state.completedAt,
+    submittedAt: session.state.submittedAt || session.state.submitted_at || null,
+    schoolName: session.state.printSchoolName,
+    subject: session.state.sourceSubject,
     checkResult: session.state.checkResult,
     storage: session.storage,
   });
@@ -2117,6 +2173,8 @@ class ViewerAttemptSession {
       startedAt: null,
       lastSavedAt: null,
       completedAt: null,
+      submittedAt: null,
+      printSchoolName: DEFAULT_VIEWER_PRINT_SCHOOL_NAME,
       autosavePending: false,
       lastSaveError: null,
       payloadValidationErrors: [],
@@ -2693,6 +2751,7 @@ class ViewerAttemptSession {
       startedAt,
       lastSavedAt: startedAt,
       completedAt: null,
+      submittedAt: null,
       answers: {},
       checkResult: null,
       subject: sourceSubject || '',
@@ -2720,7 +2779,8 @@ class ViewerAttemptSession {
     this.state.status = attemptRecord.status || 'in_progress';
     this.state.startedAt = attemptRecord.startedAt || nowIso();
     this.state.lastSavedAt = attemptRecord.lastSavedAt || null;
-    this.state.completedAt = attemptRecord.completedAt || attemptRecord.submittedAt || null;
+    this.state.submittedAt = attemptRecord.submitted_at || attemptRecord.submittedAt || attemptRecord.completedAt || null;
+    this.state.completedAt = attemptRecord.completedAt || this.state.submittedAt || null;
     this.state.source = attemptRecord.metadata?.origin || 'local_source';
     this.state.sourceType = attemptRecord.sourceType || this.state.source;
     this.state.sourceId = attemptRecord.sourceId || null;
@@ -2810,7 +2870,8 @@ class ViewerAttemptSession {
     this.state.isFinalizing = true;
     this.state.lastFinalizeError = null;
     this.state.status = 'completed';
-    this.state.completedAt = nowIso();
+    this.state.submittedAt = nowIso();
+    this.state.completedAt = this.state.submittedAt;
     this.state.checkResult = null;
     this.state.attemptRevision += 1;
     this.persistResumeMetadata();
@@ -2826,6 +2887,7 @@ class ViewerAttemptSession {
     } catch (error) {
       this.state.status = 'in_progress';
       this.state.completedAt = null;
+      this.state.submittedAt = null;
       this.state.checkResult = null;
       this.state.lastFinalizeError = `Finalize failed. Please check your connection and try again. ${error?.message || String(error)}`;
       this.persistResumeMetadata();
@@ -2916,6 +2978,7 @@ class ViewerAttemptSession {
       startedAt: this.state.startedAt,
       lastSavedAt: updatedAt,
       completedAt: this.state.completedAt,
+      submittedAt: this.state.submittedAt || null,
       answers: normalizedAnswers,
       subject: persistedSubject,
       owner: persistedOwner,
@@ -3208,7 +3271,7 @@ class ViewerAttemptSession {
       status: packageStatus,
       createdAt: this.state.startedAt || updatedAt,
       updatedAt,
-      submittedAt: packageStatus === 'in_progress' ? null : (this.state.completedAt || updatedAt),
+      submittedAt: packageStatus === 'in_progress' ? null : (this.state.submittedAt || updatedAt),
       answers: this.state.answers || {},
       checking,
     };
@@ -3687,6 +3750,7 @@ class ViewerAttemptSession {
         startedAt: restoredStartedAt,
         lastSavedAt: restoredUpdatedAt,
         completedAt: isInProgress ? null : (rawAttempt.submittedAt || restoredUpdatedAt),
+        submittedAt: isInProgress ? null : (rawAttempt.submittedAt || null),
         answers: rawAttempt.answers && typeof rawAttempt.answers === 'object' ? rawAttempt.answers : {},
         subject: String(uploadedAttemptRow?.subject || '').trim(),
         owner: String(uploadedAttemptRow?.owner_email || uploadedAttemptRow?.owner_name || uploadedAttemptRow?.owner_sub || '').trim(),
@@ -5116,6 +5180,8 @@ function renderViewerShell(session) {
   resumeWarning.className = 'answer-summary';
   const status = document.createElement('p');
   let studentName = session.state.studentName || '';
+  let printSchoolName = readViewerPrintSchoolNamePreference();
+  session.state.printSchoolName = printSchoolName;
 
   const blockSection = document.createElement('section');
   blockSection.className = 'viewer-section';
@@ -5221,13 +5287,30 @@ function renderViewerShell(session) {
   learnerNameSaveBtn.className = 'viewer-details-form__save';
   learnerNameSaveBtn.textContent = 'Apply';
   learnerNameForm.append(learnerNameLabel, learnerNameInput, learnerNameSaveBtn);
+  const printSettingsForm = document.createElement('form');
+  printSettingsForm.className = 'viewer-details-form viewer-details-form--print';
+  const printSchoolNameLabel = document.createElement('label');
+  printSchoolNameLabel.className = 'viewer-details-form__label';
+  printSchoolNameLabel.setAttribute('for', 'viewer-print-school-name-input');
+  printSchoolNameLabel.textContent = 'Print school name';
+  const printSchoolNameInput = document.createElement('input');
+  printSchoolNameInput.id = 'viewer-print-school-name-input';
+  printSchoolNameInput.className = 'viewer-details-form__input';
+  printSchoolNameInput.type = 'text';
+  printSchoolNameInput.maxLength = 180;
+  printSchoolNameInput.placeholder = DEFAULT_VIEWER_PRINT_SCHOOL_NAME;
+  const printSchoolNameSaveBtn = document.createElement('button');
+  printSchoolNameSaveBtn.type = 'submit';
+  printSchoolNameSaveBtn.className = 'viewer-details-form__save';
+  printSchoolNameSaveBtn.textContent = 'Save';
+  printSettingsForm.append(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn);
   const detailsList = document.createElement('dl');
   detailsList.className = 'viewer-details-list';
   const detailsCloseBtn = document.createElement('button');
   detailsCloseBtn.type = 'button';
   detailsCloseBtn.textContent = 'Close';
   detailsCloseBtn.className = 'viewer-details-modal__close';
-  detailsContent.append(detailsTitle, learnerNameForm, detailsList, detailsCloseBtn);
+  detailsContent.append(detailsTitle, learnerNameForm, printSettingsForm, detailsList, detailsCloseBtn);
   detailsModal.append(detailsContent);
 
   const bottomBar = document.createElement('div');
@@ -5288,6 +5371,7 @@ function renderViewerShell(session) {
   const renderTechnicalDetails = () => {
     const technicalRows = buildTechnicalDetailsRows(session.state);
     learnerNameInput.value = studentName;
+    printSchoolNameInput.value = printSchoolName;
     detailsList.innerHTML = '';
     technicalRows.forEach(([label, value]) => {
       const row = document.createElement('div');
@@ -5353,6 +5437,15 @@ function renderViewerShell(session) {
     session.state.studentName = studentName;
     renderUI();
     learnerNameInput.focus();
+  });
+
+  printSettingsForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    printSchoolName = writeViewerPrintSchoolNamePreference(printSchoolNameInput.value);
+    session.state.printSchoolName = printSchoolName;
+    printSchoolNameInput.value = printSchoolName;
+    renderUI();
+    printSchoolNameInput.focus();
   });
 
   infoBtn.addEventListener('click', () => {
@@ -7086,6 +7179,8 @@ export {
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
+  readViewerPrintSchoolNamePreference,
+  writeViewerPrintSchoolNamePreference,
   classifyPrintQuestionLayout,
   buildWorksheetPrintReportModel,
   buildWorksheetPrintReportHtml,

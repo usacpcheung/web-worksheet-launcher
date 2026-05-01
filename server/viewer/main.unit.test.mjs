@@ -168,7 +168,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, readViewerPrintSchoolNamePreference, writeViewerPrintSchoolNamePreference, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -264,6 +264,7 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   const mod = await loadViewerModule();
   const viewerPayload = {
     title: 'Practice Worksheet',
+    subject: 'Mathematics',
     blocks: [
       {
         blockId: 'q_text',
@@ -315,7 +316,7 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
       q_bool: { value: false },
     },
     studentName: 'Ada Lovelace',
-    completedAt: '2026-04-14T10:15:00Z',
+    submittedAt: '2026-04-14T10:15:00Z',
     checkResult: {
       correctCount: 1,
       totalQuestions: 2,
@@ -334,6 +335,8 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   });
 
   assert.equal(report.title, 'Practice Worksheet');
+  assert.equal(report.schoolName, 'Hong Kong Red Cross Hospital Schools');
+  assert.equal(report.subject, 'Mathematics');
   assert.equal(report.studentName, 'Ada Lovelace');
   assert.equal(report.checkedSummary, 'Checked 1/2 correct');
   assert.equal(report.questions.length, 3);
@@ -343,7 +346,7 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   assert.equal(report.questions[0].layoutMode, 'keep-all');
   assert.equal(report.questions[0].sectionBreakModes.prompt, 'keep');
   assert.equal(report.questions[0].sectionBreakModes.answer, 'keep');
-  assert.equal(report.questions[1].answerText, 'Two\nFive');
+  assert.equal(report.questions[1].answerText, 'A. Two\nC. Five');
   assert.equal(report.questions[1].result.label, 'Correct');
   assert.equal(report.questions[2].result.label, 'Incorrect');
   assert.equal(report.questions[2].result.detail, 'Correct answer: True');
@@ -355,6 +358,7 @@ test('buildWorksheetPrintReportModel normalizes unsafe image mime types for data
   const report = await mod.buildWorksheetPrintReportModel({
     viewerPayload: {
       title: 'Worksheet',
+      subject: 'Mathematics',
       blocks: [
         {
           blockId: 'q1',
@@ -385,6 +389,7 @@ test('buildWorksheetPrintReportModel normalizes image/jpg to image/jpeg for prin
   const report = await mod.buildWorksheetPrintReportModel({
     viewerPayload: {
       title: 'Worksheet',
+      subject: 'Mathematics',
       blocks: [
         {
           blockId: 'q1',
@@ -446,6 +451,7 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
   const report = await mod.buildWorksheetPrintReportModel({
     viewerPayload: {
       title: 'Worksheet',
+      subject: 'Mathematics',
       blocks: [
         {
           blockId: 'q1',
@@ -458,7 +464,7 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
     },
     answers: {},
     studentName: '',
-    completedAt: '2026-04-14T10:15:00Z',
+    submittedAt: '2026-04-14T10:15:00Z',
     storage: {
       localAssets: {
         get: async () => null,
@@ -468,16 +474,22 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
 
   const html = mod.buildWorksheetPrintReportHtml(report);
   assert.equal(html.includes('>Student<'), false);
+  assert.equal(html.includes('Hong Kong Red Cross Hospital Schools'), true);
+  assert.equal(html.includes('<dt>Subject</dt>'), true);
+  assert.equal(html.includes('Mathematics'), true);
+  assert.equal(html.includes('<dt>Submitted at</dt>'), true);
   assert.equal(html.includes('Question image unavailable.'), true);
-  assert.equal(html.includes('No answer submitted'), true);
+  assert.equal(html.includes('Answer: Not answered'), true);
 });
 
 test('buildWorksheetPrintReportHtml emits layout-mode classes for print pagination behavior', async () => {
   const mod = await loadViewerModule();
   const html = mod.buildWorksheetPrintReportHtml({
+    schoolName: 'School',
     title: 'Worksheet',
+    subject: '',
     studentName: '',
-    completedAtLabel: 'April 14, 2026, 18:00',
+    submittedAtLabel: 'April 14, 2026, 18:00',
     checkedSummary: '',
     questions: [
       {
@@ -520,8 +532,11 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('print-question-section--keep'), true);
   assert.equal(normalizedHtml.includes('print-question-section--flow'), true);
   assert.equal(normalizedHtml.includes('>Question<'), true);
-  assert.equal(normalizedHtml.includes('>Checked answer<'), true);
+  assert.equal(normalizedHtml.includes('>Checked result<'), true);
   assert.equal(normalizedHtml.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
+  assert.equal(normalizedHtml.includes('size: A4 portrait;'), true);
+  assert.equal(normalizedHtml.includes('max-height: 75mm;'), true);
+  assert.equal(normalizedHtml.includes('object-fit: contain;'), true);
   assert.equal(normalizedHtml.includes('border-radius: 3mm;'), false);
   assert.equal(normalizedHtml.includes('border-top: 1px solid #eceff3;'), false);
   assert.equal(normalizedHtml.includes('border-bottom: 1px solid #dde2e8;'), false);
@@ -530,9 +545,11 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
 test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
   const mod = await loadViewerModule();
   const html = mod.buildWorksheetPrintReportHtml({
+    schoolName: 'School',
     title: 'Worksheet',
+    subject: '',
     studentName: '',
-    completedAtLabel: '',
+    submittedAtLabel: '',
     checkedSummary: '',
     questions: [
       {
@@ -548,6 +565,96 @@ test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
   });
   assert.equal(html.includes('onerror="alert(1)"'), false);
   assert.equal(html.includes('&quot; onerror=&quot;alert(1)'), true);
+});
+
+test('buildWorksheetPrintReportModel formats selected multiple-choice answers with option prefixes in option order', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Choose one.' },
+          responseConfig: {
+            inputType: 'multiple_choice',
+            selectionMode: 'single',
+            options: [
+              { value: 'raw_a', label: 'Respiration' },
+              { value: 'raw_b', label: 'Photosynthesis' },
+            ],
+          },
+        },
+        {
+          blockId: 'q2',
+          kind: 'question',
+          position: 1,
+          prompt: { text: 'Choose colours.' },
+          responseConfig: {
+            inputType: 'multiple_choice',
+            selectionMode: 'multi',
+            options: [
+              { value: 'r', label: 'Red' },
+              { value: 'b', label: 'Blue' },
+              { value: 'g', label: 'Green' },
+            ],
+          },
+        },
+      ],
+    },
+    answers: {
+      q1: { value: 'raw_b' },
+      q2: { value: ['g', 'r'] },
+    },
+    submittedAt: '2026-05-01T06:35:00.000Z',
+  });
+
+  assert.equal(report.questions[0].answerText, 'B. Photosynthesis');
+  assert.equal(report.questions[1].answerText, 'A. Red\nC. Green');
+  assert.equal(report.questions[0].answerText.includes('raw_b'), false);
+});
+
+test('viewer print school preference defaults and persists through localStorage wrapper', async () => {
+  const mod = await loadViewerModule();
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+  };
+
+  assert.equal(
+    mod.readViewerPrintSchoolNamePreference(storage),
+    'Hong Kong Red Cross Hospital Schools'
+  );
+  assert.equal(mod.writeViewerPrintSchoolNamePreference('  St Anne School  ', storage), 'St Anne School');
+  assert.equal(mod.readViewerPrintSchoolNamePreference(storage), 'St Anne School');
+  assert.equal(mod.writeViewerPrintSchoolNamePreference('   ', storage), 'Hong Kong Red Cross Hospital Schools');
+});
+
+test('buildWorksheetPrintReportHtml records missing submitted timestamp without attempt id', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [{
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q1' },
+        responseConfig: { inputType: 'text' },
+      }],
+    },
+    answers: { q1: { value: 'Answer' } },
+    schoolName: 'School',
+  });
+  const html = mod.buildWorksheetPrintReportHtml(report);
+
+  assert.equal(html.includes('Submitted at'), true);
+  assert.equal(html.includes('Not recorded'), true);
+  assert.equal(html.includes('attempt_'), false);
+  assert.equal(html.includes('Local attempt ID'), false);
 });
 
 test('buildWorksheetPrintReportModel marks oversized sections as flow to allow internal page breaks', async () => {
@@ -600,7 +707,7 @@ test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
         },
         answers: { q1: { value: 'Answer' } },
         studentName: 'Student',
-        completedAt: '2026-04-14T10:15:00Z',
+        submittedAt: '2026-04-14T10:15:00Z',
         checkResult: null,
       },
       storage: {},
@@ -640,7 +747,7 @@ test('startWorksheetPrintFlow opens popup synchronously before async model work'
         },
         answers: { q1: { value: 'Answer' } },
         studentName: 'Student',
-        completedAt: '2026-04-14T10:15:00Z',
+        submittedAt: '2026-04-14T10:15:00Z',
         checkResult: null,
       },
       storage: {
@@ -711,7 +818,7 @@ test('startWorksheetPrintFlow returns friendly message when popup is closed befo
         },
         answers: { q1: { value: 'Answer' } },
         studentName: 'Student',
-        completedAt: '2026-04-14T10:15:00Z',
+        submittedAt: '2026-04-14T10:15:00Z',
         checkResult: null,
       },
       storage: {
