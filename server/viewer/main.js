@@ -4677,11 +4677,15 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   loadMoreBtn.type = 'button';
   loadMoreBtn.className = 'confirm-modal__btn';
   loadMoreBtn.textContent = 'Load more';
+  const refreshBtn = document.createElement('button');
+  refreshBtn.type = 'button';
+  refreshBtn.className = 'confirm-modal__btn';
+  refreshBtn.textContent = 'Refresh';
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.className = 'confirm-modal__btn';
   closeBtn.textContent = 'Close';
-  actions.append(signInBtn, loadMoreBtn, closeBtn);
+  actions.append(signInBtn, loadMoreBtn, refreshBtn, closeBtn);
   dialog.append(heading, filterRow, list, actions);
   overlay.append(dialog);
   host.appendChild(overlay);
@@ -4720,6 +4724,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     searchBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
     loadMoreBtn.hidden = !isLoggedIn || !session.state.publishedHasMore;
     loadMoreBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
+    refreshBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
     list.innerHTML = '';
     if (!isLoggedIn) {
       const signedOut = document.createElement('p');
@@ -4880,6 +4885,9 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   loadMoreBtn.addEventListener('click', async () => {
     await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });
     renderRows();
+  });
+  refreshBtn.addEventListener('click', async () => {
+    await refreshBrowse({ reset: true });
   });
   signInBtn.addEventListener('click', () => {
     startModalSignInFlow();

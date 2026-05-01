@@ -499,13 +499,14 @@ body {
   gap: 8px;
   align-items: center;
   justify-content: flex-start;
-  width: min(80%, 640px);
+  width: auto;
   max-width: 100%;
 }
 
 .published-result-action {
-  flex: 1 1 0;
-  min-width: 136px;
+  flex: 0 0 auto;
+  min-width: 172px;
+  padding-inline: 18px;
   background: #eff4ff;
   border-color: #98b2f5;
   color: #1e3a8a;
