@@ -6991,8 +6991,14 @@ async function bootstrapViewer() {
   });
 
   session.authGate = authGate;
+  const params = new URLSearchParams(window.location.search);
+  const hasAuthReturn = params.get(AUTH_RETURN_PARAM) === '1';
+  const hasAuthCallback = params.get(VIEWER_AUTH_CALLBACK_PARAM) === '1';
+  const isAuthCallbackMode = hasAuthReturn && hasAuthCallback;
+  const hasLaunchIntent = hasViewerLaunchIntent(params, { includeAuthReturn: true });
+
   await session.refreshServerSession();
-  if (session.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+  if (!hasLaunchIntent && session.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
     await session.browsePublishedPackages('');
   }
 
@@ -7127,12 +7133,6 @@ async function bootstrapViewer() {
       },
     });
   };
-
-  const params = new URLSearchParams(window.location.search);
-  const hasAuthReturn = params.get(AUTH_RETURN_PARAM) === '1';
-  const hasAuthCallback = params.get(VIEWER_AUTH_CALLBACK_PARAM) === '1';
-  const isAuthCallbackMode = hasAuthReturn && hasAuthCallback;
-  const hasLaunchIntent = hasViewerLaunchIntent(params, { includeAuthReturn: true });
 
   if (!hasLaunchIntent) {
     await renderStartPanelFromResumeFlag(session.state.recoveryMessage);

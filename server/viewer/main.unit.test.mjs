@@ -3637,6 +3637,59 @@ test('direct published package sign-in recovery retries same package and renders
   assert.equal(replacedUrl.includes('localAttemptId='), false);
 });
 
+test('direct published package launch skips start-panel browse prefetch', { concurrency: false }, async () => {
+  const { document } = createFakeDom();
+  let fetchedPackageId = null;
+  let renderedSession = null;
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: {
+        href: 'https://example.test/viewer/?publishedPackageId=pkg_direct',
+        search: '?publishedPackageId=pkg_direct',
+        origin: 'https://example.test',
+      },
+      history: { replaceState: () => {} },
+    },
+    renderViewerShell: (session) => {
+      renderedSession = session;
+    },
+    createServerApiClient: () => ({
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
+      listPublishedPackages: async () => {
+        throw new Error('published browse prefetch should not block direct package launch');
+      },
+      fetchPublishedPackageArtifact: async (publishedPackageId) => {
+        fetchedPackageId = publishedPackageId;
+        return { ok: true, data: new Uint8Array([1, 2, 3]) };
+      },
+    }),
+    parseWorksheetPackage: () => ({
+      worksheet: {
+        worksheetId: 'ws_direct',
+        snapshotId: 'snap_direct',
+        title: 'Direct worksheet',
+        blocks: [
+          { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} },
+        ],
+      },
+    }),
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null, put: async (value) => value },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+
+  assert.equal(fetchedPackageId, 'pkg_direct');
+  assert.ok(renderedSession);
+  assert.equal(renderedSession.state.viewerPayload.title, 'Direct worksheet');
+});
+
 test('direct published package sign-in recovery keeps popup-blocked failures retryable', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({
