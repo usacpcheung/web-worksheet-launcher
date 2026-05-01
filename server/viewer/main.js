@@ -145,6 +145,14 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function firstNonBlankString(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
 function formatTimestampForDisplay(timestamp) {
   if (typeof timestamp !== 'string' || !timestamp.trim()) {
     return 'unknown time';
@@ -658,6 +666,20 @@ function normalizeViewerPayload(payload, fallbackLabel = 'Local worksheet') {
     snapshotId: payload.snapshotId || createLocalId('snapshot_local'),
     snapshotVersion: Number.isInteger(payload.snapshotVersion) ? payload.snapshotVersion : 1,
     title: payload.title || fallbackLabel,
+    subject: firstNonBlankString(payload.subject, payload.metadata?.subject),
+    owner: firstNonBlankString(
+      payload.owner,
+      payload.owner_email,
+      payload.owner_name,
+      payload.owner_sub,
+      payload.metadata?.owner,
+      payload.metadata?.owner_email,
+      payload.metadata?.owner_name,
+      payload.metadata?.owner_sub
+    ),
+    owner_email: firstNonBlankString(payload.owner_email, payload.metadata?.owner_email),
+    owner_name: firstNonBlankString(payload.owner_name, payload.metadata?.owner_name),
+    owner_sub: firstNonBlankString(payload.owner_sub, payload.metadata?.owner_sub),
     blocks,
   };
 }
@@ -2068,6 +2090,11 @@ function resolveImportedWorksheetPayload(importedRecord) {
         snapshotId: `${importedRecord.localId}:imported-local`,
         snapshotVersion: 1,
         title: worksheet.title || 'Imported worksheet',
+        subject: worksheet.subject || importedRecord.subject || importedRecord.metadata?.subject || '',
+        owner: worksheet.owner || importedRecord.owner || importedRecord.metadata?.owner || '',
+        owner_email: worksheet.owner_email || importedRecord.owner_email || importedRecord.metadata?.owner_email || '',
+        owner_name: worksheet.owner_name || importedRecord.owner_name || importedRecord.metadata?.owner_name || '',
+        owner_sub: worksheet.owner_sub || importedRecord.owner_sub || importedRecord.metadata?.owner_sub || '',
         blocks: worksheet.blocks,
       },
       'Imported worksheet'
@@ -2618,22 +2645,25 @@ class ViewerAttemptSession {
     const localAttemptId = createLocalId('attempt');
     const startedAt = nowIso();
     const sourceDraftUpdatedAt = options.sourceDraftUpdatedAt || null;
-    const sourceSubject = String(
-      options.sourceSubject
-      ?? viewerPayload?.subject
-      ?? ''
-    ).trim();
-    const sourceOwner = String(
-      options.sourceOwner
-      ?? viewerPayload?.owner
-      ?? viewerPayload?.owner_email
-      ?? viewerPayload?.owner_name
-      ?? viewerPayload?.owner_sub
-      ?? this.state.serverSession?.user?.email
-      ?? this.state.serverSession?.user?.name
-      ?? this.state.serverSession?.user?.sub
-      ?? ''
-    ).trim();
+    const sourceSubject = firstNonBlankString(
+      options.sourceSubject,
+      viewerPayload?.subject,
+      viewerPayload?.metadata?.subject
+    );
+    const sourceOwner = firstNonBlankString(
+      options.sourceOwner,
+      viewerPayload?.owner,
+      viewerPayload?.owner_email,
+      viewerPayload?.owner_name,
+      viewerPayload?.owner_sub,
+      viewerPayload?.metadata?.owner,
+      viewerPayload?.metadata?.owner_email,
+      viewerPayload?.metadata?.owner_name,
+      viewerPayload?.metadata?.owner_sub,
+      this.state.serverSession?.user?.email,
+      this.state.serverSession?.user?.name,
+      this.state.serverSession?.user?.sub
+    );
 
     const sourceId = getSourceIdentity(source || 'inline_payload', {
       sourceLocalDraftId: options.sourceLocalDraftId || null,
@@ -2698,24 +2728,30 @@ class ViewerAttemptSession {
     this.state.sourceImportedWorksheetId =
       attemptRecord.sourceImportedWorksheetId || attemptRecord.metadata?.sourceImportedWorksheetId || null;
     this.state.sourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
-    this.state.sourceSubject = String(
-      attemptRecord.subject
-      ?? attemptRecord.metadata?.subject
-      ?? attemptRecord.viewerPayload?.subject
-      ?? ''
-    ).trim();
-    this.state.sourceOwner = String(
-      attemptRecord.owner
-      ?? attemptRecord.metadata?.owner
-      ?? attemptRecord.metadata?.owner_email
-      ?? attemptRecord.metadata?.owner_name
-      ?? attemptRecord.metadata?.owner_sub
-      ?? attemptRecord.viewerPayload?.owner
-      ?? attemptRecord.viewerPayload?.owner_email
-      ?? attemptRecord.viewerPayload?.owner_name
-      ?? attemptRecord.viewerPayload?.owner_sub
-      ?? ''
-    ).trim();
+    this.state.sourceSubject = firstNonBlankString(
+      attemptRecord.subject,
+      attemptRecord.metadata?.subject,
+      attemptRecord.viewerPayload?.subject,
+      attemptRecord.viewerPayload?.metadata?.subject
+    );
+    this.state.sourceOwner = firstNonBlankString(
+      attemptRecord.owner,
+      attemptRecord.owner_email,
+      attemptRecord.owner_name,
+      attemptRecord.owner_sub,
+      attemptRecord.metadata?.owner,
+      attemptRecord.metadata?.owner_email,
+      attemptRecord.metadata?.owner_name,
+      attemptRecord.metadata?.owner_sub,
+      attemptRecord.viewerPayload?.owner,
+      attemptRecord.viewerPayload?.owner_email,
+      attemptRecord.viewerPayload?.owner_name,
+      attemptRecord.viewerPayload?.owner_sub,
+      attemptRecord.viewerPayload?.metadata?.owner,
+      attemptRecord.viewerPayload?.metadata?.owner_email,
+      attemptRecord.viewerPayload?.metadata?.owner_name,
+      attemptRecord.viewerPayload?.metadata?.owner_sub
+    );
     this.state.studentName = pickAttemptStudentName(attemptRecord);
     this.state.lastActiveBlockId = attemptRecord.lastActiveBlockId || null;
     this.state.lastActiveIndex = Number.isInteger(attemptRecord.lastActiveIndex) ? attemptRecord.lastActiveIndex : 0;
@@ -2828,6 +2864,25 @@ class ViewerAttemptSession {
 
     const revisionAtSaveStart = this.state.attemptRevision;
     const updatedAt = nowIso();
+    const persistedSubject = firstNonBlankString(
+      this.state.sourceSubject,
+      this.state.viewerPayload?.subject,
+      this.state.viewerPayload?.metadata?.subject
+    );
+    const persistedOwner = firstNonBlankString(
+      this.state.sourceOwner,
+      this.state.viewerPayload?.owner,
+      this.state.viewerPayload?.owner_email,
+      this.state.viewerPayload?.owner_name,
+      this.state.viewerPayload?.owner_sub,
+      this.state.viewerPayload?.metadata?.owner,
+      this.state.viewerPayload?.metadata?.owner_email,
+      this.state.viewerPayload?.metadata?.owner_name,
+      this.state.viewerPayload?.metadata?.owner_sub,
+      this.state.serverSession?.user?.email,
+      this.state.serverSession?.user?.name,
+      this.state.serverSession?.user?.sub
+    );
 
     const normalizedAnswers = {};
     Object.entries(this.state.answers || {}).forEach(([blockId, answer]) => {
@@ -2861,8 +2916,8 @@ class ViewerAttemptSession {
       lastSavedAt: updatedAt,
       completedAt: this.state.completedAt,
       answers: normalizedAnswers,
-      subject: this.state.sourceSubject || '',
-      owner: this.state.sourceOwner || '',
+      subject: persistedSubject,
+      owner: persistedOwner,
       // checkResult is transient UI state and must not be persisted.
       metadata: {
         localId: this.state.localAttemptId,
@@ -2873,8 +2928,8 @@ class ViewerAttemptSession {
         sourceFingerprint: this.state.sourceFingerprint || null,
         studentName: this.state.studentName || '',
         sourceDraftUpdatedAt: this.state.sourceDraftUpdatedAt || null,
-        subject: this.state.sourceSubject || '',
-        owner: this.state.sourceOwner || '',
+        subject: persistedSubject,
+        owner: persistedOwner,
         updatedAt,
       },
     };
@@ -2890,6 +2945,8 @@ class ViewerAttemptSession {
       if (shouldApplySaveStatus) {
         this.state.lastSavedRevision = revisionAtSaveStart;
         this.state.lastSavedAt = persisted?.metadata?.updatedAt || updatedAt;
+        this.state.sourceSubject = persistedSubject;
+        this.state.sourceOwner = persistedOwner;
         this.state.lastSaveError = null;
         this.persistResumeMetadata();
         this.notifyStateChange();
@@ -6423,16 +6480,26 @@ function renderViewerStartPanel(session, options = {}) {
       resumeAttempt?.viewerPayload?.subject
       || resumeAttempt?.subject
       || resumeAttempt?.metadata?.subject
+      || resumeAttempt?.viewerPayload?.metadata?.subject
       || '—'
     ).trim() || '—';
     const worksheetOwner = String(
       resumeAttempt?.owner_email
       || resumeAttempt?.owner_name
       || resumeAttempt?.owner_sub
+      || resumeAttempt?.owner
       || resumeAttempt?.metadata?.owner_email
       || resumeAttempt?.metadata?.owner_name
       || resumeAttempt?.metadata?.owner_sub
       || resumeAttempt?.metadata?.owner
+      || resumeAttempt?.viewerPayload?.owner_email
+      || resumeAttempt?.viewerPayload?.owner_name
+      || resumeAttempt?.viewerPayload?.owner_sub
+      || resumeAttempt?.viewerPayload?.owner
+      || resumeAttempt?.viewerPayload?.metadata?.owner_email
+      || resumeAttempt?.viewerPayload?.metadata?.owner_name
+      || resumeAttempt?.viewerPayload?.metadata?.owner_sub
+      || resumeAttempt?.viewerPayload?.metadata?.owner
       || '—'
     ).trim() || '—';
     resumeMeta.textContent = `Title: ${worksheetTitle} · Subject: ${worksheetSubject} · Owner: ${worksheetOwner} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;

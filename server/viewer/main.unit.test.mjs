@@ -993,6 +993,21 @@ test('normalizeViewerPayload tolerates malformed blocks and coerces unknown kind
   assert.equal(payload.blocks[2].kind, 'content');
 });
 
+test('normalizeViewerPayload preserves worksheet subject and owner metadata', async () => {
+  const mod = await loadViewerModule();
+
+  const payload = mod.normalizeViewerPayload({
+    title: 'Worksheet A',
+    subject: 'ICT',
+    owner_email: 'owner@example.test',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  });
+
+  assert.equal(payload.subject, 'ICT');
+  assert.equal(payload.owner, 'owner@example.test');
+  assert.equal(payload.owner_email, 'owner@example.test');
+});
+
 test('normalizeViewerBlock preserves non-canonical single_choice inputType without coercion', async () => {
   const mod = await loadViewerModule();
   const normalized = mod.normalizeViewerBlock({
@@ -2465,6 +2480,37 @@ test('createLocalAttemptState falls back owner to logged-in session user when ow
   assert.equal(attempt.metadata.owner, 'viewer-owner@example.test');
 });
 
+test('createLocalAttemptState treats blank source metadata as missing', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.serverSession = {
+    status: 'logged_in',
+    user: { email: 'viewer-owner@example.test' },
+    error: null,
+  };
+  const payload = mod.normalizeViewerPayload({
+    worksheetId: 'ws_blank_source',
+    snapshotId: 'snap_blank_source',
+    subject: 'ICT',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  });
+
+  const attempt = session.createLocalAttemptState(payload, 'inline_payload', {
+    sourceSubject: '',
+    sourceOwner: '',
+  });
+
+  assert.equal(attempt.subject, 'ICT');
+  assert.equal(attempt.metadata.subject, 'ICT');
+  assert.equal(attempt.owner, 'viewer-owner@example.test');
+  assert.equal(attempt.metadata.owner, 'viewer-owner@example.test');
+});
+
 test('autosave persists new attempt linkage fields', async () => {
   const mod = await loadViewerModule();
   let persisted = null;
@@ -2496,6 +2542,38 @@ test('autosave persists new attempt linkage fields', async () => {
   assert.equal(persisted.metadata.owner, 'owner@example.test');
   assert.equal(persisted.studentName, 'Student A');
   assert.equal(persisted.lastActiveBlockId, 'q1');
+});
+
+test('autosave falls back to viewer payload subject and logged-in owner when source metadata is blank', async () => {
+  const mod = await loadViewerModule();
+  let persisted = null;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => { persisted = value; return value; } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.serverSession = {
+    status: 'logged_in',
+    user: { email: 'viewer-owner@example.test' },
+    error: null,
+  };
+  session.state.localAttemptId = 'attempt_blank_meta';
+  session.state.viewerPayload = mod.normalizeViewerPayload({
+    title: 'Worksheet A',
+    subject: 'ICT',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  });
+  session.state.sourceSubject = '';
+  session.state.sourceOwner = '';
+  session.state.attemptRevision = 1;
+
+  await session.autosave();
+
+  assert.equal(persisted.subject, 'ICT');
+  assert.equal(persisted.owner, 'viewer-owner@example.test');
+  assert.equal(persisted.metadata.subject, 'ICT');
+  assert.equal(persisted.metadata.owner, 'viewer-owner@example.test');
+  assert.equal(session.state.sourceSubject, 'ICT');
+  assert.equal(session.state.sourceOwner, 'viewer-owner@example.test');
 });
 
 test('computeResumeStartBlockIndex prioritizes lastActiveBlockId then first unanswered then zero', async () => {
@@ -2990,7 +3068,7 @@ test('bootstrapViewer on bare /viewer/ opens start panel with explicit resume ac
 
   assert.equal(renderedSession, null);
   const panel = document.getElementById('app').children[0];
-  const hasResumeButton = panel.children.some((child) => child.className === 'viewer-resume-card');
+  const hasResumeButton = Boolean(findNodeByClass(panel, 'viewer-resume-card'));
   assert.equal(hasResumeButton, true);
 });
 
@@ -3056,7 +3134,7 @@ test('renderViewerStartPanel resume card prefers metadata.updatedAt when updated
   });
 
   const panel = appRoot.children[0];
-  const resumeCard = panel.children.find((child) => child.className === 'viewer-resume-card');
+  const resumeCard = findNodeByClass(panel, 'viewer-resume-card');
   const resumeMeta = resumeCard.children.find((child) => child.className === 'muted');
   const expected = new Date('2026-04-02T03:04:05.000Z').toLocaleString(undefined, {
     year: 'numeric',
@@ -3092,7 +3170,7 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
   });
 
   const panel = appRoot.children[0];
-  const resumeCard = panel.children.find((child) => child.className === 'viewer-resume-card');
+  const resumeCard = findNodeByClass(panel, 'viewer-resume-card');
   const resumeMeta = resumeCard.children.find((child) => child.className === 'muted');
   const expected = new Date('2026-04-02T03:04:05.123Z').toLocaleString(undefined, {
     year: 'numeric',
@@ -3142,7 +3220,7 @@ test('renderViewerStartPanel shows auth-aware browse CTA labels', { concurrency:
 
   session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' } };
   mod.renderViewerStartPanel(session);
-  const loggedInPanel = appRoot.children[0];
+  const loggedInPanel = appRoot.children[appRoot.children.length - 1];
   const loggedInBrowse = findNodeByText(loggedInPanel, 'Browse published worksheets');
   const manageBtn = findNodeByText(loggedInPanel, 'Manage server attempts');
   assert.equal(Boolean(loggedInBrowse), true);
@@ -3161,7 +3239,7 @@ test('renderViewerStartPanel groups launcher actions into Attempts and Worksheet
 
   const session = {
     state: {
-      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
+      serverSession: { status: 'logged_out', error: '' },
       isLoadingPublishedPackages: false,
       publishedHasMore: false,
       publishedFilters: { title: '', subject: '', owner: '' },
