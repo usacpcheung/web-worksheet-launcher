@@ -1637,6 +1637,13 @@ function buildWorksheetPrintReportHtml(reportModel) {
         : '';
 
     const checkedAnswerSectionClass = `print-question-section--${escapeHtml(question.sectionBreakModes?.checkedAnswer || 'keep')}`;
+    const imageSectionHtml = imageHtml
+      ? `
+        <section class="print-question-section print-question-section--image print-question-section--flow">
+          ${imageHtml}
+        </section>
+      `
+      : '';
     const resultHtml = question.result
       ? `
         <section class="print-question-section print-question-section--result ${checkedAnswerSectionClass} print-result-${escapeHtml(question.result.status || 'neutral')}">
@@ -1655,8 +1662,8 @@ function buildWorksheetPrintReportHtml(reportModel) {
         <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
           <h3>Question</h3>
           <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || 'No prompt text provided.')}</p>
-          ${imageHtml}
         </section>
+        ${imageSectionHtml}
         <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
           <h3>Answer</h3>
           <p class="print-answer-text">Answer: ${formatMultilineTextForHtml(question.answerText)}</p>
@@ -1794,6 +1801,11 @@ function buildWorksheetPrintReportHtml(reportModel) {
       page-break-inside: auto;
     }
 
+    .print-question-section--image {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
     .print-question-section h3 {
       margin: 0 0 2mm;
       font-size: 10pt;
@@ -1815,7 +1827,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
     }
 
     .print-question-image-wrap {
-      margin-top: 4mm;
+      margin-top: 0;
     }
 
     .print-question-image {

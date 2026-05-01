@@ -506,7 +506,7 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
         promptText: 'Medium prompt',
         answerText: 'Answer',
         result: null,
-        image: null,
+        image: { status: 'ready', src: 'data:image/png;base64,abc', alt: 'Question image' },
         layoutMode: 'keep-head',
         sectionBreakModes: { prompt: 'keep', answer: 'flow', checkedAnswer: null },
       },
@@ -527,6 +527,7 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('print-question--keep-head'), true);
   assert.equal(normalizedHtml.includes('print-question--flow'), true);
   assert.equal(normalizedHtml.includes('print-question-section--prompt'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--image print-question-section--flow'), true);
   assert.equal(normalizedHtml.includes('print-question-section--answer'), true);
   assert.equal(normalizedHtml.includes('print-question-section--result'), true);
   assert.equal(normalizedHtml.includes('print-question-section--keep'), true);
@@ -534,6 +535,15 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('>Question<'), true);
   assert.equal(normalizedHtml.includes('>Checked result<'), true);
   assert.equal(normalizedHtml.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
+  assert.equal(normalizedHtml.includes('.print-question-section--image {\n      break-inside: auto;'), true);
+  const mediumPromptIndex = normalizedHtml.indexOf('<p class="print-question-text">Medium prompt</p>');
+  const imageSectionIndex = normalizedHtml.indexOf('<section class="print-question-section print-question-section--image print-question-section--flow">');
+  assert.equal(mediumPromptIndex >= 0, true);
+  assert.equal(imageSectionIndex > mediumPromptIndex, true);
+  assert.equal(
+    normalizedHtml.slice(mediumPromptIndex, imageSectionIndex).includes('</section>'),
+    true
+  );
   assert.equal(normalizedHtml.includes('size: A4 portrait;'), true);
   assert.equal(normalizedHtml.includes('max-height: 75mm;'), true);
   assert.equal(normalizedHtml.includes('object-fit: contain;'), true);
