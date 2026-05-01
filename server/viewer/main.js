@@ -4622,6 +4622,292 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   }
 }
 
+async function showPublishedPackagesBrowseModal(session, options = {}) {
+  // Defensive cleanup for stale duplicate browse overlays from prior open attempts.
+  Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
+    if (overlay.querySelector('.viewer-published-browse-modal')) {
+      overlay.remove();
+    }
+  });
+  const host = document.body || getViewerOverlayHost();
+  if (!host) return;
+
+  const autoStartSignIn = options.autoStartSignIn === true;
+  const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-modal-overlay';
+  const dialog = document.createElement('section');
+  dialog.className = 'confirm-modal browse-modal viewer-published-browse-modal';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  const heading = document.createElement('h3');
+  heading.textContent = 'Browse Published Packages';
+  const filterRow = document.createElement('div');
+  filterRow.className = 'browse-modal__filters';
+  const titleFilterInput = document.createElement('input');
+  titleFilterInput.type = 'search';
+  titleFilterInput.placeholder = 'Filter by title';
+  titleFilterInput.className = 'viewer-details-form__input';
+  titleFilterInput.setAttribute('aria-label', 'Filter published packages by title');
+  const subjectFilterInput = document.createElement('input');
+  subjectFilterInput.type = 'search';
+  subjectFilterInput.placeholder = 'Filter by subject';
+  subjectFilterInput.className = 'viewer-details-form__input';
+  subjectFilterInput.setAttribute('aria-label', 'Filter published packages by subject');
+  const ownerFilterInput = document.createElement('input');
+  ownerFilterInput.type = 'search';
+  ownerFilterInput.placeholder = 'Filter by owner email';
+  ownerFilterInput.className = 'viewer-details-form__input';
+  ownerFilterInput.setAttribute('aria-label', 'Filter published packages by owner');
+  const searchBtn = document.createElement('button');
+  searchBtn.type = 'button';
+  searchBtn.className = 'browse-modal__search-btn';
+  searchBtn.innerHTML = '<svg class="browse-modal__search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.25" stroke="currentColor" stroke-width="1.6"></circle><path d="M12.5 12.5L16.25 16.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg>';
+  searchBtn.setAttribute('aria-label', 'Search published packages');
+  filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput, searchBtn);
+  const list = document.createElement('div');
+  list.className = 'browse-results';
+  const actions = document.createElement('div');
+  actions.className = 'confirm-modal__actions';
+  const signInBtn = document.createElement('button');
+  signInBtn.type = 'button';
+  signInBtn.className = 'confirm-modal__btn';
+  signInBtn.textContent = 'Sign in';
+  const loadMoreBtn = document.createElement('button');
+  loadMoreBtn.type = 'button';
+  loadMoreBtn.className = 'confirm-modal__btn';
+  loadMoreBtn.textContent = 'Load more';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'confirm-modal__btn';
+  closeBtn.textContent = 'Close';
+  actions.append(signInBtn, loadMoreBtn, closeBtn);
+  dialog.append(heading, filterRow, list, actions);
+  overlay.append(dialog);
+  host.appendChild(overlay);
+
+  let closing = false;
+  let signInInFlight = false;
+  let searchDebounceTimer = null;
+  const closeModal = () => {
+    if (closing) return;
+    closing = true;
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = null;
+    }
+    overlay.remove();
+    if (previousActive && typeof previousActive.focus === 'function') {
+      previousActive.focus();
+    }
+  };
+
+  const renderRows = () => {
+    if (closing) return;
+    const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const activeFilters = session.state.publishedFilters || {};
+    if (document.activeElement !== titleFilterInput) titleFilterInput.value = String(activeFilters.title || '');
+    if (document.activeElement !== subjectFilterInput) subjectFilterInput.value = String(activeFilters.subject || '');
+    if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
+    signInBtn.hidden = isLoggedIn;
+    signInBtn.disabled = isChecking || signInInFlight;
+    signInBtn.textContent = signInInFlight ? 'Signing in…' : 'Sign in';
+    titleFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    subjectFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    ownerFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    searchBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    loadMoreBtn.hidden = !isLoggedIn || !session.state.publishedHasMore;
+    loadMoreBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
+    list.innerHTML = '';
+    if (!isLoggedIn) {
+      const signedOut = document.createElement('p');
+      signedOut.className = 'muted';
+      signedOut.textContent = 'Sign in to load published packages.';
+      list.append(signedOut);
+      return;
+    }
+    if (session.state.publishedListError) {
+      const error = document.createElement('p');
+      error.className = 'viewer-list-error';
+      error.textContent = session.state.publishedListError;
+      list.append(error);
+      return;
+    }
+    if (session.state.isLoadingPublishedPackages) {
+      const loading = document.createElement('p');
+      loading.className = 'muted';
+      loading.textContent = 'Loading published packages...';
+      list.append(loading);
+      return;
+    }
+    const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];
+    if (!publishedItems.length) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = 'No published packages found.';
+      list.append(empty);
+      return;
+    }
+    publishedItems.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'published-result-row';
+      const titleLine = document.createElement('div');
+      titleLine.className = 'published-result-title-line';
+      const title = document.createElement('strong');
+      title.className = 'published-result-title';
+      title.textContent = item.title || 'Untitled';
+      const publishedAt = document.createElement('span');
+      publishedAt.className = 'muted';
+      publishedAt.textContent = item.published_at ? formatTimestampForDisplay(item.published_at) : 'unknown time';
+      titleLine.append(title, publishedAt);
+      const subjectOwner = document.createElement('div');
+      subjectOwner.className = 'muted published-result-subject-owner';
+      subjectOwner.textContent = `Subject: ${item.subject || '—'} · Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;
+      const idLine = document.createElement('div');
+      idLine.className = 'muted viewer-published-id';
+      idLine.textContent = `Package ID: ${item.published_package_id || '—'}`;
+      const rowActions = document.createElement('div');
+      rowActions.className = 'published-result-actions';
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'confirm-modal__btn published-result-action';
+      openBtn.textContent = 'Open package';
+      openBtn.disabled = !item.published_package_id;
+      openBtn.addEventListener('click', async () => {
+        const result = await session.startFromPublishedPackage(item.published_package_id);
+        if (!result.ok) {
+          renderRows();
+          return;
+        }
+        if (session.state.localAttemptId) {
+          const nextUrl = new URL(window.location.href);
+          nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+          nextUrl.searchParams.delete('viewerPayload');
+          nextUrl.searchParams.delete('snapshot');
+          window.history.replaceState({}, '', nextUrl);
+        }
+        closeModal();
+        renderViewerShell(session);
+        window.viewerSession = session;
+      });
+      rowActions.append(openBtn);
+      row.append(titleLine, subjectOwner, idLine, rowActions);
+      list.append(row);
+    });
+  };
+
+  const refreshBrowse = async (options = {}) => {
+    await session.browsePublishedPackages({
+      title: titleFilterInput.value,
+      subject: subjectFilterInput.value,
+      owner: ownerFilterInput.value,
+    }, options);
+    renderRows();
+  };
+
+  const startModalSignInFlow = () => {
+    if (signInInFlight) return;
+    signInInFlight = true;
+    renderRows();
+    session.beginServerSignIn({
+      onPopupBlocked: ({ finalizeFlow }) => {
+        signInInFlight = false;
+        session.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        session.notifyStateChange();
+        renderRows();
+        finalizeFlow();
+      },
+      onStatusMessage: ({ message }) => {
+        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+          session.state.serverActionMessage = message;
+          session.notifyStateChange();
+          renderRows();
+        }
+      },
+      onSessionReady: async ({ finalizeFlow }) => {
+        try {
+          const readiness = await session.preflightPublishedSession();
+          if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+            session.state.serverActionMessage = readiness?.result?.error?.message
+              || session.state.serverSession?.error
+              || 'Sign-in completed, but session is still not ready.';
+            session.notifyStateChange();
+            renderRows();
+            return;
+          }
+          await refreshBrowse({ preflight: false, reset: true });
+          session.state.serverActionMessage = null;
+          session.notifyStateChange();
+          renderRows();
+        } finally {
+          signInInFlight = false;
+          finalizeFlow();
+        }
+      },
+      onSessionNotReady: ({ result, finalizeFlow }) => {
+        if (result?.final === false && result?.waitingForCallback === true) {
+          session.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          session.notifyStateChange();
+          renderRows();
+          return;
+        }
+        signInInFlight = false;
+        if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
+          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.notifyStateChange();
+          renderRows();
+        } else {
+          renderRows();
+        }
+        finalizeFlow();
+      },
+    });
+  };
+
+  [titleFilterInput, subjectFilterInput, ownerFilterInput].forEach((input) => {
+    input.addEventListener('input', () => {
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        refreshBrowse({ reset: true });
+      }, 300);
+    });
+  });
+  searchBtn.addEventListener('click', async () => {
+    await refreshBrowse({ reset: true });
+  });
+  loadMoreBtn.addEventListener('click', async () => {
+    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });
+    renderRows();
+  });
+  signInBtn.addEventListener('click', () => {
+    startModalSignInFlow();
+  });
+  closeBtn.addEventListener('click', () => {
+    closeModal();
+  });
+  dialog.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeModal();
+    }
+  });
+
+  const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+  if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+    await refreshBrowse({ reset: true });
+    closeBtn.focus();
+    return;
+  }
+  renderRows();
+  if (autoStartSignIn && sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+    startModalSignInFlow();
+  } else {
+    closeBtn.focus();
+  }
+}
+
 function renderViewerShell(session) {
   if (!app || !bottomBarRoot) {
     return;
@@ -6008,43 +6294,16 @@ function renderViewerStartPanel(session, options = {}) {
   signInBtn.type = 'button';
   signInBtn.className = 'viewer-start-btn';
   signInBtn.textContent = 'Log in to view published online worksheet';
-  const loadMoreBtn = document.createElement('button');
-  loadMoreBtn.type = 'button';
-  loadMoreBtn.className = 'viewer-start-btn viewer-load-more-btn';
-  loadMoreBtn.textContent = 'Load more';
-  loadMoreBtn.hidden = true;
-  const loadMoreRow = document.createElement('div');
-  loadMoreRow.className = 'viewer-load-more-row';
-  loadMoreRow.append(loadMoreBtn);
-  const filterRow = document.createElement('div');
-  filterRow.className = 'viewer-start-actions viewer-published-filters';
-  const publishedHeading = document.createElement('h2');
-  publishedHeading.className = 'viewer-published-heading';
-  publishedHeading.textContent = 'Published Packages';
-  const titleFilterInput = document.createElement('input');
-  titleFilterInput.type = 'search';
-  titleFilterInput.placeholder = 'Filter by title';
-  titleFilterInput.className = 'viewer-details-form__input';
-  titleFilterInput.setAttribute('aria-label', 'Filter published packages by title');
-  const subjectFilterInput = document.createElement('input');
-  subjectFilterInput.type = 'search';
-  subjectFilterInput.placeholder = 'Filter by subject';
-  subjectFilterInput.className = 'viewer-details-form__input';
-  subjectFilterInput.setAttribute('aria-label', 'Filter published packages by subject');
-  const ownerFilterInput = document.createElement('input');
-  ownerFilterInput.type = 'search';
-  ownerFilterInput.placeholder = 'Filter by owner';
-  ownerFilterInput.className = 'viewer-details-form__input';
-  ownerFilterInput.setAttribute('aria-label', 'Filter published packages by owner');
-  filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput);
   const sessionStatus = document.createElement('p');
   sessionStatus.className = 'muted viewer-session-status';
   const manageAttemptsBtn = document.createElement('button');
   manageAttemptsBtn.type = 'button';
   manageAttemptsBtn.className = 'viewer-start-btn';
   manageAttemptsBtn.textContent = 'Manage server attempts';
-  const publishedList = document.createElement('div');
-  publishedList.className = 'muted viewer-published-list';
+  const browsePublishedBtn = document.createElement('button');
+  browsePublishedBtn.type = 'button';
+  browsePublishedBtn.className = 'viewer-start-btn';
+  browsePublishedBtn.textContent = 'Browse published packages';
 
   const packageFileInput = document.createElement('input');
   packageFileInput.type = 'file';
@@ -6198,51 +6457,19 @@ function renderViewerStartPanel(session, options = {}) {
       },
     });
   });
-  const scheduleDebouncedBrowse = (() => {
-    let debounceTimer = null;
-    return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(async () => {
-        await session.browsePublishedPackages({
-          title: titleFilterInput.value,
-          subject: subjectFilterInput.value,
-          owner: ownerFilterInput.value,
-        });
-        renderServerControls();
-      }, 300);
-    };
-  })();
-  [titleFilterInput, subjectFilterInput, ownerFilterInput].forEach((input) => {
-    input.addEventListener('input', () => {
-      scheduleDebouncedBrowse();
+  browsePublishedBtn.addEventListener('click', async () => {
+    const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    await showPublishedPackagesBrowseModal(session, {
+      autoStartSignIn: sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN,
     });
-  });
-  loadMoreBtn.addEventListener('click', async () => {
-    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });
     renderServerControls();
   });
-
-  async function openPublishedPackage(publishedPackageId) {
-    const result = await session.startFromPublishedPackage(publishedPackageId);
-    if (!result.ok) {
-      renderServerControls();
-      return;
-    }
-    if (session.state.localAttemptId) {
-      const nextUrl = new URL(window.location.href);
-      nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
-      window.history.replaceState({}, '', nextUrl);
-    }
-    renderViewerShell(session);
-    window.viewerSession = session;
-  }
 
   function renderServerControls() {
     renderViewerNotifications(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
-    const canAccessPublished = isLoggedIn;
     const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
     let defaultSessionMessage = '';
     if (isLoggedIn) {
@@ -6260,79 +6487,10 @@ function renderViewerStartPanel(session, options = {}) {
     manageAttemptsBtn.textContent = isLoggedIn
       ? 'Manage server attempts'
       : 'Log in to manage server attempts';
+    browsePublishedBtn.disabled = isChecking;
     serverAttemptHint.textContent = isLoggedIn
       ? 'Open your private uploaded attempts to resume, download, or delete.'
-      : 'Sign in first, then manage your uploaded attempts.';
-    publishedHeading.hidden = !canAccessPublished;
-    filterRow.hidden = !canAccessPublished;
-    titleFilterInput.hidden = !canAccessPublished;
-    subjectFilterInput.hidden = !canAccessPublished;
-    ownerFilterInput.hidden = !canAccessPublished;
-    titleFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
-    subjectFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
-    ownerFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
-    const activeFilters = session.state.publishedFilters || {};
-    if (document.activeElement !== titleFilterInput) titleFilterInput.value = String(activeFilters.title || '');
-    if (document.activeElement !== subjectFilterInput) subjectFilterInput.value = String(activeFilters.subject || '');
-    if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
-    loadMoreBtn.hidden = !canAccessPublished || !session.state.publishedHasMore;
-    loadMoreBtn.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
-    loadMoreRow.hidden = loadMoreBtn.hidden;
-    publishedList.innerHTML = '';
-    publishedList.hidden = !canAccessPublished;
-    if (!canAccessPublished) {
-      return;
-    }
-    const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];
-    if (session.state.publishedListError) {
-      const errorRow = document.createElement('p');
-      errorRow.className = 'viewer-list-error';
-      errorRow.appendChild(document.createTextNode('Could not load packages. '));
-      const retryBtn = document.createElement('button');
-      retryBtn.type = 'button';
-      retryBtn.className = 'viewer-list-retry-btn';
-      retryBtn.textContent = 'Retry';
-      retryBtn.addEventListener('click', async () => {
-        await session.browsePublishedPackages(session.state.publishedFilters || {}, { reset: true });
-        renderServerControls();
-      });
-      errorRow.appendChild(retryBtn);
-      publishedList.appendChild(errorRow);
-      return;
-    }
-    if (publishedItems.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'muted';
-      empty.textContent = session.state.isLoadingPublishedPackages ? 'Loading published packages…' : 'No published packages loaded.';
-      publishedList.appendChild(empty);
-      return;
-    }
-    publishedItems.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = 'viewer-published-row';
-      const meta = document.createElement('div');
-      meta.className = 'muted viewer-published-meta';
-      const publishedAtLabel = item.published_at ? formatTimestampForDisplay(item.published_at) : 'unknown time';
-      const ownerLabel = item.owner_email || item.owner_name || item.owner_sub || '—';
-      meta.textContent = `Title: ${item.title || 'Untitled'} · Subject: ${item.subject || '—'} · Owner: ${ownerLabel} · Published: ${publishedAtLabel}`;
-      const openBtn = document.createElement('button');
-      openBtn.type = 'button';
-      openBtn.className = 'viewer-start-btn viewer-published-open-btn';
-      openBtn.textContent = 'Open package';
-      openBtn.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages || !item.published_package_id;
-      openBtn.addEventListener('click', async () => {
-        await openPublishedPackage(item.published_package_id);
-      });
-      if (item.published_package_id) {
-        const idLine = document.createElement('div');
-        idLine.className = 'muted viewer-published-id';
-        idLine.textContent = `Publish ID: ${item.published_package_id}`;
-        row.append(meta, openBtn, idLine);
-      } else {
-        row.append(meta, openBtn);
-      }
-      publishedList.appendChild(row);
-    });
+      : 'Sign in first, then manage your uploaded attempts or browse published packages.';
   }
 
   panel.append(heading, description);
@@ -6345,12 +6503,9 @@ function renderViewerStartPanel(session, options = {}) {
     serverAttemptHeading,
     serverAttemptHint,
     serverAttemptActions,
+    browsePublishedBtn,
     sessionStatus,
     signInBtn,
-    publishedHeading,
-    filterRow,
-    publishedList,
-    loadMoreRow,
     packageFileInput,
     errorMessage
   );
