@@ -4239,6 +4239,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     ? options.onResumeSuccess
     : null;
   const recommendSlotRecovery = options.reason === 'slot_limit';
+  const autoStartSignIn = options.autoStartSignIn === true;
   const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const overlay = document.createElement('div');
   overlay.className = 'confirm-modal-overlay';
@@ -4281,6 +4282,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   host.appendChild(overlay);
 
   let closing = false;
+  let signInInFlight = false;
   const closeModal = () => {
     if (closing) return;
     closing = true;
@@ -4311,7 +4313,8 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
         ? 'Server session: checking…'
         : `Server session: logged out. ${session.state.serverSession?.error || 'Sign in to manage uploaded attempts.'}`;
     signInBtn.hidden = isLoggedIn;
-    signInBtn.disabled = isChecking;
+    signInBtn.disabled = isChecking || signInInFlight;
+    signInBtn.textContent = signInInFlight ? 'Signing in…' : 'Sign in';
     refreshBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingUploadedAttempts;
     list.innerHTML = '';
     if (!isLoggedIn) {
@@ -4403,14 +4406,63 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     });
   };
 
-  signInBtn.addEventListener('click', () => {
+  const startModalSignInFlow = () => {
+    if (signInInFlight) return;
+    signInInFlight = true;
+    renderRows();
     session.beginServerSignIn({
-      onSessionReady: async () => {
-        await session.listUploadedAttempts();
-        await renderRows();
+      onPopupBlocked: ({ finalizeFlow }) => {
+        signInInFlight = false;
+        session.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        session.notifyStateChange();
+        renderRows();
+        finalizeFlow();
+      },
+      onStatusMessage: ({ message }) => {
+        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+          session.state.serverActionMessage = message;
+          session.notifyStateChange();
+          renderRows();
+        }
+      },
+      onSessionReady: async ({ finalizeFlow }) => {
+        try {
+          const readiness = await session.probeServerSessionSilently({ force: true });
+          if (readiness.status === 'ready') {
+            await session.listUploadedAttempts();
+            session.state.serverActionMessage = null;
+          } else {
+            session.state.serverActionMessage = readiness?.error?.message || 'Sign-in completed, but session is still not ready.';
+          }
+          session.notifyStateChange();
+          await renderRows();
+        } finally {
+          signInInFlight = false;
+          finalizeFlow();
+        }
+      },
+      onSessionNotReady: ({ result, finalizeFlow }) => {
+        if (result?.final === false && result?.waitingForCallback === true) {
+          session.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          session.notifyStateChange();
+          renderRows();
+          return;
+        }
+        signInInFlight = false;
+        if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
+          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.notifyStateChange();
+          renderRows();
+        } else {
+          renderRows();
+        }
+        finalizeFlow();
       },
     });
-    renderRows();
+  };
+
+  signInBtn.addEventListener('click', () => {
+    startModalSignInFlow();
   });
   refreshBtn.addEventListener('click', async () => {
     await session.listUploadedAttempts();
@@ -4431,7 +4483,11 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     await session.listUploadedAttempts();
   }
   await renderRows();
-  closeBtn.focus();
+  if (autoStartSignIn && sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+    startModalSignInFlow();
+  } else {
+    closeBtn.focus();
+  }
 }
 
 function renderViewerShell(session) {
@@ -5917,7 +5973,9 @@ function renderViewerStartPanel(session, options = {}) {
     renderServerControls();
   });
   manageAttemptsBtn.addEventListener('click', async () => {
+    const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     await showUploadedAttemptsManagerModal(session, {
+      autoStartSignIn: sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN,
       onResumeSuccess: async () => {
         if (session.state.localAttemptId) {
           const nextUrl = new URL(window.location.href);
