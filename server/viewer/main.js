@@ -2115,6 +2115,7 @@ class ViewerAttemptSession {
       isLoadingUploadedAttempts: false,
       uploadedAttemptsError: null,
       uploadedAttemptActionInFlightById: {},
+      isManagingUploadedAttempts: false,
       publishedPackages: [],
       publishedHasMore: false,
       publishedNextOffset: null,
@@ -4233,8 +4234,19 @@ function showDeleteUploadedAttemptModal(row) {
 }
 
 async function showUploadedAttemptsManagerModal(session, options = {}) {
-  const host = getViewerOverlayHost();
+  if (session?.state?.isManagingUploadedAttempts) {
+    return;
+  }
+  // Defensive cleanup for stale duplicate manager overlays from prior open attempts.
+  Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
+    if (overlay.querySelector('.viewer-attempts-modal')) {
+      overlay.remove();
+    }
+  });
+  const host = document.body || getViewerOverlayHost();
   if (!host) return;
+  session.state.isManagingUploadedAttempts = true;
+  session.notifyStateChange();
   const onResumeSuccess = typeof options.onResumeSuccess === 'function'
     ? options.onResumeSuccess
     : null;
@@ -4287,6 +4299,8 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     if (closing) return;
     closing = true;
     overlay.remove();
+    session.state.isManagingUploadedAttempts = false;
+    session.notifyStateChange();
     if (previousActive && typeof previousActive.focus === 'function') {
       previousActive.focus();
     }
@@ -4303,6 +4317,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   };
 
   const renderRows = async () => {
+    if (closing) return;
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
@@ -6053,7 +6068,7 @@ function renderViewerStartPanel(session, options = {}) {
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking;
     manageAttemptsBtn.hidden = false;
-    manageAttemptsBtn.disabled = isChecking;
+    manageAttemptsBtn.disabled = isChecking || session.state.isManagingUploadedAttempts === true;
     manageAttemptsBtn.textContent = isLoggedIn
       ? 'Manage server attempts'
       : 'Log in to manage server attempts';
