@@ -487,6 +487,127 @@ body {
   background: #fee2e2;
 }
 
+.uploaded-draft-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px 12px;
+  padding: 10px 12px;
+  border: 1px solid #d6d9e0;
+  border-radius: 10px;
+  background: #fcfcfd;
+}
+
+.uploaded-draft-row + .uploaded-draft-row {
+  margin-top: 12px;
+}
+
+.uploaded-draft-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.uploaded-draft-meta strong {
+  overflow-wrap: anywhere;
+}
+
+.uploaded-draft-uploaded-at {
+  margin-top: 2px;
+}
+
+.uploaded-draft-published-badge {
+  align-self: flex-start;
+  margin-top: 2px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-weight: 600;
+}
+
+.uploaded-draft-published-badge--current {
+  color: #166534;
+  border-color: #86efac;
+  background: #dcfce7;
+}
+
+.uploaded-draft-published-badge--stale {
+  color: #92400e;
+  border-color: #fcd34d;
+  background: #fef3c7;
+}
+
+.uploaded-draft-published-badge--deleted {
+  color: #1e3a8a;
+  border-color: #93c5fd;
+  background: #dbeafe;
+}
+
+.uploaded-draft-details {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.uploaded-draft-details > summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.uploaded-draft-details[open] > summary {
+  margin-bottom: 6px;
+}
+
+.uploaded-draft-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.uploaded-draft-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  margin-top: 2px;
+}
+
+.uploaded-draft-action {
+  min-height: 38px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.uploaded-draft-action--primary {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1e40af;
+}
+
+.uploaded-draft-action--primary:hover:not(:disabled),
+.uploaded-draft-action--primary:focus-visible:not(:disabled) {
+  background: #dbeafe;
+  border-color: #60a5fa;
+}
+
+.uploaded-draft-action--danger {
+  color: #b42318;
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.uploaded-draft-action--danger:hover:not(:disabled),
+.uploaded-draft-action--danger:focus-visible:not(:disabled) {
+  color: #912018;
+  border-color: #f87171;
+  background: #fee2e2;
+}
+
 .notification-toast-container {
   position: fixed;
   right: 16px;
@@ -500,8 +621,8 @@ body {
 }
 
 .viewer-toast-container {
-  top: 16px;
-  bottom: auto;
+  top: auto;
+  bottom: 16px;
 }
 
 .notification-toast {

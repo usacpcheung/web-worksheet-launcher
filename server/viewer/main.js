@@ -4233,6 +4233,112 @@ function showDeleteUploadedAttemptModal(row) {
   });
 }
 
+function getUploadedAttemptStatusBadge(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'checked') {
+    return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--current', text: 'Checked' };
+  }
+  if (normalized === 'submitted') {
+    return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--stale', text: 'Submitted' };
+  }
+  return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--deleted', text: 'In progress' };
+}
+
+async function showAttemptSlotFullModal(session, options = {}) {
+  const host = document.body || getViewerOverlayHost();
+  if (!host) return { deleted: false };
+  const rows = Array.isArray(options.uploadedAttempts) && options.uploadedAttempts.length > 0
+    ? options.uploadedAttempts
+    : (Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : []);
+  const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-modal-overlay';
+  const dialog = document.createElement('section');
+  dialog.className = 'confirm-modal browse-modal viewer-attempts-modal';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  const heading = document.createElement('h3');
+  heading.textContent = 'Attempt slots are full';
+  const description = document.createElement('p');
+  description.className = 'confirm-modal__description';
+  description.textContent = 'Delete one uploaded attempt to continue this upload.';
+  const list = document.createElement('div');
+  list.className = 'browse-results';
+  const actions = document.createElement('div');
+  actions.className = 'confirm-modal__actions';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'confirm-modal__btn';
+  cancelBtn.textContent = 'Cancel';
+  actions.append(cancelBtn);
+  dialog.append(heading, description, list, actions);
+  overlay.append(dialog);
+  host.appendChild(overlay);
+
+  return new Promise((resolve) => {
+    const finish = (deleted) => {
+      if (!overlay.isConnected) return;
+      overlay.remove();
+      if (previousActive && typeof previousActive.focus === 'function') {
+        previousActive.focus();
+      }
+      resolve({ deleted });
+    };
+
+    const renderSlotRows = () => {
+      list.innerHTML = '';
+      if (!rows.length) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = 'No uploaded attempts available to delete.';
+        list.appendChild(empty);
+        return;
+      }
+      rows.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'uploaded-draft-row';
+        const meta = document.createElement('div');
+        meta.className = 'uploaded-draft-meta';
+        const title = document.createElement('strong');
+        title.textContent = item.title || 'Untitled worksheet';
+        const subjectLine = document.createElement('div');
+        subjectLine.className = 'muted uploaded-draft-uploaded-at';
+        subjectLine.textContent = `Subject: ${item.subject || '-'}`;
+        const updatedLine = document.createElement('div');
+        updatedLine.className = 'muted uploaded-draft-uploaded-at';
+        updatedLine.textContent = `Updated: ${formatTimestampForDisplay(item.updated_at || item.updatedAt || null)}`;
+        meta.append(title, subjectLine, updatedLine);
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.addEventListener('click', async () => {
+          const confirmed = await showDeleteUploadedAttemptModal(item);
+          if (!confirmed) return;
+          const deleted = await session.deleteUploadedAttemptAndRefresh(item.uploaded_attempt_id);
+          if (deleted?.ok) {
+            finish(true);
+          }
+        });
+        row.append(meta, deleteBtn);
+        list.appendChild(row);
+      });
+    };
+
+    renderSlotRows();
+    cancelBtn.addEventListener('click', () => {
+      finish(false);
+    });
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    cancelBtn.focus();
+  });
+}
+
 async function showUploadedAttemptsManagerModal(session, options = {}) {
   if (session?.state?.isManagingUploadedAttempts) {
     return;
@@ -4306,16 +4412,6 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     }
   };
 
-  const formatMeta = (row) => {
-    const submittedLabel = row.submitted_at ? `Submitted ${formatTimestampForDisplay(row.submitted_at)}` : 'Not submitted';
-    const checkedLabel = row.checked_at ? `Checked ${formatTimestampForDisplay(row.checked_at)}` : 'Not checked';
-    const updatedLabel = row.updated_at ? `Updated ${formatTimestampForDisplay(row.updated_at)}` : 'Updated unknown time';
-    const sizeLabel = Number.isFinite(row.artifact_size_bytes)
-      ? `${Math.max(1, Math.round(row.artifact_size_bytes / 1024))} KB`
-      : 'size n/a';
-    return `${row.subject || '—'} • Status ${row.status} • ${submittedLabel} • ${checkedLabel} • ${updatedLabel} • ${sizeLabel}`;
-  };
-
   const renderRows = async () => {
     if (closing) return;
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
@@ -4358,7 +4454,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     }
     const rows = Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : [];
     const slotLimit = Number(session.state.uploadedAttemptSlotLimit) || 3;
-    slotUsageLine.textContent = `Slot usage: ${rows.length} / ${slotLimit}`;
+    slotUsageLine.textContent = `${rows.length} of ${slotLimit} attempt slots used.`;
     if (rows.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'muted';
@@ -4368,22 +4464,42 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     }
     rows.forEach((row) => {
       const attemptRow = document.createElement('div');
-      attemptRow.className = 'published-result-row';
-      const titleLine = document.createElement('div');
-      titleLine.className = 'published-result-title-line';
+      attemptRow.className = 'uploaded-draft-row';
+      const metaWrap = document.createElement('div');
+      metaWrap.className = 'uploaded-draft-meta';
       const title = document.createElement('strong');
-      title.className = 'published-result-title';
       title.textContent = row.title || 'Untitled worksheet';
-      titleLine.append(title);
-      const meta = document.createElement('div');
-      meta.className = 'muted published-result-subject-owner';
-      meta.textContent = formatMeta(row);
+      const subjectLine = document.createElement('div');
+      subjectLine.className = 'muted uploaded-draft-uploaded-at';
+      subjectLine.textContent = `Subject: ${row.subject || '-'}`;
+      const updatedLine = document.createElement('div');
+      updatedLine.className = 'muted uploaded-draft-uploaded-at';
+      updatedLine.textContent = `Updated: ${formatTimestampForDisplay(row.updated_at || row.updatedAt || null)}`;
+      const badge = document.createElement('span');
+      const badgeConfig = getUploadedAttemptStatusBadge(row.status);
+      badge.className = badgeConfig.className;
+      badge.textContent = badgeConfig.text;
+      const details = document.createElement('details');
+      details.className = 'uploaded-draft-details uploaded-draft-details--draft';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Details';
+      const detailBody = document.createElement('div');
+      detailBody.className = 'muted uploaded-draft-details-body';
+      const submittedLine = document.createElement('div');
+      submittedLine.textContent = `Submitted: ${row.submitted_at ? formatTimestampForDisplay(row.submitted_at) : 'No'}`;
+      const checkedLine = document.createElement('div');
+      checkedLine.textContent = `Checked: ${row.checked_at ? formatTimestampForDisplay(row.checked_at) : 'No'}`;
+      const sizeLine = document.createElement('div');
+      sizeLine.textContent = `Artifact size: ${Number.isFinite(row.artifact_size_bytes) ? `${Math.max(1, Math.round(row.artifact_size_bytes / 1024))} KB` : 'n/a'}`;
+      detailBody.append(submittedLine, checkedLine, sizeLine);
+      details.append(summary, detailBody);
+      metaWrap.append(title, subjectLine, updatedLine, badge, details);
       const rowActions = document.createElement('div');
-      rowActions.className = 'published-result-actions';
+      rowActions.className = 'uploaded-draft-actions';
       const inFlightAction = session.state.uploadedAttemptActionInFlightById?.[row.uploaded_attempt_id] || '';
       const resumeBtn = document.createElement('button');
       resumeBtn.type = 'button';
-      resumeBtn.className = 'published-result-action';
+      resumeBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
       resumeBtn.textContent = inFlightAction === 'resume' ? 'Resuming...' : 'Resume';
       resumeBtn.disabled = Boolean(inFlightAction);
       resumeBtn.addEventListener('click', async () => {
@@ -4397,8 +4513,8 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       });
       const downloadBtn = document.createElement('button');
       downloadBtn.type = 'button';
-      downloadBtn.className = 'published-result-action';
-      downloadBtn.textContent = inFlightAction === 'download' ? 'Downloading...' : 'Download';
+      downloadBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+      downloadBtn.textContent = inFlightAction === 'download' ? 'Downloading...' : 'Download ZIP';
       downloadBtn.disabled = Boolean(inFlightAction);
       downloadBtn.addEventListener('click', async () => {
         await session.downloadUploadedAttempt(row);
@@ -4406,7 +4522,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       });
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
-      deleteBtn.className = 'published-result-action uploaded-draft-action--danger';
+      deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
       deleteBtn.textContent = inFlightAction === 'delete' ? 'Deleting...' : 'Delete';
       deleteBtn.disabled = Boolean(inFlightAction);
       deleteBtn.addEventListener('click', async () => {
@@ -4416,7 +4532,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
         await renderRows();
       });
       rowActions.append(resumeBtn, downloadBtn, deleteBtn);
-      attemptRow.append(titleLine, meta, rowActions);
+      attemptRow.append(metaWrap, rowActions);
       list.append(attemptRow);
     });
   };
@@ -5688,9 +5804,16 @@ function renderViewerShell(session) {
       } else {
         session.clearAttemptUploadConflictPrompt();
       }
-    } else if (session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
-      session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
-      await showUploadedAttemptsManagerModal(session, { reason: 'slot_limit' });
+    }
+    if (session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
+      await session.listUploadedAttempts();
+      const slotRecovery = await showAttemptSlotFullModal(session, {
+        uploadedAttempts: session.state.uploadedAttempts,
+      });
+      if (!slotRecovery?.deleted) {
+        session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
+        await showUploadedAttemptsManagerModal(session, { reason: 'slot_limit' });
+      }
     }
     renderUI();
   });
