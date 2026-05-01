@@ -1178,14 +1178,13 @@ test('viewer start panel includes logged_out/checking/logged_in server-state ren
   assert.equal(source.includes("LOGGED_OUT: 'logged_out'"), true);
   assert.equal(source.includes("CHECKING: 'checking'"), true);
   assert.equal(source.includes("LOGGED_IN: 'logged_in'"), true);
-  assert.equal(source.includes("signInBtn.textContent = 'Log in to view published online worksheet';"), true);
-  assert.equal(source.includes('const canAccessPublished = isLoggedIn;'), true);
-  assert.equal(source.includes('publishedList.hidden = !canAccessPublished;'), true);
-  assert.equal(source.includes('signInBtn.disabled = isChecking;'), true);
+  assert.equal(source.includes("description.textContent = 'Resume attempts, import a worksheet, or load a published online version.';"), true);
+  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'attempts', title: 'Attempts' })"), true);
+  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'worksheet', title: 'Worksheets' })"), true);
+  assert.equal(source.includes("manageAttemptsBtn.textContent = isLoggedIn"), true);
+  assert.equal(source.includes("browsePublishedBtn.textContent = isLoggedIn"), true);
   assert.equal(source.includes("const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';"), true);
-  assert.equal(source.includes("loadMoreBtn.textContent = 'Load more';"), true);
-  assert.equal(source.includes("await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });"), true);
-  assert.equal(source.includes('await session.startFromPublishedPackage'), true);
+  assert.equal(source.includes("const SIGNED_OUT_MESSAGE = 'You are currently signed out. Log in to use server features.';"), true);
 });
 
 test('normalizeViewerBlock preserves correctAnswer for gradeable question types', async () => {
@@ -3066,7 +3065,47 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
   assert.equal(resumeMeta.textContent, `Attempt attempt_resume_ms · ${expected}`);
 });
 
-test('renderViewerStartPanel hides published controls when server session is logged out', { concurrency: false }, async () => {
+test('renderViewerStartPanel shows auth-aware browse CTA labels', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: '' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+
+  mod.renderViewerStartPanel(session);
+
+  const panel = appRoot.children[0];
+  const loggedOutBrowse = findNodeByText(panel, 'Log in to browse published worksheets');
+  assert.equal(Boolean(loggedOutBrowse), true);
+
+  session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' } };
+  mod.renderViewerStartPanel(session);
+  const loggedInPanel = appRoot.children[0];
+  const loggedInBrowse = findNodeByText(loggedInPanel, 'Browse published worksheets');
+  const manageBtn = findNodeByText(loggedInPanel, 'Manage server attempts');
+  assert.equal(Boolean(loggedInBrowse), true);
+  assert.equal(Boolean(manageBtn), true);
+});
+
+test('renderViewerStartPanel groups launcher actions into Attempts and Worksheets sections', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({
     document,
@@ -3094,145 +3133,20 @@ test('renderViewerStartPanel hides published controls when server session is log
   mod.renderViewerStartPanel(session);
 
   const panel = appRoot.children[0];
-  const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
-  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
-  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
-  const publishedList = findNodeByClass(panel, 'viewer-published-list');
-  const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
+  const attemptsHeader = findNodeByText(panel, 'Attempts');
+  const worksheetsHeader = findNodeByText(panel, 'Worksheets');
+  const importBtn = findNodeByText(panel, 'Import worksheet package (.zip)');
+  const manageBtn = findNodeByText(panel, 'Log in to manage server attempts');
+  const browseBtn = findNodeByText(panel, 'Log in to browse published worksheets');
+  const statusLine = findNodeByClass(panel, 'viewer-session-status');
 
-  assert.equal(signInBtn.hidden, false);
-  assert.equal(publishedHeading.hidden, true);
-  assert.equal(filterRow.hidden, true);
-  assert.equal(publishedList.hidden, true);
-  assert.equal(searchInputs.length, 3);
-  searchInputs.forEach((input) => assert.equal(input.hidden, true));
-});
-
-test('renderViewerStartPanel shows published controls only when server session is logged in', { concurrency: false }, async () => {
-  const { document, appRoot } = createFakeDom();
-  const mod = await loadViewerModule({
-    document,
-    window: {
-      location: { href: 'https://example.test/viewer/', search: '' },
-      history: { replaceState: () => {} },
-    },
-  });
-
-  const session = {
-    state: {
-      serverSession: { status: 'logged_in', user: { email: 'learner@example.test' } },
-      isLoadingPublishedPackages: false,
-      publishedHasMore: false,
-      publishedFilters: { title: '', subject: '', owner: '' },
-      publishedPackages: [],
-      serverActionMessage: '',
-    },
-    beginServerSignIn: () => {},
-    browsePublishedPackages: async () => {},
-    startFromPublishedPackage: async () => ({ ok: false }),
-    startImportedWorksheetFromPackageFile: async () => {},
-  };
-
-  mod.renderViewerStartPanel(session);
-
-  const panel = appRoot.children[0];
-  const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
-  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
-  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
-  const publishedList = findNodeByClass(panel, 'viewer-published-list');
-  const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
-
-  assert.equal(signInBtn.hidden, true);
-  assert.equal(publishedHeading.hidden, false);
-  assert.equal(filterRow.hidden, false);
-  assert.equal(publishedList.hidden, false);
-  assert.equal(searchInputs.length, 3);
-  searchInputs.forEach((input) => assert.equal(input.hidden, false));
-});
-
-test('renderViewerStartPanel treats unknown server state as not logged in for published controls', { concurrency: false }, async () => {
-  const { document, appRoot } = createFakeDom();
-  const mod = await loadViewerModule({
-    document,
-    window: {
-      location: { href: 'https://example.test/viewer/', search: '' },
-      history: { replaceState: () => {} },
-    },
-  });
-
-  const session = {
-    state: {
-      serverSession: { status: 'expired', error: 'Session expired. Please log in again.' },
-      isLoadingPublishedPackages: false,
-      publishedHasMore: false,
-      publishedFilters: { title: '', subject: '', owner: '' },
-      publishedPackages: [],
-      serverActionMessage: '',
-    },
-    beginServerSignIn: () => {},
-    browsePublishedPackages: async () => {},
-    startFromPublishedPackage: async () => ({ ok: false }),
-    startImportedWorksheetFromPackageFile: async () => {},
-  };
-
-  mod.renderViewerStartPanel(session);
-
-  const panel = appRoot.children[0];
-  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
-  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
-  const publishedList = findNodeByClass(panel, 'viewer-published-list');
-
-  assert.equal(publishedHeading.hidden, true);
-  assert.equal(filterRow.hidden, true);
-  assert.equal(publishedList.hidden, true);
-});
-
-test('renderViewerStartPanel orders controls with a dedicated server-attempt section and session status line', { concurrency: false }, async () => {
-  const { document, appRoot } = createFakeDom();
-  const mod = await loadViewerModule({
-    document,
-    window: {
-      location: { href: 'https://example.test/viewer/', search: '' },
-      history: { replaceState: () => {} },
-    },
-  });
-
-  const session = {
-    state: {
-      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
-      isLoadingPublishedPackages: false,
-      publishedHasMore: false,
-      publishedFilters: { title: '', subject: '', owner: '' },
-      publishedPackages: [],
-      serverActionMessage: '',
-    },
-    beginServerSignIn: () => {},
-    browsePublishedPackages: async () => {},
-    startFromPublishedPackage: async () => ({ ok: false }),
-    startImportedWorksheetFromPackageFile: async () => {},
-  };
-
-  mod.renderViewerStartPanel(session);
-
-  const panel = appRoot.children[0];
-  const importRow = panel.children[2];
-  const attemptHeading = panel.children[3];
-  const attemptHint = panel.children[4];
-  const attemptActionRow = panel.children[5];
-  const statusLine = panel.children[6];
-  const publishedSignInBtn = panel.children[7];
-
-  assert.equal(importRow.className, 'viewer-start-actions');
-  assert.equal(importRow.children[0].textContent, 'Import worksheet package (.zip)');
-  assert.equal(attemptHeading.className, 'viewer-start-subheading');
-  assert.equal(attemptHeading.textContent, 'Server Attempts');
-  assert.equal(attemptHint.className, 'muted viewer-start-subhint');
-  assert.equal(attemptActionRow.className, 'viewer-start-actions');
-  assert.equal(attemptActionRow.children[0].textContent, 'Log in to manage server attempts');
-  assert.equal(statusLine.className, 'muted viewer-session-status');
-  assert.equal(statusLine.textContent.includes('Server session:'), true);
-  assert.equal(publishedSignInBtn.className, 'viewer-start-btn');
-  assert.equal(publishedSignInBtn.textContent, 'Log in to view published online worksheet');
+  assert.equal(Boolean(attemptsHeader), true);
+  assert.equal(Boolean(worksheetsHeader), true);
+  assert.equal(Boolean(importBtn), true);
+  assert.equal(Boolean(manageBtn), true);
+  assert.equal(Boolean(browseBtn), true);
+  assert.equal(Boolean(statusLine), true);
+  assert.equal(statusLine.textContent.includes('signed out'), true);
 });
 
 test('renderViewerStartPanel renders one session-related message line without duplicate status text', { concurrency: false }, async () => {

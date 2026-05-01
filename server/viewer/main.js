@@ -29,6 +29,7 @@ const VIEWER_SERVER_SESSION_STATES = Object.freeze({
   LOGGED_IN: 'logged_in',
 });
 const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';
+const SIGNED_OUT_MESSAGE = 'You are currently signed out. Log in to use server features.';
 const AUTH_RETURN_PARAM = 'authReturn';
 const VIEWER_AUTH_CALLBACK_PARAM = 'authCallback';
 const AUTH_CALLBACK_RETRY_BASE_MS = 1000;
@@ -293,9 +294,24 @@ function createViewerIcon(name) {
   const icons = {
     info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
     upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
+    attempts: `<svg ${svgAttrs}><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><circle cx="4" cy="6" r="1.5"></circle><circle cx="4" cy="12" r="1.5"></circle><circle cx="4" cy="18" r="1.5"></circle></svg>`,
+    worksheet: `<svg ${svgAttrs}><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v6h6"></path></svg>`,
     print: `<svg ${svgAttrs}><path d="M6 9V4h12v5"></path><path d="M6 18h12v2H6z"></path><path d="M6 14h12"></path><path d="M6 10H4a2 2 0 0 0-2 2v4h4"></path><path d="M18 16h4v-4a2 2 0 0 0-2-2h-2"></path></svg>`,
   };
   return icons[name] || '';
+}
+
+function createViewerStartSectionHeader({ icon = 'info', title, className = '' }) {
+  const header = document.createElement('div');
+  header.className = `editor-section-header ${className}`.trim();
+  const iconWrap = document.createElement('span');
+  iconWrap.className = 'editor-section-header__icon';
+  iconWrap.setAttribute('aria-hidden', 'true');
+  iconWrap.innerHTML = createViewerIcon(icon);
+  const heading = document.createElement('h3');
+  heading.textContent = title;
+  header.append(iconWrap, heading);
+  return header;
 }
 
 function renderNotificationCard(notification, className = 'notification-toast') {
@@ -2127,6 +2143,7 @@ class ViewerAttemptSession {
       },
       publishedListError: null,
       isLoadingPublishedPackages: false,
+      serverSessionEverReady: false,
     };
 
     this.autosaveTimer = null;
@@ -3937,7 +3954,8 @@ class ViewerAttemptSession {
     if (result.status !== 'ready') {
       const message = result.error?.message || 'Sign-in is required before using server features.';
       if (isAuthSessionError(result.error)) {
-        this.transitionServerSessionToLoggedOut(SESSION_EXPIRED_MESSAGE);
+        const loggedInBefore = this.state.serverSessionEverReady === true;
+        this.transitionServerSessionToLoggedOut(loggedInBefore ? SESSION_EXPIRED_MESSAGE : SIGNED_OUT_MESSAGE);
       } else {
         this.state.serverSession = {
           status: VIEWER_SERVER_SESSION_STATES.CHECKING,
@@ -3954,6 +3972,7 @@ class ViewerAttemptSession {
       user: result.user || null,
       error: null,
     };
+    this.state.serverSessionEverReady = true;
     this.notifyStateChange();
     return result;
   }
@@ -6279,34 +6298,27 @@ function renderViewerStartPanel(session, options = {}) {
   heading.textContent = 'Start Viewer';
   const description = document.createElement('p');
   description.className = 'muted';
-  description.textContent = 'Resume local attempts, import a worksheet, or load a published online version.';
+  description.textContent = 'Resume attempts, import a worksheet, or load a published online version.';
   const resumeAttempt = options.resumeAttempt || null;
   const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
   const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
-  const importPackageBtn = document.createElement('button');
-  importPackageBtn.type = 'button';
-  importPackageBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  importPackageBtn.textContent = 'Import worksheet package (.zip)';
-
-  const importActions = document.createElement('div');
-  importActions.className = 'viewer-start-actions';
-  importActions.append(importPackageBtn);
-  const serverAttemptHeading = document.createElement('h2');
-  serverAttemptHeading.className = 'viewer-start-subheading';
-  serverAttemptHeading.textContent = 'Server Attempts';
-  const serverAttemptHint = document.createElement('p');
-  serverAttemptHint.className = 'muted viewer-start-subhint';
-  const serverAttemptActions = document.createElement('div');
-  serverAttemptActions.className = 'viewer-start-actions';
+  const attemptsSection = document.createElement('section');
+  attemptsSection.className = 'viewer-launch-section viewer-launch-section--attempts';
+  const worksheetsSection = document.createElement('section');
+  worksheetsSection.className = 'viewer-launch-section viewer-launch-section--worksheets';
   const sessionStatus = document.createElement('p');
   sessionStatus.className = 'muted viewer-session-status';
   const manageAttemptsBtn = document.createElement('button');
   manageAttemptsBtn.type = 'button';
-  manageAttemptsBtn.className = 'viewer-start-btn';
+  manageAttemptsBtn.className = 'viewer-start-btn viewer-start-btn--primary';
   manageAttemptsBtn.textContent = 'Manage server attempts';
+  const importPackageBtn = document.createElement('button');
+  importPackageBtn.type = 'button';
+  importPackageBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  importPackageBtn.textContent = 'Import worksheet package (.zip)';
   const browsePublishedBtn = document.createElement('button');
   browsePublishedBtn.type = 'button';
-  browsePublishedBtn.className = 'viewer-start-btn';
+  browsePublishedBtn.className = 'viewer-start-btn viewer-start-btn--primary';
   browsePublishedBtn.textContent = 'Browse published packages';
 
   const packageFileInput = document.createElement('input');
@@ -6355,6 +6367,16 @@ function renderViewerStartPanel(session, options = {}) {
     resumeActions.append(resumeBtn, discardBtn);
     resumeCard.append(resumeTitle, resumeMeta, resumeActions);
   }
+  const noResumeHint = document.createElement('p');
+  noResumeHint.className = 'muted viewer-start-subhint';
+  noResumeHint.textContent = 'No resumable local attempt found.';
+
+  const attemptsActions = document.createElement('div');
+  attemptsActions.className = 'viewer-start-actions';
+  attemptsActions.append(manageAttemptsBtn);
+  const worksheetActions = document.createElement('div');
+  worksheetActions.className = 'viewer-start-actions';
+  worksheetActions.append(importPackageBtn, browsePublishedBtn);
 
   importPackageBtn.addEventListener('click', () => {
     errorMessage.textContent = '';
@@ -6476,8 +6498,10 @@ function renderViewerStartPanel(session, options = {}) {
       defaultSessionMessage = `Server session: ready (${userLabel})`;
     } else if (isChecking) {
       defaultSessionMessage = 'Server session: checking…';
+    } else if (session.state.serverSession?.error === SESSION_EXPIRED_MESSAGE) {
+      defaultSessionMessage = SESSION_EXPIRED_MESSAGE;
     } else {
-      defaultSessionMessage = `Server session: logged out. ${session.state.serverSession?.error || 'Log in to browse published worksheets.'}`;
+      defaultSessionMessage = SIGNED_OUT_MESSAGE;
     }
     sessionStatus.textContent = defaultSessionMessage;
     manageAttemptsBtn.hidden = false;
@@ -6489,23 +6513,22 @@ function renderViewerStartPanel(session, options = {}) {
     browsePublishedBtn.textContent = isLoggedIn
       ? 'Browse published worksheets'
       : 'Log in to browse published worksheets';
-    serverAttemptHint.textContent = isLoggedIn
-      ? 'Open your private uploaded attempts to resume, download, or delete.'
-      : 'Sign in first, then manage your uploaded attempts or browse published packages.';
+    noResumeHint.hidden = Boolean(resumeAttempt);
   }
 
   panel.append(heading, description);
-  if (resumeAttempt) {
-    panel.append(resumeCard);
+  attemptsSection.appendChild(createViewerStartSectionHeader({ icon: 'attempts', title: 'Attempts' }));
+  if (resumeCard) {
+    attemptsSection.append(resumeCard);
+  } else {
+    attemptsSection.append(noResumeHint);
   }
-  serverAttemptActions.append(manageAttemptsBtn);
+  attemptsSection.append(attemptsActions, sessionStatus);
+  worksheetsSection.appendChild(createViewerStartSectionHeader({ icon: 'worksheet', title: 'Worksheets' }));
+  worksheetsSection.append(worksheetActions);
   panel.append(
-    importActions,
-    serverAttemptHeading,
-    serverAttemptHint,
-    serverAttemptActions,
-    browsePublishedBtn,
-    sessionStatus,
+    attemptsSection,
+    worksheetsSection,
     packageFileInput,
     errorMessage
   );
