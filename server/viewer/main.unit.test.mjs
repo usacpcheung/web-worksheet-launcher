@@ -4837,6 +4837,30 @@ test('resumeUploadedAttempt surfaces failure message through serverActionMessage
   assert.equal(session.state.serverActionMessage.includes('Unable to resume uploaded attempt.'), true);
 });
 
+test('resumeUploadedAttempt surfaces API fetch failure through serverActionMessage and notification', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      fetchUploadedAttemptArtifact: async () => ({ ok: false, error: { code: 'NOT_FOUND', message: 'artifact missing' } }),
+    },
+  });
+
+  const notifications = [];
+  session.pushNotification = (notification) => {
+    notifications.push(notification);
+    return notification;
+  };
+
+  const result = await session.resumeUploadedAttempt({ uploaded_attempt_id: 'a1' });
+  assert.equal(result.ok, false);
+  assert.equal(session.state.serverActionMessage, 'artifact missing');
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].kind, 'error');
+  assert.equal(notifications[0].text, 'artifact missing');
+});
+
 test('downloadUploadedAttempt surfaces API errors through serverActionMessage', async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
@@ -4870,7 +4894,9 @@ test('rewrite click handler surfaces blocked protected-action statuses before to
   assert.equal(source.includes("if (protectedActionResult?.status === 'redirected') {"), true);
   assert.equal(source.includes("if (protectedActionResult?.status !== 'executed') {"), true);
   assert.equal(source.includes("protectedActionResult?.status === 'blocked_session_probe'"), true);
+  assert.equal(source.includes('session.pushNotification({'), true);
   assert.equal(source.includes('session.setRewriteMessage(block.blockId, blockedMessage);'), true);
+  assert.equal(source.includes("session.state.utilityMessage = blockedMessage;"), false);
 });
 
 test('rewrite controls remain always mounted for text questions and enforce disabled states by rules', async () => {

@@ -3688,7 +3688,15 @@ class ViewerAttemptSession {
     this.notifyStateChange();
     try {
       const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
-      if (!artifact?.ok) return artifact;
+      if (!artifact?.ok) {
+        this.state.serverActionMessage = artifact?.error?.message || 'Unable to resume uploaded attempt.';
+        this.pushNotification({
+          kind: 'error',
+          text: this.state.serverActionMessage,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
+        return artifact;
+      }
       const packageModel = parseUploadedAttemptPackage(artifact.data);
       const importedAt = nowIso();
       const importedRecord = {
@@ -6107,11 +6115,15 @@ function renderViewerShell(session) {
           }
           const rewriteIntentPayload = buildViewerRewriteIntentPayloadForBlock(block);
           if (!rewriteIntentPayload) {
-            session.state.utilityMessage = 'Rewrite is available only for text-response questions.';
+            const message = 'Rewrite is available only for text-response questions.';
+            session.pushNotification({
+              kind: 'warn',
+              text: message,
+              ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+            });
             renderUI();
             return;
           }
-          session.state.utilityMessage = null;
           const protectedActionResult = await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);
           if (protectedActionResult?.status === 'redirected') {
             return;
@@ -6128,7 +6140,11 @@ function renderViewerShell(session) {
             } else if (protectedActionResult?.status === 'blocked_no_local_id') {
               blockedMessage = 'Rewrite could not start because no active local attempt was found.';
             }
-            session.state.utilityMessage = blockedMessage;
+            session.pushNotification({
+              kind: 'warn',
+              text: blockedMessage,
+              ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+            });
             session.setRewriteMessage(block.blockId, blockedMessage);
             renderUI();
             return;
