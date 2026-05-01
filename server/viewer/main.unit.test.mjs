@@ -3502,9 +3502,227 @@ test('viewer source preserves non-not-found published package failures during bo
 
   assert.equal(source.includes("const errorCode = String(result?.error?.code || '').trim().toUpperCase();"), true);
   assert.equal(source.includes("if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND')"), true);
-  assert.equal(source.includes('userMessage: result?.error?.requiresSignIn'), true);
-  assert.equal(source.includes('VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED'), true);
+  assert.equal(source.includes('VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_AUTH_REQUIRED'), true);
+  assert.equal(source.includes("recoveryKind: 'published_package_auth'"), true);
   assert.equal(source.includes('throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {'), true);
+});
+
+test('bootstrapViewer renders sign-in recovery for direct published package auth failures', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: {
+        href: 'https://example.test/viewer/?publishedPackageId=pkg_1',
+        search: '?publishedPackageId=pkg_1',
+      },
+      history: { replaceState: () => {} },
+      open: () => ({ closed: false }),
+    },
+    renderViewerShell: () => {
+      throw new Error('should not render shell');
+    },
+    createServerApiClient: () => ({
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({
+        ok: false,
+        error: {
+          code: 'AUTH_REQUIRED',
+          message: 'Sign in for server features, then retry this action.',
+          requiresSignIn: true,
+          status: 401,
+        },
+      }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+      fetchPublishedPackageArtifact: async () => {
+        throw new Error('should not fetch artifact before sign-in');
+      },
+    }),
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null, put: async (value) => value },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+
+  const panel = appRoot.children[0];
+  assert.equal(String(panel.className).includes('viewer-fatal-panel--recoverable-auth'), true);
+  assert.ok(findNodeByText(panel, 'Sign in to open this worksheet'));
+  assert.ok(findNodeByText(panel, 'Sign in and open worksheet'));
+  assert.ok(findNodeByText(panel, 'Go to start screen'));
+});
+
+test('direct published package sign-in recovery retries same package and renders viewer', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  let signedIn = false;
+  let fetchedPackageId = null;
+  let renderedSession = null;
+  let replacedUrl = '';
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: {
+        href: 'https://example.test/viewer/?publishedPackageId=pkg_42',
+        search: '?publishedPackageId=pkg_42',
+        origin: 'https://example.test',
+      },
+      history: {
+        replaceState: (_state, _title, url) => {
+          replacedUrl = String(url);
+        },
+      },
+      open: () => {
+        signedIn = true;
+        return { closed: false };
+      },
+    },
+    renderViewerShell: (session) => {
+      renderedSession = session;
+    },
+    createServerApiClient: () => ({
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => signedIn
+        ? { ok: true, data: { user: { email: 'learner@example.test' } } }
+        : {
+            ok: false,
+            error: {
+              code: 'AUTH_REQUIRED',
+              message: 'Sign in for server features, then retry this action.',
+              requiresSignIn: true,
+              status: 401,
+            },
+          },
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+      fetchPublishedPackageArtifact: async (publishedPackageId) => {
+        fetchedPackageId = publishedPackageId;
+        return { ok: true, data: new Uint8Array([1, 2, 3]) };
+      },
+    }),
+    parseWorksheetPackage: () => ({
+      worksheet: {
+        worksheetId: 'ws_42',
+        snapshotId: 'snap_42',
+        title: 'Published worksheet',
+        blocks: [
+          { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} },
+        ],
+      },
+    }),
+    viewerStorage: {
+      attempts: {
+        get: async () => null,
+        put: async (value) => value,
+      },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null, put: async (value) => value },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+  const signInBtn = findNodeByText(appRoot.children[0], 'Sign in and open worksheet');
+  assert.ok(signInBtn);
+
+  await signInBtn.dispatch('click');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(fetchedPackageId, 'pkg_42');
+  assert.ok(renderedSession);
+  assert.equal(renderedSession.state.viewerPayload.title, 'Published worksheet');
+  assert.ok(renderedSession.state.localAttemptId);
+  assert.equal(replacedUrl.includes(`localAttemptId=${renderedSession.state.localAttemptId}`), true);
+});
+
+test('direct published package sign-in recovery keeps popup-blocked failures retryable', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: {
+        href: 'https://example.test/viewer/?publishedPackageId=pkg_blocked',
+        search: '?publishedPackageId=pkg_blocked',
+        origin: 'https://example.test',
+      },
+      history: { replaceState: () => {} },
+      open: () => null,
+    },
+    createServerApiClient: () => ({
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({
+        ok: false,
+        error: {
+          code: 'AUTH_REQUIRED',
+          message: 'Sign in for server features, then retry this action.',
+          requiresSignIn: true,
+          status: 401,
+        },
+      }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+      fetchPublishedPackageArtifact: async () => ({ ok: false, error: { message: 'should not fetch' } }),
+    }),
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null, put: async (value) => value },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+  const signInBtn = findNodeByText(appRoot.children[0], 'Sign in and open worksheet');
+  await signInBtn.dispatch('click');
+
+  const panel = appRoot.children[appRoot.children.length - 1];
+  assert.ok(findNodeByText(panel, 'Sign in and open worksheet'));
+  assert.ok(findNodeByText(panel, 'Sign-in popup was blocked. Allow popups for this site, then try again.'));
+});
+
+test('direct published package not-found still renders fatal panel', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: {
+        href: 'https://example.test/viewer/?publishedPackageId=pkg_missing',
+        search: '?publishedPackageId=pkg_missing',
+      },
+      history: { replaceState: () => {} },
+    },
+    createServerApiClient: () => ({
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+      fetchPublishedPackageArtifact: async () => ({
+        ok: false,
+        error: {
+          code: 'PUBLISHED_PACKAGE_NOT_FOUND',
+          message: 'Package missing.',
+        },
+      }),
+    }),
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null, put: async (value) => value },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await assert.rejects(
+    () => mod.bootstrapViewer(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND
+  );
+  mod.renderViewerFatalError(new mod.ViewerBootError(mod.VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
+    userMessage: 'The requested published package was not found.',
+    technicalMessage: 'Package missing.',
+  }));
+
+  const panel = appRoot.children[appRoot.children.length - 1];
+  assert.equal(panel.className, 'viewer-fatal-panel');
+  assert.ok(findNodeByText(panel, 'Unable to open worksheet viewer'));
 });
 
 

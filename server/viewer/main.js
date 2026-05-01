@@ -54,6 +54,7 @@ const VIEWER_BOOT_ERROR_CODES = Object.freeze({
   LOCAL_DRAFT_NOT_FOUND: 'LOCAL_DRAFT_NOT_FOUND',
   IMPORTED_WORKSHEET_NOT_FOUND: 'IMPORTED_WORKSHEET_NOT_FOUND',
   PUBLISHED_PACKAGE_NOT_FOUND: 'PUBLISHED_PACKAGE_NOT_FOUND',
+  PUBLISHED_PACKAGE_AUTH_REQUIRED: 'PUBLISHED_PACKAGE_AUTH_REQUIRED',
   INVALID_VIEWER_PAYLOAD: 'INVALID_VIEWER_PAYLOAD',
   VIEWER_BOOT_FAILED: 'VIEWER_BOOT_FAILED',
 });
@@ -65,6 +66,9 @@ class ViewerBootError extends Error {
     this.code = code;
     this.userMessage = options.userMessage || 'Viewer could not be started.';
     this.technicalMessage = options.technicalMessage || this.message;
+    this.requiresSignIn = options.requiresSignIn === true;
+    this.recoveryKind = options.recoveryKind || null;
+    this.publishedPackageId = options.publishedPackageId || null;
     this.recoveryActions = Array.isArray(options.recoveryActions)
       ? options.recoveryActions
       : [
@@ -85,6 +89,15 @@ function asViewerBootError(error) {
     technicalMessage: error?.message || 'Unknown boot error',
     cause: error,
   });
+}
+
+function isPublishedPackageAuthBootError(error) {
+  return Boolean(
+    error instanceof ViewerBootError
+    && error.code === VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_AUTH_REQUIRED
+    && error.recoveryKind === 'published_package_auth'
+    && error.publishedPackageId
+  );
 }
 
 function parseLaunchParamJson(params, key, parseErrorCode) {
@@ -2498,10 +2511,17 @@ class ViewerAttemptSession {
             technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
           });
         }
+        if (result?.error?.requiresSignIn) {
+          throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_AUTH_REQUIRED, {
+            userMessage: 'Sign in to open this worksheet.',
+            technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+            requiresSignIn: true,
+            recoveryKind: 'published_package_auth',
+            publishedPackageId,
+          });
+        }
         throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
-          userMessage: result?.error?.requiresSignIn
-            ? 'Sign in is required to open this published package, then retry the link.'
-            : 'The requested published package could not be opened right now.',
+          userMessage: 'The requested published package could not be opened right now.',
           technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
         });
       }
@@ -6560,6 +6580,68 @@ function renderViewerFatalError(error) {
   app.append(panel);
 }
 
+function renderPublishedPackageAuthRecoveryPanel(session, options = {}) {
+  if (!app || !bottomBarRoot) {
+    return;
+  }
+  const bootError = asViewerBootError(options.error);
+  const panel = document.createElement('section');
+  panel.className = 'viewer-fatal-panel viewer-fatal-panel--recoverable-auth';
+
+  const heading = document.createElement('h1');
+  heading.textContent = 'Sign in to open this worksheet';
+
+  const message = document.createElement('p');
+  message.className = 'viewer-fatal-panel__message';
+  message.textContent = 'This published worksheet is available after sign-in.';
+
+  const status = document.createElement('p');
+  status.className = 'viewer-start-error';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.textContent = options.statusText || '';
+
+  const actions = document.createElement('div');
+  actions.className = 'viewer-start-actions';
+
+  const signInBtn = document.createElement('button');
+  signInBtn.type = 'button';
+  signInBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  signInBtn.textContent = 'Sign in and open worksheet';
+  signInBtn.disabled = options.primaryDisabled === true;
+  signInBtn.addEventListener('click', async () => {
+    if (typeof options.onSignInAndOpen === 'function') {
+      await options.onSignInAndOpen();
+    }
+  });
+
+  const startPanelBtn = document.createElement('button');
+  startPanelBtn.type = 'button';
+  startPanelBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
+  startPanelBtn.textContent = 'Go to start screen';
+  startPanelBtn.disabled = options.secondaryDisabled === true;
+  startPanelBtn.addEventListener('click', async () => {
+    if (typeof options.onGoToStart === 'function') {
+      await options.onGoToStart();
+    }
+  });
+
+  actions.append(signInBtn, startPanelBtn);
+
+  const details = document.createElement('details');
+  details.className = 'viewer-fatal-panel__details';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Technical details';
+  const detailBody = document.createElement('pre');
+  detailBody.textContent = `${bootError.code}: ${bootError.technicalMessage}`;
+  details.append(summary, detailBody);
+
+  panel.append(heading, message, status, actions, details);
+  app.innerHTML = '';
+  bottomBarRoot.innerHTML = '';
+  app.append(panel);
+}
+
 function renderViewerStartPanel(session, options = {}) {
   if (!app || !bottomBarRoot) {
     return;
@@ -6950,6 +7032,100 @@ async function bootstrapViewer() {
     });
   };
 
+  const completePublishedPackageOpen = () => {
+    if (session.state.localAttemptId && window?.history?.replaceState && window?.location?.href) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+      window.history.replaceState({}, '', nextUrl);
+    }
+    renderViewerShell(session);
+    window.viewerSession = session;
+  };
+
+  const handlePublishedPackageOpenResult = async (publishedPackageId, result, originalError) => {
+    if (result?.ok) {
+      completePublishedPackageOpen();
+      return true;
+    }
+
+    const errorCode = String(result?.error?.code || '').trim().toUpperCase();
+    if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND') {
+      renderViewerFatalError(new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
+        userMessage: 'The requested published package was not found.',
+        technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+      }));
+      return true;
+    }
+
+    if (!result?.error?.requiresSignIn) {
+      renderViewerFatalError(new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
+        userMessage: 'The requested published package could not be opened right now.',
+        technicalMessage: result?.error?.message || originalError?.technicalMessage || `Unable to open publishedPackageId=${publishedPackageId}.`,
+      }));
+      return true;
+    }
+
+    return false;
+  };
+
+  const renderPublishedPackageAuthRecovery = (error, state = {}) => {
+    const publishedPackageId = error?.publishedPackageId || new URLSearchParams(window.location.search).get('publishedPackageId') || '';
+    const renderState = {
+      statusText: state.statusText || '',
+      inFlight: state.inFlight === true,
+    };
+    renderPublishedPackageAuthRecoveryPanel(session, {
+      error,
+      statusText: renderState.statusText,
+      primaryDisabled: renderState.inFlight,
+      secondaryDisabled: renderState.inFlight,
+      onSignInAndOpen: async () => {
+        let popupBlockedHandled = false;
+        const updatePanel = (statusText, inFlight = true) => {
+          renderPublishedPackageAuthRecovery(error, { statusText, inFlight });
+        };
+        updatePanel('Opening sign-in...', true);
+        session.beginServerSignIn({
+          onPopupBlocked: ({ finalizeFlow }) => {
+            popupBlockedHandled = true;
+            finalizeFlow();
+            updatePanel('Sign-in popup was blocked. Allow popups for this site, then try again.', false);
+          },
+          onStatusMessage: ({ message }) => {
+            updatePanel(message || 'Waiting for sign-in confirmation...', true);
+          },
+          onSessionReady: async ({ finalizeFlow }) => {
+            try {
+              updatePanel('Sign-in completed. Opening worksheet...', true);
+              finalizeFlow();
+              const result = await session.startFromPublishedPackage(publishedPackageId);
+              const handled = await handlePublishedPackageOpenResult(publishedPackageId, result, error);
+              if (!handled) {
+                updatePanel('Sign-in is still required. Please try again.', false);
+              }
+            } catch (retryError) {
+              renderViewerFatalError(retryError);
+            }
+          },
+          onSessionNotReady: ({ result, finalizeFlow }) => {
+            if (result?.final === false && result?.waitingForCallback === true) {
+              updatePanel('Still waiting for sign-in confirmation from the popup...', true);
+              return;
+            }
+            finalizeFlow();
+            updatePanel(result?.error?.message || 'Sign-in did not complete. Try again to open this worksheet.', false);
+          },
+        });
+        if (!session._authPopupWindow && !popupBlockedHandled) {
+          updatePanel(session.state.serverActionMessage || 'Unable to open sign-in popup. Please try again.', false);
+        }
+      },
+      onGoToStart: async () => {
+        await renderStartPanelFromResumeFlag(null);
+      },
+    });
+  };
+
   const params = new URLSearchParams(window.location.search);
   const hasAuthReturn = params.get(AUTH_RETURN_PARAM) === '1';
   const hasAuthCallback = params.get(VIEWER_AUTH_CALLBACK_PARAM) === '1';
@@ -7145,30 +7321,38 @@ async function bootstrapViewer() {
     return;
   }
 
-  const hasRealContentIntent = hasViewerLaunchIntent(params);
+  try {
+    const hasRealContentIntent = hasViewerLaunchIntent(params);
 
-  if (hasAuthReturn) {
-    const restoreResult = await authGate.restoreAfterAuthReturn();
-    if (session.state.viewerPayload) {
-      renderViewerShell(session);
-      window.viewerSession = session;
-      return;
-    }
+    if (hasAuthReturn) {
+      const restoreResult = await authGate.restoreAfterAuthReturn();
+      if (session.state.viewerPayload) {
+        renderViewerShell(session);
+        window.viewerSession = session;
+        return;
+      }
 
-    if (!hasRealContentIntent) {
-      session.setRecoveryMessage(
-        session.state.recoveryMessage
-        || 'We could not restore your previous auth-return session. Reopen a valid worksheet link or import worksheet JSON again.'
-      );
-      renderViewerStartPanel(session, { warningMessage: session.state.recoveryMessage });
-      return;
-    }
+      if (!hasRealContentIntent) {
+        session.setRecoveryMessage(
+          session.state.recoveryMessage
+          || 'We could not restore your previous auth-return session. Reopen a valid worksheet link or import worksheet JSON again.'
+        );
+        renderViewerStartPanel(session, { warningMessage: session.state.recoveryMessage });
+        return;
+      }
 
-    if (restoreResult.status === 'no_pending_intent' || !session.state.viewerPayload) {
+      if (restoreResult.status === 'no_pending_intent' || !session.state.viewerPayload) {
+        await session.bootstrap();
+      }
+    } else {
       await session.bootstrap();
     }
-  } else {
-    await session.bootstrap();
+  } catch (error) {
+    if (isPublishedPackageAuthBootError(error)) {
+      renderPublishedPackageAuthRecovery(error);
+      return;
+    }
+    throw error;
   }
 
   renderViewerShell(session);
