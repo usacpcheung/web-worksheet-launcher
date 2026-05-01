@@ -37,6 +37,9 @@ const AUTH_CALLBACK_RETRY_BUDGET_MS = 60000;
 const ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE = 'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.';
 const ATTEMPT_UPLOAD_CONFLICT_MESSAGE = 'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.';
 const UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION = 'Open Manage server attempts to free slots or review existing uploads.';
+const VIEWER_NOTIFICATION_DEFAULT_TTL_MS = 5000;
+const VIEWER_NOTIFICATION_ERROR_TTL_MS = 8000;
+const VIEWER_NOTIFICATION_UPLOAD_SOURCE = 'attempt.upload';
 let activeViewerShellAbortController = null;
 
 
@@ -283,6 +286,60 @@ function normalizeUploadedAttemptRows(list) {
         : null,
     }))
     .filter((row) => typeof row.uploaded_attempt_id === 'string' && row.uploaded_attempt_id);
+}
+
+function createViewerIcon(name) {
+  const svgAttrs = 'class="viewer-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
+  const icons = {
+    info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
+    upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
+    print: `<svg ${svgAttrs}><path d="M6 9V4h12v5"></path><path d="M6 18h12v2H6z"></path><path d="M6 14h12"></path><path d="M6 10H4a2 2 0 0 0-2 2v4h4"></path><path d="M18 16h4v-4a2 2 0 0 0-2-2h-2"></path></svg>`,
+  };
+  return icons[name] || '';
+}
+
+function renderNotificationCard(notification, className = 'notification-toast') {
+  const kind = String(notification?.kind || 'info').toLowerCase();
+  const card = document.createElement('article');
+  card.className = `${className} ${className}--${kind}`;
+  card.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  card.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
+
+  const text = document.createElement('div');
+  text.className = `${className}__text`;
+  text.textContent = String(notification?.text || '');
+  card.appendChild(text);
+  return card;
+}
+
+function ensureViewerToastContainer() {
+  const host = document.body || document.getElementById('app') || document.documentElement;
+  if (!host || typeof host.querySelector !== 'function') {
+    return null;
+  }
+  const existing = host.querySelector('.notification-toast-container.viewer-toast-container');
+  if (existing) return existing;
+  const container = document.createElement('div');
+  container.className = 'notification-toast-container viewer-toast-container';
+  host.appendChild(container);
+  return container;
+}
+
+function renderViewerNotifications(session) {
+  const container = ensureViewerToastContainer();
+  if (!container) return;
+  session.pruneExpiredNotifications();
+  const notifications = Array.isArray(session.state.notifications)
+    ? session.state.notifications.slice(-4)
+    : [];
+  container.innerHTML = '';
+  notifications.forEach((notification) => {
+    container.appendChild(renderNotificationCard(notification, 'notification-toast'));
+  });
+}
+
+function getViewerOverlayHost() {
+  return document.body || document.getElementById('app') || document.documentElement || null;
 }
 
 function parseUploadedAttemptPackage(zipBytes) {
@@ -2037,6 +2094,7 @@ class ViewerAttemptSession {
       recoveryMessage: null,
       checkResult: null,
       utilityMessage: null,
+      notifications: [],
       undoBuffer: {},
       isRewriting: false,
       rewritingBlockId: null,
@@ -2056,7 +2114,6 @@ class ViewerAttemptSession {
       uploadedAttemptSlotLimit: null,
       isLoadingUploadedAttempts: false,
       uploadedAttemptsError: null,
-      isManagingUploadedAttempts: false,
       uploadedAttemptActionInFlightById: {},
       publishedPackages: [],
       publishedHasMore: false,
@@ -2083,6 +2140,7 @@ class ViewerAttemptSession {
     this._activeAuthFlowId = null;
     this._authAutoLoadInFlightByFlowId = new Set();
     this._openingPublishedPackageIds = new Set();
+    this._notificationPruneTimer = null;
   }
 
   setOnStateChange(handler) {
@@ -2093,6 +2151,98 @@ class ViewerAttemptSession {
     if (typeof this.onStateChange === 'function') {
       this.onStateChange(this.state);
     }
+  }
+
+  normalizeNotificationKind(kind) {
+    const normalized = String(kind || '').toLowerCase();
+    if (normalized === 'success' || normalized === 'info' || normalized === 'warn' || normalized === 'error') {
+      return normalized;
+    }
+    return 'info';
+  }
+
+  pruneExpiredNotifications() {
+    const now = Date.now();
+    const current = Array.isArray(this.state.notifications) ? this.state.notifications : [];
+    const filtered = current.filter((item) => !Number.isFinite(item?.expiresAt) || item.expiresAt > now);
+    if (filtered.length !== current.length) {
+      this.state.notifications = filtered;
+    }
+    return this.state.notifications;
+  }
+
+  scheduleNotificationPrune() {
+    if (this._notificationPruneTimer) {
+      clearTimeout(this._notificationPruneTimer);
+      this._notificationPruneTimer = null;
+    }
+    const current = Array.isArray(this.state.notifications) ? this.state.notifications : [];
+    const now = Date.now();
+    let nextExpiry = Infinity;
+    current.forEach((item) => {
+      if (Number.isFinite(item?.expiresAt) && item.expiresAt > now) {
+        nextExpiry = Math.min(nextExpiry, item.expiresAt);
+      }
+    });
+    if (!Number.isFinite(nextExpiry)) {
+      return;
+    }
+    const delayMs = Math.max(0, nextExpiry - now + 20);
+    this._notificationPruneTimer = setTimeout(() => {
+      this._notificationPruneTimer = null;
+      const before = Array.isArray(this.state.notifications) ? this.state.notifications.length : 0;
+      this.pruneExpiredNotifications();
+      const after = Array.isArray(this.state.notifications) ? this.state.notifications.length : 0;
+      if (before !== after) {
+        this.notifyStateChange();
+      }
+      this.scheduleNotificationPrune();
+    }, delayMs);
+  }
+
+  clearNotificationsBySource(source) {
+    if (!source) return;
+    const current = Array.isArray(this.state.notifications) ? this.state.notifications : [];
+    const filtered = current.filter((item) => item?.source !== source);
+    if (filtered.length !== current.length) {
+      this.state.notifications = filtered;
+      this.scheduleNotificationPrune();
+      this.notifyStateChange();
+    }
+  }
+
+  pushNotification(notification = {}) {
+    const text = typeof notification?.text === 'string' ? notification.text.trim() : '';
+    if (!text) return null;
+    this.pruneExpiredNotifications();
+    const ttlMsRaw = Number(notification?.ttlMs);
+    const ttlMs = Number.isFinite(ttlMsRaw) && ttlMsRaw > 0 ? ttlMsRaw : 0;
+    const createdAt = Date.now();
+    const entry = {
+      id: createLocalId('viewer_notice'),
+      text,
+      kind: this.normalizeNotificationKind(notification?.kind),
+      source: typeof notification?.source === 'string' && notification.source
+        ? notification.source
+        : null,
+      createdAt,
+      expiresAt: ttlMs > 0 ? createdAt + ttlMs : null,
+    };
+    this.state.notifications = [...(Array.isArray(this.state.notifications) ? this.state.notifications : []), entry];
+    this.scheduleNotificationPrune();
+    this.notifyStateChange();
+    return entry;
+  }
+
+  setNotificationForSource(source, notification = {}) {
+    if (!source) return null;
+    const current = Array.isArray(this.state.notifications) ? this.state.notifications : [];
+    const filtered = current.filter((item) => item?.source !== source);
+    this.state.notifications = filtered;
+    return this.pushNotification({
+      ...notification,
+      source,
+    });
   }
 
   finalizeActiveAudio(reason = 'interrupted') {
@@ -2991,23 +3141,35 @@ class ViewerAttemptSession {
   async uploadCurrentAttemptPackage(intentPayload = {}, options = {}) {
     if (!this.state.localAttemptId || !this.state.viewerPayload) {
       const message = 'No active local attempt is available for upload.';
-      this.state.utilityMessage = message;
       this.state.serverActionMessage = message;
+      this.pushNotification({
+        kind: 'warn',
+        text: message,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
       this.notifyStateChange();
       return { ok: false, status: 'no_active_attempt', error: { message } };
     }
     if (this.state.isUploadingAttemptPackage) {
       const message = 'Upload already in progress.';
-      this.state.utilityMessage = message;
       this.state.serverActionMessage = message;
+      this.pushNotification({
+        kind: 'info',
+        text: message,
+        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      });
       this.notifyStateChange();
       return { ok: false, status: 'upload_in_progress', error: { message } };
     }
     const intentAttemptId = typeof intentPayload?.localAttemptId === 'string' ? intentPayload.localAttemptId : null;
     if (intentAttemptId && intentAttemptId !== this.state.localAttemptId) {
       const message = 'Attempt upload target is stale. Please retry from the current attempt.';
-      this.state.utilityMessage = message;
       this.state.serverActionMessage = message;
+      this.pushNotification({
+        kind: 'warn',
+        text: message,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
       this.notifyStateChange();
       return { ok: false, status: 'stale_intent', error: { message } };
     }
@@ -3016,8 +3178,11 @@ class ViewerAttemptSession {
     this.state.uploadAttemptConflictContext = null;
     this.state.uploadAttemptRecoveryHint = null;
     this.state.uploadAttemptProgress = { loaded: 0, total: 0, lengthComputable: false };
-    this.state.utilityMessage = 'Preparing upload...';
-    this.state.serverActionMessage = this.state.utilityMessage;
+    this.state.serverActionMessage = 'Preparing upload...';
+    this.setNotificationForSource(VIEWER_NOTIFICATION_UPLOAD_SOURCE, {
+      kind: 'info',
+      text: 'Preparing upload...',
+    });
     this.notifyStateChange();
 
     try {
@@ -3037,8 +3202,11 @@ class ViewerAttemptSession {
             lengthComputable: Boolean(progress?.lengthComputable),
           };
           const progressMessage = formatUploadProgressText(this.state.uploadAttemptProgress);
-          this.state.utilityMessage = progressMessage;
           this.state.serverActionMessage = progressMessage;
+          this.setNotificationForSource(VIEWER_NOTIFICATION_UPLOAD_SOURCE, {
+            kind: 'info',
+            text: progressMessage,
+          });
           this.notifyStateChange();
         },
       });
@@ -3051,6 +3219,7 @@ class ViewerAttemptSession {
           this.state.uploadAttemptConflictContext = {
             title: uploadTitle,
             subject: uploadSubject,
+            existingAttempt: uploadResult?.error?.details?.existingAttempt || null,
           };
         } else if (errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED') {
           message = formatAttemptSlotLimitMessage(uploadResult?.error?.details?.slotLimit);
@@ -3066,27 +3235,43 @@ class ViewerAttemptSession {
         } else if (errorCode === 'NETWORK_ERROR') {
           message = ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE;
         }
-        this.state.utilityMessage = message;
+        this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
         this.state.serverActionMessage = message;
+        this.pushNotification({
+          kind: errorCode === 'ATTEMPT_NAME_CONFLICT' || errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED' ? 'warn' : 'error',
+          text: message,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
         this.notifyStateChange();
         return uploadResult;
       }
 
-      this.state.utilityMessage = 'Attempt saved to server.';
-      this.state.serverActionMessage = this.state.utilityMessage;
+      this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
+      this.state.serverActionMessage = 'Attempt saved to server.';
       this.state.uploadAttemptConflictContext = null;
       this.state.uploadAttemptRecoveryHint = null;
+      this.pushNotification({
+        kind: 'success',
+        text: 'Attempt saved to server.',
+        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      });
       this.notifyStateChange();
       return uploadResult;
     } catch (error) {
       console.error('[viewer] Attempt package upload failed unexpectedly.', error);
-      this.state.utilityMessage = ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE;
-      this.state.serverActionMessage = this.state.utilityMessage;
+      this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
+      this.state.serverActionMessage = ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE;
+      this.pushNotification({
+        kind: 'error',
+        text: ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
       this.notifyStateChange();
       return { ok: false, status: 'upload_failed_unexpected', error: { code: 'NETWORK_ERROR', message: ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE } };
     } finally {
       this.state.isUploadingAttemptPackage = false;
       this.state.uploadAttemptProgress = null;
+      this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
       this.notifyStateChange();
     }
   }
@@ -3151,8 +3336,22 @@ class ViewerAttemptSession {
     this.notifyStateChange();
     try {
       const result = await this.apiClient.deleteUploadedAttempt(uploadedAttemptId);
-      if (!result?.ok) return result;
+      if (!result?.ok) {
+        this.state.serverActionMessage = result?.error?.message || 'Failed to delete uploaded attempt.';
+        this.pushNotification({
+          kind: 'error',
+          text: this.state.serverActionMessage,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
+        return result;
+      }
       await this.listUploadedAttempts();
+      this.state.serverActionMessage = 'Uploaded attempt deleted from server.';
+      this.pushNotification({
+        kind: 'success',
+        text: 'Uploaded attempt deleted from server.',
+        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      });
       return result;
     } finally {
       const next = { ...this.state.uploadedAttemptActionInFlightById };
@@ -3174,12 +3373,22 @@ class ViewerAttemptSession {
       const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
       if (!artifact?.ok) {
         this.state.serverActionMessage = artifact?.error?.message || 'Unable to download uploaded attempt.';
+        this.pushNotification({
+          kind: 'error',
+          text: this.state.serverActionMessage,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
         return artifact;
       }
       const bytes = ensureUint8Array(artifact?.data);
       if (!bytes) {
         const result = { ok: false, error: { code: 'INVALID_ARTIFACT', message: 'Uploaded attempt artifact is empty.' } };
         this.state.serverActionMessage = result.error.message;
+        this.pushNotification({
+          kind: 'error',
+          text: this.state.serverActionMessage,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
         return result;
       }
       const blob = new Blob([bytes], { type: 'application/zip' });
@@ -3194,6 +3403,11 @@ class ViewerAttemptSession {
         URL.revokeObjectURL(url);
       }, 1000);
       this.state.serverActionMessage = `Downloaded uploaded attempt "${uploadedAttemptRow?.title || uploadedAttemptId}".`;
+      this.pushNotification({
+        kind: 'success',
+        text: this.state.serverActionMessage,
+        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      });
       return { ok: true };
     } finally {
       const next = { ...this.state.uploadedAttemptActionInFlightById };
@@ -3323,11 +3537,22 @@ class ViewerAttemptSession {
       await this.storage.attempts.put(restoredAttemptRecord);
       this.applyAttemptState(restoredAttemptRecord, { markDirty: false });
       this.state.checkResult = checkResult;
+      this.state.serverActionMessage = `Restored uploaded attempt as local attempt ${restoredLocalAttemptId}.`;
+      this.pushNotification({
+        kind: 'success',
+        text: 'Restored uploaded attempt as a new local attempt.',
+        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      });
       this.persistResumeMetadata();
       return { ok: true, data: { localAttemptId: restoredLocalAttemptId } };
     } catch (error) {
       this.state.utilityMessage = `Unable to resume uploaded attempt. ${error?.message || String(error)}`;
       this.state.serverActionMessage = this.state.utilityMessage;
+      this.pushNotification({
+        kind: 'error',
+        text: this.state.utilityMessage,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
       this.notifyStateChange();
       return { ok: false, error: { code: 'UPLOAD_ATTEMPT_RESTORE_FAILED', message: this.state.utilityMessage } };
     } finally {
@@ -3876,6 +4101,339 @@ class ViewerAttemptSession {
   }
 }
 
+function showAttemptUploadConflictModal(conflictContext = {}) {
+  return new Promise((resolve) => {
+    const host = getViewerOverlayHost();
+    if (!host) {
+      resolve('cancel');
+      return;
+    }
+    const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay';
+    const dialog = document.createElement('section');
+    dialog.className = 'confirm-modal';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    heading.textContent = 'Uploaded attempt already exists';
+    const description = document.createElement('p');
+    description.className = 'confirm-modal__description';
+    description.textContent = `An uploaded attempt named "${conflictContext?.title || 'Untitled'}" already exists for this subject.`;
+    const details = document.createElement('div');
+    details.className = 'muted uploaded-draft-details-body';
+    const subjectLine = document.createElement('div');
+    subjectLine.textContent = `Subject: ${conflictContext?.subject || '-'}`;
+    const statusLine = document.createElement('div');
+    statusLine.textContent = `Status: ${conflictContext?.existingAttempt?.status || 'unknown'}`;
+    details.append(subjectLine, statusLine);
+    const warning = document.createElement('p');
+    warning.className = 'confirm-modal__warning';
+    warning.textContent = 'Your local attempt will not be changed. This only affects the uploaded server copy.';
+
+    const actions = document.createElement('div');
+    actions.className = 'confirm-modal__actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'confirm-modal__btn';
+    cancelBtn.textContent = 'Cancel';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'confirm-modal__btn';
+    copyBtn.textContent = 'Save as copy';
+    const replaceBtn = document.createElement('button');
+    replaceBtn.type = 'button';
+    replaceBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+    replaceBtn.textContent = 'Replace server attempt';
+    actions.append(cancelBtn, copyBtn, replaceBtn);
+    dialog.append(heading, description, details, warning, actions);
+    overlay.append(dialog);
+    host.appendChild(overlay);
+
+    let settled = false;
+    const finish = (action) => {
+      if (settled) return;
+      settled = true;
+      overlay.remove();
+      if (previousActive && typeof previousActive.focus === 'function') {
+        previousActive.focus();
+      }
+      resolve(action);
+    };
+    cancelBtn.addEventListener('click', () => finish('cancel'));
+    copyBtn.addEventListener('click', () => finish('copy'));
+    replaceBtn.addEventListener('click', () => finish('replace'));
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish('cancel');
+      }
+    });
+    cancelBtn.focus();
+  });
+}
+
+function showDeleteUploadedAttemptModal(row) {
+  return new Promise((resolve) => {
+    const host = getViewerOverlayHost();
+    if (!host) {
+      resolve(false);
+      return;
+    }
+    const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay';
+    const dialog = document.createElement('section');
+    dialog.className = 'confirm-modal';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    heading.textContent = 'Delete uploaded attempt?';
+    const description = document.createElement('p');
+    description.className = 'confirm-modal__description';
+    description.textContent = `Delete "${row?.title || 'Untitled'}" from server storage?`;
+    const warning = document.createElement('p');
+    warning.className = 'confirm-modal__warning';
+    warning.textContent = 'This only deletes the uploaded server copy. Your local attempts remain unchanged.';
+    const actions = document.createElement('div');
+    actions.className = 'confirm-modal__actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'confirm-modal__btn';
+    cancelBtn.textContent = 'Cancel';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+    deleteBtn.textContent = 'Delete';
+    actions.append(cancelBtn, deleteBtn);
+    dialog.append(heading, description, warning, actions);
+    overlay.append(dialog);
+    host.appendChild(overlay);
+
+    let settled = false;
+    const finish = (confirmed) => {
+      if (settled) return;
+      settled = true;
+      overlay.remove();
+      if (previousActive && typeof previousActive.focus === 'function') {
+        previousActive.focus();
+      }
+      resolve(Boolean(confirmed));
+    };
+    cancelBtn.addEventListener('click', () => finish(false));
+    deleteBtn.addEventListener('click', () => finish(true));
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    cancelBtn.focus();
+  });
+}
+
+async function showUploadedAttemptsManagerModal(session, options = {}) {
+  const host = getViewerOverlayHost();
+  if (!host) return;
+  const onResumeSuccess = typeof options.onResumeSuccess === 'function'
+    ? options.onResumeSuccess
+    : null;
+  const recommendSlotRecovery = options.reason === 'slot_limit';
+  const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-modal-overlay';
+  const dialog = document.createElement('section');
+  dialog.className = 'confirm-modal browse-modal viewer-attempts-modal';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  const heading = document.createElement('h3');
+  heading.textContent = 'Manage Server Attempts';
+  const description = document.createElement('p');
+  description.className = 'confirm-modal__description';
+  description.textContent = 'Resume, download, or delete your uploaded attempts.';
+  const slotRecoveryBanner = document.createElement('p');
+  slotRecoveryBanner.className = 'confirm-modal__warning';
+  slotRecoveryBanner.hidden = !recommendSlotRecovery;
+  slotRecoveryBanner.textContent = 'Attempt slots are full. Delete one uploaded attempt, then save again manually.';
+  const sessionLine = document.createElement('p');
+  sessionLine.className = 'muted';
+  const slotUsageLine = document.createElement('p');
+  slotUsageLine.className = 'muted';
+  const list = document.createElement('div');
+  list.className = 'browse-results';
+  const actions = document.createElement('div');
+  actions.className = 'confirm-modal__actions';
+  const signInBtn = document.createElement('button');
+  signInBtn.type = 'button';
+  signInBtn.className = 'confirm-modal__btn';
+  signInBtn.textContent = 'Sign in';
+  const refreshBtn = document.createElement('button');
+  refreshBtn.type = 'button';
+  refreshBtn.className = 'confirm-modal__btn';
+  refreshBtn.textContent = 'Refresh';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'confirm-modal__btn';
+  closeBtn.textContent = 'Close';
+  actions.append(signInBtn, refreshBtn, closeBtn);
+  dialog.append(heading, description, slotRecoveryBanner, sessionLine, slotUsageLine, list, actions);
+  overlay.append(dialog);
+  host.appendChild(overlay);
+
+  let closing = false;
+  const closeModal = () => {
+    if (closing) return;
+    closing = true;
+    overlay.remove();
+    if (previousActive && typeof previousActive.focus === 'function') {
+      previousActive.focus();
+    }
+  };
+
+  const formatMeta = (row) => {
+    const submittedLabel = row.submitted_at ? `Submitted ${formatTimestampForDisplay(row.submitted_at)}` : 'Not submitted';
+    const checkedLabel = row.checked_at ? `Checked ${formatTimestampForDisplay(row.checked_at)}` : 'Not checked';
+    const updatedLabel = row.updated_at ? `Updated ${formatTimestampForDisplay(row.updated_at)}` : 'Updated unknown time';
+    const sizeLabel = Number.isFinite(row.artifact_size_bytes)
+      ? `${Math.max(1, Math.round(row.artifact_size_bytes / 1024))} KB`
+      : 'size n/a';
+    return `${row.subject || '—'} • Status ${row.status} • ${submittedLabel} • ${checkedLabel} • ${updatedLabel} • ${sizeLabel}`;
+  };
+
+  const renderRows = async () => {
+    const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
+    sessionLine.textContent = isLoggedIn
+      ? `Server session: ready (${userLabel})`
+      : isChecking
+        ? 'Server session: checking…'
+        : `Server session: logged out. ${session.state.serverSession?.error || 'Sign in to manage uploaded attempts.'}`;
+    signInBtn.hidden = isLoggedIn;
+    signInBtn.disabled = isChecking;
+    refreshBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingUploadedAttempts;
+    list.innerHTML = '';
+    if (!isLoggedIn) {
+      slotUsageLine.textContent = '';
+      const signedOut = document.createElement('p');
+      signedOut.className = 'muted';
+      signedOut.textContent = 'Sign in to load your uploaded attempts.';
+      list.append(signedOut);
+      return;
+    }
+    if (session.state.isLoadingUploadedAttempts) {
+      slotUsageLine.textContent = '';
+      const loading = document.createElement('p');
+      loading.className = 'muted';
+      loading.textContent = 'Loading uploaded attempts...';
+      list.append(loading);
+      return;
+    }
+    if (session.state.uploadedAttemptsError) {
+      slotUsageLine.textContent = '';
+      const error = document.createElement('p');
+      error.className = 'viewer-list-error';
+      error.textContent = session.state.uploadedAttemptsError;
+      list.append(error);
+      return;
+    }
+    const rows = Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : [];
+    const slotLimit = Number(session.state.uploadedAttemptSlotLimit) || 3;
+    slotUsageLine.textContent = `Slot usage: ${rows.length} / ${slotLimit}`;
+    if (rows.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = 'No uploaded attempts saved yet.';
+      list.append(empty);
+      return;
+    }
+    rows.forEach((row) => {
+      const attemptRow = document.createElement('div');
+      attemptRow.className = 'published-result-row';
+      const titleLine = document.createElement('div');
+      titleLine.className = 'published-result-title-line';
+      const title = document.createElement('strong');
+      title.className = 'published-result-title';
+      title.textContent = row.title || 'Untitled worksheet';
+      titleLine.append(title);
+      const meta = document.createElement('div');
+      meta.className = 'muted published-result-subject-owner';
+      meta.textContent = formatMeta(row);
+      const rowActions = document.createElement('div');
+      rowActions.className = 'published-result-actions';
+      const inFlightAction = session.state.uploadedAttemptActionInFlightById?.[row.uploaded_attempt_id] || '';
+      const resumeBtn = document.createElement('button');
+      resumeBtn.type = 'button';
+      resumeBtn.className = 'published-result-action';
+      resumeBtn.textContent = inFlightAction === 'resume' ? 'Resuming...' : 'Resume';
+      resumeBtn.disabled = Boolean(inFlightAction);
+      resumeBtn.addEventListener('click', async () => {
+        const result = await session.resumeUploadedAttempt(row);
+        await renderRows();
+        if (!result?.ok) return;
+        closeModal();
+        if (onResumeSuccess) {
+          await onResumeSuccess(result?.data?.localAttemptId || null);
+        }
+      });
+      const downloadBtn = document.createElement('button');
+      downloadBtn.type = 'button';
+      downloadBtn.className = 'published-result-action';
+      downloadBtn.textContent = inFlightAction === 'download' ? 'Downloading...' : 'Download';
+      downloadBtn.disabled = Boolean(inFlightAction);
+      downloadBtn.addEventListener('click', async () => {
+        await session.downloadUploadedAttempt(row);
+        await renderRows();
+      });
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'published-result-action uploaded-draft-action--danger';
+      deleteBtn.textContent = inFlightAction === 'delete' ? 'Deleting...' : 'Delete';
+      deleteBtn.disabled = Boolean(inFlightAction);
+      deleteBtn.addEventListener('click', async () => {
+        const confirmed = await showDeleteUploadedAttemptModal(row);
+        if (!confirmed) return;
+        await session.deleteUploadedAttemptAndRefresh(row.uploaded_attempt_id);
+        await renderRows();
+      });
+      rowActions.append(resumeBtn, downloadBtn, deleteBtn);
+      attemptRow.append(titleLine, meta, rowActions);
+      list.append(attemptRow);
+    });
+  };
+
+  signInBtn.addEventListener('click', () => {
+    session.beginServerSignIn({
+      onSessionReady: async () => {
+        await session.listUploadedAttempts();
+        await renderRows();
+      },
+    });
+    renderRows();
+  });
+  refreshBtn.addEventListener('click', async () => {
+    await session.listUploadedAttempts();
+    await renderRows();
+  });
+  closeBtn.addEventListener('click', () => {
+    closeModal();
+  });
+  dialog.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeModal();
+    }
+  });
+
+  const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+  if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+    await session.listUploadedAttempts();
+  }
+  await renderRows();
+  closeBtn.focus();
+}
+
 function renderViewerShell(session) {
   if (!app || !bottomBarRoot) {
     return;
@@ -3900,28 +4458,6 @@ function renderViewerShell(session) {
   answerSummary.className = 'answer-summary';
   const resumeWarning = document.createElement('p');
   resumeWarning.className = 'answer-summary';
-  const utilityFeedback = document.createElement('p');
-  utilityFeedback.className = 'viewer-utility-feedback';
-  const uploadRecoveryActions = document.createElement('div');
-  uploadRecoveryActions.className = 'viewer-start-actions';
-  uploadRecoveryActions.hidden = true;
-  const conflictReplaceBtn = document.createElement('button');
-  conflictReplaceBtn.type = 'button';
-  conflictReplaceBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  conflictReplaceBtn.textContent = 'Replace existing attempt';
-  const conflictCopyBtn = document.createElement('button');
-  conflictCopyBtn.type = 'button';
-  conflictCopyBtn.className = 'viewer-start-btn';
-  conflictCopyBtn.textContent = 'Save as copy';
-  const conflictCancelBtn = document.createElement('button');
-  conflictCancelBtn.type = 'button';
-  conflictCancelBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
-  conflictCancelBtn.textContent = 'Cancel';
-  const openManageAttemptsBtn = document.createElement('button');
-  openManageAttemptsBtn.type = 'button';
-  openManageAttemptsBtn.className = 'viewer-start-btn';
-  openManageAttemptsBtn.textContent = 'Open Manage server attempts';
-  uploadRecoveryActions.append(conflictReplaceBtn, conflictCopyBtn, conflictCancelBtn, openManageAttemptsBtn);
   const status = document.createElement('p');
   let studentName = session.state.studentName || '';
 
@@ -3976,51 +4512,29 @@ function renderViewerShell(session) {
   checkBtn.className = 'viewer-bottom-action-btn';
   checkBtn.textContent = 'Check Answer';
 
-  const utilityMenu = document.createElement('div');
-  utilityMenu.className = 'viewer-utility-menu';
   const headerActions = document.createElement('div');
   headerActions.className = 'viewer-header-actions';
   const infoBtn = document.createElement('button');
   infoBtn.type = 'button';
-  infoBtn.className = 'viewer-utility-menu__trigger';
+  infoBtn.className = 'viewer-header-icon-btn';
   infoBtn.setAttribute('aria-label', 'Open technical details');
   infoBtn.title = 'Technical details';
-  infoBtn.textContent = 'ⓘ';
-  const utilityMenuBtn = document.createElement('button');
-  utilityMenuBtn.type = 'button';
-  utilityMenuBtn.className = 'viewer-utility-menu__trigger';
-  utilityMenuBtn.setAttribute('aria-haspopup', 'menu');
-  utilityMenuBtn.setAttribute('aria-expanded', 'false');
-  utilityMenuBtn.setAttribute('aria-controls', 'viewer-utility-menu-list');
-  utilityMenuBtn.setAttribute('aria-label', 'Open more actions');
-  utilityMenuBtn.title = 'More actions';
-  utilityMenuBtn.textContent = '≡';
-  const utilityMenuList = document.createElement('div');
-  utilityMenuList.className = 'viewer-utility-menu__list';
-  utilityMenuList.id = 'viewer-utility-menu-list';
-  utilityMenuList.setAttribute('role', 'menu');
-  utilityMenuList.hidden = true;
-
-  const syncResumeBtn = document.createElement('button');
-  syncResumeBtn.type = 'button';
-  syncResumeBtn.className = 'viewer-utility-menu__item';
-  syncResumeBtn.setAttribute('role', 'menuitem');
-  syncResumeBtn.textContent = 'Server Resume (Sign-in required)';
+  infoBtn.innerHTML = createViewerIcon('info');
 
   const uploadAttemptBtn = document.createElement('button');
   uploadAttemptBtn.type = 'button';
-  uploadAttemptBtn.className = 'viewer-utility-menu__item';
-  uploadAttemptBtn.setAttribute('role', 'menuitem');
-  uploadAttemptBtn.textContent = 'Save attempt to server';
+  uploadAttemptBtn.className = 'viewer-header-icon-btn';
+  uploadAttemptBtn.setAttribute('aria-label', 'Save attempt to server');
+  uploadAttemptBtn.title = 'Save attempt to server';
+  uploadAttemptBtn.innerHTML = createViewerIcon('upload');
 
   const printReportBtn = document.createElement('button');
   printReportBtn.type = 'button';
-  printReportBtn.className = 'viewer-utility-menu__item';
-  printReportBtn.setAttribute('role', 'menuitem');
-  printReportBtn.textContent = 'Print worksheet report';
-  utilityMenuList.append(syncResumeBtn, uploadAttemptBtn, printReportBtn);
-  utilityMenu.append(utilityMenuBtn, utilityMenuList);
-  headerActions.append(infoBtn, utilityMenu);
+  printReportBtn.className = 'viewer-header-icon-btn';
+  printReportBtn.setAttribute('aria-label', 'Print worksheet report');
+  printReportBtn.title = 'Print worksheet report';
+  printReportBtn.innerHTML = createViewerIcon('print');
+  headerActions.append(infoBtn, uploadAttemptBtn, printReportBtn);
 
   const detailsModal = document.createElement('div');
   detailsModal.className = 'viewer-details-modal';
@@ -4096,7 +4610,6 @@ function renderViewerShell(session) {
     [...(session.state.viewerPayload?.blocks || [])].sort((a, b) => a.position - b.position)
   );
 
-  const getMenuItems = () => Array.from(utilityMenuList.querySelectorAll('.viewer-utility-menu__item'));
   let lastFocusedElement = null;
 
   const copyTextValue = async (rawValue) => {
@@ -4197,91 +4710,6 @@ function renderViewerShell(session) {
       closeTechnicalDetails();
     }
   });
-
-  const closeUtilityMenu = ({ returnFocus = false } = {}) => {
-    utilityMenuList.hidden = true;
-    utilityMenuBtn.setAttribute('aria-expanded', 'false');
-    if (returnFocus) {
-      utilityMenuBtn.focus();
-    }
-  };
-
-  const openUtilityMenu = () => {
-    utilityMenuList.hidden = false;
-    utilityMenuBtn.setAttribute('aria-expanded', 'true');
-  };
-
-  const isUtilityMenuOpen = () => (
-    !utilityMenuList.hidden
-    && utilityMenuBtn.getAttribute('aria-expanded') === 'true'
-  );
-
-  const focusMenuItemByDelta = (delta) => {
-    const items = getMenuItems();
-    if (items.length === 0) return;
-    const activeIndex = items.indexOf(document.activeElement);
-    const nextIndex = activeIndex === -1
-      ? 0
-      : (activeIndex + delta + items.length) % items.length;
-    items[nextIndex].focus();
-  };
-
-  utilityMenuBtn.addEventListener('click', () => {
-    const isOpen = utilityMenuBtn.getAttribute('aria-expanded') === 'true';
-    if (isOpen) {
-      closeUtilityMenu();
-      return;
-    }
-    openUtilityMenu();
-    getMenuItems()[0]?.focus();
-  });
-
-  utilityMenuBtn.addEventListener('keydown', (event) => {
-    if (event.key !== 'ArrowDown') return;
-    event.preventDefault();
-    openUtilityMenu();
-    getMenuItems()[0]?.focus();
-  });
-
-  utilityMenuList.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeUtilityMenu({ returnFocus: true });
-      return;
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      focusMenuItemByDelta(1);
-      return;
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      focusMenuItemByDelta(-1);
-      return;
-    }
-    if (event.key === 'Home') {
-      event.preventDefault();
-      getMenuItems()[0]?.focus();
-      return;
-    }
-    if (event.key === 'End') {
-      event.preventDefault();
-      const items = getMenuItems();
-      items[items.length - 1]?.focus();
-    }
-  });
-
-  document.addEventListener('click', (event) => {
-    if (!utilityMenu.contains(event.target)) {
-      closeUtilityMenu();
-    }
-  }, { signal });
-
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && detailsModal.hidden && isUtilityMenuOpen()) {
-      closeUtilityMenu({ returnFocus: true });
-    }
-  }, { signal });
 
   const getStepperLabel = (block, counters) => {
     if (block.kind === 'content') {
@@ -5129,20 +5557,7 @@ function renderViewerShell(session) {
               : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
     resumeWarning.textContent = session.state.recoveryMessage ? `⚠️ ${session.state.recoveryMessage}` : '';
     resumeWarning.hidden = !session.state.recoveryMessage;
-    utilityFeedback.textContent = session.state.utilityMessage || '';
-    utilityFeedback.hidden = !session.state.utilityMessage;
-    const showConflictActions = Boolean(session.state.uploadAttemptConflictContext);
-    const showSlotRecoveryAction = Boolean(session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit');
-    conflictReplaceBtn.hidden = !showConflictActions;
-    conflictCopyBtn.hidden = !showConflictActions;
-    conflictCancelBtn.hidden = !showConflictActions;
-    openManageAttemptsBtn.hidden = !showSlotRecoveryAction;
-    uploadRecoveryActions.hidden = !showConflictActions && !showSlotRecoveryAction;
-    const disableRecoveryButtons = session.state.isUploadingAttemptPackage;
-    conflictReplaceBtn.disabled = disableRecoveryButtons;
-    conflictCopyBtn.disabled = disableRecoveryButtons;
-    conflictCancelBtn.disabled = disableRecoveryButtons;
-    openManageAttemptsBtn.disabled = disableRecoveryButtons;
+    renderViewerNotifications(session);
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     const checkAvailable = session.state.status === 'completed';
@@ -5151,9 +5566,6 @@ function renderViewerShell(session) {
     printReportBtn.hidden = !checkAvailable;
     printReportBtn.disabled = session.state.isFinalizing || !checkAvailable;
     uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
-    uploadAttemptBtn.textContent = session.state.isUploadingAttemptPackage
-      ? 'Saving attempt to server...'
-      : 'Save attempt to server';
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
     const normalizedAttemptStatus = session.state.status
@@ -5181,13 +5593,7 @@ function renderViewerShell(session) {
     await session.saveNow();
     renderUI();
   });
-  syncResumeBtn.addEventListener('click', async () => {
-    closeUtilityMenu({ returnFocus: true });
-    await session.triggerProtectedAction('resumeAttemptServerResumeAfterLogin');
-    renderUI();
-  });
   uploadAttemptBtn.addEventListener('click', async () => {
-    closeUtilityMenu({ returnFocus: true });
     const protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
     if (protectedActionResult?.status === 'redirected') {
       return;
@@ -5196,44 +5602,36 @@ function renderViewerShell(session) {
       const blockedMessage = protectedActionResult?.status === 'blocked_session_probe'
         ? SESSION_EXPIRED_MESSAGE
         : 'Sign-in is required before uploading attempts.';
-      session.state.utilityMessage = blockedMessage;
+      session.pushNotification({
+        kind: 'warn',
+        text: blockedMessage,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
       renderUI();
       return;
     }
-    renderUI();
-  });
-  conflictReplaceBtn.addEventListener('click', async () => {
-    const result = await session.retryAttemptUploadFromConflict('replace');
-    if (!result?.ok) {
-      session.state.utilityMessage = result?.error?.message || session.state.utilityMessage;
+    if (session.state.uploadAttemptConflictContext) {
+      const choice = await showAttemptUploadConflictModal(session.state.uploadAttemptConflictContext);
+      if (choice === 'replace' || choice === 'copy') {
+        await session.retryAttemptUploadFromConflict(choice);
+      } else {
+        session.clearAttemptUploadConflictPrompt();
+      }
+    } else if (session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
+      session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
+      await showUploadedAttemptsManagerModal(session, { reason: 'slot_limit' });
     }
     renderUI();
-  });
-  conflictCopyBtn.addEventListener('click', async () => {
-    const result = await session.retryAttemptUploadFromConflict('copy');
-    if (!result?.ok) {
-      session.state.utilityMessage = result?.error?.message || session.state.utilityMessage;
-    }
-    renderUI();
-  });
-  conflictCancelBtn.addEventListener('click', () => {
-    session.clearAttemptUploadConflictPrompt();
-    renderUI();
-  });
-  openManageAttemptsBtn.addEventListener('click', async () => {
-    session.state.utilityMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
-    session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
-    session.state.isManagingUploadedAttempts = true;
-    await session.listUploadedAttempts();
-    renderViewerStartPanel(session, { warningMessage: null });
   });
 
   printReportBtn.addEventListener('click', async () => {
-    closeUtilityMenu({ returnFocus: true });
-    session.state.utilityMessage = null;
     const result = await startWorksheetPrintFlow({ session });
     if (!result.ok) {
-      session.state.utilityMessage = result.message;
+      session.pushNotification({
+        kind: 'error',
+        text: result.message,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
     }
     renderUI();
   });
@@ -5247,7 +5645,7 @@ function renderViewerShell(session) {
   nextBtn.addEventListener('click', goNext);
 
   headerTop.append(heading, headerActions);
-  header.append(headerTop, answerSummary, resumeWarning, utilityFeedback, uploadRecoveryActions);
+  header.append(headerTop, answerSummary, resumeWarning);
   blockSection.append(blockHeading, stepper, blockList);
   shell.append(header, blockSection);
   app.innerHTML = '';
@@ -5440,9 +5838,6 @@ function renderViewerStartPanel(session, options = {}) {
   manageAttemptsBtn.textContent = 'Manage server attempts';
   const publishedList = document.createElement('div');
   publishedList.className = 'muted viewer-published-list';
-  const uploadedAttemptsPanel = document.createElement('div');
-  uploadedAttemptsPanel.className = 'muted viewer-published-list';
-  uploadedAttemptsPanel.hidden = true;
 
   const packageFileInput = document.createElement('input');
   packageFileInput.type = 'file';
@@ -5522,13 +5917,19 @@ function renderViewerStartPanel(session, options = {}) {
     renderServerControls();
   });
   manageAttemptsBtn.addEventListener('click', async () => {
-    session.state.isManagingUploadedAttempts = !session.state.isManagingUploadedAttempts;
-    if (session.state.isManagingUploadedAttempts) {
-      const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
-      if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
-        await session.listUploadedAttempts();
-      }
-    }
+    await showUploadedAttemptsManagerModal(session, {
+      onResumeSuccess: async () => {
+        if (session.state.localAttemptId) {
+          const nextUrl = new URL(window.location.href);
+          nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+          nextUrl.searchParams.delete('viewerPayload');
+          nextUrl.searchParams.delete('snapshot');
+          window.history.replaceState({}, '', nextUrl);
+        }
+        renderViewerShell(session);
+        window.viewerSession = session;
+      },
+    });
     renderServerControls();
   });
   const scheduleDebouncedBrowse = (() => {
@@ -5570,24 +5971,8 @@ function renderViewerStartPanel(session, options = {}) {
     window.viewerSession = session;
   }
 
-  async function openUploadedAttempt(row) {
-    const result = await session.resumeUploadedAttempt(row);
-    if (!result?.ok) {
-      renderServerControls();
-      return;
-    }
-    if (session.state.localAttemptId) {
-      const nextUrl = new URL(window.location.href);
-      nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
-      nextUrl.searchParams.delete('viewerPayload');
-      nextUrl.searchParams.delete('snapshot');
-      window.history.replaceState({}, '', nextUrl);
-    }
-    renderViewerShell(session);
-    window.viewerSession = session;
-  }
-
   function renderServerControls() {
+    renderViewerNotifications(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
@@ -5609,6 +5994,9 @@ function renderViewerStartPanel(session, options = {}) {
     signInBtn.disabled = isChecking;
     manageAttemptsBtn.hidden = false;
     manageAttemptsBtn.disabled = isChecking;
+    manageAttemptsBtn.textContent = isLoggedIn
+      ? 'Manage server attempts'
+      : 'Log in to manage server attempts';
     publishedHeading.hidden = !canAccessPublished;
     filterRow.hidden = !canAccessPublished;
     titleFilterInput.hidden = !canAccessPublished;
@@ -5626,96 +6014,6 @@ function renderViewerStartPanel(session, options = {}) {
     loadMoreRow.hidden = loadMoreBtn.hidden;
     publishedList.innerHTML = '';
     publishedList.hidden = !canAccessPublished;
-    uploadedAttemptsPanel.hidden = !session.state.isManagingUploadedAttempts;
-    uploadedAttemptsPanel.innerHTML = '';
-    manageAttemptsBtn.textContent = session.state.isManagingUploadedAttempts ? 'Hide server attempts' : 'Manage server attempts';
-    if (session.state.isManagingUploadedAttempts) {
-      const attemptHeader = document.createElement('h2');
-      attemptHeader.className = 'viewer-published-heading';
-      attemptHeader.textContent = 'Uploaded Attempts';
-      uploadedAttemptsPanel.append(attemptHeader);
-      if (!isLoggedIn) {
-        const signedOut = document.createElement('p');
-        signedOut.className = 'muted';
-        signedOut.textContent = 'Sign in to manage uploaded attempts.';
-        uploadedAttemptsPanel.append(signedOut);
-      } else if (session.state.uploadedAttemptsError) {
-        const errorRow = document.createElement('p');
-        errorRow.className = 'viewer-list-error';
-        errorRow.textContent = session.state.uploadedAttemptsError;
-        const retryBtn = document.createElement('button');
-        retryBtn.type = 'button';
-        retryBtn.className = 'viewer-list-retry-btn';
-        retryBtn.textContent = 'Retry';
-        retryBtn.addEventListener('click', async () => {
-          await session.listUploadedAttempts();
-          renderServerControls();
-        });
-        errorRow.append(' ', retryBtn);
-        uploadedAttemptsPanel.append(errorRow);
-      } else {
-        const rows = Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : [];
-        const slotLimit = Number(session.state.uploadedAttemptSlotLimit) || 3;
-        const slotUsage = document.createElement('p');
-        slotUsage.className = 'muted';
-        slotUsage.textContent = `Slot usage: ${rows.length} / ${slotLimit}`;
-        uploadedAttemptsPanel.append(slotUsage);
-        if (rows.length === 0) {
-          const empty = document.createElement('p');
-          empty.className = 'muted';
-          empty.textContent = session.state.isLoadingUploadedAttempts ? 'Loading uploaded attempts...' : 'No uploaded attempts saved yet.';
-          uploadedAttemptsPanel.append(empty);
-        } else {
-          rows.forEach((row) => {
-            const attemptRow = document.createElement('div');
-            attemptRow.className = 'viewer-published-row';
-            const meta = document.createElement('div');
-            meta.className = 'muted viewer-published-meta';
-            const submittedLabel = row.submitted_at ? `Submitted ${formatTimestampForDisplay(row.submitted_at)}` : 'Not submitted';
-            const checkedLabel = row.checked_at ? `Checked ${formatTimestampForDisplay(row.checked_at)}` : 'Not checked';
-            const sizeLabel = Number.isFinite(row.artifact_size_bytes) ? `${Math.max(1, Math.round(row.artifact_size_bytes / 1024))} KB` : 'size n/a';
-            meta.textContent = `Title: ${row.title} · Subject: ${row.subject || '—'} · Status: ${row.status} · ${submittedLabel} · ${checkedLabel} · ${sizeLabel}`;
-            const actions = document.createElement('div');
-            actions.className = 'viewer-start-actions';
-            const inFlightAction = session.state.uploadedAttemptActionInFlightById?.[row.uploaded_attempt_id] || '';
-            const resumeBtn = document.createElement('button');
-            resumeBtn.type = 'button';
-            resumeBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-            resumeBtn.textContent = inFlightAction === 'resume' ? 'Resuming...' : 'Resume';
-            resumeBtn.disabled = Boolean(inFlightAction);
-            resumeBtn.addEventListener('click', async () => {
-              await openUploadedAttempt(row);
-            });
-            const downloadBtn = document.createElement('button');
-            downloadBtn.type = 'button';
-            downloadBtn.className = 'viewer-start-btn';
-            downloadBtn.textContent = inFlightAction === 'download' ? 'Downloading...' : 'Download';
-            downloadBtn.disabled = Boolean(inFlightAction);
-            downloadBtn.addEventListener('click', async () => {
-              await session.downloadUploadedAttempt(row);
-              renderServerControls();
-            });
-            const deleteBtn = document.createElement('button');
-            deleteBtn.type = 'button';
-            deleteBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
-            deleteBtn.textContent = inFlightAction === 'delete' ? 'Deleting...' : 'Delete';
-            deleteBtn.disabled = Boolean(inFlightAction);
-            deleteBtn.addEventListener('click', async () => {
-              const shouldDelete = window.confirm(`Delete uploaded attempt "${row.title}" from server?`);
-              if (!shouldDelete) return;
-              const deleteResult = await session.deleteUploadedAttemptAndRefresh(row.uploaded_attempt_id);
-              if (!deleteResult?.ok) {
-                session.state.serverActionMessage = deleteResult?.error?.message || 'Failed to delete uploaded attempt.';
-              }
-              renderServerControls();
-            });
-            actions.append(resumeBtn, downloadBtn, deleteBtn);
-            attemptRow.append(meta, actions);
-            uploadedAttemptsPanel.append(attemptRow);
-          });
-        }
-      }
-    }
     if (!canAccessPublished) {
       return;
     }
@@ -5776,7 +6074,7 @@ function renderViewerStartPanel(session, options = {}) {
     panel.append(resumeCard);
   }
   serverActions.append(signInBtn, manageAttemptsBtn);
-  panel.append(importActions, serverActions, sessionStatus, uploadedAttemptsPanel, publishedHeading, filterRow, publishedList, loadMoreRow, packageFileInput, errorMessage);
+  panel.append(importActions, serverActions, sessionStatus, publishedHeading, filterRow, publishedList, loadMoreRow, packageFileInput, errorMessage);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);

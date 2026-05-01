@@ -3260,7 +3260,7 @@ test('renderViewerStartPanel renders one session-related message line without du
   assert.equal(matched.length, 1);
 });
 
-test('renderViewerStartPanel shows Manage server attempts action', { concurrency: false }, async () => {
+test('renderViewerStartPanel shows contextual server-attempt management action', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({
     document,
@@ -3289,7 +3289,7 @@ test('renderViewerStartPanel shows Manage server attempts action', { concurrency
   };
   mod.renderViewerStartPanel(session);
   const panel = appRoot.children[0];
-  const manageBtn = findNodeByText(panel, 'Manage server attempts');
+  const manageBtn = findNodeByText(panel, 'Log in to manage server attempts');
   assert.equal(Boolean(manageBtn), true);
 });
 
@@ -4145,9 +4145,9 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
   });
 });
 
-test('viewer utility menu includes upload attempt action and protected upload intent hook', async () => {
+test('viewer header actions include server-save icon wiring and protected upload intent hook', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("uploadAttemptBtn.textContent = 'Save attempt to server';"), true);
+  assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', 'Save attempt to server');"), true);
   assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
   assert.equal(source.includes('await session.uploadCurrentAttemptPackage();'), false);
 });
@@ -4361,7 +4361,7 @@ test('uploadCurrentAttemptPackage reports progress text while upload runs', asyn
     },
   });
   session.setOnStateChange((state) => {
-    observedMessages.push(state.utilityMessage);
+    observedMessages.push(state.serverActionMessage);
   });
   session.state.localAttemptId = 'attempt_progress';
   session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
@@ -4371,7 +4371,7 @@ test('uploadCurrentAttemptPackage reports progress text while upload runs', asyn
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, true);
   assert.equal(observedMessages.some((msg) => String(msg || '').includes('Saving attempt to server...')), true);
-  assert.equal(session.state.utilityMessage, 'Attempt saved to server.');
+  assert.equal(session.state.serverActionMessage, 'Attempt saved to server.');
 });
 
 test('uploadCurrentAttemptPackage leaves local attempt state safe on network failure', async () => {
@@ -4395,7 +4395,7 @@ test('uploadCurrentAttemptPackage leaves local attempt state safe on network fai
   assert.equal(session.state.localAttemptId, 'attempt_safe');
   assert.equal(JSON.stringify(session.state.answers), answersBefore);
   assert.equal(
-    session.state.utilityMessage,
+    session.state.serverActionMessage,
     'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.'
   );
 });
@@ -4417,7 +4417,7 @@ test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_NAME_CONFLICT mess
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
   assert.equal(
-    session.state.utilityMessage,
+    session.state.serverActionMessage,
     'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.'
   );
 });
@@ -4446,7 +4446,7 @@ test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_SLOT_LIMIT_REACHED
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
   assert.equal(
-    session.state.utilityMessage,
+    session.state.serverActionMessage,
     'You already have 3 uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
   );
 });
@@ -4468,7 +4468,7 @@ test('uploadCurrentAttemptPackage slot-limit message falls back when slotLimit d
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
   assert.equal(
-    session.state.utilityMessage,
+    session.state.serverActionMessage,
     'You already have uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
   );
 });
