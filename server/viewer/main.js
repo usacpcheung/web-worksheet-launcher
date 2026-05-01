@@ -5851,8 +5851,13 @@ function renderViewerStartPanel(session, options = {}) {
   const importActions = document.createElement('div');
   importActions.className = 'viewer-start-actions';
   importActions.append(importPackageBtn);
-  const serverActions = document.createElement('div');
-  serverActions.className = 'viewer-start-actions';
+  const serverAttemptHeading = document.createElement('h2');
+  serverAttemptHeading.className = 'viewer-start-subheading';
+  serverAttemptHeading.textContent = 'Server Attempts';
+  const serverAttemptHint = document.createElement('p');
+  serverAttemptHint.className = 'muted viewer-start-subhint';
+  const serverAttemptActions = document.createElement('div');
+  serverAttemptActions.className = 'viewer-start-actions';
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.className = 'viewer-start-btn';
@@ -6044,10 +6049,7 @@ function renderViewerStartPanel(session, options = {}) {
     } else {
       defaultSessionMessage = `Server session: logged out. ${session.state.serverSession?.error || 'Log in to view published online worksheet.'}`;
     }
-    const actionMessage = typeof session.state.serverActionMessage === 'string'
-      ? session.state.serverActionMessage.trim()
-      : '';
-    sessionStatus.textContent = actionMessage || defaultSessionMessage;
+    sessionStatus.textContent = defaultSessionMessage;
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking;
     manageAttemptsBtn.hidden = false;
@@ -6055,6 +6057,9 @@ function renderViewerStartPanel(session, options = {}) {
     manageAttemptsBtn.textContent = isLoggedIn
       ? 'Manage server attempts'
       : 'Log in to manage server attempts';
+    serverAttemptHint.textContent = isLoggedIn
+      ? 'Open your private uploaded attempts to resume, download, or delete.'
+      : 'Sign in first, then manage your uploaded attempts.';
     publishedHeading.hidden = !canAccessPublished;
     filterRow.hidden = !canAccessPublished;
     titleFilterInput.hidden = !canAccessPublished;
@@ -6131,8 +6136,21 @@ function renderViewerStartPanel(session, options = {}) {
   if (resumeAttempt) {
     panel.append(resumeCard);
   }
-  serverActions.append(signInBtn, manageAttemptsBtn);
-  panel.append(importActions, serverActions, sessionStatus, publishedHeading, filterRow, publishedList, loadMoreRow, packageFileInput, errorMessage);
+  serverAttemptActions.append(manageAttemptsBtn);
+  panel.append(
+    importActions,
+    serverAttemptHeading,
+    serverAttemptHint,
+    serverAttemptActions,
+    sessionStatus,
+    signInBtn,
+    publishedHeading,
+    filterRow,
+    publishedList,
+    loadMoreRow,
+    packageFileInput,
+    errorMessage
+  );
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);

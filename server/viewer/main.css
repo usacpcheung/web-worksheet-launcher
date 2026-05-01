@@ -158,20 +158,30 @@ body {
   width: 100%;
 }
 
-.viewer-start-btn {
-  min-height: 52px;
-  border-radius: 999px;
-  padding: 0 24px;
-  border: 1px solid #d7e4f5;
-  background: #e7effa;
-  color: #1b66dc;
-  font-weight: 500;
+.viewer-start-subheading {
+  margin: 4px 0 0;
   font-size: 1.05rem;
+  line-height: 1.25;
+}
+
+.viewer-start-subhint {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.viewer-start-btn {
+  min-height: 42px;
+  border-radius: 8px;
+  padding: 10px 14px;
+  border: 1px solid #c4cad7;
+  background: #fff;
+  color: #1f2937;
+  font-weight: 500;
+  font-size: 1rem;
   transition:
     background 150ms ease,
     border-color 150ms ease,
     color 150ms ease,
-    transform 120ms ease,
     box-shadow 150ms ease;
 }
 
@@ -192,35 +202,31 @@ body {
 }
 
 .viewer-start-btn:hover:not(:disabled) {
-  background: #dce9fb;
-  border-color: #bfd5f2;
-  color: #1559c6;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgb(51 102 180 / 12%);
+  background: #f8fafc;
+  border-color: #98a2b3;
 }
 
 .viewer-start-btn:focus-visible {
-  outline: 2px solid #5b8fff;
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 24%);
 }
 
 .viewer-start-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-  transform: none;
   box-shadow: none;
 }
 
 .viewer-start-btn--primary {
-  background: #dbe7f7;
-  border-color: #d2def0;
-  color: #1b66dc;
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #1e3a8a;
 }
 
 .viewer-start-btn--primary:hover:not(:disabled) {
-  background: #cfddf4;
-  border-color: #c2d4ee;
-  color: #1559c6;
+  background: #e0e7ff;
+  border-color: #a5b4fc;
+  color: #1e40af;
 }
 
 .viewer-start-btn--quiet {
@@ -601,13 +607,13 @@ body {
 }
 
 .viewer-header-icon-btn {
-  width: 42px;
-  height: 42px;
-  min-width: 42px;
-  border-radius: 10px;
-  border: 1px solid #c8d4ea;
-  color: #334a8a;
-  background: #eef4ff;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  border-radius: 8px;
+  border: 1px solid #c4cad7;
+  color: #334155;
+  background: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -616,9 +622,9 @@ body {
 
 .viewer-header-icon-btn:hover:not(:disabled),
 .viewer-header-icon-btn:focus-visible:not(:disabled) {
-  color: #223b7d;
-  background: #e1ecff;
-  border-color: #9eb6ef;
+  color: #1f2937;
+  background: #f8fafc;
+  border-color: #98a2b3;
 }
 
 .viewer-header-icon-btn:focus-visible {
@@ -632,8 +638,8 @@ body {
 }
 
 .viewer-icon {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   display: block;
 }
 

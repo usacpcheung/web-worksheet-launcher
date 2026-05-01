@@ -3187,7 +3187,7 @@ test('renderViewerStartPanel treats unknown server state as not logged in for pu
   assert.equal(publishedList.hidden, true);
 });
 
-test('renderViewerStartPanel orders controls as import then auth row then single status line', { concurrency: false }, async () => {
+test('renderViewerStartPanel orders controls with a dedicated server-attempt section and session status line', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({
     document,
@@ -3216,15 +3216,23 @@ test('renderViewerStartPanel orders controls as import then auth row then single
 
   const panel = appRoot.children[0];
   const importRow = panel.children[2];
-  const authRow = panel.children[3];
-  const statusLine = panel.children[4];
+  const attemptHeading = panel.children[3];
+  const attemptHint = panel.children[4];
+  const attemptActionRow = panel.children[5];
+  const statusLine = panel.children[6];
+  const publishedSignInBtn = panel.children[7];
 
   assert.equal(importRow.className, 'viewer-start-actions');
   assert.equal(importRow.children[0].textContent, 'Import worksheet package (.zip)');
-  assert.equal(authRow.className, 'viewer-start-actions');
-  assert.equal(authRow.children[0].textContent, 'Log in to view published online worksheet');
+  assert.equal(attemptHeading.className, 'viewer-start-subheading');
+  assert.equal(attemptHeading.textContent, 'Server Attempts');
+  assert.equal(attemptHint.className, 'muted viewer-start-subhint');
+  assert.equal(attemptActionRow.className, 'viewer-start-actions');
+  assert.equal(attemptActionRow.children[0].textContent, 'Log in to manage server attempts');
   assert.equal(statusLine.className, 'muted viewer-session-status');
   assert.equal(statusLine.textContent.includes('Server session:'), true);
+  assert.equal(publishedSignInBtn.className, 'viewer-start-btn');
+  assert.equal(publishedSignInBtn.textContent, 'Log in to view published online worksheet');
 });
 
 test('renderViewerStartPanel renders one session-related message line without duplicate status text', { concurrency: false }, async () => {
