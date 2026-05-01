@@ -2441,6 +2441,30 @@ test('createLocalAttemptState persists sourceDraftUpdatedAt in attempt metadata'
   assert.equal(attempt.snapshotId, 'snap_1');
 });
 
+test('createLocalAttemptState falls back owner to logged-in session user when owner is missing', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.serverSession = {
+    status: 'logged_in',
+    user: { email: 'viewer-owner@example.test' },
+    error: null,
+  };
+  const payload = mod.normalizeViewerPayload({
+    worksheetId: 'ws_owner',
+    snapshotId: 'snap_owner',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  });
+
+  const attempt = session.createLocalAttemptState(payload, 'inline_payload', {});
+  assert.equal(attempt.owner, 'viewer-owner@example.test');
+  assert.equal(attempt.metadata.owner, 'viewer-owner@example.test');
+});
+
 test('autosave persists new attempt linkage fields', async () => {
   const mod = await loadViewerModule();
   let persisted = null;

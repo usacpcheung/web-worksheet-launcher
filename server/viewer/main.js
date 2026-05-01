@@ -1007,6 +1007,7 @@ function mapDraftRecordToViewerPayload(draftRecord) {
       snapshotId: `${draftRecord.localId}:local-snapshot`,
       snapshotVersion: 1,
       title: draftRecord.title || 'Local draft worksheet',
+      subject: draftRecord?.subject || draftRecord?.metadata?.subject || '',
       blocks: draftRecord.blocks || [],
     },
     'Local draft worksheet'
@@ -2523,8 +2524,8 @@ class ViewerAttemptSession {
         sourceLocalDraftId: previewIntent.localDraftId,
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || previewIntent.sourceDraftUpdatedAt || null,
-        sourceSubject: draftRecord?.subject || '',
-        sourceOwner: draftRecord?.owner_email || draftRecord?.owner_name || draftRecord?.owner_sub || '',
+        sourceSubject: draftRecord?.subject || draftRecord?.metadata?.subject || '',
+        sourceOwner: draftRecord?.owner_email || draftRecord?.owner_name || draftRecord?.owner_sub || draftRecord?.metadata?.owner || '',
       };
     }
 
@@ -2586,8 +2587,8 @@ class ViewerAttemptSession {
         sourceLocalDraftId: localDraftId,
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || null,
-        sourceSubject: draftRecord?.subject || '',
-        sourceOwner: draftRecord?.owner_email || draftRecord?.owner_name || draftRecord?.owner_sub || '',
+        sourceSubject: draftRecord?.subject || draftRecord?.metadata?.subject || '',
+        sourceOwner: draftRecord?.owner_email || draftRecord?.owner_name || draftRecord?.owner_sub || draftRecord?.metadata?.owner || '',
       };
     }
 
@@ -2628,6 +2629,9 @@ class ViewerAttemptSession {
       ?? viewerPayload?.owner_email
       ?? viewerPayload?.owner_name
       ?? viewerPayload?.owner_sub
+      ?? this.state.serverSession?.user?.email
+      ?? this.state.serverSession?.user?.name
+      ?? this.state.serverSession?.user?.sub
       ?? ''
     ).trim();
 
