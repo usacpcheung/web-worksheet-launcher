@@ -6345,7 +6345,27 @@ function renderViewerStartPanel(session, options = {}) {
       || resumeAttempt.lastSavedAt
       || resumeAttempt.startedAt
       || null;
-    resumeMeta.textContent = `Attempt ${resumeAttempt.localId || 'unknown'} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
+    const worksheetTitle = String(
+      resumeAttempt?.viewerPayload?.title
+      || resumeAttempt?.title
+      || 'Untitled worksheet'
+    );
+    const worksheetSubject = String(
+      resumeAttempt?.viewerPayload?.subject
+      || resumeAttempt?.subject
+      || resumeAttempt?.metadata?.subject
+      || '—'
+    ).trim() || '—';
+    const worksheetOwner = String(
+      resumeAttempt?.owner_email
+      || resumeAttempt?.owner_name
+      || resumeAttempt?.owner_sub
+      || resumeAttempt?.metadata?.owner_email
+      || resumeAttempt?.metadata?.owner_name
+      || resumeAttempt?.metadata?.owner_sub
+      || '—'
+    ).trim() || '—';
+    resumeMeta.textContent = `Title: ${worksheetTitle} · Subject: ${worksheetSubject} · Owner: ${worksheetOwner} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
     const resumeActions = document.createElement('div');
     resumeActions.className = 'viewer-start-actions';
     const resumeBtn = document.createElement('button');

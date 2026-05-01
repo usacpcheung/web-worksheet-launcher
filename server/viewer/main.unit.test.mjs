@@ -3012,7 +3012,8 @@ test('renderViewerStartPanel resume card prefers metadata.updatedAt when updated
   mod.renderViewerStartPanel({ state: {} }, {
     resumeAttempt: {
       localId: 'attempt_resume_meta',
-      metadata: { updatedAt: '2026-04-02T03:04:05.000Z' },
+      viewerPayload: { title: 'Worksheet A', subject: 'ICT' },
+      metadata: { updatedAt: '2026-04-02T03:04:05.000Z', owner_email: 'owner@example.test' },
       lastSavedAt: '2026-01-01T01:01:01.000Z',
       startedAt: '2026-01-01T00:00:00.000Z',
     },
@@ -3030,7 +3031,10 @@ test('renderViewerStartPanel resume card prefers metadata.updatedAt when updated
     second: '2-digit',
     hour12: false,
   });
-  assert.equal(resumeMeta.textContent, `Attempt attempt_resume_meta · ${expected}`);
+  assert.equal(
+    resumeMeta.textContent,
+    `Title: Worksheet A · Subject: ICT · Owner: owner@example.test · ${expected}`
+  );
 });
 
 test('renderViewerStartPanel resume card strips fractional seconds in display timestamp', { concurrency: false }, async () => {
@@ -3046,6 +3050,7 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
   mod.renderViewerStartPanel({ state: {} }, {
     resumeAttempt: {
       localId: 'attempt_resume_ms',
+      viewerPayload: { title: 'Worksheet B' },
       metadata: { updatedAt: '2026-04-02T03:04:05.123Z' },
     },
   });
@@ -3062,7 +3067,10 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
     second: '2-digit',
     hour12: false,
   });
-  assert.equal(resumeMeta.textContent, `Attempt attempt_resume_ms · ${expected}`);
+  assert.equal(
+    resumeMeta.textContent,
+    `Title: Worksheet B · Subject: — · Owner: — · ${expected}`
+  );
 });
 
 test('renderViewerStartPanel shows auth-aware browse CTA labels', { concurrency: false }, async () => {
