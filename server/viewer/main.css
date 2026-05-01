@@ -621,8 +621,10 @@ body {
 }
 
 .viewer-toast-container {
-  top: auto;
-  bottom: 16px;
+  left: 16px;
+  right: auto;
+  top: 16px;
+  bottom: auto;
 }
 
 .notification-toast {
@@ -731,21 +733,25 @@ body {
   width: 38px;
   height: 38px;
   min-width: 38px;
+  min-height: 38px;
+  padding: 0;
   border-radius: 8px;
-  border: 1px solid #c4cad7;
-  color: #334155;
-  background: #fff;
+  border: 1px solid #bfd0ea;
+  color: #4a607f;
+  background: #eef3fb;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, color 140ms ease;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease, box-shadow 150ms ease;
 }
 
 .viewer-header-icon-btn:hover:not(:disabled),
 .viewer-header-icon-btn:focus-visible:not(:disabled) {
-  color: #1f2937;
-  background: #f8fafc;
-  border-color: #98a2b3;
+  background: #e4ecf9;
+  border-color: #bfd0ea;
+  color: #304e7a;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgb(64 88 132 / 12%);
 }
 
 .viewer-header-icon-btn:focus-visible {
@@ -754,8 +760,10 @@ body {
 }
 
 .viewer-header-icon-btn:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .viewer-icon {

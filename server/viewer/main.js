@@ -5748,10 +5748,11 @@ function renderViewerShell(session) {
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     const checkAvailable = session.state.status === 'completed';
+    const printAvailable = session.state.status === 'completed';
     checkBtn.hidden = !checkAvailable;
     checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
-    printReportBtn.hidden = !checkAvailable;
-    printReportBtn.disabled = session.state.isFinalizing || !checkAvailable;
+    printReportBtn.hidden = !printAvailable;
+    printReportBtn.disabled = session.state.isFinalizing || !printAvailable;
     uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
@@ -5810,7 +5811,13 @@ function renderViewerShell(session) {
       const slotRecovery = await showAttemptSlotFullModal(session, {
         uploadedAttempts: session.state.uploadedAttempts,
       });
-      if (!slotRecovery?.deleted) {
+      if (slotRecovery?.deleted) {
+        session.pushNotification({
+          kind: 'info',
+          text: 'One uploaded attempt was deleted. Please click Save attempt to server again.',
+          ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+        });
+      } else {
         session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
         await showUploadedAttemptsManagerModal(session, { reason: 'slot_limit' });
       }
