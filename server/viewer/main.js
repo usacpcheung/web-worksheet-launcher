@@ -6290,10 +6290,6 @@ function renderViewerStartPanel(session, options = {}) {
   serverAttemptHint.className = 'muted viewer-start-subhint';
   const serverAttemptActions = document.createElement('div');
   serverAttemptActions.className = 'viewer-start-actions';
-  const signInBtn = document.createElement('button');
-  signInBtn.type = 'button';
-  signInBtn.className = 'viewer-start-btn';
-  signInBtn.textContent = 'Log in to view published online worksheet';
   const sessionStatus = document.createElement('p');
   sessionStatus.className = 'muted viewer-session-status';
   const manageAttemptsBtn = document.createElement('button');
@@ -6378,10 +6374,6 @@ function renderViewerStartPanel(session, options = {}) {
     }
   });
 
-  signInBtn.addEventListener('click', () => {
-    session.beginServerSignIn();
-    renderServerControls();
-  });
   manageAttemptsBtn.addEventListener('click', async () => {
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const onResumeSuccess = async () => {
@@ -6477,17 +6469,18 @@ function renderViewerStartPanel(session, options = {}) {
     } else if (isChecking) {
       defaultSessionMessage = 'Server session: checking…';
     } else {
-      defaultSessionMessage = `Server session: logged out. ${session.state.serverSession?.error || 'Log in to view published online worksheet.'}`;
+      defaultSessionMessage = `Server session: logged out. ${session.state.serverSession?.error || 'Log in to browse published worksheets.'}`;
     }
     sessionStatus.textContent = defaultSessionMessage;
-    signInBtn.hidden = isLoggedIn;
-    signInBtn.disabled = isChecking;
     manageAttemptsBtn.hidden = false;
     manageAttemptsBtn.disabled = isChecking || session.state.isManagingUploadedAttempts === true;
     manageAttemptsBtn.textContent = isLoggedIn
       ? 'Manage server attempts'
       : 'Log in to manage server attempts';
     browsePublishedBtn.disabled = isChecking;
+    browsePublishedBtn.textContent = isLoggedIn
+      ? 'Browse published worksheets'
+      : 'Log in to browse published worksheets';
     serverAttemptHint.textContent = isLoggedIn
       ? 'Open your private uploaded attempts to resume, download, or delete.'
       : 'Sign in first, then manage your uploaded attempts or browse published packages.';
@@ -6505,7 +6498,6 @@ function renderViewerStartPanel(session, options = {}) {
     serverAttemptActions,
     browsePublishedBtn,
     sessionStatus,
-    signInBtn,
     packageFileInput,
     errorMessage
   );
