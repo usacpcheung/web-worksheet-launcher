@@ -4225,6 +4225,7 @@ test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and medi
   };
   session.state.viewerPayload = {
     title: 'Worksheet A',
+    subject: 'ICT',
     worksheetId: 'ws_1',
     snapshotId: 'snap_1',
     blocks: [
@@ -4246,8 +4247,12 @@ test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and medi
   assert.equal(files.has('media/img_1'), true);
 
   const manifest = JSON.parse(decodeUtf8(files.get('manifest.json')));
+  const worksheet = JSON.parse(decodeUtf8(files.get('content/worksheet.json')));
   const attempt = JSON.parse(decodeUtf8(files.get('content/attempt.json')));
   assert.equal(manifest.format, 'worksheet-attempt-package');
+  assert.equal(manifest.worksheet.subject, 'ICT');
+  assert.equal(worksheet.subject, 'ICT');
+  assert.equal(worksheet.metadata.subject, 'ICT');
   assert.equal(Array.isArray(manifest.assets), true);
   assert.equal(manifest.assets.length, 1);
   assert.equal(attempt.kind, 'worksheet-attempt');
@@ -4416,6 +4421,31 @@ test('uploadCurrentAttemptPackage reports progress text while upload runs', asyn
   assert.equal(result.ok, true);
   assert.equal(observedMessages.some((msg) => String(msg || '').includes('Saving attempt to server...')), true);
   assert.equal(session.state.serverActionMessage, 'Attempt saved to server.');
+});
+
+test('uploadCurrentAttemptPackage sends sourceSubject when viewerPayload subject is blank', async () => {
+  const mod = await loadViewerModule();
+  let uploadedMetadata = null;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async (_bytes, metadata) => {
+        uploadedMetadata = metadata;
+        return { ok: true, data: { uploaded_attempt_id: 'attempt_server_subject' } };
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_upload_subject';
+  session.state.viewerPayload = { title: 'Sheet', blocks: [] };
+  session.state.sourceSubject = 'ICT';
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+
+  assert.equal(result.ok, true);
+  assert.equal(uploadedMetadata.subject, 'ICT');
 });
 
 test('uploadCurrentAttemptPackage leaves local attempt state safe on network failure', async () => {

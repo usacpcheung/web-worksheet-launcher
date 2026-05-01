@@ -3217,13 +3217,36 @@ class ViewerAttemptSession {
     if (!this.state.viewerPayload) {
       throw new Error('No active worksheet is loaded.');
     }
+    const worksheetSubject = firstNonBlankString(
+      this.state.sourceSubject,
+      this.state.viewerPayload?.subject,
+      this.state.viewerPayload?.metadata?.subject
+    );
+    const worksheetOwner = firstNonBlankString(
+      this.state.sourceOwner,
+      this.state.viewerPayload?.owner,
+      this.state.viewerPayload?.owner_email,
+      this.state.viewerPayload?.owner_name,
+      this.state.viewerPayload?.owner_sub,
+      this.state.viewerPayload?.metadata?.owner,
+      this.state.viewerPayload?.metadata?.owner_email,
+      this.state.viewerPayload?.metadata?.owner_name,
+      this.state.viewerPayload?.metadata?.owner_sub,
+      this.state.serverSession?.user?.email,
+      this.state.serverSession?.user?.name,
+      this.state.serverSession?.user?.sub
+    );
     const worksheet = {
       title: String(this.state.viewerPayload.title || 'Untitled worksheet'),
+      subject: worksheetSubject,
+      owner: worksheetOwner,
       blocks: Array.isArray(this.state.viewerPayload.blocks) ? this.state.viewerPayload.blocks : [],
       metadata: {
         modelVersion: 'attempt-package-v1',
         worksheetId: this.state.viewerPayload.worksheetId || null,
         snapshotId: this.state.viewerPayload.snapshotId || null,
+        subject: worksheetSubject,
+        owner: worksheetOwner,
       },
     };
     const attempt = this.buildAttemptRecordForPackage();
@@ -3234,6 +3257,7 @@ class ViewerAttemptSession {
       generatedAt: nowIso(),
       worksheet: {
         title: worksheet.title,
+        subject: worksheetSubject,
       },
       attempt: {
         localAttemptId: this.state.localAttemptId || null,
@@ -3323,7 +3347,11 @@ class ViewerAttemptSession {
       await this.flushLocalStateForAuthRedirect();
       const packageResult = await this.buildUploadedAttemptPackage();
       const uploadTitle = String(this.state.viewerPayload?.title || 'Untitled worksheet');
-      const uploadSubject = String(this.state.viewerPayload?.subject || '').trim();
+      const uploadSubject = firstNonBlankString(
+        this.state.sourceSubject,
+        this.state.viewerPayload?.subject,
+        this.state.viewerPayload?.metadata?.subject
+      );
       const uploadResult = await this.apiClient.uploadAttemptPackage(packageResult.bytes, {
         title: uploadTitle,
         subject: uploadSubject,
