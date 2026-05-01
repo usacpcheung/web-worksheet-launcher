@@ -2456,6 +2456,8 @@ test('autosave persists new attempt linkage fields', async () => {
   };
   session.state.sourceType = 'imported_worksheet';
   session.state.sourceImportedWorksheetId = 'imported_1';
+  session.state.sourceSubject = 'ICT';
+  session.state.sourceOwner = 'owner@example.test';
   session.state.studentName = 'Student A';
   session.state.lastActiveBlockId = 'q1';
   session.state.lastActiveIndex = 0;
@@ -2464,6 +2466,10 @@ test('autosave persists new attempt linkage fields', async () => {
   await session.autosave();
   assert.equal(persisted.sourceType, 'imported_worksheet');
   assert.equal(persisted.sourceImportedWorksheetId, 'imported_1');
+  assert.equal(persisted.subject, 'ICT');
+  assert.equal(persisted.owner, 'owner@example.test');
+  assert.equal(persisted.metadata.subject, 'ICT');
+  assert.equal(persisted.metadata.owner, 'owner@example.test');
   assert.equal(persisted.studentName, 'Student A');
   assert.equal(persisted.lastActiveBlockId, 'q1');
 });

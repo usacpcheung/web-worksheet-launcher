@@ -2100,6 +2100,8 @@ class ViewerAttemptSession {
       sourceLocalDraftId: null,
       sourceImportedWorksheetId: null,
       sourceDraftUpdatedAt: null,
+      sourceSubject: '',
+      sourceOwner: '',
       studentName: '',
       lastActiveBlockId: null,
       lastActiveIndex: 0,
@@ -2692,6 +2694,24 @@ class ViewerAttemptSession {
     this.state.sourceImportedWorksheetId =
       attemptRecord.sourceImportedWorksheetId || attemptRecord.metadata?.sourceImportedWorksheetId || null;
     this.state.sourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
+    this.state.sourceSubject = String(
+      attemptRecord.subject
+      ?? attemptRecord.metadata?.subject
+      ?? attemptRecord.viewerPayload?.subject
+      ?? ''
+    ).trim();
+    this.state.sourceOwner = String(
+      attemptRecord.owner
+      ?? attemptRecord.metadata?.owner
+      ?? attemptRecord.metadata?.owner_email
+      ?? attemptRecord.metadata?.owner_name
+      ?? attemptRecord.metadata?.owner_sub
+      ?? attemptRecord.viewerPayload?.owner
+      ?? attemptRecord.viewerPayload?.owner_email
+      ?? attemptRecord.viewerPayload?.owner_name
+      ?? attemptRecord.viewerPayload?.owner_sub
+      ?? ''
+    ).trim();
     this.state.studentName = pickAttemptStudentName(attemptRecord);
     this.state.lastActiveBlockId = attemptRecord.lastActiveBlockId || null;
     this.state.lastActiveIndex = Number.isInteger(attemptRecord.lastActiveIndex) ? attemptRecord.lastActiveIndex : 0;
@@ -2837,6 +2857,8 @@ class ViewerAttemptSession {
       lastSavedAt: updatedAt,
       completedAt: this.state.completedAt,
       answers: normalizedAnswers,
+      subject: this.state.sourceSubject || '',
+      owner: this.state.sourceOwner || '',
       // checkResult is transient UI state and must not be persisted.
       metadata: {
         localId: this.state.localAttemptId,
@@ -2847,6 +2869,8 @@ class ViewerAttemptSession {
         sourceFingerprint: this.state.sourceFingerprint || null,
         studentName: this.state.studentName || '',
         sourceDraftUpdatedAt: this.state.sourceDraftUpdatedAt || null,
+        subject: this.state.sourceSubject || '',
+        owner: this.state.sourceOwner || '',
         updatedAt,
       },
     };
