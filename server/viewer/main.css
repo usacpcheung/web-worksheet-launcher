@@ -173,11 +173,11 @@ body {
 }
 
 .viewer-resume-card {
-  border: 1px solid #e2e8f1;
-  border-radius: 14px;
-  padding: 22px 24px;
-  background: #fff;
-  box-shadow: 0 2px 8px rgb(15 23 42 / 4%);
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .viewer-resume-card h2 {
@@ -193,6 +193,12 @@ body {
 .viewer-resume-card .muted {
   margin-top: 10px;
   margin-bottom: 0;
+}
+
+.viewer-launch-divider {
+  height: 1px;
+  width: 100%;
+  background: #e7ecf4;
 }
 
 .viewer-start-actions {
@@ -239,15 +245,15 @@ body {
 }
 
 .viewer-resume-card .viewer-start-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 12px;
   align-items: center;
-  flex-wrap: wrap;
   margin-top: 12px;
 }
 
 .viewer-resume-card .viewer-start-btn {
-  width: auto;
+  width: 100%;
 }
 
 .viewer-start-btn:hover:not(:disabled) {
@@ -292,6 +298,18 @@ body {
   color: #4b5563;
   box-shadow: none;
   transform: none;
+}
+
+.viewer-start-btn--secondary-danger {
+  background: #fff;
+  border-color: #efc1bc;
+  color: #9f1239;
+}
+
+.viewer-start-btn--secondary-danger:hover:not(:disabled) {
+  background: #fff5f5;
+  border-color: #e8a7a1;
+  color: #881337;
 }
 
 .viewer-published-heading {
@@ -760,7 +778,7 @@ body {
 @media (max-width: 640px) {
   .viewer-resume-card .viewer-start-actions {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
   }
 
   .viewer-resume-card .viewer-start-btn {

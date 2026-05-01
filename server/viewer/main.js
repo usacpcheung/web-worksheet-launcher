@@ -6358,7 +6358,7 @@ function renderViewerStartPanel(session, options = {}) {
     });
     const discardBtn = document.createElement('button');
     discardBtn.type = 'button';
-    discardBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
+    discardBtn.className = 'viewer-start-btn viewer-start-btn--secondary-danger';
     discardBtn.textContent = 'Discard attempt';
     discardBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
@@ -6520,15 +6520,19 @@ function renderViewerStartPanel(session, options = {}) {
   attemptsSection.appendChild(createViewerStartSectionHeader({ icon: 'attempts', title: 'Attempts' }));
   if (resumeCard) {
     attemptsSection.append(resumeCard);
+    const attemptDivider = document.createElement('div');
+    attemptDivider.className = 'viewer-launch-divider';
+    attemptsSection.append(attemptDivider);
   } else {
     attemptsSection.append(noResumeHint);
   }
-  attemptsSection.append(attemptsActions, sessionStatus);
+  attemptsSection.append(attemptsActions);
   worksheetsSection.appendChild(createViewerStartSectionHeader({ icon: 'worksheet', title: 'Worksheets' }));
   worksheetsSection.append(worksheetActions);
   panel.append(
     attemptsSection,
     worksheetsSection,
+    sessionStatus,
     packageFileInput,
     errorMessage
   );
