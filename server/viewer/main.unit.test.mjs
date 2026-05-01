@@ -3633,7 +3633,8 @@ test('direct published package sign-in recovery retries same package and renders
   assert.ok(renderedSession);
   assert.equal(renderedSession.state.viewerPayload.title, 'Published worksheet');
   assert.ok(renderedSession.state.localAttemptId);
-  assert.equal(replacedUrl.includes(`localAttemptId=${renderedSession.state.localAttemptId}`), true);
+  assert.equal(replacedUrl.includes('publishedPackageId=pkg_42'), true);
+  assert.equal(replacedUrl.includes('localAttemptId='), false);
 });
 
 test('direct published package sign-in recovery keeps popup-blocked failures retryable', { concurrency: false }, async () => {

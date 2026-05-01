@@ -7033,9 +7033,11 @@ async function bootstrapViewer() {
   };
 
   const completePublishedPackageOpen = () => {
-    if (session.state.localAttemptId && window?.history?.replaceState && window?.location?.href) {
+    if (window?.history?.replaceState && window?.location?.href) {
       const nextUrl = new URL(window.location.href);
-      nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+      // Keep direct published-package links portable across devices/profiles.
+      // If we pin localAttemptId here, copied links may fail where that local attempt does not exist.
+      nextUrl.searchParams.delete('localAttemptId');
       window.history.replaceState({}, '', nextUrl);
     }
     renderViewerShell(session);
