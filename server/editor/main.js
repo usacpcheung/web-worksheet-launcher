@@ -4220,7 +4220,7 @@ function renderEditorShell(session) {
       cancelBtn.textContent = 'Cancel';
       const confirmBtn = document.createElement('button');
       confirmBtn.type = 'button';
-      confirmBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+      confirmBtn.className = 'confirm-modal__btn confirm-modal__btn--primary';
       confirmBtn.textContent = 'Publish';
       actions.append(cancelBtn, confirmBtn);
       dialog.append(heading, description, publishTitleField, publishSubjectField, actions);
