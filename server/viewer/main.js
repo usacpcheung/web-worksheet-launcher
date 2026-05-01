@@ -302,6 +302,7 @@ function createViewerIcon(name) {
   const icons = {
     info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
     upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
+    audio: `<svg ${svgAttrs}><path d="M11 5 6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18.5 6a8.5 8.5 0 0 1 0 12"></path></svg>`,
     attempts: `<svg ${svgAttrs}><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><circle cx="4" cy="6" r="1.5"></circle><circle cx="4" cy="12" r="1.5"></circle><circle cx="4" cy="18" r="1.5"></circle></svg>`,
     worksheet: `<svg ${svgAttrs}><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v6h6"></path></svg>`,
     print: `<svg ${svgAttrs}><path d="M6 9V4h12v5"></path><path d="M6 18h12v2H6z"></path><path d="M6 14h12"></path><path d="M6 10H4a2 2 0 0 0-2 2v4h4"></path><path d="M18 16h4v-4a2 2 0 0 0-2-2h-2"></path></svg>`,
@@ -923,8 +924,8 @@ function createChoiceButtonGroup({
     if (optionAudioRef) {
       const optionAudioBtn = document.createElement('button');
       optionAudioBtn.type = 'button';
-      optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';
-      optionAudioBtn.textContent = '🔊';
+      optionAudioBtn.className = 'viewer-header-icon-btn choice-audio-btn question-card__prompt-audio-btn';
+      optionAudioBtn.innerHTML = createViewerIcon('audio');
       optionAudioBtn.setAttribute('aria-label', 'Play option audio');
       optionAudioBtn.title = 'Play option audio';
       optionAudioBtn.addEventListener('click', async (event) => {
@@ -5669,10 +5670,10 @@ function renderViewerShell(session) {
     if (questionAudioRef?.assetId) {
       const questionAudioBtn = document.createElement('button');
       questionAudioBtn.type = 'button';
-      questionAudioBtn.className = 'question-card__prompt-audio-btn';
+      questionAudioBtn.className = 'viewer-header-icon-btn question-card__prompt-audio-btn';
       questionAudioBtn.setAttribute('aria-label', 'Play question audio');
       questionAudioBtn.title = 'Play question audio';
-      questionAudioBtn.textContent = '🔊';
+      questionAudioBtn.innerHTML = createViewerIcon('audio');
       questionAudioBtn.addEventListener('click', async () => {
         if (questionAudioBtn.disabled) return;
         questionAudioBtn.disabled = true;

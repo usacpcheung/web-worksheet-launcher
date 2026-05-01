@@ -1161,7 +1161,8 @@ test('createChoiceButtonGroup renders option-audio play buttons only when option
   const firstAudioButton = firstRow.children.find((node) => String(node.className || '').includes('choice-audio-btn'));
   const secondAudioButton = secondRow.children.find((node) => String(node.className || '').includes('choice-audio-btn'));
 
-  assert.equal(firstAudioButton?.textContent, '🔊');
+  assert.equal(String(firstAudioButton?.innerHTML || '').includes('viewer-icon'), true);
+  assert.equal(String(firstAudioButton?.className || '').includes('viewer-header-icon-btn'), true);
   assert.equal(String(firstAudioButton?.className || '').includes('question-card__prompt-audio-btn'), true);
   assert.equal(secondAudioButton, undefined);
 });
@@ -4074,6 +4075,8 @@ test('viewer playback race condition: last request wins when fetches resolve out
 
 test('question prompt audio handler toggles disable state and does not persist success text', async () => {
   const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
+  assert.equal(source.includes("questionAudioBtn.className = 'viewer-header-icon-btn question-card__prompt-audio-btn';"), true);
+  assert.equal(source.includes("questionAudioBtn.innerHTML = createViewerIcon('audio');"), true);
   assert.equal(source.includes("if (questionAudioBtn.disabled) return;"), true);
   assert.equal(source.includes("questionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("onEnded: () => {\n            questionAudioBtn.disabled = false;"), true);
@@ -4083,8 +4086,8 @@ test('question prompt audio handler toggles disable state and does not persist s
 
 test('choice option audio handler matches icon-button lifecycle behavior', async () => {
   const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
-  assert.equal(source.includes("optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';"), true);
-  assert.equal(source.includes("optionAudioBtn.textContent = '🔊';"), true);
+  assert.equal(source.includes("optionAudioBtn.className = 'viewer-header-icon-btn choice-audio-btn question-card__prompt-audio-btn';"), true);
+  assert.equal(source.includes("optionAudioBtn.innerHTML = createViewerIcon('audio');"), true);
   assert.equal(source.includes("if (optionAudioBtn.disabled) return;"), true);
   assert.equal(source.includes("optionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("onStart: () => {\n            optionAudioBtn.disabled = true;"), false);
