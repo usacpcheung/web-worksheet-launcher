@@ -4525,7 +4525,7 @@ test('listUploadedAttempts stores rows and slot limit for management UI', async 
         ok: true,
         data: {
           attemptSlotLimit: 3,
-          uploadedAttempts: [{ uploaded_attempt_id: 'a1', title: 'Sheet 1', subject: 'Math', status: 'in_progress' }],
+          items: [{ uploaded_attempt_id: 'a1', title: 'Sheet 1', subject: 'Math', status: 'in_progress' }],
         },
       }),
     },

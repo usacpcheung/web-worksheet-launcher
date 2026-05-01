@@ -3120,7 +3120,13 @@ class ViewerAttemptSession {
         this.state.uploadedAttemptsError = result?.error?.message || 'Unable to load uploaded attempts.';
         return result;
       }
-      const rows = normalizeUploadedAttemptRows(result?.data?.uploadedAttempts || result?.data?.attempts || result?.data || []);
+      const rows = normalizeUploadedAttemptRows(
+        result?.data?.uploadedAttempts
+        || result?.data?.attempts
+        || result?.data?.items
+        || result?.data
+        || []
+      );
       this.state.uploadedAttempts = rows;
       const limit = Number(result?.data?.attemptSlotLimit || result?.data?.slotLimit);
       if (Number.isFinite(limit) && limit > 0) {
