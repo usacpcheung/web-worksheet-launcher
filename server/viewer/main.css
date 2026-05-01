@@ -301,15 +301,15 @@ body {
 }
 
 .viewer-start-btn--secondary-danger {
-  background: #fff;
-  border-color: #efc1bc;
-  color: #9f1239;
+  color: #912018;
+  border-color: #f4b8b2;
+  background: #fef2f1;
 }
 
 .viewer-start-btn--secondary-danger:hover:not(:disabled) {
-  background: #fff5f5;
-  border-color: #e8a7a1;
-  color: #881337;
+  color: #7a271a;
+  border-color: #eca8a2;
+  background: #fee4e2;
 }
 
 .viewer-published-heading {
