@@ -4561,6 +4561,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           const readiness = await session.probeServerSessionSilently({ force: true });
           if (readiness.status === 'ready') {
             await session.listUploadedAttempts();
+            await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true });
             session.state.serverActionMessage = null;
           } else {
             session.state.serverActionMessage = readiness?.error?.message || 'Sign-in completed, but session is still not ready.';
@@ -6124,21 +6125,78 @@ function renderViewerStartPanel(session, options = {}) {
   });
   manageAttemptsBtn.addEventListener('click', async () => {
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
-    await showUploadedAttemptsManagerModal(session, {
-      autoStartSignIn: sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN,
-      onResumeSuccess: async () => {
-        if (session.state.localAttemptId) {
-          const nextUrl = new URL(window.location.href);
-          nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
-          nextUrl.searchParams.delete('viewerPayload');
-          nextUrl.searchParams.delete('snapshot');
-          window.history.replaceState({}, '', nextUrl);
+    const onResumeSuccess = async () => {
+      if (session.state.localAttemptId) {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+        nextUrl.searchParams.delete('viewerPayload');
+        nextUrl.searchParams.delete('snapshot');
+        window.history.replaceState({}, '', nextUrl);
+      }
+      renderViewerShell(session);
+      window.viewerSession = session;
+    };
+    if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+      await showUploadedAttemptsManagerModal(session, {
+        autoStartSignIn: false,
+        onResumeSuccess,
+      });
+      renderServerControls();
+      return;
+    }
+    session.beginServerSignIn({
+      onPopupBlocked: ({ finalizeFlow }) => {
+        session.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        session.notifyStateChange();
+        renderServerControls();
+        finalizeFlow();
+      },
+      onStatusMessage: ({ message }) => {
+        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+          session.state.serverActionMessage = message;
+          session.notifyStateChange();
+          renderServerControls();
         }
-        renderViewerShell(session);
-        window.viewerSession = session;
+      },
+      onSessionReady: async ({ finalizeFlow }) => {
+        try {
+          const readiness = await session.preflightPublishedSession();
+          if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+            session.state.serverActionMessage = readiness?.result?.error?.message
+              || session.state.serverSession?.error
+              || 'Sign-in completed, but session is still not ready.';
+            session.notifyStateChange();
+            renderServerControls();
+            return;
+          }
+          await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true });
+          session.state.serverActionMessage = null;
+          session.notifyStateChange();
+          renderServerControls();
+          await showUploadedAttemptsManagerModal(session, {
+            autoStartSignIn: false,
+            onResumeSuccess,
+          });
+          renderServerControls();
+        } finally {
+          finalizeFlow();
+        }
+      },
+      onSessionNotReady: ({ result, finalizeFlow }) => {
+        if (result?.final === false && result?.waitingForCallback === true) {
+          session.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          session.notifyStateChange();
+          renderServerControls();
+          return;
+        }
+        if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
+          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.notifyStateChange();
+          renderServerControls();
+        }
+        finalizeFlow();
       },
     });
-    renderServerControls();
   });
   const scheduleDebouncedBrowse = (() => {
     let debounceTimer = null;
