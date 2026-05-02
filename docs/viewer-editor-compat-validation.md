@@ -15,12 +15,21 @@
 2. Search/pagination query shape unchanged.
 3. Open flow unchanged.
 4. No contract mismatches from client-level API tests.
+5. Uploaded draft slot-full flow retries upload after deleting one server draft slot.
+6. Uploaded draft slot usage reflects server-provided `draftSlotLimit` when available.
+
+### Viewer (attempt upload parity)
+1. Attempt slot-full flow retries upload after deleting one server attempt slot.
+2. Attempt slot usage reflects server-provided `attemptSlotLimit`.
+3. Attempt slot-full upload recovery uses the focused delete-and-continue prompt, not the general server-attempt manager.
 
 ## Evidence run
 
 - `node --test server/viewer/main.unit.test.mjs`
 - `node --test server/editor/main.unit.test.mjs`
 - `node --test server/app/api/server-api-client.unit.test.mjs`
+- `node --test server/api/services/package-service.unit.test.mjs`
+- `node --test server/api/server.unit.test.mjs`
 
 All passed in this environment.
 

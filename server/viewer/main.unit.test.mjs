@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
+import { createStoredZip, parseStoredZip, decodeUtf8, crc32 } from '../editor/zip-utils.js';
+import { PackageService } from '../api/services/package-service.js';
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
@@ -102,6 +104,10 @@ async function loadViewerModule(overrides = {}) {
       return { worksheet: value };
     }),
     parseWorksheetPackage: overrides.parseWorksheetPackage || (() => ({ worksheet: { title: 'Imported package', blocks: [] } })),
+    createStoredZip: overrides.createStoredZip || createStoredZip,
+    crc32: overrides.crc32 || crc32,
+    parseStoredZip: overrides.parseStoredZip || parseStoredZip,
+    decodeUtf8: overrides.decodeUtf8 || decodeUtf8,
     validateViewerPayloadSchema: overrides.validateViewerPayloadSchema || (() => ({ valid: true, errors: [] })),
     renderViewerShell: overrides.renderViewerShell || (() => {}),
     document: overrides.document || { getElementById: () => null },
@@ -140,6 +146,11 @@ async function loadViewerModule(overrides = {}) {
       replacement: 'const mapLegacyJsonToPackageModel = __testBag.mapLegacyJsonToPackageModel;\nconst parseWorksheetPackage = __testBag.parseWorksheetPackage;',
     },
     {
+      name: 'replace zip utils imports with test bag bindings',
+      pattern: /import\s*\{\s*createStoredZip\s*,\s*crc32\s*,\s*parseStoredZip\s*,\s*decodeUtf8\s*\}\s*from\s*['"]\.\.\/editor\/zip-utils\.js['"];/,
+      replacement: 'const createStoredZip = __testBag.createStoredZip;\nconst crc32 = __testBag.crc32;\nconst parseStoredZip = __testBag.parseStoredZip;\nconst decodeUtf8 = __testBag.decodeUtf8;',
+    },
+    {
       name: 'replace createServerApiClient import with test bag binding',
       pattern: /import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];/,
       replacement: 'const createServerApiClient = __testBag.createServerApiClient;',
@@ -157,7 +168,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, readViewerPrintSchoolNamePreference, writeViewerPrintSchoolNamePreference, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -253,6 +264,7 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   const mod = await loadViewerModule();
   const viewerPayload = {
     title: 'Practice Worksheet',
+    subject: 'Mathematics',
     blocks: [
       {
         blockId: 'q_text',
@@ -304,7 +316,7 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
       q_bool: { value: false },
     },
     studentName: 'Ada Lovelace',
-    completedAt: '2026-04-14T10:15:00Z',
+    submittedAt: '2026-04-14T10:15:00Z',
     checkResult: {
       correctCount: 1,
       totalQuestions: 2,
@@ -323,6 +335,8 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   });
 
   assert.equal(report.title, 'Practice Worksheet');
+  assert.equal(report.schoolName, 'Hong Kong Red Cross Hospital Schools');
+  assert.equal(report.subject, 'Mathematics');
   assert.equal(report.studentName, 'Ada Lovelace');
   assert.equal(report.checkedSummary, 'Checked 1/2 correct');
   assert.equal(report.questions.length, 3);
@@ -332,7 +346,7 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   assert.equal(report.questions[0].layoutMode, 'keep-all');
   assert.equal(report.questions[0].sectionBreakModes.prompt, 'keep');
   assert.equal(report.questions[0].sectionBreakModes.answer, 'keep');
-  assert.equal(report.questions[1].answerText, 'Two\nFive');
+  assert.equal(report.questions[1].answerText, 'A. Two\nC. Five');
   assert.equal(report.questions[1].result.label, 'Correct');
   assert.equal(report.questions[2].result.label, 'Incorrect');
   assert.equal(report.questions[2].result.detail, 'Correct answer: True');
@@ -344,6 +358,7 @@ test('buildWorksheetPrintReportModel normalizes unsafe image mime types for data
   const report = await mod.buildWorksheetPrintReportModel({
     viewerPayload: {
       title: 'Worksheet',
+      subject: 'Mathematics',
       blocks: [
         {
           blockId: 'q1',
@@ -374,6 +389,7 @@ test('buildWorksheetPrintReportModel normalizes image/jpg to image/jpeg for prin
   const report = await mod.buildWorksheetPrintReportModel({
     viewerPayload: {
       title: 'Worksheet',
+      subject: 'Mathematics',
       blocks: [
         {
           blockId: 'q1',
@@ -435,6 +451,7 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
   const report = await mod.buildWorksheetPrintReportModel({
     viewerPayload: {
       title: 'Worksheet',
+      subject: 'Mathematics',
       blocks: [
         {
           blockId: 'q1',
@@ -447,7 +464,7 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
     },
     answers: {},
     studentName: '',
-    completedAt: '2026-04-14T10:15:00Z',
+    submittedAt: '2026-04-14T10:15:00Z',
     storage: {
       localAssets: {
         get: async () => null,
@@ -457,16 +474,22 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
 
   const html = mod.buildWorksheetPrintReportHtml(report);
   assert.equal(html.includes('>Student<'), false);
+  assert.equal(html.includes('Hong Kong Red Cross Hospital Schools'), true);
+  assert.equal(html.includes('<dt>Subject</dt>'), true);
+  assert.equal(html.includes('Mathematics'), true);
+  assert.equal(html.includes('<dt>Submitted at</dt>'), true);
   assert.equal(html.includes('Question image unavailable.'), true);
-  assert.equal(html.includes('No answer submitted'), true);
+  assert.equal(html.includes('Answer: Not answered'), true);
 });
 
 test('buildWorksheetPrintReportHtml emits layout-mode classes for print pagination behavior', async () => {
   const mod = await loadViewerModule();
   const html = mod.buildWorksheetPrintReportHtml({
+    schoolName: 'School',
     title: 'Worksheet',
+    subject: '',
     studentName: '',
-    completedAtLabel: 'April 14, 2026, 18:00',
+    submittedAtLabel: 'April 14, 2026, 18:00',
     checkedSummary: '',
     questions: [
       {
@@ -483,7 +506,7 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
         promptText: 'Medium prompt',
         answerText: 'Answer',
         result: null,
-        image: null,
+        image: { status: 'ready', src: 'data:image/png;base64,abc', alt: 'Question image' },
         layoutMode: 'keep-head',
         sectionBreakModes: { prompt: 'keep', answer: 'flow', checkedAnswer: null },
       },
@@ -504,13 +527,26 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('print-question--keep-head'), true);
   assert.equal(normalizedHtml.includes('print-question--flow'), true);
   assert.equal(normalizedHtml.includes('print-question-section--prompt'), true);
+  assert.equal(normalizedHtml.includes('print-question-section--image print-question-section--flow'), true);
   assert.equal(normalizedHtml.includes('print-question-section--answer'), true);
   assert.equal(normalizedHtml.includes('print-question-section--result'), true);
   assert.equal(normalizedHtml.includes('print-question-section--keep'), true);
   assert.equal(normalizedHtml.includes('print-question-section--flow'), true);
   assert.equal(normalizedHtml.includes('>Question<'), true);
-  assert.equal(normalizedHtml.includes('>Checked answer<'), true);
+  assert.equal(normalizedHtml.includes('>Checked result<'), true);
   assert.equal(normalizedHtml.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
+  assert.equal(normalizedHtml.includes('.print-question-section--image {\n      break-inside: auto;'), true);
+  const mediumPromptIndex = normalizedHtml.indexOf('<p class="print-question-text">Medium prompt</p>');
+  const imageSectionIndex = normalizedHtml.indexOf('<section class="print-question-section print-question-section--image print-question-section--flow">');
+  assert.equal(mediumPromptIndex >= 0, true);
+  assert.equal(imageSectionIndex > mediumPromptIndex, true);
+  assert.equal(
+    normalizedHtml.slice(mediumPromptIndex, imageSectionIndex).includes('</section>'),
+    true
+  );
+  assert.equal(normalizedHtml.includes('size: A4 portrait;'), true);
+  assert.equal(normalizedHtml.includes('max-height: 75mm;'), true);
+  assert.equal(normalizedHtml.includes('object-fit: contain;'), true);
   assert.equal(normalizedHtml.includes('border-radius: 3mm;'), false);
   assert.equal(normalizedHtml.includes('border-top: 1px solid #eceff3;'), false);
   assert.equal(normalizedHtml.includes('border-bottom: 1px solid #dde2e8;'), false);
@@ -519,9 +555,11 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
 test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
   const mod = await loadViewerModule();
   const html = mod.buildWorksheetPrintReportHtml({
+    schoolName: 'School',
     title: 'Worksheet',
+    subject: '',
     studentName: '',
-    completedAtLabel: '',
+    submittedAtLabel: '',
     checkedSummary: '',
     questions: [
       {
@@ -537,6 +575,96 @@ test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
   });
   assert.equal(html.includes('onerror="alert(1)"'), false);
   assert.equal(html.includes('&quot; onerror=&quot;alert(1)'), true);
+});
+
+test('buildWorksheetPrintReportModel formats selected multiple-choice answers with option prefixes in option order', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Choose one.' },
+          responseConfig: {
+            inputType: 'multiple_choice',
+            selectionMode: 'single',
+            options: [
+              { value: 'raw_a', label: 'Respiration' },
+              { value: 'raw_b', label: 'Photosynthesis' },
+            ],
+          },
+        },
+        {
+          blockId: 'q2',
+          kind: 'question',
+          position: 1,
+          prompt: { text: 'Choose colours.' },
+          responseConfig: {
+            inputType: 'multiple_choice',
+            selectionMode: 'multi',
+            options: [
+              { value: 'r', label: 'Red' },
+              { value: 'b', label: 'Blue' },
+              { value: 'g', label: 'Green' },
+            ],
+          },
+        },
+      ],
+    },
+    answers: {
+      q1: { value: 'raw_b' },
+      q2: { value: ['g', 'r'] },
+    },
+    submittedAt: '2026-05-01T06:35:00.000Z',
+  });
+
+  assert.equal(report.questions[0].answerText, 'B. Photosynthesis');
+  assert.equal(report.questions[1].answerText, 'A. Red\nC. Green');
+  assert.equal(report.questions[0].answerText.includes('raw_b'), false);
+});
+
+test('viewer print school preference defaults and persists through localStorage wrapper', async () => {
+  const mod = await loadViewerModule();
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+  };
+
+  assert.equal(
+    mod.readViewerPrintSchoolNamePreference(storage),
+    'Hong Kong Red Cross Hospital Schools'
+  );
+  assert.equal(mod.writeViewerPrintSchoolNamePreference('  St Anne School  ', storage), 'St Anne School');
+  assert.equal(mod.readViewerPrintSchoolNamePreference(storage), 'St Anne School');
+  assert.equal(mod.writeViewerPrintSchoolNamePreference('   ', storage), 'Hong Kong Red Cross Hospital Schools');
+});
+
+test('buildWorksheetPrintReportHtml records missing submitted timestamp without attempt id', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({
+    viewerPayload: {
+      title: 'Worksheet',
+      blocks: [{
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q1' },
+        responseConfig: { inputType: 'text' },
+      }],
+    },
+    answers: { q1: { value: 'Answer' } },
+    schoolName: 'School',
+  });
+  const html = mod.buildWorksheetPrintReportHtml(report);
+
+  assert.equal(html.includes('Submitted at'), true);
+  assert.equal(html.includes('Not recorded'), true);
+  assert.equal(html.includes('attempt_'), false);
+  assert.equal(html.includes('Local attempt ID'), false);
 });
 
 test('buildWorksheetPrintReportModel marks oversized sections as flow to allow internal page breaks', async () => {
@@ -589,7 +717,7 @@ test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
         },
         answers: { q1: { value: 'Answer' } },
         studentName: 'Student',
-        completedAt: '2026-04-14T10:15:00Z',
+        submittedAt: '2026-04-14T10:15:00Z',
         checkResult: null,
       },
       storage: {},
@@ -629,7 +757,7 @@ test('startWorksheetPrintFlow opens popup synchronously before async model work'
         },
         answers: { q1: { value: 'Answer' } },
         studentName: 'Student',
-        completedAt: '2026-04-14T10:15:00Z',
+        submittedAt: '2026-04-14T10:15:00Z',
         checkResult: null,
       },
       storage: {
@@ -700,7 +828,7 @@ test('startWorksheetPrintFlow returns friendly message when popup is closed befo
         },
         answers: { q1: { value: 'Answer' } },
         studentName: 'Student',
-        completedAt: '2026-04-14T10:15:00Z',
+        submittedAt: '2026-04-14T10:15:00Z',
         checkResult: null,
       },
       storage: {
@@ -982,6 +1110,21 @@ test('normalizeViewerPayload tolerates malformed blocks and coerces unknown kind
   assert.equal(payload.blocks[2].kind, 'content');
 });
 
+test('normalizeViewerPayload preserves worksheet subject and owner metadata', async () => {
+  const mod = await loadViewerModule();
+
+  const payload = mod.normalizeViewerPayload({
+    title: 'Worksheet A',
+    subject: 'ICT',
+    owner_email: 'owner@example.test',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  });
+
+  assert.equal(payload.subject, 'ICT');
+  assert.equal(payload.owner, 'owner@example.test');
+  assert.equal(payload.owner_email, 'owner@example.test');
+});
+
 test('normalizeViewerBlock preserves non-canonical single_choice inputType without coercion', async () => {
   const mod = await loadViewerModule();
   const normalized = mod.normalizeViewerBlock({
@@ -1135,7 +1278,8 @@ test('createChoiceButtonGroup renders option-audio play buttons only when option
   const firstAudioButton = firstRow.children.find((node) => String(node.className || '').includes('choice-audio-btn'));
   const secondAudioButton = secondRow.children.find((node) => String(node.className || '').includes('choice-audio-btn'));
 
-  assert.equal(firstAudioButton?.textContent, '🔊');
+  assert.equal(String(firstAudioButton?.innerHTML || '').includes('viewer-icon'), true);
+  assert.equal(String(firstAudioButton?.className || '').includes('viewer-header-icon-btn'), true);
   assert.equal(String(firstAudioButton?.className || '').includes('question-card__prompt-audio-btn'), true);
   assert.equal(secondAudioButton, undefined);
 });
@@ -1167,14 +1311,13 @@ test('viewer start panel includes logged_out/checking/logged_in server-state ren
   assert.equal(source.includes("LOGGED_OUT: 'logged_out'"), true);
   assert.equal(source.includes("CHECKING: 'checking'"), true);
   assert.equal(source.includes("LOGGED_IN: 'logged_in'"), true);
-  assert.equal(source.includes("signInBtn.textContent = 'Log in to view published online worksheet';"), true);
-  assert.equal(source.includes('const canAccessPublished = isLoggedIn;'), true);
-  assert.equal(source.includes('publishedList.hidden = !canAccessPublished;'), true);
-  assert.equal(source.includes('signInBtn.disabled = isChecking;'), true);
+  assert.equal(source.includes("description.textContent = 'Resume attempts, import a worksheet, or load a published online version.';"), true);
+  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'attempts', title: 'Attempts' })"), true);
+  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'worksheet', title: 'Worksheets' })"), true);
+  assert.equal(source.includes("manageAttemptsBtn.textContent = isLoggedIn"), true);
+  assert.equal(source.includes("browsePublishedBtn.textContent = isLoggedIn"), true);
   assert.equal(source.includes("const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';"), true);
-  assert.equal(source.includes("loadMoreBtn.textContent = 'Load more';"), true);
-  assert.equal(source.includes("await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });"), true);
-  assert.equal(source.includes('await session.startFromPublishedPackage'), true);
+  assert.equal(source.includes("const SIGNED_OUT_MESSAGE = 'You are currently signed out. Log in to use server features.';"), true);
 });
 
 test('normalizeViewerBlock preserves correctAnswer for gradeable question types', async () => {
@@ -2411,18 +2554,79 @@ test('createLocalAttemptState persists sourceDraftUpdatedAt in attempt metadata'
   const payload = mod.normalizeViewerPayload({
     worksheetId: 'ws_1',
     snapshotId: 'snap_1',
+    subject: 'ICT',
     blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
   });
   const attempt = session.createLocalAttemptState(payload, 'local_draft_preview', {
     sourceDraftUpdatedAt: '2026-03-31T11:00:00.000Z',
     sourceLocalDraftId: 'draft_11',
+    sourceOwner: 'owner@example.test',
   });
 
   assert.equal(attempt.metadata.sourceDraftUpdatedAt, '2026-03-31T11:00:00.000Z');
+  assert.equal(attempt.metadata.subject, 'ICT');
+  assert.equal(attempt.metadata.owner, 'owner@example.test');
+  assert.equal(attempt.subject, 'ICT');
+  assert.equal(attempt.owner, 'owner@example.test');
   assert.equal(attempt.sourceType, 'local_draft_preview');
   assert.equal(attempt.sourceLocalDraftId, 'draft_11');
   assert.equal(attempt.worksheetId, 'ws_1');
   assert.equal(attempt.snapshotId, 'snap_1');
+});
+
+test('createLocalAttemptState falls back owner to logged-in session user when owner is missing', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.serverSession = {
+    status: 'logged_in',
+    user: { email: 'viewer-owner@example.test' },
+    error: null,
+  };
+  const payload = mod.normalizeViewerPayload({
+    worksheetId: 'ws_owner',
+    snapshotId: 'snap_owner',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  });
+
+  const attempt = session.createLocalAttemptState(payload, 'inline_payload', {});
+  assert.equal(attempt.owner, 'viewer-owner@example.test');
+  assert.equal(attempt.metadata.owner, 'viewer-owner@example.test');
+});
+
+test('createLocalAttemptState treats blank source metadata as missing', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { get: async () => null, put: async (value) => value },
+    drafts: { get: async () => null },
+    importedWorksheets: { get: async () => null },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.serverSession = {
+    status: 'logged_in',
+    user: { email: 'viewer-owner@example.test' },
+    error: null,
+  };
+  const payload = mod.normalizeViewerPayload({
+    worksheetId: 'ws_blank_source',
+    snapshotId: 'snap_blank_source',
+    subject: 'ICT',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  });
+
+  const attempt = session.createLocalAttemptState(payload, 'inline_payload', {
+    sourceSubject: '',
+    sourceOwner: '',
+  });
+
+  assert.equal(attempt.subject, 'ICT');
+  assert.equal(attempt.metadata.subject, 'ICT');
+  assert.equal(attempt.owner, 'viewer-owner@example.test');
+  assert.equal(attempt.metadata.owner, 'viewer-owner@example.test');
 });
 
 test('autosave persists new attempt linkage fields', async () => {
@@ -2440,6 +2644,8 @@ test('autosave persists new attempt linkage fields', async () => {
   };
   session.state.sourceType = 'imported_worksheet';
   session.state.sourceImportedWorksheetId = 'imported_1';
+  session.state.sourceSubject = 'ICT';
+  session.state.sourceOwner = 'owner@example.test';
   session.state.studentName = 'Student A';
   session.state.lastActiveBlockId = 'q1';
   session.state.lastActiveIndex = 0;
@@ -2448,8 +2654,44 @@ test('autosave persists new attempt linkage fields', async () => {
   await session.autosave();
   assert.equal(persisted.sourceType, 'imported_worksheet');
   assert.equal(persisted.sourceImportedWorksheetId, 'imported_1');
+  assert.equal(persisted.subject, 'ICT');
+  assert.equal(persisted.owner, 'owner@example.test');
+  assert.equal(persisted.metadata.subject, 'ICT');
+  assert.equal(persisted.metadata.owner, 'owner@example.test');
   assert.equal(persisted.studentName, 'Student A');
   assert.equal(persisted.lastActiveBlockId, 'q1');
+});
+
+test('autosave falls back to viewer payload subject and logged-in owner when source metadata is blank', async () => {
+  const mod = await loadViewerModule();
+  let persisted = null;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => { persisted = value; return value; } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.serverSession = {
+    status: 'logged_in',
+    user: { email: 'viewer-owner@example.test' },
+    error: null,
+  };
+  session.state.localAttemptId = 'attempt_blank_meta';
+  session.state.viewerPayload = mod.normalizeViewerPayload({
+    title: 'Worksheet A',
+    subject: 'ICT',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} }],
+  });
+  session.state.sourceSubject = '';
+  session.state.sourceOwner = '';
+  session.state.attemptRevision = 1;
+
+  await session.autosave();
+
+  assert.equal(persisted.subject, 'ICT');
+  assert.equal(persisted.owner, 'viewer-owner@example.test');
+  assert.equal(persisted.metadata.subject, 'ICT');
+  assert.equal(persisted.metadata.owner, 'viewer-owner@example.test');
+  assert.equal(session.state.sourceSubject, 'ICT');
+  assert.equal(session.state.sourceOwner, 'viewer-owner@example.test');
 });
 
 test('computeResumeStartBlockIndex prioritizes lastActiveBlockId then first unanswered then zero', async () => {
@@ -2944,7 +3186,7 @@ test('bootstrapViewer on bare /viewer/ opens start panel with explicit resume ac
 
   assert.equal(renderedSession, null);
   const panel = document.getElementById('app').children[0];
-  const hasResumeButton = panel.children.some((child) => child.className === 'viewer-resume-card');
+  const hasResumeButton = Boolean(findNodeByClass(panel, 'viewer-resume-card'));
   assert.equal(hasResumeButton, true);
 });
 
@@ -3002,14 +3244,15 @@ test('renderViewerStartPanel resume card prefers metadata.updatedAt when updated
   mod.renderViewerStartPanel({ state: {} }, {
     resumeAttempt: {
       localId: 'attempt_resume_meta',
-      metadata: { updatedAt: '2026-04-02T03:04:05.000Z' },
+      viewerPayload: { title: 'Worksheet A', subject: 'ICT' },
+      metadata: { updatedAt: '2026-04-02T03:04:05.000Z', owner_email: 'owner@example.test' },
       lastSavedAt: '2026-01-01T01:01:01.000Z',
       startedAt: '2026-01-01T00:00:00.000Z',
     },
   });
 
   const panel = appRoot.children[0];
-  const resumeCard = panel.children.find((child) => child.className === 'viewer-resume-card');
+  const resumeCard = findNodeByClass(panel, 'viewer-resume-card');
   const resumeMeta = resumeCard.children.find((child) => child.className === 'muted');
   const expected = new Date('2026-04-02T03:04:05.000Z').toLocaleString(undefined, {
     year: 'numeric',
@@ -3020,7 +3263,10 @@ test('renderViewerStartPanel resume card prefers metadata.updatedAt when updated
     second: '2-digit',
     hour12: false,
   });
-  assert.equal(resumeMeta.textContent, `Attempt attempt_resume_meta · ${expected}`);
+  assert.equal(
+    resumeMeta.textContent,
+    `Title: Worksheet A · Subject: ICT · Owner: owner@example.test · ${expected}`
+  );
 });
 
 test('renderViewerStartPanel resume card strips fractional seconds in display timestamp', { concurrency: false }, async () => {
@@ -3036,12 +3282,13 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
   mod.renderViewerStartPanel({ state: {} }, {
     resumeAttempt: {
       localId: 'attempt_resume_ms',
+      viewerPayload: { title: 'Worksheet B' },
       metadata: { updatedAt: '2026-04-02T03:04:05.123Z' },
     },
   });
 
   const panel = appRoot.children[0];
-  const resumeCard = panel.children.find((child) => child.className === 'viewer-resume-card');
+  const resumeCard = findNodeByClass(panel, 'viewer-resume-card');
   const resumeMeta = resumeCard.children.find((child) => child.className === 'muted');
   const expected = new Date('2026-04-02T03:04:05.123Z').toLocaleString(undefined, {
     year: 'numeric',
@@ -3052,10 +3299,13 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
     second: '2-digit',
     hour12: false,
   });
-  assert.equal(resumeMeta.textContent, `Attempt attempt_resume_ms · ${expected}`);
+  assert.equal(
+    resumeMeta.textContent,
+    `Title: Worksheet B · Subject: — · Owner: — · ${expected}`
+  );
 });
 
-test('renderViewerStartPanel hides published controls when server session is logged out', { concurrency: false }, async () => {
+test('renderViewerStartPanel shows auth-aware browse CTA labels', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({
     document,
@@ -3067,7 +3317,7 @@ test('renderViewerStartPanel hides published controls when server session is log
 
   const session = {
     state: {
-      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
+      serverSession: { status: 'logged_out', error: '' },
       isLoadingPublishedPackages: false,
       publishedHasMore: false,
       publishedFilters: { title: '', subject: '', owner: '' },
@@ -3083,21 +3333,19 @@ test('renderViewerStartPanel hides published controls when server session is log
   mod.renderViewerStartPanel(session);
 
   const panel = appRoot.children[0];
-  const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
-  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
-  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
-  const publishedList = findNodeByClass(panel, 'viewer-published-list');
-  const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
+  const loggedOutBrowse = findNodeByText(panel, 'Log in to browse published worksheets');
+  assert.equal(Boolean(loggedOutBrowse), true);
 
-  assert.equal(signInBtn.hidden, false);
-  assert.equal(publishedHeading.hidden, true);
-  assert.equal(filterRow.hidden, true);
-  assert.equal(publishedList.hidden, true);
-  assert.equal(searchInputs.length, 3);
-  searchInputs.forEach((input) => assert.equal(input.hidden, true));
+  session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' } };
+  mod.renderViewerStartPanel(session);
+  const loggedInPanel = appRoot.children[appRoot.children.length - 1];
+  const loggedInBrowse = findNodeByText(loggedInPanel, 'Browse published worksheets');
+  const manageBtn = findNodeByText(loggedInPanel, 'Manage server attempts');
+  assert.equal(Boolean(loggedInBrowse), true);
+  assert.equal(Boolean(manageBtn), true);
 });
 
-test('renderViewerStartPanel shows published controls only when server session is logged in', { concurrency: false }, async () => {
+test('renderViewerStartPanel groups launcher actions into Attempts and Worksheets sections', { concurrency: false }, async () => {
   const { document, appRoot } = createFakeDom();
   const mod = await loadViewerModule({
     document,
@@ -3109,7 +3357,7 @@ test('renderViewerStartPanel shows published controls only when server session i
 
   const session = {
     state: {
-      serverSession: { status: 'logged_in', user: { email: 'learner@example.test' } },
+      serverSession: { status: 'logged_out', error: '' },
       isLoadingPublishedPackages: false,
       publishedHasMore: false,
       publishedFilters: { title: '', subject: '', owner: '' },
@@ -3125,95 +3373,20 @@ test('renderViewerStartPanel shows published controls only when server session i
   mod.renderViewerStartPanel(session);
 
   const panel = appRoot.children[0];
-  const signInBtn = findNodeByText(panel, 'Log in to view published online worksheet');
-  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
-  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
-  const publishedList = findNodeByClass(panel, 'viewer-published-list');
-  const searchInputs = collectNodes(panel).filter((node) => node.tagName === 'INPUT' && node.type === 'search');
+  const attemptsHeader = findNodeByText(panel, 'Attempts');
+  const worksheetsHeader = findNodeByText(panel, 'Worksheets');
+  const importBtn = findNodeByText(panel, 'Import worksheet package (.zip)');
+  const manageBtn = findNodeByText(panel, 'Log in to manage server attempts');
+  const browseBtn = findNodeByText(panel, 'Log in to browse published worksheets');
+  const statusLine = findNodeByClass(panel, 'viewer-session-status');
 
-  assert.equal(signInBtn.hidden, true);
-  assert.equal(publishedHeading.hidden, false);
-  assert.equal(filterRow.hidden, false);
-  assert.equal(publishedList.hidden, false);
-  assert.equal(searchInputs.length, 3);
-  searchInputs.forEach((input) => assert.equal(input.hidden, false));
-});
-
-test('renderViewerStartPanel treats unknown server state as not logged in for published controls', { concurrency: false }, async () => {
-  const { document, appRoot } = createFakeDom();
-  const mod = await loadViewerModule({
-    document,
-    window: {
-      location: { href: 'https://example.test/viewer/', search: '' },
-      history: { replaceState: () => {} },
-    },
-  });
-
-  const session = {
-    state: {
-      serverSession: { status: 'expired', error: 'Session expired. Please log in again.' },
-      isLoadingPublishedPackages: false,
-      publishedHasMore: false,
-      publishedFilters: { title: '', subject: '', owner: '' },
-      publishedPackages: [],
-      serverActionMessage: '',
-    },
-    beginServerSignIn: () => {},
-    browsePublishedPackages: async () => {},
-    startFromPublishedPackage: async () => ({ ok: false }),
-    startImportedWorksheetFromPackageFile: async () => {},
-  };
-
-  mod.renderViewerStartPanel(session);
-
-  const panel = appRoot.children[0];
-  const publishedHeading = findNodeByClass(panel, 'viewer-published-heading');
-  const filterRow = findNodeByClass(panel, 'viewer-published-filters');
-  const publishedList = findNodeByClass(panel, 'viewer-published-list');
-
-  assert.equal(publishedHeading.hidden, true);
-  assert.equal(filterRow.hidden, true);
-  assert.equal(publishedList.hidden, true);
-});
-
-test('renderViewerStartPanel orders controls as import then auth row then single status line', { concurrency: false }, async () => {
-  const { document, appRoot } = createFakeDom();
-  const mod = await loadViewerModule({
-    document,
-    window: {
-      location: { href: 'https://example.test/viewer/', search: '' },
-      history: { replaceState: () => {} },
-    },
-  });
-
-  const session = {
-    state: {
-      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
-      isLoadingPublishedPackages: false,
-      publishedHasMore: false,
-      publishedFilters: { title: '', subject: '', owner: '' },
-      publishedPackages: [],
-      serverActionMessage: '',
-    },
-    beginServerSignIn: () => {},
-    browsePublishedPackages: async () => {},
-    startFromPublishedPackage: async () => ({ ok: false }),
-    startImportedWorksheetFromPackageFile: async () => {},
-  };
-
-  mod.renderViewerStartPanel(session);
-
-  const panel = appRoot.children[0];
-  const importRow = panel.children[2];
-  const authRow = panel.children[3];
-  const statusLine = panel.children[4];
-
-  assert.equal(importRow.className, 'viewer-start-actions');
-  assert.equal(importRow.children[0].textContent, 'Import worksheet package (.zip)');
-  assert.equal(authRow.className, 'viewer-start-actions');
-  assert.equal(authRow.children[0].textContent, 'Log in to view published online worksheet');
-  assert.equal(statusLine.className, 'muted viewer-session-status');
-  assert.equal(statusLine.textContent.includes('Server session:'), true);
+  assert.equal(Boolean(attemptsHeader), true);
+  assert.equal(Boolean(worksheetsHeader), true);
+  assert.equal(Boolean(importBtn), true);
+  assert.equal(Boolean(manageBtn), true);
+  assert.equal(Boolean(browseBtn), true);
+  assert.equal(Boolean(statusLine), true);
+  assert.equal(statusLine.textContent.includes('signed out'), true);
 });
 
 test('renderViewerStartPanel renders one session-related message line without duplicate status text', { concurrency: false }, async () => {
@@ -3247,6 +3420,45 @@ test('renderViewerStartPanel renders one session-related message line without du
   const panel = appRoot.children[0];
   const matched = collectNodes(panel).filter((node) => String(node.textContent || '').includes(duplicateText));
   assert.equal(matched.length, 1);
+});
+
+test('renderViewerStartPanel shows contextual server-attempt management action', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: { href: 'https://example.test/viewer/', search: '' },
+      history: { replaceState: () => {} },
+    },
+  });
+  const session = {
+    state: {
+      serverSession: { status: 'logged_out', error: 'Session expired. Please log in again.' },
+      isLoadingPublishedPackages: false,
+      publishedHasMore: false,
+      publishedFilters: { title: '', subject: '', owner: '' },
+      publishedPackages: [],
+      serverActionMessage: '',
+      isManagingUploadedAttempts: false,
+      uploadedAttempts: [],
+      uploadedAttemptActionInFlightById: {},
+    },
+    beginServerSignIn: () => {},
+    browsePublishedPackages: async () => {},
+    listUploadedAttempts: async () => ({ ok: true }),
+    startFromPublishedPackage: async () => ({ ok: false }),
+    startImportedWorksheetFromPackageFile: async () => {},
+  };
+  mod.renderViewerStartPanel(session);
+  const panel = appRoot.children[0];
+  const manageBtn = findNodeByText(panel, 'Log in to manage server attempts');
+  assert.equal(Boolean(manageBtn), true);
+});
+
+test('renderViewerStartPanel only fetches uploaded attempts when session is logged in', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {'), true);
+  assert.equal(source.includes('await session.listUploadedAttempts();'), true);
 });
 
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
@@ -3290,9 +3502,281 @@ test('viewer source preserves non-not-found published package failures during bo
 
   assert.equal(source.includes("const errorCode = String(result?.error?.code || '').trim().toUpperCase();"), true);
   assert.equal(source.includes("if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND')"), true);
-  assert.equal(source.includes('userMessage: result?.error?.requiresSignIn'), true);
-  assert.equal(source.includes('VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED'), true);
+  assert.equal(source.includes('VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_AUTH_REQUIRED'), true);
+  assert.equal(source.includes("recoveryKind: 'published_package_auth'"), true);
   assert.equal(source.includes('throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {'), true);
+});
+
+test('bootstrapViewer renders sign-in recovery for direct published package auth failures', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: {
+        href: 'https://example.test/viewer/?publishedPackageId=pkg_1',
+        search: '?publishedPackageId=pkg_1',
+      },
+      history: { replaceState: () => {} },
+      open: () => ({ closed: false }),
+    },
+    renderViewerShell: () => {
+      throw new Error('should not render shell');
+    },
+    createServerApiClient: () => ({
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({
+        ok: false,
+        error: {
+          code: 'AUTH_REQUIRED',
+          message: 'Sign in for server features, then retry this action.',
+          requiresSignIn: true,
+          status: 401,
+        },
+      }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+      fetchPublishedPackageArtifact: async () => {
+        throw new Error('should not fetch artifact before sign-in');
+      },
+    }),
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null, put: async (value) => value },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+
+  const panel = appRoot.children[0];
+  assert.equal(String(panel.className).includes('viewer-fatal-panel--recoverable-auth'), true);
+  assert.ok(findNodeByText(panel, 'Sign in to open this worksheet'));
+  assert.ok(findNodeByText(panel, 'Sign in and open worksheet'));
+  assert.ok(findNodeByText(panel, 'Go to start screen'));
+});
+
+test('direct published package sign-in recovery retries same package and renders viewer', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  let signedIn = false;
+  let fetchedPackageId = null;
+  let renderedSession = null;
+  let replacedUrl = '';
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: {
+        href: 'https://example.test/viewer/?publishedPackageId=pkg_42',
+        search: '?publishedPackageId=pkg_42',
+        origin: 'https://example.test',
+      },
+      history: {
+        replaceState: (_state, _title, url) => {
+          replacedUrl = String(url);
+        },
+      },
+      open: () => {
+        signedIn = true;
+        return { closed: false };
+      },
+    },
+    renderViewerShell: (session) => {
+      renderedSession = session;
+    },
+    createServerApiClient: () => ({
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => signedIn
+        ? { ok: true, data: { user: { email: 'learner@example.test' } } }
+        : {
+            ok: false,
+            error: {
+              code: 'AUTH_REQUIRED',
+              message: 'Sign in for server features, then retry this action.',
+              requiresSignIn: true,
+              status: 401,
+            },
+          },
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+      fetchPublishedPackageArtifact: async (publishedPackageId) => {
+        fetchedPackageId = publishedPackageId;
+        return { ok: true, data: new Uint8Array([1, 2, 3]) };
+      },
+    }),
+    parseWorksheetPackage: () => ({
+      worksheet: {
+        worksheetId: 'ws_42',
+        snapshotId: 'snap_42',
+        title: 'Published worksheet',
+        blocks: [
+          { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} },
+        ],
+      },
+    }),
+    viewerStorage: {
+      attempts: {
+        get: async () => null,
+        put: async (value) => value,
+      },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null, put: async (value) => value },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+  const signInBtn = findNodeByText(appRoot.children[0], 'Sign in and open worksheet');
+  assert.ok(signInBtn);
+
+  await signInBtn.dispatch('click');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(fetchedPackageId, 'pkg_42');
+  assert.ok(renderedSession);
+  assert.equal(renderedSession.state.viewerPayload.title, 'Published worksheet');
+  assert.ok(renderedSession.state.localAttemptId);
+  assert.equal(replacedUrl.includes('publishedPackageId=pkg_42'), true);
+  assert.equal(replacedUrl.includes('localAttemptId='), false);
+});
+
+test('direct published package launch skips start-panel browse prefetch', { concurrency: false }, async () => {
+  const { document } = createFakeDom();
+  let fetchedPackageId = null;
+  let renderedSession = null;
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: {
+        href: 'https://example.test/viewer/?publishedPackageId=pkg_direct',
+        search: '?publishedPackageId=pkg_direct',
+        origin: 'https://example.test',
+      },
+      history: { replaceState: () => {} },
+    },
+    renderViewerShell: (session) => {
+      renderedSession = session;
+    },
+    createServerApiClient: () => ({
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
+      listPublishedPackages: async () => {
+        throw new Error('published browse prefetch should not block direct package launch');
+      },
+      fetchPublishedPackageArtifact: async (publishedPackageId) => {
+        fetchedPackageId = publishedPackageId;
+        return { ok: true, data: new Uint8Array([1, 2, 3]) };
+      },
+    }),
+    parseWorksheetPackage: () => ({
+      worksheet: {
+        worksheetId: 'ws_direct',
+        snapshotId: 'snap_direct',
+        title: 'Direct worksheet',
+        blocks: [
+          { blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: {} },
+        ],
+      },
+    }),
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null, put: async (value) => value },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+
+  assert.equal(fetchedPackageId, 'pkg_direct');
+  assert.ok(renderedSession);
+  assert.equal(renderedSession.state.viewerPayload.title, 'Direct worksheet');
+});
+
+test('direct published package sign-in recovery keeps popup-blocked failures retryable', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: {
+        href: 'https://example.test/viewer/?publishedPackageId=pkg_blocked',
+        search: '?publishedPackageId=pkg_blocked',
+        origin: 'https://example.test',
+      },
+      history: { replaceState: () => {} },
+      open: () => null,
+    },
+    createServerApiClient: () => ({
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({
+        ok: false,
+        error: {
+          code: 'AUTH_REQUIRED',
+          message: 'Sign in for server features, then retry this action.',
+          requiresSignIn: true,
+          status: 401,
+        },
+      }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+      fetchPublishedPackageArtifact: async () => ({ ok: false, error: { message: 'should not fetch' } }),
+    }),
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null, put: async (value) => value },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await mod.bootstrapViewer();
+  const signInBtn = findNodeByText(appRoot.children[0], 'Sign in and open worksheet');
+  await signInBtn.dispatch('click');
+
+  const panel = appRoot.children[appRoot.children.length - 1];
+  assert.ok(findNodeByText(panel, 'Sign in and open worksheet'));
+  assert.ok(findNodeByText(panel, 'Sign-in popup was blocked. Allow popups for this site, then try again.'));
+});
+
+test('direct published package not-found still renders fatal panel', { concurrency: false }, async () => {
+  const { document, appRoot } = createFakeDom();
+  const mod = await loadViewerModule({
+    document,
+    window: {
+      location: {
+        href: 'https://example.test/viewer/?publishedPackageId=pkg_missing',
+        search: '?publishedPackageId=pkg_missing',
+      },
+      history: { replaceState: () => {} },
+    },
+    createServerApiClient: () => ({
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'learner@example.test' } } }),
+      listPublishedPackages: async () => ({ ok: true, data: { items: [] } }),
+      fetchPublishedPackageArtifact: async () => ({
+        ok: false,
+        error: {
+          code: 'PUBLISHED_PACKAGE_NOT_FOUND',
+          message: 'Package missing.',
+        },
+      }),
+    }),
+    viewerStorage: {
+      attempts: { get: async () => null, put: async (value) => value },
+      resumeFlags: { get: () => null, set: () => {} },
+      importedWorksheets: { get: async () => null, put: async (value) => value },
+      drafts: { get: async () => null },
+    },
+  });
+
+  await assert.rejects(
+    () => mod.bootstrapViewer(),
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND
+  );
+  mod.renderViewerFatalError(new mod.ViewerBootError(mod.VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
+    userMessage: 'The requested published package was not found.',
+    technicalMessage: 'Package missing.',
+  }));
+
+  const panel = appRoot.children[appRoot.children.length - 1];
+  assert.equal(panel.className, 'viewer-fatal-panel');
+  assert.ok(findNodeByText(panel, 'Unable to open worksheet viewer'));
 });
 
 
@@ -3980,6 +4464,8 @@ test('viewer playback race condition: last request wins when fetches resolve out
 
 test('question prompt audio handler toggles disable state and does not persist success text', async () => {
   const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
+  assert.equal(source.includes("questionAudioBtn.className = 'viewer-header-icon-btn question-card__prompt-audio-btn';"), true);
+  assert.equal(source.includes("questionAudioBtn.innerHTML = createViewerIcon('audio');"), true);
   assert.equal(source.includes("if (questionAudioBtn.disabled) return;"), true);
   assert.equal(source.includes("questionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("onEnded: () => {\n            questionAudioBtn.disabled = false;"), true);
@@ -3989,8 +4475,8 @@ test('question prompt audio handler toggles disable state and does not persist s
 
 test('choice option audio handler matches icon-button lifecycle behavior', async () => {
   const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
-  assert.equal(source.includes("optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';"), true);
-  assert.equal(source.includes("optionAudioBtn.textContent = '🔊';"), true);
+  assert.equal(source.includes("optionAudioBtn.className = 'viewer-header-icon-btn choice-audio-btn question-card__prompt-audio-btn';"), true);
+  assert.equal(source.includes("optionAudioBtn.innerHTML = createViewerIcon('audio');"), true);
   assert.equal(source.includes("if (optionAudioBtn.disabled) return;"), true);
   assert.equal(source.includes("optionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("onStart: () => {\n            optionAudioBtn.disabled = true;"), false);
@@ -4047,6 +4533,7 @@ test('bootstrapViewer validateIntent uses action-aware viewer rewrite payload ch
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("actionId === 'viewerRewrite' || actionId === 'resumeViewerRewriteAfterLogin'"), true);
   assert.equal(source.includes("actionId === 'resumeAttemptServerResumeAfterLogin'"), true);
+  assert.equal(source.includes("actionId === 'uploadAttemptPackageAfterLogin'"), true);
   assert.equal(source.includes('hasOnlyAllowedKeys(payload, allowed)'), true);
   assert.equal(source.includes('session.validateViewerRewriteIntentPayload(payload).ok'), true);
   assert.equal(source.includes('return false;'), true);
@@ -4094,6 +4581,631 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
   });
 });
 
+test('viewer header actions include server-save icon wiring and protected upload intent hook', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', 'Save attempt to server');"), true);
+  assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
+  assert.equal(source.includes('await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);'), true);
+});
+
+test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and media entries', async () => {
+  const mod = await loadViewerModule();
+  const assetBytes = new Uint8Array([1, 2, 3, 4]);
+  const session = new mod.ViewerAttemptSession({
+    localAssets: {
+      async get(localId) {
+        if (localId !== 'img_1') return null;
+        return {
+          localId: 'img_1',
+          binary: assetBytes,
+          metadata: { mimeType: 'image/png' },
+        };
+      },
+    },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_1';
+  session.state.status = 'completed';
+  session.state.startedAt = '2026-04-30T00:00:00.000Z';
+  session.state.lastSavedAt = '2026-04-30T00:05:00.000Z';
+  session.state.completedAt = '2026-04-30T00:06:00.000Z';
+  session.state.answers = { q1: { value: 'A' } };
+  session.state.checkResult = {
+    correctCount: 1,
+    totalQuestions: 1,
+    statusByBlockId: { q1: 'correct' },
+  };
+  session.state.viewerPayload = {
+    title: 'Worksheet A',
+    subject: 'ICT',
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+        responseConfig: { inputType: 'text' },
+      },
+    ],
+  };
+
+  const pkg = await session.buildUploadedAttemptPackage();
+  const files = parseStoredZip(pkg.bytes);
+  assert.equal(files.has('manifest.json'), true);
+  assert.equal(files.has('content/worksheet.json'), true);
+  assert.equal(files.has('content/attempt.json'), true);
+  assert.equal(files.has('media/img_1'), true);
+
+  const manifest = JSON.parse(decodeUtf8(files.get('manifest.json')));
+  const worksheet = JSON.parse(decodeUtf8(files.get('content/worksheet.json')));
+  const attempt = JSON.parse(decodeUtf8(files.get('content/attempt.json')));
+  assert.equal(manifest.format, 'worksheet-attempt-package');
+  assert.equal(manifest.worksheet.subject, 'ICT');
+  assert.equal(worksheet.subject, 'ICT');
+  assert.equal(worksheet.metadata.subject, 'ICT');
+  assert.equal(Array.isArray(manifest.assets), true);
+  assert.equal(manifest.assets.length, 1);
+  assert.equal(attempt.kind, 'worksheet-attempt');
+  assert.equal(attempt.status, 'checked');
+  assert.equal(attempt.answers.q1.value, 'A');
+  assert.equal(attempt.checking.items.q1.result, 'correct');
+  assert.equal(JSON.stringify(attempt).includes('correctAnswer'), false);
+  assert.equal(JSON.stringify(attempt).includes('responseConfig'), false);
+  assert.equal(JSON.stringify(attempt).includes('mediaRefs'), false);
+});
+
+test('buildUploadedAttemptPackage output is accepted by server upload attempt package validator', async () => {
+  const mod = await loadViewerModule();
+  const assetBytes = new Uint8Array([10, 20, 30]);
+  const session = new mod.ViewerAttemptSession({
+    localAssets: {
+      async get(localId) {
+        if (localId !== 'img_1') return null;
+        return {
+          localId: 'img_1',
+          binary: assetBytes,
+          metadata: { mimeType: 'image/png' },
+        };
+      },
+    },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.localAttemptId = 'attempt_compat';
+  session.state.status = 'completed';
+  session.state.startedAt = '2026-04-30T00:00:00.000Z';
+  session.state.lastSavedAt = '2026-04-30T00:05:00.000Z';
+  session.state.completedAt = '2026-04-30T00:06:00.000Z';
+  session.state.answers = { q1: { value: 'A' } };
+  session.state.checkResult = {
+    correctCount: 1,
+    totalQuestions: 1,
+    statusByBlockId: { q1: 'correct' },
+  };
+  session.state.viewerPayload = {
+    title: 'Compatibility Worksheet',
+    worksheetId: 'ws_compat',
+    snapshotId: 'snap_compat',
+    blocks: [
+      {
+        blockId: 'q1',
+        kind: 'question',
+        position: 0,
+        prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+        responseConfig: { inputType: 'text', correctAnswer: 'A' },
+      },
+    ],
+  };
+
+  const pkg = await session.buildUploadedAttemptPackage();
+
+  const db = {
+    async connect() {
+      const client = {
+        async query(sql) {
+          if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 };
+          if (sql.includes('SELECT pg_advisory_xact_lock')) return { rows: [{ ok: true }], rowCount: 1 };
+          if (sql.includes('FROM uploaded_attempts') && sql.includes('LIMIT 1')) return { rows: [], rowCount: 0 };
+          if (sql.includes('COUNT(*)::int AS count FROM uploaded_attempts')) return { rows: [{ count: 0 }], rowCount: 1 };
+          if (sql.includes('INSERT INTO uploaded_attempts')) return { rows: [], rowCount: 1 };
+          throw new Error(`Unhandled SQL in compatibility test: ${sql}`);
+        },
+        release() {},
+      };
+      return client;
+    },
+  };
+  const service = new PackageService({
+    db,
+    artifactStore: {
+      async storeArtifact({ artifactId }) {
+        return {
+          artifactPath: `attempts/oidc-sub/${artifactId}.zip`,
+          absolutePath: `/tmp/${artifactId}.zip`,
+          artifactSha256: 'sha',
+          artifactSizeBytes: 128,
+        };
+      },
+      resolveAbsolutePath() {
+        return '/tmp/unused.zip';
+      },
+    },
+    config: {
+      draftSlotLimit: 3,
+      attemptSlotLimit: 3,
+    },
+  });
+
+  const uploadResult = await service.uploadAttempt({
+    identity: { sub: 'oidc-sub', email: 'learner@example.test', name: 'Learner' },
+    title: 'Compatibility Worksheet',
+    subject: 'Math',
+    zipBytes: pkg.bytes,
+    conflictAction: 'fail_on_conflict',
+  });
+
+  assert.equal(uploadResult.ok, true);
+  assert.equal(uploadResult.statusCode, 201);
+});
+
+test('uploadCurrentAttemptPackage prevents duplicate upload while one upload is in progress', async () => {
+  const mod = await loadViewerModule();
+  let resolveUpload;
+  let uploadCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => {
+        uploadCalls += 1;
+        return new Promise((resolve) => {
+          resolveUpload = resolve;
+        });
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_dup';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const firstUpload = session.uploadCurrentAttemptPackage();
+  const secondResult = await session.uploadCurrentAttemptPackage();
+
+  assert.equal(secondResult.ok, false);
+  assert.equal(secondResult.status, 'upload_in_progress');
+  await Promise.resolve();
+  assert.equal(uploadCalls <= 1, true);
+  if (uploadCalls === 0) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.equal(uploadCalls, 1);
+  resolveUpload({ ok: true, data: { uploaded_attempt_id: 'attempt_server_1' } });
+  const firstResult = await firstUpload;
+  assert.equal(firstResult.ok, true);
+  assert.equal(session.state.isUploadingAttemptPackage, false);
+});
+
+test('uploadCurrentAttemptPackage reports progress text while upload runs', async () => {
+  const mod = await loadViewerModule();
+  const observedMessages = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async (_bytes, _metadata, options = {}) => {
+        options.onProgress?.({ loaded: 200, total: 1000, lengthComputable: true });
+        options.onProgress?.({ loaded: 1000, total: 1000, lengthComputable: true });
+        return { ok: true, data: { uploaded_attempt_id: 'attempt_server_2' } };
+      },
+    },
+  });
+  session.setOnStateChange((state) => {
+    observedMessages.push(state.serverActionMessage);
+  });
+  session.state.localAttemptId = 'attempt_progress';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, true);
+  assert.equal(observedMessages.some((msg) => String(msg || '').includes('Saving attempt to server...')), true);
+  assert.equal(session.state.serverActionMessage, 'Attempt saved to server.');
+});
+
+test('uploadCurrentAttemptPackage sends sourceSubject when viewerPayload subject is blank', async () => {
+  const mod = await loadViewerModule();
+  let uploadedMetadata = null;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async (_bytes, metadata) => {
+        uploadedMetadata = metadata;
+        return { ok: true, data: { uploaded_attempt_id: 'attempt_server_subject' } };
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_upload_subject';
+  session.state.viewerPayload = { title: 'Sheet', blocks: [] };
+  session.state.sourceSubject = 'ICT';
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+
+  assert.equal(result.ok, true);
+  assert.equal(uploadedMetadata.subject, 'ICT');
+});
+
+test('uploadCurrentAttemptPackage leaves local attempt state safe on network failure', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({ ok: false, error: { code: 'NETWORK_ERROR', message: 'transport error' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_safe';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.state.answers = { q1: { value: 'A' } };
+  const answersBefore = JSON.stringify(session.state.answers);
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, false);
+  assert.equal(session.state.localAttemptId, 'attempt_safe');
+  assert.equal(JSON.stringify(session.state.answers), answersBefore);
+  assert.equal(
+    session.state.serverActionMessage,
+    'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.'
+  );
+});
+
+test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_NAME_CONFLICT message', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({ ok: false, error: { code: 'ATTEMPT_NAME_CONFLICT', message: 'raw conflict' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_conflict';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, false);
+  assert.equal(
+    session.state.serverActionMessage,
+    'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.'
+  );
+});
+
+test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_SLOT_LIMIT_REACHED message', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({
+        ok: false,
+        error: {
+          code: 'ATTEMPT_SLOT_LIMIT_REACHED',
+          message: 'raw slot',
+          details: { slotLimit: 3 },
+        },
+      }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_limit';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, false);
+  assert.equal(
+    session.state.serverActionMessage,
+    'You already have 3 uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
+  );
+  assert.equal(session.state.uploadAttemptRecoveryHint?.conflictAction, 'fail_on_conflict');
+});
+
+test('uploadCurrentAttemptPackage slot-limit recovery hint preserves copy conflictAction', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({
+        ok: false,
+        error: {
+          code: 'ATTEMPT_SLOT_LIMIT_REACHED',
+          message: 'raw slot',
+          details: { slotLimit: 3 },
+        },
+      }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_limit_copy';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage({}, { conflictAction: 'copy' });
+  assert.equal(result.ok, false);
+  assert.equal(session.state.uploadAttemptRecoveryHint?.conflictAction, 'copy');
+});
+
+test('uploadCurrentAttemptPackage slot-limit message falls back when slotLimit detail is missing', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({ ok: false, error: { code: 'ATTEMPT_SLOT_LIMIT_REACHED', message: 'raw slot' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_limit_fallback';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, false);
+  assert.equal(
+    session.state.serverActionMessage,
+    'You already have uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
+  );
+});
+
+test('uploadCurrentAttemptPackage sets conflict context for replace/copy recovery UI', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({ ok: false, error: { code: 'ATTEMPT_NAME_CONFLICT', message: 'raw conflict' } }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_conflict_ctx';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage();
+  assert.equal(result.ok, false);
+  assert.equal(Boolean(session.state.uploadAttemptConflictContext), true);
+});
+
+test('retryAttemptUploadFromConflict uses replace and copy actions', async () => {
+  const mod = await loadViewerModule();
+  const conflictActions = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async (_bytes, metadata) => {
+        conflictActions.push(metadata.conflictAction);
+        return { ok: true };
+      },
+    },
+  });
+  session.state.localAttemptId = 'attempt_conflict_retry';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  await session.retryAttemptUploadFromConflict('replace');
+  await session.retryAttemptUploadFromConflict('copy');
+  assert.deepEqual(conflictActions, ['replace', 'copy']);
+});
+
+test('retryAttemptUploadAfterSlotRecovery preserves slot recovery conflict action', async () => {
+  const mod = await loadViewerModule();
+  const conflictActions = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.uploadCurrentAttemptPackage = async (_payload = {}, options = {}) => {
+    conflictActions.push(options.conflictAction || 'fail_on_conflict');
+    return { ok: true };
+  };
+
+  await session.retryAttemptUploadAfterSlotRecovery({ kind: 'slot_limit', conflictAction: 'copy' });
+  await session.retryAttemptUploadAfterSlotRecovery({ kind: 'slot_limit', conflictAction: 'replace' });
+  await session.retryAttemptUploadAfterSlotRecovery({ kind: 'slot_limit', conflictAction: 'fail_on_conflict' });
+
+  assert.deepEqual(conflictActions, ['copy', 'replace', 'fail_on_conflict']);
+});
+
+test('viewer slot-limit recovery uses focused delete modal and automatic retry path', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const slotRecoveryHint = { ...session.state.uploadAttemptRecoveryHint };'), true);
+  assert.equal(source.includes('await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);'), true);
+  assert.equal(source.includes("await showUploadedAttemptsManagerModal(session, { reason: 'slot_limit' });"), false);
+  assert.equal(source.includes('then save again manually'), false);
+});
+
+test('listUploadedAttempts stores rows and slot limit for management UI', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      listUploadedAttempts: async () => ({
+        ok: true,
+        data: {
+          attemptSlotLimit: 3,
+          items: [{ uploaded_attempt_id: 'a1', title: 'Sheet 1', subject: 'Math', status: 'in_progress' }],
+        },
+      }),
+    },
+  });
+  session.state.serverSession = { status: 'logged_in', user: { sub: 'learner' }, error: null };
+  const result = await session.listUploadedAttempts();
+  assert.equal(result.ok, true);
+  assert.equal(session.state.uploadedAttempts.length, 1);
+  assert.equal(session.state.uploadedAttemptSlotLimit, 3);
+});
+
+test('listUploadedAttempts skips network call when viewer session is logged out', async () => {
+  const mod = await loadViewerModule();
+  let callCount = 0;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      listUploadedAttempts: async () => {
+        callCount += 1;
+        return { ok: true, data: { uploadedAttempts: [] } };
+      },
+    },
+  });
+  session.state.serverSession = { status: 'logged_out', user: null, error: 'auth required' };
+  const result = await session.listUploadedAttempts();
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'AUTH_REQUIRED');
+  assert.equal(callCount, 0);
+});
+
+test('deleteUploadedAttemptAndRefresh calls delete then refreshes list', async () => {
+  const mod = await loadViewerModule();
+  const calls = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      deleteUploadedAttempt: async (id) => {
+        calls.push(`delete:${id}`);
+        return { ok: true };
+      },
+      listUploadedAttempts: async () => {
+        calls.push('list');
+        return { ok: true, data: { uploadedAttempts: [] } };
+      },
+    },
+  });
+  session.state.serverSession = { status: 'logged_in', user: { sub: 'learner' }, error: null };
+  const result = await session.deleteUploadedAttemptAndRefresh('attempt_1');
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['delete:attempt_1', 'list']);
+});
+
+test('resumeUploadedAttempt restores uploaded package into a new local attempt', async () => {
+  const mod = await loadViewerModule();
+  const packageBytes = createStoredZip([
+    { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion: 1, assets: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Restored', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] }) },
+    { path: 'content/attempt.json', data: JSON.stringify({ status: 'submitted', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', submittedAt: '2026-01-02T00:00:00.000Z', answers: { q1: { value: 'A' } }, checking: null }) },
+  ]);
+  const savedAttempts = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+    importedWorksheets: { put: async () => {}, remove: async () => {} },
+    localAssets: { put: async () => {}, remove: async () => {} },
+    attempts: { put: async (record) => { savedAttempts.push(record); return record; } },
+  }, {
+    apiClient: {
+      fetchUploadedAttemptArtifact: async () => ({ ok: true, data: packageBytes }),
+    },
+  });
+  session.validateViewerPayload = async () => {};
+  const result = await session.resumeUploadedAttempt({ uploaded_attempt_id: 'a1' });
+  assert.equal(result.ok, true);
+  assert.equal(savedAttempts.length, 1);
+  assert.equal(session.state.status, 'completed');
+  assert.equal(session.state.checkResult, null);
+});
+
+test('mapUploadedAttemptCheckResult restores string enum statuses for viewer and print flows', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  const restored = session.mapUploadedAttemptCheckResult({
+    correctCount: 1,
+    totalQuestions: 2,
+    items: {
+      q1: { result: 'correct' },
+      q2: { result: false },
+      q3: { result: 'ungraded_missing_or_invalid_key' },
+    },
+  });
+  assert.equal(restored.statusByBlockId.q1, 'correct');
+  assert.equal(restored.statusByBlockId.q2, 'incorrect');
+  assert.equal(restored.statusByBlockId.q3, 'ungraded_missing_or_invalid_key');
+  assert.equal(restored.byBlockId.q1, true);
+  assert.equal(restored.byBlockId.q2, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(restored.byBlockId, 'q3'), false);
+});
+
+test('resumeUploadedAttempt surfaces failure message through serverActionMessage for start-panel visibility', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      fetchUploadedAttemptArtifact: async () => ({ ok: true, data: new Uint8Array([0x00]) }),
+    },
+  });
+  const result = await session.resumeUploadedAttempt({ uploaded_attempt_id: 'a1' });
+  assert.equal(result.ok, false);
+  assert.equal(typeof session.state.serverActionMessage, 'string');
+  assert.equal(session.state.serverActionMessage.includes('Unable to resume uploaded attempt.'), true);
+});
+
+test('resumeUploadedAttempt surfaces API fetch failure through serverActionMessage and notification', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      fetchUploadedAttemptArtifact: async () => ({ ok: false, error: { code: 'NOT_FOUND', message: 'artifact missing' } }),
+    },
+  });
+
+  const notifications = [];
+  session.pushNotification = (notification) => {
+    notifications.push(notification);
+    return notification;
+  };
+
+  const result = await session.resumeUploadedAttempt({ uploaded_attempt_id: 'a1' });
+  assert.equal(result.ok, false);
+  assert.equal(session.state.serverActionMessage, 'artifact missing');
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].kind, 'error');
+  assert.equal(notifications[0].text, 'artifact missing');
+});
+
+test('downloadUploadedAttempt surfaces API errors through serverActionMessage', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      fetchUploadedAttemptArtifact: async () => ({ ok: false, error: { code: 'NOT_FOUND', message: 'artifact missing' } }),
+    },
+  });
+  const result = await session.downloadUploadedAttempt({ uploaded_attempt_id: 'attempt_a', title: 'Sheet A' });
+  assert.equal(result.ok, false);
+  assert.equal(session.state.serverActionMessage, 'artifact missing');
+});
+
+test('downloadUploadedAttempt defers object URL revocation to avoid browser race', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('setTimeout(() => {'), true);
+  assert.equal(source.includes('URL.revokeObjectURL(url);'), true);
+});
+
 test('rewrite assist snapshots answer text from answer record value', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {'), true);
@@ -4107,7 +5219,9 @@ test('rewrite click handler surfaces blocked protected-action statuses before to
   assert.equal(source.includes("if (protectedActionResult?.status === 'redirected') {"), true);
   assert.equal(source.includes("if (protectedActionResult?.status !== 'executed') {"), true);
   assert.equal(source.includes("protectedActionResult?.status === 'blocked_session_probe'"), true);
+  assert.equal(source.includes('session.pushNotification({'), true);
   assert.equal(source.includes('session.setRewriteMessage(block.blockId, blockedMessage);'), true);
+  assert.equal(source.includes("session.state.utilityMessage = blockedMessage;"), false);
 });
 
 test('rewrite controls remain always mounted for text questions and enforce disabled states by rules', async () => {

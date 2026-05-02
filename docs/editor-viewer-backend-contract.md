@@ -32,6 +32,10 @@ Base path defaults to `'/api/worksheet-launcher/v1'` (overrideable via `?apiBase
    - `GET /api/worksheet-launcher/v1/published/:publishedPackageId/artifact`
    - Must return `application/zip`; editor imports this ZIP as a local editable copy.
 
+4. **Uploaded drafts list (slot management)**
+   - `GET /api/worksheet-launcher/v1/drafts`
+   - Contract includes `data.items` and `data.draftSlotLimit` for slot-usage UI.
+
 ## Query parameters (search + pagination)
 
 For `GET /published`, editor sends the canonical query shape:
@@ -113,6 +117,19 @@ Open published package:
 - In-flight dedupe by `openingPublishedPackageIds` to prevent duplicate opens.
 - On success: imports ZIP into new local draft and emits success notifications.
 - On failure: uses `serverActionMessage` or API `error.message`; browse modal stays open with error.
+
+Uploaded draft upload conflict + slot handling:
+
+- `DRAFT_SLOT_LIMIT_REACHED` must include `error.details.slotLimit` and `error.details.uploadedDrafts`.
+- Editor slot-usage UI should read server-provided slot limit when available.
+- After deleting one uploaded draft from the slot-full flow, upload is expected to continue in the same flow (no extra user "start over" step).
+
+Viewer uploaded attempt slot handling:
+
+- `ATTEMPT_SLOT_LIMIT_REACHED` must include `error.details.slotLimit`.
+- `GET /attempts` should include `data.attemptSlotLimit` for slot-usage UI.
+- After deleting one uploaded attempt from the focused slot-full recovery prompt, upload is expected to retry in the same flow.
+- The general uploaded-attempt manager is for manual resume/download/delete actions and should not be used as the automatic upload recovery UI.
 
 ## Do-not-break rules for viewer reuse
 

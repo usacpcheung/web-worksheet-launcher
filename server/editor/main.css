@@ -1335,6 +1335,19 @@ textarea.control {
   background: #fee4e2;
 }
 
+.confirm-modal__btn--primary {
+  color: #1e3a8a;
+  border-color: #98b2f5;
+  background: #eff4ff;
+}
+
+.confirm-modal__btn--primary:hover:not(:disabled),
+.confirm-modal__btn--primary:focus-visible:not(:disabled) {
+  color: #1e40af;
+  border-color: #7ea4f2;
+  background: #dbeafe;
+}
+
 .browse-modal {
   width: min(900px, 92vw);
 }

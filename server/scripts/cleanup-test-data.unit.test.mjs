@@ -14,3 +14,11 @@ test('cleanup script normalizes storage root once and protects rm from option-in
   assert.equal(source.includes('normalized_root=$(realpath -m "$STORAGE_ROOT")'), true);
   assert.equal(source.includes('if rm -f -- "$normalized_target"; then'), true);
 });
+
+test('cleanup script includes uploaded_attempts in path collection, counts, and delete SQL', async () => {
+  const source = await fs.readFile(path.resolve('scripts/cleanup-test-data.sh'), 'utf8');
+  assert.equal(source.includes('target_attempts AS ('), true);
+  assert.equal(source.includes('SELECT artifact_path FROM target_attempts'), true);
+  assert.equal(source.includes("SELECT 'uploaded_attempts' AS table_name, count(*) AS row_count"), true);
+  assert.equal(source.includes('DELETE FROM uploaded_attempts'), true);
+});

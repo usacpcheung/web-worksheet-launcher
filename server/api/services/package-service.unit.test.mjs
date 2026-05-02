@@ -17,6 +17,7 @@ function createFakeDb({
   failDelete = false,
   draftRow = null,
   publishConflict = null,
+  replaceUpdateRowCount = 1,
 } = {}) {
   const state = { draftCount, queries: [] };
 
@@ -123,6 +124,9 @@ function createFakeDb({
             };
           }
           if (sql.includes('UPDATE uploaded_drafts') && sql.includes('SET owner_email')) {
+            if (replaceUpdateRowCount === 0) {
+              return { rowCount: 0, rows: [] };
+            }
             return {
               rowCount: 1,
               rows: [
@@ -211,6 +215,7 @@ test('uploadDraft acquires per-owner advisory lock before counting slots', async
   assert.equal(result.ok, false);
   assert.equal(result.statusCode, 409);
   assert.equal(result.error.code, 'DRAFT_SLOT_LIMIT_REACHED');
+  assert.equal(result.error.details.slotLimit, 3);
 
   const lockQueryIndex = db.state.queries.findIndex((sql) => sql.includes('pg_advisory_xact_lock'));
   const countQueryIndex = db.state.queries.findIndex((sql) => sql.includes('COUNT(*)::int AS count FROM uploaded_drafts'));
@@ -477,6 +482,63 @@ test('uploadDraft replace preserves live published package link and historical m
   assert.equal(db.state.queries.some((sql) => sql.includes('DELETE FROM published_packages')), false);
   assert.equal(db.state.queries.some((sql) => sql.includes('DELETE FROM uploaded_drafts')), false);
   assert.equal(db.state.queries.some((sql) => sql.includes('SET owner_email')), true);
+});
+
+test('uploadDraft replace fails fast and removes staged artifact when live draft disappears before update', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-replace-missing-'));
+  const stagedArtifactPath = path.join(tempDir, 'replacement.zip');
+  await fs.writeFile(stagedArtifactPath, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+
+  const db = createFakeDb({
+    draftCount: 1,
+    uploadConflict: true,
+    replaceUpdateRowCount: 0,
+    uploadConflictRow: {
+      uploaded_draft_id: 'u-live',
+      owner_sub: 'oidc-sub',
+      title: 'T',
+      subject: 'S',
+      artifact_path: 'drafts/live.zip',
+      artifact_sha256: 'sha-current',
+      artifact_size_bytes: 1,
+      last_published_artifact_sha256: 'sha-current',
+      last_published_at: '2026-04-07T15:42:00.000Z',
+      published_package_id: 'p-live',
+      published_at: '2026-04-07T15:45:00.000Z',
+    },
+  });
+  const service = createService({
+    db,
+    artifactStore: {
+      async storeArtifact() {
+        return {
+          artifactPath: 'drafts/replacement.zip',
+          absolutePath: stagedArtifactPath,
+          artifactSha256: 'sha-new',
+          artifactSizeBytes: 4,
+        };
+      },
+      resolveAbsolutePath() {
+        return '/tmp/live.zip';
+      },
+    },
+  });
+
+  const result = await service.uploadDraft({
+    identity: { sub: 'oidc-sub', email: 'teacher@example.test', name: 'Teacher' },
+    title: 'T',
+    subject: 'S',
+    zipBytes: createValidWorksheetZip({ title: 'T' }),
+    conflictAction: 'replace',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 409);
+  assert.equal(result.error.code, 'DRAFT_REPLACE_TARGET_MISSING');
+  assert.equal(db.state.queries.some((sql) => sql === 'COMMIT'), false);
+  assert.equal(db.state.queries.some((sql) => sql === 'ROLLBACK'), true);
+  await assert.rejects(() => fs.access(stagedArtifactPath));
+  await fs.rm(tempDir, { recursive: true, force: true });
 });
 
 test('deleteOwnPublishedPackage removes owner package artifact after row delete', async () => {

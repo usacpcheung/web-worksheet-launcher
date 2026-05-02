@@ -6,6 +6,7 @@ import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
 import { mapLegacyJsonToPackageModel, parseWorksheetPackage } from '../editor/worksheet-package.js';
+import { createStoredZip, crc32, parseStoredZip, decodeUtf8 } from '../editor/zip-utils.js';
 import { createServerApiClient } from '../app/api/server-api-client.js';
 import {
   DEFAULT_PUBLISHED_PACKAGE_LIMIT,
@@ -28,11 +29,20 @@ const VIEWER_SERVER_SESSION_STATES = Object.freeze({
   LOGGED_IN: 'logged_in',
 });
 const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';
+const SIGNED_OUT_MESSAGE = 'You are currently signed out. Log in to use server features.';
 const AUTH_RETURN_PARAM = 'authReturn';
 const VIEWER_AUTH_CALLBACK_PARAM = 'authCallback';
 const AUTH_CALLBACK_RETRY_BASE_MS = 1000;
 const AUTH_CALLBACK_RETRY_MAX_MS = 10000;
 const AUTH_CALLBACK_RETRY_BUDGET_MS = 60000;
+const ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE = 'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.';
+const ATTEMPT_UPLOAD_CONFLICT_MESSAGE = 'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.';
+const UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION = 'Open Manage server attempts to free slots or review existing uploads.';
+const VIEWER_NOTIFICATION_DEFAULT_TTL_MS = 5000;
+const VIEWER_NOTIFICATION_ERROR_TTL_MS = 8000;
+const VIEWER_NOTIFICATION_UPLOAD_SOURCE = 'attempt.upload';
+const VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY = 'worksheetLauncher.viewer.printSchoolName';
+const DEFAULT_VIEWER_PRINT_SCHOOL_NAME = 'Hong Kong Red Cross Hospital Schools';
 let activeViewerShellAbortController = null;
 
 
@@ -44,6 +54,7 @@ const VIEWER_BOOT_ERROR_CODES = Object.freeze({
   LOCAL_DRAFT_NOT_FOUND: 'LOCAL_DRAFT_NOT_FOUND',
   IMPORTED_WORKSHEET_NOT_FOUND: 'IMPORTED_WORKSHEET_NOT_FOUND',
   PUBLISHED_PACKAGE_NOT_FOUND: 'PUBLISHED_PACKAGE_NOT_FOUND',
+  PUBLISHED_PACKAGE_AUTH_REQUIRED: 'PUBLISHED_PACKAGE_AUTH_REQUIRED',
   INVALID_VIEWER_PAYLOAD: 'INVALID_VIEWER_PAYLOAD',
   VIEWER_BOOT_FAILED: 'VIEWER_BOOT_FAILED',
 });
@@ -55,6 +66,9 @@ class ViewerBootError extends Error {
     this.code = code;
     this.userMessage = options.userMessage || 'Viewer could not be started.';
     this.technicalMessage = options.technicalMessage || this.message;
+    this.requiresSignIn = options.requiresSignIn === true;
+    this.recoveryKind = options.recoveryKind || null;
+    this.publishedPackageId = options.publishedPackageId || null;
     this.recoveryActions = Array.isArray(options.recoveryActions)
       ? options.recoveryActions
       : [
@@ -75,6 +89,15 @@ function asViewerBootError(error) {
     technicalMessage: error?.message || 'Unknown boot error',
     cause: error,
   });
+}
+
+function isPublishedPackageAuthBootError(error) {
+  return Boolean(
+    error instanceof ViewerBootError
+    && error.code === VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_AUTH_REQUIRED
+    && error.recoveryKind === 'published_package_auth'
+    && error.publishedPackageId
+  );
 }
 
 function parseLaunchParamJson(params, key, parseErrorCode) {
@@ -137,6 +160,14 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function firstNonBlankString(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
 function formatTimestampForDisplay(timestamp) {
   if (typeof timestamp !== 'string' || !timestamp.trim()) {
     return 'unknown time';
@@ -158,7 +189,7 @@ function formatTimestampForDisplay(timestamp) {
 
 function formatTimestampForReportHeader(timestamp) {
   if (typeof timestamp !== 'string' || !timestamp.trim()) {
-    return '';
+    return 'Not recorded';
   }
   const parsed = new Date(timestamp);
   if (Number.isNaN(parsed.getTime())) {
@@ -172,6 +203,28 @@ function formatTimestampForReportHeader(timestamp) {
     minute: '2-digit',
     hour12: false,
   });
+}
+
+function normalizeViewerPrintSchoolName(value) {
+  return firstNonBlankString(value, DEFAULT_VIEWER_PRINT_SCHOOL_NAME);
+}
+
+function readViewerPrintSchoolNamePreference(storage = globalThis.localStorage) {
+  try {
+    return normalizeViewerPrintSchoolName(storage?.getItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY));
+  } catch {
+    return DEFAULT_VIEWER_PRINT_SCHOOL_NAME;
+  }
+}
+
+function writeViewerPrintSchoolNamePreference(value, storage = globalThis.localStorage) {
+  const schoolName = normalizeViewerPrintSchoolName(value);
+  try {
+    storage?.setItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY, schoolName);
+  } catch {
+    // Printing should still work if localStorage is unavailable.
+  }
+  return schoolName;
 }
 
 function createLocalId(prefix = 'local') {
@@ -210,6 +263,193 @@ function maybeParseEncodedJson(rawValue) {
 
 function isRecord(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function ensureUint8Array(value) {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  return null;
+}
+
+function formatUploadProgressText(progress = {}) {
+  const loaded = Number(progress.loaded || 0);
+  const total = Number(progress.total || 0);
+  if (progress.lengthComputable && total > 0) {
+    const percent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+    return `Saving attempt to server... ${percent}%`;
+  }
+  if (loaded > 0) {
+    return 'Saving attempt to server...';
+  }
+  return 'Preparing upload...';
+}
+
+function formatAttemptSlotLimitMessage(slotLimit) {
+  const normalizedLimit = Number(slotLimit);
+  if (Number.isInteger(normalizedLimit) && normalizedLimit > 0) {
+    return `You already have ${normalizedLimit} uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.`;
+  }
+  return 'You already have uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.';
+}
+
+function sanitizeFilenameSegment(value, fallback = 'worksheet') {
+  const normalized = String(value || '')
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized || fallback;
+}
+
+function formatAttemptDownloadFilename(row = {}) {
+  const title = sanitizeFilenameSegment(row.title, 'worksheet');
+  const stampSource = row.updated_at || row.updatedAt || null;
+  const date = stampSource ? new Date(stampSource) : null;
+  const stamp = date && !Number.isNaN(date.getTime())
+    ? date.toISOString().replace(/[:.]/g, '-')
+    : nowIso().replace(/[:.]/g, '-');
+  return `${title}__attempt__${stamp}.zip`;
+}
+
+function normalizeUploadedAttemptRows(list) {
+  const rows = Array.isArray(list) ? list : [];
+  return rows
+    .map((row) => (row && typeof row === 'object' ? row : null))
+    .filter(Boolean)
+    .map((row) => ({
+      ...row,
+      uploaded_attempt_id: row.uploaded_attempt_id || row.id || null,
+      title: String(row.title || 'Untitled worksheet'),
+      subject: String(row.subject || ''),
+      status: String(row.status || 'in_progress'),
+      updated_at: row.updated_at || row.updatedAt || null,
+      submitted_at: row.submitted_at || row.submittedAt || null,
+      checked_at: row.checked_at || row.checkedAt || null,
+      artifact_size_bytes: Number.isFinite(Number(row.artifact_size_bytes || row.artifactSizeBytes))
+        ? Number(row.artifact_size_bytes || row.artifactSizeBytes)
+        : null,
+    }))
+    .filter((row) => typeof row.uploaded_attempt_id === 'string' && row.uploaded_attempt_id);
+}
+
+function createViewerIcon(name) {
+  const svgAttrs = 'class="viewer-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
+  const icons = {
+    info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
+    upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
+    audio: `<svg ${svgAttrs}><path d="M11 5 6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18.5 6a8.5 8.5 0 0 1 0 12"></path></svg>`,
+    attempts: `<svg ${svgAttrs}><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><circle cx="4" cy="6" r="1.5"></circle><circle cx="4" cy="12" r="1.5"></circle><circle cx="4" cy="18" r="1.5"></circle></svg>`,
+    worksheet: `<svg ${svgAttrs}><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v6h6"></path></svg>`,
+    print: `<svg ${svgAttrs}><path d="M6 9V4h12v5"></path><path d="M6 18h12v2H6z"></path><path d="M6 14h12"></path><path d="M6 10H4a2 2 0 0 0-2 2v4h4"></path><path d="M18 16h4v-4a2 2 0 0 0-2-2h-2"></path></svg>`,
+  };
+  return icons[name] || '';
+}
+
+function createViewerStartSectionHeader({ icon = 'info', title, className = '' }) {
+  const header = document.createElement('div');
+  header.className = `editor-section-header ${className}`.trim();
+  const iconWrap = document.createElement('span');
+  iconWrap.className = 'editor-section-header__icon';
+  iconWrap.setAttribute('aria-hidden', 'true');
+  iconWrap.innerHTML = createViewerIcon(icon);
+  const heading = document.createElement('h3');
+  heading.textContent = title;
+  header.append(iconWrap, heading);
+  return header;
+}
+
+function renderNotificationCard(notification, className = 'notification-toast') {
+  const kind = String(notification?.kind || 'info').toLowerCase();
+  const card = document.createElement('article');
+  card.className = `${className} ${className}--${kind}`;
+  card.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  card.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
+
+  const text = document.createElement('div');
+  text.className = `${className}__text`;
+  text.textContent = String(notification?.text || '');
+  card.appendChild(text);
+  return card;
+}
+
+function ensureViewerToastContainer() {
+  const host = document.body || document.getElementById('app') || document.documentElement;
+  if (!host || typeof host.querySelector !== 'function') {
+    return null;
+  }
+  const existing = host.querySelector('.notification-toast-container.viewer-toast-container');
+  if (existing) return existing;
+  const container = document.createElement('div');
+  container.className = 'notification-toast-container viewer-toast-container';
+  host.appendChild(container);
+  return container;
+}
+
+function renderViewerNotifications(session) {
+  const container = ensureViewerToastContainer();
+  if (!container) return;
+  session.pruneExpiredNotifications();
+  const notifications = Array.isArray(session.state.notifications)
+    ? session.state.notifications.slice(-4)
+    : [];
+  container.innerHTML = '';
+  notifications.forEach((notification) => {
+    container.appendChild(renderNotificationCard(notification, 'notification-toast'));
+  });
+}
+
+function getViewerOverlayHost() {
+  return document.body || document.getElementById('app') || document.documentElement || null;
+}
+
+function parseUploadedAttemptPackage(zipBytes) {
+  const files = parseStoredZip(zipBytes);
+  const manifestEntry = files.get('manifest.json');
+  const worksheetEntry = files.get('content/worksheet.json');
+  const attemptEntry = files.get('content/attempt.json');
+  if (!manifestEntry || !worksheetEntry || !attemptEntry) {
+    throw new Error('Uploaded attempt package is missing required files.');
+  }
+  const manifest = JSON.parse(decodeUtf8(manifestEntry));
+  if (manifest?.format !== 'worksheet-attempt-package' || manifest?.packageVersion !== 1) {
+    throw new Error('Uploaded attempt package format is not supported.');
+  }
+  const worksheet = JSON.parse(decodeUtf8(worksheetEntry));
+  const attempt = JSON.parse(decodeUtf8(attemptEntry));
+  const assets = [];
+  const assetManifest = Array.isArray(manifest?.assets) ? manifest.assets : [];
+  assetManifest.forEach((asset) => {
+    const assetId = typeof asset?.assetId === 'string' ? asset.assetId : '';
+    const path = typeof asset?.path === 'string' ? asset.path : '';
+    if (!assetId || !path || !path.startsWith('media/')) return;
+    const binary = files.get(path);
+    if (!binary) return;
+    assets.push({
+      assetId,
+      path,
+      mimeType: typeof asset?.mimeType === 'string' ? asset.mimeType : null,
+      kind: asset?.kind || null,
+      usage: asset?.usage || null,
+      binary,
+    });
+  });
+  return { manifest, worksheet, attempt, assets };
+}
+
+function normalizeRestoredCheckStatus(value) {
+  if (value === true) return 'correct';
+  if (value === false) return 'incorrect';
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'correct' || normalized === 'incorrect') {
+    return normalized;
+  }
+  if (normalized === 'ungraded_missing_or_invalid_key' || normalized === 'ungraded_missing_key') {
+    return normalized;
+  }
+  return null;
 }
 
 function normalizeOptionMediaRefs(mediaRefs) {
@@ -464,6 +704,20 @@ function normalizeViewerPayload(payload, fallbackLabel = 'Local worksheet') {
     snapshotId: payload.snapshotId || createLocalId('snapshot_local'),
     snapshotVersion: Number.isInteger(payload.snapshotVersion) ? payload.snapshotVersion : 1,
     title: payload.title || fallbackLabel,
+    subject: firstNonBlankString(payload.subject, payload.metadata?.subject),
+    owner: firstNonBlankString(
+      payload.owner,
+      payload.owner_email,
+      payload.owner_name,
+      payload.owner_sub,
+      payload.metadata?.owner,
+      payload.metadata?.owner_email,
+      payload.metadata?.owner_name,
+      payload.metadata?.owner_sub
+    ),
+    owner_email: firstNonBlankString(payload.owner_email, payload.metadata?.owner_email),
+    owner_name: firstNonBlankString(payload.owner_name, payload.metadata?.owner_name),
+    owner_sub: firstNonBlankString(payload.owner_sub, payload.metadata?.owner_sub),
     blocks,
   };
 }
@@ -707,8 +961,8 @@ function createChoiceButtonGroup({
     if (optionAudioRef) {
       const optionAudioBtn = document.createElement('button');
       optionAudioBtn.type = 'button';
-      optionAudioBtn.className = 'choice-audio-btn question-card__prompt-audio-btn';
-      optionAudioBtn.textContent = '🔊';
+      optionAudioBtn.className = 'viewer-header-icon-btn choice-audio-btn question-card__prompt-audio-btn';
+      optionAudioBtn.innerHTML = createViewerIcon('audio');
       optionAudioBtn.setAttribute('aria-label', 'Play option audio');
       optionAudioBtn.title = 'Play option audio';
       optionAudioBtn.addEventListener('click', async (event) => {
@@ -813,6 +1067,7 @@ function mapDraftRecordToViewerPayload(draftRecord) {
       snapshotId: `${draftRecord.localId}:local-snapshot`,
       snapshotVersion: 1,
       title: draftRecord.title || 'Local draft worksheet',
+      subject: draftRecord?.subject || draftRecord?.metadata?.subject || '',
       blocks: draftRecord.blocks || [],
     },
     'Local draft worksheet'
@@ -1016,13 +1271,17 @@ function getQuestionImageRefForPrint(block) {
   return promptMediaRefs.find((ref) => ref.usage === 'question_image') || null;
 }
 
-function getOptionLabelByValue(block, rawValue) {
+function getOptionDisplayTextByValue(block, rawValue) {
   const options = Array.isArray(block?.responseConfig?.options)
     ? block.responseConfig.options
     : [];
   const normalizedValue = String(rawValue ?? '');
-  const matched = options.find((option) => String(option?.value ?? option?.label ?? '') === normalizedValue);
-  return matched ? String(matched.label ?? matched.value ?? normalizedValue) : normalizedValue;
+  const matchedIndex = options.findIndex((option) => String(option?.value ?? option?.label ?? '') === normalizedValue);
+  if (matchedIndex < 0) {
+    return normalizedValue;
+  }
+  const label = String(options[matchedIndex]?.label ?? options[matchedIndex]?.value ?? normalizedValue);
+  return `${getChoicePrefix(matchedIndex)} ${label}`;
 }
 
 function formatAnswerValueForPrint(block, rawValue) {
@@ -1034,7 +1293,7 @@ function formatAnswerValueForPrint(block, rawValue) {
         ? rawValue.map((value) => String(value))
         : [];
       if (normalizedValues.length === 0) {
-        return 'No answer submitted';
+        return 'Not answered';
       }
       const options = Array.isArray(block?.responseConfig?.options)
         ? block.responseConfig.options
@@ -1043,32 +1302,32 @@ function formatAnswerValueForPrint(block, rawValue) {
       const orderedValues = optionOrder.filter((value) => normalizedValues.includes(value));
       const remainingValues = normalizedValues.filter((value) => !orderedValues.includes(value));
       return [...orderedValues, ...remainingValues]
-        .map((value) => getOptionLabelByValue(block, value))
+        .map((value) => getOptionDisplayTextByValue(block, value))
         .join('\n');
     }
 
     if (rawValue === null || rawValue === undefined || String(rawValue).trim() === '') {
-      return 'No answer submitted';
+      return 'Not answered';
     }
-    return getOptionLabelByValue(block, rawValue);
+    return getOptionDisplayTextByValue(block, rawValue);
   }
 
   if (inputType === 'boolean') {
     const normalized = coerceAnswerValueByInputType('boolean', rawValue);
     if (normalized === true) return 'True';
     if (normalized === false) return 'False';
-    return 'No answer submitted';
+    return 'Not answered';
   }
 
   if (inputType === 'number') {
     if (rawValue === '' || rawValue === null || rawValue === undefined) {
-      return 'No answer submitted';
+      return 'Not answered';
     }
     return String(rawValue);
   }
 
   const textValue = String(rawValue ?? '');
-  return textValue.trim() ? textValue : 'No answer submitted';
+  return textValue.trim() ? textValue : 'Not answered';
 }
 
 function formatCorrectAnswerForPrint(block) {
@@ -1082,11 +1341,11 @@ function formatCorrectAnswerForPrint(block) {
         ? correctAnswer.map((value) => String(value))
         : [];
       return normalizedValues.length > 0
-        ? normalizedValues.map((value) => getOptionLabelByValue(block, value)).join('\n')
+        ? normalizedValues.map((value) => getOptionDisplayTextByValue(block, value)).join('\n')
         : '';
     }
     return typeof correctAnswer === 'string' && correctAnswer.trim()
-      ? getOptionLabelByValue(block, correctAnswer)
+      ? getOptionDisplayTextByValue(block, correctAnswer)
       : '';
   }
 
@@ -1285,7 +1544,9 @@ async function buildWorksheetPrintReportModel({
   viewerPayload,
   answers = {},
   studentName = '',
-  completedAt = '',
+  submittedAt = '',
+  schoolName = DEFAULT_VIEWER_PRINT_SCHOOL_NAME,
+  subject = '',
   checkResult = null,
   storage = null,
 } = {}) {
@@ -1335,34 +1596,42 @@ async function buildWorksheetPrintReportModel({
   }));
 
   return {
+    schoolName: normalizeViewerPrintSchoolName(schoolName),
     title: String(viewerPayload?.title || 'Worksheet'),
+    subject: firstNonBlankString(subject, viewerPayload?.subject, viewerPayload?.metadata?.subject),
     studentName: String(studentName || '').trim(),
-    completedAtLabel: formatTimestampForReportHeader(completedAt),
+    submittedAtLabel: formatTimestampForReportHeader(submittedAt),
     checkedSummary,
     questions,
   };
 }
 
 function buildWorksheetPrintReportHtml(reportModel) {
-  const studentRow = reportModel.studentName
+  const studentMeta = reportModel.studentName
     ? `
-      <div class="print-meta-row">
+      <div class="print-meta-item">
         <dt>Student</dt>
         <dd>${escapeHtml(reportModel.studentName)}</dd>
       </div>
     `
     : '';
-  const completedRow = reportModel.completedAtLabel
+  const subjectMeta = reportModel.subject
     ? `
-      <div class="print-meta-row">
-        <dt>Completed</dt>
-        <dd>${escapeHtml(reportModel.completedAtLabel)}</dd>
+      <div class="print-meta-item">
+        <dt>Subject</dt>
+        <dd>${escapeHtml(reportModel.subject)}</dd>
       </div>
     `
     : '';
+  const submittedMeta = `
+      <div class="print-meta-item print-meta-item--wide">
+        <dt>Submitted at</dt>
+        <dd>${escapeHtml(reportModel.submittedAtLabel || 'Not recorded')}</dd>
+      </div>
+  `;
   const checkedRow = reportModel.checkedSummary
     ? `
-      <div class="print-meta-row">
+      <div class="print-meta-item print-meta-item--wide">
         <dt>Check result</dt>
         <dd>${escapeHtml(reportModel.checkedSummary)}</dd>
       </div>
@@ -1381,10 +1650,17 @@ function buildWorksheetPrintReportHtml(reportModel) {
         : '';
 
     const checkedAnswerSectionClass = `print-question-section--${escapeHtml(question.sectionBreakModes?.checkedAnswer || 'keep')}`;
+    const imageSectionHtml = imageHtml
+      ? `
+        <section class="print-question-section print-question-section--image print-question-section--flow">
+          ${imageHtml}
+        </section>
+      `
+      : '';
     const resultHtml = question.result
       ? `
         <section class="print-question-section print-question-section--result ${checkedAnswerSectionClass} print-result-${escapeHtml(question.result.status || 'neutral')}">
-          <h3>Checked answer</h3>
+          <h3>Checked result</h3>
           <p class="print-result-label">${escapeHtml(question.result.label)}</p>
           ${question.result.detail ? `<p class="print-result-detail">${formatMultilineTextForHtml(question.result.detail)}</p>` : ''}
         </section>
@@ -1399,11 +1675,11 @@ function buildWorksheetPrintReportHtml(reportModel) {
         <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
           <h3>Question</h3>
           <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || 'No prompt text provided.')}</p>
-          ${imageHtml}
         </section>
+        ${imageSectionHtml}
         <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
           <h3>Answer</h3>
-          <p class="print-answer-text">${formatMultilineTextForHtml(question.answerText)}</p>
+          <p class="print-answer-text">Answer: ${formatMultilineTextForHtml(question.answerText)}</p>
         </section>
         ${resultHtml}
       </article>
@@ -1417,7 +1693,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
   <title>${escapeHtml(reportModel.title)} - Print Report</title>
   <style>
     @page {
-      size: A4;
+      size: A4 portrait;
       margin: 16mm 14mm 18mm 14mm;
     }
 
@@ -1445,36 +1721,50 @@ function buildWorksheetPrintReportHtml(reportModel) {
     }
 
     .print-header {
-      border-bottom: 1px solid #b8bcc4;
-      padding-bottom: 10mm;
-      margin-bottom: 9mm;
+      border-bottom: 1px solid #9aa1ad;
+      padding-bottom: 6mm;
+      margin-bottom: 6mm;
       break-after: avoid;
     }
 
+    .print-school {
+      margin: 0 0 2mm;
+      font-size: 11pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
     .print-title {
-      margin: 0 0 5mm;
-      font-size: 20pt;
+      margin: 0 0 4mm;
+      font-size: 18pt;
       line-height: 1.15;
       font-weight: 700;
     }
 
     .print-meta {
       display: grid;
-      gap: 2.5mm;
+      grid-template-columns: 1fr 1fr;
+      column-gap: 10mm;
+      row-gap: 1.5mm;
       margin: 0;
     }
 
-    .print-meta-row {
+    .print-meta-item {
       display: grid;
-      grid-template-columns: 32mm 1fr;
-      gap: 4mm;
+      grid-template-columns: 28mm 1fr;
+      gap: 3mm;
     }
 
-    .print-meta-row dt {
+    .print-meta-item--wide {
+      grid-column: 1 / -1;
+    }
+
+    .print-meta-item dt {
       font-weight: 700;
     }
 
-    .print-meta-row dd {
+    .print-meta-item dd {
       margin: 0;
     }
 
@@ -1524,6 +1814,11 @@ function buildWorksheetPrintReportHtml(reportModel) {
       page-break-inside: auto;
     }
 
+    .print-question-section--image {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+
     .print-question-section h3 {
       margin: 0 0 2mm;
       font-size: 10pt;
@@ -1545,15 +1840,15 @@ function buildWorksheetPrintReportHtml(reportModel) {
     }
 
     .print-question-image-wrap {
-      margin-top: 4mm;
+      margin-top: 0;
     }
 
     .print-question-image {
       display: block;
       max-width: 100%;
-      max-height: 60mm;
+      max-height: 75mm;
+      object-fit: contain;
       border: 1px solid #d7dbe2;
-      border-radius: 2mm;
     }
 
     .print-question-media-note {
@@ -1585,10 +1880,12 @@ function buildWorksheetPrintReportHtml(reportModel) {
 <body>
   <main class="print-report">
     <header class="print-header">
+      <p class="print-school">${escapeHtml(reportModel.schoolName || DEFAULT_VIEWER_PRINT_SCHOOL_NAME)}</p>
       <h1 class="print-title">${escapeHtml(reportModel.title)}</h1>
       <dl class="print-meta">
-        ${studentRow}
-        ${completedRow}
+        ${studentMeta}
+        ${subjectMeta}
+        ${submittedMeta}
         ${checkedRow}
       </dl>
     </header>
@@ -1656,7 +1953,9 @@ async function startWorksheetPrintFlow({
     viewerPayload: session.state.viewerPayload,
     answers: session.state.answers,
     studentName: session.state.studentName,
-    completedAt: session.state.completedAt,
+    submittedAt: session.state.submittedAt || session.state.submitted_at || null,
+    schoolName: session.state.printSchoolName,
+    subject: session.state.sourceSubject,
     checkResult: session.state.checkResult,
     storage: session.storage,
   });
@@ -1873,6 +2172,11 @@ function resolveImportedWorksheetPayload(importedRecord) {
         snapshotId: `${importedRecord.localId}:imported-local`,
         snapshotVersion: 1,
         title: worksheet.title || 'Imported worksheet',
+        subject: worksheet.subject || importedRecord.subject || importedRecord.metadata?.subject || '',
+        owner: worksheet.owner || importedRecord.owner || importedRecord.metadata?.owner || '',
+        owner_email: worksheet.owner_email || importedRecord.owner_email || importedRecord.metadata?.owner_email || '',
+        owner_name: worksheet.owner_name || importedRecord.owner_name || importedRecord.metadata?.owner_name || '',
+        owner_sub: worksheet.owner_sub || importedRecord.owner_sub || importedRecord.metadata?.owner_sub || '',
         blocks: worksheet.blocks,
       },
       'Imported worksheet'
@@ -1894,6 +2198,8 @@ class ViewerAttemptSession {
       startedAt: null,
       lastSavedAt: null,
       completedAt: null,
+      submittedAt: null,
+      printSchoolName: DEFAULT_VIEWER_PRINT_SCHOOL_NAME,
       autosavePending: false,
       lastSaveError: null,
       payloadValidationErrors: [],
@@ -1906,6 +2212,8 @@ class ViewerAttemptSession {
       sourceLocalDraftId: null,
       sourceImportedWorksheetId: null,
       sourceDraftUpdatedAt: null,
+      sourceSubject: '',
+      sourceOwner: '',
       studentName: '',
       lastActiveBlockId: null,
       lastActiveIndex: 0,
@@ -1916,6 +2224,7 @@ class ViewerAttemptSession {
       recoveryMessage: null,
       checkResult: null,
       utilityMessage: null,
+      notifications: [],
       undoBuffer: {},
       isRewriting: false,
       rewritingBlockId: null,
@@ -1927,6 +2236,16 @@ class ViewerAttemptSession {
         error: null,
       },
       serverActionMessage: null,
+      isUploadingAttemptPackage: false,
+      uploadAttemptProgress: null,
+      uploadAttemptConflictContext: null,
+      uploadAttemptRecoveryHint: null,
+      uploadedAttempts: [],
+      uploadedAttemptSlotLimit: null,
+      isLoadingUploadedAttempts: false,
+      uploadedAttemptsError: null,
+      uploadedAttemptActionInFlightById: {},
+      isManagingUploadedAttempts: false,
       publishedPackages: [],
       publishedHasMore: false,
       publishedNextOffset: null,
@@ -1938,6 +2257,7 @@ class ViewerAttemptSession {
       },
       publishedListError: null,
       isLoadingPublishedPackages: false,
+      serverSessionEverReady: false,
     };
 
     this.autosaveTimer = null;
@@ -1952,6 +2272,7 @@ class ViewerAttemptSession {
     this._activeAuthFlowId = null;
     this._authAutoLoadInFlightByFlowId = new Set();
     this._openingPublishedPackageIds = new Set();
+    this._notificationPruneTimer = null;
   }
 
   setOnStateChange(handler) {
@@ -1962,6 +2283,98 @@ class ViewerAttemptSession {
     if (typeof this.onStateChange === 'function') {
       this.onStateChange(this.state);
     }
+  }
+
+  normalizeNotificationKind(kind) {
+    const normalized = String(kind || '').toLowerCase();
+    if (normalized === 'success' || normalized === 'info' || normalized === 'warn' || normalized === 'error') {
+      return normalized;
+    }
+    return 'info';
+  }
+
+  pruneExpiredNotifications() {
+    const now = Date.now();
+    const current = Array.isArray(this.state.notifications) ? this.state.notifications : [];
+    const filtered = current.filter((item) => !Number.isFinite(item?.expiresAt) || item.expiresAt > now);
+    if (filtered.length !== current.length) {
+      this.state.notifications = filtered;
+    }
+    return this.state.notifications;
+  }
+
+  scheduleNotificationPrune() {
+    if (this._notificationPruneTimer) {
+      clearTimeout(this._notificationPruneTimer);
+      this._notificationPruneTimer = null;
+    }
+    const current = Array.isArray(this.state.notifications) ? this.state.notifications : [];
+    const now = Date.now();
+    let nextExpiry = Infinity;
+    current.forEach((item) => {
+      if (Number.isFinite(item?.expiresAt) && item.expiresAt > now) {
+        nextExpiry = Math.min(nextExpiry, item.expiresAt);
+      }
+    });
+    if (!Number.isFinite(nextExpiry)) {
+      return;
+    }
+    const delayMs = Math.max(0, nextExpiry - now + 20);
+    this._notificationPruneTimer = setTimeout(() => {
+      this._notificationPruneTimer = null;
+      const before = Array.isArray(this.state.notifications) ? this.state.notifications.length : 0;
+      this.pruneExpiredNotifications();
+      const after = Array.isArray(this.state.notifications) ? this.state.notifications.length : 0;
+      if (before !== after) {
+        this.notifyStateChange();
+      }
+      this.scheduleNotificationPrune();
+    }, delayMs);
+  }
+
+  clearNotificationsBySource(source) {
+    if (!source) return;
+    const current = Array.isArray(this.state.notifications) ? this.state.notifications : [];
+    const filtered = current.filter((item) => item?.source !== source);
+    if (filtered.length !== current.length) {
+      this.state.notifications = filtered;
+      this.scheduleNotificationPrune();
+      this.notifyStateChange();
+    }
+  }
+
+  pushNotification(notification = {}) {
+    const text = typeof notification?.text === 'string' ? notification.text.trim() : '';
+    if (!text) return null;
+    this.pruneExpiredNotifications();
+    const ttlMsRaw = Number(notification?.ttlMs);
+    const ttlMs = Number.isFinite(ttlMsRaw) && ttlMsRaw > 0 ? ttlMsRaw : 0;
+    const createdAt = Date.now();
+    const entry = {
+      id: createLocalId('viewer_notice'),
+      text,
+      kind: this.normalizeNotificationKind(notification?.kind),
+      source: typeof notification?.source === 'string' && notification.source
+        ? notification.source
+        : null,
+      createdAt,
+      expiresAt: ttlMs > 0 ? createdAt + ttlMs : null,
+    };
+    this.state.notifications = [...(Array.isArray(this.state.notifications) ? this.state.notifications : []), entry];
+    this.scheduleNotificationPrune();
+    this.notifyStateChange();
+    return entry;
+  }
+
+  setNotificationForSource(source, notification = {}) {
+    if (!source) return null;
+    const current = Array.isArray(this.state.notifications) ? this.state.notifications : [];
+    const filtered = current.filter((item) => item?.source !== source);
+    this.state.notifications = filtered;
+    return this.pushNotification({
+      ...notification,
+      source,
+    });
   }
 
   finalizeActiveAudio(reason = 'interrupted') {
@@ -2098,10 +2511,17 @@ class ViewerAttemptSession {
             technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
           });
         }
+        if (result?.error?.requiresSignIn) {
+          throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_AUTH_REQUIRED, {
+            userMessage: 'Sign in to open this worksheet.',
+            technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+            requiresSignIn: true,
+            recoveryKind: 'published_package_auth',
+            publishedPackageId,
+          });
+        }
         throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
-          userMessage: result?.error?.requiresSignIn
-            ? 'Sign in is required to open this published package, then retry the link.'
-            : 'The requested published package could not be opened right now.',
+          userMessage: 'The requested published package could not be opened right now.',
           technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
         });
       }
@@ -2117,6 +2537,8 @@ class ViewerAttemptSession {
         sourceDraftUpdatedAt: loadedPayload.sourceDraftUpdatedAt,
         sourceLocalDraftId: loadedPayload.sourceLocalDraftId || null,
         sourceImportedWorksheetId: loadedPayload.sourceImportedWorksheetId || null,
+        sourceSubject: loadedPayload.sourceSubject || '',
+        sourceOwner: loadedPayload.sourceOwner || '',
       }
     );
     attempt.checkResult = null;
@@ -2220,6 +2642,8 @@ class ViewerAttemptSession {
         sourceLocalDraftId: previewIntent.localDraftId,
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || previewIntent.sourceDraftUpdatedAt || null,
+        sourceSubject: draftRecord?.subject || draftRecord?.metadata?.subject || '',
+        sourceOwner: draftRecord?.owner_email || draftRecord?.owner_name || draftRecord?.owner_sub || draftRecord?.metadata?.owner || '',
       };
     }
 
@@ -2232,6 +2656,8 @@ class ViewerAttemptSession {
       return {
         sourceType: 'inline_payload',
         payload: normalizeViewerPayload(inlinePayload, 'Local worksheet'),
+        sourceSubject: inlinePayload?.subject || '',
+        sourceOwner: inlinePayload?.owner || inlinePayload?.owner_email || inlinePayload?.owner_name || inlinePayload?.owner_sub || '',
       };
     }
 
@@ -2240,6 +2666,8 @@ class ViewerAttemptSession {
       return {
         sourceType: 'snapshot_derived',
         payload: normalizeViewerPayload(mapSnapshotToViewerPayload(snapshotParam.value), 'Snapshot worksheet'),
+        sourceSubject: snapshotParam.value?.subject || '',
+        sourceOwner: snapshotParam.value?.owner || snapshotParam.value?.owner_email || snapshotParam.value?.owner_name || snapshotParam.value?.owner_sub || '',
       };
     }
 
@@ -2257,6 +2685,8 @@ class ViewerAttemptSession {
         sourceType: 'imported_worksheet',
         sourceImportedWorksheetId: importedWorksheetId,
         payload: resolveImportedWorksheetPayload(importedRecord),
+        sourceSubject: importedRecord?.worksheet?.subject || importedRecord?.subject || '',
+        sourceOwner: importedRecord?.worksheet?.owner || importedRecord?.owner || '',
       };
     }
 
@@ -2275,6 +2705,8 @@ class ViewerAttemptSession {
         sourceLocalDraftId: localDraftId,
         payload: mapDraftRecordToViewerPayload(draftRecord),
         sourceDraftUpdatedAt: draftRecord.metadata?.updatedAt || null,
+        sourceSubject: draftRecord?.subject || draftRecord?.metadata?.subject || '',
+        sourceOwner: draftRecord?.owner_email || draftRecord?.owner_name || draftRecord?.owner_sub || draftRecord?.metadata?.owner || '',
       };
     }
 
@@ -2304,6 +2736,25 @@ class ViewerAttemptSession {
     const localAttemptId = createLocalId('attempt');
     const startedAt = nowIso();
     const sourceDraftUpdatedAt = options.sourceDraftUpdatedAt || null;
+    const sourceSubject = firstNonBlankString(
+      options.sourceSubject,
+      viewerPayload?.subject,
+      viewerPayload?.metadata?.subject
+    );
+    const sourceOwner = firstNonBlankString(
+      options.sourceOwner,
+      viewerPayload?.owner,
+      viewerPayload?.owner_email,
+      viewerPayload?.owner_name,
+      viewerPayload?.owner_sub,
+      viewerPayload?.metadata?.owner,
+      viewerPayload?.metadata?.owner_email,
+      viewerPayload?.metadata?.owner_name,
+      viewerPayload?.metadata?.owner_sub,
+      this.state.serverSession?.user?.email,
+      this.state.serverSession?.user?.name,
+      this.state.serverSession?.user?.sub
+    );
 
     const sourceId = getSourceIdentity(source || 'inline_payload', {
       sourceLocalDraftId: options.sourceLocalDraftId || null,
@@ -2332,8 +2783,11 @@ class ViewerAttemptSession {
       startedAt,
       lastSavedAt: startedAt,
       completedAt: null,
+      submittedAt: null,
       answers: {},
       checkResult: null,
+      subject: sourceSubject || '',
+      owner: sourceOwner || '',
       metadata: {
         localId: localAttemptId,
         origin: source || 'local_source',
@@ -2343,6 +2797,8 @@ class ViewerAttemptSession {
         sourceImportedWorksheetId: options.sourceImportedWorksheetId || null,
         studentName: options.studentName || '',
         sourceDraftUpdatedAt,
+        subject: sourceSubject || '',
+        owner: sourceOwner || '',
         updatedAt: startedAt,
       },
     };
@@ -2355,7 +2811,8 @@ class ViewerAttemptSession {
     this.state.status = attemptRecord.status || 'in_progress';
     this.state.startedAt = attemptRecord.startedAt || nowIso();
     this.state.lastSavedAt = attemptRecord.lastSavedAt || null;
-    this.state.completedAt = attemptRecord.completedAt || attemptRecord.submittedAt || null;
+    this.state.submittedAt = attemptRecord.submitted_at || attemptRecord.submittedAt || attemptRecord.completedAt || null;
+    this.state.completedAt = attemptRecord.completedAt || this.state.submittedAt || null;
     this.state.source = attemptRecord.metadata?.origin || 'local_source';
     this.state.sourceType = attemptRecord.sourceType || this.state.source;
     this.state.sourceId = attemptRecord.sourceId || null;
@@ -2364,6 +2821,30 @@ class ViewerAttemptSession {
     this.state.sourceImportedWorksheetId =
       attemptRecord.sourceImportedWorksheetId || attemptRecord.metadata?.sourceImportedWorksheetId || null;
     this.state.sourceDraftUpdatedAt = attemptRecord.metadata?.sourceDraftUpdatedAt || null;
+    this.state.sourceSubject = firstNonBlankString(
+      attemptRecord.subject,
+      attemptRecord.metadata?.subject,
+      attemptRecord.viewerPayload?.subject,
+      attemptRecord.viewerPayload?.metadata?.subject
+    );
+    this.state.sourceOwner = firstNonBlankString(
+      attemptRecord.owner,
+      attemptRecord.owner_email,
+      attemptRecord.owner_name,
+      attemptRecord.owner_sub,
+      attemptRecord.metadata?.owner,
+      attemptRecord.metadata?.owner_email,
+      attemptRecord.metadata?.owner_name,
+      attemptRecord.metadata?.owner_sub,
+      attemptRecord.viewerPayload?.owner,
+      attemptRecord.viewerPayload?.owner_email,
+      attemptRecord.viewerPayload?.owner_name,
+      attemptRecord.viewerPayload?.owner_sub,
+      attemptRecord.viewerPayload?.metadata?.owner,
+      attemptRecord.viewerPayload?.metadata?.owner_email,
+      attemptRecord.viewerPayload?.metadata?.owner_name,
+      attemptRecord.viewerPayload?.metadata?.owner_sub
+    );
     this.state.studentName = pickAttemptStudentName(attemptRecord);
     this.state.lastActiveBlockId = attemptRecord.lastActiveBlockId || null;
     this.state.lastActiveIndex = Number.isInteger(attemptRecord.lastActiveIndex) ? attemptRecord.lastActiveIndex : 0;
@@ -2421,7 +2902,8 @@ class ViewerAttemptSession {
     this.state.isFinalizing = true;
     this.state.lastFinalizeError = null;
     this.state.status = 'completed';
-    this.state.completedAt = nowIso();
+    this.state.submittedAt = nowIso();
+    this.state.completedAt = this.state.submittedAt;
     this.state.checkResult = null;
     this.state.attemptRevision += 1;
     this.persistResumeMetadata();
@@ -2437,6 +2919,7 @@ class ViewerAttemptSession {
     } catch (error) {
       this.state.status = 'in_progress';
       this.state.completedAt = null;
+      this.state.submittedAt = null;
       this.state.checkResult = null;
       this.state.lastFinalizeError = `Finalize failed. Please check your connection and try again. ${error?.message || String(error)}`;
       this.persistResumeMetadata();
@@ -2476,6 +2959,25 @@ class ViewerAttemptSession {
 
     const revisionAtSaveStart = this.state.attemptRevision;
     const updatedAt = nowIso();
+    const persistedSubject = firstNonBlankString(
+      this.state.sourceSubject,
+      this.state.viewerPayload?.subject,
+      this.state.viewerPayload?.metadata?.subject
+    );
+    const persistedOwner = firstNonBlankString(
+      this.state.sourceOwner,
+      this.state.viewerPayload?.owner,
+      this.state.viewerPayload?.owner_email,
+      this.state.viewerPayload?.owner_name,
+      this.state.viewerPayload?.owner_sub,
+      this.state.viewerPayload?.metadata?.owner,
+      this.state.viewerPayload?.metadata?.owner_email,
+      this.state.viewerPayload?.metadata?.owner_name,
+      this.state.viewerPayload?.metadata?.owner_sub,
+      this.state.serverSession?.user?.email,
+      this.state.serverSession?.user?.name,
+      this.state.serverSession?.user?.sub
+    );
 
     const normalizedAnswers = {};
     Object.entries(this.state.answers || {}).forEach(([blockId, answer]) => {
@@ -2508,7 +3010,10 @@ class ViewerAttemptSession {
       startedAt: this.state.startedAt,
       lastSavedAt: updatedAt,
       completedAt: this.state.completedAt,
+      submittedAt: this.state.submittedAt || null,
       answers: normalizedAnswers,
+      subject: persistedSubject,
+      owner: persistedOwner,
       // checkResult is transient UI state and must not be persisted.
       metadata: {
         localId: this.state.localAttemptId,
@@ -2519,6 +3024,8 @@ class ViewerAttemptSession {
         sourceFingerprint: this.state.sourceFingerprint || null,
         studentName: this.state.studentName || '',
         sourceDraftUpdatedAt: this.state.sourceDraftUpdatedAt || null,
+        subject: persistedSubject,
+        owner: persistedOwner,
         updatedAt,
       },
     };
@@ -2534,6 +3041,8 @@ class ViewerAttemptSession {
       if (shouldApplySaveStatus) {
         this.state.lastSavedRevision = revisionAtSaveStart;
         this.state.lastSavedAt = persisted?.metadata?.updatedAt || updatedAt;
+        this.state.sourceSubject = persistedSubject;
+        this.state.sourceOwner = persistedOwner;
         this.state.lastSaveError = null;
         this.persistResumeMetadata();
         this.notifyStateChange();
@@ -2607,17 +3116,17 @@ class ViewerAttemptSession {
     return this.startImportedWorksheetFromPackageModel(mappedPackage);
   }
 
-  async startImportedWorksheetFromPackageFile(fileOrBytes) {
+  async startImportedWorksheetFromPackageFile(fileOrBytes, options = {}) {
     let packageModel;
     try {
       packageModel = parseWorksheetPackage(fileOrBytes);
     } catch (error) {
       throw new Error(`Unable to import worksheet package. ${error?.message || String(error)}`);
     }
-    return this.startImportedWorksheetFromPackageModel(packageModel);
+    return this.startImportedWorksheetFromPackageModel(packageModel, options);
   }
 
-  async startImportedWorksheetFromPackageModel(packageModel) {
+  async startImportedWorksheetFromPackageModel(packageModel, options = {}) {
     const worksheet = packageModel?.worksheet;
     if (!worksheet || typeof worksheet !== 'object') {
       throw new Error('Imported worksheet package is missing worksheet content.');
@@ -2685,6 +3194,8 @@ class ViewerAttemptSession {
     try {
       const attempt = this.createLocalAttemptState(payload, 'imported_worksheet', {
         sourceImportedWorksheetId: importedRecord.localId,
+        sourceSubject: options?.sourceSubject || worksheet?.subject || '',
+        sourceOwner: options?.sourceOwner || worksheet?.owner || '',
       });
       attempt.checkResult = null;
       this.applyAttemptState(attempt, { markDirty: true });
@@ -2732,9 +3243,608 @@ class ViewerAttemptSession {
       case 'resumeAttemptServerResumeAfterLogin':
         this.setRecoveryMessage(null);
         return { ok: true, status: 'noop_resume_attempt' };
+      case 'uploadAttemptPackageAfterLogin':
+        this.setRecoveryMessage(null);
+        return this.uploadCurrentAttemptPackage(payload);
       default:
         this.setRecoveryMessage(null);
         return { ok: true, status: 'noop_unsupported_action' };
+    }
+  }
+
+  collectAttemptPackageAssetIds(viewerPayload = this.state.viewerPayload) {
+    const ids = new Set();
+    const blocks = Array.isArray(viewerPayload?.blocks) ? viewerPayload.blocks : [];
+    blocks.forEach((block) => {
+      if (!isRecord(block)) return;
+      normalizePromptMediaRefs(block.prompt?.mediaRefs).forEach((ref) => {
+        if (ref?.assetId) ids.add(ref.assetId);
+      });
+      const options = Array.isArray(block.responseConfig?.options) ? block.responseConfig.options : [];
+      options.forEach((option) => {
+        normalizeOptionMediaRefs(option?.mediaRefs).forEach((ref) => {
+          if (ref?.assetId) ids.add(ref.assetId);
+        });
+      });
+    });
+    return [...ids];
+  }
+
+  mapAttemptStatusForPackage() {
+    if (this.state.status === 'completed') {
+      return this.state.checkResult ? 'checked' : 'submitted';
+    }
+    return 'in_progress';
+  }
+
+  buildAttemptRecordForPackage() {
+    const packageStatus = this.mapAttemptStatusForPackage();
+    const updatedAt = this.state.lastSavedAt || nowIso();
+    const checkingItems = {};
+    const statusByBlockId = isRecord(this.state.checkResult?.statusByBlockId)
+      ? this.state.checkResult.statusByBlockId
+      : {};
+    Object.entries(statusByBlockId).forEach(([blockId, status]) => {
+      if (typeof blockId !== 'string' || !blockId) return;
+      checkingItems[blockId] = { result: status };
+    });
+    const checking = this.state.checkResult
+      ? {
+        checkedAt: updatedAt,
+        correctCount: Number(this.state.checkResult.correctCount) || 0,
+        totalQuestions: Number(this.state.checkResult.totalQuestions) || 0,
+        items: checkingItems,
+      }
+      : null;
+
+    return {
+      schemaVersion: 1,
+      kind: 'worksheet-attempt',
+      status: packageStatus,
+      createdAt: this.state.startedAt || updatedAt,
+      updatedAt,
+      submittedAt: packageStatus === 'in_progress' ? null : (this.state.submittedAt || updatedAt),
+      answers: this.state.answers || {},
+      checking,
+    };
+  }
+
+  async buildUploadedAttemptPackage() {
+    if (!this.state.viewerPayload) {
+      throw new Error('No active worksheet is loaded.');
+    }
+    const worksheetSubject = firstNonBlankString(
+      this.state.sourceSubject,
+      this.state.viewerPayload?.subject,
+      this.state.viewerPayload?.metadata?.subject
+    );
+    const worksheetOwner = firstNonBlankString(
+      this.state.sourceOwner,
+      this.state.viewerPayload?.owner,
+      this.state.viewerPayload?.owner_email,
+      this.state.viewerPayload?.owner_name,
+      this.state.viewerPayload?.owner_sub,
+      this.state.viewerPayload?.metadata?.owner,
+      this.state.viewerPayload?.metadata?.owner_email,
+      this.state.viewerPayload?.metadata?.owner_name,
+      this.state.viewerPayload?.metadata?.owner_sub,
+      this.state.serverSession?.user?.email,
+      this.state.serverSession?.user?.name,
+      this.state.serverSession?.user?.sub
+    );
+    const worksheet = {
+      title: String(this.state.viewerPayload.title || 'Untitled worksheet'),
+      subject: worksheetSubject,
+      owner: worksheetOwner,
+      blocks: Array.isArray(this.state.viewerPayload.blocks) ? this.state.viewerPayload.blocks : [],
+      metadata: {
+        modelVersion: 'attempt-package-v1',
+        worksheetId: this.state.viewerPayload.worksheetId || null,
+        snapshotId: this.state.viewerPayload.snapshotId || null,
+        subject: worksheetSubject,
+        owner: worksheetOwner,
+      },
+    };
+    const attempt = this.buildAttemptRecordForPackage();
+    const manifest = {
+      format: 'worksheet-attempt-package',
+      packageVersion: 1,
+      schemaVersion: 1,
+      generatedAt: nowIso(),
+      worksheet: {
+        title: worksheet.title,
+        subject: worksheetSubject,
+      },
+      attempt: {
+        localAttemptId: this.state.localAttemptId || null,
+        status: attempt.status,
+      },
+      assets: [],
+    };
+    const entries = [
+      { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) },
+      { path: 'content/worksheet.json', data: JSON.stringify(worksheet, null, 2) },
+      { path: 'content/attempt.json', data: JSON.stringify(attempt, null, 2) },
+    ];
+    const assetIds = this.collectAttemptPackageAssetIds(this.state.viewerPayload);
+    for (const assetId of assetIds) {
+      const assetRecord = await this.storage.localAssets?.get?.(assetId);
+      const binary = ensureUint8Array(assetRecord?.binary);
+      if (!binary || binary.byteLength <= 0) continue;
+      const assetPath = `media/${assetId}`;
+      manifest.assets.push({
+        assetId,
+        path: assetPath,
+        mimeType: typeof assetRecord?.metadata?.mimeType === 'string'
+          ? assetRecord.metadata.mimeType
+          : null,
+        byteLength: binary.byteLength,
+        crc32: crc32(binary).toString(16).padStart(8, '0'),
+      });
+      entries.push({ path: assetPath, data: binary });
+    }
+    entries[0] = { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) };
+    return {
+      bytes: createStoredZip(entries),
+      manifest,
+      worksheet,
+      attempt,
+    };
+  }
+
+  async uploadCurrentAttemptPackage(intentPayload = {}, options = {}) {
+    if (!this.state.localAttemptId || !this.state.viewerPayload) {
+      const message = 'No active local attempt is available for upload.';
+      this.state.serverActionMessage = message;
+      this.pushNotification({
+        kind: 'warn',
+        text: message,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
+      this.notifyStateChange();
+      return { ok: false, status: 'no_active_attempt', error: { message } };
+    }
+    if (this.state.isUploadingAttemptPackage) {
+      const message = 'Upload already in progress.';
+      this.state.serverActionMessage = message;
+      this.pushNotification({
+        kind: 'info',
+        text: message,
+        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      });
+      this.notifyStateChange();
+      return { ok: false, status: 'upload_in_progress', error: { message } };
+    }
+    const intentAttemptId = typeof intentPayload?.localAttemptId === 'string' ? intentPayload.localAttemptId : null;
+    if (intentAttemptId && intentAttemptId !== this.state.localAttemptId) {
+      const message = 'Attempt upload target is stale. Please retry from the current attempt.';
+      this.state.serverActionMessage = message;
+      this.pushNotification({
+        kind: 'warn',
+        text: message,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
+      this.notifyStateChange();
+      return { ok: false, status: 'stale_intent', error: { message } };
+    }
+
+    this.state.isUploadingAttemptPackage = true;
+    this.state.uploadAttemptConflictContext = null;
+    this.state.uploadAttemptRecoveryHint = null;
+    this.state.uploadAttemptProgress = { loaded: 0, total: 0, lengthComputable: false };
+    this.state.serverActionMessage = 'Preparing upload...';
+    this.setNotificationForSource(VIEWER_NOTIFICATION_UPLOAD_SOURCE, {
+      kind: 'info',
+      text: 'Preparing upload...',
+    });
+    this.notifyStateChange();
+
+    try {
+      await this.flushLocalStateForAuthRedirect();
+      const packageResult = await this.buildUploadedAttemptPackage();
+      const uploadTitle = String(this.state.viewerPayload?.title || 'Untitled worksheet');
+      const uploadSubject = firstNonBlankString(
+        this.state.sourceSubject,
+        this.state.viewerPayload?.subject,
+        this.state.viewerPayload?.metadata?.subject
+      );
+      const uploadResult = await this.apiClient.uploadAttemptPackage(packageResult.bytes, {
+        title: uploadTitle,
+        subject: uploadSubject,
+        conflictAction: options.conflictAction || 'fail_on_conflict',
+      }, {
+        onProgress: (progress) => {
+          this.state.uploadAttemptProgress = {
+            loaded: Number(progress?.loaded || 0),
+            total: Number(progress?.total || 0),
+            lengthComputable: Boolean(progress?.lengthComputable),
+          };
+          const progressMessage = formatUploadProgressText(this.state.uploadAttemptProgress);
+          this.state.serverActionMessage = progressMessage;
+          this.setNotificationForSource(VIEWER_NOTIFICATION_UPLOAD_SOURCE, {
+            kind: 'info',
+            text: progressMessage,
+          });
+          this.notifyStateChange();
+        },
+      });
+
+      if (!uploadResult?.ok) {
+        const errorCode = String(uploadResult?.error?.code || '').toUpperCase();
+        let message = uploadResult?.error?.message || 'Attempt upload failed.';
+        if (errorCode === 'ATTEMPT_NAME_CONFLICT') {
+          message = ATTEMPT_UPLOAD_CONFLICT_MESSAGE;
+          this.state.uploadAttemptConflictContext = {
+            title: uploadTitle,
+            subject: uploadSubject,
+            existingAttempt: uploadResult?.error?.details?.existingAttempt || null,
+          };
+        } else if (errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED') {
+          message = formatAttemptSlotLimitMessage(uploadResult?.error?.details?.slotLimit);
+          const requestedConflictAction = options.conflictAction === 'replace'
+            ? 'replace'
+            : options.conflictAction === 'copy'
+              ? 'copy'
+              : 'fail_on_conflict';
+          this.state.uploadAttemptRecoveryHint = {
+            kind: 'slot_limit',
+            slotLimit: uploadResult?.error?.details?.slotLimit,
+            conflictAction: requestedConflictAction,
+          };
+          this.state.uploadedAttemptSlotLimit = Number(uploadResult?.error?.details?.slotLimit) || this.state.uploadedAttemptSlotLimit;
+        } else if (errorCode === 'INVALID_ATTEMPT_PACKAGE') {
+          message = 'The attempt package format is invalid. Your local attempt is still safe. Please refresh and retry.';
+        } else if (errorCode === 'AUTH_REQUIRED') {
+          message = 'Sign-in is required before saving attempts to server.';
+        } else if (errorCode === 'NETWORK_ERROR') {
+          message = ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE;
+        }
+        this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
+        this.state.serverActionMessage = message;
+        this.pushNotification({
+          kind: errorCode === 'ATTEMPT_NAME_CONFLICT' || errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED' ? 'warn' : 'error',
+          text: message,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
+        this.notifyStateChange();
+        return uploadResult;
+      }
+
+      this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
+      this.state.serverActionMessage = 'Attempt saved to server.';
+      this.state.uploadAttemptConflictContext = null;
+      this.state.uploadAttemptRecoveryHint = null;
+      this.pushNotification({
+        kind: 'success',
+        text: 'Attempt saved to server.',
+        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      });
+      this.notifyStateChange();
+      return uploadResult;
+    } catch (error) {
+      console.error('[viewer] Attempt package upload failed unexpectedly.', error);
+      this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
+      this.state.serverActionMessage = ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE;
+      this.pushNotification({
+        kind: 'error',
+        text: ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
+      this.notifyStateChange();
+      return { ok: false, status: 'upload_failed_unexpected', error: { code: 'NETWORK_ERROR', message: ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE } };
+    } finally {
+      this.state.isUploadingAttemptPackage = false;
+      this.state.uploadAttemptProgress = null;
+      this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
+      this.notifyStateChange();
+    }
+  }
+
+  async retryAttemptUploadFromConflict(conflictAction) {
+    const action = conflictAction === 'replace' ? 'replace' : conflictAction === 'copy' ? 'copy' : null;
+    if (!action) return { ok: false, status: 'invalid_conflict_action' };
+    return this.uploadCurrentAttemptPackage({}, { conflictAction: action });
+  }
+
+  async retryAttemptUploadAfterSlotRecovery(recoveryHint = this.state.uploadAttemptRecoveryHint) {
+    const retryConflictAction = recoveryHint?.conflictAction;
+    if (retryConflictAction === 'replace' || retryConflictAction === 'copy') {
+      return this.retryAttemptUploadFromConflict(retryConflictAction);
+    }
+    return this.uploadCurrentAttemptPackage();
+  }
+
+  clearAttemptUploadConflictPrompt() {
+    this.state.uploadAttemptConflictContext = null;
+    this.state.uploadAttemptRecoveryHint = null;
+    this.notifyStateChange();
+  }
+
+  async listUploadedAttempts() {
+    const sessionState = this.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    if (sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+      this.state.isLoadingUploadedAttempts = false;
+      this.state.uploadedAttemptsError = null;
+      this.notifyStateChange();
+      return { ok: false, error: { code: 'AUTH_REQUIRED', message: 'Sign in to manage uploaded attempts.' } };
+    }
+    this.state.isLoadingUploadedAttempts = true;
+    this.state.uploadedAttemptsError = null;
+    this.notifyStateChange();
+    try {
+      const result = await this.apiClient.listUploadedAttempts();
+      if (!result?.ok) {
+        this.state.uploadedAttemptsError = result?.error?.message || 'Unable to load uploaded attempts.';
+        return result;
+      }
+      const rows = normalizeUploadedAttemptRows(
+        result?.data?.uploadedAttempts
+        || result?.data?.attempts
+        || result?.data?.items
+        || result?.data
+        || []
+      );
+      this.state.uploadedAttempts = rows;
+      const limit = Number(result?.data?.attemptSlotLimit || result?.data?.slotLimit);
+      if (Number.isFinite(limit) && limit > 0) {
+        this.state.uploadedAttemptSlotLimit = limit;
+      }
+      return result;
+    } catch (error) {
+      this.state.uploadedAttemptsError = error?.message || 'Unable to load uploaded attempts.';
+      return { ok: false, error: { code: 'NETWORK_ERROR', message: this.state.uploadedAttemptsError } };
+    } finally {
+      this.state.isLoadingUploadedAttempts = false;
+      this.notifyStateChange();
+    }
+  }
+
+  async deleteUploadedAttemptAndRefresh(uploadedAttemptId) {
+    if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
+    this.state.uploadedAttemptActionInFlightById = {
+      ...this.state.uploadedAttemptActionInFlightById,
+      [uploadedAttemptId]: 'delete',
+    };
+    this.notifyStateChange();
+    try {
+      const result = await this.apiClient.deleteUploadedAttempt(uploadedAttemptId);
+      if (!result?.ok) {
+        this.state.serverActionMessage = result?.error?.message || 'Failed to delete uploaded attempt.';
+        this.pushNotification({
+          kind: 'error',
+          text: this.state.serverActionMessage,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
+        return result;
+      }
+      await this.listUploadedAttempts();
+      this.state.serverActionMessage = 'Uploaded attempt deleted from server.';
+      this.pushNotification({
+        kind: 'success',
+        text: 'Uploaded attempt deleted from server.',
+        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      });
+      return result;
+    } finally {
+      const next = { ...this.state.uploadedAttemptActionInFlightById };
+      delete next[uploadedAttemptId];
+      this.state.uploadedAttemptActionInFlightById = next;
+      this.notifyStateChange();
+    }
+  }
+
+  async downloadUploadedAttempt(uploadedAttemptRow) {
+    const uploadedAttemptId = uploadedAttemptRow?.uploaded_attempt_id || null;
+    if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
+    this.state.uploadedAttemptActionInFlightById = {
+      ...this.state.uploadedAttemptActionInFlightById,
+      [uploadedAttemptId]: 'download',
+    };
+    this.notifyStateChange();
+    try {
+      const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
+      if (!artifact?.ok) {
+        this.state.serverActionMessage = artifact?.error?.message || 'Unable to download uploaded attempt.';
+        this.pushNotification({
+          kind: 'error',
+          text: this.state.serverActionMessage,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
+        return artifact;
+      }
+      const bytes = ensureUint8Array(artifact?.data);
+      if (!bytes) {
+        const result = { ok: false, error: { code: 'INVALID_ARTIFACT', message: 'Uploaded attempt artifact is empty.' } };
+        this.state.serverActionMessage = result.error.message;
+        this.pushNotification({
+          kind: 'error',
+          text: this.state.serverActionMessage,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
+        return result;
+      }
+      const blob = new Blob([bytes], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = formatAttemptDownloadFilename(uploadedAttemptRow);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+      }, 1000);
+      this.state.serverActionMessage = `Downloaded uploaded attempt "${uploadedAttemptRow?.title || uploadedAttemptId}".`;
+      this.pushNotification({
+        kind: 'success',
+        text: this.state.serverActionMessage,
+        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      });
+      return { ok: true };
+    } finally {
+      const next = { ...this.state.uploadedAttemptActionInFlightById };
+      delete next[uploadedAttemptId];
+      this.state.uploadedAttemptActionInFlightById = next;
+      this.notifyStateChange();
+    }
+  }
+
+  mapUploadedAttemptCheckResult(checking) {
+    if (!checking || typeof checking !== 'object') return null;
+    const items = checking.items && typeof checking.items === 'object' ? checking.items : {};
+    const byBlockId = {};
+    const statusByBlockId = {};
+    Object.entries(items).forEach(([blockId, item]) => {
+      if (typeof blockId !== 'string' || !blockId) return;
+      const status = normalizeRestoredCheckStatus(item?.result);
+      if (!status) return;
+      statusByBlockId[blockId] = status;
+      if (status === 'correct' || status === 'incorrect') {
+        byBlockId[blockId] = status === 'correct';
+      }
+    });
+    return {
+      statusByBlockId,
+      byBlockId,
+      correctCount: Number(checking.correctCount) || 0,
+      totalQuestions: Number(checking.totalQuestions) || 0,
+      checkedAt: checking.checkedAt || nowIso(),
+    };
+  }
+
+  async resumeUploadedAttempt(uploadedAttemptRow) {
+    const uploadedAttemptId = uploadedAttemptRow?.uploaded_attempt_id || null;
+    if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
+    this.state.uploadedAttemptActionInFlightById = {
+      ...this.state.uploadedAttemptActionInFlightById,
+      [uploadedAttemptId]: 'resume',
+    };
+    this.notifyStateChange();
+    try {
+      const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
+      if (!artifact?.ok) {
+        this.state.serverActionMessage = artifact?.error?.message || 'Unable to resume uploaded attempt.';
+        this.pushNotification({
+          kind: 'error',
+          text: this.state.serverActionMessage,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
+        return artifact;
+      }
+      const packageModel = parseUploadedAttemptPackage(artifact.data);
+      const importedAt = nowIso();
+      const importedRecord = {
+        localId: createLocalId('imported'),
+        worksheet: packageModel.worksheet,
+        importedAt,
+        metadata: {
+          localId: null,
+          origin: 'uploaded_attempt_restore',
+          updatedAt: importedAt,
+        },
+      };
+      importedRecord.metadata.localId = importedRecord.localId;
+      const payload = resolveImportedWorksheetPayload(importedRecord);
+      await this.validateViewerPayload(payload);
+
+      const persistedAssetIds = [];
+      try {
+        await this.storage.importedWorksheets.put(importedRecord);
+        for (const asset of packageModel.assets) {
+          if (!asset?.assetId || !(asset.binary instanceof Uint8Array)) continue;
+          await this.storage.localAssets.put({
+            localId: asset.assetId,
+            binary: asset.binary,
+            metadata: {
+              localId: asset.assetId,
+              origin: 'uploaded_attempt_restore',
+              updatedAt: importedAt,
+              mimeType: asset.mimeType || null,
+              kind: asset.kind || null,
+              usage: asset.usage || null,
+              path: asset.path || null,
+            },
+          });
+          persistedAssetIds.push(asset.assetId);
+        }
+      } catch (error) {
+        await Promise.all(persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {})));
+        await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
+        throw error;
+      }
+
+      const rawAttempt = packageModel.attempt && typeof packageModel.attempt === 'object' ? packageModel.attempt : {};
+      const attemptStatus = String(rawAttempt.status || 'in_progress');
+      const restoredLocalAttemptId = createLocalId('attempt');
+      const restoredStartedAt = rawAttempt.createdAt || nowIso();
+      const restoredUpdatedAt = rawAttempt.updatedAt || nowIso();
+      const isInProgress = attemptStatus === 'in_progress';
+      const isChecked = attemptStatus === 'checked';
+      const isSubmitted = attemptStatus === 'submitted';
+      if (!isInProgress && !isChecked && !isSubmitted) {
+        throw new Error('Uploaded attempt status is not supported.');
+      }
+      const checkResult = isChecked ? this.mapUploadedAttemptCheckResult(rawAttempt.checking) : null;
+      const restoredAttemptRecord = {
+        localId: restoredLocalAttemptId,
+        localAttemptId: restoredLocalAttemptId,
+        viewerPayload: payload,
+        learnerId: DEFAULT_LEARNER_ID,
+        worksheetId: payload?.worksheetId || null,
+        snapshotId: payload?.snapshotId || null,
+        sourceType: 'imported_worksheet',
+        sourceId: getSourceIdentity('imported_worksheet', { sourceImportedWorksheetId: importedRecord.localId }),
+        sourceFingerprint: computeViewerPayloadFingerprint(payload),
+        sourceLocalDraftId: null,
+        sourceImportedWorksheetId: importedRecord.localId,
+        lastActiveBlockId: payload?.blocks?.[0]?.blockId || null,
+        lastActiveIndex: 0,
+        studentName: '',
+        status: isInProgress ? 'in_progress' : 'completed',
+        startedAt: restoredStartedAt,
+        lastSavedAt: restoredUpdatedAt,
+        completedAt: isInProgress ? null : (rawAttempt.submittedAt || restoredUpdatedAt),
+        submittedAt: isInProgress ? null : (rawAttempt.submittedAt || null),
+        answers: rawAttempt.answers && typeof rawAttempt.answers === 'object' ? rawAttempt.answers : {},
+        subject: String(uploadedAttemptRow?.subject || '').trim(),
+        owner: String(uploadedAttemptRow?.owner_email || uploadedAttemptRow?.owner_name || uploadedAttemptRow?.owner_sub || '').trim(),
+        metadata: {
+          localId: restoredLocalAttemptId,
+          origin: 'imported_worksheet',
+          sourceImportedWorksheetId: importedRecord.localId,
+          sourceId: getSourceIdentity('imported_worksheet', { sourceImportedWorksheetId: importedRecord.localId }),
+          sourceFingerprint: computeViewerPayloadFingerprint(payload),
+          subject: String(uploadedAttemptRow?.subject || '').trim(),
+          owner: String(uploadedAttemptRow?.owner_email || uploadedAttemptRow?.owner_name || uploadedAttemptRow?.owner_sub || '').trim(),
+          updatedAt: restoredUpdatedAt,
+        },
+      };
+      await this.storage.attempts.put(restoredAttemptRecord);
+      this.applyAttemptState(restoredAttemptRecord, { markDirty: false });
+      this.state.checkResult = checkResult;
+      this.state.serverActionMessage = `Restored uploaded attempt as local attempt ${restoredLocalAttemptId}.`;
+      this.pushNotification({
+        kind: 'success',
+        text: 'Restored uploaded attempt as a new local attempt.',
+        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      });
+      this.persistResumeMetadata();
+      return { ok: true, data: { localAttemptId: restoredLocalAttemptId } };
+    } catch (error) {
+      this.state.utilityMessage = `Unable to resume uploaded attempt. ${error?.message || String(error)}`;
+      this.state.serverActionMessage = this.state.utilityMessage;
+      this.pushNotification({
+        kind: 'error',
+        text: this.state.utilityMessage,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
+      this.notifyStateChange();
+      return { ok: false, error: { code: 'UPLOAD_ATTEMPT_RESTORE_FAILED', message: this.state.utilityMessage } };
+    } finally {
+      const next = { ...this.state.uploadedAttemptActionInFlightById };
+      delete next[uploadedAttemptId];
+      this.state.uploadedAttemptActionInFlightById = next;
+      this.notifyStateChange();
     }
   }
 
@@ -3111,7 +4221,8 @@ class ViewerAttemptSession {
     if (result.status !== 'ready') {
       const message = result.error?.message || 'Sign-in is required before using server features.';
       if (isAuthSessionError(result.error)) {
-        this.transitionServerSessionToLoggedOut(SESSION_EXPIRED_MESSAGE);
+        const loggedInBefore = this.state.serverSessionEverReady === true;
+        this.transitionServerSessionToLoggedOut(loggedInBefore ? SESSION_EXPIRED_MESSAGE : SIGNED_OUT_MESSAGE);
       } else {
         this.state.serverSession = {
           status: VIEWER_SERVER_SESSION_STATES.CHECKING,
@@ -3128,6 +4239,7 @@ class ViewerAttemptSession {
       user: result.user || null,
       error: null,
     };
+    this.state.serverSessionEverReady = true;
     this.notifyStateChange();
     return result;
   }
@@ -3221,7 +4333,7 @@ class ViewerAttemptSession {
     return result;
   }
 
-  async startFromPublishedPackage(publishedPackageId) {
+  async startFromPublishedPackage(publishedPackageId, options = {}) {
     const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
     if (!normalizedPublishedPackageId) {
       const message = 'Published package ID is required.';
@@ -3242,7 +4354,10 @@ class ViewerAttemptSession {
         this.notifyStateChange();
         return artifact;
       }
-      const started = await this.startImportedWorksheetFromPackageFile(artifact.data);
+      const started = await this.startImportedWorksheetFromPackageFile(artifact.data, {
+        sourceSubject: options?.sourceSubject || '',
+        sourceOwner: options?.sourceOwner || '',
+      });
       this.state.serverActionMessage = `Imported published package ${normalizedPublishedPackageId} into local viewer runtime.`;
       this.notifyStateChange();
       return { ok: true, data: started };
@@ -3276,6 +4391,823 @@ class ViewerAttemptSession {
   }
 }
 
+function showAttemptUploadConflictModal(conflictContext = {}) {
+  return new Promise((resolve) => {
+    const host = getViewerOverlayHost();
+    if (!host) {
+      resolve('cancel');
+      return;
+    }
+    const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay';
+    const dialog = document.createElement('section');
+    dialog.className = 'confirm-modal';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    heading.textContent = 'Uploaded attempt already exists';
+    const description = document.createElement('p');
+    description.className = 'confirm-modal__description';
+    description.textContent = `An uploaded attempt named "${conflictContext?.title || 'Untitled'}" already exists for this subject.`;
+    const details = document.createElement('div');
+    details.className = 'muted uploaded-draft-details-body';
+    const subjectLine = document.createElement('div');
+    subjectLine.textContent = `Subject: ${conflictContext?.subject || '-'}`;
+    const statusLine = document.createElement('div');
+    statusLine.textContent = `Status: ${conflictContext?.existingAttempt?.status || 'unknown'}`;
+    details.append(subjectLine, statusLine);
+    const warning = document.createElement('p');
+    warning.className = 'confirm-modal__warning';
+    warning.textContent = 'Your local attempt will not be changed. This only affects the uploaded server copy.';
+
+    const actions = document.createElement('div');
+    actions.className = 'confirm-modal__actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'confirm-modal__btn';
+    cancelBtn.textContent = 'Cancel';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'confirm-modal__btn';
+    copyBtn.textContent = 'Save as copy';
+    const replaceBtn = document.createElement('button');
+    replaceBtn.type = 'button';
+    replaceBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+    replaceBtn.textContent = 'Replace server attempt';
+    actions.append(cancelBtn, copyBtn, replaceBtn);
+    dialog.append(heading, description, details, warning, actions);
+    overlay.append(dialog);
+    host.appendChild(overlay);
+
+    let settled = false;
+    const finish = (action) => {
+      if (settled) return;
+      settled = true;
+      overlay.remove();
+      if (previousActive && typeof previousActive.focus === 'function') {
+        previousActive.focus();
+      }
+      resolve(action);
+    };
+    cancelBtn.addEventListener('click', () => finish('cancel'));
+    copyBtn.addEventListener('click', () => finish('copy'));
+    replaceBtn.addEventListener('click', () => finish('replace'));
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish('cancel');
+      }
+    });
+    cancelBtn.focus();
+  });
+}
+
+function showDeleteUploadedAttemptModal(row) {
+  return new Promise((resolve) => {
+    const host = getViewerOverlayHost();
+    if (!host) {
+      resolve(false);
+      return;
+    }
+    const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay';
+    const dialog = document.createElement('section');
+    dialog.className = 'confirm-modal';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const heading = document.createElement('h3');
+    heading.textContent = 'Delete uploaded attempt?';
+    const description = document.createElement('p');
+    description.className = 'confirm-modal__description';
+    description.textContent = `Delete "${row?.title || 'Untitled'}" from server storage?`;
+    const warning = document.createElement('p');
+    warning.className = 'confirm-modal__warning';
+    warning.textContent = 'This only deletes the uploaded server copy. Your local attempts remain unchanged.';
+    const actions = document.createElement('div');
+    actions.className = 'confirm-modal__actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'confirm-modal__btn';
+    cancelBtn.textContent = 'Cancel';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+    deleteBtn.textContent = 'Delete';
+    actions.append(cancelBtn, deleteBtn);
+    dialog.append(heading, description, warning, actions);
+    overlay.append(dialog);
+    host.appendChild(overlay);
+
+    let settled = false;
+    const finish = (confirmed) => {
+      if (settled) return;
+      settled = true;
+      overlay.remove();
+      if (previousActive && typeof previousActive.focus === 'function') {
+        previousActive.focus();
+      }
+      resolve(Boolean(confirmed));
+    };
+    cancelBtn.addEventListener('click', () => finish(false));
+    deleteBtn.addEventListener('click', () => finish(true));
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    cancelBtn.focus();
+  });
+}
+
+function getUploadedAttemptStatusBadge(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'checked') {
+    return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--current', text: 'Checked' };
+  }
+  if (normalized === 'submitted') {
+    return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--stale', text: 'Submitted' };
+  }
+  return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--deleted', text: 'In progress' };
+}
+
+async function showAttemptSlotFullModal(session, options = {}) {
+  const host = document.body || getViewerOverlayHost();
+  if (!host) return { deleted: false };
+  const rows = Array.isArray(options.uploadedAttempts) && options.uploadedAttempts.length > 0
+    ? options.uploadedAttempts
+    : (Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : []);
+  const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-modal-overlay';
+  const dialog = document.createElement('section');
+  dialog.className = 'confirm-modal browse-modal viewer-attempts-modal';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  const heading = document.createElement('h3');
+  heading.textContent = 'Attempt slots are full';
+  const description = document.createElement('p');
+  description.className = 'confirm-modal__description';
+  description.textContent = 'Delete one uploaded attempt to continue this upload.';
+  const list = document.createElement('div');
+  list.className = 'browse-results';
+  const actions = document.createElement('div');
+  actions.className = 'confirm-modal__actions';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'confirm-modal__btn';
+  cancelBtn.textContent = 'Cancel';
+  actions.append(cancelBtn);
+  dialog.append(heading, description, list, actions);
+  overlay.append(dialog);
+  host.appendChild(overlay);
+
+  return new Promise((resolve) => {
+    const finish = (deleted) => {
+      if (!overlay.isConnected) return;
+      overlay.remove();
+      if (previousActive && typeof previousActive.focus === 'function') {
+        previousActive.focus();
+      }
+      resolve({ deleted });
+    };
+
+    const renderSlotRows = () => {
+      list.innerHTML = '';
+      if (!rows.length) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = 'No uploaded attempts available to delete.';
+        list.appendChild(empty);
+        return;
+      }
+      rows.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'uploaded-draft-row';
+        const meta = document.createElement('div');
+        meta.className = 'uploaded-draft-meta';
+        const title = document.createElement('strong');
+        title.textContent = item.title || 'Untitled worksheet';
+        const subjectLine = document.createElement('div');
+        subjectLine.className = 'muted uploaded-draft-uploaded-at';
+        subjectLine.textContent = `Subject: ${item.subject || '-'}`;
+        const updatedLine = document.createElement('div');
+        updatedLine.className = 'muted uploaded-draft-uploaded-at';
+        updatedLine.textContent = `Updated: ${formatTimestampForDisplay(item.updated_at || item.updatedAt || null)}`;
+        meta.append(title, subjectLine, updatedLine);
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.addEventListener('click', async () => {
+          const confirmed = await showDeleteUploadedAttemptModal(item);
+          if (!confirmed) return;
+          const deleted = await session.deleteUploadedAttemptAndRefresh(item.uploaded_attempt_id);
+          if (deleted?.ok) {
+            finish(true);
+          }
+        });
+        row.append(meta, deleteBtn);
+        list.appendChild(row);
+      });
+    };
+
+    renderSlotRows();
+    cancelBtn.addEventListener('click', () => {
+      finish(false);
+    });
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    cancelBtn.focus();
+  });
+}
+
+async function showUploadedAttemptsManagerModal(session, options = {}) {
+  if (session?.state?.isManagingUploadedAttempts) {
+    return;
+  }
+  // Defensive cleanup for stale duplicate manager overlays from prior open attempts.
+  Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
+    if (overlay.querySelector('.viewer-attempts-modal')) {
+      overlay.remove();
+    }
+  });
+  const host = document.body || getViewerOverlayHost();
+  if (!host) return;
+  session.state.isManagingUploadedAttempts = true;
+  session.notifyStateChange();
+  const onResumeSuccess = typeof options.onResumeSuccess === 'function'
+    ? options.onResumeSuccess
+    : null;
+  const recommendSlotRecovery = options.reason === 'slot_limit';
+  const autoStartSignIn = options.autoStartSignIn === true;
+  const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-modal-overlay';
+  const dialog = document.createElement('section');
+  dialog.className = 'confirm-modal browse-modal viewer-attempts-modal';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  const heading = document.createElement('h3');
+  heading.textContent = 'Manage Server Attempts';
+  const description = document.createElement('p');
+  description.className = 'confirm-modal__description';
+  description.textContent = 'Resume, download, or delete your uploaded attempts.';
+  const slotRecoveryBanner = document.createElement('p');
+  slotRecoveryBanner.className = 'confirm-modal__warning';
+  slotRecoveryBanner.hidden = !recommendSlotRecovery;
+  slotRecoveryBanner.textContent = 'Attempt slots are full. Use the upload recovery prompt to delete one attempt and continue automatically.';
+  const sessionLine = document.createElement('p');
+  sessionLine.className = 'muted';
+  const slotUsageLine = document.createElement('p');
+  slotUsageLine.className = 'muted';
+  const list = document.createElement('div');
+  list.className = 'browse-results';
+  const actions = document.createElement('div');
+  actions.className = 'confirm-modal__actions';
+  const signInBtn = document.createElement('button');
+  signInBtn.type = 'button';
+  signInBtn.className = 'confirm-modal__btn';
+  signInBtn.textContent = 'Sign in';
+  const refreshBtn = document.createElement('button');
+  refreshBtn.type = 'button';
+  refreshBtn.className = 'confirm-modal__btn';
+  refreshBtn.textContent = 'Refresh';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'confirm-modal__btn';
+  closeBtn.textContent = 'Close';
+  actions.append(signInBtn, refreshBtn, closeBtn);
+  dialog.append(heading, description, slotRecoveryBanner, sessionLine, slotUsageLine, list, actions);
+  overlay.append(dialog);
+  host.appendChild(overlay);
+
+  let closing = false;
+  let signInInFlight = false;
+  const closeModal = () => {
+    if (closing) return;
+    closing = true;
+    overlay.remove();
+    session.state.isManagingUploadedAttempts = false;
+    session.notifyStateChange();
+    if (previousActive && typeof previousActive.focus === 'function') {
+      previousActive.focus();
+    }
+  };
+
+  const renderRows = async () => {
+    if (closing) return;
+    const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
+    sessionLine.textContent = isLoggedIn
+      ? `Server session: ready (${userLabel})`
+      : isChecking
+        ? 'Server session: checking…'
+        : `Server session: logged out. ${session.state.serverSession?.error || 'Sign in to manage uploaded attempts.'}`;
+    signInBtn.hidden = isLoggedIn;
+    signInBtn.disabled = isChecking || signInInFlight;
+    signInBtn.textContent = signInInFlight ? 'Signing in…' : 'Sign in';
+    refreshBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingUploadedAttempts;
+    list.innerHTML = '';
+    if (!isLoggedIn) {
+      slotUsageLine.textContent = '';
+      const signedOut = document.createElement('p');
+      signedOut.className = 'muted';
+      signedOut.textContent = 'Sign in to load your uploaded attempts.';
+      list.append(signedOut);
+      return;
+    }
+    if (session.state.isLoadingUploadedAttempts) {
+      slotUsageLine.textContent = '';
+      const loading = document.createElement('p');
+      loading.className = 'muted';
+      loading.textContent = 'Loading uploaded attempts...';
+      list.append(loading);
+      return;
+    }
+    if (session.state.uploadedAttemptsError) {
+      slotUsageLine.textContent = '';
+      const error = document.createElement('p');
+      error.className = 'viewer-list-error';
+      error.textContent = session.state.uploadedAttemptsError;
+      list.append(error);
+      return;
+    }
+    const rows = Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : [];
+    const slotLimit = Number(session.state.uploadedAttemptSlotLimit) || 3;
+    slotUsageLine.textContent = `${rows.length} of ${slotLimit} attempt slots used.`;
+    if (rows.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = 'No uploaded attempts saved yet.';
+      list.append(empty);
+      return;
+    }
+    rows.forEach((row) => {
+      const attemptRow = document.createElement('div');
+      attemptRow.className = 'uploaded-draft-row';
+      const metaWrap = document.createElement('div');
+      metaWrap.className = 'uploaded-draft-meta';
+      const title = document.createElement('strong');
+      title.textContent = row.title || 'Untitled worksheet';
+      const subjectLine = document.createElement('div');
+      subjectLine.className = 'muted uploaded-draft-uploaded-at';
+      subjectLine.textContent = `Subject: ${row.subject || '-'}`;
+      const updatedLine = document.createElement('div');
+      updatedLine.className = 'muted uploaded-draft-uploaded-at';
+      updatedLine.textContent = `Updated: ${formatTimestampForDisplay(row.updated_at || row.updatedAt || null)}`;
+      const badge = document.createElement('span');
+      const badgeConfig = getUploadedAttemptStatusBadge(row.status);
+      badge.className = badgeConfig.className;
+      badge.textContent = badgeConfig.text;
+      const details = document.createElement('details');
+      details.className = 'uploaded-draft-details uploaded-draft-details--draft';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Details';
+      const detailBody = document.createElement('div');
+      detailBody.className = 'muted uploaded-draft-details-body';
+      const submittedLine = document.createElement('div');
+      submittedLine.textContent = `Submitted: ${row.submitted_at ? formatTimestampForDisplay(row.submitted_at) : 'No'}`;
+      const checkedLine = document.createElement('div');
+      checkedLine.textContent = `Checked: ${row.checked_at ? formatTimestampForDisplay(row.checked_at) : 'No'}`;
+      const sizeLine = document.createElement('div');
+      sizeLine.textContent = `Artifact size: ${Number.isFinite(row.artifact_size_bytes) ? `${Math.max(1, Math.round(row.artifact_size_bytes / 1024))} KB` : 'n/a'}`;
+      detailBody.append(submittedLine, checkedLine, sizeLine);
+      details.append(summary, detailBody);
+      metaWrap.append(title, subjectLine, updatedLine, badge, details);
+      const rowActions = document.createElement('div');
+      rowActions.className = 'uploaded-draft-actions';
+      const inFlightAction = session.state.uploadedAttemptActionInFlightById?.[row.uploaded_attempt_id] || '';
+      const resumeBtn = document.createElement('button');
+      resumeBtn.type = 'button';
+      resumeBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+      resumeBtn.textContent = inFlightAction === 'resume' ? 'Resuming...' : 'Resume';
+      resumeBtn.disabled = Boolean(inFlightAction);
+      resumeBtn.addEventListener('click', async () => {
+        const result = await session.resumeUploadedAttempt(row);
+        await renderRows();
+        if (!result?.ok) return;
+        closeModal();
+        if (onResumeSuccess) {
+          await onResumeSuccess(result?.data?.localAttemptId || null);
+        }
+      });
+      const downloadBtn = document.createElement('button');
+      downloadBtn.type = 'button';
+      downloadBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+      downloadBtn.textContent = inFlightAction === 'download' ? 'Downloading...' : 'Download ZIP';
+      downloadBtn.disabled = Boolean(inFlightAction);
+      downloadBtn.addEventListener('click', async () => {
+        await session.downloadUploadedAttempt(row);
+        await renderRows();
+      });
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
+      deleteBtn.textContent = inFlightAction === 'delete' ? 'Deleting...' : 'Delete';
+      deleteBtn.disabled = Boolean(inFlightAction);
+      deleteBtn.addEventListener('click', async () => {
+        const confirmed = await showDeleteUploadedAttemptModal(row);
+        if (!confirmed) return;
+        await session.deleteUploadedAttemptAndRefresh(row.uploaded_attempt_id);
+        await renderRows();
+      });
+      rowActions.append(resumeBtn, downloadBtn, deleteBtn);
+      attemptRow.append(metaWrap, rowActions);
+      list.append(attemptRow);
+    });
+  };
+
+  const startModalSignInFlow = () => {
+    if (signInInFlight) return;
+    signInInFlight = true;
+    renderRows();
+    session.beginServerSignIn({
+      onPopupBlocked: ({ finalizeFlow }) => {
+        signInInFlight = false;
+        session.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        session.notifyStateChange();
+        renderRows();
+        finalizeFlow();
+      },
+      onStatusMessage: ({ message }) => {
+        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+          session.state.serverActionMessage = message;
+          session.notifyStateChange();
+          renderRows();
+        }
+      },
+      onSessionReady: async ({ finalizeFlow }) => {
+        try {
+          const readiness = await session.probeServerSessionSilently({ force: true });
+          if (readiness.status === 'ready') {
+            await session.listUploadedAttempts();
+            await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true });
+            session.state.serverActionMessage = null;
+          } else {
+            session.state.serverActionMessage = readiness?.error?.message || 'Sign-in completed, but session is still not ready.';
+          }
+          session.notifyStateChange();
+          await renderRows();
+        } finally {
+          signInInFlight = false;
+          finalizeFlow();
+        }
+      },
+      onSessionNotReady: ({ result, finalizeFlow }) => {
+        if (result?.final === false && result?.waitingForCallback === true) {
+          session.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          session.notifyStateChange();
+          renderRows();
+          return;
+        }
+        signInInFlight = false;
+        if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
+          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.notifyStateChange();
+          renderRows();
+        } else {
+          renderRows();
+        }
+        finalizeFlow();
+      },
+    });
+  };
+
+  signInBtn.addEventListener('click', () => {
+    startModalSignInFlow();
+  });
+  refreshBtn.addEventListener('click', async () => {
+    await session.listUploadedAttempts();
+    await renderRows();
+  });
+  closeBtn.addEventListener('click', () => {
+    closeModal();
+  });
+  dialog.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeModal();
+    }
+  });
+
+  const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+  if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+    await session.listUploadedAttempts();
+  }
+  await renderRows();
+  if (autoStartSignIn && sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+    startModalSignInFlow();
+  } else {
+    closeBtn.focus();
+  }
+}
+
+async function showPublishedPackagesBrowseModal(session, options = {}) {
+  // Defensive cleanup for stale duplicate browse overlays from prior open attempts.
+  Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
+    if (overlay.querySelector('.viewer-published-browse-modal')) {
+      overlay.remove();
+    }
+  });
+  const host = document.body || getViewerOverlayHost();
+  if (!host) return;
+
+  const autoStartSignIn = options.autoStartSignIn === true;
+  const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-modal-overlay';
+  const dialog = document.createElement('section');
+  dialog.className = 'confirm-modal browse-modal viewer-published-browse-modal';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  const heading = document.createElement('h3');
+  heading.textContent = 'Browse Published Packages';
+  const filterRow = document.createElement('div');
+  filterRow.className = 'browse-modal__filters';
+  const titleFilterInput = document.createElement('input');
+  titleFilterInput.type = 'search';
+  titleFilterInput.placeholder = 'Filter by title';
+  titleFilterInput.className = 'viewer-details-form__input';
+  titleFilterInput.setAttribute('aria-label', 'Filter published packages by title');
+  const subjectFilterInput = document.createElement('input');
+  subjectFilterInput.type = 'search';
+  subjectFilterInput.placeholder = 'Filter by subject';
+  subjectFilterInput.className = 'viewer-details-form__input';
+  subjectFilterInput.setAttribute('aria-label', 'Filter published packages by subject');
+  const ownerFilterInput = document.createElement('input');
+  ownerFilterInput.type = 'search';
+  ownerFilterInput.placeholder = 'Filter by owner email';
+  ownerFilterInput.className = 'viewer-details-form__input';
+  ownerFilterInput.setAttribute('aria-label', 'Filter published packages by owner');
+  const searchBtn = document.createElement('button');
+  searchBtn.type = 'button';
+  searchBtn.className = 'browse-modal__search-btn';
+  searchBtn.innerHTML = '<svg class="browse-modal__search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.25" stroke="currentColor" stroke-width="1.6"></circle><path d="M12.5 12.5L16.25 16.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg>';
+  searchBtn.setAttribute('aria-label', 'Search published packages');
+  filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput, searchBtn);
+  const list = document.createElement('div');
+  list.className = 'browse-results';
+  const actions = document.createElement('div');
+  actions.className = 'confirm-modal__actions';
+  const signInBtn = document.createElement('button');
+  signInBtn.type = 'button';
+  signInBtn.className = 'confirm-modal__btn';
+  signInBtn.textContent = 'Sign in';
+  const loadMoreBtn = document.createElement('button');
+  loadMoreBtn.type = 'button';
+  loadMoreBtn.className = 'confirm-modal__btn';
+  loadMoreBtn.textContent = 'Load more';
+  const refreshBtn = document.createElement('button');
+  refreshBtn.type = 'button';
+  refreshBtn.className = 'confirm-modal__btn';
+  refreshBtn.textContent = 'Refresh';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'confirm-modal__btn';
+  closeBtn.textContent = 'Close';
+  actions.append(signInBtn, loadMoreBtn, refreshBtn, closeBtn);
+  dialog.append(heading, filterRow, list, actions);
+  overlay.append(dialog);
+  host.appendChild(overlay);
+
+  let closing = false;
+  let signInInFlight = false;
+  let searchDebounceTimer = null;
+  const closeModal = () => {
+    if (closing) return;
+    closing = true;
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = null;
+    }
+    overlay.remove();
+    if (previousActive && typeof previousActive.focus === 'function') {
+      previousActive.focus();
+    }
+  };
+
+  const renderRows = () => {
+    if (closing) return;
+    const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const activeFilters = session.state.publishedFilters || {};
+    if (document.activeElement !== titleFilterInput) titleFilterInput.value = String(activeFilters.title || '');
+    if (document.activeElement !== subjectFilterInput) subjectFilterInput.value = String(activeFilters.subject || '');
+    if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
+    signInBtn.hidden = isLoggedIn;
+    signInBtn.disabled = isChecking || signInInFlight;
+    signInBtn.textContent = signInInFlight ? 'Signing in…' : 'Sign in';
+    titleFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    subjectFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    ownerFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    searchBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    loadMoreBtn.hidden = !isLoggedIn || !session.state.publishedHasMore;
+    loadMoreBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
+    refreshBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    list.innerHTML = '';
+    if (!isLoggedIn) {
+      const signedOut = document.createElement('p');
+      signedOut.className = 'muted';
+      signedOut.textContent = 'Sign in to load published packages.';
+      list.append(signedOut);
+      return;
+    }
+    if (session.state.publishedListError) {
+      const error = document.createElement('p');
+      error.className = 'viewer-list-error';
+      error.textContent = session.state.publishedListError;
+      list.append(error);
+      return;
+    }
+    if (session.state.isLoadingPublishedPackages) {
+      const loading = document.createElement('p');
+      loading.className = 'muted';
+      loading.textContent = 'Loading published packages...';
+      list.append(loading);
+      return;
+    }
+    const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];
+    if (!publishedItems.length) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = 'No published packages found.';
+      list.append(empty);
+      return;
+    }
+    publishedItems.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'published-result-row';
+      const titleLine = document.createElement('div');
+      titleLine.className = 'published-result-title-line';
+      const title = document.createElement('strong');
+      title.className = 'published-result-title';
+      title.textContent = item.title || 'Untitled';
+      const publishedAt = document.createElement('span');
+      publishedAt.className = 'muted';
+      publishedAt.textContent = item.published_at ? formatTimestampForDisplay(item.published_at) : 'unknown time';
+      titleLine.append(title, publishedAt);
+      const subjectOwner = document.createElement('div');
+      subjectOwner.className = 'muted published-result-subject-owner';
+      subjectOwner.textContent = `Subject: ${item.subject || '—'} · Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;
+      const idLine = document.createElement('div');
+      idLine.className = 'muted viewer-published-id';
+      idLine.textContent = `Package ID: ${item.published_package_id || '—'}`;
+      const rowActions = document.createElement('div');
+      rowActions.className = 'published-result-actions';
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'confirm-modal__btn published-result-action';
+      openBtn.textContent = 'Open package';
+      openBtn.disabled = !item.published_package_id;
+      openBtn.addEventListener('click', async () => {
+        const result = await session.startFromPublishedPackage(item.published_package_id, {
+          sourceSubject: item.subject || '',
+          sourceOwner: item.owner_email || item.owner_name || item.owner_sub || '',
+        });
+        if (!result.ok) {
+          renderRows();
+          return;
+        }
+        if (session.state.localAttemptId) {
+          const nextUrl = new URL(window.location.href);
+          nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+          nextUrl.searchParams.delete('viewerPayload');
+          nextUrl.searchParams.delete('snapshot');
+          window.history.replaceState({}, '', nextUrl);
+        }
+        closeModal();
+        renderViewerShell(session);
+        window.viewerSession = session;
+      });
+      rowActions.append(openBtn);
+      row.append(titleLine, subjectOwner, idLine, rowActions);
+      list.append(row);
+    });
+  };
+
+  const refreshBrowse = async (options = {}) => {
+    await session.browsePublishedPackages({
+      title: titleFilterInput.value,
+      subject: subjectFilterInput.value,
+      owner: ownerFilterInput.value,
+    }, options);
+    renderRows();
+  };
+
+  const startModalSignInFlow = () => {
+    if (signInInFlight) return;
+    signInInFlight = true;
+    renderRows();
+    session.beginServerSignIn({
+      onPopupBlocked: ({ finalizeFlow }) => {
+        signInInFlight = false;
+        session.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        session.notifyStateChange();
+        renderRows();
+        finalizeFlow();
+      },
+      onStatusMessage: ({ message }) => {
+        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+          session.state.serverActionMessage = message;
+          session.notifyStateChange();
+          renderRows();
+        }
+      },
+      onSessionReady: async ({ finalizeFlow }) => {
+        try {
+          const readiness = await session.preflightPublishedSession();
+          if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+            session.state.serverActionMessage = readiness?.result?.error?.message
+              || session.state.serverSession?.error
+              || 'Sign-in completed, but session is still not ready.';
+            session.notifyStateChange();
+            renderRows();
+            return;
+          }
+          await refreshBrowse({ preflight: false, reset: true });
+          session.state.serverActionMessage = null;
+          session.notifyStateChange();
+          renderRows();
+        } finally {
+          signInInFlight = false;
+          finalizeFlow();
+        }
+      },
+      onSessionNotReady: ({ result, finalizeFlow }) => {
+        if (result?.final === false && result?.waitingForCallback === true) {
+          session.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          session.notifyStateChange();
+          renderRows();
+          return;
+        }
+        signInInFlight = false;
+        if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
+          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.notifyStateChange();
+          renderRows();
+        } else {
+          renderRows();
+        }
+        finalizeFlow();
+      },
+    });
+  };
+
+  [titleFilterInput, subjectFilterInput, ownerFilterInput].forEach((input) => {
+    input.addEventListener('input', () => {
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        refreshBrowse({ reset: true });
+      }, 300);
+    });
+  });
+  searchBtn.addEventListener('click', async () => {
+    await refreshBrowse({ reset: true });
+  });
+  loadMoreBtn.addEventListener('click', async () => {
+    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });
+    renderRows();
+  });
+  refreshBtn.addEventListener('click', async () => {
+    await refreshBrowse({ reset: true });
+  });
+  signInBtn.addEventListener('click', () => {
+    startModalSignInFlow();
+  });
+  closeBtn.addEventListener('click', () => {
+    closeModal();
+  });
+  dialog.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeModal();
+    }
+  });
+
+  const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+  if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+    await refreshBrowse({ reset: true });
+    closeBtn.focus();
+    return;
+  }
+  renderRows();
+  if (autoStartSignIn && sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+    startModalSignInFlow();
+  } else {
+    closeBtn.focus();
+  }
+}
+
 function renderViewerShell(session) {
   if (!app || !bottomBarRoot) {
     return;
@@ -3300,10 +5232,10 @@ function renderViewerShell(session) {
   answerSummary.className = 'answer-summary';
   const resumeWarning = document.createElement('p');
   resumeWarning.className = 'answer-summary';
-  const utilityFeedback = document.createElement('p');
-  utilityFeedback.className = 'viewer-utility-feedback';
   const status = document.createElement('p');
   let studentName = session.state.studentName || '';
+  let printSchoolName = readViewerPrintSchoolNamePreference();
+  session.state.printSchoolName = printSchoolName;
 
   const blockSection = document.createElement('section');
   blockSection.className = 'viewer-section';
@@ -3356,45 +5288,29 @@ function renderViewerShell(session) {
   checkBtn.className = 'viewer-bottom-action-btn';
   checkBtn.textContent = 'Check Answer';
 
-  const utilityMenu = document.createElement('div');
-  utilityMenu.className = 'viewer-utility-menu';
   const headerActions = document.createElement('div');
   headerActions.className = 'viewer-header-actions';
   const infoBtn = document.createElement('button');
   infoBtn.type = 'button';
-  infoBtn.className = 'viewer-utility-menu__trigger';
+  infoBtn.className = 'viewer-header-icon-btn';
   infoBtn.setAttribute('aria-label', 'Open technical details');
   infoBtn.title = 'Technical details';
-  infoBtn.textContent = 'ⓘ';
-  const utilityMenuBtn = document.createElement('button');
-  utilityMenuBtn.type = 'button';
-  utilityMenuBtn.className = 'viewer-utility-menu__trigger';
-  utilityMenuBtn.setAttribute('aria-haspopup', 'menu');
-  utilityMenuBtn.setAttribute('aria-expanded', 'false');
-  utilityMenuBtn.setAttribute('aria-controls', 'viewer-utility-menu-list');
-  utilityMenuBtn.setAttribute('aria-label', 'Open more actions');
-  utilityMenuBtn.title = 'More actions';
-  utilityMenuBtn.textContent = '≡';
-  const utilityMenuList = document.createElement('div');
-  utilityMenuList.className = 'viewer-utility-menu__list';
-  utilityMenuList.id = 'viewer-utility-menu-list';
-  utilityMenuList.setAttribute('role', 'menu');
-  utilityMenuList.hidden = true;
+  infoBtn.innerHTML = createViewerIcon('info');
 
-  const syncResumeBtn = document.createElement('button');
-  syncResumeBtn.type = 'button';
-  syncResumeBtn.className = 'viewer-utility-menu__item';
-  syncResumeBtn.setAttribute('role', 'menuitem');
-  syncResumeBtn.textContent = 'Server Resume (Sign-in required)';
+  const uploadAttemptBtn = document.createElement('button');
+  uploadAttemptBtn.type = 'button';
+  uploadAttemptBtn.className = 'viewer-header-icon-btn';
+  uploadAttemptBtn.setAttribute('aria-label', 'Save attempt to server');
+  uploadAttemptBtn.title = 'Save attempt to server';
+  uploadAttemptBtn.innerHTML = createViewerIcon('upload');
 
   const printReportBtn = document.createElement('button');
   printReportBtn.type = 'button';
-  printReportBtn.className = 'viewer-utility-menu__item';
-  printReportBtn.setAttribute('role', 'menuitem');
-  printReportBtn.textContent = 'Print worksheet report';
-  utilityMenuList.append(syncResumeBtn, printReportBtn);
-  utilityMenu.append(utilityMenuBtn, utilityMenuList);
-  headerActions.append(infoBtn, utilityMenu);
+  printReportBtn.className = 'viewer-header-icon-btn';
+  printReportBtn.setAttribute('aria-label', 'Print worksheet report');
+  printReportBtn.title = 'Print worksheet report';
+  printReportBtn.innerHTML = createViewerIcon('print');
+  headerActions.append(infoBtn, uploadAttemptBtn, printReportBtn);
 
   const detailsModal = document.createElement('div');
   detailsModal.className = 'viewer-details-modal';
@@ -3425,13 +5341,30 @@ function renderViewerShell(session) {
   learnerNameSaveBtn.className = 'viewer-details-form__save';
   learnerNameSaveBtn.textContent = 'Apply';
   learnerNameForm.append(learnerNameLabel, learnerNameInput, learnerNameSaveBtn);
+  const printSettingsForm = document.createElement('form');
+  printSettingsForm.className = 'viewer-details-form viewer-details-form--print';
+  const printSchoolNameLabel = document.createElement('label');
+  printSchoolNameLabel.className = 'viewer-details-form__label';
+  printSchoolNameLabel.setAttribute('for', 'viewer-print-school-name-input');
+  printSchoolNameLabel.textContent = 'Print school name';
+  const printSchoolNameInput = document.createElement('input');
+  printSchoolNameInput.id = 'viewer-print-school-name-input';
+  printSchoolNameInput.className = 'viewer-details-form__input';
+  printSchoolNameInput.type = 'text';
+  printSchoolNameInput.maxLength = 180;
+  printSchoolNameInput.placeholder = DEFAULT_VIEWER_PRINT_SCHOOL_NAME;
+  const printSchoolNameSaveBtn = document.createElement('button');
+  printSchoolNameSaveBtn.type = 'submit';
+  printSchoolNameSaveBtn.className = 'viewer-details-form__save';
+  printSchoolNameSaveBtn.textContent = 'Save';
+  printSettingsForm.append(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn);
   const detailsList = document.createElement('dl');
   detailsList.className = 'viewer-details-list';
   const detailsCloseBtn = document.createElement('button');
   detailsCloseBtn.type = 'button';
   detailsCloseBtn.textContent = 'Close';
   detailsCloseBtn.className = 'viewer-details-modal__close';
-  detailsContent.append(detailsTitle, learnerNameForm, detailsList, detailsCloseBtn);
+  detailsContent.append(detailsTitle, learnerNameForm, printSettingsForm, detailsList, detailsCloseBtn);
   detailsModal.append(detailsContent);
 
   const bottomBar = document.createElement('div');
@@ -3470,7 +5403,6 @@ function renderViewerShell(session) {
     [...(session.state.viewerPayload?.blocks || [])].sort((a, b) => a.position - b.position)
   );
 
-  const getMenuItems = () => Array.from(utilityMenuList.querySelectorAll('.viewer-utility-menu__item'));
   let lastFocusedElement = null;
 
   const copyTextValue = async (rawValue) => {
@@ -3493,6 +5425,7 @@ function renderViewerShell(session) {
   const renderTechnicalDetails = () => {
     const technicalRows = buildTechnicalDetailsRows(session.state);
     learnerNameInput.value = studentName;
+    printSchoolNameInput.value = printSchoolName;
     detailsList.innerHTML = '';
     technicalRows.forEach(([label, value]) => {
       const row = document.createElement('div');
@@ -3560,6 +5493,15 @@ function renderViewerShell(session) {
     learnerNameInput.focus();
   });
 
+  printSettingsForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    printSchoolName = writeViewerPrintSchoolNamePreference(printSchoolNameInput.value);
+    session.state.printSchoolName = printSchoolName;
+    printSchoolNameInput.value = printSchoolName;
+    renderUI();
+    printSchoolNameInput.focus();
+  });
+
   infoBtn.addEventListener('click', () => {
     openTechnicalDetails();
   });
@@ -3571,91 +5513,6 @@ function renderViewerShell(session) {
       closeTechnicalDetails();
     }
   });
-
-  const closeUtilityMenu = ({ returnFocus = false } = {}) => {
-    utilityMenuList.hidden = true;
-    utilityMenuBtn.setAttribute('aria-expanded', 'false');
-    if (returnFocus) {
-      utilityMenuBtn.focus();
-    }
-  };
-
-  const openUtilityMenu = () => {
-    utilityMenuList.hidden = false;
-    utilityMenuBtn.setAttribute('aria-expanded', 'true');
-  };
-
-  const isUtilityMenuOpen = () => (
-    !utilityMenuList.hidden
-    && utilityMenuBtn.getAttribute('aria-expanded') === 'true'
-  );
-
-  const focusMenuItemByDelta = (delta) => {
-    const items = getMenuItems();
-    if (items.length === 0) return;
-    const activeIndex = items.indexOf(document.activeElement);
-    const nextIndex = activeIndex === -1
-      ? 0
-      : (activeIndex + delta + items.length) % items.length;
-    items[nextIndex].focus();
-  };
-
-  utilityMenuBtn.addEventListener('click', () => {
-    const isOpen = utilityMenuBtn.getAttribute('aria-expanded') === 'true';
-    if (isOpen) {
-      closeUtilityMenu();
-      return;
-    }
-    openUtilityMenu();
-    getMenuItems()[0]?.focus();
-  });
-
-  utilityMenuBtn.addEventListener('keydown', (event) => {
-    if (event.key !== 'ArrowDown') return;
-    event.preventDefault();
-    openUtilityMenu();
-    getMenuItems()[0]?.focus();
-  });
-
-  utilityMenuList.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeUtilityMenu({ returnFocus: true });
-      return;
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      focusMenuItemByDelta(1);
-      return;
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      focusMenuItemByDelta(-1);
-      return;
-    }
-    if (event.key === 'Home') {
-      event.preventDefault();
-      getMenuItems()[0]?.focus();
-      return;
-    }
-    if (event.key === 'End') {
-      event.preventDefault();
-      const items = getMenuItems();
-      items[items.length - 1]?.focus();
-    }
-  });
-
-  document.addEventListener('click', (event) => {
-    if (!utilityMenu.contains(event.target)) {
-      closeUtilityMenu();
-    }
-  }, { signal });
-
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && detailsModal.hidden && isUtilityMenuOpen()) {
-      closeUtilityMenu({ returnFocus: true });
-    }
-  }, { signal });
 
   const getStepperLabel = (block, counters) => {
     if (block.kind === 'content') {
@@ -3960,10 +5817,10 @@ function renderViewerShell(session) {
     if (questionAudioRef?.assetId) {
       const questionAudioBtn = document.createElement('button');
       questionAudioBtn.type = 'button';
-      questionAudioBtn.className = 'question-card__prompt-audio-btn';
+      questionAudioBtn.className = 'viewer-header-icon-btn question-card__prompt-audio-btn';
       questionAudioBtn.setAttribute('aria-label', 'Play question audio');
       questionAudioBtn.title = 'Play question audio';
-      questionAudioBtn.textContent = '🔊';
+      questionAudioBtn.innerHTML = createViewerIcon('audio');
       questionAudioBtn.addEventListener('click', async () => {
         if (questionAudioBtn.disabled) return;
         questionAudioBtn.disabled = true;
@@ -4292,11 +6149,15 @@ function renderViewerShell(session) {
           }
           const rewriteIntentPayload = buildViewerRewriteIntentPayloadForBlock(block);
           if (!rewriteIntentPayload) {
-            session.state.utilityMessage = 'Rewrite is available only for text-response questions.';
+            const message = 'Rewrite is available only for text-response questions.';
+            session.pushNotification({
+              kind: 'warn',
+              text: message,
+              ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+            });
             renderUI();
             return;
           }
-          session.state.utilityMessage = null;
           const protectedActionResult = await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);
           if (protectedActionResult?.status === 'redirected') {
             return;
@@ -4313,7 +6174,11 @@ function renderViewerShell(session) {
             } else if (protectedActionResult?.status === 'blocked_no_local_id') {
               blockedMessage = 'Rewrite could not start because no active local attempt was found.';
             }
-            session.state.utilityMessage = blockedMessage;
+            session.pushNotification({
+              kind: 'warn',
+              text: blockedMessage,
+              ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+            });
             session.setRewriteMessage(block.blockId, blockedMessage);
             renderUI();
             return;
@@ -4503,15 +6368,16 @@ function renderViewerShell(session) {
               : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
     resumeWarning.textContent = session.state.recoveryMessage ? `⚠️ ${session.state.recoveryMessage}` : '';
     resumeWarning.hidden = !session.state.recoveryMessage;
-    utilityFeedback.textContent = session.state.utilityMessage ? `⚠️ ${session.state.utilityMessage}` : '';
-    utilityFeedback.hidden = !session.state.utilityMessage;
+    renderViewerNotifications(session);
     saveBtn.disabled = session.state.isFinalizing;
     completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
     const checkAvailable = session.state.status === 'completed';
+    const printAvailable = session.state.status === 'completed';
     checkBtn.hidden = !checkAvailable;
     checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
-    printReportBtn.hidden = !checkAvailable;
-    printReportBtn.disabled = session.state.isFinalizing || !checkAvailable;
+    printReportBtn.hidden = !printAvailable;
+    printReportBtn.disabled = session.state.isFinalizing || !printAvailable;
+    uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
     const normalizedAttemptStatus = session.state.status
@@ -4539,18 +6405,56 @@ function renderViewerShell(session) {
     await session.saveNow();
     renderUI();
   });
-  syncResumeBtn.addEventListener('click', async () => {
-    closeUtilityMenu({ returnFocus: true });
-    await session.triggerProtectedAction('resumeAttemptServerResumeAfterLogin');
+  uploadAttemptBtn.addEventListener('click', async () => {
+    const protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
+    if (protectedActionResult?.status === 'redirected') {
+      return;
+    }
+    if (protectedActionResult?.status !== 'executed') {
+      const blockedMessage = protectedActionResult?.status === 'blocked_session_probe'
+        ? SESSION_EXPIRED_MESSAGE
+        : 'Sign-in is required before uploading attempts.';
+      session.pushNotification({
+        kind: 'warn',
+        text: blockedMessage,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
+      renderUI();
+      return;
+    }
+    if (session.state.uploadAttemptConflictContext) {
+      const choice = await showAttemptUploadConflictModal(session.state.uploadAttemptConflictContext);
+      if (choice === 'replace' || choice === 'copy') {
+        await session.retryAttemptUploadFromConflict(choice);
+      } else {
+        session.clearAttemptUploadConflictPrompt();
+      }
+    }
+    if (session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
+      const slotRecoveryHint = { ...session.state.uploadAttemptRecoveryHint };
+      await session.listUploadedAttempts();
+      const slotRecovery = await showAttemptSlotFullModal(session, {
+        uploadedAttempts: session.state.uploadedAttempts,
+      });
+      if (slotRecovery?.deleted) {
+        // Keep slot-limit recovery behavior aligned with editor draft upload flow:
+        // after deleting one server row to free space, retry upload immediately.
+        await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);
+      } else {
+        session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
+      }
+    }
     renderUI();
   });
 
   printReportBtn.addEventListener('click', async () => {
-    closeUtilityMenu({ returnFocus: true });
-    session.state.utilityMessage = null;
     const result = await startWorksheetPrintFlow({ session });
     if (!result.ok) {
-      session.state.utilityMessage = result.message;
+      session.pushNotification({
+        kind: 'error',
+        text: result.message,
+        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+      });
     }
     renderUI();
   });
@@ -4564,7 +6468,7 @@ function renderViewerShell(session) {
   nextBtn.addEventListener('click', goNext);
 
   headerTop.append(heading, headerActions);
-  header.append(headerTop, answerSummary, resumeWarning, utilityFeedback);
+  header.append(headerTop, answerSummary, resumeWarning);
   blockSection.append(blockHeading, stepper, blockList);
   shell.append(header, blockSection);
   app.innerHTML = '';
@@ -4688,6 +6592,68 @@ function renderViewerFatalError(error) {
   app.append(panel);
 }
 
+function renderPublishedPackageAuthRecoveryPanel(session, options = {}) {
+  if (!app || !bottomBarRoot) {
+    return;
+  }
+  const bootError = asViewerBootError(options.error);
+  const panel = document.createElement('section');
+  panel.className = 'viewer-fatal-panel viewer-fatal-panel--recoverable-auth';
+
+  const heading = document.createElement('h1');
+  heading.textContent = 'Sign in to open this worksheet';
+
+  const message = document.createElement('p');
+  message.className = 'viewer-fatal-panel__message';
+  message.textContent = 'This published worksheet is available after sign-in.';
+
+  const status = document.createElement('p');
+  status.className = 'viewer-start-error';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.textContent = options.statusText || '';
+
+  const actions = document.createElement('div');
+  actions.className = 'viewer-start-actions';
+
+  const signInBtn = document.createElement('button');
+  signInBtn.type = 'button';
+  signInBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  signInBtn.textContent = 'Sign in and open worksheet';
+  signInBtn.disabled = options.primaryDisabled === true;
+  signInBtn.addEventListener('click', async () => {
+    if (typeof options.onSignInAndOpen === 'function') {
+      await options.onSignInAndOpen();
+    }
+  });
+
+  const startPanelBtn = document.createElement('button');
+  startPanelBtn.type = 'button';
+  startPanelBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  startPanelBtn.textContent = 'Go to start screen';
+  startPanelBtn.disabled = options.secondaryDisabled === true;
+  startPanelBtn.addEventListener('click', async () => {
+    if (typeof options.onGoToStart === 'function') {
+      await options.onGoToStart();
+    }
+  });
+
+  actions.append(signInBtn, startPanelBtn);
+
+  const details = document.createElement('details');
+  details.className = 'viewer-fatal-panel__details';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Technical details';
+  const detailBody = document.createElement('pre');
+  detailBody.textContent = `${bootError.code}: ${bootError.technicalMessage}`;
+  details.append(summary, detailBody);
+
+  panel.append(heading, message, status, actions, details);
+  app.innerHTML = '';
+  bottomBarRoot.innerHTML = '';
+  app.append(panel);
+}
+
 function renderViewerStartPanel(session, options = {}) {
   if (!app || !bottomBarRoot) {
     return;
@@ -4702,57 +6668,28 @@ function renderViewerStartPanel(session, options = {}) {
   heading.textContent = 'Start Viewer';
   const description = document.createElement('p');
   description.className = 'muted';
-  description.textContent = 'Resume local attempts, import a worksheet, or load a published online version.';
+  description.textContent = 'Resume attempts, import a worksheet, or load a published online version.';
   const resumeAttempt = options.resumeAttempt || null;
   const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
   const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
+  const attemptsSection = document.createElement('section');
+  attemptsSection.className = 'viewer-launch-section viewer-launch-section--attempts';
+  const worksheetsSection = document.createElement('section');
+  worksheetsSection.className = 'viewer-launch-section viewer-launch-section--worksheets';
+  const sessionStatus = document.createElement('p');
+  sessionStatus.className = 'muted viewer-session-status';
+  const manageAttemptsBtn = document.createElement('button');
+  manageAttemptsBtn.type = 'button';
+  manageAttemptsBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  manageAttemptsBtn.textContent = 'Manage server attempts';
   const importPackageBtn = document.createElement('button');
   importPackageBtn.type = 'button';
   importPackageBtn.className = 'viewer-start-btn viewer-start-btn--primary';
   importPackageBtn.textContent = 'Import worksheet package (.zip)';
-
-  const importActions = document.createElement('div');
-  importActions.className = 'viewer-start-actions';
-  importActions.append(importPackageBtn);
-  const serverActions = document.createElement('div');
-  serverActions.className = 'viewer-start-actions';
-  const signInBtn = document.createElement('button');
-  signInBtn.type = 'button';
-  signInBtn.className = 'viewer-start-btn';
-  signInBtn.textContent = 'Log in to view published online worksheet';
-  const loadMoreBtn = document.createElement('button');
-  loadMoreBtn.type = 'button';
-  loadMoreBtn.className = 'viewer-start-btn viewer-load-more-btn';
-  loadMoreBtn.textContent = 'Load more';
-  loadMoreBtn.hidden = true;
-  const loadMoreRow = document.createElement('div');
-  loadMoreRow.className = 'viewer-load-more-row';
-  loadMoreRow.append(loadMoreBtn);
-  const filterRow = document.createElement('div');
-  filterRow.className = 'viewer-start-actions viewer-published-filters';
-  const publishedHeading = document.createElement('h2');
-  publishedHeading.className = 'viewer-published-heading';
-  publishedHeading.textContent = 'Published Packages';
-  const titleFilterInput = document.createElement('input');
-  titleFilterInput.type = 'search';
-  titleFilterInput.placeholder = 'Filter by title';
-  titleFilterInput.className = 'viewer-details-form__input';
-  titleFilterInput.setAttribute('aria-label', 'Filter published packages by title');
-  const subjectFilterInput = document.createElement('input');
-  subjectFilterInput.type = 'search';
-  subjectFilterInput.placeholder = 'Filter by subject';
-  subjectFilterInput.className = 'viewer-details-form__input';
-  subjectFilterInput.setAttribute('aria-label', 'Filter published packages by subject');
-  const ownerFilterInput = document.createElement('input');
-  ownerFilterInput.type = 'search';
-  ownerFilterInput.placeholder = 'Filter by owner';
-  ownerFilterInput.className = 'viewer-details-form__input';
-  ownerFilterInput.setAttribute('aria-label', 'Filter published packages by owner');
-  filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput);
-  const sessionStatus = document.createElement('p');
-  sessionStatus.className = 'muted viewer-session-status';
-  const publishedList = document.createElement('div');
-  publishedList.className = 'muted viewer-published-list';
+  const browsePublishedBtn = document.createElement('button');
+  browsePublishedBtn.type = 'button';
+  browsePublishedBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  browsePublishedBtn.textContent = 'Browse published packages';
 
   const packageFileInput = document.createElement('input');
   packageFileInput.type = 'file';
@@ -4778,7 +6715,38 @@ function renderViewerStartPanel(session, options = {}) {
       || resumeAttempt.lastSavedAt
       || resumeAttempt.startedAt
       || null;
-    resumeMeta.textContent = `Attempt ${resumeAttempt.localId || 'unknown'} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
+    const worksheetTitle = String(
+      resumeAttempt?.viewerPayload?.title
+      || resumeAttempt?.title
+      || 'Untitled worksheet'
+    );
+    const worksheetSubject = String(
+      resumeAttempt?.viewerPayload?.subject
+      || resumeAttempt?.subject
+      || resumeAttempt?.metadata?.subject
+      || resumeAttempt?.viewerPayload?.metadata?.subject
+      || '—'
+    ).trim() || '—';
+    const worksheetOwner = String(
+      resumeAttempt?.owner_email
+      || resumeAttempt?.owner_name
+      || resumeAttempt?.owner_sub
+      || resumeAttempt?.owner
+      || resumeAttempt?.metadata?.owner_email
+      || resumeAttempt?.metadata?.owner_name
+      || resumeAttempt?.metadata?.owner_sub
+      || resumeAttempt?.metadata?.owner
+      || resumeAttempt?.viewerPayload?.owner_email
+      || resumeAttempt?.viewerPayload?.owner_name
+      || resumeAttempt?.viewerPayload?.owner_sub
+      || resumeAttempt?.viewerPayload?.owner
+      || resumeAttempt?.viewerPayload?.metadata?.owner_email
+      || resumeAttempt?.viewerPayload?.metadata?.owner_name
+      || resumeAttempt?.viewerPayload?.metadata?.owner_sub
+      || resumeAttempt?.viewerPayload?.metadata?.owner
+      || '—'
+    ).trim() || '—';
+    resumeMeta.textContent = `Title: ${worksheetTitle} · Subject: ${worksheetSubject} · Owner: ${worksheetOwner} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
     const resumeActions = document.createElement('div');
     resumeActions.className = 'viewer-start-actions';
     const resumeBtn = document.createElement('button');
@@ -4791,7 +6759,7 @@ function renderViewerStartPanel(session, options = {}) {
     });
     const discardBtn = document.createElement('button');
     discardBtn.type = 'button';
-    discardBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
+    discardBtn.className = 'viewer-start-btn viewer-start-btn--secondary-danger';
     discardBtn.textContent = 'Discard attempt';
     discardBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
@@ -4800,6 +6768,16 @@ function renderViewerStartPanel(session, options = {}) {
     resumeActions.append(resumeBtn, discardBtn);
     resumeCard.append(resumeTitle, resumeMeta, resumeActions);
   }
+  const noResumeHint = document.createElement('p');
+  noResumeHint.className = 'muted viewer-start-subhint';
+  noResumeHint.textContent = 'No resumable local attempt found.';
+
+  const attemptsActions = document.createElement('div');
+  attemptsActions.className = 'viewer-start-actions';
+  attemptsActions.append(manageAttemptsBtn);
+  const worksheetActions = document.createElement('div');
+  worksheetActions.className = 'viewer-start-actions';
+  worksheetActions.append(importPackageBtn, browsePublishedBtn);
 
   importPackageBtn.addEventListener('click', () => {
     errorMessage.textContent = '';
@@ -4827,147 +6805,138 @@ function renderViewerStartPanel(session, options = {}) {
     }
   });
 
-  signInBtn.addEventListener('click', () => {
-    session.beginServerSignIn();
-    renderServerControls();
-  });
-  const scheduleDebouncedBrowse = (() => {
-    let debounceTimer = null;
-    return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(async () => {
-        await session.browsePublishedPackages({
-          title: titleFilterInput.value,
-          subject: subjectFilterInput.value,
-          owner: ownerFilterInput.value,
-        });
-        renderServerControls();
-      }, 300);
+  manageAttemptsBtn.addEventListener('click', async () => {
+    const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    const onResumeSuccess = async () => {
+      if (session.state.localAttemptId) {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+        nextUrl.searchParams.delete('viewerPayload');
+        nextUrl.searchParams.delete('snapshot');
+        window.history.replaceState({}, '', nextUrl);
+      }
+      renderViewerShell(session);
+      window.viewerSession = session;
     };
-  })();
-  [titleFilterInput, subjectFilterInput, ownerFilterInput].forEach((input) => {
-    input.addEventListener('input', () => {
-      scheduleDebouncedBrowse();
-    });
-  });
-  loadMoreBtn.addEventListener('click', async () => {
-    await session.browsePublishedPackages(session.state.publishedFilters || {}, { append: true });
-    renderServerControls();
-  });
-
-  async function openPublishedPackage(publishedPackageId) {
-    const result = await session.startFromPublishedPackage(publishedPackageId);
-    if (!result.ok) {
+    if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+      await showUploadedAttemptsManagerModal(session, {
+        autoStartSignIn: false,
+        onResumeSuccess,
+      });
       renderServerControls();
       return;
     }
-    if (session.state.localAttemptId) {
-      const nextUrl = new URL(window.location.href);
-      nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
-      window.history.replaceState({}, '', nextUrl);
-    }
-    renderViewerShell(session);
-    window.viewerSession = session;
-  }
+    session.beginServerSignIn({
+      onPopupBlocked: ({ finalizeFlow }) => {
+        session.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        session.notifyStateChange();
+        renderServerControls();
+        finalizeFlow();
+      },
+      onStatusMessage: ({ message }) => {
+        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+          session.state.serverActionMessage = message;
+          session.notifyStateChange();
+          renderServerControls();
+        }
+      },
+      onSessionReady: async ({ finalizeFlow }) => {
+        try {
+          const readiness = await session.preflightPublishedSession();
+          if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+            session.state.serverActionMessage = readiness?.result?.error?.message
+              || session.state.serverSession?.error
+              || 'Sign-in completed, but session is still not ready.';
+            session.notifyStateChange();
+            renderServerControls();
+            return;
+          }
+          await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true });
+          session.state.serverActionMessage = null;
+          session.notifyStateChange();
+          renderServerControls();
+          await showUploadedAttemptsManagerModal(session, {
+            autoStartSignIn: false,
+            onResumeSuccess,
+          });
+          renderServerControls();
+        } finally {
+          finalizeFlow();
+        }
+      },
+      onSessionNotReady: ({ result, finalizeFlow }) => {
+        if (result?.final === false && result?.waitingForCallback === true) {
+          session.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          session.notifyStateChange();
+          renderServerControls();
+          return;
+        }
+        if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
+          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.notifyStateChange();
+          renderServerControls();
+        }
+        finalizeFlow();
+      },
+    });
+  });
+  browsePublishedBtn.addEventListener('click', async () => {
+    const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
+    await showPublishedPackagesBrowseModal(session, {
+      autoStartSignIn: sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN,
+    });
+    renderServerControls();
+  });
 
   function renderServerControls() {
+    renderViewerNotifications(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
-    const canAccessPublished = isLoggedIn;
     const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
     let defaultSessionMessage = '';
     if (isLoggedIn) {
       defaultSessionMessage = `Server session: ready (${userLabel})`;
     } else if (isChecking) {
       defaultSessionMessage = 'Server session: checking…';
+    } else if (session.state.serverSession?.error === SESSION_EXPIRED_MESSAGE) {
+      defaultSessionMessage = SESSION_EXPIRED_MESSAGE;
     } else {
-      defaultSessionMessage = `Server session: logged out. ${session.state.serverSession?.error || 'Log in to view published online worksheet.'}`;
+      defaultSessionMessage = SIGNED_OUT_MESSAGE;
     }
-    const actionMessage = typeof session.state.serverActionMessage === 'string'
-      ? session.state.serverActionMessage.trim()
-      : '';
-    sessionStatus.textContent = actionMessage || defaultSessionMessage;
-    signInBtn.hidden = isLoggedIn;
-    signInBtn.disabled = isChecking;
-    publishedHeading.hidden = !canAccessPublished;
-    filterRow.hidden = !canAccessPublished;
-    titleFilterInput.hidden = !canAccessPublished;
-    subjectFilterInput.hidden = !canAccessPublished;
-    ownerFilterInput.hidden = !canAccessPublished;
-    titleFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
-    subjectFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
-    ownerFilterInput.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages;
-    const activeFilters = session.state.publishedFilters || {};
-    if (document.activeElement !== titleFilterInput) titleFilterInput.value = String(activeFilters.title || '');
-    if (document.activeElement !== subjectFilterInput) subjectFilterInput.value = String(activeFilters.subject || '');
-    if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
-    loadMoreBtn.hidden = !canAccessPublished || !session.state.publishedHasMore;
-    loadMoreBtn.disabled = !canAccessPublished || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
-    loadMoreRow.hidden = loadMoreBtn.hidden;
-    publishedList.innerHTML = '';
-    publishedList.hidden = !canAccessPublished;
-    if (!canAccessPublished) {
-      return;
-    }
-    const publishedItems = Array.isArray(session.state.publishedPackages) ? session.state.publishedPackages : [];
-    if (session.state.publishedListError) {
-      const errorRow = document.createElement('p');
-      errorRow.className = 'viewer-list-error';
-      errorRow.appendChild(document.createTextNode('Could not load packages. '));
-      const retryBtn = document.createElement('button');
-      retryBtn.type = 'button';
-      retryBtn.className = 'viewer-list-retry-btn';
-      retryBtn.textContent = 'Retry';
-      retryBtn.addEventListener('click', async () => {
-        await session.browsePublishedPackages(session.state.publishedFilters || {}, { reset: true });
-        renderServerControls();
-      });
-      errorRow.appendChild(retryBtn);
-      publishedList.appendChild(errorRow);
-      return;
-    }
-    if (publishedItems.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'muted';
-      empty.textContent = session.state.isLoadingPublishedPackages ? 'Loading published packages…' : 'No published packages loaded.';
-      publishedList.appendChild(empty);
-      return;
-    }
-    publishedItems.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = 'viewer-published-row';
-      const meta = document.createElement('div');
-      meta.className = 'muted viewer-published-meta';
-      const publishedAtLabel = item.published_at ? formatTimestampForDisplay(item.published_at) : 'unknown time';
-      const ownerLabel = item.owner_email || item.owner_name || item.owner_sub || '—';
-      meta.textContent = `Title: ${item.title || 'Untitled'} · Subject: ${item.subject || '—'} · Owner: ${ownerLabel} · Published: ${publishedAtLabel}`;
-      const openBtn = document.createElement('button');
-      openBtn.type = 'button';
-      openBtn.className = 'viewer-start-btn viewer-published-open-btn';
-      openBtn.textContent = 'Open package';
-      openBtn.disabled = !isLoggedIn || session.state.isLoadingPublishedPackages || !item.published_package_id;
-      openBtn.addEventListener('click', async () => {
-        await openPublishedPackage(item.published_package_id);
-      });
-      if (item.published_package_id) {
-        const idLine = document.createElement('div');
-        idLine.className = 'muted viewer-published-id';
-        idLine.textContent = `Publish ID: ${item.published_package_id}`;
-        row.append(meta, openBtn, idLine);
-      } else {
-        row.append(meta, openBtn);
-      }
-      publishedList.appendChild(row);
-    });
+    sessionStatus.textContent = defaultSessionMessage;
+    manageAttemptsBtn.hidden = false;
+    manageAttemptsBtn.disabled = isChecking || session.state.isManagingUploadedAttempts === true;
+    manageAttemptsBtn.textContent = isLoggedIn
+      ? 'Manage server attempts'
+      : 'Log in to manage server attempts';
+    browsePublishedBtn.disabled = isChecking;
+    browsePublishedBtn.textContent = isLoggedIn
+      ? 'Browse published worksheets'
+      : 'Log in to browse published worksheets';
+    noResumeHint.hidden = Boolean(resumeAttempt);
   }
 
   panel.append(heading, description);
-  if (resumeAttempt) {
-    panel.append(resumeCard);
+  attemptsSection.appendChild(createViewerStartSectionHeader({ icon: 'attempts', title: 'Attempts' }));
+  if (resumeCard) {
+    attemptsSection.append(resumeCard);
+    const attemptDivider = document.createElement('div');
+    attemptDivider.className = 'viewer-launch-divider';
+    attemptsSection.append(attemptDivider);
+  } else {
+    attemptsSection.append(noResumeHint);
   }
-  serverActions.append(signInBtn);
-  panel.append(importActions, serverActions, sessionStatus, publishedHeading, filterRow, publishedList, loadMoreRow, packageFileInput, errorMessage);
+  attemptsSection.append(attemptsActions);
+  worksheetsSection.appendChild(createViewerStartSectionHeader({ icon: 'worksheet', title: 'Worksheets' }));
+  worksheetsSection.append(worksheetActions);
+  panel.append(
+    attemptsSection,
+    worksheetsSection,
+    sessionStatus,
+    packageFileInput,
+    errorMessage
+  );
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(panel);
@@ -5003,6 +6972,12 @@ async function bootstrapViewer() {
       return typeof payload.localAttemptId === 'string' && payload.localAttemptId === session.state.localAttemptId;
     }
 
+    if (actionId === 'uploadAttemptPackageAfterLogin') {
+      const allowed = new Set(['localAttemptId']);
+      if (!hasOnlyAllowedKeys(payload, allowed)) return false;
+      return typeof payload.localAttemptId === 'string' && payload.localAttemptId === session.state.localAttemptId;
+    }
+
     return false;
   };
 
@@ -5028,8 +7003,14 @@ async function bootstrapViewer() {
   });
 
   session.authGate = authGate;
+  const params = new URLSearchParams(window.location.search);
+  const hasAuthReturn = params.get(AUTH_RETURN_PARAM) === '1';
+  const hasAuthCallback = params.get(VIEWER_AUTH_CALLBACK_PARAM) === '1';
+  const isAuthCallbackMode = hasAuthReturn && hasAuthCallback;
+  const hasLaunchIntent = hasViewerLaunchIntent(params, { includeAuthReturn: true });
+
   await session.refreshServerSession();
-  if (session.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+  if (!hasLaunchIntent && session.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
     await session.browsePublishedPackages('');
   }
 
@@ -5069,11 +7050,101 @@ async function bootstrapViewer() {
     });
   };
 
-  const params = new URLSearchParams(window.location.search);
-  const hasAuthReturn = params.get(AUTH_RETURN_PARAM) === '1';
-  const hasAuthCallback = params.get(VIEWER_AUTH_CALLBACK_PARAM) === '1';
-  const isAuthCallbackMode = hasAuthReturn && hasAuthCallback;
-  const hasLaunchIntent = hasViewerLaunchIntent(params, { includeAuthReturn: true });
+  const completePublishedPackageOpen = () => {
+    if (window?.history?.replaceState && window?.location?.href) {
+      const nextUrl = new URL(window.location.href);
+      // Keep direct published-package links portable across devices/profiles.
+      // If we pin localAttemptId here, copied links may fail where that local attempt does not exist.
+      nextUrl.searchParams.delete('localAttemptId');
+      window.history.replaceState({}, '', nextUrl);
+    }
+    renderViewerShell(session);
+    window.viewerSession = session;
+  };
+
+  const handlePublishedPackageOpenResult = async (publishedPackageId, result, originalError) => {
+    if (result?.ok) {
+      completePublishedPackageOpen();
+      return true;
+    }
+
+    const errorCode = String(result?.error?.code || '').trim().toUpperCase();
+    if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND') {
+      renderViewerFatalError(new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
+        userMessage: 'The requested published package was not found.',
+        technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+      }));
+      return true;
+    }
+
+    if (!result?.error?.requiresSignIn) {
+      renderViewerFatalError(new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
+        userMessage: 'The requested published package could not be opened right now.',
+        technicalMessage: result?.error?.message || originalError?.technicalMessage || `Unable to open publishedPackageId=${publishedPackageId}.`,
+      }));
+      return true;
+    }
+
+    return false;
+  };
+
+  const renderPublishedPackageAuthRecovery = (error, state = {}) => {
+    const publishedPackageId = error?.publishedPackageId || new URLSearchParams(window.location.search).get('publishedPackageId') || '';
+    const renderState = {
+      statusText: state.statusText || '',
+      inFlight: state.inFlight === true,
+    };
+    renderPublishedPackageAuthRecoveryPanel(session, {
+      error,
+      statusText: renderState.statusText,
+      primaryDisabled: renderState.inFlight,
+      secondaryDisabled: renderState.inFlight,
+      onSignInAndOpen: async () => {
+        let popupBlockedHandled = false;
+        const updatePanel = (statusText, inFlight = true) => {
+          renderPublishedPackageAuthRecovery(error, { statusText, inFlight });
+        };
+        updatePanel('Opening sign-in...', true);
+        session.beginServerSignIn({
+          onPopupBlocked: ({ finalizeFlow }) => {
+            popupBlockedHandled = true;
+            finalizeFlow();
+            updatePanel('Sign-in popup was blocked. Allow popups for this site, then try again.', false);
+          },
+          onStatusMessage: ({ message }) => {
+            updatePanel(message || 'Waiting for sign-in confirmation...', true);
+          },
+          onSessionReady: async ({ finalizeFlow }) => {
+            try {
+              updatePanel('Sign-in completed. Opening worksheet...', true);
+              finalizeFlow();
+              const result = await session.startFromPublishedPackage(publishedPackageId);
+              const handled = await handlePublishedPackageOpenResult(publishedPackageId, result, error);
+              if (!handled) {
+                updatePanel('Sign-in is still required. Please try again.', false);
+              }
+            } catch (retryError) {
+              renderViewerFatalError(retryError);
+            }
+          },
+          onSessionNotReady: ({ result, finalizeFlow }) => {
+            if (result?.final === false && result?.waitingForCallback === true) {
+              updatePanel('Still waiting for sign-in confirmation from the popup...', true);
+              return;
+            }
+            finalizeFlow();
+            updatePanel(result?.error?.message || 'Sign-in did not complete. Try again to open this worksheet.', false);
+          },
+        });
+        if (!session._authPopupWindow && !popupBlockedHandled) {
+          updatePanel(session.state.serverActionMessage || 'Unable to open sign-in popup. Please try again.', false);
+        }
+      },
+      onGoToStart: async () => {
+        await renderStartPanelFromResumeFlag(null);
+      },
+    });
+  };
 
   if (!hasLaunchIntent) {
     await renderStartPanelFromResumeFlag(session.state.recoveryMessage);
@@ -5264,30 +7335,38 @@ async function bootstrapViewer() {
     return;
   }
 
-  const hasRealContentIntent = hasViewerLaunchIntent(params);
+  try {
+    const hasRealContentIntent = hasViewerLaunchIntent(params);
 
-  if (hasAuthReturn) {
-    const restoreResult = await authGate.restoreAfterAuthReturn();
-    if (session.state.viewerPayload) {
-      renderViewerShell(session);
-      window.viewerSession = session;
-      return;
-    }
+    if (hasAuthReturn) {
+      const restoreResult = await authGate.restoreAfterAuthReturn();
+      if (session.state.viewerPayload) {
+        renderViewerShell(session);
+        window.viewerSession = session;
+        return;
+      }
 
-    if (!hasRealContentIntent) {
-      session.setRecoveryMessage(
-        session.state.recoveryMessage
-        || 'We could not restore your previous auth-return session. Reopen a valid worksheet link or import worksheet JSON again.'
-      );
-      renderViewerStartPanel(session, { warningMessage: session.state.recoveryMessage });
-      return;
-    }
+      if (!hasRealContentIntent) {
+        session.setRecoveryMessage(
+          session.state.recoveryMessage
+          || 'We could not restore your previous auth-return session. Reopen a valid worksheet link or import worksheet JSON again.'
+        );
+        renderViewerStartPanel(session, { warningMessage: session.state.recoveryMessage });
+        return;
+      }
 
-    if (restoreResult.status === 'no_pending_intent' || !session.state.viewerPayload) {
+      if (restoreResult.status === 'no_pending_intent' || !session.state.viewerPayload) {
+        await session.bootstrap();
+      }
+    } else {
       await session.bootstrap();
     }
-  } else {
-    await session.bootstrap();
+  } catch (error) {
+    if (isPublishedPackageAuthBootError(error)) {
+      renderPublishedPackageAuthRecovery(error);
+      return;
+    }
+    throw error;
   }
 
   renderViewerShell(session);
@@ -5326,6 +7405,8 @@ export {
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
+  readViewerPrintSchoolNamePreference,
+  writeViewerPrintSchoolNamePreference,
   classifyPrintQuestionLayout,
   buildWorksheetPrintReportModel,
   buildWorksheetPrintReportHtml,

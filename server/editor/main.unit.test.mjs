@@ -3738,6 +3738,28 @@ test('loadUploadedDrafts preflight:false does not reuse an in-flight preflight:t
   assert.equal(session.state.uploadedDrafts[0].uploaded_draft_id, 'draft-1');
 });
 
+test('loadUploadedDrafts stores draftSlotLimit for uploaded draft management UI', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSessionSignInUrl: () => '/worksheet_launcher/app/login/popup.html',
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      listUploadedDrafts: async () => ({
+        ok: true,
+        data: {
+          draftSlotLimit: 5,
+          items: [{ uploaded_draft_id: 'draft-1' }],
+        },
+      }),
+    },
+  });
+
+  const result = await session.loadUploadedDrafts({ preflight: false });
+  assert.equal(result.ok, true);
+  assert.equal(session.state.uploadedDrafts.length, 1);
+  assert.equal(session.state.uploadedDraftSlotLimit, 5);
+});
+
 test('loadUploadedDrafts keeps loading state true until overlapping preflight and non-preflight refreshes finish', async () => {
   const mod = await loadEditorModule();
   let resolveEnsure;

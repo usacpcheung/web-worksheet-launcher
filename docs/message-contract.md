@@ -236,13 +236,14 @@ Deterministic behavior requirements:
 - If resumable local attempt metadata exists, start screen must present a prominent **Resume** option, but user choice is still required.
 - **Any explicit source param present** must either:
   - load the requested source, or
-  - fail as a typed fatal launch error in viewer UI.
+  - fail as a typed launch error in viewer UI.
 - Viewer must **never synthesize unrelated worksheet content** as fallback when explicit launch intent fails.
 
 Explicit-parameter fatal error rules:
 
 - `localAttemptId`: missing/corrupt/unreadable resume target is fatal (`LOCAL_ATTEMPT_RESUME_FAILED` class error).
 - `publishedPackageId`: unresolved package lookup or validation mismatch is fatal (`PUBLISHED_PACKAGE_NOT_FOUND` / `PUBLISHED_PACKAGE_INVALID` class errors).
+- `publishedPackageId` with an auth-required response is recoverable: viewer should preserve the same package intent, offer sign-in, and retry that package automatically after session readiness.
 - `localDraftId` with `preview=1`: missing draft or invalid preview payload is fatal (`LOCAL_DRAFT_PREVIEW_FAILED` class errors).
 - `importedWorksheetId`: lookup failure is fatal (`IMPORTED_WORKSHEET_NOT_FOUND` class errors).
 - `viewerPayload` / `snapshot`: parse/schema failures are fatal (`INVALID_VIEWER_PAYLOAD` class errors).

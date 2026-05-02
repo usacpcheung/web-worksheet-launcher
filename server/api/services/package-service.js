@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { parseWorksheetPackage, rewriteWorksheetPackageTitle } from '../../editor/worksheet-package.js';
+import { parseStoredZip, decodeUtf8 } from '../../editor/zip-utils.js';
 
 function normalizeText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -34,6 +35,45 @@ function validateUploadedWorksheetPackage(zipBytes) {
     };
   }
 }
+function validateUploadedAttemptPackage(zipBytes) {
+  try {
+    const files = parseStoredZip(zipBytes);
+    const manifest = files.get('manifest.json');
+    const worksheet = files.get('content/worksheet.json');
+    const attempt = files.get('content/attempt.json');
+    if (!manifest || !worksheet || !attempt) throw new Error('Missing required files.');
+    const manifestJson = JSON.parse(decodeUtf8(manifest));
+    if (manifestJson?.format !== 'worksheet-attempt-package') throw new Error('Unsupported manifest format.');
+    if (manifestJson?.packageVersion !== 1) throw new Error('Unsupported manifest packageVersion.');
+    if (manifestJson?.schemaVersion !== undefined && manifestJson?.schemaVersion !== 1) {
+      throw new Error('Unsupported manifest schemaVersion.');
+    }
+    const worksheetJson = JSON.parse(decodeUtf8(worksheet));
+    const attemptJson = JSON.parse(decodeUtf8(attempt));
+    if (attemptJson?.schemaVersion !== 1 || attemptJson?.kind !== 'worksheet-attempt') throw new Error('Unsupported attempt schema.');
+    if (!['in_progress', 'submitted', 'checked'].includes(attemptJson?.status)) throw new Error('Invalid attempt status.');
+    if (typeof attemptJson.answers !== 'object' || Array.isArray(attemptJson.answers) || !attemptJson.answers) throw new Error('answers must be an object.');
+    if ((attemptJson.status === 'submitted' || attemptJson.status === 'checked') && !attemptJson.submittedAt) throw new Error('submittedAt required.');
+    const blockIds = new Set(
+      (Array.isArray(worksheetJson?.blocks) ? worksheetJson.blocks : [])
+        .map((block) => {
+          if (!block || typeof block !== 'object') return null;
+          const blockId = typeof block.blockId === 'string' ? block.blockId.trim() : '';
+          if (blockId) return blockId;
+          const legacyId = typeof block.id === 'string' ? block.id.trim() : '';
+          return legacyId || null;
+        })
+        .filter(Boolean)
+    );
+    const checkingItems = attemptJson?.checking?.items;
+    if (checkingItems && typeof checkingItems === 'object') {
+      for (const key of Object.keys(checkingItems)) if (!blockIds.has(key)) throw new Error(`checking item references unknown blockId: ${key}`);
+    }
+    return { ok: true, attempt: attemptJson };
+  } catch (error) {
+    return { ok: false, error: { code: 'INVALID_ATTEMPT_PACKAGE', message: 'Uploaded attempt package is invalid or corrupted.', details: { reason: error?.message || 'validation failed' } } };
+  }
+}
 
 function stripGeneratedCopySuffix(title) {
   const normalizedTitle = normalizeText(title, 'Untitled draft');
@@ -62,7 +102,7 @@ async function deleteArtifactBestEffort({ artifactStore, artifactPath }) {
       absolutePath: artifactStore.resolveAbsolutePath(artifactPath),
     });
   } catch (error) {
-    console.warn('Failed to cleanup deleted uploaded draft artifact.', {
+    console.warn('Failed to cleanup deleted uploaded artifact.', {
       artifactPath,
       code: error?.code,
       message: error?.message,
@@ -208,6 +248,44 @@ export class PackageService {
     return `${baseTitle} (${crypto.randomUUID().slice(0, 8)})`;
   }
 
+  async findAttemptConflict({ client, identity, title, subject }) {
+    const result = await client.query(
+      `SELECT
+        uploaded_attempt_id,
+        owner_sub,
+        owner_email,
+        owner_name,
+        title,
+        subject,
+        status,
+        submitted_at,
+        checked_at,
+        artifact_path,
+        artifact_sha256,
+        artifact_size_bytes,
+        created_at,
+        updated_at
+       FROM uploaded_attempts
+       WHERE owner_sub = $1
+         AND lower(regexp_replace(btrim(coalesce(title, '')), '\\s+', ' ', 'g')) = $2
+         AND lower(regexp_replace(btrim(coalesce(subject, '')), '\\s+', ' ', 'g')) = $3
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [identity.sub, normalizeConflictText(title), normalizeConflictText(subject)]
+    );
+    return result.rows[0] || null;
+  }
+
+  async findAvailableAttemptCopyTitle({ client, identity, title, subject }) {
+    const baseTitle = stripGeneratedCopySuffix(title);
+    for (let copyIndex = 2; copyIndex < 1000; copyIndex += 1) {
+      const candidate = `${baseTitle} (${copyIndex})`;
+      const existing = await this.findAttemptConflict({ client, identity, title: candidate, subject });
+      if (!existing) return candidate;
+    }
+    return `${baseTitle} (${crypto.randomUUID().slice(0, 8)})`;
+  }
+
   async uploadDraft({ identity, title, subject, zipBytes, conflictAction = 'fail_on_conflict' }) {
     const packageValidation = validateUploadedWorksheetPackage(zipBytes);
     if (!packageValidation.ok) {
@@ -305,6 +383,19 @@ export class PackageService {
             artifact.artifactSizeBytes,
           ]
         );
+        if (updated.rowCount === 0) {
+          await client.query('ROLLBACK');
+          await deleteArtifactIfPresent(artifact);
+          artifact = null;
+          return {
+            ok: false,
+            statusCode: 409,
+            error: {
+              code: 'DRAFT_REPLACE_TARGET_MISSING',
+              message: 'The uploaded draft to replace no longer exists. Please retry.',
+            },
+          };
+        }
         cleanupArtifactPathsAfterCommit.push(conflict.artifact_path);
         await client.query('COMMIT');
         for (const artifactPath of cleanupArtifactPathsAfterCommit) {
@@ -327,6 +418,7 @@ export class PackageService {
             code: 'DRAFT_SLOT_LIMIT_REACHED',
             message: `You already have ${this.config.draftSlotLimit} uploaded drafts. Delete one before uploading another.`,
             details: {
+              slotLimit: this.config.draftSlotLimit,
               uploadedDrafts: drafts,
             },
           },
@@ -439,6 +531,110 @@ export class PackageService {
     } finally {
       client.release();
     }
+  }
+
+  async listOwnAttempts(identity, clientOverride = null) {
+    const executor = clientOverride || this.db;
+    const result = await executor.query(
+      `SELECT
+        uploaded_attempt_id,
+        owner_sub,
+        owner_email,
+        owner_name,
+        title,
+        subject,
+        status,
+        submitted_at,
+        checked_at,
+        artifact_sha256,
+        artifact_size_bytes,
+        created_at,
+        updated_at
+       FROM uploaded_attempts
+       WHERE owner_sub = $1
+       ORDER BY created_at DESC`,
+      [identity.sub]
+    );
+    return result.rows;
+  }
+  async loadOwnAttemptArtifact({ identity, uploadedAttemptId }) {
+    const result = await this.db.query('SELECT uploaded_attempt_id, owner_sub, artifact_path FROM uploaded_attempts WHERE uploaded_attempt_id = $1 AND owner_sub = $2', [uploadedAttemptId, identity.sub]);
+    return result.rowCount ? result.rows[0] : null;
+  }
+  async deleteOwnAttempt({ identity, uploadedAttemptId }) {
+    const deleted = await this.db.query('DELETE FROM uploaded_attempts WHERE uploaded_attempt_id = $1 AND owner_sub = $2 RETURNING uploaded_attempt_id, artifact_path', [uploadedAttemptId, identity.sub]);
+    if (!deleted.rowCount) return { ok: false, statusCode: 404, error: { code: 'UPLOADED_ATTEMPT_NOT_FOUND', message: 'Uploaded attempt was not found for this owner.' } };
+    await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath: deleted.rows[0].artifact_path });
+    return { ok: true, statusCode: 200, data: { uploaded_attempt_id: deleted.rows[0].uploaded_attempt_id, deleted: true } };
+  }
+  async uploadAttempt({ identity, title, subject, zipBytes, conflictAction = 'fail_on_conflict' }) {
+    const validation = validateUploadedAttemptPackage(zipBytes);
+    if (!validation.ok) return { ok: false, statusCode: 400, error: validation.error };
+    const action = normalizeUploadConflictAction(conflictAction);
+    const normalizedTitle = normalizeText(title, 'Untitled attempt');
+    const normalizedSubject = normalizeText(subject, '');
+    const client = await this.db.connect();
+    let artifact = null;
+    let uploadedAttemptId = null;
+    const cleanupArtifactPathsAfterCommit = [];
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
+      const conflict = await this.findAttemptConflict({
+        client,
+        identity,
+        title: normalizedTitle,
+        subject: normalizedSubject,
+      });
+      if (conflict && action === 'fail_on_conflict') {
+        const attempts = await this.listOwnAttempts(identity, client);
+        await client.query('ROLLBACK');
+        return { ok: false, statusCode: 409, error: { code: 'ATTEMPT_NAME_CONFLICT', message: 'An uploaded attempt with the same title and subject already exists.', details: { existingAttempt: conflict, uploadedAttempts: attempts } } };
+      }
+      const countRes = await client.query('SELECT COUNT(*)::int AS count FROM uploaded_attempts WHERE owner_sub = $1', [identity.sub]);
+      const willCreateNewRow = !conflict || action === 'copy';
+      if (willCreateNewRow && countRes.rows[0].count >= this.config.attemptSlotLimit) {
+        const attempts = await this.listOwnAttempts(identity, client);
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 409,
+          error: {
+            code: 'ATTEMPT_SLOT_LIMIT_REACHED',
+            message: `You already have ${this.config.attemptSlotLimit} uploaded attempts.`,
+            details: {
+              slotLimit: this.config.attemptSlotLimit,
+              uploadedAttempts: attempts,
+            },
+          },
+        };
+      }
+      const attempt = validation.attempt;
+      if (conflict && action === 'replace') {
+        uploadedAttemptId = conflict.uploaded_attempt_id;
+        artifact = await this.artifactStore.storeArtifact({
+          ownerSub: identity.sub,
+          bucket: 'attempts',
+          artifactId: crypto.randomUUID(),
+          bytes: zipBytes,
+        });
+        await client.query(`UPDATE uploaded_attempts SET owner_email=$3, owner_name=$4, title=$5, subject=$6, status=$7, submitted_at=$8, checked_at=$9, artifact_path=$10, artifact_sha256=$11, artifact_size_bytes=$12, updated_at=now() WHERE uploaded_attempt_id=$1 AND owner_sub=$2`, [conflict.uploaded_attempt_id, identity.sub, identity.email, identity.name, normalizedTitle, normalizedSubject, attempt.status, attempt.submittedAt || null, attempt.checking?.checkedAt || null, artifact.artifactPath, artifact.artifactSha256, artifact.artifactSizeBytes]);
+        cleanupArtifactPathsAfterCommit.push(conflict.artifact_path);
+      } else {
+        const finalTitle = conflict && action === 'copy'
+          ? await this.findAvailableAttemptCopyTitle({ client, identity, title: normalizedTitle, subject: normalizedSubject })
+          : normalizedTitle;
+        uploadedAttemptId = crypto.randomUUID();
+        artifact = await this.artifactStore.storeArtifact({ ownerSub: identity.sub, bucket: 'attempts', artifactId: uploadedAttemptId, bytes: zipBytes });
+        await client.query(`INSERT INTO uploaded_attempts(uploaded_attempt_id,owner_sub,owner_email,owner_name,title,subject,status,submitted_at,checked_at,artifact_path,artifact_sha256,artifact_size_bytes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [uploadedAttemptId, identity.sub, identity.email, identity.name, finalTitle, normalizedSubject, attempt.status, attempt.submittedAt || null, attempt.checking?.checkedAt || null, artifact.artifactPath, artifact.artifactSha256, artifact.artifactSizeBytes]);
+      }
+      await client.query('COMMIT');
+      for (const artifactPath of cleanupArtifactPathsAfterCommit) {
+        await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
+      }
+      artifact = null;
+      return { ok: true, statusCode: conflict && action === 'replace' ? 200 : 201, data: { uploaded_attempt_id: uploadedAttemptId } };
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); await deleteArtifactIfPresent(artifact); throw e; } finally { client.release(); }
   }
 
   async deleteOwnPublishedPackage({ identity, publishedPackageId }) {

@@ -111,6 +111,11 @@ WITH target_uploaded AS (
   FROM uploaded_drafts
   WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
     AND created_at < now() - ('${OLDER_THAN_DAYS} days')::interval
+), target_attempts AS (
+  SELECT artifact_path
+  FROM uploaded_attempts
+  WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
+    AND created_at < now() - ('${OLDER_THAN_DAYS} days')::interval
 ), target_published AS (
   SELECT artifact_path
   FROM published_packages
@@ -120,6 +125,8 @@ WITH target_uploaded AS (
 SELECT DISTINCT artifact_path
 FROM (
   SELECT artifact_path FROM target_uploaded
+  UNION ALL
+  SELECT artifact_path FROM target_attempts
   UNION ALL
   SELECT artifact_path FROM target_published
 ) all_paths
@@ -131,6 +138,11 @@ SQL
 SQL_COUNTS=$(cat <<SQL
 SELECT 'uploaded_drafts' AS table_name, count(*) AS row_count
 FROM uploaded_drafts
+WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
+  AND created_at < now() - ('${OLDER_THAN_DAYS} days')::interval
+UNION ALL
+SELECT 'uploaded_attempts' AS table_name, count(*) AS row_count
+FROM uploaded_attempts
 WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
   AND created_at < now() - ('${OLDER_THAN_DAYS} days')::interval
 UNION ALL
@@ -170,6 +182,10 @@ WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
   AND published_at < now() - ('${OLDER_THAN_DAYS} days')::interval;
 
 DELETE FROM uploaded_drafts
+WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
+  AND created_at < now() - ('${OLDER_THAN_DAYS} days')::interval;
+
+DELETE FROM uploaded_attempts
 WHERE owner_sub LIKE '${OWNER_PREFIX_LIKE_SQL}%' ESCAPE '\'
   AND created_at < now() - ('${OLDER_THAN_DAYS} days')::interval;
 COMMIT;
