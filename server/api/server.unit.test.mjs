@@ -20,6 +20,7 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test', 
       },
       browsePageLimitDefault: 20,
       browsePageLimitMax: 100,
+      attemptSlotLimit: 3,
       packageUploadMaxBytes: 31457280,
       ...configOverrides,
     },
@@ -288,6 +289,7 @@ test('GET /api/v1/attempts returns uploaded attempts list', async () => {
       const payload = await res.json();
       assert.equal(payload.ok, true);
       assert.deepEqual(payload.data.items, [{ uploaded_attempt_id: 'a1' }]);
+      assert.equal(payload.data.attemptSlotLimit, 3);
     }
   );
   assert.equal(identitySub, 'user-sub');

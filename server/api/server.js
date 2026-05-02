@@ -151,7 +151,10 @@ export function createRequestHandler({ service, artifactStore, config }) {
       }
       if (req.method === 'GET' && url.pathname === '/api/v1/attempts') {
         const rows = await service.listOwnAttempts(identity);
-        return json(res, 200, ok({ items: rows }));
+        return json(res, 200, ok({
+          items: rows,
+          attemptSlotLimit: config.attemptSlotLimit,
+        }));
       }
       if (req.method === 'DELETE' && isAttemptDetailRoute(segments)) {
         if (segments.length !== 4) return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
