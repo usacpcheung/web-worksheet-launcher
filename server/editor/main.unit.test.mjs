@@ -1092,33 +1092,36 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
   assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
   assert.equal(source.includes("metadataHeading.textContent = t('editor.sections.draftInfo');"), true);
-  assert.equal(source.includes("titleLabel.textContent = 'Worksheet Title';"), true);
-  assert.equal(source.includes("subjectLabel.textContent = 'Subject';"), true);
+  assert.equal(source.includes("titleLabel.textContent = t('editor.form.title.label');"), true);
+  assert.equal(source.includes("subjectLabel.textContent = t('editor.form.subject.label');"), true);
   assert.equal(source.includes("signInBtn.textContent = t('auth.signInForServerFeatures');"), true);
   assert.equal(source.includes("syncDraftBtn.textContent = t('editor.server.uploadDraft');"), true);
   assert.equal(source.includes("manageUploadedDraftsBtn.textContent = t('editor.uploadedDraft.manage');"), true);
   assert.equal(source.includes("browsePublishedBtn.textContent = t('editor.published.browse');"), true);
   assert.equal(source.includes("loadMoreBtn.textContent = browsePublishedState.loading ? t('common.actions.loading') : t('common.actions.loadMore');"), true);
-  assert.equal(source.includes("ownerFilter.placeholder = 'Filter by owner email';"), true);
+  assert.equal(source.includes("ownerFilter.placeholder = t('common.publishedBrowser.filterByOwnerEmail');"), true);
   assert.equal(source.includes("copyBtn.textContent = t('editor.published.copyViewerLink');"), true);
-  assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? 'Opening…' : t('editor.published.openInEditor');"), true);
+  assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? t('editor.published.openingInEditor') : t('editor.published.openInEditor');"), true);
   assert.equal(source.includes('if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;'), true);
   assert.equal(source.includes('const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);'), true);
   assert.equal(source.includes('const reopenResult = await reopenPromise;'), true);
   assert.equal(source.includes('if (browsePublishedDialogOpen) {\n      renderPublishedBrowserModal();\n    }'), true);
   assert.equal(source.includes('if (reopenResult?.ok) {'), true);
   assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
-  assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.';"), true);
+  assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || t('editor.notifications.failedOpenPublishedPackage');"), true);
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
-  assert.equal(source.includes("summary.textContent = 'Details';"), true);
-  assert.equal(source.includes("text: hasPublishedPackage ? 'Published — package live' : 'Published — package deleted'"), true);
-  assert.equal(source.includes("text: 'Updated — ready to publish'"), true);
-  assert.equal(source.includes("text: 'Not published'"), true);
-  assert.equal(source.includes('This version was already published, but the published package has been deleted. Replace or upload an updated draft to publish again.'), true);
-  assert.equal(source.includes("publishBtn.textContent = isPublishing ? 'Publishing…' : publishState === 'unpublished_changes' ? 'Publish New Version' : 'Publish';"), true);
-  assert.equal(source.includes("heading.textContent = 'Published package conflict';"), true);
-  assert.equal(source.includes("editBtn.textContent = 'Edit Published Name/Subject';"), true);
+  assert.equal(source.includes("summary.textContent = t('common.sections.details');"), true);
+  assert.equal(source.includes("text: hasPublishedPackage ? t('editor.uploadedDraft.publishBadge.live') : t('editor.uploadedDraft.publishBadge.deleted')"), true);
+  assert.equal(source.includes("text: t('editor.uploadedDraft.publishBadge.updated'),"), true);
+  assert.equal(source.includes("text: t('editor.uploadedDraft.publishBadge.notPublished'),"), true);
+  assert.equal(source.includes("t('editor.uploadedDraft.publishBadge.deletedHelp')"), true);
+  assert.equal(source.includes("publishBtn.textContent = isPublishing"), true);
+  assert.equal(source.includes("? t('editor.uploadedDraft.publishing')"), true);
+  assert.equal(source.includes("? t('editor.uploadedDraft.publishNewVersion')"), true);
+  assert.equal(source.includes(": t('common.actions.publish');"), true);
+  assert.equal(source.includes("heading.textContent = t('editor.modal.publishConflict.title');"), true);
+  assert.equal(source.includes("editBtn.textContent = t('editor.modal.publishConflict.editNameSubject');"), true);
   assert.equal(source.includes("let attemptedTitle = String(item?.title || '');"), true);
   assert.equal(source.includes("let attemptedSubject = String(item?.subject || '');"), true);
   assert.equal(source.includes('initialTitle: attemptedTitle,'), true);
@@ -1128,7 +1131,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("if (event.key !== 'Tab') return;"), true);
   assert.equal(source.includes("dialog.removeEventListener('keydown', onKeyDown);"), true);
   assert.equal(
-    source.includes("subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;"),
+    source.includes("subjectOwner.textContent = t('editor.published.metaSubjectOwner', {"),
     true
   );
 });
@@ -1303,8 +1306,8 @@ test('prompt typing updates T2A state without forcing detail-panel rerender on e
 test('localDraftId render path avoids innerHTML interpolation for untrusted ids', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('localDraftIdEl.innerHTML'), false);
-  assert.equal(source.includes("localDraftIdLabel.textContent = 'localDraftId:';"), true);
-  assert.equal(source.includes("localDraftIdValue.textContent = session.state.draft?.localId || 'n/a';"), true);
+  assert.equal(source.includes("localDraftIdLabel.textContent = t('editor.labels.localDraftId');"), true);
+  assert.equal(source.includes("localDraftIdValue.textContent = session.state.draft?.localId || t('common.values.na');"), true);
 });
 
 test('autosave completion emits state updates and clears pending state without extra UI events', async () => {
@@ -1653,7 +1656,7 @@ test('confirm modal uses configurable description copy and defaults initial focu
   assert.match(source, /variant\s*=\s*'danger'/);
   assert.match(source, /resolvedBodyText\s*=\s*isNonEmptyString\(bodyText\)\s*\?\s*bodyText\s*:\s*descriptionText/);
   assert.match(source, /fallbackDescription\s*=\s*isNonEmptyString\(entityLabel\)/);
-  assert.match(source, /'Are you sure you want to continue\?'/);
+  assert.match(source, /t\('editor\.modal\.confirm\.defaultDescription'\)/);
   assert.equal(source.includes('cancelBtn.focus();'), true);
 });
 
@@ -1669,8 +1672,8 @@ test('replace/delete image flows use shared confirm modal and avoid native confi
 
 test('delete block baseline confirm parity uses shared danger modal labels', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("title: `Delete block ${displayIndex}?`"), true);
-  assert.equal(source.includes("confirmLabel: 'Delete block'"), true);
+  assert.equal(source.includes("title: t('editor.block.deleteDialogTitle', { index: displayIndex }),"), true);
+  assert.equal(source.includes("confirmLabel: t('editor.block.deleteConfirm'),"), true);
   assert.equal(source.includes('await showConfirmDialog({'), true);
 });
 
@@ -1686,7 +1689,7 @@ test('browse modal filters are decoupled from generic button-row card styling an
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.match(source, /filterRow\.className\s*=\s*'browse-modal__filters'/);
   assert.equal(source.includes("filterRow.className = 'button-row browse-modal__filters'"), false);
-  assert.match(source, /searchBtn\.setAttribute\('aria-label', 'Search published packages'\)/);
+  assert.match(source, /searchBtn\.setAttribute\('aria-label', t\('common\.publishedBrowser\.searchAriaLabel'\)\)/);
   assert.equal(source.includes('<span class="sr-only">Search</span>'), false);
 });
 
@@ -3613,8 +3616,8 @@ test('formatUploadedDraftTimestamp uses local browser formatting and handles inv
       hour: 'numeric',
       minute: '2-digit',
     });
-    assert.equal(mod.formatUploadedDraftTimestamp('not-a-date'), 'Unknown upload time');
-    assert.equal(mod.formatUploadedDraftTimestamp(''), 'Unknown upload time');
+    assert.equal(mod.formatUploadedDraftTimestamp('not-a-date'), 'common.values.unknownUploadTime');
+    assert.equal(mod.formatUploadedDraftTimestamp(''), 'common.values.unknownUploadTime');
   } finally {
     Intl.DateTimeFormat = originalFormatter;
   }
@@ -3624,32 +3627,32 @@ test('uploaded draft publish badge labels distinguish live and deleted published
   const mod = await loadEditorModule();
   assert.equal(
     mod.getUploadedDraftPublishBadge({ publish_state: 'draft_only' }).text,
-    'Not published'
+    'editor.uploadedDraft.publishBadge.notPublished'
   );
   assert.equal(
     mod.getUploadedDraftPublishBadge({
       publish_state: 'current_version_published',
       published_package_id: 'p-live',
     }).text,
-    'Published — package live'
+    'editor.uploadedDraft.publishBadge.live'
   );
   assert.equal(
     mod.getUploadedDraftPublishBadge({
       publish_state: 'current_version_published',
       published_package_id: '',
     }).text,
-    'Published — package deleted'
+    'editor.uploadedDraft.publishBadge.deleted'
   );
   assert.equal(
     mod.getUploadedDraftPublishBadge({ publish_state: 'unpublished_changes' }).text,
-    'Updated — ready to publish'
+    'editor.uploadedDraft.publishBadge.updated'
   );
   assert.equal(
     mod.getUploadedDraftPublishBadge({
       artifact_sha256: 'sha',
       last_published_artifact_sha256: 'sha',
     }).text,
-    'Published — package deleted'
+    'editor.uploadedDraft.publishBadge.deleted'
   );
 });
 
@@ -4023,14 +4026,14 @@ test('toUploadedDraftDisplay includes fallback title and uploaded label', async 
       created_at: '2026-04-07T15:42:00.000Z',
     });
     assert.equal(withTitle.title, 'Algebra worksheet');
-    assert.equal(withTitle.uploadedLabel, 'Uploaded: Apr 7, 2026, 3:42 PM');
+    assert.equal(withTitle.uploadedLabel, 'common.meta.uploaded');
 
     const untitled = mod.toUploadedDraftDisplay({
       title: '',
       created_at: '',
     });
-    assert.equal(untitled.title, 'Untitled');
-    assert.equal(untitled.uploadedLabel, 'Uploaded: Unknown upload time');
+    assert.equal(untitled.title, 'common.values.untitled');
+    assert.equal(untitled.uploadedLabel, 'common.meta.uploaded');
   } finally {
     Intl.DateTimeFormat = originalFormatter;
   }

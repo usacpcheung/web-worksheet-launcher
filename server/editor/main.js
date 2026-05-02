@@ -28,9 +28,9 @@ function nowIso() {
 }
 
 function formatUploadedDraftTimestamp(createdAt, locale = undefined) {
-  if (!isNonEmptyString(createdAt)) return 'Unknown upload time';
+  if (!isNonEmptyString(createdAt)) return t('common.values.unknownUploadTime');
   const parsed = new Date(createdAt);
-  if (Number.isNaN(parsed.getTime())) return 'Unknown upload time';
+  if (Number.isNaN(parsed.getTime())) return t('common.values.unknownUploadTime');
   return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
@@ -41,10 +41,10 @@ function formatUploadedDraftTimestamp(createdAt, locale = undefined) {
 }
 
 function toUploadedDraftDisplay(item, locale = undefined) {
-  const title = isNonEmptyString(item?.title) ? item.title.trim() : 'Untitled';
+  const title = isNonEmptyString(item?.title) ? item.title.trim() : t('common.values.untitled');
   return {
     title,
-    uploadedLabel: `Uploaded: ${formatUploadedDraftTimestamp(item?.created_at, locale)}`,
+    uploadedLabel: t('common.meta.uploaded', { value: formatUploadedDraftTimestamp(item?.created_at, locale) }),
   };
 }
 
@@ -69,22 +69,22 @@ function getUploadedDraftPublishBadge(item) {
       className: hasPublishedPackage
         ? 'editor-pill editor-pill--ok uploaded-draft-published-badge'
         : 'editor-pill editor-pill--warn uploaded-draft-published-badge',
-      text: hasPublishedPackage ? 'Published — package live' : 'Published — package deleted',
+      text: hasPublishedPackage ? t('editor.uploadedDraft.publishBadge.live') : t('editor.uploadedDraft.publishBadge.deleted'),
       helperText: hasPublishedPackage
-        ? 'This version is published and can be opened with the viewer link.'
-        : 'This version was already published, but the published package has been deleted. Replace or upload an updated draft to publish again.',
+        ? t('editor.uploadedDraft.publishBadge.liveHelp')
+        : t('editor.uploadedDraft.publishBadge.deletedHelp'),
     };
   }
   if (publishState === 'unpublished_changes') {
     return {
       className: 'editor-pill editor-pill--warn uploaded-draft-published-badge',
-      text: 'Updated — ready to publish',
+      text: t('editor.uploadedDraft.publishBadge.updated'),
       helperText: '',
     };
   }
   return {
     className: 'editor-pill uploaded-draft-published-badge',
-    text: 'Not published',
+    text: t('editor.uploadedDraft.publishBadge.notPublished'),
     helperText: '',
   };
 }
@@ -3688,7 +3688,7 @@ function renderEditorShell(session) {
   localDraftIdEl.className = 'editor-topbar-item';
   const localDraftIdLabel = document.createElement('span');
   localDraftIdLabel.className = 'editor-label';
-  localDraftIdLabel.textContent = 'localDraftId:';
+  localDraftIdLabel.textContent = t('editor.labels.localDraftId');
   const localDraftIdValue = document.createElement('span');
   localDraftIdValue.className = 'editor-id-value';
   localDraftIdEl.append(localDraftIdLabel, localDraftIdValue);
@@ -3721,7 +3721,7 @@ function renderEditorShell(session) {
   const moreActions = document.createElement('details');
   moreActions.className = 'editor-more-actions';
   const moreActionsSummary = document.createElement('summary');
-  moreActionsSummary.textContent = 'More Actions';
+  moreActionsSummary.textContent = t('editor.actions.more');
   moreActions.appendChild(moreActionsSummary);
 
   const blockKind = document.createElement('select');
@@ -3739,20 +3739,20 @@ function renderEditorShell(session) {
   titleField.className = 'editor-field';
   const titleLabel = document.createElement('label');
   titleLabel.setAttribute('for', 'editor-title-input');
-  titleLabel.textContent = 'Worksheet Title';
+  titleLabel.textContent = t('editor.form.title.label');
   const titleInput = document.createElement('input');
   titleInput.id = 'editor-title-input';
-  titleInput.placeholder = 'Worksheet title';
+  titleInput.placeholder = t('editor.form.title.placeholder');
   titleInput.className = 'control';
   titleField.append(titleLabel, titleInput);
   const subjectField = document.createElement('div');
   subjectField.className = 'editor-field';
   const subjectLabel = document.createElement('label');
   subjectLabel.setAttribute('for', 'editor-subject-input');
-  subjectLabel.textContent = 'Subject';
+  subjectLabel.textContent = t('editor.form.subject.label');
   const subjectInput = document.createElement('input');
   subjectInput.id = 'editor-subject-input';
-  subjectInput.placeholder = 'Subject';
+  subjectInput.placeholder = t('editor.form.subject.placeholder');
   subjectInput.className = 'control';
   subjectField.append(subjectLabel, subjectInput);
   metadataSection.append(metadataHeading, titleField, subjectField);
@@ -3815,7 +3815,7 @@ function renderEditorShell(session) {
   const addOptionBtn = document.createElement('button');
   addOptionBtn.type = 'button';
   addOptionBtn.className = 'option-add-btn';
-  addOptionBtn.textContent = '+ Add option';
+  addOptionBtn.textContent = t('editor.option.add');
   const questionSelectionMode = document.createElement('select');
   questionSelectionMode.id = 'editor-question-selection-mode';
   questionSelectionMode.className = 'control';
@@ -3835,7 +3835,7 @@ function renderEditorShell(session) {
   const questionShuffleToggle = document.createElement('button');
   questionShuffleToggle.type = 'button';
   questionShuffleToggle.className = 'option-correct-toggle inline-toggle__tick-btn';
-  questionShuffleToggle.setAttribute('aria-label', 'Toggle shuffle options');
+  questionShuffleToggle.setAttribute('aria-label', t('editor.question.toggleShuffleAria'));
   questionShuffleToggle.setAttribute('aria-pressed', 'false');
   const questionShuffleTick = document.createElement('span');
   questionShuffleTick.className = 'option-correct-toggle__tick';
@@ -3857,7 +3857,7 @@ function renderEditorShell(session) {
   const questionNumberAllowSignedToggle = document.createElement('button');
   questionNumberAllowSignedToggle.type = 'button';
   questionNumberAllowSignedToggle.className = 'option-correct-toggle inline-toggle__tick-btn';
-  questionNumberAllowSignedToggle.setAttribute('aria-label', 'Toggle signed values');
+  questionNumberAllowSignedToggle.setAttribute('aria-label', t('editor.question.toggleSignedValuesAria'));
   questionNumberAllowSignedToggle.setAttribute('aria-pressed', 'false');
   const questionNumberAllowSignedTick = document.createElement('span');
   questionNumberAllowSignedTick.className = 'option-correct-toggle__tick';
@@ -3974,14 +3974,14 @@ function renderEditorShell(session) {
     description.className = 'confirm-modal__description';
     const resolvedBodyText = isNonEmptyString(bodyText) ? bodyText : descriptionText;
     const fallbackDescription = isNonEmptyString(entityLabel)
-      ? `You are deleting ${entityLabel}.`
-      : 'Are you sure you want to continue?';
+      ? t('editor.modal.confirm.deleteEntity', { entity: entityLabel })
+      : t('editor.modal.confirm.defaultDescription');
     description.textContent = isNonEmptyString(resolvedBodyText)
       ? resolvedBodyText
       : fallbackDescription;
     const detailsHeading = document.createElement('p');
     detailsHeading.className = 'confirm-modal__details-heading';
-    detailsHeading.textContent = 'This will remove:';
+    detailsHeading.textContent = t('editor.modal.confirm.thisWillRemove');
     const detailsList = document.createElement('ul');
     detailsList.className = 'confirm-modal__details-list';
     removalItems.forEach((item) => {
@@ -3991,7 +3991,7 @@ function renderEditorShell(session) {
     });
     const warning = document.createElement('p');
     warning.className = 'confirm-modal__warning';
-    warning.textContent = 'This action is irreversible. Undo is not available.';
+    warning.textContent = t('editor.modal.confirm.irreversibleWarning');
     const actionRow = document.createElement('div');
     actionRow.className = 'confirm-modal__actions';
     const cancelBtn = document.createElement('button');
@@ -4075,7 +4075,7 @@ function renderEditorShell(session) {
       bodyText,
       removalItems,
       confirmLabel,
-      cancelLabel: 'Cancel',
+      cancelLabel: t('common.actions.cancel'),
       variant: 'danger',
       entityLabel: '',
     });
@@ -4246,14 +4246,14 @@ function renderEditorShell(session) {
       dialog.setAttribute('role', 'dialog');
       dialog.setAttribute('aria-modal', 'true');
       const heading = document.createElement('h3');
-      heading.textContent = 'Publish uploaded draft';
+      heading.textContent = t('editor.modal.publish.title');
       const description = document.createElement('p');
       description.className = 'confirm-modal__description';
-      description.textContent = 'Confirm the published package title and subject. This will not edit uploaded draft metadata.';
+      description.textContent = t('editor.modal.publish.description');
       const publishTitleField = document.createElement('div');
       publishTitleField.className = 'editor-field';
       const publishTitleLabel = document.createElement('label');
-      publishTitleLabel.textContent = 'Published Title';
+      publishTitleLabel.textContent = t('editor.modal.publish.publishedTitle');
       const publishTitleInput = document.createElement('input');
       publishTitleInput.className = 'control';
       publishTitleInput.value = initialTitle !== null
@@ -4263,7 +4263,7 @@ function renderEditorShell(session) {
       const publishSubjectField = document.createElement('div');
       publishSubjectField.className = 'editor-field';
       const publishSubjectLabel = document.createElement('label');
-      publishSubjectLabel.textContent = 'Published Subject';
+      publishSubjectLabel.textContent = t('editor.modal.publish.publishedSubject');
       const publishSubjectInput = document.createElement('input');
       publishSubjectInput.className = 'control';
       publishSubjectInput.value = initialSubject !== null
@@ -4275,11 +4275,11 @@ function renderEditorShell(session) {
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.className = 'confirm-modal__btn';
-      cancelBtn.textContent = 'Cancel';
+      cancelBtn.textContent = t('common.actions.cancel');
       const confirmBtn = document.createElement('button');
       confirmBtn.type = 'button';
       confirmBtn.className = 'confirm-modal__btn confirm-modal__btn--primary';
-      confirmBtn.textContent = 'Publish';
+      confirmBtn.textContent = t('common.actions.publish');
       actions.append(cancelBtn, confirmBtn);
       dialog.append(heading, description, publishTitleField, publishSubjectField, actions);
       overlay.appendChild(dialog);
@@ -4349,24 +4349,24 @@ function renderEditorShell(session) {
       dialog.setAttribute('aria-modal', 'true');
 
       const heading = document.createElement('h3');
-      heading.textContent = 'Published package conflict';
+      heading.textContent = t('editor.modal.publishConflict.title');
       const description = document.createElement('p');
       description.className = 'confirm-modal__description';
-      description.textContent = 'A published package with this worksheet name and subject already exists.';
+      description.textContent = t('editor.modal.publishConflict.description');
       const warning = document.createElement('p');
       warning.className = 'confirm-modal__warning';
-      warning.textContent = 'Existing viewer links may already be in use. This app will not replace or delete that package automatically.';
+      warning.textContent = t('editor.modal.publishConflict.warning');
 
       const actions = document.createElement('div');
       actions.className = 'confirm-modal__actions';
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.className = 'confirm-modal__btn';
-      cancelBtn.textContent = 'Cancel';
+      cancelBtn.textContent = t('common.actions.cancel');
       const editBtn = document.createElement('button');
       editBtn.type = 'button';
       editBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
-      editBtn.textContent = 'Edit Published Name/Subject';
+      editBtn.textContent = t('editor.modal.publishConflict.editNameSubject');
       actions.append(cancelBtn, editBtn);
       dialog.append(heading, description, warning, actions);
       overlay.appendChild(dialog);
@@ -4424,40 +4424,42 @@ function renderEditorShell(session) {
       dialog.setAttribute('role', 'dialog');
       dialog.setAttribute('aria-modal', 'true');
       const heading = document.createElement('h3');
-      heading.textContent = 'Uploaded draft already exists';
+      heading.textContent = t('editor.modal.uploadConflict.title');
       const description = document.createElement('p');
       description.className = 'confirm-modal__description';
-      description.textContent = `A draft named "${existingDraft?.title || 'Untitled'}" already exists for this subject.`;
+      description.textContent = t('editor.modal.uploadConflict.description', {
+        title: existingDraft?.title || t('common.values.untitled'),
+      });
       const details = document.createElement('div');
       details.className = 'muted uploaded-draft-details-body';
       const subjectLine = document.createElement('div');
-      subjectLine.textContent = `Subject: ${existingDraft?.subject || '-'}`;
+      subjectLine.textContent = t('common.meta.subject', { value: existingDraft?.subject || '-' });
       const uploadedLine = document.createElement('div');
-      uploadedLine.textContent = `Uploaded: ${formatUploadedDraftTimestamp(existingDraft?.created_at)}`;
+      uploadedLine.textContent = t('common.meta.uploaded', { value: formatUploadedDraftTimestamp(existingDraft?.created_at) });
       const statusLine = document.createElement('div');
       statusLine.textContent = existingDraft?.published_package_id
-        ? 'Status: already published'
-        : 'Status: draft only';
+        ? t('common.meta.status', { value: t('editor.modal.uploadConflict.statusAlreadyPublished') })
+        : t('common.meta.status', { value: t('editor.modal.uploadConflict.statusDraftOnly') });
       details.append(subjectLine, uploadedLine, statusLine);
       const warning = document.createElement('p');
       warning.className = 'confirm-modal__warning';
       warning.textContent = existingDraft?.published_package_id
-        ? 'The published package will not change. The old uploaded draft copy will be removed and this upload will become the new draft copy.'
-        : 'Replacing will update the existing uploaded draft artifact.';
+        ? t('editor.modal.uploadConflict.warningPublishedCopyUnaffected')
+        : t('editor.modal.uploadConflict.warningReplaceArtifact');
       const actions = document.createElement('div');
       actions.className = 'confirm-modal__actions';
       const cancelBtn = document.createElement('button');
       cancelBtn.type = 'button';
       cancelBtn.className = 'confirm-modal__btn';
-      cancelBtn.textContent = 'Cancel';
+      cancelBtn.textContent = t('common.actions.cancel');
       const copyBtn = document.createElement('button');
       copyBtn.type = 'button';
       copyBtn.className = 'confirm-modal__btn';
-      copyBtn.textContent = 'Save as New Copy';
+      copyBtn.textContent = t('editor.modal.uploadConflict.saveAsNewCopy');
       const replaceBtn = document.createElement('button');
       replaceBtn.type = 'button';
       replaceBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
-      replaceBtn.textContent = 'Replace Uploaded Draft';
+      replaceBtn.textContent = t('editor.modal.uploadConflict.replaceUploadedDraft');
       actions.append(cancelBtn, copyBtn, replaceBtn);
       dialog.append(heading, description, details, warning, actions);
       overlay.appendChild(dialog);
@@ -4508,10 +4510,10 @@ function renderEditorShell(session) {
       dialog.setAttribute('role', 'dialog');
       dialog.setAttribute('aria-modal', 'true');
       const heading = document.createElement('h3');
-      heading.textContent = 'Draft slots are full';
+      heading.textContent = t('editor.modal.slotLimit.title');
       const description = document.createElement('p');
       description.className = 'confirm-modal__description';
-      description.textContent = 'Delete one uploaded draft to continue this upload.';
+      description.textContent = t('editor.modal.slotLimit.description');
       const list = document.createElement('div');
       list.className = 'browse-results';
       rows.forEach((item) => {
@@ -4519,7 +4521,7 @@ function renderEditorShell(session) {
         row.className = 'published-result-row';
         const title = document.createElement('strong');
         title.className = 'published-result-title';
-        title.textContent = item.title || 'Untitled';
+        title.textContent = item.title || t('common.values.untitled');
         const meta = document.createElement('div');
         meta.className = 'muted published-result-subject-owner';
         meta.textContent = `${item.subject || '-'} • ${formatUploadedDraftTimestamp(item.created_at)}`;
@@ -4529,13 +4531,13 @@ function renderEditorShell(session) {
         deleteBtn.textContent = t('common.actions.delete');
         deleteBtn.addEventListener('click', async () => {
           const confirmed = await showConfirmDialog({
-            title: 'Delete uploaded draft?',
-            entityLabel: item.title || 'Untitled',
+            title: t('editor.uploadedDraft.deleteDialog.title'),
+            entityLabel: item.title || t('common.values.untitled'),
             descriptionText: item.published_package_id
-              ? 'This deletes the uploaded draft slot only. The published package remains unchanged.'
-              : 'This will permanently remove this uploaded draft from server storage.',
-            removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
-            confirmLabel: 'Delete draft',
+              ? t('editor.uploadedDraft.deleteDialog.publishedDescription')
+              : t('editor.uploadedDraft.deleteDialog.draftDescription'),
+            removalItems: [t('editor.uploadedDraft.deleteDialog.removeArtifact'), t('editor.uploadedDraft.deleteDialog.removeMetadata')],
+            confirmLabel: t('editor.uploadedDraft.deleteDialog.confirm'),
           });
           if (!confirmed) return;
           const result = await session.deleteUploadedDraft(item.uploaded_draft_id);
@@ -4553,7 +4555,7 @@ function renderEditorShell(session) {
       const closeBtn = document.createElement('button');
       closeBtn.type = 'button';
       closeBtn.className = 'confirm-modal__btn';
-      closeBtn.textContent = 'Cancel';
+      closeBtn.textContent = t('common.actions.cancel');
       closeBtn.addEventListener('click', () => {
         overlay.remove();
         if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
@@ -4652,21 +4654,21 @@ function renderEditorShell(session) {
     filterRow.className = 'browse-modal__filters';
     const titleFilter = document.createElement('input');
     titleFilter.className = 'control';
-    titleFilter.placeholder = 'Filter by title';
+    titleFilter.placeholder = t('common.publishedBrowser.filterByTitle');
     titleFilter.value = browsePublishedState.title;
     const subjectFilter = document.createElement('input');
     subjectFilter.className = 'control';
-    subjectFilter.placeholder = 'Filter by subject';
+    subjectFilter.placeholder = t('common.publishedBrowser.filterBySubject');
     subjectFilter.value = browsePublishedState.subject;
     const ownerFilter = document.createElement('input');
     ownerFilter.className = 'control';
-    ownerFilter.placeholder = 'Filter by owner email';
+    ownerFilter.placeholder = t('common.publishedBrowser.filterByOwnerEmail');
     ownerFilter.value = browsePublishedState.owner;
     const searchBtn = document.createElement('button');
     searchBtn.type = 'button';
     searchBtn.className = 'browse-modal__search-btn';
     searchBtn.innerHTML = '<svg class="browse-modal__search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.25" stroke="currentColor" stroke-width="1.6"></circle><path d="M12.5 12.5L16.25 16.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg>';
-    searchBtn.setAttribute('aria-label', 'Search published packages');
+    searchBtn.setAttribute('aria-label', t('common.publishedBrowser.searchAriaLabel'));
     searchBtn.disabled = browsePublishedState.loading;
     filterRow.append(titleFilter, subjectFilter, ownerFilter, searchBtn);
     const results = document.createElement('div');
@@ -4679,12 +4681,12 @@ function renderEditorShell(session) {
     } else if (browsePublishedState.loading) {
       const loading = document.createElement('p');
       loading.className = 'muted';
-      loading.textContent = 'Loading published packages…';
+      loading.textContent = t('common.publishedBrowser.loading');
       results.appendChild(loading);
     } else if (browsePublishedState.items.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'muted';
-      empty.textContent = 'No published packages found.';
+      empty.textContent = t('common.publishedBrowser.empty');
       results.appendChild(empty);
     } else {
       browsePublishedState.items.forEach((item) => {
@@ -4694,17 +4696,20 @@ function renderEditorShell(session) {
         titleLine.className = 'published-result-title-line';
         const title = document.createElement('strong');
         title.className = 'published-result-title';
-        title.textContent = item.title || 'Untitled';
+        title.textContent = item.title || t('common.values.untitled');
         const publishedDate = document.createElement('span');
         publishedDate.className = 'published-result-date muted';
         publishedDate.textContent = formatUploadedDraftTimestamp(item.published_at);
         titleLine.append(title, publishedDate);
         const subjectOwner = document.createElement('div');
         subjectOwner.className = 'muted published-result-subject-owner';
-        subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;
+        subjectOwner.textContent = t('editor.published.metaSubjectOwner', {
+          subject: item.subject || '—',
+          owner: item.owner_email || item.owner_name || item.owner_sub || '—',
+        });
         const publishedMeta = document.createElement('div');
         publishedMeta.className = 'muted published-result-id';
-        publishedMeta.textContent = `Package ID: ${item.published_package_id}`;
+        publishedMeta.textContent = t('common.meta.packageId', { value: item.published_package_id });
         row.append(titleLine, subjectOwner, publishedMeta);
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
@@ -4717,15 +4722,15 @@ function renderEditorShell(session) {
             kind: copied ? 'success' : 'warn',
             source: 'clipboard.publishedId',
             text: copied
-              ? 'Copied viewer link.'
-              : 'Clipboard copy is unavailable in this browser.',
+              ? t('editor.notifications.viewerLinkCopied')
+              : t('common.clipboard.unavailable'),
           });
         });
         const openInEditorBtn = document.createElement('button');
         openInEditorBtn.type = 'button';
         openInEditorBtn.className = 'uploaded-draft-action published-result-action';
         const isOpening = session.state.openingPublishedPackageIds.has(item.published_package_id);
-        openInEditorBtn.textContent = isOpening ? 'Opening…' : t('editor.published.openInEditor');
+        openInEditorBtn.textContent = isOpening ? t('editor.published.openingInEditor') : t('editor.published.openInEditor');
         openInEditorBtn.disabled = !serverReady || browsePublishedState.loading || isOpening;
         openInEditorBtn.addEventListener('click', async () => {
           if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
@@ -4736,11 +4741,11 @@ function renderEditorShell(session) {
             emitPublishedBrowseNotification({
               kind: 'success',
               source: 'browse.published.open',
-              text: `Opened published package ${item.published_package_id} in the editor.`,
+              text: t('editor.notifications.openedPublishedPackageInEditor', { id: item.published_package_id }),
             });
             browsePublishedDialogOpen = false;
           } else {
-            const openError = session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.';
+            const openError = session.state.serverActionMessage || reopenResult?.error?.message || t('editor.notifications.failedOpenPublishedPackage');
             browsePublishedState = {
               ...browsePublishedState,
               error: openError,
@@ -5094,13 +5099,13 @@ function renderEditorShell(session) {
     const menu = document.createElement('div');
     menu.className = 'block-reorder-menu';
     menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', `Reorder block ${displayIndex}`);
+    menu.setAttribute('aria-label', t('editor.reorder.menuAriaLabel', { index: displayIndex }));
 
     const moveUpBtn = document.createElement('button');
     moveUpBtn.type = 'button';
     moveUpBtn.className = 'block-reorder-menu__item';
-    moveUpBtn.title = `Move block ${displayIndex} up`;
-    moveUpBtn.textContent = 'Move up';
+    moveUpBtn.title = t('editor.reorder.moveUpTitle', { index: displayIndex });
+    moveUpBtn.textContent = t('editor.reorder.moveUp');
     moveUpBtn.disabled = isFirst;
     moveUpBtn.setAttribute('role', 'menuitem');
     moveUpBtn.addEventListener('click', () => {
@@ -5112,8 +5117,8 @@ function renderEditorShell(session) {
     const moveDownBtn = document.createElement('button');
     moveDownBtn.type = 'button';
     moveDownBtn.className = 'block-reorder-menu__item';
-    moveDownBtn.title = `Move block ${displayIndex} down`;
-    moveDownBtn.textContent = 'Move down';
+    moveDownBtn.title = t('editor.reorder.moveDownTitle', { index: displayIndex });
+    moveDownBtn.textContent = t('editor.reorder.moveDown');
     moveDownBtn.disabled = isLast;
     moveDownBtn.setAttribute('role', 'menuitem');
     moveDownBtn.addEventListener('click', () => {
@@ -5170,8 +5175,8 @@ function renderEditorShell(session) {
       const dragHandle = document.createElement('button');
       dragHandle.type = 'button';
       dragHandle.className = 'block-drag-handle';
-      dragHandle.title = `Drag block ${index + 1} to reorder`;
-      dragHandle.setAttribute('aria-label', `Drag block ${index + 1} to reorder`);
+      dragHandle.title = t('editor.reorder.dragHandleTitle', { index: index + 1 });
+      dragHandle.setAttribute('aria-label', t('editor.reorder.dragHandleAriaLabel', { index: index + 1 }));
       dragHandle.setAttribute('draggable', 'true');
       dragHandle.innerHTML = createEditorIcon('grip');
       dragHandle.addEventListener('click', (event) => {
@@ -5245,8 +5250,8 @@ function renderEditorShell(session) {
       const reorderMenuBtn = document.createElement('button');
       reorderMenuBtn.type = 'button';
       reorderMenuBtn.className = 'icon-btn';
-      reorderMenuBtn.title = `More reorder actions for block ${displayIndex}`;
-      reorderMenuBtn.setAttribute('aria-label', `More reorder actions for block ${displayIndex}`);
+      reorderMenuBtn.title = t('editor.reorder.moreActionsTitle', { index: displayIndex });
+      reorderMenuBtn.setAttribute('aria-label', t('editor.reorder.moreActionsAriaLabel', { index: displayIndex }));
       reorderMenuBtn.setAttribute('aria-haspopup', 'menu');
       reorderMenuBtn.setAttribute('aria-expanded', 'false');
       reorderMenuBtn.innerHTML = createEditorIcon('moreHorizontal');
@@ -5262,8 +5267,8 @@ function renderEditorShell(session) {
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'icon-btn danger';
-      deleteBtn.title = 'Delete this block';
-      deleteBtn.setAttribute('aria-label', `Delete block ${displayIndex}`);
+      deleteBtn.title = t('editor.block.deleteThisBlock');
+      deleteBtn.setAttribute('aria-label', t('editor.block.deleteBlockAriaLabel', { index: displayIndex }));
       setIconButtonContent(deleteBtn, 'trash');
       deleteBtn.addEventListener('click', async (event) => {
         event.stopPropagation();
@@ -5277,10 +5282,10 @@ function renderEditorShell(session) {
             removalItems.push('Any linked image/audio files and related asset metadata.');
           }
           const confirmed = await showConfirmDialog({
-            title: `Delete block ${displayIndex}?`,
-            entityLabel: `block ${displayIndex}`,
+            title: t('editor.block.deleteDialogTitle', { index: displayIndex }),
+            entityLabel: t('editor.block.entityLabel', { index: displayIndex }),
             removalItems,
-            confirmLabel: 'Delete block',
+            confirmLabel: t('editor.block.deleteConfirm'),
           });
           if (!confirmed) return;
           session.deleteBlockWithPolicy(block.blockId, { confirmDelete: true });
@@ -5532,7 +5537,7 @@ function renderEditorShell(session) {
     if (!selectedBlock) {
       promptT2AUiRefs = null;
       const empty = document.createElement('p');
-      empty.textContent = 'Select a block to edit.';
+      empty.textContent = t('editor.block.emptyState');
       detailHeader.append(detailTitleGroup);
       rightPanel.append(detailHeader);
       rightPanel.append(statusRow);
@@ -5543,9 +5548,9 @@ function renderEditorShell(session) {
     detailActions.append(
       blockKind,
       createCopyIdMenu({
-        title: 'Block ID',
+        title: t('editor.block.blockIdLabel'),
         idValue: selectedBlock.blockId,
-        copyLabel: 'Copy Block ID',
+        copyLabel: t('editor.block.copyBlockId'),
         source: 'clipboard.blockId',
       })
     );
@@ -5555,20 +5560,20 @@ function renderEditorShell(session) {
 
     if (selectedBlock.kind === 'content') {
       promptT2AUiRefs = null;
-      rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: 'Content' }));
+      rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: t('editor.block.contentSectionTitle') }));
       const contentLabel = document.createElement('label');
-      contentLabel.textContent = 'Content text';
+      contentLabel.textContent = t('editor.block.contentTextLabel');
       contentLabel.htmlFor = 'editor-block-editor';
-      blockEditor.placeholder = 'Content block text';
+      blockEditor.placeholder = t('editor.block.contentTextPlaceholder');
       rightPanel.append(contentLabel, blockEditor);
       return;
     }
 
-    rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: 'Question' }));
+    rightPanel.appendChild(createEditorSectionHeader({ icon: 'pencil', title: t('editor.block.questionSectionTitle') }));
     const promptLabel = document.createElement('label');
-    promptLabel.textContent = 'Prompt';
+    promptLabel.textContent = t('editor.block.promptLabel');
     promptLabel.htmlFor = 'editor-block-editor';
-    blockEditor.placeholder = 'Question prompt';
+    blockEditor.placeholder = t('editor.block.promptPlaceholder');
     rightPanel.append(promptLabel, blockEditor);
 
     const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
@@ -5577,7 +5582,7 @@ function renderEditorShell(session) {
 
     const mediaSection = document.createElement('section');
     mediaSection.className = 'editor-detail-section media-section';
-    mediaSection.appendChild(createEditorSectionHeader({ icon: 'image', title: 'Prompt Media' }));
+    mediaSection.appendChild(createEditorSectionHeader({ icon: 'image', title: t('editor.block.promptMediaTitle') }));
     const mediaRows = document.createElement('div');
     mediaRows.className = 'media-row-list';
     const questionImageRow = document.createElement('div');
@@ -5586,21 +5591,21 @@ function renderEditorShell(session) {
     questionImageMeta.className = 'media-row__meta';
     const questionImageLabel = document.createElement('span');
     questionImageLabel.className = 'media-row__title';
-    questionImageLabel.textContent = 'Prompt image';
+    questionImageLabel.textContent = t('editor.block.promptImageLabel');
     questionImageMeta.appendChild(questionImageLabel);
     if (currentQuestionImageRef) {
       questionImageMeta.appendChild(createCopyIdMenu({
         triggerKind: 'badge',
-        triggerText: 'Attached',
-        title: 'Prompt Image Asset ID',
+        triggerText: t('editor.block.attachedBadge'),
+        title: t('editor.block.promptImageAssetId'),
         idValue: currentQuestionImageRef.assetId,
-        copyLabel: 'Copy Asset ID',
+        copyLabel: t('editor.block.copyAssetId'),
         source: 'clipboard.imageAssetId',
       }));
     } else {
       const emptyImageBadge = document.createElement('span');
       emptyImageBadge.className = 'asset-status-badge asset-status-badge--empty';
-      emptyImageBadge.textContent = 'None';
+      emptyImageBadge.textContent = t('common.values.none');
       questionImageMeta.appendChild(emptyImageBadge);
     }
     const questionImageActions = document.createElement('div');
@@ -5655,21 +5660,21 @@ function renderEditorShell(session) {
     questionAudioMeta.className = 'media-row__meta';
     const questionAudioLabel = document.createElement('span');
     questionAudioLabel.className = 'media-row__title';
-    questionAudioLabel.textContent = 'Prompt audio';
+    questionAudioLabel.textContent = t('editor.block.promptAudioLabel');
     questionAudioMeta.appendChild(questionAudioLabel);
     if (currentQuestionAudioRef) {
       questionAudioMeta.appendChild(createCopyIdMenu({
         triggerKind: 'badge',
-        triggerText: 'Attached',
-        title: 'Prompt Audio Asset ID',
+        triggerText: t('editor.block.attachedBadge'),
+        title: t('editor.block.promptAudioAssetId'),
         idValue: currentQuestionAudioRef.assetId,
-        copyLabel: 'Copy Asset ID',
+        copyLabel: t('editor.block.copyAssetId'),
         source: 'clipboard.audioAssetId',
       }));
     } else {
       const emptyAudioBadge = document.createElement('span');
       emptyAudioBadge.className = 'asset-status-badge asset-status-badge--empty';
-      emptyAudioBadge.textContent = 'None';
+      emptyAudioBadge.textContent = t('common.values.none');
       questionAudioMeta.appendChild(emptyAudioBadge);
     }
     const questionAudioActions = document.createElement('div');
@@ -5831,11 +5836,11 @@ function renderEditorShell(session) {
 
     const answerSection = document.createElement('section');
     answerSection.className = 'editor-detail-section answer-section';
-    answerSection.appendChild(createEditorSectionHeader({ icon: 'list', title: 'Answer' }));
+    answerSection.appendChild(createEditorSectionHeader({ icon: 'list', title: t('editor.question.answerSectionTitle') }));
     const answerGrid = document.createElement('div');
     answerGrid.className = 'answer-grid';
     const inputTypeLabel = document.createElement('label');
-    inputTypeLabel.textContent = 'Answer input type';
+    inputTypeLabel.textContent = t('editor.question.answerInputType');
     inputTypeLabel.htmlFor = 'editor-question-input-type';
     const inputTypeField = document.createElement('div');
     inputTypeField.className = 'editor-field';
@@ -5845,7 +5850,7 @@ function renderEditorShell(session) {
     const activeInputType = selectedBlock.responseConfig?.inputType || 'text';
     if (activeInputType === 'multiple_choice') {
       const selectionModeLabel = document.createElement('label');
-      selectionModeLabel.textContent = 'Selection mode';
+      selectionModeLabel.textContent = t('editor.question.selectionMode');
       selectionModeLabel.htmlFor = 'editor-question-selection-mode';
       const selectionModeField = document.createElement('div');
       selectionModeField.className = 'editor-field';
@@ -5859,7 +5864,7 @@ function renderEditorShell(session) {
       const maxLengthField = document.createElement('div');
       maxLengthField.className = 'editor-field';
       const maxLengthLabel = document.createElement('label');
-      maxLengthLabel.textContent = 'Max length';
+      maxLengthLabel.textContent = t('editor.question.maxLength');
       maxLengthLabel.htmlFor = 'editor-question-max-length';
       maxLengthField.append(maxLengthLabel, questionMaxLength);
 
@@ -5867,7 +5872,7 @@ function renderEditorShell(session) {
       displayModeField.className = 'editor-field';
       const displayModeLabel = document.createElement('label');
       displayModeLabel.id = 'editor-question-text-display-mode-label';
-      displayModeLabel.textContent = 'Response format';
+      displayModeLabel.textContent = t('editor.question.responseFormat');
       displayModeField.append(displayModeLabel, questionTextDisplayMode);
       textSettingsRow.append(maxLengthField, displayModeField);
       answerSection.appendChild(textSettingsRow);
@@ -5875,13 +5880,13 @@ function renderEditorShell(session) {
 
     if (activeInputType === 'number') {
       const minLabel = document.createElement('label');
-      minLabel.textContent = 'Min';
+      minLabel.textContent = t('editor.question.min');
       minLabel.htmlFor = 'editor-question-min';
       const minField = document.createElement('div');
       minField.className = 'editor-field';
       minField.append(minLabel, questionMin, questionMinError);
       const maxLabel = document.createElement('label');
-      maxLabel.textContent = 'Max';
+      maxLabel.textContent = t('editor.question.max');
       maxLabel.htmlFor = 'editor-question-max';
       const maxField = document.createElement('div');
       maxField.className = 'editor-field';
@@ -5898,18 +5903,18 @@ function renderEditorShell(session) {
       const signedRow = document.createElement('div');
       signedRow.className = 'inline-toggle inline-toggle--custom';
       const signedText = document.createElement('span');
-      signedText.textContent = 'Allow signed values (+/-)';
+      signedText.textContent = t('editor.question.allowSignedValues');
       signedRow.append(questionNumberAllowSignedToggle, questionNumberAllowSigned, signedText);
       signedField.append(signedRow);
 
       const decimalPlacesField = document.createElement('div');
       decimalPlacesField.className = 'editor-field';
       const decimalPlacesLabel = document.createElement('label');
-      decimalPlacesLabel.textContent = 'Decimal places';
+      decimalPlacesLabel.textContent = t('editor.question.decimalPlaces');
       decimalPlacesLabel.htmlFor = 'editor-question-number-decimal-places-allowed';
       const decimalPlacesHint = document.createElement('p');
       decimalPlacesHint.className = 'muted number-answer-hint';
-      decimalPlacesHint.textContent = 'Blank = unlimited';
+      decimalPlacesHint.textContent = t('editor.question.decimalPlacesHint');
       decimalPlacesField.append(
         decimalPlacesLabel,
         questionNumberDecimalPlacesAllowed,
@@ -5920,7 +5925,7 @@ function renderEditorShell(session) {
       answerSection.append(rulesRow);
 
       const correctAnswerLabel = document.createElement('label');
-      correctAnswerLabel.textContent = 'Correct answer';
+      correctAnswerLabel.textContent = t('editor.question.correctAnswer');
       correctAnswerLabel.htmlFor = 'editor-question-correct-answer-number';
       answerSection.append(correctAnswerLabel, questionCorrectAnswerNumber, questionCorrectAnswerNumberError);
     }
@@ -5928,7 +5933,7 @@ function renderEditorShell(session) {
     if (activeInputType === 'boolean') {
       const correctAnswerLabel = document.createElement('label');
       correctAnswerLabel.id = 'editor-question-correct-answer-boolean-label';
-      correctAnswerLabel.textContent = 'Correct answer';
+      correctAnswerLabel.textContent = t('editor.question.correctAnswer');
       answerSection.append(correctAnswerLabel, questionCorrectAnswerBoolean);
     }
 
@@ -5940,12 +5945,12 @@ function renderEditorShell(session) {
       const shuffleRow = document.createElement('div');
       shuffleRow.className = 'inline-toggle inline-toggle--custom';
       const shuffleText = document.createElement('span');
-      shuffleText.textContent = 'Shuffle options';
+      shuffleText.textContent = t('editor.question.shuffleOptions');
       shuffleRow.append(questionShuffleToggle, questionShuffleOptions, shuffleText);
       answerSection.append(shuffleRow);
 
       rightPanel.appendChild(answerSection);
-      rightPanel.appendChild(createEditorSectionHeader({ icon: 'list', title: 'Options' }));
+      rightPanel.appendChild(createEditorSectionHeader({ icon: 'list', title: t('editor.option.sectionTitle') }));
 
       const normalizedResponseConfig = normalizeQuestionResponseConfig(selectedBlock.responseConfig);
       const normalizedOptions = (normalizedResponseConfig.options || []).map((option, index) =>
@@ -5997,13 +6002,15 @@ function renderEditorShell(session) {
         const correctToggle = document.createElement('button');
         correctToggle.type = 'button';
         correctToggle.className = 'option-correct-toggle';
-        correctToggle.title = isMultiSelect ? 'Include in correct answers' : 'Mark as the correct answer';
+        correctToggle.title = isMultiSelect
+          ? t('editor.option.includeInCorrectAnswers')
+          : t('editor.option.markAsCorrectAnswer');
         correctToggle.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
         correctToggle.setAttribute(
           'aria-label',
           isMultiSelect
-            ? `Toggle option ${optionIndex + 1} correct answer`
-            : `Toggle option ${optionIndex + 1} as the correct answer`
+            ? t('editor.option.toggleCorrectAnswerAriaLabelMulti', { index: optionIndex + 1 })
+            : t('editor.option.toggleCorrectAnswerAriaLabelSingle', { index: optionIndex + 1 })
         );
         correctToggle.addEventListener('click', () => {
           if (!isMultiSelect) {
@@ -6037,7 +6044,7 @@ function renderEditorShell(session) {
         optionInput.dataset.optionInput = '1';
         optionInput.dataset.optionIndex = String(optionIndex);
         optionInput.className = 'control';
-        optionInput.placeholder = `Option ${optionIndex + 1}`;
+        optionInput.placeholder = t('editor.option.placeholder', { index: optionIndex + 1 });
         optionInput.value = String(option?.label ?? option?.value ?? '');
         let isOptionInputComposing = false;
         const commitOptionInputValue = () => {
@@ -6285,7 +6292,9 @@ function renderEditorShell(session) {
     if (session.state.uploadedDrafts.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'muted';
-      empty.textContent = session.state.isLoadingUploadedDrafts ? 'Loading uploaded drafts…' : 'No uploaded drafts yet.';
+      empty.textContent = session.state.isLoadingUploadedDrafts
+        ? t('editor.uploadedDraft.loading')
+        : t('editor.uploadedDraft.empty');
       container.appendChild(empty);
       return;
     }
@@ -6302,7 +6311,7 @@ function renderEditorShell(session) {
       uploadedAtLine.textContent = display.uploadedLabel;
       const subjectLine = document.createElement('div');
       subjectLine.className = 'muted uploaded-draft-uploaded-at';
-      subjectLine.textContent = `Subject: ${item.subject || '-'}`;
+      subjectLine.textContent = t('common.meta.subject', { value: item.subject || '-' });
       meta.append(titleLine, subjectLine, uploadedAtLine);
       const publishedPackageId = isNonEmptyString(item.published_package_id) ? item.published_package_id : null;
       const publishState = normalizeDraftPublishState(item);
@@ -6314,15 +6323,15 @@ function renderEditorShell(session) {
       const details = document.createElement('details');
       details.className = 'uploaded-draft-details uploaded-draft-details--draft';
       const summary = document.createElement('summary');
-      summary.textContent = 'Details';
+      summary.textContent = t('common.sections.details');
       const body = document.createElement('div');
       body.className = 'muted uploaded-draft-details-body';
       const draftIdLine = document.createElement('div');
-      draftIdLine.textContent = `Uploaded draft ID: ${item.uploaded_draft_id || '-'}`;
+      draftIdLine.textContent = t('editor.uploadedDraft.metaDraftId', { value: item.uploaded_draft_id || '-' });
       const publishedIdLine = document.createElement('div');
-      publishedIdLine.textContent = `Published ID: ${publishedPackageId || '-'}`;
+      publishedIdLine.textContent = t('editor.uploadedDraft.metaPublishedId', { value: publishedPackageId || '-' });
       const publishStateLine = document.createElement('div');
-      publishStateLine.textContent = `Publish state: ${publishState}`;
+      publishStateLine.textContent = t('editor.uploadedDraft.metaPublishState', { value: publishState });
       body.append(draftIdLine, publishedIdLine, publishStateLine);
       if (badgeConfig.helperText) {
         const helperLine = document.createElement('div');
@@ -6336,7 +6345,7 @@ function renderEditorShell(session) {
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
       openBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
-      openBtn.textContent = 'Open';
+      openBtn.textContent = t('common.actions.open');
       openBtn.disabled = !serverReady;
       openBtn.addEventListener('click', async () => {
         await guardServerMenuAction(openBtn, () => session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id));
@@ -6347,14 +6356,14 @@ function renderEditorShell(session) {
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
         copyBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
-        copyBtn.textContent = 'Copy Viewer Link';
+        copyBtn.textContent = t('editor.published.copyViewerLink');
         copyBtn.disabled = !serverReady;
         copyBtn.addEventListener('click', async () => {
           const copied = await copyTextToClipboard(buildPublishedPackageViewerUrl(publishedPackageId));
           emitServerNotification({
             kind: copied ? 'success' : 'warn',
             source: 'clipboard.publishedViewerLink',
-            text: copied ? 'Copied viewer link.' : 'Clipboard copy is unavailable in this browser.',
+            text: copied ? t('editor.notifications.viewerLinkCopied') : t('common.clipboard.unavailable'),
           });
         });
         actions.appendChild(copyBtn);
@@ -6365,7 +6374,11 @@ function renderEditorShell(session) {
         const publishBtn = document.createElement('button');
         publishBtn.type = 'button';
         publishBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
-        publishBtn.textContent = isPublishing ? 'Publishing…' : publishState === 'unpublished_changes' ? 'Publish New Version' : 'Publish';
+        publishBtn.textContent = isPublishing
+          ? t('editor.uploadedDraft.publishing')
+          : publishState === 'unpublished_changes'
+            ? t('editor.uploadedDraft.publishNewVersion')
+            : t('common.actions.publish');
         publishBtn.disabled = !serverReady || isPublishing;
         publishBtn.addEventListener('click', async () => {
           if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
@@ -6402,13 +6415,13 @@ function renderEditorShell(session) {
       deleteBtn.addEventListener('click', async () => {
         await guardServerMenuAction(deleteBtn, async () => {
           const confirmed = await showConfirmDialog({
-            title: 'Delete uploaded draft?',
-            entityLabel: isNonEmptyString(item.title) ? item.title.trim() : 'Untitled',
+            title: t('editor.uploadedDraft.deleteDialog.title'),
+            entityLabel: isNonEmptyString(item.title) ? item.title.trim() : t('common.values.untitled'),
             descriptionText: publishedPackageId
-              ? 'This deletes the uploaded draft slot only. The published package will remain available.'
-              : 'This will permanently remove this uploaded draft from server storage.',
-            removalItems: ['Uploaded draft ZIP artifact', 'Uploaded draft metadata'],
-            confirmLabel: 'Delete draft',
+              ? t('editor.uploadedDraft.deleteDialog.publishedDescription')
+              : t('editor.uploadedDraft.deleteDialog.draftDescription'),
+            removalItems: [t('editor.uploadedDraft.deleteDialog.removeArtifact'), t('editor.uploadedDraft.deleteDialog.removeMetadata')],
+            confirmLabel: t('editor.uploadedDraft.deleteDialog.confirm'),
           });
           if (!confirmed) return null;
           return session.deleteUploadedDraft(item.uploaded_draft_id);
@@ -6435,7 +6448,10 @@ function renderEditorShell(session) {
     const slotUsage = document.createElement('p');
     slotUsage.className = 'confirm-modal__description';
     const slotLimit = Number(session.state.uploadedDraftSlotLimit) || 3;
-    slotUsage.textContent = `${session.state.uploadedDrafts.length} of ${slotLimit} draft slots used.`;
+    slotUsage.textContent = t('editor.uploadedDraft.slotUsage', {
+      used: session.state.uploadedDrafts.length,
+      limit: slotLimit,
+    });
     const list = document.createElement('div');
     list.className = 'browse-results';
     renderUploadedDraftRows(list);
@@ -6487,7 +6503,7 @@ function renderEditorShell(session) {
     saveStateEl.title = session.state.lastPersistenceError || session.state.lastValidationWarning || '';
     const lastSavedLabel = document.createElement('span');
     lastSavedLabel.className = 'editor-label';
-    lastSavedLabel.textContent = 'Last saved:';
+    lastSavedLabel.textContent = t('editor.labels.lastSaved');
     lastSavedEl.replaceChildren(lastSavedLabel, document.createTextNode(` ${formatLastSavedLabel(session.state.lastSavedAt)}`));
     const validationIssues = session.state.lastSavedLocalValidationIssueCount + session.state.lastContractValidationIssueCount;
     validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">${createEditorIcon('shield')}${validationIssues} issue${validationIssues === 1 ? '' : 's'}</span>`;
@@ -6499,8 +6515,10 @@ function renderEditorShell(session) {
       validationTooltip.push(...session.state.validationErrors);
     }
     validationEl.title = validationIssues > 0 ? validationTooltip.join('\n') : '';
-    localDraftIdValue.textContent = session.state.draft?.localId || 'n/a';
-    statusRow.textContent = `Selected block: ${session.state.selectedBlockId || 'none'}`;
+    localDraftIdValue.textContent = session.state.draft?.localId || t('common.values.na');
+    statusRow.textContent = t('editor.status.selectedBlock', {
+      value: session.state.selectedBlockId || t('common.values.noneLowercase'),
+    });
     const renderNotification = (element, categories) => {
       const notification = session.getLatestNotification({ categories });
       element.textContent = notification?.text || '';
@@ -6541,7 +6559,7 @@ function renderEditorShell(session) {
     if (feedNotifications.length === 0) {
       const emptyFeed = document.createElement('p');
       emptyFeed.className = 'muted';
-      emptyFeed.textContent = 'No activity yet.';
+      emptyFeed.textContent = t('common.activity.empty');
       activityFeedList.appendChild(emptyFeed);
     } else {
       feedNotifications.forEach((notification) => {

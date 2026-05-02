@@ -343,7 +343,7 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   assert.equal(report.schoolName, 'Hong Kong Red Cross Hospital Schools');
   assert.equal(report.subject, 'Mathematics');
   assert.equal(report.studentName, 'Ada Lovelace');
-  assert.equal(report.checkedSummary, 'Checked 1/2 correct');
+  assert.equal(report.checkedSummary, 'viewer.print.checkedSummary');
   assert.equal(report.questions.length, 3);
   assert.equal(report.questions[0].answerText, 'It increases by 2 each line.');
   assert.equal(report.questions[0].image.status, 'ready');
@@ -352,9 +352,9 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   assert.equal(report.questions[0].sectionBreakModes.prompt, 'keep');
   assert.equal(report.questions[0].sectionBreakModes.answer, 'keep');
   assert.equal(report.questions[1].answerText, 'A. Two\nC. Five');
-  assert.equal(report.questions[1].result.label, 'Correct');
-  assert.equal(report.questions[2].result.label, 'Incorrect');
-  assert.equal(report.questions[2].result.detail, 'Correct answer: True');
+  assert.equal(report.questions[1].result.label, 'viewer.check.correct');
+  assert.equal(report.questions[2].result.label, 'viewer.check.incorrect');
+  assert.equal(report.questions[2].result.detail, 'viewer.check.reveal.correctAnswer');
   assert.equal(report.questions[2].sectionBreakModes.checkedAnswer, 'keep');
 });
 
@@ -480,11 +480,12 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
   const html = mod.buildWorksheetPrintReportHtml(report);
   assert.equal(html.includes('>Student<'), false);
   assert.equal(html.includes('Hong Kong Red Cross Hospital Schools'), true);
-  assert.equal(html.includes('<dt>Subject</dt>'), true);
+  assert.equal(html.includes('<dt>viewer.print.meta.subject</dt>'), true);
   assert.equal(html.includes('Mathematics'), true);
-  assert.equal(html.includes('<dt>Submitted at</dt>'), true);
-  assert.equal(html.includes('Question image unavailable.'), true);
-  assert.equal(html.includes('Answer: Not answered'), true);
+  assert.equal(html.includes('<dt>viewer.print.meta.submittedAt</dt>'), true);
+  assert.equal(html.includes('viewer.print.questionImageUnavailable'), true);
+  assert.equal(html.includes('viewer.print.answerPrefix'), true);
+  assert.equal(html.includes('viewer.print.notAnswered'), true);
 });
 
 test('buildWorksheetPrintReportHtml emits layout-mode classes for print pagination behavior', async () => {
@@ -537,8 +538,8 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('print-question-section--result'), true);
   assert.equal(normalizedHtml.includes('print-question-section--keep'), true);
   assert.equal(normalizedHtml.includes('print-question-section--flow'), true);
-  assert.equal(normalizedHtml.includes('>Question<'), true);
-  assert.equal(normalizedHtml.includes('>Checked result<'), true);
+  assert.equal(normalizedHtml.includes('>viewer.print.questionHeading<'), true);
+  assert.equal(normalizedHtml.includes('>viewer.print.checkedResultHeading<'), true);
   assert.equal(normalizedHtml.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
   assert.equal(normalizedHtml.includes('.print-question-section--image {\n      break-inside: auto;'), true);
   const mediumPromptIndex = normalizedHtml.indexOf('<p class="print-question-text">Medium prompt</p>');
@@ -666,8 +667,8 @@ test('buildWorksheetPrintReportHtml records missing submitted timestamp without 
   });
   const html = mod.buildWorksheetPrintReportHtml(report);
 
-  assert.equal(html.includes('Submitted at'), true);
-  assert.equal(html.includes('Not recorded'), true);
+  assert.equal(html.includes('viewer.print.meta.submittedAt'), true);
+  assert.equal(html.includes('common.values.notRecorded'), true);
   assert.equal(html.includes('attempt_'), false);
   assert.equal(html.includes('Local attempt ID'), false);
 });
@@ -1730,9 +1731,9 @@ test('multiple_choice render path no longer creates select or checkbox controls'
 
 test('viewer summary text includes distinct finalize outcome messages', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.match(source, /Finalizing submission…/);
-  assert.match(source, /Finalize failed\. Please check your connection and try again\./);
-  assert.match(source, /Finalized/);
+  assert.match(source, /t\('viewer\.status\.finalizing'\)/);
+  assert.match(source, /session\.state\.lastFinalizeError/);
+  assert.match(source, /t\('viewer\.status\.finalizedAt'/);
 });
 
 test('viewer shell exposes check action only in completed state', async () => {
@@ -2853,19 +2854,19 @@ test('getInputHelperText maps input types to guidance', async () => {
   const mod = await loadViewerModule();
   assert.equal(
     mod.getInputHelperText('number', { min: 1, max: 5 }),
-    'Enter integer/decimal only (fractions like 2/3 are not supported). Range: minimum 1, maximum 5.'
+    'viewer.inputHelper.numberBaseviewer.inputHelper.numberRangeSuffix'
   );
   assert.equal(
     mod.getInputHelperText('multiple_choice', { selectionMode: 'single' }),
-    'Choose one option only.'
+    'viewer.inputHelper.multipleChoiceSingle'
   );
   assert.equal(
     mod.getInputHelperText('multiple_choice', { selectionMode: 'multi' }),
-    'Choose one or more options.'
+    'viewer.inputHelper.multipleChoiceMulti'
   );
-  assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one option only.');
-  assert.equal(mod.getInputHelperText('boolean'), 'Choose True / False.');
-  assert.equal(mod.getInputHelperText('text'), 'Text response.');
+  assert.equal(mod.getInputHelperText('multiple_choice'), 'viewer.inputHelper.multipleChoiceSingle');
+  assert.equal(mod.getInputHelperText('boolean'), 'viewer.inputHelper.boolean');
+  assert.equal(mod.getInputHelperText('text'), 'viewer.inputHelper.text');
 });
 
 test('buildTechnicalDetailsRows only shows current session ids', async () => {
@@ -3598,9 +3599,9 @@ test('bootstrapViewer renders sign-in recovery for direct published package auth
 
   const panel = appRoot.children[0];
   assert.equal(String(panel.className).includes('viewer-fatal-panel--recoverable-auth'), true);
-  assert.ok(findNodeByText(panel, 'Sign in to open this worksheet'));
-  assert.ok(findNodeByText(panel, 'Sign in and open worksheet'));
-  assert.ok(findNodeByText(panel, 'Go to start screen'));
+  assert.ok(findNodeByText(panel, 'viewer.boot.signInToOpenWorksheet'));
+  assert.ok(findNodeByText(panel, 'viewer.boot.signInAndOpenWorksheet'));
+  assert.ok(findNodeByText(panel, 'viewer.boot.goToStartScreen'));
 });
 
 test('direct published package sign-in recovery retries same package and renders viewer', { concurrency: false }, async () => {
@@ -3671,7 +3672,7 @@ test('direct published package sign-in recovery retries same package and renders
   });
 
   await mod.bootstrapViewer();
-  const signInBtn = findNodeByText(appRoot.children[0], 'Sign in and open worksheet');
+  const signInBtn = findNodeByText(appRoot.children[0], 'viewer.boot.signInAndOpenWorksheet');
   assert.ok(signInBtn);
 
   await signInBtn.dispatch('click');
@@ -3774,11 +3775,11 @@ test('direct published package sign-in recovery keeps popup-blocked failures ret
   });
 
   await mod.bootstrapViewer();
-  const signInBtn = findNodeByText(appRoot.children[0], 'Sign in and open worksheet');
+  const signInBtn = findNodeByText(appRoot.children[0], 'viewer.boot.signInAndOpenWorksheet');
   await signInBtn.dispatch('click');
 
   const panel = appRoot.children[appRoot.children.length - 1];
-  assert.ok(findNodeByText(panel, 'Sign in and open worksheet'));
+  assert.ok(findNodeByText(panel, 'viewer.boot.signInAndOpenWorksheet'));
   assert.ok(findNodeByText(panel, 'Sign-in popup was blocked. Allow popups for this site, then try again.'));
 });
 
@@ -3824,7 +3825,7 @@ test('direct published package not-found still renders fatal panel', { concurren
 
   const panel = appRoot.children[appRoot.children.length - 1];
   assert.equal(panel.className, 'viewer-fatal-panel');
-  assert.ok(findNodeByText(panel, 'Unable to open worksheet viewer'));
+  assert.ok(findNodeByText(panel, 'viewer.boot.unableToOpen'));
 });
 
 
@@ -3998,7 +3999,7 @@ test('bootstrapViewer callback mode uses dedicated recovery panel and passes pre
 
 test('bootstrapViewer callback mode includes explicit cancel recovery escape-hatch behavior', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("cancelRecoveryBtn.textContent = 'Cancel recovery';"), true);
+  assert.equal(source.includes("cancelRecoveryBtn.textContent = t('viewer.recovery.cancelRecovery');"), true);
   assert.equal(source.includes('authGate.clearPending();'), true);
   assert.equal(source.includes('cleanupViewerAuthCallbackUrlParams();'), true);
   assert.equal(source.includes('await renderStartPanelFromResumeFlag(session.state.recoveryMessage);'), true);
@@ -4287,10 +4288,10 @@ test('getCheckRevealMessage uses explicit fallback when learner answer is empty'
     correctAnswerText: '',
   });
 
-  assert.equal(incorrectEmpty, 'Your answer was: No answer submitted · Correct answer: A, B');
-  assert.equal(incorrectWhitespace, 'Your answer was: No answer submitted · Correct answer: True');
-  assert.equal(correct, 'Correct answer: 4');
-  assert.equal(ungradedMissingKey, 'Your answer was: No answer submitted');
+  assert.equal(incorrectEmpty, 'viewer.check.reveal.incorrectWithCorrectAnswer');
+  assert.equal(incorrectWhitespace, 'viewer.check.reveal.incorrectWithCorrectAnswer');
+  assert.equal(correct, 'viewer.check.reveal.correctAnswer');
+  assert.equal(ungradedMissingKey, 'viewer.check.reveal.noAnswer');
 });
 
 test('computeCheckResult marks gradeable missing key questions as ungraded without changing summary fields', async () => {
@@ -4327,11 +4328,12 @@ test('computeCheckResult marks gradeable missing key questions as ungraded witho
 test('render check feedback includes neutral ungraded banner copy and learner answer fallback', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
 
-  assert.equal(source.includes("checkTitle.textContent = isCorrect ? 'Correct' : isIncorrect ? 'Incorrect' : 'Not graded';"), true);
-  assert.equal(source.includes("'Answer key missing or invalid for this question.'"), true);
+  assert.equal(source.includes("? t('viewer.check.correct')"), true);
+  assert.equal(source.includes(": t('viewer.check.notGraded');"), true);
+  assert.equal(source.includes("t('viewer.check.missingAnswerKey')"), true);
   assert.equal(source.includes("status: checkStatus,"), true);
   assert.equal(source.includes("correctAnswerText: isUngradedMissingOrInvalidKey ? '' : formatCorrectAnswer(),"), true);
-  assert.equal(source.includes("'Your answer was: No answer submitted'"), true);
+  assert.equal(source.includes("t('viewer.check.reveal.noAnswer')"), true);
 });
 
 test('viewer stylesheet defines neutral ungraded check banner styles', async () => {
@@ -4637,7 +4639,7 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
 
 test('viewer header actions include server-save icon wiring and protected upload intent hook', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', 'Save attempt to server');"), true);
+  assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', t('viewer.upload.saveAttemptAriaLabel'));"), true);
   assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
   assert.equal(source.includes('await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);'), true);
 });
@@ -4865,7 +4867,11 @@ test('uploadCurrentAttemptPackage reports progress text while upload runs', asyn
 
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, true);
-  assert.equal(observedMessages.some((msg) => String(msg || '').includes('Saving attempt to server...')), true);
+  assert.equal(
+    observedMessages.some((msg) => ['viewer.upload.progressPercent', 'viewer.upload.progressSaving', 'viewer.upload.progressPreparing']
+      .some((token) => String(msg || '').includes(token))),
+    true
+  );
   assert.equal(session.state.serverActionMessage, 'Attempt saved to server.');
 });
 
@@ -4965,10 +4971,7 @@ test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_SLOT_LIMIT_REACHED
 
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
-  assert.equal(
-    session.state.serverActionMessage,
-    'You already have 3 uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
-  );
+  assert.equal(session.state.serverActionMessage, 'viewer.attemptSlots.limitReached');
   assert.equal(session.state.uploadAttemptRecoveryHint?.conflictAction, 'fail_on_conflict');
 });
 
@@ -5014,10 +5017,7 @@ test('uploadCurrentAttemptPackage slot-limit message falls back when slotLimit d
 
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
-  assert.equal(
-    session.state.serverActionMessage,
-    'You already have uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
-  );
+  assert.equal(session.state.serverActionMessage, 'viewer.attemptSlots.limitReachedUnknown');
 });
 
 test('uploadCurrentAttemptPackage sets conflict context for replace/copy recovery UI', async () => {
@@ -5287,8 +5287,8 @@ test('rewrite controls remain always mounted for text questions and enforce disa
   assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;'), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
   assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
-  assert.equal(source.includes("rewriteHint.textContent = 'Enter text to rewrite.';"), true);
-  assert.equal(source.includes('Answer is too long to rewrite (max 300 characters).'), true);
+  assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintEnterText');"), true);
+  assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintTooLong', { max: 300 });"), true);
 });
 
 test('render signature excludes rewrite-row dynamic flags to avoid remounting for text length transitions', async () => {
@@ -5563,7 +5563,7 @@ test('stale replay context aborts without calling rewrite API or mutating answer
 test('undo lifecycle wiring exists for post-rewrite visibility, restore, and manual input clear', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);'), true);
-  assert.equal(source.includes("undoButton.textContent = 'Undo';"), true);
+  assert.equal(source.includes("undoButton.textContent = t('viewer.rewrite.undo');"), true);
   assert.equal(source.includes('if (undoButton.disabled || isRewriteInFlight) {'), true);
   assert.equal(source.includes("cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));"), true);
   assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer);'), true);
@@ -5582,7 +5582,7 @@ test('text control sync prefers focused edit cache and falls back to canonical s
 test('in-flight rewrite state renders loading label while preserving always-visible controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;'), true);
-  assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';"), true);
+  assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');"), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
   assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
   assert.equal(source.includes('session.state.rewriteMessageByBlock?.[block.blockId]'), true);
