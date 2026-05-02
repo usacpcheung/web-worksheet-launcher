@@ -416,8 +416,8 @@ export default {
     },
     "attemptSlots": {
       "description": "伺服器作答記錄空位用完時，請先刪除不需要的記錄。",
-      "limitReached": "已達上限 {limit}",
-      "limitReachedUnknown": "已達上限",
+      "limitReached": "Limit Reached {limit}",
+      "limitReachedUnknown": "Limit Reached",
       "noAttemptsToDelete": "沒有可刪除的作答記錄",
       "title": "作答記錄空位"
     },
