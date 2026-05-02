@@ -173,6 +173,73 @@ export default {
       "promptPlaceholder": "輸入題目內容。",
       "questionSectionTitle": "題目"
     },
+    "media": {
+      "actions": {
+        "attach": "附加",
+        "attachAudio": "附加音訊",
+        "attachAudioEllipsis": "附加音訊...",
+        "attachOptionAudio": "附加選項音訊",
+        "generate": "生成",
+        "generateAudio": "生成音訊",
+        "generating": "生成中...",
+        "play": "播放",
+        "playAudio": "播放音訊",
+        "regenerate": "重新生成",
+        "regenerateAudio": "重新生成音訊",
+        "remove": "移除",
+        "removeAudio": "移除音訊",
+        "removeImage": "移除圖片",
+        "replace": "取代",
+        "replaceAudio": "取代音訊",
+        "replaceAudioEllipsis": "取代音訊...",
+        "replaceImage": "取代圖片",
+        "replaceOptionAudio": "取代選項音訊",
+        "view": "檢視"
+      },
+      "confirm": {
+        "currentOptionAudioAttachment": "此選項目前的音訊檔案附件。",
+        "currentQuestionAudioAttachment": "此題目目前的音訊檔案附件。",
+        "currentQuestionImageAttachment": "此題目目前的圖片檔案附件。",
+        "regenerateOptionAudioBody": "重新生成會捨棄第 {index} 個選項目前的音訊附件。",
+        "regenerateOptionAudioTitle": "重新生成第 {index} 個選項的音訊？",
+        "regenerateQuestionAudioBody": "重新生成會捨棄目前附加的題目音訊。",
+        "regenerateQuestionAudioTitle": "重新生成題目音訊？",
+        "removeOptionAudioBody": "這會移除第 {index} 個選項的音訊附件。",
+        "removeOptionAudioTitle": "移除第 {index} 個選項的音訊？",
+        "removeQuestionAudioBody": "這會移除目前的題目音訊附件。",
+        "removeQuestionAudioTitle": "移除題目音訊？",
+        "removeQuestionImageBody": "這會移除目前的題目圖片附件。",
+        "removeQuestionImageTitle": "移除題目圖片？",
+        "replaceOptionAudioBody": "取代會捨棄目前附加的選項音訊。",
+        "replaceOptionAudioTitle": "取代選項音訊？",
+        "replaceQuestionAudioBody": "取代會捨棄目前附加的題目音訊。",
+        "replaceQuestionAudioTitle": "取代題目音訊？",
+        "replaceQuestionImageBody": "取代會捨棄目前附加的題目圖片。",
+        "replaceQuestionImageTitle": "取代題目圖片？"
+      },
+      "enterOptionTextBeforeAttachingAudio": "請先輸入選項文字或按「新增選項」，再附加音訊。",
+      "enterOptionTextBeforeAudioActions": "請先輸入選項文字或按「新增選項」，再使用音訊操作",
+      "feedback": {
+        "audioRegenerationCanceled": "已取消重新生成音訊。",
+        "audioReplacementCanceled": "已取消取代音訊。",
+        "imageReplacementCanceled": "已取消取代圖片。",
+        "imagePreviewBlocked": "圖片預覽被封鎖。請允許彈出式視窗後再試一次。",
+        "imagePreviewLoadFailed": "無法載入附加圖片作預覽。",
+        "imagePreviewOpenFailed": "無法開啟附加圖片預覽。",
+        "noOptionAudioToRemove": "找不到可移除的選項音訊附件。",
+        "optionAudioRegenerationCanceled": "已取消重新生成選項音訊。",
+        "optionAudioReplacementCanceled": "已取消取代選項音訊。"
+      },
+      "optionAudioMenu": "選項音訊操作",
+      "optionAudioMenuAttached": "選項音訊操作，已附加音訊",
+      "optionAudioMenuGenerating": "選項音訊操作，生成中",
+      "preview": {
+        "attachedImageAlt": "附加圖片預覽",
+        "imagePreviewTitle": "圖片預覽",
+        "loadingImagePreview": "正在載入圖片預覽..."
+      },
+      "textTooLongForAudio": "文字太長，無法生成音訊（最多 {max} 個字元）。"
+    },
     "form": {
       "subject": {
         "label": "科目",
@@ -267,6 +334,15 @@ export default {
       "booleanValues": {
         "true": "是",
         "false": "否"
+      },
+      "switchTypeConfirm": {
+        "attachmentRemoval": "將會移除 {count} 個選項附件（音訊／檔案）。",
+        "description": "你正由「{fromType}」切換為「{toType}」。",
+        "entityLabel": "此題型",
+        "optionRemoval": "將會移除 {count} 個選項。",
+        "optionTextRemoval": "將會移除使用者輸入的選項文字／值。",
+        "title": "切換答案類型會移除資料",
+        "confirmLabel": "切換並移除"
       }
     },
     "reorder": {

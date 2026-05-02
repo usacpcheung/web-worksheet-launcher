@@ -173,6 +173,73 @@ export default {
       "promptPlaceholder": "Prompt Placeholder",
       "questionSectionTitle": "Question Section Title"
     },
+    "media": {
+      "actions": {
+        "attach": "Attach",
+        "attachAudio": "Attach audio",
+        "attachAudioEllipsis": "Attach audio...",
+        "attachOptionAudio": "Attach option audio",
+        "generate": "Generate",
+        "generateAudio": "Generate audio",
+        "generating": "Generating...",
+        "play": "Play",
+        "playAudio": "Play audio",
+        "regenerate": "Regenerate",
+        "regenerateAudio": "Regenerate audio",
+        "remove": "Remove",
+        "removeAudio": "Remove audio",
+        "removeImage": "Remove image",
+        "replace": "Replace",
+        "replaceAudio": "Replace audio",
+        "replaceAudioEllipsis": "Replace audio...",
+        "replaceImage": "Replace image",
+        "replaceOptionAudio": "Replace option audio",
+        "view": "View"
+      },
+      "confirm": {
+        "currentOptionAudioAttachment": "Current audio file attachment for this option.",
+        "currentQuestionAudioAttachment": "Current audio file attachment for this question.",
+        "currentQuestionImageAttachment": "Current image file attachment for this question.",
+        "regenerateOptionAudioBody": "Regenerating will discard the current audio attachment for option {index}.",
+        "regenerateOptionAudioTitle": "Regenerate option {index} audio?",
+        "regenerateQuestionAudioBody": "Regenerating will discard the currently attached question audio.",
+        "regenerateQuestionAudioTitle": "Regenerate question audio?",
+        "removeOptionAudioBody": "This will remove the audio attachment for option {index}.",
+        "removeOptionAudioTitle": "Remove option {index} audio?",
+        "removeQuestionAudioBody": "This will remove the current question audio attachment.",
+        "removeQuestionAudioTitle": "Remove question audio?",
+        "removeQuestionImageBody": "This will remove the current question image attachment.",
+        "removeQuestionImageTitle": "Remove question image?",
+        "replaceOptionAudioBody": "Replacing will discard the currently attached option audio.",
+        "replaceOptionAudioTitle": "Replace option audio?",
+        "replaceQuestionAudioBody": "Replacing will discard the currently attached question audio.",
+        "replaceQuestionAudioTitle": "Replace question audio?",
+        "replaceQuestionImageBody": "Replacing will discard the currently attached question image.",
+        "replaceQuestionImageTitle": "Replace question image?"
+      },
+      "enterOptionTextBeforeAttachingAudio": "Enter option text or click Add option before attaching audio.",
+      "enterOptionTextBeforeAudioActions": "Enter option text or click Add option before using audio actions",
+      "feedback": {
+        "audioRegenerationCanceled": "Audio regeneration canceled.",
+        "audioReplacementCanceled": "Audio replacement canceled.",
+        "imageReplacementCanceled": "Image replacement canceled.",
+        "imagePreviewBlocked": "Image preview was blocked. Allow pop-ups and try again.",
+        "imagePreviewLoadFailed": "Unable to load attached image for preview.",
+        "imagePreviewOpenFailed": "Unable to open attached image for preview.",
+        "noOptionAudioToRemove": "No option audio attachment found to remove.",
+        "optionAudioRegenerationCanceled": "Option audio regeneration canceled.",
+        "optionAudioReplacementCanceled": "Option audio replacement canceled."
+      },
+      "optionAudioMenu": "Option audio actions",
+      "optionAudioMenuAttached": "Option audio actions, audio attached",
+      "optionAudioMenuGenerating": "Option audio actions, generating",
+      "preview": {
+        "attachedImageAlt": "Attached image preview",
+        "imagePreviewTitle": "Image preview",
+        "loadingImagePreview": "Loading image preview..."
+      },
+      "textTooLongForAudio": "Text is too long to generate audio (max {max} characters)."
+    },
     "form": {
       "subject": {
         "label": "Label",
@@ -267,6 +334,15 @@ export default {
       "booleanValues": {
         "true": "True",
         "false": "False"
+      },
+      "switchTypeConfirm": {
+        "attachmentRemoval": "{count} option attachment(s) (audio/files) will be removed.",
+        "description": "You are switching from {fromType} to {toType}.",
+        "entityLabel": "this question type",
+        "optionRemoval": "{count} option(s) will be removed.",
+        "optionTextRemoval": "User-entered option text/values will be removed.",
+        "title": "Switching answer type will remove data",
+        "confirmLabel": "Switch and remove"
       }
     },
     "reorder": {

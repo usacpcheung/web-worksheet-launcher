@@ -438,12 +438,12 @@ function setOptionAudioMenuTriggerState(trigger, { hasAudio = false, isGeneratin
   if (!(trigger instanceof HTMLElement)) return;
   const iconName = isGenerating ? 'loading' : hasAudio ? 'audioAttached' : 'audio';
   const label = isGenerating
-    ? 'Option audio actions, generating'
-    : hasAudio ? 'Option audio actions, audio attached' : 'Option audio actions';
+    ? t('editor.media.optionAudioMenuGenerating')
+    : hasAudio ? t('editor.media.optionAudioMenuAttached') : t('editor.media.optionAudioMenu');
   trigger.innerHTML = `<span class="option-actions-menu__icon${isGenerating ? ' option-actions-menu__icon--spin' : ''}" aria-hidden="true">${createEditorIcon(iconName)}</span>`;
   trigger.title = isPersisted
     ? label
-    : 'Enter option text or click Add option before using audio actions';
+    : t('editor.media.enterOptionTextBeforeAudioActions');
   trigger.setAttribute('aria-label', label);
   trigger.setAttribute('aria-disabled', isPersisted ? 'false' : 'true');
   trigger.dataset.audioState = isGenerating ? 'generating' : hasAudio ? 'attached' : 'empty';
@@ -505,6 +505,21 @@ function getEditorIssueCountLabel(count) {
     normalizedCount === 1 ? 'editor.validation.issueCountOne' : 'editor.validation.issueCountOther',
     { count: normalizedCount }
   );
+}
+
+function getEditorAudioGenerationLabel({ isGenerating = false, hasAudio = false, includeAudio = false } = {}) {
+  if (isGenerating) return t('editor.media.actions.generating');
+  if (hasAudio) return includeAudio ? t('editor.media.actions.regenerateAudio') : t('editor.media.actions.regenerate');
+  return includeAudio ? t('editor.media.actions.generateAudio') : t('editor.media.actions.generate');
+}
+
+function getEditorAudioAttachLabel(hasAudio, { includeAudio = false } = {}) {
+  if (hasAudio) return includeAudio ? t('editor.media.actions.replaceAudio') : t('editor.media.actions.replace');
+  return includeAudio ? t('editor.media.actions.attachAudio') : t('editor.media.actions.attach');
+}
+
+function getEditorTextTooLongForAudioLabel(max) {
+  return t('editor.media.textTooLongForAudio', { max });
 }
 
 async function loadContracts() {
@@ -1403,7 +1418,7 @@ class EditorDraftSession {
     // though the tab still opens. We instead manually null out .opener below.
     const previewWindow = window.open('', '_blank');
     if (!previewWindow) {
-      this.setMediaFeedback('Image preview was blocked. Allow pop-ups and try again.');
+      this.setMediaFeedback(t('editor.media.feedback.imagePreviewBlocked'));
       return { ok: false, reason: 'blocked' };
     }
     try {
@@ -1412,8 +1427,8 @@ class EditorDraftSession {
       // Ignore cross-browser quirks when hardening the newly opened window.
     }
     try {
-      previewWindow.document.title = 'Loading image preview…';
-      previewWindow.document.body.textContent = 'Loading image preview…';
+      previewWindow.document.title = t('editor.media.preview.loadingImagePreview');
+      previewWindow.document.body.textContent = t('editor.media.preview.loadingImagePreview');
     } catch (error) {
       // Ignore cross-browser document access quirks for newly opened windows.
     }
@@ -1421,7 +1436,7 @@ class EditorDraftSession {
     const record = await this.getLocalAssetRecord(assetId);
     if (!record) {
       previewWindow.close();
-      this.setMediaFeedback('Unable to load attached image for preview.');
+      this.setMediaFeedback(t('editor.media.feedback.imagePreviewLoadFailed'));
       return { ok: false, reason: 'missing-asset' };
     }
     const draftAsset = this.findAsset(assetId);
@@ -1429,7 +1444,7 @@ class EditorDraftSession {
     const objectUrl = this.createObjectUrlForAsset(record, fallbackImageMimeType);
     if (!objectUrl) {
       previewWindow.close();
-      this.setMediaFeedback('Unable to load attached image for preview.');
+      this.setMediaFeedback(t('editor.media.feedback.imagePreviewLoadFailed'));
       return { ok: false, reason: 'missing-binary' };
     }
 
@@ -1445,11 +1460,11 @@ class EditorDraftSession {
       try {
         const doc = previewWindow.document;
         if (doc?.body && typeof doc.createElement === 'function') {
-          doc.title = 'Image preview';
+          doc.title = t('editor.media.preview.imagePreviewTitle');
           doc.body.innerHTML = '';
           const image = doc.createElement('img');
           image.src = objectUrl;
-          image.alt = 'Attached image preview';
+          image.alt = t('editor.media.preview.attachedImageAlt');
           image.style.maxWidth = '100%';
           image.style.height = 'auto';
           image.style.display = 'block';
@@ -1465,7 +1480,7 @@ class EditorDraftSession {
 
     if (!didNavigate) {
       previewWindow.close();
-      this.setMediaFeedback('Unable to open attached image for preview.');
+      this.setMediaFeedback(t('editor.media.feedback.imagePreviewOpenFailed'));
       URL.revokeObjectURL(objectUrl);
       return { ok: false, reason: 'navigation-failed' };
     }
@@ -1603,7 +1618,7 @@ class EditorDraftSession {
     if (responseConfig.inputType !== 'multiple_choice') return { ok: false, reason: 'not-multiple-choice' };
     const existingOption = (responseConfig.options || []).map((option) => normalizeResponseOption(option)).find((o) => o.id === optionId);
     if (!existingOption) {
-      this.setMediaFeedback('Enter option text or click Add option before attaching audio.');
+      this.setMediaFeedback(t('editor.media.enterOptionTextBeforeAttachingAudio'));
       return { ok: false, reason: 'missing-option' };
     }
     const currentRef = getSingleMediaRef(existingOption.mediaRefs, 'option_audio');
@@ -1657,7 +1672,7 @@ class EditorDraftSession {
     if (!existingOption) return { ok: false, reason: 'missing-option' };
     const currentRef = getSingleMediaRef(existingOption.mediaRefs, 'option_audio');
     if (!currentRef) {
-      this.setMediaFeedback('No option audio attachment found to remove.');
+      this.setMediaFeedback(t('editor.media.feedback.noOptionAudioToRemove'));
       return { ok: false, reason: 'missing-media' };
     }
     if (options.confirmRemove !== true) {
@@ -5442,14 +5457,16 @@ function renderEditorShell(session) {
     const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
     const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
       || promptT2AInFlightBlockId === selectedBlock.blockId;
-    const promptT2ALabel = isPromptT2AInFlight
-      ? 'Generating…'
-      : currentQuestionAudioRef ? 'Regenerate audio' : 'Generate audio';
+    const promptT2ALabel = getEditorAudioGenerationLabel({
+      isGenerating: isPromptT2AInFlight,
+      hasAudio: Boolean(currentQuestionAudioRef),
+      includeAudio: true,
+    });
     const promptT2AIcon = isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate';
     setMediaActionButtonContent(promptT2AUiRefs.generateBtn, promptT2AIcon, promptT2ALabel);
     promptT2AUiRefs.generateBtn.disabled = !promptTextState.eligible || isPromptT2AInFlight;
     promptT2AUiRefs.hint.textContent = promptTextState.exceedsLimit
-      ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+      ? getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)
       : '';
     promptT2AUiRefs.hint.hidden = !promptTextState.exceedsLimit;
     promptT2AUiRefs.attachBtn.disabled = isPromptT2AInFlight;
@@ -5488,12 +5505,18 @@ function renderEditorShell(session) {
     });
     if (optionAudioBtn instanceof HTMLButtonElement) {
       optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
-      setMediaActionButtonContent(optionAudioBtn, 'upload', optionAudioRef ? 'Replace audio…' : 'Attach audio…');
+      setMediaActionButtonContent(
+        optionAudioBtn,
+        'upload',
+        optionAudioRef ? t('editor.media.actions.replaceAudioEllipsis') : t('editor.media.actions.attachAudioEllipsis')
+      );
     }
     if (optionT2ABtn instanceof HTMLButtonElement) {
-      const optionT2ALabel = isOptionT2AInFlight
-        ? 'Generating…'
-        : optionAudioRef ? 'Regenerate audio' : 'Generate audio';
+      const optionT2ALabel = getEditorAudioGenerationLabel({
+        isGenerating: isOptionT2AInFlight,
+        hasAudio: Boolean(optionAudioRef),
+        includeAudio: true,
+      });
       const optionT2AIcon = isOptionT2AInFlight ? 'loading' : optionAudioRef ? 'refresh' : 'generate';
       setMediaActionButtonContent(optionT2ABtn, optionT2AIcon, optionT2ALabel);
       optionT2ABtn.disabled = !isPersistedOption || !optionTextState.eligible || isOptionT2AInFlight;
@@ -5507,7 +5530,7 @@ function renderEditorShell(session) {
     if (optionT2AHint instanceof HTMLElement) {
       optionT2AHint.hidden = !isPersistedOption || !optionTextState.exceedsLimit;
       optionT2AHint.textContent = optionTextState.exceedsLimit
-        ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+        ? getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)
         : '';
     }
     if (optionAudioAttached instanceof HTMLElement) {
@@ -5643,16 +5666,16 @@ function renderEditorShell(session) {
     const attachImageBtn = document.createElement('button');
     attachImageBtn.type = 'button';
     attachImageBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(attachImageBtn, 'image', currentQuestionImageRef ? 'Replace' : 'Attach');
+    setMediaActionButtonContent(attachImageBtn, 'image', currentQuestionImageRef ? t('editor.media.actions.replace') : t('editor.media.actions.attach'));
     const removeImageBtn = document.createElement('button');
     removeImageBtn.type = 'button';
     removeImageBtn.className = 'media-action-btn media-action-btn--remove';
-    setMediaActionButtonContent(removeImageBtn, 'trash', 'Remove');
+    setMediaActionButtonContent(removeImageBtn, 'trash', t('editor.media.actions.remove'));
     removeImageBtn.disabled = !currentQuestionImageRef;
     const viewImageBtn = document.createElement('button');
     viewImageBtn.type = 'button';
     viewImageBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(viewImageBtn, 'eye', 'View');
+    setMediaActionButtonContent(viewImageBtn, 'eye', t('editor.media.actions.view'));
     viewImageBtn.disabled = !currentQuestionImageRef;
     attachImageBtn.addEventListener('click', () => {
       questionImageInput.dataset.blockId = selectedBlock.blockId;
@@ -5662,10 +5685,10 @@ function renderEditorShell(session) {
     removeImageBtn.addEventListener('click', async () => {
       await runMediaAction(async () => {
         const confirmed = await confirmDangerAction({
-          title: 'Remove question image?',
-          bodyText: 'This will remove the current question image attachment.',
-          confirmLabel: 'Remove image',
-          removalItems: ['Current image file attachment for this question.'],
+          title: t('editor.media.confirm.removeQuestionImageTitle'),
+          bodyText: t('editor.media.confirm.removeQuestionImageBody'),
+          confirmLabel: t('editor.media.actions.removeImage'),
+          removalItems: [t('editor.media.confirm.currentQuestionImageAttachment')],
         });
         if (!confirmed) return;
         const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_image', { confirmRemove: true });
@@ -5717,16 +5740,16 @@ function renderEditorShell(session) {
     const attachQuestionAudioBtn = document.createElement('button');
     attachQuestionAudioBtn.type = 'button';
     attachQuestionAudioBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(attachQuestionAudioBtn, 'upload', currentQuestionAudioRef ? 'Replace' : 'Attach');
+    setMediaActionButtonContent(attachQuestionAudioBtn, 'upload', getEditorAudioAttachLabel(Boolean(currentQuestionAudioRef)));
     const removeQuestionAudioBtn = document.createElement('button');
     removeQuestionAudioBtn.type = 'button';
     removeQuestionAudioBtn.className = 'media-action-btn media-action-btn--remove';
-    setMediaActionButtonContent(removeQuestionAudioBtn, 'trash', 'Remove');
+    setMediaActionButtonContent(removeQuestionAudioBtn, 'trash', t('editor.media.actions.remove'));
     removeQuestionAudioBtn.disabled = !currentQuestionAudioRef;
     const playQuestionAudioBtn = document.createElement('button');
     playQuestionAudioBtn.type = 'button';
     playQuestionAudioBtn.className = 'media-action-btn';
-    setMediaActionButtonContent(playQuestionAudioBtn, 'play', 'Play');
+    setMediaActionButtonContent(playQuestionAudioBtn, 'play', t('editor.media.actions.play'));
     playQuestionAudioBtn.disabled = !currentQuestionAudioRef;
     const generateQuestionAudioBtn = document.createElement('button');
     generateQuestionAudioBtn.type = 'button';
@@ -5734,13 +5757,13 @@ function renderEditorShell(session) {
     setMediaActionButtonContent(
       generateQuestionAudioBtn,
       isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate',
-      isPromptT2AInFlight ? 'Generating…' : currentQuestionAudioRef ? 'Regenerate' : 'Generate'
+      getEditorAudioGenerationLabel({ isGenerating: isPromptT2AInFlight, hasAudio: Boolean(currentQuestionAudioRef) })
     );
     generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;
     const questionAudioHint = document.createElement('p');
     questionAudioHint.className = 'muted';
     questionAudioHint.textContent = promptExceedsT2ALimit
-      ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+      ? getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)
       : '';
     if (!promptExceedsT2ALimit) {
       questionAudioHint.hidden = true;
@@ -5766,10 +5789,10 @@ function renderEditorShell(session) {
     removeQuestionAudioBtn.addEventListener('click', async () => {
       await runMediaAction(async () => {
         const confirmed = await confirmDangerAction({
-          title: 'Remove question audio?',
-          bodyText: 'This will remove the current question audio attachment.',
-          confirmLabel: 'Remove audio',
-          removalItems: ['Current audio file attachment for this question.'],
+          title: t('editor.media.confirm.removeQuestionAudioTitle'),
+          bodyText: t('editor.media.confirm.removeQuestionAudioBody'),
+          confirmLabel: t('editor.media.actions.removeAudio'),
+          removalItems: [t('editor.media.confirm.currentQuestionAudioAttachment')],
         });
         if (!confirmed) return;
         const result = await session.removeQuestionMedia(selectedBlock.blockId, 'question_audio', { confirmRemove: true });
@@ -5810,15 +5833,15 @@ function renderEditorShell(session) {
       updateSummary();
       if (currentQuestionAudioRef) {
         const confirmed = await confirmDangerAction({
-          title: 'Regenerate question audio?',
-          bodyText: 'Regenerating will discard the currently attached question audio.',
-          confirmLabel: 'Regenerate audio',
-          removalItems: ['Current audio file attachment for this question.'],
+          title: t('editor.media.confirm.regenerateQuestionAudioTitle'),
+          bodyText: t('editor.media.confirm.regenerateQuestionAudioBody'),
+          confirmLabel: t('editor.media.actions.regenerateAudio'),
+          removalItems: [t('editor.media.confirm.currentQuestionAudioAttachment')],
         });
         if (!confirmed) {
           promptT2AInFlightBlockIds.delete(selectedBlock.blockId);
           restoreLegacyPromptInFlightMarker();
-          session.setMediaFeedback('Audio regeneration canceled.');
+          session.setMediaFeedback(t('editor.media.feedback.audioRegenerationCanceled'));
           updateSummary();
           return;
         }
@@ -6112,14 +6135,18 @@ function renderEditorShell(session) {
         optionAudioBtn.type = 'button';
         optionAudioBtn.className = 'media-action-btn option-actions-menu__item';
         optionAudioBtn.dataset.optionAudioBtn = '1';
-        setMediaActionButtonContent(optionAudioBtn, 'upload', optionAudioRef ? 'Replace audio…' : 'Attach audio…');
+        setMediaActionButtonContent(
+          optionAudioBtn,
+          'upload',
+          optionAudioRef ? t('editor.media.actions.replaceAudioEllipsis') : t('editor.media.actions.attachAudioEllipsis')
+        );
         optionAudioBtn.title = isPersistedOption
-          ? optionAudioRef ? 'Replace option audio' : 'Attach option audio'
-          : 'Enter option text or click Add option before attaching audio';
+          ? optionAudioRef ? t('editor.media.actions.replaceOptionAudio') : t('editor.media.actions.attachOptionAudio')
+          : t('editor.media.enterOptionTextBeforeAttachingAudio');
         optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
         optionAudioBtn.addEventListener('click', () => {
           if (!isPersistedOption) {
-            session.setMediaFeedback('Enter option text or click Add option before attaching audio.');
+            session.setMediaFeedback(t('editor.media.enterOptionTextBeforeAttachingAudio'));
             updateSummary();
             return;
           }
@@ -6131,15 +6158,15 @@ function renderEditorShell(session) {
         removeOptionAudioBtn.type = 'button';
         removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove option-actions-menu__item';
         removeOptionAudioBtn.dataset.optionRemoveAudioBtn = '1';
-        setMediaActionButtonContent(removeOptionAudioBtn, 'trash', 'Remove audio');
+        setMediaActionButtonContent(removeOptionAudioBtn, 'trash', t('editor.media.actions.removeAudio'));
         removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
         removeOptionAudioBtn.addEventListener('click', async () => {
           await runMediaAction(async () => {
             const confirmed = await confirmDangerAction({
-              title: `Remove option ${optionIndex + 1} audio?`,
-              bodyText: `This will remove the audio attachment for option ${optionIndex + 1}.`,
-              confirmLabel: 'Remove audio',
-              removalItems: ['Current audio file attachment for this option.'],
+              title: t('editor.media.confirm.removeOptionAudioTitle', { index: optionIndex + 1 }),
+              bodyText: t('editor.media.confirm.removeOptionAudioBody', { index: optionIndex + 1 }),
+              confirmLabel: t('editor.media.actions.removeAudio'),
+              removalItems: [t('editor.media.confirm.currentOptionAudioAttachment')],
             });
             if (!confirmed) return;
             const result = await session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: true });
@@ -6152,7 +6179,7 @@ function renderEditorShell(session) {
         playOptionAudioBtn.type = 'button';
         playOptionAudioBtn.className = 'media-action-btn option-actions-menu__item';
         playOptionAudioBtn.dataset.optionPlayBtn = '1';
-        setMediaActionButtonContent(playOptionAudioBtn, 'play', 'Play audio');
+        setMediaActionButtonContent(playOptionAudioBtn, 'play', t('editor.media.actions.playAudio'));
         playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
         playOptionAudioBtn.addEventListener('click', async () => {
           if (!optionAudioRef?.assetId || playOptionAudioBtn.disabled) return;
@@ -6177,9 +6204,11 @@ function renderEditorShell(session) {
         optionT2ABtn.type = 'button';
         optionT2ABtn.className = 'media-action-btn option-actions-menu__item';
         optionT2ABtn.dataset.optionT2aBtn = '1';
-        const optionT2ALabel = isOptionT2AInFlight
-          ? 'Generating…'
-          : optionAudioRef ? 'Regenerate audio' : 'Generate audio';
+        const optionT2ALabel = getEditorAudioGenerationLabel({
+          isGenerating: isOptionT2AInFlight,
+          hasAudio: Boolean(optionAudioRef),
+          includeAudio: true,
+        });
         setMediaActionButtonContent(
           optionT2ABtn,
           isOptionT2AInFlight ? 'loading' : optionAudioRef ? 'refresh' : 'generate',
@@ -6188,7 +6217,7 @@ function renderEditorShell(session) {
         optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;
         optionT2ABtn.addEventListener('click', async () => {
           if (!isPersistedOption) {
-            session.setMediaFeedback('Enter option text or click Add option before attaching audio.');
+            session.setMediaFeedback(t('editor.media.enterOptionTextBeforeAttachingAudio'));
             updateSummary();
             return;
           }
@@ -6208,15 +6237,15 @@ function renderEditorShell(session) {
           updateSummary();
           if (optionAudioRef) {
             const confirmed = await confirmDangerAction({
-              title: `Regenerate option ${optionIndex + 1} audio?`,
-              bodyText: `Regenerating will discard the current audio attachment for option ${optionIndex + 1}.`,
-              confirmLabel: 'Regenerate audio',
-              removalItems: ['Current audio file attachment for this option.'],
+              title: t('editor.media.confirm.regenerateOptionAudioTitle', { index: optionIndex + 1 }),
+              bodyText: t('editor.media.confirm.regenerateOptionAudioBody', { index: optionIndex + 1 }),
+              confirmLabel: t('editor.media.actions.regenerateAudio'),
+              removalItems: [t('editor.media.confirm.currentOptionAudioAttachment')],
             });
             if (!confirmed) {
               optionT2AInFlightKeys.delete(optionT2AKey);
               restoreLegacyOptionInFlightMarker();
-              session.setMediaFeedback('Option audio regeneration canceled.');
+              session.setMediaFeedback(t('editor.media.feedback.optionAudioRegenerationCanceled'));
               updateSummary();
               return;
             }
@@ -6290,7 +6319,7 @@ function renderEditorShell(session) {
         optionT2AHint.className = 'muted option-row__meta';
         optionT2AHint.dataset.optionT2aHint = '1';
         optionT2AHint.textContent = optionTextExceedsT2ALimit
-          ? `Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).`
+          ? getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)
           : '';
         optionT2AHint.hidden = !isPersistedOption || !optionTextExceedsT2ALimit;
         row.appendChild(optionT2AHint);
@@ -6713,18 +6742,21 @@ function renderEditorShell(session) {
     const outcome = session.switchQuestionInputTypeWithImpactPolicy(selectedBlockId, questionInputType.value);
     if (!outcome.ok && outcome.reason === 'confirm-switch-required') {
       const details = [
-        `${outcome.impact.optionCountToRemove} option${outcome.impact.optionCountToRemove === 1 ? '' : 's'} will be removed.`,
-        `${outcome.impact.optionAttachmentCountToRemove} option attachment${outcome.impact.optionAttachmentCountToRemove === 1 ? '' : 's'} (audio/files) will be removed.`,
+        t('editor.question.switchTypeConfirm.optionRemoval', { count: outcome.impact.optionCountToRemove }),
+        t('editor.question.switchTypeConfirm.attachmentRemoval', { count: outcome.impact.optionAttachmentCountToRemove }),
       ];
       if (outcome.impact.hasOptionTextLoss) {
-        details.push('User-entered option text/values will be removed.');
+        details.push(t('editor.question.switchTypeConfirm.optionTextRemoval'));
       }
       const confirmed = await showConfirmDialog({
-        title: 'Switching answer type will remove data',
-        entityLabel: 'this question type',
-        descriptionText: `You are switching from ${outcome.impact.fromType} to ${outcome.impact.toType}.`,
+        title: t('editor.question.switchTypeConfirm.title'),
+        entityLabel: t('editor.question.switchTypeConfirm.entityLabel'),
+        descriptionText: t('editor.question.switchTypeConfirm.description', {
+          fromType: getAnswerInputTypeLabel(outcome.impact.fromType),
+          toType: getAnswerInputTypeLabel(outcome.impact.toType),
+        }),
         removalItems: details,
-        confirmLabel: 'Switch and Remove',
+        confirmLabel: t('editor.question.switchTypeConfirm.confirmLabel'),
       });
       if (!confirmed) {
         questionInputType.value = currentInputType;
@@ -6804,13 +6836,13 @@ function renderEditorShell(session) {
       const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_image'));
       if (hasExisting) {
         const confirmed = await confirmDangerAction({
-          title: 'Replace question image?',
-          bodyText: 'Replacing will discard the currently attached question image.',
-          confirmLabel: 'Replace image',
-          removalItems: ['Current image file attachment for this question.'],
+          title: t('editor.media.confirm.replaceQuestionImageTitle'),
+          bodyText: t('editor.media.confirm.replaceQuestionImageBody'),
+          confirmLabel: t('editor.media.actions.replaceImage'),
+          removalItems: [t('editor.media.confirm.currentQuestionImageAttachment')],
         });
         if (!confirmed) {
-          session.setMediaFeedback('Image replacement canceled.');
+          session.setMediaFeedback(t('editor.media.feedback.imageReplacementCanceled'));
           questionImageInput.value = '';
           updateSummary();
           return;
@@ -6830,13 +6862,13 @@ function renderEditorShell(session) {
       const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_audio'));
       if (hasExisting) {
         const confirmed = await confirmDangerAction({
-          title: 'Replace question audio?',
-          bodyText: 'Replacing will discard the currently attached question audio.',
-          confirmLabel: 'Replace audio',
-          removalItems: ['Current audio file attachment for this question.'],
+          title: t('editor.media.confirm.replaceQuestionAudioTitle'),
+          bodyText: t('editor.media.confirm.replaceQuestionAudioBody'),
+          confirmLabel: t('editor.media.actions.replaceAudio'),
+          removalItems: [t('editor.media.confirm.currentQuestionAudioAttachment')],
         });
         if (!confirmed) {
-          session.setMediaFeedback('Audio replacement canceled.');
+          session.setMediaFeedback(t('editor.media.feedback.audioReplacementCanceled'));
           questionAudioInput.value = '';
           updateSummary();
           return;
@@ -6859,13 +6891,13 @@ function renderEditorShell(session) {
       const hasExisting = Boolean(getSingleMediaRef(option?.mediaRefs, 'option_audio'));
       if (hasExisting) {
         const confirmed = await confirmDangerAction({
-          title: 'Replace option audio?',
-          bodyText: 'Replacing will discard the currently attached option audio.',
-          confirmLabel: 'Replace audio',
-          removalItems: ['Current audio file attachment for this option.'],
+          title: t('editor.media.confirm.replaceOptionAudioTitle'),
+          bodyText: t('editor.media.confirm.replaceOptionAudioBody'),
+          confirmLabel: t('editor.media.actions.replaceAudio'),
+          removalItems: [t('editor.media.confirm.currentOptionAudioAttachment')],
         });
         if (!confirmed) {
-          session.setMediaFeedback('Option audio replacement canceled.');
+          session.setMediaFeedback(t('editor.media.feedback.optionAudioReplacementCanceled'));
           optionAudioInput.value = '';
           updateSummary();
           return;
