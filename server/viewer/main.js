@@ -3481,9 +3481,15 @@ class ViewerAttemptSession {
           };
         } else if (errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED') {
           message = formatAttemptSlotLimitMessage(uploadResult?.error?.details?.slotLimit);
+          const requestedConflictAction = options.conflictAction === 'replace'
+            ? 'replace'
+            : options.conflictAction === 'copy'
+              ? 'copy'
+              : 'fail_on_conflict';
           this.state.uploadAttemptRecoveryHint = {
             kind: 'slot_limit',
             slotLimit: uploadResult?.error?.details?.slotLimit,
+            conflictAction: requestedConflictAction,
           };
           this.state.uploadedAttemptSlotLimit = Number(uploadResult?.error?.details?.slotLimit) || this.state.uploadedAttemptSlotLimit;
         } else if (errorCode === 'INVALID_ATTEMPT_PACKAGE') {
@@ -6424,7 +6430,12 @@ function renderViewerShell(session) {
       if (slotRecovery?.deleted) {
         // Keep slot-limit recovery behavior aligned with editor draft upload flow:
         // after deleting one server row to free space, retry upload immediately.
-        await session.uploadCurrentAttemptPackage();
+        const retryConflictAction = session.state.uploadAttemptRecoveryHint?.conflictAction;
+        if (retryConflictAction === 'replace' || retryConflictAction === 'copy') {
+          await session.retryAttemptUploadFromConflict(retryConflictAction);
+        } else {
+          await session.uploadCurrentAttemptPackage();
+        }
       } else {
         session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
         await showUploadedAttemptsManagerModal(session, { reason: 'slot_limit' });

@@ -4915,6 +4915,33 @@ test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_SLOT_LIMIT_REACHED
     session.state.serverActionMessage,
     'You already have 3 uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
   );
+  assert.equal(session.state.uploadAttemptRecoveryHint?.conflictAction, 'fail_on_conflict');
+});
+
+test('uploadCurrentAttemptPackage slot-limit recovery hint preserves copy conflictAction', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      uploadAttemptPackage: async () => ({
+        ok: false,
+        error: {
+          code: 'ATTEMPT_SLOT_LIMIT_REACHED',
+          message: 'raw slot',
+          details: { slotLimit: 3 },
+        },
+      }),
+    },
+  });
+  session.state.localAttemptId = 'attempt_limit_copy';
+  session.state.viewerPayload = { title: 'Sheet', subject: 'Math', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+
+  const result = await session.uploadCurrentAttemptPackage({}, { conflictAction: 'copy' });
+  assert.equal(result.ok, false);
+  assert.equal(session.state.uploadAttemptRecoveryHint?.conflictAction, 'copy');
 });
 
 test('uploadCurrentAttemptPackage slot-limit message falls back when slotLimit detail is missing', async () => {
