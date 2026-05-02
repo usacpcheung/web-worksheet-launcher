@@ -4713,12 +4713,14 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
-    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
+    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || t('common.values.unknown');
     sessionLine.textContent = isLoggedIn
-      ? `Server session: ready (${userLabel})`
+      ? t('viewer.start.serverSession.ready', { user: userLabel })
       : isChecking
-        ? 'Server session: checking…'
-        : `Server session: logged out. ${session.state.serverSession?.error || 'Sign in to manage uploaded attempts.'}`;
+        ? t('viewer.start.serverSession.checking')
+        : t('viewer.start.serverSession.loggedOut', {
+          reason: session.state.serverSession?.error || t('viewer.serverAttempts.signInToLoad'),
+        });
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
     signInBtn.textContent = signInInFlight ? 'Signing in…' : t('common.actions.signIn');
@@ -4750,7 +4752,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     }
     const rows = Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : [];
     const slotLimit = Number(session.state.uploadedAttemptSlotLimit) || 3;
-    slotUsageLine.textContent = `${rows.length} of ${slotLimit} attempt slots used.`;
+    slotUsageLine.textContent = t('viewer.serverAttempts.slotUsage', { used: rows.length, limit: slotLimit });
     if (rows.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'muted';
@@ -6782,7 +6784,7 @@ function renderViewerStartPanel(session, options = {}) {
       || resumeAttempt?.viewerPayload?.metadata?.owner
       || '—'
     ).trim() || '—';
-    resumeMeta.textContent = `Title: ${worksheetTitle} · Subject: ${worksheetSubject} · Owner: ${worksheetOwner} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
+    resumeMeta.textContent = `${t('viewer.start.resumeMetaLabels.title')}: ${worksheetTitle} · ${t('viewer.start.resumeMetaLabels.subject')}: ${worksheetSubject} · ${t('viewer.start.resumeMetaLabels.owner')}: ${worksheetOwner} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
     const resumeActions = document.createElement('div');
     resumeActions.className = 'viewer-start-actions';
     const resumeBtn = document.createElement('button');
@@ -6929,16 +6931,16 @@ function renderViewerStartPanel(session, options = {}) {
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
-    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
+    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || t('common.values.unknown');
     let defaultSessionMessage = '';
     if (isLoggedIn) {
-      defaultSessionMessage = `Server session: ready (${userLabel})`;
+      defaultSessionMessage = t('viewer.start.serverSession.ready', { user: userLabel });
     } else if (isChecking) {
-      defaultSessionMessage = 'Server session: checking…';
+      defaultSessionMessage = t('viewer.start.serverSession.checking');
     } else if (session.state.serverSession?.error === SESSION_EXPIRED_MESSAGE) {
       defaultSessionMessage = SESSION_EXPIRED_MESSAGE;
     } else {
-      defaultSessionMessage = SIGNED_OUT_MESSAGE;
+      defaultSessionMessage = t('viewer.start.serverSession.loggedOut', { reason: SIGNED_OUT_MESSAGE });
     }
     sessionStatus.textContent = defaultSessionMessage;
     manageAttemptsBtn.hidden = false;

@@ -375,7 +375,17 @@ export default {
       "resumePreviousAttempt": "Resume previous attempt",
       "resumeAttempt": "Resume attempt",
       "discardAttempt": "Discard attempt",
-      "noResume": "No resumable local attempt found."
+      "noResume": "No resumable local attempt found.",
+      "resumeMetaLabels": {
+        "title": "Title",
+        "subject": "Subject",
+        "owner": "Owner"
+      },
+      "serverSession": {
+        "ready": "Server session: ready ({user})",
+        "checking": "Server session: checking...",
+        "loggedOut": "Server session: logged out. {reason}"
+      }
     },
     "actions": {
       "back": "← Back",
@@ -512,6 +522,7 @@ export default {
       "manageRecommendation": "Open Manage server attempts to free slots or review existing uploads.",
       "resuming": "Resuming",
       "signInToLoad": "Sign In To Load",
+      "slotUsage": "{used} of {limit} attempt slots used.",
       "slotRecoveryBanner": "Slot Recovery Banner",
       "status": {
         "checked": "Checked",

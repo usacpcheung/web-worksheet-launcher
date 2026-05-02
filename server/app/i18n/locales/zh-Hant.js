@@ -375,7 +375,17 @@ export default {
       "resumePreviousAttempt": "繼續上一個作答記錄",
       "resumeAttempt": "繼續作答",
       "discardAttempt": "放棄作答記錄",
-      "noResume": "找不到可繼續的本機作答記錄。"
+      "noResume": "找不到可繼續的本機作答記錄。",
+      "resumeMetaLabels": {
+        "title": "標題",
+        "subject": "科目",
+        "owner": "擁有者"
+      },
+      "serverSession": {
+        "ready": "伺服器工作階段：已就緒（{user}）",
+        "checking": "伺服器工作階段：檢查中...",
+        "loggedOut": "伺服器工作階段：未登入。{reason}"
+      }
     },
     "actions": {
       "back": "← 上一個",
@@ -512,6 +522,7 @@ export default {
       "manageRecommendation": "請開啟「管理伺服器作答記錄」以騰出空位或檢視現有上載。",
       "resuming": "繼續中",
       "signInToLoad": "登入以載入",
+      "slotUsage": "已使用 {used} / {limit} 個作答空位。",
       "slotRecoveryBanner": "伺服器作答記錄空位已滿。請刪除不需要的記錄後再上載。",
       "status": {
         "checked": "已檢查",

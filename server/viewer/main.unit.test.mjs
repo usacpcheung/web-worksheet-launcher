@@ -3330,7 +3330,7 @@ test('renderViewerStartPanel resume card prefers metadata.updatedAt when updated
   });
   assert.equal(
     resumeMeta.textContent,
-    `Title: Worksheet A · Subject: ICT · Owner: owner@example.test · ${expected}`
+    `viewer.start.resumeMetaLabels.title: Worksheet A · viewer.start.resumeMetaLabels.subject: ICT · viewer.start.resumeMetaLabels.owner: owner@example.test · ${expected}`
   );
 });
 
@@ -3366,7 +3366,7 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
   });
   assert.equal(
     resumeMeta.textContent,
-    `Title: Worksheet B · Subject: — · Owner: — · ${expected}`
+    `viewer.start.resumeMetaLabels.title: Worksheet B · viewer.start.resumeMetaLabels.subject: — · viewer.start.resumeMetaLabels.owner: — · ${expected}`
   );
 });
 
@@ -3451,7 +3451,7 @@ test('renderViewerStartPanel groups launcher actions into Attempts and Worksheet
   assert.equal(Boolean(manageBtn), true);
   assert.equal(Boolean(browseBtn), true);
   assert.equal(Boolean(statusLine), true);
-  assert.equal(statusLine.textContent.includes('signed out'), true);
+  assert.equal(statusLine.textContent.includes('viewer.start.serverSession.loggedOut'), true);
 });
 
 test('renderViewerStartPanel renders one session-related message line without duplicate status text', { concurrency: false }, async () => {
