@@ -290,6 +290,7 @@ function createViewerIcon(name) {
     attempts: `<svg ${svgAttrs}><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><circle cx="4" cy="6" r="1.5"></circle><circle cx="4" cy="12" r="1.5"></circle><circle cx="4" cy="18" r="1.5"></circle></svg>`,
     worksheet: `<svg ${svgAttrs}><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v6h6"></path></svg>`,
     print: `<svg ${svgAttrs}><path d="M6 9V4h12v5"></path><path d="M6 18h12v2H6z"></path><path d="M6 14h12"></path><path d="M6 10H4a2 2 0 0 0-2 2v4h4"></path><path d="M18 16h4v-4a2 2 0 0 0-2-2h-2"></path></svg>`,
+    language: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 0 20"></path><path d="M12 2a15.3 15.3 0 0 0 0 20"></path></svg>`,
   };
   return icons[name] || '';
 }
@@ -307,9 +308,40 @@ function createViewerStartSectionHeader({ icon = 'info', title, className = '' }
   return header;
 }
 
-function createLanguageSelector({ onChange } = {}) {
+function createLanguageSelector({ onChange, variant = 'inline' } = {}) {
+  if (variant === 'icon') {
+    const wrapper = document.createElement('details');
+    wrapper.className = 'language-selector language-selector--icon';
+    const trigger = document.createElement('summary');
+    trigger.className = 'viewer-header-icon-btn language-selector__trigger';
+    trigger.setAttribute('aria-label', t('common.language.label'));
+    trigger.title = t('common.language.label');
+    trigger.innerHTML = createViewerIcon('language');
+    const menu = document.createElement('div');
+    menu.className = 'language-selector__menu';
+    getAvailableLocales().forEach((locale) => {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'language-selector__option';
+      option.value = locale;
+      option.textContent = locale === 'zh-Hant' ? t('common.language.zhHant') : t('common.language.en');
+      option.setAttribute('aria-pressed', locale === getLocale() ? 'true' : 'false');
+      option.addEventListener('click', () => {
+        wrapper.open = false;
+        if (locale === getLocale()) return;
+        setLocale(locale);
+        if (typeof onChange === 'function') {
+          onChange(locale);
+        }
+      });
+      menu.appendChild(option);
+    });
+    wrapper.append(trigger, menu);
+    return wrapper;
+  }
+
   const wrapper = document.createElement('label');
-  wrapper.className = 'language-selector';
+  wrapper.className = 'language-selector language-selector--inline';
   const label = document.createElement('span');
   label.className = 'editor-label';
   label.textContent = t('common.language.label');
@@ -5280,7 +5312,7 @@ function renderViewerShell(session) {
   infoBtn.type = 'button';
   infoBtn.className = 'viewer-header-icon-btn';
   infoBtn.setAttribute('aria-label', t('viewer.details.openTechnicalDetailsAriaLabel'));
-  infoBtn.title = t('viewer.details.title');
+  infoBtn.title = t('viewer.details.openTechnicalDetailsTitle');
   infoBtn.innerHTML = createViewerIcon('info');
 
   const uploadAttemptBtn = document.createElement('button');
@@ -5297,6 +5329,7 @@ function renderViewerShell(session) {
   printReportBtn.title = t('viewer.print.printReportTitle');
   printReportBtn.innerHTML = createViewerIcon('print');
   const languageSelector = createLanguageSelector({
+    variant: 'icon',
     onChange: async () => {
       await flushLocaleChangeBeforeReload(session, 'viewer.shell');
       window.location.reload?.();

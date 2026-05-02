@@ -437,11 +437,12 @@ export default {
     },
     "details": {
       "copyFieldAriaLabel": "Copy Field Aria Label",
-      "openTechnicalDetailsAriaLabel": "Open Technical Details Aria Label",
+      "openTechnicalDetailsAriaLabel": "Open Details And Print Settings",
+      "openTechnicalDetailsTitle": "Details And Print Settings",
       "printSchoolName": "Print School Name",
       "studentName": "Student Name",
       "studentNamePlaceholder": "Student Name Placeholder",
-      "title": "Title"
+      "title": "Details And Print Settings"
     },
     "image": {
       "couldNotLoad": "Could Not Load",

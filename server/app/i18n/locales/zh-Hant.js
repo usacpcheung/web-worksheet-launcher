@@ -437,11 +437,12 @@ export default {
     },
     "details": {
       "copyFieldAriaLabel": "複製欄位",
-      "openTechnicalDetailsAriaLabel": "開啟技術詳情",
+      "openTechnicalDetailsAriaLabel": "開啟詳細資料與列印設定",
+      "openTechnicalDetailsTitle": "詳細資料與列印設定",
       "printSchoolName": "學校名稱",
       "studentName": "學生姓名",
       "studentNamePlaceholder": "輸入學生姓名",
-      "title": "詳細資料"
+      "title": "詳細資料與列印設定"
     },
     "image": {
       "couldNotLoad": "無法載入圖片",

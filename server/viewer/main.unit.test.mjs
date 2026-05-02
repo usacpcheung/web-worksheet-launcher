@@ -1750,6 +1750,24 @@ test('viewer language change reload paths flush local attempt state first', asyn
   assert.equal(matches.length, 2);
 });
 
+test('active viewer uses compact language icon menu in the header actions', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.match(source, /function createLanguageSelector\(\{ onChange, variant = 'inline' \} = \{\}\)/);
+  assert.match(source, /if \(variant === 'icon'\)/);
+  assert.match(source, /trigger\.className = 'viewer-header-icon-btn language-selector__trigger';/);
+  assert.match(source, /trigger\.innerHTML = createViewerIcon\('language'\);/);
+  assert.match(source, /variant: 'icon',\s+onChange: async \(\) => \{\s+await flushLocaleChangeBeforeReload\(session, 'viewer\.shell'\);/);
+});
+
+test('viewer details action stays available for print settings copy', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.match(source, /infoBtn\.setAttribute\('aria-label', t\('viewer\.details\.openTechnicalDetailsAriaLabel'\)\);/);
+  assert.match(source, /infoBtn\.title = t\('viewer\.details\.openTechnicalDetailsTitle'\);/);
+  assert.match(source, /detailsTitle\.textContent = t\('viewer\.details\.title'\);/);
+  assert.match(source, /learnerNameForm\.append\(learnerNameLabel, learnerNameInput, learnerNameSaveBtn\);/);
+  assert.match(source, /printSettingsForm\.append\(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn\);/);
+});
+
 
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
   const mod = await loadViewerModule();
