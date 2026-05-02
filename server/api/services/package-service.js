@@ -383,6 +383,19 @@ export class PackageService {
             artifact.artifactSizeBytes,
           ]
         );
+        if (updated.rowCount === 0) {
+          await client.query('ROLLBACK');
+          await deleteArtifactIfPresent(artifact);
+          artifact = null;
+          return {
+            ok: false,
+            statusCode: 409,
+            error: {
+              code: 'DRAFT_REPLACE_TARGET_MISSING',
+              message: 'The uploaded draft to replace no longer exists. Please retry.',
+            },
+          };
+        }
         cleanupArtifactPathsAfterCommit.push(conflict.artifact_path);
         await client.query('COMMIT');
         for (const artifactPath of cleanupArtifactPathsAfterCommit) {
