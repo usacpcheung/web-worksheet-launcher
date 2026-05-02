@@ -468,6 +468,26 @@ function createServerApiClient(options = {}) {
     deleteUploadedDraft(uploadedDraftId) {
       return requestJson(`/drafts/${uploadedDraftId}`, { method: 'DELETE' });
     },
+    listUploadedAttempts() {
+      return requestJson('/attempts');
+    },
+    uploadAttemptPackage(zipBytes, metadata = {}, options = {}) {
+      return uploadZip('/attempts/upload', zipBytes, {
+        query: {
+          title: metadata.title || '',
+          subject: metadata.subject || '',
+          conflictAction: metadata.conflictAction || '',
+        },
+        onProgress: options.onProgress,
+        signal: options.signal,
+      });
+    },
+    fetchUploadedAttemptArtifact(uploadedAttemptId) {
+      return requestZip(`/attempts/${uploadedAttemptId}/artifact`);
+    },
+    deleteUploadedAttempt(uploadedAttemptId) {
+      return requestJson(`/attempts/${uploadedAttemptId}`, { method: 'DELETE' });
+    },
     publishFromUploadedDraft(uploadedDraftId, metadata = {}) {
       return requestJson('/published', {
         method: 'POST',

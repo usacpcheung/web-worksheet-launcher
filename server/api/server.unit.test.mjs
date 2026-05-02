@@ -180,6 +180,119 @@ test('POST /api/v1/drafts/upload returns 413 with PACKAGE_UPLOAD_TOO_LARGE when 
   assert.equal(uploadCalled, false);
 });
 
+test('POST /api/v1/attempts/upload forwards payload and returns success', async () => {
+  let received = null;
+  await withServer(
+    {
+      service: {
+        async uploadAttempt(payload) {
+          received = payload;
+          return { ok: true, statusCode: 201, data: { uploaded_attempt_id: 'a1' } };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const zipBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+      const res = await fetch(`${baseUrl}/api/v1/attempts/upload?title=Attempt&subject=Math&conflictAction=copy`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/zip' },
+        body: zipBytes,
+      });
+      assert.equal(res.status, 201);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.uploaded_attempt_id, 'a1');
+    }
+  );
+
+  assert.equal(received.title, 'Attempt');
+  assert.equal(received.subject, 'Math');
+  assert.equal(received.conflictAction, 'copy');
+  assert.deepEqual(Array.from(received.zipBytes), [0x50, 0x4b, 0x03, 0x04]);
+});
+
+test('POST /api/v1/attempts/upload returns 413 with PACKAGE_UPLOAD_TOO_LARGE when body exceeds configured max', async () => {
+  let uploadCalled = false;
+  await withServer(
+    {
+      configOverrides: {
+        packageUploadMaxBytes: 16,
+      },
+      service: {
+        async uploadAttempt() {
+          uploadCalled = true;
+          return { ok: true, statusCode: 201, data: {} };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const oversized = new Uint8Array(32);
+      const res = await fetch(`${baseUrl}/api/v1/attempts/upload`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/zip' },
+        body: oversized,
+      });
+      assert.equal(res.status, 413);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'PACKAGE_UPLOAD_TOO_LARGE');
+      assert.equal(payload.error.message, 'Uploaded package is too large.');
+    }
+  );
+  assert.equal(uploadCalled, false);
+});
+
+test('DELETE /api/v1/attempts/:id/artifact returns 404 and does not delete attempt', async () => {
+  let called = false;
+  await withServer(
+    {
+      service: {
+        async deleteOwnAttempt() {
+          called = true;
+          return { ok: true, statusCode: 200, data: { uploaded_attempt_id: 'x', deleted: true } };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const attemptId = '550e8400-e29b-41d4-a716-446655440000';
+      const res = await fetch(`${baseUrl}/api/v1/attempts/${attemptId}/artifact`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 404);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'NOT_FOUND');
+    }
+  );
+
+  assert.equal(called, false);
+});
+
+test('GET /api/v1/attempts returns uploaded attempts list', async () => {
+  let identitySub = null;
+  await withServer(
+    {
+      service: {
+        async listOwnAttempts(identity) {
+          identitySub = identity.sub;
+          return [{ uploaded_attempt_id: 'a1' }];
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/attempts`, {
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data.items, [{ uploaded_attempt_id: 'a1' }]);
+    }
+  );
+  assert.equal(identitySub, 'user-sub');
+});
+
 test('POST /api/v1/published returns 413 with REQUEST_BODY_TOO_LARGE when body exceeds configured max', async () => {
   let publishCalled = false;
   await withServer(

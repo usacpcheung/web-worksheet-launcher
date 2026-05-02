@@ -67,6 +67,9 @@ function isPublishedDetailRoute(segments) {
 function isDraftDetailRoute(segments) {
   return segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'drafts' && !!segments[3];
 }
+function isAttemptDetailRoute(segments) {
+  return segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'attempts' && !!segments[3];
+}
 
 export function createRequestHandler({ service, artifactStore, config }) {
   return async function requestHandler(req, res) {
@@ -127,6 +130,45 @@ export function createRequestHandler({ service, artifactStore, config }) {
       if (req.method === 'GET' && url.pathname === '/api/v1/drafts') {
         const rows = await service.listOwnDrafts(identity);
         return json(res, 200, ok({ items: rows }));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/v1/attempts/upload') {
+        const contentType = String(req.headers['content-type'] || '').toLowerCase();
+        if (!contentType.includes('application/zip')) return json(res, 415, fail('UNSUPPORTED_MEDIA_TYPE', 'Upload attempt requires Content-Type: application/zip'));
+        let zipBytes;
+        try {
+          zipBytes = await readRequestBody(req, Number(config.packageUploadMaxBytes) || 30 * 1024 * 1024);
+        } catch (error) {
+          if (error instanceof RequestBodyTooLargeError) {
+            return json(res, 413, fail('PACKAGE_UPLOAD_TOO_LARGE', 'Uploaded package is too large.'));
+          }
+          throw error;
+        }
+        const result = await service.uploadAttempt({
+          identity, zipBytes, title: url.searchParams.get('title') || '', subject: url.searchParams.get('subject') || '', conflictAction: url.searchParams.get('conflictAction') || '',
+        });
+        if (!result.ok) return json(res, result.statusCode, fail(result.error.code, result.error.message, result.error.details));
+        return json(res, result.statusCode, ok(result.data));
+      }
+      if (req.method === 'GET' && url.pathname === '/api/v1/attempts') {
+        const rows = await service.listOwnAttempts(identity);
+        return json(res, 200, ok({ items: rows }));
+      }
+      if (req.method === 'DELETE' && isAttemptDetailRoute(segments)) {
+        if (segments.length !== 4) return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        const validated = assertUuid(segments[3], { code: 'INVALID_UPLOADED_ATTEMPT_ID', message: 'uploadedAttemptId must be a valid UUID.' });
+        if (!validated.ok) return json(res, 400, fail(validated.error.code, validated.error.message));
+        const result = await service.deleteOwnAttempt({ identity, uploadedAttemptId: validated.value });
+        if (!result.ok) return json(res, result.statusCode, fail(result.error.code, result.error.message));
+        return json(res, result.statusCode, ok(result.data));
+      }
+      if (req.method === 'GET' && isAttemptDetailRoute(segments)) {
+        if (!(segments.length === 5 && segments[4] === 'artifact')) return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        const validated = assertUuid(segments[3], { code: 'INVALID_UPLOADED_ATTEMPT_ID', message: 'uploadedAttemptId must be a valid UUID.' });
+        if (!validated.ok) return json(res, 400, fail(validated.error.code, validated.error.message));
+        const attempt = await service.loadOwnAttemptArtifact({ identity, uploadedAttemptId: validated.value });
+        if (!attempt) return json(res, 404, fail('UPLOADED_ATTEMPT_NOT_FOUND', 'Uploaded attempt was not found for this owner.'));
+        const zipBytes = await artifactStore.readArtifact(attempt.artifact_path);
+        res.statusCode = 200; res.setHeader('content-type', 'application/zip'); res.setHeader('content-length', String(zipBytes.byteLength)); res.end(zipBytes); return;
       }
 
       if (req.method === 'DELETE' && isDraftDetailRoute(segments)) {

@@ -51,6 +51,7 @@ export function loadConfig(env = process.env) {
       name: (env.AUTH_HEADER_NAME || 'x-oidc-name').toLowerCase(),
     },
     draftSlotLimit: 3,
+    attemptSlotLimit: 3,
     browsePageLimitDefault: 20,
     browsePageLimitMax: 100,
     packageUploadMaxBytes: parsePositiveInt(env.PACKAGE_UPLOAD_MAX_BYTES, '31457280', 'PACKAGE_UPLOAD_MAX_BYTES'),
