@@ -6589,13 +6589,15 @@ function renderEditorShell(session) {
 
     renderNotification(mediaFeedback, ['media']);
     const sessionStatus = session.state.serverSession?.status || 'checking';
-    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
+    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || t('common.values.unknown');
     if (sessionStatus === 'ready') {
-      serverSessionStatus.textContent = `Server session: ready (${userLabel})`;
+      serverSessionStatus.textContent = t('editor.serverSession.ready', { user: userLabel });
     } else if (sessionStatus === 'checking') {
-      serverSessionStatus.textContent = 'Server session: checking…';
+      serverSessionStatus.textContent = t('editor.serverSession.checking');
     } else {
-      serverSessionStatus.textContent = `Server session: not ready. ${session.state.serverSession?.error || 'Sign in for server features.'}`;
+      serverSessionStatus.textContent = t('editor.serverSession.notReady', {
+        reason: session.state.serverSession?.error || t('editor.serverSession.signInForFeatures'),
+      });
     }
     const isUploadingDraft = session.state.isUploadingDraft;
     const isUploadDraftFlowActive = session.state.isUploadDraftFlowActive;

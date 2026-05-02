@@ -358,6 +358,12 @@ export default {
     },
     "status": {
       "selectedBlock": "已選取區塊 {value}"
+    },
+    "serverSession": {
+      "ready": "伺服器工作階段：已就緒（{user}）",
+      "checking": "伺服器工作階段：檢查中...",
+      "notReady": "伺服器工作階段：未就緒。{reason}",
+      "signInForFeatures": "請先登入以使用伺服器功能。"
     }
   },
   "viewer": {

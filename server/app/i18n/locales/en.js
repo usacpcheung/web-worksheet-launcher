@@ -358,6 +358,12 @@ export default {
     },
     "status": {
       "selectedBlock": "Selected Block {value}"
+    },
+    "serverSession": {
+      "ready": "Server session: ready ({user})",
+      "checking": "Server session: checking...",
+      "notReady": "Server session: not ready. {reason}",
+      "signInForFeatures": "Sign in for server features."
     }
   },
   "viewer": {
