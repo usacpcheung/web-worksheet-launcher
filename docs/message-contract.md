@@ -223,12 +223,12 @@ Preferred source paths:
 2. `publishedPackageId` (open immutable published package by reference)
 3. `importedWorksheetId` (open imported local package)
 4. `localDraftId` with `preview=1` (explicit editor preview; optional `draftUpdatedAt`)
-5. `viewerPayload` / `snapshot` (legacy compatibility path; no longer preferred as main route)
 
 Transitional terminology note:
 - `publishedPackageId` is the canonical published-viewer reference in the redesign direction.
 - Editor copy actions should share a full viewer URL containing `publishedPackageId`, not only the raw package id.
-- `snapshot`/`snapshotId` wording in viewer launch docs is compatibility-only terminology and should be treated as transitional alias language.
+- `snapshot`/`snapshotId` wording in model docs remains compatibility terminology for persisted/derived payload shapes, but `snapshot` is no longer accepted as a viewer query launch parameter.
+- Inline `viewerPayload` and `snapshot` query launch modes have been removed. Viewer payloads remain internal derived/runtime shapes.
 
 Deterministic behavior requirements:
 
@@ -246,7 +246,6 @@ Explicit-parameter fatal error rules:
 - `publishedPackageId` with an auth-required response is recoverable: viewer should preserve the same package intent, offer sign-in, and retry that package automatically after session readiness.
 - `localDraftId` with `preview=1`: missing draft or invalid preview payload is fatal (`LOCAL_DRAFT_PREVIEW_FAILED` class errors).
 - `importedWorksheetId`: lookup failure is fatal (`IMPORTED_WORKSHEET_NOT_FOUND` class errors).
-- `viewerPayload` / `snapshot`: parse/schema failures are fatal (`INVALID_VIEWER_PAYLOAD` class errors).
 
 Published package cache behavior:
 

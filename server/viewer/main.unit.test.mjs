@@ -3492,6 +3492,8 @@ test('viewer launch intent gates include publishedPackageId links', async () => 
 
   assert.equal(source.includes('function hasViewerLaunchIntent(params, options = {})'), true);
   assert.equal(source.includes("params.has('publishedPackageId')"), true);
+  assert.equal(source.includes("params.has('viewerPayload')"), false);
+  assert.equal(source.includes("params.has('snapshot')"), false);
   assert.equal(source.includes('const hasLaunchIntent = hasViewerLaunchIntent(params, { includeAuthReturn: true });'), true);
   assert.equal(source.includes('const hasRealContentIntent = hasViewerLaunchIntent(params);'), true);
   assert.equal(source.includes('const hasExplicitContentIntent = hasViewerContentIntent(params);'), true);
@@ -3780,7 +3782,7 @@ test('direct published package not-found still renders fatal panel', { concurren
 });
 
 
-test('bootstrap hard-fails with parse-specific errors for malformed explicit payload params', async () => {
+test('bootstrap ignores removed inline payload query launch params', async () => {
   const mod = await loadViewerModule({
     window: { location: { search: '?viewerPayload=@@bad@@' } },
   });
@@ -3793,7 +3795,7 @@ test('bootstrap hard-fails with parse-specific errors for malformed explicit pay
 
   await assert.rejects(
     () => session.bootstrap(),
-    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.VIEWER_PAYLOAD_PARSE_FAILED
+    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE
   );
 
   const snapshotMod = await loadViewerModule({
@@ -3807,7 +3809,7 @@ test('bootstrap hard-fails with parse-specific errors for malformed explicit pay
   });
   await assert.rejects(
     () => snapshotSession.bootstrap(),
-    (error) => error?.code === snapshotMod.VIEWER_BOOT_ERROR_CODES.SNAPSHOT_PARSE_FAILED
+    (error) => error?.code === snapshotMod.VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE
   );
 });
 
@@ -3844,13 +3846,19 @@ test('bootstrap hard-fails with typed not-found errors for explicit localDraftId
 
 test('bootstrap maps payload schema validation failures to INVALID_VIEWER_PAYLOAD', async () => {
   const mod = await loadViewerModule({
-    window: { location: { search: '?viewerPayload=%7B%22blocks%22%3A%5B%7B%22kind%22%3A%22question%22%2C%22position%22%3A0%2C%22prompt%22%3A%7B%22text%22%3A%22Q%22%7D%2C%22responseConfig%22%3A%7B%7D%7D%5D%7D' } },
+    window: { location: { search: '?localDraftId=draft_invalid&preview=1' } },
     validateViewerPayloadSchema: () => ({ valid: false, errors: ['missing worksheetId'] }),
   });
 
   const session = new mod.ViewerAttemptSession({
     attempts: { get: async () => null, put: async (value) => value },
-    drafts: { get: async () => null },
+    drafts: {
+      get: async () => ({
+        localId: 'draft_invalid',
+        title: 'Invalid draft',
+        blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+      }),
+    },
     importedWorksheets: { get: async () => null },
     resumeFlags: { get: () => null, set: () => {} },
   });
