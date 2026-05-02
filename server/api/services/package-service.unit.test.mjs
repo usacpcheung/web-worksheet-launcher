@@ -13,6 +13,7 @@ function createFakeDb({
   draftExists = true,
   uploadConflict = false,
   uploadConflictTitles = ['t'],
+  uploadConflictRow = null,
   failDelete = false,
   draftRow = null,
   publishConflict = null,
@@ -41,7 +42,7 @@ function createFakeDb({
             return {
               rowCount: 1,
               rows: [
-                {
+                uploadConflictRow || {
                   uploaded_draft_id: 'u',
                   owner_sub: 'oidc-sub',
                   title: values[1] === 't (2)' ? 'T (2)' : 'T',
@@ -49,6 +50,8 @@ function createFakeDb({
                   artifact_path: 'drafts/a.zip',
                   artifact_sha256: 'sha',
                   artifact_size_bytes: 1,
+                  last_published_artifact_sha256: null,
+                  last_published_at: null,
                   published_package_id: null,
                 },
               ],
@@ -95,6 +98,8 @@ function createFakeDb({
                   subject: values[5],
                   artifact_sha256: values[7],
                   artifact_size_bytes: values[8],
+                  last_published_artifact_sha256: null,
+                  last_published_at: null,
                 },
               ],
             };
@@ -117,7 +122,26 @@ function createFakeDb({
               ],
             };
           }
-          if (sql.includes('UPDATE uploaded_drafts') && sql.includes('last_published_artifact_sha256')) {
+          if (sql.includes('UPDATE uploaded_drafts') && sql.includes('SET owner_email')) {
+            return {
+              rowCount: 1,
+              rows: [
+                {
+                  uploaded_draft_id: values[0],
+                  owner_sub: values[1],
+                  owner_email: values[2],
+                  owner_name: values[3],
+                  title: values[4],
+                  subject: values[5],
+                  artifact_sha256: values[7],
+                  artifact_size_bytes: values[8],
+                  last_published_artifact_sha256: draftRow?.last_published_artifact_sha256 || uploadConflictRow?.last_published_artifact_sha256 || null,
+                  last_published_at: draftRow?.last_published_at || uploadConflictRow?.last_published_at || null,
+                },
+              ],
+            };
+          }
+          if (sql.includes('UPDATE uploaded_drafts') && sql.includes('SET last_published_artifact_sha256')) {
             return { rowCount: 1, rows: [] };
           }
           if (sql.includes('DELETE FROM uploaded_drafts')) {
@@ -357,6 +381,104 @@ test('uploadDraft save-as-copy advances generated suffix instead of nesting suff
   assert.equal(parsed.worksheet.title, 'T (3)');
 });
 
+test('uploadDraft replace creates fresh draft row with empty markers when matching draft has no live package', async () => {
+  const db = createFakeDb({
+    draftCount: 1,
+    uploadConflict: true,
+    uploadConflictRow: {
+      uploaded_draft_id: 'old-u',
+      owner_sub: 'oidc-sub',
+      title: 'T',
+      subject: 'S',
+      artifact_path: 'drafts/old.zip',
+      artifact_sha256: 'sha-current',
+      artifact_size_bytes: 1,
+      last_published_artifact_sha256: 'sha-current',
+      last_published_at: '2026-04-07T15:42:00.000Z',
+      published_package_id: null,
+      published_at: null,
+    },
+  });
+  const service = createService({
+    db,
+    artifactStore: {
+      async storeArtifact() {
+        return { artifactPath: 'drafts/new.zip', absolutePath: '/tmp/new.zip', artifactSha256: 'sha-current', artifactSizeBytes: 4 };
+      },
+      resolveAbsolutePath() {
+        return '/tmp/old.zip';
+      },
+    },
+  });
+
+  const result = await service.uploadDraft({
+    identity: { sub: 'oidc-sub', email: 'teacher@example.test', name: 'Teacher' },
+    title: 'T',
+    subject: 'S',
+    zipBytes: createValidWorksheetZip({ title: 'T' }),
+    conflictAction: 'replace',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.data.replaced_uploaded_draft_id, 'old-u');
+  assert.notEqual(result.data.uploaded_draft_id, 'old-u');
+  assert.equal(result.data.last_published_artifact_sha256, null);
+  assert.equal(result.data.last_published_at, null);
+  assert.equal(db.state.queries.some((sql) => sql.includes('DELETE FROM uploaded_drafts')), true);
+  assert.equal(db.state.queries.some((sql) => sql.includes('INSERT INTO uploaded_drafts')), true);
+  assert.equal(db.state.queries.some((sql) => sql.includes('SET owner_email')), false);
+});
+
+test('uploadDraft replace preserves live published package link and historical markers', async () => {
+  const db = createFakeDb({
+    draftCount: 1,
+    uploadConflict: true,
+    uploadConflictRow: {
+      uploaded_draft_id: 'u-live',
+      owner_sub: 'oidc-sub',
+      title: 'T',
+      subject: 'S',
+      artifact_path: 'drafts/live.zip',
+      artifact_sha256: 'sha-current',
+      artifact_size_bytes: 1,
+      last_published_artifact_sha256: 'sha-current',
+      last_published_at: '2026-04-07T15:42:00.000Z',
+      published_package_id: 'p-live',
+      published_at: '2026-04-07T15:45:00.000Z',
+    },
+  });
+  const service = createService({
+    db,
+    artifactStore: {
+      async storeArtifact() {
+        return { artifactPath: 'drafts/replacement.zip', absolutePath: '/tmp/replacement.zip', artifactSha256: 'sha-current', artifactSizeBytes: 4 };
+      },
+      resolveAbsolutePath() {
+        return '/tmp/live.zip';
+      },
+    },
+  });
+
+  const result = await service.uploadDraft({
+    identity: { sub: 'oidc-sub', email: 'teacher@example.test', name: 'Teacher' },
+    title: 'T',
+    subject: 'S',
+    zipBytes: createValidWorksheetZip({ title: 'T' }),
+    conflictAction: 'replace',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.data.uploaded_draft_id, 'u-live');
+  assert.equal(result.data.replaced_uploaded_draft_id, 'u-live');
+  assert.equal(result.data.last_published_artifact_sha256, 'sha-current');
+  assert.equal(result.data.last_published_at, '2026-04-07T15:42:00.000Z');
+  assert.equal(db.state.queries.some((sql) => sql.includes('DELETE FROM published_packages')), false);
+  assert.equal(db.state.queries.some((sql) => sql.includes('DELETE FROM uploaded_drafts')), false);
+  assert.equal(db.state.queries.some((sql) => sql.includes('SET owner_email')), true);
+});
+
 test('deleteOwnPublishedPackage removes owner package artifact after row delete', async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-published-delete-'));
   const artifactPath = path.join(tempDir, 'published.zip');
@@ -397,6 +519,47 @@ test('deleteOwnPublishedPackage removes owner package artifact after row delete'
   assert.equal(result.statusCode, 200);
   await assert.rejects(() => fs.access(artifactPath));
   await fs.rm(tempDir, { recursive: true, force: true });
+});
+
+test('deleteOwnPublishedPackage does not clear uploaded draft publish markers', async () => {
+  const queries = [];
+  const service = createService({
+    db: {
+      async connect() {
+        return {
+          async query(sql) {
+            queries.push(sql);
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+              return { rows: [], rowCount: 0 };
+            }
+            if (sql.includes('DELETE FROM published_packages')) {
+              return {
+                rowCount: 1,
+                rows: [{ published_package_id: 'p1', artifact_path: 'published/a.zip' }],
+              };
+            }
+            throw new Error(`Unhandled query in marker preservation test: ${sql}`);
+          },
+          release() {},
+        };
+      },
+    },
+    artifactStore: {
+      resolveAbsolutePath() {
+        return '/tmp/published.zip';
+      },
+    },
+  });
+
+  const result = await service.deleteOwnPublishedPackage({
+    identity: { sub: 'oidc-sub' },
+    publishedPackageId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(queries.some((sql) => sql.includes('UPDATE uploaded_drafts')), false);
+  assert.equal(queries.some((sql) => sql.includes('last_published_artifact_sha256')), false);
+  assert.equal(queries.some((sql) => sql.includes('last_published_at')), false);
 });
 
 test('publishFromDraft removes artifact file when DB insert fails', async () => {

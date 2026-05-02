@@ -138,6 +138,8 @@ export class PackageService {
         d.artifact_path,
         d.artifact_sha256,
         d.artifact_size_bytes,
+        d.last_published_artifact_sha256,
+        d.last_published_at,
         d.created_at,
         d.updated_at,
         p.published_package_id,
@@ -253,7 +255,7 @@ export class PackageService {
       if (conflict && action === 'replace') {
         const replacementId = crypto.randomUUID();
         artifact = await this.createDraftArtifact({ identity, uploadedDraftId: replacementId, zipBytes });
-        if (conflict.published_package_id) {
+        if (!conflict.published_package_id) {
           const deleted = await client.query(
             `DELETE FROM uploaded_drafts
              WHERE uploaded_draft_id = $1 AND owner_sub = $2
