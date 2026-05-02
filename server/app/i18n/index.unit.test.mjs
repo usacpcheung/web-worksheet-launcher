@@ -50,7 +50,7 @@ test('t falls back to English and missing keys are safe', async () => {
   mod.setLocale('zh-Hant', { persist: false });
 
   assert.equal(mod.t('viewer.actions.submit'), '提交');
-  assert.equal(mod.t('common.status.saved'), 'Saved');
+  assert.equal(mod.t('common.status.saved'), '已儲存');
   assert.equal(mod.t('viewer.actions.nonexistent'), 'viewer.actions.nonexistent');
 });
 
