@@ -4585,7 +4585,7 @@ test('viewer header actions include server-save icon wiring and protected upload
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', 'Save attempt to server');"), true);
   assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
-  assert.equal(source.includes('await session.uploadCurrentAttemptPackage();'), true);
+  assert.equal(source.includes('await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);'), true);
 });
 
 test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and media entries', async () => {
@@ -5006,6 +5006,32 @@ test('retryAttemptUploadFromConflict uses replace and copy actions', async () =>
   await session.retryAttemptUploadFromConflict('replace');
   await session.retryAttemptUploadFromConflict('copy');
   assert.deepEqual(conflictActions, ['replace', 'copy']);
+});
+
+test('retryAttemptUploadAfterSlotRecovery preserves slot recovery conflict action', async () => {
+  const mod = await loadViewerModule();
+  const conflictActions = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.uploadCurrentAttemptPackage = async (_payload = {}, options = {}) => {
+    conflictActions.push(options.conflictAction || 'fail_on_conflict');
+    return { ok: true };
+  };
+
+  await session.retryAttemptUploadAfterSlotRecovery({ kind: 'slot_limit', conflictAction: 'copy' });
+  await session.retryAttemptUploadAfterSlotRecovery({ kind: 'slot_limit', conflictAction: 'replace' });
+  await session.retryAttemptUploadAfterSlotRecovery({ kind: 'slot_limit', conflictAction: 'fail_on_conflict' });
+
+  assert.deepEqual(conflictActions, ['copy', 'replace', 'fail_on_conflict']);
+});
+
+test('viewer slot-limit recovery uses focused delete modal and automatic retry path', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes('const slotRecoveryHint = { ...session.state.uploadAttemptRecoveryHint };'), true);
+  assert.equal(source.includes('await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);'), true);
+  assert.equal(source.includes("await showUploadedAttemptsManagerModal(session, { reason: 'slot_limit' });"), false);
+  assert.equal(source.includes('then save again manually'), false);
 });
 
 test('listUploadedAttempts stores rows and slot limit for management UI', async () => {

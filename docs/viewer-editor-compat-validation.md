@@ -21,6 +21,7 @@
 ### Viewer (attempt upload parity)
 1. Attempt slot-full flow retries upload after deleting one server attempt slot.
 2. Attempt slot usage reflects server-provided `attemptSlotLimit`.
+3. Attempt slot-full upload recovery uses the focused delete-and-continue prompt, not the general server-attempt manager.
 
 ## Evidence run
 

@@ -128,7 +128,8 @@ Viewer uploaded attempt slot handling:
 
 - `ATTEMPT_SLOT_LIMIT_REACHED` must include `error.details.slotLimit`.
 - `GET /attempts` should include `data.attemptSlotLimit` for slot-usage UI.
-- After deleting one uploaded attempt from the slot-full flow, upload is expected to retry in the same flow.
+- After deleting one uploaded attempt from the focused slot-full recovery prompt, upload is expected to retry in the same flow.
+- The general uploaded-attempt manager is for manual resume/download/delete actions and should not be used as the automatic upload recovery UI.
 
 ## Do-not-break rules for viewer reuse
 

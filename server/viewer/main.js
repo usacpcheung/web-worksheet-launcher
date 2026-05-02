@@ -3546,6 +3546,14 @@ class ViewerAttemptSession {
     return this.uploadCurrentAttemptPackage({}, { conflictAction: action });
   }
 
+  async retryAttemptUploadAfterSlotRecovery(recoveryHint = this.state.uploadAttemptRecoveryHint) {
+    const retryConflictAction = recoveryHint?.conflictAction;
+    if (retryConflictAction === 'replace' || retryConflictAction === 'copy') {
+      return this.retryAttemptUploadFromConflict(retryConflictAction);
+    }
+    return this.uploadCurrentAttemptPackage();
+  }
+
   clearAttemptUploadConflictPrompt() {
     this.state.uploadAttemptConflictContext = null;
     this.state.uploadAttemptRecoveryHint = null;
@@ -4654,7 +4662,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   const slotRecoveryBanner = document.createElement('p');
   slotRecoveryBanner.className = 'confirm-modal__warning';
   slotRecoveryBanner.hidden = !recommendSlotRecovery;
-  slotRecoveryBanner.textContent = 'Attempt slots are full. Delete one uploaded attempt, then save again manually.';
+  slotRecoveryBanner.textContent = 'Attempt slots are full. Use the upload recovery prompt to delete one attempt and continue automatically.';
   const sessionLine = document.createElement('p');
   sessionLine.className = 'muted';
   const slotUsageLine = document.createElement('p');
@@ -6423,6 +6431,7 @@ function renderViewerShell(session) {
       }
     }
     if (session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
+      const slotRecoveryHint = { ...session.state.uploadAttemptRecoveryHint };
       await session.listUploadedAttempts();
       const slotRecovery = await showAttemptSlotFullModal(session, {
         uploadedAttempts: session.state.uploadedAttempts,
@@ -6430,15 +6439,9 @@ function renderViewerShell(session) {
       if (slotRecovery?.deleted) {
         // Keep slot-limit recovery behavior aligned with editor draft upload flow:
         // after deleting one server row to free space, retry upload immediately.
-        const retryConflictAction = session.state.uploadAttemptRecoveryHint?.conflictAction;
-        if (retryConflictAction === 'replace' || retryConflictAction === 'copy') {
-          await session.retryAttemptUploadFromConflict(retryConflictAction);
-        } else {
-          await session.uploadCurrentAttemptPackage();
-        }
+        await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);
       } else {
         session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
-        await showUploadedAttemptsManagerModal(session, { reason: 'slot_limit' });
       }
     }
     renderUI();
