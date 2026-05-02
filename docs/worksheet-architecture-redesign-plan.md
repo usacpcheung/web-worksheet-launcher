@@ -22,7 +22,7 @@ This redesign aligns the product around three core object types:
 The system direction is **package-first / hybrid**, not full inline payload as the default runtime path:
 
 - Viewer should primarily open by reference (especially `publishedPackageId`, which is the canonical published identity in target direction).
-- Inline `viewerPayload` is retained only for compatibility/debug paths and is no longer preferred as the main launch route.
+- Inline `viewerPayload` and `snapshot` query launch paths have been removed; viewer payloads remain derived runtime/internal shapes.
 - Local-first behavior remains primary for editing and preview.
 
 ## 2) Canonical models and rules
@@ -202,7 +202,7 @@ Recommended conceptual tables (names illustrative):
 
 - Current docs emphasize `worksheetId`/`snapshotId`; target needs canonical `publishedPackageId`.
 - “Sync draft” wording implies bidirectional cloud sync; target reframes this as upload-for-later-edit.
-- Viewer launch precedence currently elevates inline payload modes; target de-emphasizes inline `viewerPayload`.
+- Historical viewer launch precedence elevated inline payload modes; current runtime removes inline `viewerPayload` and `snapshot` query launch paths.
 - Some flows still imply auto-resume behavior without a start screen choice.
 - Import/export examples still center on worksheet JSON rather than package envelope + media manifest.
 
@@ -304,4 +304,3 @@ Recommended conceptual tables (names illustrative):
 2. Should `packageFamilyId` be introduced at MVP, or deferred until branching UX requires it?
 3. Cache validation strategy for published packages: strict hash match only, or hash + ETag flow?
 4. Guest attempt policy defaults for published packages (allowed vs auth-only by default)?
-5. Whether legacy inline `viewerPayload` should remain behind a feature flag or compatibility-only mode.

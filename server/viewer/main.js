@@ -49,8 +49,6 @@ let activeViewerShellAbortController = null;
 const VIEWER_BOOT_ERROR_CODES = Object.freeze({
   NO_CONTENT_SOURCE: 'NO_CONTENT_SOURCE',
   LOCAL_ATTEMPT_RESUME_FAILED: 'LOCAL_ATTEMPT_RESUME_FAILED',
-  VIEWER_PAYLOAD_PARSE_FAILED: 'VIEWER_PAYLOAD_PARSE_FAILED',
-  SNAPSHOT_PARSE_FAILED: 'SNAPSHOT_PARSE_FAILED',
   LOCAL_DRAFT_NOT_FOUND: 'LOCAL_DRAFT_NOT_FOUND',
   IMPORTED_WORKSHEET_NOT_FOUND: 'IMPORTED_WORKSHEET_NOT_FOUND',
   PUBLISHED_PACKAGE_NOT_FOUND: 'PUBLISHED_PACKAGE_NOT_FOUND',
@@ -100,36 +98,11 @@ function isPublishedPackageAuthBootError(error) {
   );
 }
 
-function parseLaunchParamJson(params, key, parseErrorCode) {
-  if (!params.has(key)) {
-    return { present: false, value: null };
-  }
-  const rawValue = params.get(key);
-  if (!rawValue) {
-    throw new ViewerBootError(parseErrorCode, {
-      userMessage: `The ${key} launch parameter could not be read.`,
-      technicalMessage: `${key} is present but empty or malformed.`,
-    });
-  }
-
-  const parsed = maybeParseEncodedJson(rawValue);
-  if (!parsed) {
-    throw new ViewerBootError(parseErrorCode, {
-      userMessage: `The ${key} launch parameter is invalid or corrupted.`,
-      technicalMessage: `${key} could not be parsed as JSON or base64url JSON.`,
-    });
-  }
-
-  return { present: true, value: parsed };
-}
-
 function hasViewerLaunchIntent(params, options = {}) {
   return Boolean(
     params.has('localAttemptId')
     || params.has('localDraftId')
     || params.has('publishedPackageId')
-    || params.has('viewerPayload')
-    || params.has('snapshot')
     || params.has('importedWorksheetId')
     || (options.includeAuthReturn === true && params.get(AUTH_RETURN_PARAM) === '1')
   );
@@ -139,8 +112,6 @@ function hasViewerContentIntent(params) {
   return Boolean(
     params.has('localDraftId')
     || params.has('publishedPackageId')
-    || params.has('viewerPayload')
-    || params.has('snapshot')
     || params.has('importedWorksheetId')
   );
 }
@@ -233,32 +204,6 @@ function createLocalId(prefix = 'local') {
   }
 
   return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
-}
-
-function decodeBase64Url(input) {
-  if (!input) return null;
-
-  const normalized = input.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
-  return atob(padded);
-}
-
-function maybeParseEncodedJson(rawValue) {
-  if (!rawValue) return null;
-
-  try {
-    return JSON.parse(rawValue);
-  } catch {
-    // Continue to base64url decode path.
-  }
-
-  try {
-    const decoded = decodeBase64Url(rawValue);
-    if (!decoded) return null;
-    return JSON.parse(decoded);
-  } catch {
-    return null;
-  }
 }
 
 function isRecord(value) {
@@ -2647,30 +2592,6 @@ class ViewerAttemptSession {
       };
     }
 
-    const viewerPayloadParam = parseLaunchParamJson(params, 'viewerPayload', VIEWER_BOOT_ERROR_CODES.VIEWER_PAYLOAD_PARSE_FAILED);
-    const inlinePayload = viewerPayloadParam.present
-      ? viewerPayloadParam.value
-      : null;
-
-    if (inlinePayload) {
-      return {
-        sourceType: 'inline_payload',
-        payload: normalizeViewerPayload(inlinePayload, 'Local worksheet'),
-        sourceSubject: inlinePayload?.subject || '',
-        sourceOwner: inlinePayload?.owner || inlinePayload?.owner_email || inlinePayload?.owner_name || inlinePayload?.owner_sub || '',
-      };
-    }
-
-    const snapshotParam = parseLaunchParamJson(params, 'snapshot', VIEWER_BOOT_ERROR_CODES.SNAPSHOT_PARSE_FAILED);
-    if (snapshotParam.present) {
-      return {
-        sourceType: 'snapshot_derived',
-        payload: normalizeViewerPayload(mapSnapshotToViewerPayload(snapshotParam.value), 'Snapshot worksheet'),
-        sourceSubject: snapshotParam.value?.subject || '',
-        sourceOwner: snapshotParam.value?.owner || snapshotParam.value?.owner_email || snapshotParam.value?.owner_name || snapshotParam.value?.owner_sub || '',
-      };
-    }
-
     const importedWorksheetId = params.get('importedWorksheetId');
     if (importedWorksheetId) {
       const importedRecord = await this.storage.importedWorksheets.get(importedWorksheetId);
@@ -2712,7 +2633,7 @@ class ViewerAttemptSession {
 
     throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.NO_CONTENT_SOURCE, {
       userMessage: 'No worksheet launch content was provided.',
-      technicalMessage: 'No viewer launch parameter was provided (localAttemptId/localDraftId/publishedPackageId/importedWorksheetId/viewerPayload/snapshot).',
+      technicalMessage: 'No viewer launch parameter was provided (localAttemptId/localDraftId/publishedPackageId/importedWorksheetId).',
     });
   }
 
