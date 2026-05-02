@@ -9,8 +9,10 @@ import {
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
 import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
+import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } from '../app/i18n/index.js';
 
 const app = document.getElementById('app');
+setLocale(resolveInitialLocale(), { persist: false });
 
 const AUTOSAVE_MS = 1000;
 const ACTIVITY_VISIBLE_INITIAL = 30;
@@ -386,7 +388,39 @@ function setIconButtonContent(button, iconName) {
 
 function setMediaActionButtonContent(button, iconName, label) {
   const spinClass = iconName === 'loading' ? ' media-action-btn__icon--spin' : '';
-  button.innerHTML = `<span class="media-action-btn__icon${spinClass}" aria-hidden="true">${createEditorIcon(iconName)}</span><span>${label}</span>`;
+  const icon = document.createElement('span');
+  icon.className = `media-action-btn__icon${spinClass}`;
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = createEditorIcon(iconName);
+  const text = document.createElement('span');
+  text.textContent = label;
+  button.replaceChildren(icon, text);
+}
+
+function createLanguageSelector({ onChange } = {}) {
+  const wrapper = document.createElement('label');
+  wrapper.className = 'editor-topbar-item language-selector';
+  const label = document.createElement('span');
+  label.className = 'editor-label';
+  label.textContent = t('common.language.label');
+  const select = document.createElement('select');
+  select.className = 'control language-selector__control';
+  select.value = getLocale();
+  getAvailableLocales().forEach((locale) => {
+    const option = document.createElement('option');
+    option.value = locale;
+    option.textContent = locale === 'zh-Hant' ? t('common.language.zhHant') : t('common.language.en');
+    select.appendChild(option);
+  });
+  select.value = getLocale();
+  select.addEventListener('change', () => {
+    setLocale(select.value);
+    if (typeof onChange === 'function') {
+      onChange(select.value);
+    }
+  });
+  wrapper.append(label, select);
+  return wrapper;
 }
 
 function setOptionAudioMenuTriggerState(trigger, { hasAudio = false, isGenerating = false, isPersisted = true } = {}) {
@@ -3655,9 +3689,9 @@ function renderEditorShell(session) {
   rightPanel.className = 'editor-panel right';
 
   const leftHeading = document.createElement('h2');
-  leftHeading.textContent = 'Blocks';
+  leftHeading.textContent = t('editor.sections.blocks');
   const rightHeading = document.createElement('h2');
-  rightHeading.textContent = 'Block Details';
+  rightHeading.textContent = t('editor.sections.blockDetails');
 
   const blockList = document.createElement('ul');
   blockList.className = 'block-list';
@@ -3687,7 +3721,7 @@ function renderEditorShell(session) {
   const metadataSection = document.createElement('section');
   metadataSection.className = 'editor-metadata-section';
   const metadataHeading = document.createElement('h3');
-  metadataHeading.textContent = 'Draft Info';
+  metadataHeading.textContent = t('editor.sections.draftInfo');
   const titleField = document.createElement('div');
   titleField.className = 'editor-field';
   const titleLabel = document.createElement('label');
@@ -3903,8 +3937,8 @@ function renderEditorShell(session) {
     entityLabel,
     descriptionText,
     removalItems = [],
-    confirmLabel = 'Delete',
-    cancelLabel = 'Cancel',
+    confirmLabel = t('common.actions.delete'),
+    cancelLabel = t('common.actions.cancel'),
     variant = 'danger',
   }) {
     if (activeConfirmDialog) {
@@ -4479,7 +4513,7 @@ function renderEditorShell(session) {
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
         deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
-        deleteBtn.textContent = 'Delete';
+        deleteBtn.textContent = t('common.actions.delete');
         deleteBtn.addEventListener('click', async () => {
           const confirmed = await showConfirmDialog({
             title: 'Delete uploaded draft?',
@@ -4600,7 +4634,7 @@ function renderEditorShell(session) {
     const dialog = document.createElement('section');
     dialog.className = 'confirm-modal browse-modal';
     const heading = document.createElement('h3');
-    heading.textContent = 'Browse Published Packages';
+    heading.textContent = t('editor.published.browse');
     const filterRow = document.createElement('div');
     filterRow.className = 'browse-modal__filters';
     const titleFilter = document.createElement('input');
@@ -4662,7 +4696,7 @@ function renderEditorShell(session) {
         const copyBtn = document.createElement('button');
         copyBtn.type = 'button';
         copyBtn.className = 'uploaded-draft-action published-result-action';
-        copyBtn.textContent = 'Copy Viewer Link';
+        copyBtn.textContent = t('editor.published.copyViewerLink');
         copyBtn.addEventListener('click', async () => {
           const viewerUrl = buildPublishedPackageViewerUrl(item.published_package_id);
           const copied = await copyTextToClipboard(viewerUrl);
@@ -4678,7 +4712,7 @@ function renderEditorShell(session) {
         openInEditorBtn.type = 'button';
         openInEditorBtn.className = 'uploaded-draft-action published-result-action';
         const isOpening = session.state.openingPublishedPackageIds.has(item.published_package_id);
-        openInEditorBtn.textContent = isOpening ? 'Opening…' : 'Open in Editor';
+        openInEditorBtn.textContent = isOpening ? 'Opening…' : t('editor.published.openInEditor');
         openInEditorBtn.disabled = !serverReady || browsePublishedState.loading || isOpening;
         openInEditorBtn.addEventListener('click', async () => {
           if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
@@ -4715,7 +4749,7 @@ function renderEditorShell(session) {
           const deletePublishedBtn = document.createElement('button');
           deletePublishedBtn.type = 'button';
           deletePublishedBtn.className = 'uploaded-draft-action uploaded-draft-action--danger published-result-action';
-          deletePublishedBtn.textContent = 'Delete';
+          deletePublishedBtn.textContent = t('common.actions.delete');
           deletePublishedBtn.addEventListener('click', async () => {
             const confirmed = await showConfirmDialog({
               title: 'Delete published package?',
@@ -4741,18 +4775,18 @@ function renderEditorShell(session) {
     const loadMoreBtn = document.createElement('button');
     loadMoreBtn.type = 'button';
     loadMoreBtn.className = 'confirm-modal__btn';
-    loadMoreBtn.textContent = browsePublishedState.loading ? 'Loading…' : 'Load more';
+    loadMoreBtn.textContent = browsePublishedState.loading ? t('common.actions.loading') : t('common.actions.loadMore');
     loadMoreBtn.hidden = !browsePublishedState.hasMore;
     loadMoreBtn.disabled = browsePublishedState.loading || !serverReady;
     const refreshBtn = document.createElement('button');
     refreshBtn.type = 'button';
     refreshBtn.className = 'confirm-modal__btn';
-    refreshBtn.textContent = 'Refresh';
+    refreshBtn.textContent = t('common.actions.refresh');
     refreshBtn.disabled = browsePublishedState.loading || !serverReady;
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'confirm-modal__btn';
-    closeBtn.textContent = 'Close';
+    closeBtn.textContent = t('common.actions.close');
     actions.append(loadMoreBtn, refreshBtn, closeBtn);
     dialog.append(heading, filterRow, results, actions);
     overlay.appendChild(dialog);
@@ -4791,38 +4825,37 @@ function renderEditorShell(session) {
 
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
-  saveBtn.textContent = 'Save Local Draft';
   saveBtn.className = 'sidebar-action-btn';
-  setMediaActionButtonContent(saveBtn, 'save', 'Save Local Draft');
+  setMediaActionButtonContent(saveBtn, 'save', t('editor.actions.saveLocalDraft'));
   const addContentBtn = document.createElement('button');
   addContentBtn.type = 'button';
   addContentBtn.className = 'sidebar-action-btn';
-  setMediaActionButtonContent(addContentBtn, 'filePlus', 'Add Content');
+  setMediaActionButtonContent(addContentBtn, 'filePlus', t('editor.actions.addContent'));
   const addQuestionBtn = document.createElement('button');
   addQuestionBtn.type = 'button';
   addQuestionBtn.className = 'sidebar-action-btn';
-  setMediaActionButtonContent(addQuestionBtn, 'question', 'Add Question');
+  setMediaActionButtonContent(addQuestionBtn, 'question', t('editor.actions.addQuestion'));
   const openViewerBtn = document.createElement('button');
   openViewerBtn.type = 'button';
-  openViewerBtn.textContent = 'Open in Viewer (same tab)';
+  openViewerBtn.textContent = t('editor.actions.openViewer');
   const importBtn = document.createElement('button');
   importBtn.type = 'button';
-  importBtn.textContent = 'Import package (.zip) / legacy JSON';
+  importBtn.textContent = t('editor.actions.importPackage');
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
-  exportBtn.textContent = 'Export package (.zip)';
+  exportBtn.textContent = t('editor.actions.exportPackage');
   const syncDraftBtn = document.createElement('button');
   syncDraftBtn.type = 'button';
-  syncDraftBtn.textContent = 'Upload Draft';
+  syncDraftBtn.textContent = t('editor.server.uploadDraft');
   const browsePublishedBtn = document.createElement('button');
   browsePublishedBtn.type = 'button';
-  browsePublishedBtn.textContent = 'Browse Published Packages';
+  browsePublishedBtn.textContent = t('editor.published.browse');
   const manageUploadedDraftsBtn = document.createElement('button');
   manageUploadedDraftsBtn.type = 'button';
-  manageUploadedDraftsBtn.textContent = 'Manage Uploaded Drafts';
+  manageUploadedDraftsBtn.textContent = t('editor.uploadedDraft.manage');
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
-  signInBtn.textContent = 'Sign in for server features';
+  signInBtn.textContent = t('auth.signInForServerFeatures');
   const serverSessionStatus = document.createElement('p');
   serverSessionStatus.className = 'muted';
   const activityFeed = document.createElement('section');
@@ -4831,14 +4864,14 @@ function renderEditorShell(session) {
   activityFeedToggle.className = 'editor-activity-panel';
   const activityFeedHeading = document.createElement('summary');
   activityFeedHeading.className = 'editor-activity-panel__summary';
-  activityFeedHeading.textContent = 'Activity';
+  activityFeedHeading.textContent = t('common.sections.activity');
   const activityFeedList = document.createElement('div');
   activityFeedList.className = 'notification-feed__list';
   const activityFeedSummary = document.createElement('p');
   activityFeedSummary.className = 'muted';
   const loadOlderActivityBtn = document.createElement('button');
   loadOlderActivityBtn.type = 'button';
-  loadOlderActivityBtn.textContent = 'Load older activity';
+  loadOlderActivityBtn.textContent = t('editor.activity.loadOlder');
   activityFeed.append(activityFeedSummary, activityFeedList, loadOlderActivityBtn);
   activityFeedToggle.append(activityFeedHeading, activityFeed);
   const toastContainer = document.createElement('div');
@@ -6351,7 +6384,7 @@ function renderEditorShell(session) {
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
-      deleteBtn.textContent = 'Delete';
+      deleteBtn.textContent = t('common.actions.delete');
       deleteBtn.disabled = !serverReady;
       deleteBtn.addEventListener('click', async () => {
         await guardServerMenuAction(deleteBtn, async () => {
@@ -6385,7 +6418,7 @@ function renderEditorShell(session) {
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     const heading = document.createElement('h3');
-    heading.textContent = 'Manage Uploaded Drafts';
+    heading.textContent = t('editor.uploadedDraft.manage');
     const slotUsage = document.createElement('p');
     slotUsage.className = 'confirm-modal__description';
     const slotLimit = Number(session.state.uploadedDraftSlotLimit) || 3;
@@ -6398,7 +6431,7 @@ function renderEditorShell(session) {
     const refreshBtn = document.createElement('button');
     refreshBtn.type = 'button';
     refreshBtn.className = 'confirm-modal__btn';
-    refreshBtn.textContent = session.state.isLoadingUploadedDrafts ? 'Refreshing…' : 'Refresh';
+    refreshBtn.textContent = session.state.isLoadingUploadedDrafts ? t('common.actions.refreshing') : t('common.actions.refresh');
     refreshBtn.disabled = session.state.isLoadingUploadedDrafts;
     refreshBtn.addEventListener('click', async () => {
       await session.loadUploadedDrafts({ preflight: false });
@@ -6407,7 +6440,7 @@ function renderEditorShell(session) {
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'confirm-modal__btn';
-    closeBtn.textContent = 'Close';
+    closeBtn.textContent = t('common.actions.close');
     closeBtn.addEventListener('click', () => {
       manageUploadedDraftsDialogOpen = false;
       renderManageUploadedDraftsModal();
@@ -6538,18 +6571,22 @@ function renderEditorShell(session) {
       const progress = session.state.uploadDraftProgress;
       if (progress?.lengthComputable && Number(progress?.total) > 0) {
         const percent = Math.max(0, Math.min(100, Math.round((progress.loaded / progress.total) * 100)));
-        syncDraftBtn.textContent = `Uploading draft package... ${percent}% (${formatMegabytes(progress.loaded)} / ${formatMegabytes(progress.total)})`;
+        syncDraftBtn.textContent = t('editor.server.uploadingDraftPackageProgress', {
+          percent,
+          loaded: formatMegabytes(progress.loaded),
+          total: formatMegabytes(progress.total),
+        });
       } else if (Number(progress?.loaded) > 0) {
-        syncDraftBtn.textContent = `Uploading draft package... ${formatMegabytes(progress.loaded)}`;
+        syncDraftBtn.textContent = t('editor.server.uploadingDraftPackageLoaded', { loaded: formatMegabytes(progress.loaded) });
       } else {
-        syncDraftBtn.textContent = 'Uploading draft package...';
+        syncDraftBtn.textContent = t('editor.server.uploadingDraftPackage');
       }
     } else {
-      syncDraftBtn.textContent = 'Upload Draft';
+      syncDraftBtn.textContent = t('editor.server.uploadDraft');
     }
     syncDraftBtn.disabled = !serverReady || isUploadingDraft || isUploadDraftFlowActive;
     browsePublishedBtn.disabled = !serverReady;
-    manageUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? 'Refreshing…' : 'Manage Uploaded Drafts';
+    manageUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? t('common.actions.refreshing') : t('editor.uploadedDraft.manage');
     manageUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;
     signInBtn.hidden = serverReady;
     if (manageUploadedDraftsDialogOpen) renderManageUploadedDraftsModal();
@@ -6887,7 +6924,10 @@ function renderEditorShell(session) {
   );
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
-  topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl);
+  const languageSelector = createLanguageSelector({
+    onChange: () => window.location.reload?.(),
+  });
+  topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl, languageSelector);
   shell.append(topBar, layout);
   shell.appendChild(browsePublishedModalRoot);
   shell.appendChild(manageUploadedDraftsModalRoot);

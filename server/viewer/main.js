@@ -15,9 +15,11 @@ import {
   normalizePaginationState,
   normalizePublishedPackageFilters,
 } from '../app/api/published-packages-service.js';
+import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } from '../app/i18n/index.js';
 
 const app = document.getElementById('app');
 const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
+setLocale(resolveInitialLocale(), { persist: false });
 
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
@@ -303,6 +305,31 @@ function createViewerStartSectionHeader({ icon = 'info', title, className = '' }
   heading.textContent = title;
   header.append(iconWrap, heading);
   return header;
+}
+
+function createLanguageSelector({ onChange } = {}) {
+  const wrapper = document.createElement('label');
+  wrapper.className = 'language-selector';
+  const label = document.createElement('span');
+  label.className = 'editor-label';
+  label.textContent = t('common.language.label');
+  const select = document.createElement('select');
+  select.className = 'control language-selector__control';
+  getAvailableLocales().forEach((locale) => {
+    const option = document.createElement('option');
+    option.value = locale;
+    option.textContent = locale === 'zh-Hant' ? t('common.language.zhHant') : t('common.language.en');
+    select.appendChild(option);
+  });
+  select.value = getLocale();
+  select.addEventListener('change', () => {
+    setLocale(select.value);
+    if (typeof onChange === 'function') {
+      onChange(select.value);
+    }
+  });
+  wrapper.append(label, select);
+  return wrapper;
 }
 
 function renderNotificationCard(notification, className = 'notification-toast') {
@@ -4347,7 +4374,7 @@ function showAttemptUploadConflictModal(conflictContext = {}) {
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
     cancelBtn.className = 'confirm-modal__btn';
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = t('common.actions.cancel');
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'confirm-modal__btn';
@@ -4415,7 +4442,7 @@ function showDeleteUploadedAttemptModal(row) {
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
-    deleteBtn.textContent = 'Delete';
+    deleteBtn.textContent = t('common.actions.delete');
     actions.append(cancelBtn, deleteBtn);
     dialog.append(heading, description, warning, actions);
     overlay.append(dialog);
@@ -4479,7 +4506,7 @@ async function showAttemptSlotFullModal(session, options = {}) {
   const cancelBtn = document.createElement('button');
   cancelBtn.type = 'button';
   cancelBtn.className = 'confirm-modal__btn';
-  cancelBtn.textContent = 'Cancel';
+  cancelBtn.textContent = t('common.actions.cancel');
   actions.append(cancelBtn);
   dialog.append(heading, description, list, actions);
   overlay.append(dialog);
@@ -4521,7 +4548,7 @@ async function showAttemptSlotFullModal(session, options = {}) {
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
         deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
-        deleteBtn.textContent = 'Delete';
+        deleteBtn.textContent = t('common.actions.delete');
         deleteBtn.addEventListener('click', async () => {
           const confirmed = await showDeleteUploadedAttemptModal(item);
           if (!confirmed) return;
@@ -4595,15 +4622,15 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.className = 'confirm-modal__btn';
-  signInBtn.textContent = 'Sign in';
+  signInBtn.textContent = t('common.actions.signIn');
   const refreshBtn = document.createElement('button');
   refreshBtn.type = 'button';
   refreshBtn.className = 'confirm-modal__btn';
-  refreshBtn.textContent = 'Refresh';
+  refreshBtn.textContent = t('common.actions.refresh');
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.className = 'confirm-modal__btn';
-  closeBtn.textContent = 'Close';
+  closeBtn.textContent = t('common.actions.close');
   actions.append(signInBtn, refreshBtn, closeBtn);
   dialog.append(heading, description, slotRecoveryBanner, sessionLine, slotUsageLine, list, actions);
   overlay.append(dialog);
@@ -4635,7 +4662,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
         : `Server session: logged out. ${session.state.serverSession?.error || 'Sign in to manage uploaded attempts.'}`;
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
-    signInBtn.textContent = signInInFlight ? 'Signing in…' : 'Sign in';
+    signInBtn.textContent = signInInFlight ? 'Signing in…' : t('common.actions.signIn');
     refreshBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingUploadedAttempts;
     list.innerHTML = '';
     if (!isLoggedIn) {
@@ -4733,7 +4760,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
-      deleteBtn.textContent = inFlightAction === 'delete' ? 'Deleting...' : 'Delete';
+      deleteBtn.textContent = inFlightAction === 'delete' ? 'Deleting...' : t('common.actions.delete');
       deleteBtn.disabled = Boolean(inFlightAction);
       deleteBtn.addEventListener('click', async () => {
         const confirmed = await showDeleteUploadedAttemptModal(row);
@@ -4851,7 +4878,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   dialog.setAttribute('role', 'dialog');
   dialog.setAttribute('aria-modal', 'true');
   const heading = document.createElement('h3');
-  heading.textContent = 'Browse Published Packages';
+  heading.textContent = t('common.publishedBrowser.browsePublishedPackages');
   const filterRow = document.createElement('div');
   filterRow.className = 'browse-modal__filters';
   const titleFilterInput = document.createElement('input');
@@ -4882,19 +4909,19 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.className = 'confirm-modal__btn';
-  signInBtn.textContent = 'Sign in';
+  signInBtn.textContent = t('common.actions.signIn');
   const loadMoreBtn = document.createElement('button');
   loadMoreBtn.type = 'button';
   loadMoreBtn.className = 'confirm-modal__btn';
-  loadMoreBtn.textContent = 'Load more';
+  loadMoreBtn.textContent = t('common.actions.loadMore');
   const refreshBtn = document.createElement('button');
   refreshBtn.type = 'button';
   refreshBtn.className = 'confirm-modal__btn';
-  refreshBtn.textContent = 'Refresh';
+  refreshBtn.textContent = t('common.actions.refresh');
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.className = 'confirm-modal__btn';
-  closeBtn.textContent = 'Close';
+  closeBtn.textContent = t('common.actions.close');
   actions.append(signInBtn, loadMoreBtn, refreshBtn, closeBtn);
   dialog.append(heading, filterRow, list, actions);
   overlay.append(dialog);
@@ -4927,7 +4954,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
-    signInBtn.textContent = signInInFlight ? 'Signing in…' : 'Sign in';
+    signInBtn.textContent = signInInFlight ? 'Signing in…' : t('common.actions.signIn');
     titleFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
     subjectFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
     ownerFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
@@ -4988,7 +5015,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
       openBtn.className = 'confirm-modal__btn published-result-action';
-      openBtn.textContent = 'Open package';
+      openBtn.textContent = t('common.publishedBrowser.openPackage');
       openBtn.disabled = !item.published_package_id;
       openBtn.addEventListener('click', async () => {
         const result = await session.startFromPublishedPackage(item.published_package_id, {
@@ -5173,15 +5200,15 @@ function renderViewerShell(session) {
   const prevBtn = document.createElement('button');
   prevBtn.type = 'button';
   prevBtn.className = 'icon-nav-btn';
-  prevBtn.textContent = '← Back';
-  prevBtn.setAttribute('aria-label', 'Go to previous block');
-  prevBtn.title = 'Previous block';
+  prevBtn.textContent = t('viewer.actions.back');
+  prevBtn.setAttribute('aria-label', t('viewer.actions.previousBlock'));
+  prevBtn.title = t('viewer.actions.previousBlockTitle');
   const nextBtn = document.createElement('button');
   nextBtn.type = 'button';
   nextBtn.className = 'icon-nav-btn';
-  nextBtn.textContent = 'Next →';
-  nextBtn.setAttribute('aria-label', 'Go to next block');
-  nextBtn.title = 'Next block';
+  nextBtn.textContent = t('viewer.actions.next');
+  nextBtn.setAttribute('aria-label', t('viewer.actions.nextBlock'));
+  nextBtn.title = t('viewer.actions.nextBlockTitle');
   navActions.append(prevBtn, nextBtn);
   const answerControls = new Map();
   const textControlFeedback = new Map();
@@ -5199,15 +5226,15 @@ function renderViewerShell(session) {
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.className = 'viewer-bottom-action-btn';
-  saveBtn.textContent = 'Save';
+  saveBtn.textContent = t('common.actions.save');
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
   completeBtn.className = 'viewer-bottom-action-btn';
-  completeBtn.textContent = 'Submit';
+  completeBtn.textContent = t('viewer.actions.submit');
   const checkBtn = document.createElement('button');
   checkBtn.type = 'button';
   checkBtn.className = 'viewer-bottom-action-btn';
-  checkBtn.textContent = 'Check Answer';
+  checkBtn.textContent = t('viewer.actions.checkAnswer');
 
   const headerActions = document.createElement('div');
   headerActions.className = 'viewer-header-actions';
@@ -5231,7 +5258,10 @@ function renderViewerShell(session) {
   printReportBtn.setAttribute('aria-label', 'Print worksheet report');
   printReportBtn.title = 'Print worksheet report';
   printReportBtn.innerHTML = createViewerIcon('print');
-  headerActions.append(infoBtn, uploadAttemptBtn, printReportBtn);
+  const languageSelector = createLanguageSelector({
+    onChange: () => window.location.reload?.(),
+  });
+  headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, printReportBtn);
 
   const detailsModal = document.createElement('div');
   detailsModal.className = 'viewer-details-modal';
@@ -5277,13 +5307,13 @@ function renderViewerShell(session) {
   const printSchoolNameSaveBtn = document.createElement('button');
   printSchoolNameSaveBtn.type = 'submit';
   printSchoolNameSaveBtn.className = 'viewer-details-form__save';
-  printSchoolNameSaveBtn.textContent = 'Save';
+  printSchoolNameSaveBtn.textContent = t('common.actions.save');
   printSettingsForm.append(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn);
   const detailsList = document.createElement('dl');
   detailsList.className = 'viewer-details-list';
   const detailsCloseBtn = document.createElement('button');
   detailsCloseBtn.type = 'button';
-  detailsCloseBtn.textContent = 'Close';
+  detailsCloseBtn.textContent = t('common.actions.close');
   detailsCloseBtn.className = 'viewer-details-modal__close';
   detailsContent.append(detailsTitle, learnerNameForm, printSettingsForm, detailsList, detailsCloseBtn);
   detailsModal.append(detailsContent);
@@ -6586,10 +6616,10 @@ function renderViewerStartPanel(session, options = {}) {
   const panel = document.createElement('section');
   panel.className = 'viewer-start-panel';
   const heading = document.createElement('h1');
-  heading.textContent = 'Start Viewer';
+  heading.textContent = t('viewer.start.title');
   const description = document.createElement('p');
   description.className = 'muted';
-  description.textContent = 'Resume attempts, import a worksheet, or load a published online version.';
+  description.textContent = t('viewer.start.description');
   const resumeAttempt = options.resumeAttempt || null;
   const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
   const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
@@ -6602,15 +6632,15 @@ function renderViewerStartPanel(session, options = {}) {
   const manageAttemptsBtn = document.createElement('button');
   manageAttemptsBtn.type = 'button';
   manageAttemptsBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  manageAttemptsBtn.textContent = 'Manage server attempts';
+  manageAttemptsBtn.textContent = t('viewer.start.manageServerAttempts');
   const importPackageBtn = document.createElement('button');
   importPackageBtn.type = 'button';
   importPackageBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  importPackageBtn.textContent = 'Import worksheet package (.zip)';
+  importPackageBtn.textContent = t('viewer.start.importPackage');
   const browsePublishedBtn = document.createElement('button');
   browsePublishedBtn.type = 'button';
   browsePublishedBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  browsePublishedBtn.textContent = 'Browse published packages';
+  browsePublishedBtn.textContent = t('viewer.start.browsePublishedPackages');
 
   const packageFileInput = document.createElement('input');
   packageFileInput.type = 'file';
@@ -6628,7 +6658,7 @@ function renderViewerStartPanel(session, options = {}) {
     resumeCard = document.createElement('div');
     resumeCard.className = 'viewer-resume-card';
     const resumeTitle = document.createElement('h2');
-    resumeTitle.textContent = 'Resume previous attempt';
+    resumeTitle.textContent = t('viewer.start.resumePreviousAttempt');
     const resumeMeta = document.createElement('p');
     resumeMeta.className = 'muted';
     const resumeUpdatedAt =
@@ -6673,7 +6703,7 @@ function renderViewerStartPanel(session, options = {}) {
     const resumeBtn = document.createElement('button');
     resumeBtn.type = 'button';
     resumeBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-    resumeBtn.textContent = 'Resume attempt';
+    resumeBtn.textContent = t('viewer.start.resumeAttempt');
     resumeBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
       if (onResumeAttempt) await onResumeAttempt();
@@ -6681,7 +6711,7 @@ function renderViewerStartPanel(session, options = {}) {
     const discardBtn = document.createElement('button');
     discardBtn.type = 'button';
     discardBtn.className = 'viewer-start-btn viewer-start-btn--secondary-danger';
-    discardBtn.textContent = 'Discard attempt';
+    discardBtn.textContent = t('viewer.start.discardAttempt');
     discardBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
       if (onDiscardResume) await onDiscardResume();
@@ -6691,7 +6721,7 @@ function renderViewerStartPanel(session, options = {}) {
   }
   const noResumeHint = document.createElement('p');
   noResumeHint.className = 'muted viewer-start-subhint';
-  noResumeHint.textContent = 'No resumable local attempt found.';
+  noResumeHint.textContent = t('viewer.start.noResume');
 
   const attemptsActions = document.createElement('div');
   attemptsActions.className = 'viewer-start-actions';
@@ -6829,17 +6859,20 @@ function renderViewerStartPanel(session, options = {}) {
     manageAttemptsBtn.hidden = false;
     manageAttemptsBtn.disabled = isChecking || session.state.isManagingUploadedAttempts === true;
     manageAttemptsBtn.textContent = isLoggedIn
-      ? 'Manage server attempts'
-      : 'Log in to manage server attempts';
+      ? t('viewer.start.manageServerAttempts')
+      : t('viewer.start.loginToManageServerAttempts');
     browsePublishedBtn.disabled = isChecking;
     browsePublishedBtn.textContent = isLoggedIn
-      ? 'Browse published worksheets'
-      : 'Log in to browse published worksheets';
+      ? t('viewer.start.browsePublishedWorksheets')
+      : t('viewer.start.loginToBrowsePublishedWorksheets');
     noResumeHint.hidden = Boolean(resumeAttempt);
   }
 
-  panel.append(heading, description);
-  attemptsSection.appendChild(createViewerStartSectionHeader({ icon: 'attempts', title: 'Attempts' }));
+  const languageSelector = createLanguageSelector({
+    onChange: () => window.location.reload?.(),
+  });
+  panel.append(languageSelector, heading, description);
+  attemptsSection.appendChild(createViewerStartSectionHeader({ icon: 'attempts', title: t('viewer.start.attempts') }));
   if (resumeCard) {
     attemptsSection.append(resumeCard);
     const attemptDivider = document.createElement('div');
@@ -6849,7 +6882,7 @@ function renderViewerStartPanel(session, options = {}) {
     attemptsSection.append(noResumeHint);
   }
   attemptsSection.append(attemptsActions);
-  worksheetsSection.appendChild(createViewerStartSectionHeader({ icon: 'worksheet', title: 'Worksheets' }));
+  worksheetsSection.appendChild(createViewerStartSectionHeader({ icon: 'worksheet', title: t('viewer.start.worksheets') }));
   worksheetsSection.append(worksheetActions);
   panel.append(
     attemptsSection,

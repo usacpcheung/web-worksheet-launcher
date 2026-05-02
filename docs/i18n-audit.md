@@ -2,6 +2,14 @@
 
 ## 1) Summary
 
+### Phase 2 implementation note
+
+- Supported locales are `en` and `zh-Hant`.
+- Locale preference is stored in `localStorage` under `worksheetLauncher.locale`.
+- English is the default and fallback locale; missing locale keys must fall back to English and missing keys must render the key instead of crashing.
+- Current scope is editor/viewer application UI chrome only. Worksheet/user-authored content, package/attempt names, widget strings, backend/API errors, API routes, protocol tokens, and package format are out of scope.
+- Initial migrated slice: editor main action buttons/section headings, viewer start screen/action bar labels, language selectors, and common buttons such as Save, Cancel, Close, Delete, Refresh, and Load more where touched by the first slice.
+
 ### Files inspected
 
 - `server/editor/index.html`

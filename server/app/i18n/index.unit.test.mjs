@@ -1,0 +1,65 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+function createStorage(initial = {}) {
+  const values = new Map(Object.entries(initial));
+  return {
+    getItem: (key) => values.get(key) || null,
+    setItem: (key, value) => values.set(key, String(value)),
+    values,
+  };
+}
+
+test('resolveInitialLocale uses saved preference before browser language', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+  const storage = createStorage({ [mod.LOCALE_STORAGE_KEY]: 'en' });
+
+  assert.equal(
+    mod.resolveInitialLocale({ storage, navigator: { language: 'zh-HK', languages: ['zh-HK'] } }),
+    'en'
+  );
+});
+
+test('resolveInitialLocale maps Traditional Chinese browser locales to zh-Hant', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+
+  assert.equal(mod.resolveInitialLocale({ storage: createStorage(), navigator: { language: 'zh-HK' } }), 'zh-Hant');
+  assert.equal(mod.resolveInitialLocale({ storage: createStorage(), navigator: { language: 'zh-TW' } }), 'zh-Hant');
+  assert.equal(mod.resolveInitialLocale({ storage: createStorage(), navigator: { language: 'zh-Hant' } }), 'zh-Hant');
+});
+
+test('unknown locales fall back to English', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+
+  assert.equal(mod.resolveInitialLocale({ storage: createStorage(), navigator: { language: 'fr-FR' } }), 'en');
+  assert.equal(mod.setLocale('fr-FR', { storage: createStorage() }), 'en');
+});
+
+test('setLocale saves preference to worksheetLauncher.locale', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+  const storage = createStorage();
+
+  mod.setLocale('zh-HK', { storage });
+
+  assert.equal(storage.values.get(mod.LOCALE_STORAGE_KEY), 'zh-Hant');
+  assert.equal(mod.getLocale(), 'zh-Hant');
+});
+
+test('t falls back to English and missing keys are safe', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+  mod.setLocale('zh-Hant', { persist: false });
+
+  assert.equal(mod.t('viewer.actions.submit'), '提交');
+  assert.equal(mod.t('common.status.saved'), 'Saved');
+  assert.equal(mod.t('viewer.actions.nonexistent'), 'viewer.actions.nonexistent');
+});
+
+test('t supports simple interpolation', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+  mod.setLocale('en', { persist: false });
+
+  assert.equal(
+    mod.t('editor.server.uploadingDraftPackageProgress', { percent: 50, loaded: '1 MB', total: '2 MB' }),
+    'Uploading draft package... 50% (1 MB / 2 MB)'
+  );
+});

@@ -96,6 +96,17 @@ const startAuthPopupFlow = (options = {}) => {
 `,
     },
     {
+      name: 'replace i18n import with local test doubles',
+      pattern: /import\s*\{\s*getAvailableLocales\s*,\s*getLocale\s*,\s*resolveInitialLocale\s*,\s*setLocale\s*,\s*t\s*\}\s*from\s*['"]\.\.\/app\/i18n\/index\.js['"];\s*/,
+      replacement: `const getAvailableLocales = () => ['en', 'zh-Hant'];
+let __testLocale = 'en';
+const getLocale = () => __testLocale;
+const resolveInitialLocale = () => __testLocale;
+const setLocale = (locale) => { __testLocale = locale === 'zh-Hant' ? 'zh-Hant' : 'en'; return __testLocale; };
+const t = (key, params = {}) => String(key).replace(/\\{([A-Za-z0-9_]+)\\}/g, (_, name) => String(params[name] ?? ''));
+`,
+    },
+    {
       name: 'replace dynamic contracts loader with deterministic test stub',
       pattern: /async function loadContracts\(\)\s*\{[\s\S]*?\n\}\s*\nfunction createEmptyQuestionBlock/,
       replacement: `async function loadContracts() {
@@ -929,7 +940,7 @@ test('activity panel source uses activity log pagination with load-older control
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('const ACTIVITY_VISIBLE_INITIAL = 30;'), true);
   assert.equal(source.includes('const ACTIVITY_MAX_STORED = 200;'), true);
-  assert.equal(source.includes("loadOlderActivityBtn.textContent = 'Load older activity';"), true);
+  assert.equal(source.includes("loadOlderActivityBtn.textContent = t('editor.activity.loadOlder');"), true);
   assert.equal(source.includes('const feedNotifications = (Array.isArray(session.state.activityLog) ? session.state.activityLog : [])'), true);
   assert.equal(source.includes('visibleActivityCount = Math.min(totalActivity, visibleActivityCount + ACTIVITY_VISIBLE_INITIAL);'), true);
   assert.equal(source.includes('Showing ${Math.min(visibleActivityCount, totalActivity)} of ${totalActivity} recent activities.'), true);
@@ -1080,17 +1091,17 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    publishBtn,'), false);
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
   assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
-  assert.equal(source.includes("metadataHeading.textContent = 'Draft Info';"), true);
+  assert.equal(source.includes("metadataHeading.textContent = t('editor.sections.draftInfo');"), true);
   assert.equal(source.includes("titleLabel.textContent = 'Worksheet Title';"), true);
   assert.equal(source.includes("subjectLabel.textContent = 'Subject';"), true);
-  assert.equal(source.includes("signInBtn.textContent = 'Sign in for server features';"), true);
-  assert.equal(source.includes("syncDraftBtn.textContent = 'Upload Draft';"), true);
-  assert.equal(source.includes("manageUploadedDraftsBtn.textContent = 'Manage Uploaded Drafts';"), true);
-  assert.equal(source.includes("browsePublishedBtn.textContent = 'Browse Published Packages';"), true);
-  assert.equal(source.includes("loadMoreBtn.textContent = browsePublishedState.loading ? 'Loading…' : 'Load more';"), true);
+  assert.equal(source.includes("signInBtn.textContent = t('auth.signInForServerFeatures');"), true);
+  assert.equal(source.includes("syncDraftBtn.textContent = t('editor.server.uploadDraft');"), true);
+  assert.equal(source.includes("manageUploadedDraftsBtn.textContent = t('editor.uploadedDraft.manage');"), true);
+  assert.equal(source.includes("browsePublishedBtn.textContent = t('editor.published.browse');"), true);
+  assert.equal(source.includes("loadMoreBtn.textContent = browsePublishedState.loading ? t('common.actions.loading') : t('common.actions.loadMore');"), true);
   assert.equal(source.includes("ownerFilter.placeholder = 'Filter by owner email';"), true);
-  assert.equal(source.includes("copyBtn.textContent = 'Copy Viewer Link';"), true);
-  assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? 'Opening…' : 'Open in Editor';"), true);
+  assert.equal(source.includes("copyBtn.textContent = t('editor.published.copyViewerLink');"), true);
+  assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? 'Opening…' : t('editor.published.openInEditor');"), true);
   assert.equal(source.includes('if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;'), true);
   assert.equal(source.includes('const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);'), true);
   assert.equal(source.includes('const reopenResult = await reopenPromise;'), true);
@@ -1601,7 +1612,7 @@ test('question input type change flow routes destructive switches through in-app
 test('confirm modal uses configurable description copy and defaults initial focus to cancel', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.match(source, /function showConfirmDialog\(\{\s*title,\s*bodyText,\s*entityLabel,\s*descriptionText,/m);
-  assert.match(source, /cancelLabel\s*=\s*'Cancel'/);
+  assert.match(source, /cancelLabel\s*=\s*t\('common\.actions\.cancel'\)/);
   assert.match(source, /variant\s*=\s*'danger'/);
   assert.match(source, /resolvedBodyText\s*=\s*isNonEmptyString\(bodyText\)\s*\?\s*bodyText\s*:\s*descriptionText/);
   assert.match(source, /fallbackDescription\s*=\s*isNonEmptyString\(entityLabel\)/);

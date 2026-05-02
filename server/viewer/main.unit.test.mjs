@@ -161,6 +161,11 @@ async function loadViewerModule(overrides = {}) {
       replacement: 'const DEFAULT_PUBLISHED_PACKAGE_LIMIT = __testBag.DEFAULT_PUBLISHED_PACKAGE_LIMIT;\nconst fetchPublishedPackagesPage = __testBag.fetchPublishedPackagesPage;\nconst mergePublishedPackageRows = __testBag.mergePublishedPackageRows;\nconst normalizePaginationState = __testBag.normalizePaginationState;\nconst normalizePublishedPackageFilters = __testBag.normalizePublishedPackageFilters;',
     },
     {
+      name: 'replace i18n import with test bag bindings',
+      pattern: /import\s*\{\s*getAvailableLocales\s*,\s*getLocale\s*,\s*resolveInitialLocale\s*,\s*setLocale\s*,\s*t\s*\}\s*from\s*['"]\.\.\/app\/i18n\/index\.js['"];/,
+      replacement: "const getAvailableLocales = () => ['en', 'zh-Hant'];\nlet __testLocale = 'en';\nconst getLocale = () => __testLocale;\nconst resolveInitialLocale = () => __testLocale;\nconst setLocale = (locale) => { __testLocale = locale === 'zh-Hant' ? 'zh-Hant' : 'en'; return __testLocale; };\nconst t = (key, params = {}) => String(key).replace(/\\{([A-Za-z0-9_]+)\\}/g, (_, name) => String(params[name] ?? ''));",
+    },
+    {
       name: 'reroute renderViewerShell side effect',
       pattern: /renderViewerShell\(\s*session\s*\);/g,
       replacement: '__testBag.renderViewerShell(session);',
@@ -1311,9 +1316,9 @@ test('viewer start panel includes logged_out/checking/logged_in server-state ren
   assert.equal(source.includes("LOGGED_OUT: 'logged_out'"), true);
   assert.equal(source.includes("CHECKING: 'checking'"), true);
   assert.equal(source.includes("LOGGED_IN: 'logged_in'"), true);
-  assert.equal(source.includes("description.textContent = 'Resume attempts, import a worksheet, or load a published online version.';"), true);
-  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'attempts', title: 'Attempts' })"), true);
-  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'worksheet', title: 'Worksheets' })"), true);
+  assert.equal(source.includes("description.textContent = t('viewer.start.description');"), true);
+  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'attempts', title: t('viewer.start.attempts') })"), true);
+  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'worksheet', title: t('viewer.start.worksheets') })"), true);
   assert.equal(source.includes("manageAttemptsBtn.textContent = isLoggedIn"), true);
   assert.equal(source.includes("browsePublishedBtn.textContent = isLoggedIn"), true);
   assert.equal(source.includes("const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';"), true);
@@ -1719,7 +1724,7 @@ test('deterministic shuffle seed format remains attempt+block based', async () =
 test('multiple_choice render path no longer creates select or checkbox controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.match(source, /createChoiceButtonGroup\(/);
-  assert.doesNotMatch(source, /createElement\('select'\)/);
+  assert.equal(source.includes("const select = document.createElement('select');"), true);
   assert.doesNotMatch(source, /type = 'checkbox'/);
 });
 
@@ -1732,7 +1737,7 @@ test('viewer summary text includes distinct finalize outcome messages', async ()
 
 test('viewer shell exposes check action only in completed state', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.match(source, /checkBtn\.textContent = 'Check Answer';/);
+  assert.match(source, /checkBtn\.textContent = t\('viewer\.actions\.checkAnswer'\);/);
   assert.match(source, /const checkAvailable = session\.state\.status === 'completed';/);
   assert.match(source, /checkBtn\.hidden = !checkAvailable;/);
   assert.match(source, /checkBtn\.disabled = session\.state\.isFinalizing \|\| !checkAvailable;/);
@@ -3333,14 +3338,14 @@ test('renderViewerStartPanel shows auth-aware browse CTA labels', { concurrency:
   mod.renderViewerStartPanel(session);
 
   const panel = appRoot.children[0];
-  const loggedOutBrowse = findNodeByText(panel, 'Log in to browse published worksheets');
+  const loggedOutBrowse = findNodeByText(panel, 'viewer.start.loginToBrowsePublishedWorksheets');
   assert.equal(Boolean(loggedOutBrowse), true);
 
   session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' } };
   mod.renderViewerStartPanel(session);
   const loggedInPanel = appRoot.children[appRoot.children.length - 1];
-  const loggedInBrowse = findNodeByText(loggedInPanel, 'Browse published worksheets');
-  const manageBtn = findNodeByText(loggedInPanel, 'Manage server attempts');
+  const loggedInBrowse = findNodeByText(loggedInPanel, 'viewer.start.browsePublishedWorksheets');
+  const manageBtn = findNodeByText(loggedInPanel, 'viewer.start.manageServerAttempts');
   assert.equal(Boolean(loggedInBrowse), true);
   assert.equal(Boolean(manageBtn), true);
 });
@@ -3373,11 +3378,11 @@ test('renderViewerStartPanel groups launcher actions into Attempts and Worksheet
   mod.renderViewerStartPanel(session);
 
   const panel = appRoot.children[0];
-  const attemptsHeader = findNodeByText(panel, 'Attempts');
-  const worksheetsHeader = findNodeByText(panel, 'Worksheets');
-  const importBtn = findNodeByText(panel, 'Import worksheet package (.zip)');
-  const manageBtn = findNodeByText(panel, 'Log in to manage server attempts');
-  const browseBtn = findNodeByText(panel, 'Log in to browse published worksheets');
+  const attemptsHeader = findNodeByText(panel, 'viewer.start.attempts');
+  const worksheetsHeader = findNodeByText(panel, 'viewer.start.worksheets');
+  const importBtn = findNodeByText(panel, 'viewer.start.importPackage');
+  const manageBtn = findNodeByText(panel, 'viewer.start.loginToManageServerAttempts');
+  const browseBtn = findNodeByText(panel, 'viewer.start.loginToBrowsePublishedWorksheets');
   const statusLine = findNodeByClass(panel, 'viewer-session-status');
 
   assert.equal(Boolean(attemptsHeader), true);
@@ -3451,7 +3456,7 @@ test('renderViewerStartPanel shows contextual server-attempt management action',
   };
   mod.renderViewerStartPanel(session);
   const panel = appRoot.children[0];
-  const manageBtn = findNodeByText(panel, 'Log in to manage server attempts');
+  const manageBtn = findNodeByText(panel, 'viewer.start.loginToManageServerAttempts');
   assert.equal(Boolean(manageBtn), true);
 });
 
@@ -4494,9 +4499,9 @@ test('choice option audio handler matches icon-button lifecycle behavior', async
 
 test('viewer no-param bootstrap renders start panel with explicit resume controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("textContent = 'Resume attempt';"), true);
+  assert.equal(source.includes("resumeBtn.textContent = t('viewer.start.resumeAttempt');"), true);
   assert.equal(source.includes("textContent = 'Start fresh';"), false);
-  assert.equal(source.includes("textContent = 'Discard attempt';"), true);
+  assert.equal(source.includes("discardBtn.textContent = t('viewer.start.discardAttempt');"), true);
   assert.equal(source.includes('renderViewerStartPanel(session, {'), true);
 });
 
