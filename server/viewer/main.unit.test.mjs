@@ -1743,6 +1743,12 @@ test('viewer shell exposes check action only in completed state', async () => {
   assert.match(source, /checkBtn\.disabled = session\.state\.isFinalizing \|\| !checkAvailable;/);
 });
 
+test('viewer language change reload paths flush local attempt state first', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  const matches = source.match(/await flushLocaleChangeBeforeReload\(session, 'viewer\.(shell|start)'\);/g) || [];
+  assert.equal(matches.length, 2);
+});
+
 
 test('completeLocalAttempt clears pending autosave timer before immediate autosave', async () => {
   const mod = await loadViewerModule();
@@ -1770,6 +1776,41 @@ test('completeLocalAttempt clears pending autosave timer before immediate autosa
   };
 
   await session.completeLocalAttempt();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(session.autosaveTimer, null);
+  assert.equal(autosaveCalls, 1);
+  assert.equal(timerFired, false);
+});
+
+test('flushLocalStateForAuthRedirect clears pending autosave timer before immediate autosave', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.localAttemptId = 'attempt_flush_local_state';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.state.lastSavedRevision = 0;
+  session.state.attemptRevision = 1;
+
+  let timerFired = false;
+  let autosaveCalls = 0;
+  session.autosaveTimer = setTimeout(() => {
+    timerFired = true;
+  }, 10);
+
+  session.autosave = async () => {
+    autosaveCalls += 1;
+    return { ok: true };
+  };
+
+  await session.flushLocalStateForAuthRedirect();
   await new Promise((resolve) => setTimeout(resolve, 30));
 
   assert.equal(session.autosaveTimer, null);

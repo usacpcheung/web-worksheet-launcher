@@ -423,6 +423,17 @@ function createLanguageSelector({ onChange } = {}) {
   return wrapper;
 }
 
+async function flushLocaleChangeBeforeReload(session, source = 'editor') {
+  if (!session || typeof session.flushLocalStateForAuthRedirect !== 'function') {
+    return;
+  }
+  try {
+    await session.flushLocalStateForAuthRedirect();
+  } catch (error) {
+    console.error(`Failed to flush local draft before locale change (${source})`, error);
+  }
+}
+
 function setOptionAudioMenuTriggerState(trigger, { hasAudio = false, isGenerating = false, isPersisted = true } = {}) {
   if (!(trigger instanceof HTMLElement)) return;
   const iconName = isGenerating ? 'loading' : hasAudio ? 'audioAttached' : 'audio';
@@ -3265,6 +3276,8 @@ class EditorDraftSession {
     if (!this.state.draft) return null;
 
     if (this.state.lastSavedRevision < this.state.draftRevision) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
       return this.autosave();
     }
 
@@ -6925,7 +6938,10 @@ function renderEditorShell(session) {
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
   const languageSelector = createLanguageSelector({
-    onChange: () => window.location.reload?.(),
+    onChange: async () => {
+      await flushLocaleChangeBeforeReload(session, 'editor.shell');
+      window.location.reload?.();
+    },
   });
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl, languageSelector);
   shell.append(topBar, layout);

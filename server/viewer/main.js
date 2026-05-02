@@ -332,6 +332,17 @@ function createLanguageSelector({ onChange } = {}) {
   return wrapper;
 }
 
+async function flushLocaleChangeBeforeReload(session, source = 'viewer') {
+  if (!session || typeof session.flushLocalStateForAuthRedirect !== 'function') {
+    return;
+  }
+  try {
+    await session.flushLocalStateForAuthRedirect();
+  } catch (error) {
+    console.error(`Failed to flush local attempt before locale change (${source})`, error);
+  }
+}
+
 function renderNotificationCard(notification, className = 'notification-toast') {
   const kind = String(notification?.kind || 'info').toLowerCase();
   const card = document.createElement('article');
@@ -3023,6 +3034,8 @@ class ViewerAttemptSession {
     if (!this.state.localAttemptId || !this.state.viewerPayload) return null;
 
     if (this.state.lastSavedRevision < this.state.attemptRevision) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
       return this.autosave();
     }
 
@@ -5259,7 +5272,10 @@ function renderViewerShell(session) {
   printReportBtn.title = 'Print worksheet report';
   printReportBtn.innerHTML = createViewerIcon('print');
   const languageSelector = createLanguageSelector({
-    onChange: () => window.location.reload?.(),
+    onChange: async () => {
+      await flushLocaleChangeBeforeReload(session, 'viewer.shell');
+      window.location.reload?.();
+    },
   });
   headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, printReportBtn);
 
@@ -6869,7 +6885,10 @@ function renderViewerStartPanel(session, options = {}) {
   }
 
   const languageSelector = createLanguageSelector({
-    onChange: () => window.location.reload?.(),
+    onChange: async () => {
+      await flushLocaleChangeBeforeReload(session, 'viewer.start');
+      window.location.reload?.();
+    },
   });
   panel.append(languageSelector, heading, description);
   attemptsSection.appendChild(createViewerStartSectionHeader({ icon: 'attempts', title: t('viewer.start.attempts') }));

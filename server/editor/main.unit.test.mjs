@@ -1327,6 +1327,43 @@ test('autosave completion emits state updates and clears pending state without e
   assert.ok(emissions >= 2, 'expected state emissions for pending + completion transitions');
 });
 
+test('flushLocalStateForAuthRedirect clears pending autosave timer before immediate autosave', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_flush_local_state');
+  clearTimeout(session.autosaveTimer);
+  session.state.lastSavedRevision = 0;
+  session.state.draftRevision = 1;
+
+  let timerFired = false;
+  let autosaveCalls = 0;
+  session.autosaveTimer = setTimeout(() => {
+    timerFired = true;
+  }, 10);
+
+  session.autosave = async () => {
+    autosaveCalls += 1;
+    return { ok: true };
+  };
+
+  await session.flushLocalStateForAuthRedirect();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(session.autosaveTimer, null);
+  assert.equal(autosaveCalls, 1);
+  assert.equal(timerFired, false);
+});
+
+test('editor language change reload path flushes local draft state first', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("await flushLocaleChangeBeforeReload(session, 'editor.shell');"), true);
+});
+
 test('autosave mirrors persistence and validation warnings into deduped notification sources', async () => {
   const mod = await loadEditorModule();
   let shouldFailPut = false;
