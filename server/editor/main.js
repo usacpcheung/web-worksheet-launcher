@@ -456,25 +456,55 @@ function toTitleCaseLabel(value) {
 }
 
 function getBlockKindLabel(kind) {
-  if (kind === 'question') return 'Question';
-  if (kind === 'content') return 'Content';
-  return toTitleCaseLabel(kind || 'Block');
+  if (kind === 'question') return t('editor.block.kind.question');
+  if (kind === 'content') return t('editor.block.kind.content');
+  return t('editor.block.kind.fallback', { value: toTitleCaseLabel(kind || 'Block') });
 }
 
 function getAnswerInputTypeLabel(inputType) {
-  const labels = {
-    text: 'Text',
-    number: 'Number',
-    boolean: 'True / False',
-    multiple_choice: 'Multiple choice',
+  const keys = {
+    text: 'editor.question.inputTypes.text',
+    number: 'editor.question.inputTypes.number',
+    boolean: 'editor.question.inputTypes.boolean',
+    multiple_choice: 'editor.question.inputTypes.multipleChoice',
   };
-  return labels[inputType] || toTitleCaseLabel(inputType);
+  return keys[inputType] ? t(keys[inputType]) : toTitleCaseLabel(inputType);
 }
 
 function getSelectionModeLabel(selectionMode) {
-  if (selectionMode === 'single') return 'Single';
-  if (selectionMode === 'multi') return 'Multiple';
+  if (selectionMode === 'single') return t('editor.question.selectionModes.single');
+  if (selectionMode === 'multi') return t('editor.question.selectionModes.multiple');
   return toTitleCaseLabel(selectionMode);
+}
+
+function getTextDisplayModeLabel(displayMode) {
+  if (displayMode === 'single_line') return t('editor.question.textDisplayModes.singleLine');
+  if (displayMode === 'multi_line') return t('editor.question.textDisplayModes.multiLine');
+  return toTitleCaseLabel(displayMode);
+}
+
+function getBooleanAnswerLabel(value) {
+  if (value === 'true') return t('editor.question.booleanValues.true');
+  if (value === 'false') return t('editor.question.booleanValues.false');
+  return toTitleCaseLabel(value);
+}
+
+function getEditorSaveStateLabel(saveState) {
+  const keyByState = {
+    error: 'editor.saveState.error',
+    saving: 'editor.saveState.saving',
+    warning: 'editor.saveState.savedWithWarnings',
+    saved: 'editor.saveState.saved',
+  };
+  return t(keyByState[saveState] || keyByState.saved);
+}
+
+function getEditorIssueCountLabel(count) {
+  const normalizedCount = Number.isFinite(Number(count)) ? Number(count) : 0;
+  return t(
+    normalizedCount === 1 ? 'editor.validation.issueCountOne' : 'editor.validation.issueCountOther',
+    { count: normalizedCount }
+  );
 }
 
 async function loadContracts() {
@@ -3781,8 +3811,8 @@ function renderEditorShell(session) {
   questionTextDisplayMode.setAttribute('role', 'group');
   questionTextDisplayMode.setAttribute('aria-labelledby', 'editor-question-text-display-mode-label');
   const questionTextDisplayModeButtons = [
-    { value: 'single_line', label: 'Single line' },
-    { value: 'multi_line', label: 'Multi line' },
+    { value: 'single_line', label: getTextDisplayModeLabel('single_line') },
+    { value: 'multi_line', label: getTextDisplayModeLabel('multi_line') },
   ].map(({ value, label }) => {
     const button = document.createElement('button');
     button.type = 'button';
@@ -3886,7 +3916,7 @@ function renderEditorShell(session) {
     tick.setAttribute('aria-hidden', 'true');
     tick.innerHTML = createEditorIcon('check');
     const text = document.createElement('span');
-    text.textContent = value === 'true' ? 'True' : 'False';
+    text.textContent = getBooleanAnswerLabel(value);
     button.append(tick, text);
     questionCorrectAnswerBoolean.appendChild(button);
     return button;
@@ -6491,22 +6521,21 @@ function renderEditorShell(session) {
     }
 
     const saveState = session.state.lastPersistenceError
-      ? 'Save error'
+      ? 'error'
       : session.state.autosavePending
-        ? 'Saving…'
+        ? 'saving'
         : session.state.lastValidationWarning
-          ? 'Saved (warnings)'
-        : 'Saved';
-
-    const isSaved = saveState === 'Saved';
-    saveStateEl.innerHTML = `<span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}">${createEditorIcon('check')}${isSaved ? 'Saved' : saveState}</span>`;
+          ? 'warning'
+        : 'saved';
+    const isSaved = saveState === 'saved';
+    saveStateEl.innerHTML = `<span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}">${createEditorIcon('check')}${getEditorSaveStateLabel(saveState)}</span>`;
     saveStateEl.title = session.state.lastPersistenceError || session.state.lastValidationWarning || '';
     const lastSavedLabel = document.createElement('span');
     lastSavedLabel.className = 'editor-label';
     lastSavedLabel.textContent = t('editor.labels.lastSaved');
     lastSavedEl.replaceChildren(lastSavedLabel, document.createTextNode(` ${formatLastSavedLabel(session.state.lastSavedAt)}`));
     const validationIssues = session.state.lastSavedLocalValidationIssueCount + session.state.lastContractValidationIssueCount;
-    validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">${createEditorIcon('shield')}${validationIssues} issue${validationIssues === 1 ? '' : 's'}</span>`;
+    validationEl.innerHTML = `<span class="editor-pill ${validationIssues > 0 ? 'editor-pill--warn' : 'editor-pill--ok'}">${createEditorIcon('shield')}${getEditorIssueCountLabel(validationIssues)}</span>`;
     const validationTooltip = [];
     if (session.state.lastValidationWarning) {
       validationTooltip.push(session.state.lastValidationWarning);

@@ -93,6 +93,16 @@ export default {
       "uploadingDraftPackageProgress": "正在上載草稿套件... {percent}%（{loaded} / {total}）",
       "uploadingDraftPackageLoaded": "正在上載草稿套件... {loaded}"
     },
+    "saveState": {
+      "error": "儲存錯誤",
+      "saving": "儲存中...",
+      "savedWithWarnings": "已儲存（有警告）",
+      "saved": "已儲存"
+    },
+    "validation": {
+      "issueCountOne": "{count} 個問題",
+      "issueCountOther": "{count} 個問題"
+    },
     "published": {
       "browse": "瀏覽已發布套件",
       "copyViewerLink": "複製檢視器連結",
@@ -137,6 +147,11 @@ export default {
     },
     "block": {
       "attachedBadge": "已附加",
+      "kind": {
+        "content": "內容",
+        "question": "題目",
+        "fallback": "{value}"
+      },
       "blockIdLabel": "區塊 ID",
       "contentSectionTitle": "內容",
       "contentTextLabel": "內容文字",
@@ -234,7 +249,25 @@ export default {
       "selectionMode": "選擇模式",
       "shuffleOptions": "隨機排列選項",
       "toggleShuffleAria": "切換隨機排列選項",
-      "toggleSignedValuesAria": "切換是否允許正負號"
+      "toggleSignedValuesAria": "切換是否允許正負號",
+      "inputTypes": {
+        "text": "文字",
+        "number": "數字",
+        "boolean": "是 / 否",
+        "multipleChoice": "選擇題"
+      },
+      "selectionModes": {
+        "single": "單選",
+        "multiple": "多選"
+      },
+      "textDisplayModes": {
+        "singleLine": "單行",
+        "multiLine": "多行"
+      },
+      "booleanValues": {
+        "true": "是",
+        "false": "否"
+      }
     },
     "reorder": {
       "dragHandleAriaLabel": "拖曳第 {index} 個區塊",

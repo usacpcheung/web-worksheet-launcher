@@ -93,6 +93,16 @@ export default {
       "uploadingDraftPackageProgress": "Uploading draft package... {percent}% ({loaded} / {total})",
       "uploadingDraftPackageLoaded": "Uploading draft package... {loaded}"
     },
+    "saveState": {
+      "error": "Save error",
+      "saving": "Saving...",
+      "savedWithWarnings": "Saved (warnings)",
+      "saved": "Saved"
+    },
+    "validation": {
+      "issueCountOne": "{count} issue",
+      "issueCountOther": "{count} issues"
+    },
     "published": {
       "browse": "Browse Published Packages",
       "copyViewerLink": "Copy Viewer Link",
@@ -137,6 +147,11 @@ export default {
     },
     "block": {
       "attachedBadge": "Attached Badge",
+      "kind": {
+        "content": "Content",
+        "question": "Question",
+        "fallback": "{value}"
+      },
       "blockIdLabel": "Block Id Label",
       "contentSectionTitle": "Content Section Title",
       "contentTextLabel": "Content Text Label",
@@ -234,7 +249,25 @@ export default {
       "selectionMode": "Selection Mode",
       "shuffleOptions": "Shuffle Options",
       "toggleShuffleAria": "Toggle Shuffle Aria",
-      "toggleSignedValuesAria": "Toggle Signed Values Aria"
+      "toggleSignedValuesAria": "Toggle Signed Values Aria",
+      "inputTypes": {
+        "text": "Text",
+        "number": "Number",
+        "boolean": "True / False",
+        "multipleChoice": "Multiple choice"
+      },
+      "selectionModes": {
+        "single": "Single",
+        "multiple": "Multiple"
+      },
+      "textDisplayModes": {
+        "singleLine": "Single line",
+        "multiLine": "Multi line"
+      },
+      "booleanValues": {
+        "true": "True",
+        "false": "False"
+      }
     },
     "reorder": {
       "dragHandleAriaLabel": "Drag Handle Aria Label {index}",
