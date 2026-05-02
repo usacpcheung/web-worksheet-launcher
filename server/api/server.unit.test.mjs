@@ -295,6 +295,31 @@ test('GET /api/v1/attempts returns uploaded attempts list', async () => {
   assert.equal(identitySub, 'user-sub');
 });
 
+test('GET /api/v1/drafts returns uploaded drafts list with draft slot limit', async () => {
+  await withServer(
+    {
+      service: {
+        async listOwnDrafts() {
+          return [{ uploaded_draft_id: 'd1' }];
+        },
+      },
+      configOverrides: {
+        draftSlotLimit: 5,
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/drafts`, {
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data.items, [{ uploaded_draft_id: 'd1' }]);
+      assert.equal(payload.data.draftSlotLimit, 5);
+    }
+  );
+});
+
 test('POST /api/v1/published returns 413 with REQUEST_BODY_TOO_LARGE when body exceeds configured max', async () => {
   let publishCalled = false;
   await withServer(

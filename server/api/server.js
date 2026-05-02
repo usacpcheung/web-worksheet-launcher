@@ -129,7 +129,10 @@ export function createRequestHandler({ service, artifactStore, config }) {
 
       if (req.method === 'GET' && url.pathname === '/api/v1/drafts') {
         const rows = await service.listOwnDrafts(identity);
-        return json(res, 200, ok({ items: rows }));
+        return json(res, 200, ok({
+          items: rows,
+          draftSlotLimit: config.draftSlotLimit,
+        }));
       }
       if (req.method === 'POST' && url.pathname === '/api/v1/attempts/upload') {
         const contentType = String(req.headers['content-type'] || '').toLowerCase();

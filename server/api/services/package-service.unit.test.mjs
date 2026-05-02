@@ -215,6 +215,7 @@ test('uploadDraft acquires per-owner advisory lock before counting slots', async
   assert.equal(result.ok, false);
   assert.equal(result.statusCode, 409);
   assert.equal(result.error.code, 'DRAFT_SLOT_LIMIT_REACHED');
+  assert.equal(result.error.details.slotLimit, 3);
 
   const lockQueryIndex = db.state.queries.findIndex((sql) => sql.includes('pg_advisory_xact_lock'));
   const countQueryIndex = db.state.queries.findIndex((sql) => sql.includes('COUNT(*)::int AS count FROM uploaded_drafts'));

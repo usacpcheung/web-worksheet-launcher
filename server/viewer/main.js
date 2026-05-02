@@ -6422,11 +6422,9 @@ function renderViewerShell(session) {
         uploadedAttempts: session.state.uploadedAttempts,
       });
       if (slotRecovery?.deleted) {
-        session.pushNotification({
-          kind: 'info',
-          text: 'One uploaded attempt was deleted. Please click Save attempt to server again.',
-          ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
-        });
+        // Keep slot-limit recovery behavior aligned with editor draft upload flow:
+        // after deleting one server row to free space, retry upload immediately.
+        await session.uploadCurrentAttemptPackage();
       } else {
         session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
         await showUploadedAttemptsManagerModal(session, { reason: 'slot_limit' });

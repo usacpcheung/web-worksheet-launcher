@@ -802,6 +802,7 @@ class EditorDraftSession {
       lastUploadedDraft: null,
       lastPublishedPackage: null,
       uploadedDrafts: [],
+      uploadedDraftSlotLimit: 3,
       isUploadingDraft: false,
       uploadDraftProgress: null,
       isUploadDraftFlowActive: false,
@@ -2935,6 +2936,12 @@ class EditorDraftSession {
         },
       });
       if (!result.ok) {
+        if (String(result?.error?.code || '').toUpperCase() === 'DRAFT_SLOT_LIMIT_REACHED') {
+          const slotLimit = Number(result?.error?.details?.slotLimit);
+          if (Number.isFinite(slotLimit) && slotLimit > 0) {
+            this.state.uploadedDraftSlotLimit = slotLimit;
+          }
+        }
         const isTransportFailure = String(result?.error?.code || '') === 'NETWORK_ERROR';
         const errorText = isTransportFailure
           ? 'Upload failed before completion. Your local draft is still safe. Please retry when the network is stable.'
@@ -3067,6 +3074,10 @@ class EditorDraftSession {
         }
 
         this.state.uploadedDrafts = Array.isArray(result.data?.items) ? result.data.items : [];
+        const slotLimit = Number(result?.data?.draftSlotLimit || result?.data?.slotLimit);
+        if (Number.isFinite(slotLimit) && slotLimit > 0) {
+          this.state.uploadedDraftSlotLimit = slotLimit;
+        }
         this.notifyStateChange();
         return result;
       } finally {
@@ -6377,7 +6388,8 @@ function renderEditorShell(session) {
     heading.textContent = 'Manage Uploaded Drafts';
     const slotUsage = document.createElement('p');
     slotUsage.className = 'confirm-modal__description';
-    slotUsage.textContent = `${session.state.uploadedDrafts.length} of 3 draft slots used.`;
+    const slotLimit = Number(session.state.uploadedDraftSlotLimit) || 3;
+    slotUsage.textContent = `${session.state.uploadedDrafts.length} of ${slotLimit} draft slots used.`;
     const list = document.createElement('div');
     list.className = 'browse-results';
     renderUploadedDraftRows(list);
@@ -6805,6 +6817,7 @@ function renderEditorShell(session) {
           if (!retry?.ok && retry?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
             const slotChoice = await showSlotFullModal({ uploadedDrafts: retry.error.details?.uploadedDrafts });
             if (slotChoice.deleted) {
+              // Keep slot-limit recovery in one continuous upload flow.
               await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
             }
           }
@@ -6812,6 +6825,7 @@ function renderEditorShell(session) {
       } else if (!result?.ok && result?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
         const slotChoice = await showSlotFullModal({ uploadedDrafts: result.error.details?.uploadedDrafts });
         if (slotChoice.deleted) {
+          // Keep slot-limit recovery in one continuous upload flow.
           await session.uploadCurrentDraftToServer({ preflight: false });
         }
       }

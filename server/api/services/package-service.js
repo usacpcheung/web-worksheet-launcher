@@ -418,6 +418,7 @@ export class PackageService {
             code: 'DRAFT_SLOT_LIMIT_REACHED',
             message: `You already have ${this.config.draftSlotLimit} uploaded drafts. Delete one before uploading another.`,
             details: {
+              slotLimit: this.config.draftSlotLimit,
               uploadedDrafts: drafts,
             },
           },

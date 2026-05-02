@@ -4585,7 +4585,7 @@ test('viewer header actions include server-save icon wiring and protected upload
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', 'Save attempt to server');"), true);
   assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
-  assert.equal(source.includes('await session.uploadCurrentAttemptPackage();'), false);
+  assert.equal(source.includes('await session.uploadCurrentAttemptPackage();'), true);
 });
 
 test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and media entries', async () => {
