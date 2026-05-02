@@ -96,6 +96,17 @@ const startAuthPopupFlow = (options = {}) => {
 `,
     },
     {
+      name: 'replace i18n import with local test doubles',
+      pattern: /import\s*\{\s*getAvailableLocales\s*,\s*getLocale\s*,\s*resolveInitialLocale\s*,\s*setLocale\s*,\s*t\s*\}\s*from\s*['"]\.\.\/app\/i18n\/index\.js['"];\s*/,
+      replacement: `const getAvailableLocales = () => ['en', 'zh-Hant'];
+let __testLocale = 'en';
+const getLocale = () => __testLocale;
+const resolveInitialLocale = () => __testLocale;
+const setLocale = (locale) => { __testLocale = locale === 'zh-Hant' ? 'zh-Hant' : 'en'; return __testLocale; };
+const t = (key, params = {}) => String(key).replace(/\\{([A-Za-z0-9_]+)\\}/g, (_, name) => String(params[name] ?? ''));
+`,
+    },
+    {
       name: 'replace dynamic contracts loader with deterministic test stub',
       pattern: /async function loadContracts\(\)\s*\{[\s\S]*?\n\}\s*\nfunction createEmptyQuestionBlock/,
       replacement: `async function loadContracts() {
@@ -929,7 +940,7 @@ test('activity panel source uses activity log pagination with load-older control
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('const ACTIVITY_VISIBLE_INITIAL = 30;'), true);
   assert.equal(source.includes('const ACTIVITY_MAX_STORED = 200;'), true);
-  assert.equal(source.includes("loadOlderActivityBtn.textContent = 'Load older activity';"), true);
+  assert.equal(source.includes("loadOlderActivityBtn.textContent = t('editor.activity.loadOlder');"), true);
   assert.equal(source.includes('const feedNotifications = (Array.isArray(session.state.activityLog) ? session.state.activityLog : [])'), true);
   assert.equal(source.includes('visibleActivityCount = Math.min(totalActivity, visibleActivityCount + ACTIVITY_VISIBLE_INITIAL);'), true);
   assert.equal(source.includes('Showing ${Math.min(visibleActivityCount, totalActivity)} of ${totalActivity} recent activities.'), true);
@@ -1080,34 +1091,37 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    publishBtn,'), false);
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
   assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
-  assert.equal(source.includes("metadataHeading.textContent = 'Draft Info';"), true);
-  assert.equal(source.includes("titleLabel.textContent = 'Worksheet Title';"), true);
-  assert.equal(source.includes("subjectLabel.textContent = 'Subject';"), true);
-  assert.equal(source.includes("signInBtn.textContent = 'Sign in for server features';"), true);
-  assert.equal(source.includes("syncDraftBtn.textContent = 'Upload Draft';"), true);
-  assert.equal(source.includes("manageUploadedDraftsBtn.textContent = 'Manage Uploaded Drafts';"), true);
-  assert.equal(source.includes("browsePublishedBtn.textContent = 'Browse Published Packages';"), true);
-  assert.equal(source.includes("loadMoreBtn.textContent = browsePublishedState.loading ? 'Loading…' : 'Load more';"), true);
-  assert.equal(source.includes("ownerFilter.placeholder = 'Filter by owner email';"), true);
-  assert.equal(source.includes("copyBtn.textContent = 'Copy Viewer Link';"), true);
-  assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? 'Opening…' : 'Open in Editor';"), true);
+  assert.equal(source.includes("metadataHeading.textContent = t('editor.sections.draftInfo');"), true);
+  assert.equal(source.includes("titleLabel.textContent = t('editor.form.title.label');"), true);
+  assert.equal(source.includes("subjectLabel.textContent = t('editor.form.subject.label');"), true);
+  assert.equal(source.includes("signInBtn.textContent = t('auth.signInForServerFeatures');"), true);
+  assert.equal(source.includes("syncDraftBtn.textContent = t('editor.server.uploadDraft');"), true);
+  assert.equal(source.includes("manageUploadedDraftsBtn.textContent = t('editor.uploadedDraft.manage');"), true);
+  assert.equal(source.includes("browsePublishedBtn.textContent = t('editor.published.browse');"), true);
+  assert.equal(source.includes("loadMoreBtn.textContent = browsePublishedState.loading ? t('common.actions.loading') : t('common.actions.loadMore');"), true);
+  assert.equal(source.includes("ownerFilter.placeholder = t('common.publishedBrowser.filterByOwnerEmail');"), true);
+  assert.equal(source.includes("copyBtn.textContent = t('editor.published.copyViewerLink');"), true);
+  assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? t('editor.published.openingInEditor') : t('editor.published.openInEditor');"), true);
   assert.equal(source.includes('if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;'), true);
   assert.equal(source.includes('const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);'), true);
   assert.equal(source.includes('const reopenResult = await reopenPromise;'), true);
   assert.equal(source.includes('if (browsePublishedDialogOpen) {\n      renderPublishedBrowserModal();\n    }'), true);
   assert.equal(source.includes('if (reopenResult?.ok) {'), true);
   assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
-  assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || 'Failed to open published package.';"), true);
+  assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || t('editor.notifications.failedOpenPublishedPackage');"), true);
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
-  assert.equal(source.includes("summary.textContent = 'Details';"), true);
-  assert.equal(source.includes("text: hasPublishedPackage ? 'Published — package live' : 'Published — package deleted'"), true);
-  assert.equal(source.includes("text: 'Updated — ready to publish'"), true);
-  assert.equal(source.includes("text: 'Not published'"), true);
-  assert.equal(source.includes('This version was already published, but the published package has been deleted. Replace or upload an updated draft to publish again.'), true);
-  assert.equal(source.includes("publishBtn.textContent = isPublishing ? 'Publishing…' : publishState === 'unpublished_changes' ? 'Publish New Version' : 'Publish';"), true);
-  assert.equal(source.includes("heading.textContent = 'Published package conflict';"), true);
-  assert.equal(source.includes("editBtn.textContent = 'Edit Published Name/Subject';"), true);
+  assert.equal(source.includes("summary.textContent = t('common.sections.details');"), true);
+  assert.equal(source.includes("text: hasPublishedPackage ? t('editor.uploadedDraft.publishBadge.live') : t('editor.uploadedDraft.publishBadge.deleted')"), true);
+  assert.equal(source.includes("text: t('editor.uploadedDraft.publishBadge.updated'),"), true);
+  assert.equal(source.includes("text: t('editor.uploadedDraft.publishBadge.notPublished'),"), true);
+  assert.equal(source.includes("t('editor.uploadedDraft.publishBadge.deletedHelp')"), true);
+  assert.equal(source.includes("publishBtn.textContent = isPublishing"), true);
+  assert.equal(source.includes("? t('editor.uploadedDraft.publishing')"), true);
+  assert.equal(source.includes("? t('editor.uploadedDraft.publishNewVersion')"), true);
+  assert.equal(source.includes(": t('common.actions.publish');"), true);
+  assert.equal(source.includes("heading.textContent = t('editor.modal.publishConflict.title');"), true);
+  assert.equal(source.includes("editBtn.textContent = t('editor.modal.publishConflict.editNameSubject');"), true);
   assert.equal(source.includes("let attemptedTitle = String(item?.title || '');"), true);
   assert.equal(source.includes("let attemptedSubject = String(item?.subject || '');"), true);
   assert.equal(source.includes('initialTitle: attemptedTitle,'), true);
@@ -1117,7 +1131,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("if (event.key !== 'Tab') return;"), true);
   assert.equal(source.includes("dialog.removeEventListener('keydown', onKeyDown);"), true);
   assert.equal(
-    source.includes("subjectOwner.textContent = `Subject: ${item.subject || '—'} • Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;"),
+    source.includes("subjectOwner.textContent = t('editor.published.metaSubjectOwner', {"),
     true
   );
 });
@@ -1174,7 +1188,7 @@ test('multiple-choice option audio controls gate placeholder options with helper
   assert.equal(source.includes('const persistedOptionIds = new Set(normalizedOptions.map((option) => String(option?.id || \'\')));'), true);
   assert.equal(source.includes('const isPersistedOption = persistedOptionIds.has(optionId);'), true);
   assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
-  assert.equal(source.includes("Enter option text or click Add option before attaching audio."), true);
+  assert.equal(source.includes("t('editor.media.enterOptionTextBeforeAttachingAudio')"), true);
 });
 
 test('question audio row adds contextual generate/regenerate control with prompt eligibility checks', async () => {
@@ -1183,10 +1197,9 @@ test('question audio row adds contextual generate/regenerate control with prompt
   assert.equal(source.includes("setMediaActionButtonContent("), true);
   assert.equal(source.includes("generateQuestionAudioBtn,"), true);
   assert.equal(source.includes("isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate'"), true);
-  assert.equal(source.includes("? 'Generating…'"), true);
-  assert.equal(source.includes("isPromptT2AInFlight ? 'Generating…' : currentQuestionAudioRef ? 'Regenerate' : 'Generate'"), true);
+  assert.equal(source.includes('getEditorAudioGenerationLabel({ isGenerating: isPromptT2AInFlight'), true);
   assert.equal(source.includes("generateQuestionAudioBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;"), true);
-  assert.equal(source.includes("Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters)."), true);
+  assert.equal(source.includes('getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)'), true);
   assert.equal(source.includes("attachQuestionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("playQuestionAudioBtn.disabled = true;"), true);
   assert.equal(source.includes("removeQuestionAudioBtn.disabled = true;"), true);
@@ -1195,7 +1208,7 @@ test('question audio row adds contextual generate/regenerate control with prompt
 
 test('stage3: prompt row triggers replace confirmation before prompt bridge generation when audio exists', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  const hasAudioConfirmIdx = source.indexOf("title: 'Regenerate question audio?'");
+  const hasAudioConfirmIdx = source.indexOf("title: t('editor.media.confirm.regenerateQuestionAudioTitle')");
   const promptBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorPromptT2A', {");
   const sessionReadyIdx = source.indexOf("const sessionReady = await session.ensureServerSessionReady();");
   assert.equal(hasAudioConfirmIdx >= 0, true);
@@ -1223,9 +1236,12 @@ test('multiple-choice option actions include contextual generate/regenerate audi
   assert.equal(source.includes("const optionDisplayText = String(option?.label ?? option?.value ?? '');"), true);
   assert.equal(source.includes("const optionTextState = getT2ATextEligibility(optionDisplayText);"), true);
   assert.equal(source.includes("const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;"), true);
-  assert.equal(source.includes("const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);"), true);
-  assert.equal(source.includes("const optionT2ALabel = isOptionT2AInFlight"), true);
-  assert.equal(source.includes(": optionAudioRef ? 'Regenerate audio' : 'Generate audio';"), true);
+  assert.match(
+    source,
+    /const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey\s*\|\|\s*optionT2AInFlightKeys\.has\(optionT2AKey\);/
+  );
+  assert.equal(source.includes("const optionT2ALabel = getEditorAudioGenerationLabel({"), true);
+  assert.equal(source.includes('getEditorAudioGenerationLabel({'), true);
   assert.equal(source.includes("setMediaActionButtonContent("), true);
   assert.equal(source.includes("optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("optionT2AInFlightKey = optionT2AKey;"), true);
@@ -1233,14 +1249,14 @@ test('multiple-choice option actions include contextual generate/regenerate audi
   assert.equal(source.includes("actionId: 'editorOptionT2A'"), false);
   assert.equal(source.includes("await session.triggerProtectedAction('editorOptionT2A', {"), true);
   assert.equal(source.includes("text: getProtectedActionErrorMessage(result, 'Unable to start audio generation. Please try again.'),"), true);
-  assert.equal(source.includes('Text is too long to generate audio (max ${T2A_TEXT_MAX_LENGTH} characters).'), true);
+  assert.equal(source.includes('getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)'), true);
   assert.equal(source.includes("optionActionsRow.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);"), true);
   assert.equal(source.includes("setOptionAudioMenuTriggerState(optionAudioMenuTrigger"), true);
 });
 
 test('stage3: option row triggers replace confirmation before option bridge generation when audio exists', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  const hasAudioConfirmIdx = source.indexOf("title: `Regenerate option ${optionIndex + 1} audio?`");
+  const hasAudioConfirmIdx = source.indexOf("title: t('editor.media.confirm.regenerateOptionAudioTitle'");
   const optionBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorOptionT2A', {");
   const optionSessionReadyIdx = source.indexOf("const sessionReady = await session.ensureServerSessionReady();");
   assert.equal(hasAudioConfirmIdx >= 0, true);
@@ -1253,7 +1269,10 @@ test('stage3: option row triggers replace confirmation before option bridge gene
 test('stage3: in-flight lock is row-scoped by block/option key and leaves unrelated rows interactive', async () => {
   const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes("const optionT2AKey = `${selectedBlock.blockId}:${optionId}`;"), true);
-  assert.equal(source.includes("const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);"), true);
+  assert.match(
+    source,
+    /const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey\s*\|\|\s*optionT2AInFlightKeys\.has\(optionT2AKey\);/
+  );
   assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;"), true);
@@ -1292,8 +1311,8 @@ test('prompt typing updates T2A state without forcing detail-panel rerender on e
 test('localDraftId render path avoids innerHTML interpolation for untrusted ids', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('localDraftIdEl.innerHTML'), false);
-  assert.equal(source.includes("localDraftIdLabel.textContent = 'localDraftId:';"), true);
-  assert.equal(source.includes("localDraftIdValue.textContent = session.state.draft?.localId || 'n/a';"), true);
+  assert.equal(source.includes("localDraftIdLabel.textContent = t('editor.labels.localDraftId');"), true);
+  assert.equal(source.includes("localDraftIdValue.textContent = session.state.draft?.localId || t('common.values.na');"), true);
 });
 
 test('autosave completion emits state updates and clears pending state without extra UI events', async () => {
@@ -1314,6 +1333,43 @@ test('autosave completion emits state updates and clears pending state without e
 
   assert.equal(session.state.autosavePending, false);
   assert.ok(emissions >= 2, 'expected state emissions for pending + completion transitions');
+});
+
+test('flushLocalStateForAuthRedirect clears pending autosave timer before immediate autosave', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_flush_local_state');
+  clearTimeout(session.autosaveTimer);
+  session.state.lastSavedRevision = 0;
+  session.state.draftRevision = 1;
+
+  let timerFired = false;
+  let autosaveCalls = 0;
+  session.autosaveTimer = setTimeout(() => {
+    timerFired = true;
+  }, 10);
+
+  session.autosave = async () => {
+    autosaveCalls += 1;
+    return { ok: true };
+  };
+
+  await session.flushLocalStateForAuthRedirect();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(session.autosaveTimer, null);
+  assert.equal(autosaveCalls, 1);
+  assert.equal(timerFired, false);
+});
+
+test('editor language change reload path flushes local draft state first', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("await flushLocaleChangeBeforeReload(session, 'editor.shell');"), true);
 });
 
 test('autosave mirrors persistence and validation warnings into deduped notification sources', async () => {
@@ -1592,37 +1648,37 @@ test('question input type change flow routes destructive switches through in-app
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes("questionInputType.addEventListener('change', async () => {"), true);
   assert.equal(source.includes("reason === 'confirm-switch-required'"), true);
-  assert.equal(source.includes("title: 'Switching answer type will remove data'"), true);
-  assert.equal(source.includes("confirmLabel: 'Switch and Remove'"), true);
-  assert.equal(source.includes('descriptionText: `You are switching from ${outcome.impact.fromType} to ${outcome.impact.toType}.`'), true);
+  assert.equal(source.includes("title: t('editor.question.switchTypeConfirm.title')"), true);
+  assert.equal(source.includes("confirmLabel: t('editor.question.switchTypeConfirm.confirmLabel')"), true);
+  assert.equal(source.includes("descriptionText: t('editor.question.switchTypeConfirm.description'"), true);
   assert.equal(source.includes('await showConfirmDialog({'), true);
 });
 
 test('confirm modal uses configurable description copy and defaults initial focus to cancel', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.match(source, /function showConfirmDialog\(\{\s*title,\s*bodyText,\s*entityLabel,\s*descriptionText,/m);
-  assert.match(source, /cancelLabel\s*=\s*'Cancel'/);
+  assert.match(source, /cancelLabel\s*=\s*t\('common\.actions\.cancel'\)/);
   assert.match(source, /variant\s*=\s*'danger'/);
   assert.match(source, /resolvedBodyText\s*=\s*isNonEmptyString\(bodyText\)\s*\?\s*bodyText\s*:\s*descriptionText/);
   assert.match(source, /fallbackDescription\s*=\s*isNonEmptyString\(entityLabel\)/);
-  assert.match(source, /'Are you sure you want to continue\?'/);
+  assert.match(source, /t\('editor\.modal\.confirm\.defaultDescription'\)/);
   assert.equal(source.includes('cancelBtn.focus();'), true);
 });
 
 test('replace/delete image flows use shared confirm modal and avoid native confirm', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.match(source, /title:\s*'Replace question image\?'/);
-  assert.match(source, /confirmLabel:\s*'Replace image'/);
-  assert.match(source, /title:\s*'Remove question image\?'/);
-  assert.match(source, /confirmLabel:\s*'Remove image'/);
+  assert.match(source, /title:\s*t\('editor\.media\.confirm\.replaceQuestionImageTitle'\)/);
+  assert.match(source, /confirmLabel:\s*t\('editor\.media\.actions\.replaceImage'\)/);
+  assert.match(source, /title:\s*t\('editor\.media\.confirm\.removeQuestionImageTitle'\)/);
+  assert.match(source, /confirmLabel:\s*t\('editor\.media\.actions\.removeImage'\)/);
   assert.match(source, /await\s+confirmDangerAction\(\{/);
   assert.equal(source.includes('window.confirm('), false);
 });
 
 test('delete block baseline confirm parity uses shared danger modal labels', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("title: `Delete block ${displayIndex}?`"), true);
-  assert.equal(source.includes("confirmLabel: 'Delete block'"), true);
+  assert.equal(source.includes("title: t('editor.block.deleteDialogTitle', { index: displayIndex }),"), true);
+  assert.equal(source.includes("confirmLabel: t('editor.block.deleteConfirm'),"), true);
   assert.equal(source.includes('await showConfirmDialog({'), true);
 });
 
@@ -1638,7 +1694,7 @@ test('browse modal filters are decoupled from generic button-row card styling an
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.match(source, /filterRow\.className\s*=\s*'browse-modal__filters'/);
   assert.equal(source.includes("filterRow.className = 'button-row browse-modal__filters'"), false);
-  assert.match(source, /searchBtn\.setAttribute\('aria-label', 'Search published packages'\)/);
+  assert.match(source, /searchBtn\.setAttribute\('aria-label', t\('common\.publishedBrowser\.searchAriaLabel'\)\)/);
   assert.equal(source.includes('<span class="sr-only">Search</span>'), false);
 });
 
@@ -2814,7 +2870,7 @@ test('attach option audio on non-persisted option returns missing-option with he
 
   const result = await session.attachOptionAudio('q1', 'placeholder_opt', createFakeFile({ name: 'opt.mp3', type: 'audio/mpeg' }));
   assert.equal(result.reason, 'missing-option');
-  assert.equal(session.state.mediaFeedback, 'Enter option text or click Add option before attaching audio.');
+  assert.equal(session.state.mediaFeedback, 'editor.media.enterOptionTextBeforeAttachingAudio');
 });
 
 // ─── preview helper tests ────────────────────────────────────────────────────
@@ -3102,7 +3158,7 @@ test('openAssetImage returns blocked when window.open returns null', async () =>
     const result = await session.openAssetImage('asset_1');
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'blocked');
-    assert.equal(session.state.mediaFeedback, 'Image preview was blocked. Allow pop-ups and try again.');
+    assert.equal(session.state.mediaFeedback, 'editor.media.feedback.imagePreviewBlocked');
   } finally {
     globalThis.window.open = origOpen;
   }
@@ -3565,8 +3621,8 @@ test('formatUploadedDraftTimestamp uses local browser formatting and handles inv
       hour: 'numeric',
       minute: '2-digit',
     });
-    assert.equal(mod.formatUploadedDraftTimestamp('not-a-date'), 'Unknown upload time');
-    assert.equal(mod.formatUploadedDraftTimestamp(''), 'Unknown upload time');
+    assert.equal(mod.formatUploadedDraftTimestamp('not-a-date'), 'common.values.unknownUploadTime');
+    assert.equal(mod.formatUploadedDraftTimestamp(''), 'common.values.unknownUploadTime');
   } finally {
     Intl.DateTimeFormat = originalFormatter;
   }
@@ -3576,32 +3632,32 @@ test('uploaded draft publish badge labels distinguish live and deleted published
   const mod = await loadEditorModule();
   assert.equal(
     mod.getUploadedDraftPublishBadge({ publish_state: 'draft_only' }).text,
-    'Not published'
+    'editor.uploadedDraft.publishBadge.notPublished'
   );
   assert.equal(
     mod.getUploadedDraftPublishBadge({
       publish_state: 'current_version_published',
       published_package_id: 'p-live',
     }).text,
-    'Published — package live'
+    'editor.uploadedDraft.publishBadge.live'
   );
   assert.equal(
     mod.getUploadedDraftPublishBadge({
       publish_state: 'current_version_published',
       published_package_id: '',
     }).text,
-    'Published — package deleted'
+    'editor.uploadedDraft.publishBadge.deleted'
   );
   assert.equal(
     mod.getUploadedDraftPublishBadge({ publish_state: 'unpublished_changes' }).text,
-    'Updated — ready to publish'
+    'editor.uploadedDraft.publishBadge.updated'
   );
   assert.equal(
     mod.getUploadedDraftPublishBadge({
       artifact_sha256: 'sha',
       last_published_artifact_sha256: 'sha',
     }).text,
-    'Published — package deleted'
+    'editor.uploadedDraft.publishBadge.deleted'
   );
 });
 
@@ -3975,14 +4031,14 @@ test('toUploadedDraftDisplay includes fallback title and uploaded label', async 
       created_at: '2026-04-07T15:42:00.000Z',
     });
     assert.equal(withTitle.title, 'Algebra worksheet');
-    assert.equal(withTitle.uploadedLabel, 'Uploaded: Apr 7, 2026, 3:42 PM');
+    assert.equal(withTitle.uploadedLabel, 'common.meta.uploaded');
 
     const untitled = mod.toUploadedDraftDisplay({
       title: '',
       created_at: '',
     });
-    assert.equal(untitled.title, 'Untitled');
-    assert.equal(untitled.uploadedLabel, 'Uploaded: Unknown upload time');
+    assert.equal(untitled.title, 'common.values.untitled');
+    assert.equal(untitled.uploadedLabel, 'common.meta.uploaded');
   } finally {
     Intl.DateTimeFormat = originalFormatter;
   }

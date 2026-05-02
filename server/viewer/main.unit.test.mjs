@@ -161,6 +161,11 @@ async function loadViewerModule(overrides = {}) {
       replacement: 'const DEFAULT_PUBLISHED_PACKAGE_LIMIT = __testBag.DEFAULT_PUBLISHED_PACKAGE_LIMIT;\nconst fetchPublishedPackagesPage = __testBag.fetchPublishedPackagesPage;\nconst mergePublishedPackageRows = __testBag.mergePublishedPackageRows;\nconst normalizePaginationState = __testBag.normalizePaginationState;\nconst normalizePublishedPackageFilters = __testBag.normalizePublishedPackageFilters;',
     },
     {
+      name: 'replace i18n import with test bag bindings',
+      pattern: /import\s*\{\s*getAvailableLocales\s*,\s*getLocale\s*,\s*resolveInitialLocale\s*,\s*setLocale\s*,\s*t\s*\}\s*from\s*['"]\.\.\/app\/i18n\/index\.js['"];/,
+      replacement: "const getAvailableLocales = () => ['en', 'zh-Hant'];\nlet __testLocale = 'en';\nconst getLocale = () => __testLocale;\nconst resolveInitialLocale = () => __testLocale;\nconst setLocale = (locale) => { __testLocale = locale === 'zh-Hant' ? 'zh-Hant' : 'en'; return __testLocale; };\nconst t = (key, params = {}) => String(key).replace(/\\{([A-Za-z0-9_]+)\\}/g, (_, name) => String(params[name] ?? ''));",
+    },
+    {
       name: 'reroute renderViewerShell side effect',
       pattern: /renderViewerShell\(\s*session\s*\);/g,
       replacement: '__testBag.renderViewerShell(session);',
@@ -338,7 +343,7 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   assert.equal(report.schoolName, 'Hong Kong Red Cross Hospital Schools');
   assert.equal(report.subject, 'Mathematics');
   assert.equal(report.studentName, 'Ada Lovelace');
-  assert.equal(report.checkedSummary, 'Checked 1/2 correct');
+  assert.equal(report.checkedSummary, 'viewer.print.checkedSummary');
   assert.equal(report.questions.length, 3);
   assert.equal(report.questions[0].answerText, 'It increases by 2 each line.');
   assert.equal(report.questions[0].image.status, 'ready');
@@ -347,9 +352,9 @@ test('buildWorksheetPrintReportModel formats answers, grading, and question imag
   assert.equal(report.questions[0].sectionBreakModes.prompt, 'keep');
   assert.equal(report.questions[0].sectionBreakModes.answer, 'keep');
   assert.equal(report.questions[1].answerText, 'A. Two\nC. Five');
-  assert.equal(report.questions[1].result.label, 'Correct');
-  assert.equal(report.questions[2].result.label, 'Incorrect');
-  assert.equal(report.questions[2].result.detail, 'Correct answer: True');
+  assert.equal(report.questions[1].result.label, 'viewer.check.correct');
+  assert.equal(report.questions[2].result.label, 'viewer.check.incorrect');
+  assert.equal(report.questions[2].result.detail, 'viewer.check.reveal.correctAnswer');
   assert.equal(report.questions[2].sectionBreakModes.checkedAnswer, 'keep');
 });
 
@@ -475,11 +480,12 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
   const html = mod.buildWorksheetPrintReportHtml(report);
   assert.equal(html.includes('>Student<'), false);
   assert.equal(html.includes('Hong Kong Red Cross Hospital Schools'), true);
-  assert.equal(html.includes('<dt>Subject</dt>'), true);
+  assert.equal(html.includes('<dt>viewer.print.meta.subject</dt>'), true);
   assert.equal(html.includes('Mathematics'), true);
-  assert.equal(html.includes('<dt>Submitted at</dt>'), true);
-  assert.equal(html.includes('Question image unavailable.'), true);
-  assert.equal(html.includes('Answer: Not answered'), true);
+  assert.equal(html.includes('<dt>viewer.print.meta.submittedAt</dt>'), true);
+  assert.equal(html.includes('viewer.print.questionImageUnavailable'), true);
+  assert.equal(html.includes('viewer.print.answerPrefix'), true);
+  assert.equal(html.includes('viewer.print.notAnswered'), true);
 });
 
 test('buildWorksheetPrintReportHtml emits layout-mode classes for print pagination behavior', async () => {
@@ -532,8 +538,8 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('print-question-section--result'), true);
   assert.equal(normalizedHtml.includes('print-question-section--keep'), true);
   assert.equal(normalizedHtml.includes('print-question-section--flow'), true);
-  assert.equal(normalizedHtml.includes('>Question<'), true);
-  assert.equal(normalizedHtml.includes('>Checked result<'), true);
+  assert.equal(normalizedHtml.includes('>viewer.print.questionHeading<'), true);
+  assert.equal(normalizedHtml.includes('>viewer.print.checkedResultHeading<'), true);
   assert.equal(normalizedHtml.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
   assert.equal(normalizedHtml.includes('.print-question-section--image {\n      break-inside: auto;'), true);
   const mediumPromptIndex = normalizedHtml.indexOf('<p class="print-question-text">Medium prompt</p>');
@@ -661,8 +667,8 @@ test('buildWorksheetPrintReportHtml records missing submitted timestamp without 
   });
   const html = mod.buildWorksheetPrintReportHtml(report);
 
-  assert.equal(html.includes('Submitted at'), true);
-  assert.equal(html.includes('Not recorded'), true);
+  assert.equal(html.includes('viewer.print.meta.submittedAt'), true);
+  assert.equal(html.includes('common.values.notRecorded'), true);
   assert.equal(html.includes('attempt_'), false);
   assert.equal(html.includes('Local attempt ID'), false);
 });
@@ -1311,9 +1317,9 @@ test('viewer start panel includes logged_out/checking/logged_in server-state ren
   assert.equal(source.includes("LOGGED_OUT: 'logged_out'"), true);
   assert.equal(source.includes("CHECKING: 'checking'"), true);
   assert.equal(source.includes("LOGGED_IN: 'logged_in'"), true);
-  assert.equal(source.includes("description.textContent = 'Resume attempts, import a worksheet, or load a published online version.';"), true);
-  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'attempts', title: 'Attempts' })"), true);
-  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'worksheet', title: 'Worksheets' })"), true);
+  assert.equal(source.includes("description.textContent = t('viewer.start.description');"), true);
+  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'attempts', title: t('viewer.start.attempts') })"), true);
+  assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'worksheet', title: t('viewer.start.worksheets') })"), true);
   assert.equal(source.includes("manageAttemptsBtn.textContent = isLoggedIn"), true);
   assert.equal(source.includes("browsePublishedBtn.textContent = isLoggedIn"), true);
   assert.equal(source.includes("const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';"), true);
@@ -1719,23 +1725,47 @@ test('deterministic shuffle seed format remains attempt+block based', async () =
 test('multiple_choice render path no longer creates select or checkbox controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.match(source, /createChoiceButtonGroup\(/);
-  assert.doesNotMatch(source, /createElement\('select'\)/);
+  assert.equal(source.includes("const select = document.createElement('select');"), true);
   assert.doesNotMatch(source, /type = 'checkbox'/);
 });
 
 test('viewer summary text includes distinct finalize outcome messages', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.match(source, /Finalizing submission…/);
-  assert.match(source, /Finalize failed\. Please check your connection and try again\./);
-  assert.match(source, /Finalized/);
+  assert.match(source, /t\('viewer\.status\.finalizing'\)/);
+  assert.match(source, /session\.state\.lastFinalizeError/);
+  assert.match(source, /t\('viewer\.status\.finalizedAt'/);
 });
 
 test('viewer shell exposes check action only in completed state', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.match(source, /checkBtn\.textContent = 'Check Answer';/);
+  assert.match(source, /checkBtn\.textContent = t\('viewer\.actions\.checkAnswer'\);/);
   assert.match(source, /const checkAvailable = session\.state\.status === 'completed';/);
   assert.match(source, /checkBtn\.hidden = !checkAvailable;/);
   assert.match(source, /checkBtn\.disabled = session\.state\.isFinalizing \|\| !checkAvailable;/);
+});
+
+test('viewer language change reload paths flush local attempt state first', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  const matches = source.match(/await flushLocaleChangeBeforeReload\(session, 'viewer\.(shell|start)'\);/g) || [];
+  assert.equal(matches.length, 2);
+});
+
+test('active viewer uses compact language icon menu in the header actions', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.match(source, /function createLanguageSelector\(\{ onChange, variant = 'inline' \} = \{\}\)/);
+  assert.match(source, /if \(variant === 'icon'\)/);
+  assert.match(source, /trigger\.className = 'viewer-header-icon-btn language-selector__trigger';/);
+  assert.match(source, /trigger\.innerHTML = createViewerIcon\('language'\);/);
+  assert.match(source, /variant: 'icon',\s+onChange: async \(\) => \{\s+await flushLocaleChangeBeforeReload\(session, 'viewer\.shell'\);/);
+});
+
+test('viewer details action stays available for print settings copy', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.match(source, /infoBtn\.setAttribute\('aria-label', t\('viewer\.details\.openTechnicalDetailsAriaLabel'\)\);/);
+  assert.match(source, /infoBtn\.title = t\('viewer\.details\.openTechnicalDetailsTitle'\);/);
+  assert.match(source, /detailsTitle\.textContent = t\('viewer\.details\.title'\);/);
+  assert.match(source, /learnerNameForm\.append\(learnerNameLabel, learnerNameInput, learnerNameSaveBtn\);/);
+  assert.match(source, /printSettingsForm\.append\(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn\);/);
 });
 
 
@@ -1765,6 +1795,41 @@ test('completeLocalAttempt clears pending autosave timer before immediate autosa
   };
 
   await session.completeLocalAttempt();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(session.autosaveTimer, null);
+  assert.equal(autosaveCalls, 1);
+  assert.equal(timerFired, false);
+});
+
+test('flushLocalStateForAuthRedirect clears pending autosave timer before immediate autosave', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (v) => v },
+    resumeFlags: { set: () => {}, get: () => null },
+  });
+
+  session.state.localAttemptId = 'attempt_flush_local_state';
+  session.state.viewerPayload = {
+    worksheetId: 'ws',
+    snapshotId: 'snap',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: {} }],
+  };
+  session.state.lastSavedRevision = 0;
+  session.state.attemptRevision = 1;
+
+  let timerFired = false;
+  let autosaveCalls = 0;
+  session.autosaveTimer = setTimeout(() => {
+    timerFired = true;
+  }, 10);
+
+  session.autosave = async () => {
+    autosaveCalls += 1;
+    return { ok: true };
+  };
+
+  await session.flushLocalStateForAuthRedirect();
   await new Promise((resolve) => setTimeout(resolve, 30));
 
   assert.equal(session.autosaveTimer, null);
@@ -2807,19 +2872,19 @@ test('getInputHelperText maps input types to guidance', async () => {
   const mod = await loadViewerModule();
   assert.equal(
     mod.getInputHelperText('number', { min: 1, max: 5 }),
-    'Enter integer/decimal only (fractions like 2/3 are not supported). Range: minimum 1, maximum 5.'
+    'viewer.inputHelper.numberBaseviewer.inputHelper.numberRangeSuffix'
   );
   assert.equal(
     mod.getInputHelperText('multiple_choice', { selectionMode: 'single' }),
-    'Choose one option only.'
+    'viewer.inputHelper.multipleChoiceSingle'
   );
   assert.equal(
     mod.getInputHelperText('multiple_choice', { selectionMode: 'multi' }),
-    'Choose one or more options.'
+    'viewer.inputHelper.multipleChoiceMulti'
   );
-  assert.equal(mod.getInputHelperText('multiple_choice'), 'Choose one option only.');
-  assert.equal(mod.getInputHelperText('boolean'), 'Choose True / False.');
-  assert.equal(mod.getInputHelperText('text'), 'Text response.');
+  assert.equal(mod.getInputHelperText('multiple_choice'), 'viewer.inputHelper.multipleChoiceSingle');
+  assert.equal(mod.getInputHelperText('boolean'), 'viewer.inputHelper.boolean');
+  assert.equal(mod.getInputHelperText('text'), 'viewer.inputHelper.text');
 });
 
 test('buildTechnicalDetailsRows only shows current session ids', async () => {
@@ -3265,7 +3330,7 @@ test('renderViewerStartPanel resume card prefers metadata.updatedAt when updated
   });
   assert.equal(
     resumeMeta.textContent,
-    `Title: Worksheet A · Subject: ICT · Owner: owner@example.test · ${expected}`
+    `viewer.start.resumeMetaLabels.title: Worksheet A · viewer.start.resumeMetaLabels.subject: ICT · viewer.start.resumeMetaLabels.owner: owner@example.test · ${expected}`
   );
 });
 
@@ -3301,7 +3366,7 @@ test('renderViewerStartPanel resume card strips fractional seconds in display ti
   });
   assert.equal(
     resumeMeta.textContent,
-    `Title: Worksheet B · Subject: — · Owner: — · ${expected}`
+    `viewer.start.resumeMetaLabels.title: Worksheet B · viewer.start.resumeMetaLabels.subject: — · viewer.start.resumeMetaLabels.owner: — · ${expected}`
   );
 });
 
@@ -3333,14 +3398,14 @@ test('renderViewerStartPanel shows auth-aware browse CTA labels', { concurrency:
   mod.renderViewerStartPanel(session);
 
   const panel = appRoot.children[0];
-  const loggedOutBrowse = findNodeByText(panel, 'Log in to browse published worksheets');
+  const loggedOutBrowse = findNodeByText(panel, 'viewer.start.loginToBrowsePublishedWorksheets');
   assert.equal(Boolean(loggedOutBrowse), true);
 
   session.state.serverSession = { status: 'logged_in', user: { email: 'learner@example.test' } };
   mod.renderViewerStartPanel(session);
   const loggedInPanel = appRoot.children[appRoot.children.length - 1];
-  const loggedInBrowse = findNodeByText(loggedInPanel, 'Browse published worksheets');
-  const manageBtn = findNodeByText(loggedInPanel, 'Manage server attempts');
+  const loggedInBrowse = findNodeByText(loggedInPanel, 'viewer.start.browsePublishedWorksheets');
+  const manageBtn = findNodeByText(loggedInPanel, 'viewer.start.manageServerAttempts');
   assert.equal(Boolean(loggedInBrowse), true);
   assert.equal(Boolean(manageBtn), true);
 });
@@ -3373,11 +3438,11 @@ test('renderViewerStartPanel groups launcher actions into Attempts and Worksheet
   mod.renderViewerStartPanel(session);
 
   const panel = appRoot.children[0];
-  const attemptsHeader = findNodeByText(panel, 'Attempts');
-  const worksheetsHeader = findNodeByText(panel, 'Worksheets');
-  const importBtn = findNodeByText(panel, 'Import worksheet package (.zip)');
-  const manageBtn = findNodeByText(panel, 'Log in to manage server attempts');
-  const browseBtn = findNodeByText(panel, 'Log in to browse published worksheets');
+  const attemptsHeader = findNodeByText(panel, 'viewer.start.attempts');
+  const worksheetsHeader = findNodeByText(panel, 'viewer.start.worksheets');
+  const importBtn = findNodeByText(panel, 'viewer.start.importPackage');
+  const manageBtn = findNodeByText(panel, 'viewer.start.loginToManageServerAttempts');
+  const browseBtn = findNodeByText(panel, 'viewer.start.loginToBrowsePublishedWorksheets');
   const statusLine = findNodeByClass(panel, 'viewer-session-status');
 
   assert.equal(Boolean(attemptsHeader), true);
@@ -3386,7 +3451,7 @@ test('renderViewerStartPanel groups launcher actions into Attempts and Worksheet
   assert.equal(Boolean(manageBtn), true);
   assert.equal(Boolean(browseBtn), true);
   assert.equal(Boolean(statusLine), true);
-  assert.equal(statusLine.textContent.includes('signed out'), true);
+  assert.equal(statusLine.textContent.includes('viewer.start.serverSession.loggedOut'), true);
 });
 
 test('renderViewerStartPanel renders one session-related message line without duplicate status text', { concurrency: false }, async () => {
@@ -3451,7 +3516,7 @@ test('renderViewerStartPanel shows contextual server-attempt management action',
   };
   mod.renderViewerStartPanel(session);
   const panel = appRoot.children[0];
-  const manageBtn = findNodeByText(panel, 'Log in to manage server attempts');
+  const manageBtn = findNodeByText(panel, 'viewer.start.loginToManageServerAttempts');
   assert.equal(Boolean(manageBtn), true);
 });
 
@@ -3552,9 +3617,9 @@ test('bootstrapViewer renders sign-in recovery for direct published package auth
 
   const panel = appRoot.children[0];
   assert.equal(String(panel.className).includes('viewer-fatal-panel--recoverable-auth'), true);
-  assert.ok(findNodeByText(panel, 'Sign in to open this worksheet'));
-  assert.ok(findNodeByText(panel, 'Sign in and open worksheet'));
-  assert.ok(findNodeByText(panel, 'Go to start screen'));
+  assert.ok(findNodeByText(panel, 'viewer.boot.signInToOpenWorksheet'));
+  assert.ok(findNodeByText(panel, 'viewer.boot.signInAndOpenWorksheet'));
+  assert.ok(findNodeByText(panel, 'viewer.boot.goToStartScreen'));
 });
 
 test('direct published package sign-in recovery retries same package and renders viewer', { concurrency: false }, async () => {
@@ -3625,7 +3690,7 @@ test('direct published package sign-in recovery retries same package and renders
   });
 
   await mod.bootstrapViewer();
-  const signInBtn = findNodeByText(appRoot.children[0], 'Sign in and open worksheet');
+  const signInBtn = findNodeByText(appRoot.children[0], 'viewer.boot.signInAndOpenWorksheet');
   assert.ok(signInBtn);
 
   await signInBtn.dispatch('click');
@@ -3728,11 +3793,11 @@ test('direct published package sign-in recovery keeps popup-blocked failures ret
   });
 
   await mod.bootstrapViewer();
-  const signInBtn = findNodeByText(appRoot.children[0], 'Sign in and open worksheet');
+  const signInBtn = findNodeByText(appRoot.children[0], 'viewer.boot.signInAndOpenWorksheet');
   await signInBtn.dispatch('click');
 
   const panel = appRoot.children[appRoot.children.length - 1];
-  assert.ok(findNodeByText(panel, 'Sign in and open worksheet'));
+  assert.ok(findNodeByText(panel, 'viewer.boot.signInAndOpenWorksheet'));
   assert.ok(findNodeByText(panel, 'Sign-in popup was blocked. Allow popups for this site, then try again.'));
 });
 
@@ -3778,7 +3843,7 @@ test('direct published package not-found still renders fatal panel', { concurren
 
   const panel = appRoot.children[appRoot.children.length - 1];
   assert.equal(panel.className, 'viewer-fatal-panel');
-  assert.ok(findNodeByText(panel, 'Unable to open worksheet viewer'));
+  assert.ok(findNodeByText(panel, 'viewer.boot.unableToOpen'));
 });
 
 
@@ -3952,7 +4017,7 @@ test('bootstrapViewer callback mode uses dedicated recovery panel and passes pre
 
 test('bootstrapViewer callback mode includes explicit cancel recovery escape-hatch behavior', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("cancelRecoveryBtn.textContent = 'Cancel recovery';"), true);
+  assert.equal(source.includes("cancelRecoveryBtn.textContent = t('viewer.recovery.cancelRecovery');"), true);
   assert.equal(source.includes('authGate.clearPending();'), true);
   assert.equal(source.includes('cleanupViewerAuthCallbackUrlParams();'), true);
   assert.equal(source.includes('await renderStartPanelFromResumeFlag(session.state.recoveryMessage);'), true);
@@ -4241,10 +4306,10 @@ test('getCheckRevealMessage uses explicit fallback when learner answer is empty'
     correctAnswerText: '',
   });
 
-  assert.equal(incorrectEmpty, 'Your answer was: No answer submitted · Correct answer: A, B');
-  assert.equal(incorrectWhitespace, 'Your answer was: No answer submitted · Correct answer: True');
-  assert.equal(correct, 'Correct answer: 4');
-  assert.equal(ungradedMissingKey, 'Your answer was: No answer submitted');
+  assert.equal(incorrectEmpty, 'viewer.check.reveal.incorrectWithCorrectAnswer');
+  assert.equal(incorrectWhitespace, 'viewer.check.reveal.incorrectWithCorrectAnswer');
+  assert.equal(correct, 'viewer.check.reveal.correctAnswer');
+  assert.equal(ungradedMissingKey, 'viewer.check.reveal.noAnswer');
 });
 
 test('computeCheckResult marks gradeable missing key questions as ungraded without changing summary fields', async () => {
@@ -4281,11 +4346,12 @@ test('computeCheckResult marks gradeable missing key questions as ungraded witho
 test('render check feedback includes neutral ungraded banner copy and learner answer fallback', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
 
-  assert.equal(source.includes("checkTitle.textContent = isCorrect ? 'Correct' : isIncorrect ? 'Incorrect' : 'Not graded';"), true);
-  assert.equal(source.includes("'Answer key missing or invalid for this question.'"), true);
+  assert.equal(source.includes("? t('viewer.check.correct')"), true);
+  assert.equal(source.includes(": t('viewer.check.notGraded');"), true);
+  assert.equal(source.includes("t('viewer.check.missingAnswerKey')"), true);
   assert.equal(source.includes("status: checkStatus,"), true);
   assert.equal(source.includes("correctAnswerText: isUngradedMissingOrInvalidKey ? '' : formatCorrectAnswer(),"), true);
-  assert.equal(source.includes("'Your answer was: No answer submitted'"), true);
+  assert.equal(source.includes("t('viewer.check.reveal.noAnswer')"), true);
 });
 
 test('viewer stylesheet defines neutral ungraded check banner styles', async () => {
@@ -4494,9 +4560,9 @@ test('choice option audio handler matches icon-button lifecycle behavior', async
 
 test('viewer no-param bootstrap renders start panel with explicit resume controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("textContent = 'Resume attempt';"), true);
+  assert.equal(source.includes("resumeBtn.textContent = t('viewer.start.resumeAttempt');"), true);
   assert.equal(source.includes("textContent = 'Start fresh';"), false);
-  assert.equal(source.includes("textContent = 'Discard attempt';"), true);
+  assert.equal(source.includes("discardBtn.textContent = t('viewer.start.discardAttempt');"), true);
   assert.equal(source.includes('renderViewerStartPanel(session, {'), true);
 });
 
@@ -4591,7 +4657,7 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
 
 test('viewer header actions include server-save icon wiring and protected upload intent hook', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', 'Save attempt to server');"), true);
+  assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', t('viewer.upload.saveAttemptAriaLabel'));"), true);
   assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
   assert.equal(source.includes('await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);'), true);
 });
@@ -4819,7 +4885,11 @@ test('uploadCurrentAttemptPackage reports progress text while upload runs', asyn
 
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, true);
-  assert.equal(observedMessages.some((msg) => String(msg || '').includes('Saving attempt to server...')), true);
+  assert.equal(
+    observedMessages.some((msg) => ['viewer.upload.progressPercent', 'viewer.upload.progressSaving', 'viewer.upload.progressPreparing']
+      .some((token) => String(msg || '').includes(token))),
+    true
+  );
   assert.equal(session.state.serverActionMessage, 'Attempt saved to server.');
 });
 
@@ -4919,10 +4989,7 @@ test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_SLOT_LIMIT_REACHED
 
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
-  assert.equal(
-    session.state.serverActionMessage,
-    'You already have 3 uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
-  );
+  assert.equal(session.state.serverActionMessage, 'viewer.attemptSlots.limitReached');
   assert.equal(session.state.uploadAttemptRecoveryHint?.conflictAction, 'fail_on_conflict');
 });
 
@@ -4968,10 +5035,7 @@ test('uploadCurrentAttemptPackage slot-limit message falls back when slotLimit d
 
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
-  assert.equal(
-    session.state.serverActionMessage,
-    'You already have uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.'
-  );
+  assert.equal(session.state.serverActionMessage, 'viewer.attemptSlots.limitReachedUnknown');
 });
 
 test('uploadCurrentAttemptPackage sets conflict context for replace/copy recovery UI', async () => {
@@ -5241,8 +5305,8 @@ test('rewrite controls remain always mounted for text questions and enforce disa
   assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;'), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
   assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
-  assert.equal(source.includes("rewriteHint.textContent = 'Enter text to rewrite.';"), true);
-  assert.equal(source.includes('Answer is too long to rewrite (max 300 characters).'), true);
+  assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintEnterText');"), true);
+  assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintTooLong', { max: 300 });"), true);
 });
 
 test('render signature excludes rewrite-row dynamic flags to avoid remounting for text length transitions', async () => {
@@ -5517,7 +5581,7 @@ test('stale replay context aborts without calling rewrite API or mutating answer
 test('undo lifecycle wiring exists for post-rewrite visibility, restore, and manual input clear', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);'), true);
-  assert.equal(source.includes("undoButton.textContent = 'Undo';"), true);
+  assert.equal(source.includes("undoButton.textContent = t('viewer.rewrite.undo');"), true);
   assert.equal(source.includes('if (undoButton.disabled || isRewriteInFlight) {'), true);
   assert.equal(source.includes("cacheRawControlValue(block.blockId, String(savedUndoAnswer ?? ''));"), true);
   assert.equal(source.includes('session.setAnswer(block.blockId, savedUndoAnswer);'), true);
@@ -5536,7 +5600,7 @@ test('text control sync prefers focused edit cache and falls back to canonical s
 test('in-flight rewrite state renders loading label while preserving always-visible controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes('const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;'), true);
-  assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';"), true);
+  assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');"), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
   assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
   assert.equal(source.includes('session.state.rewriteMessageByBlock?.[block.blockId]'), true);

@@ -15,9 +15,11 @@ import {
   normalizePaginationState,
   normalizePublishedPackageFilters,
 } from '../app/api/published-packages-service.js';
+import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } from '../app/i18n/index.js';
 
 const app = document.getElementById('app');
 const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
+setLocale(resolveInitialLocale(), { persist: false });
 
 const AUTOSAVE_MS = 1000;
 const RESUME_FLAG_KEY = 'viewer:lastSession';
@@ -37,7 +39,7 @@ const AUTH_CALLBACK_RETRY_MAX_MS = 10000;
 const AUTH_CALLBACK_RETRY_BUDGET_MS = 60000;
 const ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE = 'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.';
 const ATTEMPT_UPLOAD_CONFLICT_MESSAGE = 'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.';
-const UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION = 'Open Manage server attempts to free slots or review existing uploads.';
+const UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION = t('viewer.serverAttempts.manageRecommendation');
 const VIEWER_NOTIFICATION_DEFAULT_TTL_MS = 5000;
 const VIEWER_NOTIFICATION_ERROR_TTL_MS = 8000;
 const VIEWER_NOTIFICATION_UPLOAD_SOURCE = 'attempt.upload';
@@ -141,7 +143,7 @@ function firstNonBlankString(...values) {
 
 function formatTimestampForDisplay(timestamp) {
   if (typeof timestamp !== 'string' || !timestamp.trim()) {
-    return 'unknown time';
+    return t('common.values.unknownTime');
   }
   const parsed = new Date(timestamp);
   if (Number.isNaN(parsed.getTime())) {
@@ -160,7 +162,7 @@ function formatTimestampForDisplay(timestamp) {
 
 function formatTimestampForReportHeader(timestamp) {
   if (typeof timestamp !== 'string' || !timestamp.trim()) {
-    return 'Not recorded';
+    return t('common.values.notRecorded');
   }
   const parsed = new Date(timestamp);
   if (Number.isNaN(parsed.getTime())) {
@@ -224,20 +226,20 @@ function formatUploadProgressText(progress = {}) {
   const total = Number(progress.total || 0);
   if (progress.lengthComputable && total > 0) {
     const percent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
-    return `Saving attempt to server... ${percent}%`;
+    return t('viewer.upload.progressPercent', { percent });
   }
   if (loaded > 0) {
-    return 'Saving attempt to server...';
+    return t('viewer.upload.progressSaving');
   }
-  return 'Preparing upload...';
+  return t('viewer.upload.progressPreparing');
 }
 
 function formatAttemptSlotLimitMessage(slotLimit) {
   const normalizedLimit = Number(slotLimit);
   if (Number.isInteger(normalizedLimit) && normalizedLimit > 0) {
-    return `You already have ${normalizedLimit} uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.`;
+    return t('viewer.attemptSlots.limitReached', { limit: normalizedLimit });
   }
-  return 'You already have uploaded attempts. Delete an old uploaded attempt from Manage Server Attempts before saving another.';
+  return t('viewer.attemptSlots.limitReachedUnknown');
 }
 
 function sanitizeFilenameSegment(value, fallback = 'worksheet') {
@@ -288,6 +290,7 @@ function createViewerIcon(name) {
     attempts: `<svg ${svgAttrs}><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><circle cx="4" cy="6" r="1.5"></circle><circle cx="4" cy="12" r="1.5"></circle><circle cx="4" cy="18" r="1.5"></circle></svg>`,
     worksheet: `<svg ${svgAttrs}><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v6h6"></path></svg>`,
     print: `<svg ${svgAttrs}><path d="M6 9V4h12v5"></path><path d="M6 18h12v2H6z"></path><path d="M6 14h12"></path><path d="M6 10H4a2 2 0 0 0-2 2v4h4"></path><path d="M18 16h4v-4a2 2 0 0 0-2-2h-2"></path></svg>`,
+    language: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 0 20"></path><path d="M12 2a15.3 15.3 0 0 0 0 20"></path></svg>`,
   };
   return icons[name] || '';
 }
@@ -303,6 +306,73 @@ function createViewerStartSectionHeader({ icon = 'info', title, className = '' }
   heading.textContent = title;
   header.append(iconWrap, heading);
   return header;
+}
+
+function createLanguageSelector({ onChange, variant = 'inline' } = {}) {
+  if (variant === 'icon') {
+    const wrapper = document.createElement('details');
+    wrapper.className = 'language-selector language-selector--icon';
+    const trigger = document.createElement('summary');
+    trigger.className = 'viewer-header-icon-btn language-selector__trigger';
+    trigger.setAttribute('aria-label', t('common.language.label'));
+    trigger.title = t('common.language.label');
+    trigger.innerHTML = createViewerIcon('language');
+    const menu = document.createElement('div');
+    menu.className = 'language-selector__menu';
+    getAvailableLocales().forEach((locale) => {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'language-selector__option';
+      option.value = locale;
+      option.textContent = locale === 'zh-Hant' ? t('common.language.zhHant') : t('common.language.en');
+      option.setAttribute('aria-pressed', locale === getLocale() ? 'true' : 'false');
+      option.addEventListener('click', () => {
+        wrapper.open = false;
+        if (locale === getLocale()) return;
+        setLocale(locale);
+        if (typeof onChange === 'function') {
+          onChange(locale);
+        }
+      });
+      menu.appendChild(option);
+    });
+    wrapper.append(trigger, menu);
+    return wrapper;
+  }
+
+  const wrapper = document.createElement('label');
+  wrapper.className = 'language-selector language-selector--inline';
+  const label = document.createElement('span');
+  label.className = 'editor-label';
+  label.textContent = t('common.language.label');
+  const select = document.createElement('select');
+  select.className = 'control language-selector__control';
+  getAvailableLocales().forEach((locale) => {
+    const option = document.createElement('option');
+    option.value = locale;
+    option.textContent = locale === 'zh-Hant' ? t('common.language.zhHant') : t('common.language.en');
+    select.appendChild(option);
+  });
+  select.value = getLocale();
+  select.addEventListener('change', () => {
+    setLocale(select.value);
+    if (typeof onChange === 'function') {
+      onChange(select.value);
+    }
+  });
+  wrapper.append(label, select);
+  return wrapper;
+}
+
+async function flushLocaleChangeBeforeReload(session, source = 'viewer') {
+  if (!session || typeof session.flushLocalStateForAuthRedirect !== 'function') {
+    return;
+  }
+  try {
+    await session.flushLocalStateForAuthRedirect();
+  } catch (error) {
+    console.error(`Failed to flush local attempt before locale change (${source})`, error);
+  }
 }
 
 function renderNotificationCard(notification, className = 'notification-toast') {
@@ -908,8 +978,8 @@ function createChoiceButtonGroup({
       optionAudioBtn.type = 'button';
       optionAudioBtn.className = 'viewer-header-icon-btn choice-audio-btn question-card__prompt-audio-btn';
       optionAudioBtn.innerHTML = createViewerIcon('audio');
-      optionAudioBtn.setAttribute('aria-label', 'Play option audio');
-      optionAudioBtn.title = 'Play option audio';
+      optionAudioBtn.setAttribute('aria-label', t('viewer.audio.playOptionAudioAriaLabel'));
+      optionAudioBtn.title = t('viewer.audio.playOptionAudioTitle');
       optionAudioBtn.addEventListener('click', async (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -938,7 +1008,7 @@ function createChoiceButtonGroup({
         if (typeof reportMediaFeedback === 'function') {
           if (!result.ok) {
             optionAudioBtn.disabled = false;
-            reportMediaFeedback(result.message || 'Unable to play option audio.');
+            reportMediaFeedback(result.message || t('viewer.audio.playOptionAudioFailed'));
           }
         }
       });
@@ -1168,18 +1238,21 @@ function getCheckRevealMessage({ status, learnerAnswerText, correctAnswerText })
     ? learnerAnswerText.trim()
     : '';
   const learnerClause = normalizedLearnerAnswer.length > 0
-    ? `Your answer was: ${normalizedLearnerAnswer}`
-    : 'Your answer was: No answer submitted';
+    ? t('viewer.check.reveal.yourAnswer', { answer: normalizedLearnerAnswer })
+    : t('viewer.check.reveal.noAnswer');
 
   if (status === 'correct') {
-    return `Correct answer: ${correctAnswerText}`;
+    return t('viewer.check.reveal.correctAnswer', { answer: correctAnswerText });
   }
 
   if (status === 'ungraded_missing_or_invalid_key' || status === 'ungraded_missing_key') {
     return learnerClause;
   }
 
-  return `${learnerClause} · Correct answer: ${correctAnswerText}`;
+  return t('viewer.check.reveal.incorrectWithCorrectAnswer', {
+    learnerClause,
+    answer: correctAnswerText,
+  });
 }
 
 function computeAnswerSummary(viewerPayload, answers) {
@@ -1238,7 +1311,7 @@ function formatAnswerValueForPrint(block, rawValue) {
         ? rawValue.map((value) => String(value))
         : [];
       if (normalizedValues.length === 0) {
-        return 'Not answered';
+        return t('viewer.print.notAnswered');
       }
       const options = Array.isArray(block?.responseConfig?.options)
         ? block.responseConfig.options
@@ -1252,7 +1325,7 @@ function formatAnswerValueForPrint(block, rawValue) {
     }
 
     if (rawValue === null || rawValue === undefined || String(rawValue).trim() === '') {
-      return 'Not answered';
+      return t('viewer.print.notAnswered');
     }
     return getOptionDisplayTextByValue(block, rawValue);
   }
@@ -1261,18 +1334,18 @@ function formatAnswerValueForPrint(block, rawValue) {
     const normalized = coerceAnswerValueByInputType('boolean', rawValue);
     if (normalized === true) return 'True';
     if (normalized === false) return 'False';
-    return 'Not answered';
+    return t('viewer.print.notAnswered');
   }
 
   if (inputType === 'number') {
     if (rawValue === '' || rawValue === null || rawValue === undefined) {
-      return 'Not answered';
+      return t('viewer.print.notAnswered');
     }
     return String(rawValue);
   }
 
   const textValue = String(rawValue ?? '');
-  return textValue.trim() ? textValue : 'Not answered';
+  return textValue.trim() ? textValue : t('viewer.print.notAnswered');
 }
 
 function formatCorrectAnswerForPrint(block) {
@@ -1323,7 +1396,7 @@ function buildPrintQuestionResult(block, checkResult) {
   if (status === 'correct') {
     return {
       status,
-      label: 'Correct',
+      label: t('viewer.check.correct'),
       detail: '',
     };
   }
@@ -1332,14 +1405,14 @@ function buildPrintQuestionResult(block, checkResult) {
     const correctAnswerText = formatCorrectAnswerForPrint(block);
     return {
       status,
-      label: 'Incorrect',
-      detail: correctAnswerText ? `Correct answer: ${correctAnswerText}` : '',
+      label: t('viewer.check.incorrect'),
+      detail: correctAnswerText ? t('viewer.check.reveal.correctAnswer', { answer: correctAnswerText }) : '',
     };
   }
 
   return {
     status,
-    label: 'Not graded',
+    label: t('viewer.check.notGraded'),
     detail: '',
   };
 }
@@ -1461,7 +1534,7 @@ async function resolvePrintQuestionImage(questionImageRef, storage) {
     if (!(asset?.binary instanceof Uint8Array) || asset.binary.byteLength === 0) {
       return {
         status: 'missing',
-        message: 'Question image unavailable.',
+        message: t('viewer.print.questionImageUnavailable'),
       };
     }
     const mimeType = normalizePrintImageMimeType(asset?.metadata?.mimeType, 'image/png');
@@ -1469,18 +1542,18 @@ async function resolvePrintQuestionImage(questionImageRef, storage) {
     if (!src) {
       return {
         status: 'missing',
-        message: 'Question image unavailable.',
+        message: t('viewer.print.questionImageUnavailable'),
       };
     }
     return {
       status: 'ready',
       src,
-      alt: 'Question image',
+      alt: t('viewer.print.questionImageAlt'),
     };
   } catch {
     return {
       status: 'missing',
-      message: 'Question image unavailable.',
+      message: t('viewer.print.questionImageUnavailable'),
     };
   }
 }
@@ -1497,7 +1570,10 @@ async function buildWorksheetPrintReportModel({
 } = {}) {
   const orderedQuestions = getQuestionBlocksInOrder(viewerPayload);
   const checkedSummary = checkResult
-    ? `Checked ${checkResult.correctCount}/${checkResult.totalQuestions} correct`
+    ? t('viewer.print.checkedSummary', {
+      correct: checkResult.correctCount,
+      total: checkResult.totalQuestions,
+    })
     : '';
 
   const questions = await Promise.all(orderedQuestions.map(async (block, index) => {
@@ -1542,7 +1618,7 @@ async function buildWorksheetPrintReportModel({
 
   return {
     schoolName: normalizeViewerPrintSchoolName(schoolName),
-    title: String(viewerPayload?.title || 'Worksheet'),
+    title: String(viewerPayload?.title || t('viewer.print.worksheetFallbackTitle')),
     subject: firstNonBlankString(subject, viewerPayload?.subject, viewerPayload?.metadata?.subject),
     studentName: String(studentName || '').trim(),
     submittedAtLabel: formatTimestampForReportHeader(submittedAt),
@@ -1555,7 +1631,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
   const studentMeta = reportModel.studentName
     ? `
       <div class="print-meta-item">
-        <dt>Student</dt>
+        <dt>${escapeHtml(t('viewer.print.meta.student'))}</dt>
         <dd>${escapeHtml(reportModel.studentName)}</dd>
       </div>
     `
@@ -1563,21 +1639,21 @@ function buildWorksheetPrintReportHtml(reportModel) {
   const subjectMeta = reportModel.subject
     ? `
       <div class="print-meta-item">
-        <dt>Subject</dt>
+        <dt>${escapeHtml(t('viewer.print.meta.subject'))}</dt>
         <dd>${escapeHtml(reportModel.subject)}</dd>
       </div>
     `
     : '';
   const submittedMeta = `
       <div class="print-meta-item print-meta-item--wide">
-        <dt>Submitted at</dt>
-        <dd>${escapeHtml(reportModel.submittedAtLabel || 'Not recorded')}</dd>
+        <dt>${escapeHtml(t('viewer.print.meta.submittedAt'))}</dt>
+        <dd>${escapeHtml(reportModel.submittedAtLabel || t('common.values.notRecorded'))}</dd>
       </div>
   `;
   const checkedRow = reportModel.checkedSummary
     ? `
       <div class="print-meta-item print-meta-item--wide">
-        <dt>Check result</dt>
+        <dt>${escapeHtml(t('viewer.print.meta.checkResult'))}</dt>
         <dd>${escapeHtml(reportModel.checkedSummary)}</dd>
       </div>
     `
@@ -1587,11 +1663,11 @@ function buildWorksheetPrintReportHtml(reportModel) {
     const imageHtml = question.image?.status === 'ready' && question.image?.src
       ? `
         <div class="print-question-image-wrap">
-          <img class="print-question-image" src="${escapeHtml(question.image.src)}" alt="${escapeHtml(question.image.alt || 'Question image')}">
+          <img class="print-question-image" src="${escapeHtml(question.image.src)}" alt="${escapeHtml(question.image.alt || t('viewer.print.questionImageAlt'))}">
         </div>
       `
       : question.image?.status === 'missing'
-        ? `<p class="print-question-media-note">${escapeHtml(question.image.message || 'Question image unavailable.')}</p>`
+        ? `<p class="print-question-media-note">${escapeHtml(question.image.message || t('viewer.print.questionImageUnavailable'))}</p>`
         : '';
 
     const checkedAnswerSectionClass = `print-question-section--${escapeHtml(question.sectionBreakModes?.checkedAnswer || 'keep')}`;
@@ -1605,7 +1681,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
     const resultHtml = question.result
       ? `
         <section class="print-question-section print-question-section--result ${checkedAnswerSectionClass} print-result-${escapeHtml(question.result.status || 'neutral')}">
-          <h3>Checked result</h3>
+          <h3>${escapeHtml(t('viewer.print.checkedResultHeading'))}</h3>
           <p class="print-result-label">${escapeHtml(question.result.label)}</p>
           ${question.result.detail ? `<p class="print-result-detail">${formatMultilineTextForHtml(question.result.detail)}</p>` : ''}
         </section>
@@ -1615,16 +1691,16 @@ function buildWorksheetPrintReportHtml(reportModel) {
     return `
       <article class="print-question print-question--${escapeHtml(question.layoutMode || 'keep-all')}">
         <header class="print-question-header">
-          <div class="print-question-number">Question ${question.questionNumber}</div>
+          <div class="print-question-number">${escapeHtml(t('viewer.print.questionNumber', { number: question.questionNumber }))}</div>
         </header>
         <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
-          <h3>Question</h3>
-          <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || 'No prompt text provided.')}</p>
+          <h3>${escapeHtml(t('viewer.print.questionHeading'))}</h3>
+          <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || t('viewer.print.noPromptProvided'))}</p>
         </section>
         ${imageSectionHtml}
         <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
-          <h3>Answer</h3>
-          <p class="print-answer-text">Answer: ${formatMultilineTextForHtml(question.answerText)}</p>
+          <h3>${escapeHtml(t('viewer.print.answerHeading'))}</h3>
+          <p class="print-answer-text">${escapeHtml(t('viewer.print.answerPrefix'))}: ${formatMultilineTextForHtml(question.answerText)}</p>
         </section>
         ${resultHtml}
       </article>
@@ -1635,7 +1711,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>${escapeHtml(reportModel.title)} - Print Report</title>
+  <title>${escapeHtml(reportModel.title)} - ${escapeHtml(t('viewer.print.reportTitleSuffix'))}</title>
   <style>
     @page {
       size: A4 portrait;
@@ -1984,25 +2060,27 @@ function computeResumeStartBlockIndex(viewerPayload, answers = {}, attemptRecord
 }
 
 function getInputHelperText(inputType, responseConfig = {}) {
-  if (inputType === 'text') return 'Text response.';
+  if (inputType === 'text') return t('viewer.inputHelper.text');
   if (inputType === 'number') {
     const constraints = [];
     if (Number.isFinite(responseConfig.min)) {
-      constraints.push(`minimum ${Number(responseConfig.min)}`);
+      constraints.push(t('viewer.inputHelper.numberMinimum', { value: Number(responseConfig.min) }));
     }
     if (Number.isFinite(responseConfig.max)) {
-      constraints.push(`maximum ${Number(responseConfig.max)}`);
+      constraints.push(t('viewer.inputHelper.numberMaximum', { value: Number(responseConfig.max) }));
     }
-    const suffix = constraints.length > 0 ? ` Range: ${constraints.join(', ')}.` : '';
-    return `Enter integer/decimal only (fractions like 2/3 are not supported).${suffix}`;
+    const suffix = constraints.length > 0
+      ? t('viewer.inputHelper.numberRangeSuffix', { range: constraints.join(', ') })
+      : '';
+    return `${t('viewer.inputHelper.numberBase')}${suffix}`;
   }
-  if (inputType === 'boolean') return 'Choose True / False.';
+  if (inputType === 'boolean') return t('viewer.inputHelper.boolean');
   if (inputType === 'multiple_choice') {
     return responseConfig?.selectionMode === 'multi'
-      ? 'Choose one or more options.'
-      : 'Choose one option only.';
+      ? t('viewer.inputHelper.multipleChoiceMulti')
+      : t('viewer.inputHelper.multipleChoiceSingle');
   }
-  return 'Text response.';
+  return t('viewer.inputHelper.text');
 }
 
 function getNumberInputErrorMessage(rawValue, responseConfig = {}) {
@@ -2996,6 +3074,8 @@ class ViewerAttemptSession {
     if (!this.state.localAttemptId || !this.state.viewerPayload) return null;
 
     if (this.state.lastSavedRevision < this.state.attemptRevision) {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
       return this.autosave();
     }
 
@@ -4327,35 +4407,37 @@ function showAttemptUploadConflictModal(conflictContext = {}) {
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     const heading = document.createElement('h3');
-    heading.textContent = 'Uploaded attempt already exists';
+    heading.textContent = t('viewer.attemptConflict.title');
     const description = document.createElement('p');
     description.className = 'confirm-modal__description';
-    description.textContent = `An uploaded attempt named "${conflictContext?.title || 'Untitled'}" already exists for this subject.`;
+    description.textContent = t('viewer.attemptConflict.description', {
+      title: conflictContext?.title || t('common.values.untitled'),
+    });
     const details = document.createElement('div');
     details.className = 'muted uploaded-draft-details-body';
     const subjectLine = document.createElement('div');
-    subjectLine.textContent = `Subject: ${conflictContext?.subject || '-'}`;
+    subjectLine.textContent = t('common.meta.subject', { value: conflictContext?.subject || '-' });
     const statusLine = document.createElement('div');
-    statusLine.textContent = `Status: ${conflictContext?.existingAttempt?.status || 'unknown'}`;
+    statusLine.textContent = t('common.meta.status', { value: conflictContext?.existingAttempt?.status || t('common.values.unknown') });
     details.append(subjectLine, statusLine);
     const warning = document.createElement('p');
     warning.className = 'confirm-modal__warning';
-    warning.textContent = 'Your local attempt will not be changed. This only affects the uploaded server copy.';
+    warning.textContent = t('viewer.attemptConflict.warning');
 
     const actions = document.createElement('div');
     actions.className = 'confirm-modal__actions';
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
     cancelBtn.className = 'confirm-modal__btn';
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = t('common.actions.cancel');
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
     copyBtn.className = 'confirm-modal__btn';
-    copyBtn.textContent = 'Save as copy';
+    copyBtn.textContent = t('common.actions.saveAsCopy');
     const replaceBtn = document.createElement('button');
     replaceBtn.type = 'button';
     replaceBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
-    replaceBtn.textContent = 'Replace server attempt';
+    replaceBtn.textContent = t('viewer.attemptConflict.replaceServerAttempt');
     actions.append(cancelBtn, copyBtn, replaceBtn);
     dialog.append(heading, description, details, warning, actions);
     overlay.append(dialog);
@@ -4399,23 +4481,25 @@ function showDeleteUploadedAttemptModal(row) {
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     const heading = document.createElement('h3');
-    heading.textContent = 'Delete uploaded attempt?';
+    heading.textContent = t('viewer.attemptDelete.title');
     const description = document.createElement('p');
     description.className = 'confirm-modal__description';
-    description.textContent = `Delete "${row?.title || 'Untitled'}" from server storage?`;
+    description.textContent = t('viewer.attemptDelete.description', {
+      title: row?.title || t('common.values.untitled'),
+    });
     const warning = document.createElement('p');
     warning.className = 'confirm-modal__warning';
-    warning.textContent = 'This only deletes the uploaded server copy. Your local attempts remain unchanged.';
+    warning.textContent = t('viewer.attemptDelete.warning');
     const actions = document.createElement('div');
     actions.className = 'confirm-modal__actions';
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
     cancelBtn.className = 'confirm-modal__btn';
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = t('common.actions.cancel');
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'confirm-modal__btn confirm-modal__btn--destructive';
-    deleteBtn.textContent = 'Delete';
+    deleteBtn.textContent = t('common.actions.delete');
     actions.append(cancelBtn, deleteBtn);
     dialog.append(heading, description, warning, actions);
     overlay.append(dialog);
@@ -4446,12 +4530,12 @@ function showDeleteUploadedAttemptModal(row) {
 function getUploadedAttemptStatusBadge(status) {
   const normalized = String(status || '').trim().toLowerCase();
   if (normalized === 'checked') {
-    return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--current', text: 'Checked' };
+    return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--current', text: t('viewer.serverAttempts.status.checked') };
   }
   if (normalized === 'submitted') {
-    return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--stale', text: 'Submitted' };
+    return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--stale', text: t('viewer.serverAttempts.status.submitted') };
   }
-  return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--deleted', text: 'In progress' };
+  return { className: 'uploaded-draft-published-badge uploaded-draft-published-badge--deleted', text: t('viewer.serverAttempts.status.inProgress') };
 }
 
 async function showAttemptSlotFullModal(session, options = {}) {
@@ -4468,10 +4552,10 @@ async function showAttemptSlotFullModal(session, options = {}) {
   dialog.setAttribute('role', 'dialog');
   dialog.setAttribute('aria-modal', 'true');
   const heading = document.createElement('h3');
-  heading.textContent = 'Attempt slots are full';
+  heading.textContent = t('viewer.attemptSlots.title');
   const description = document.createElement('p');
   description.className = 'confirm-modal__description';
-  description.textContent = 'Delete one uploaded attempt to continue this upload.';
+  description.textContent = t('viewer.attemptSlots.description');
   const list = document.createElement('div');
   list.className = 'browse-results';
   const actions = document.createElement('div');
@@ -4479,7 +4563,7 @@ async function showAttemptSlotFullModal(session, options = {}) {
   const cancelBtn = document.createElement('button');
   cancelBtn.type = 'button';
   cancelBtn.className = 'confirm-modal__btn';
-  cancelBtn.textContent = 'Cancel';
+  cancelBtn.textContent = t('common.actions.cancel');
   actions.append(cancelBtn);
   dialog.append(heading, description, list, actions);
   overlay.append(dialog);
@@ -4500,7 +4584,7 @@ async function showAttemptSlotFullModal(session, options = {}) {
       if (!rows.length) {
         const empty = document.createElement('p');
         empty.className = 'muted';
-        empty.textContent = 'No uploaded attempts available to delete.';
+        empty.textContent = t('viewer.attemptSlots.noAttemptsToDelete');
         list.appendChild(empty);
         return;
       }
@@ -4510,18 +4594,20 @@ async function showAttemptSlotFullModal(session, options = {}) {
         const meta = document.createElement('div');
         meta.className = 'uploaded-draft-meta';
         const title = document.createElement('strong');
-        title.textContent = item.title || 'Untitled worksheet';
+        title.textContent = item.title || t('common.values.untitledWorksheet');
         const subjectLine = document.createElement('div');
         subjectLine.className = 'muted uploaded-draft-uploaded-at';
-        subjectLine.textContent = `Subject: ${item.subject || '-'}`;
+        subjectLine.textContent = t('common.meta.subject', { value: item.subject || '-' });
         const updatedLine = document.createElement('div');
         updatedLine.className = 'muted uploaded-draft-uploaded-at';
-        updatedLine.textContent = `Updated: ${formatTimestampForDisplay(item.updated_at || item.updatedAt || null)}`;
+        updatedLine.textContent = t('common.meta.updated', {
+          value: formatTimestampForDisplay(item.updated_at || item.updatedAt || null),
+        });
         meta.append(title, subjectLine, updatedLine);
         const deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
         deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
-        deleteBtn.textContent = 'Delete';
+        deleteBtn.textContent = t('common.actions.delete');
         deleteBtn.addEventListener('click', async () => {
           const confirmed = await showDeleteUploadedAttemptModal(item);
           if (!confirmed) return;
@@ -4576,14 +4662,14 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   dialog.setAttribute('role', 'dialog');
   dialog.setAttribute('aria-modal', 'true');
   const heading = document.createElement('h3');
-  heading.textContent = 'Manage Server Attempts';
+  heading.textContent = t('viewer.serverAttempts.title');
   const description = document.createElement('p');
   description.className = 'confirm-modal__description';
-  description.textContent = 'Resume, download, or delete your uploaded attempts.';
+  description.textContent = t('viewer.serverAttempts.description');
   const slotRecoveryBanner = document.createElement('p');
   slotRecoveryBanner.className = 'confirm-modal__warning';
   slotRecoveryBanner.hidden = !recommendSlotRecovery;
-  slotRecoveryBanner.textContent = 'Attempt slots are full. Use the upload recovery prompt to delete one attempt and continue automatically.';
+  slotRecoveryBanner.textContent = t('viewer.serverAttempts.slotRecoveryBanner');
   const sessionLine = document.createElement('p');
   sessionLine.className = 'muted';
   const slotUsageLine = document.createElement('p');
@@ -4595,15 +4681,15 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.className = 'confirm-modal__btn';
-  signInBtn.textContent = 'Sign in';
+  signInBtn.textContent = t('common.actions.signIn');
   const refreshBtn = document.createElement('button');
   refreshBtn.type = 'button';
   refreshBtn.className = 'confirm-modal__btn';
-  refreshBtn.textContent = 'Refresh';
+  refreshBtn.textContent = t('common.actions.refresh');
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.className = 'confirm-modal__btn';
-  closeBtn.textContent = 'Close';
+  closeBtn.textContent = t('common.actions.close');
   actions.append(signInBtn, refreshBtn, closeBtn);
   dialog.append(heading, description, slotRecoveryBanner, sessionLine, slotUsageLine, list, actions);
   overlay.append(dialog);
@@ -4627,22 +4713,24 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
-    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
+    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || t('common.values.unknown');
     sessionLine.textContent = isLoggedIn
-      ? `Server session: ready (${userLabel})`
+      ? t('viewer.start.serverSession.ready', { user: userLabel })
       : isChecking
-        ? 'Server session: checking…'
-        : `Server session: logged out. ${session.state.serverSession?.error || 'Sign in to manage uploaded attempts.'}`;
+        ? t('viewer.start.serverSession.checking')
+        : t('viewer.start.serverSession.loggedOut', {
+          reason: session.state.serverSession?.error || t('viewer.serverAttempts.signInToLoad'),
+        });
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
-    signInBtn.textContent = signInInFlight ? 'Signing in…' : 'Sign in';
+    signInBtn.textContent = signInInFlight ? 'Signing in…' : t('common.actions.signIn');
     refreshBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingUploadedAttempts;
     list.innerHTML = '';
     if (!isLoggedIn) {
       slotUsageLine.textContent = '';
       const signedOut = document.createElement('p');
       signedOut.className = 'muted';
-      signedOut.textContent = 'Sign in to load your uploaded attempts.';
+      signedOut.textContent = t('viewer.serverAttempts.signInToLoad');
       list.append(signedOut);
       return;
     }
@@ -4650,7 +4738,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       slotUsageLine.textContent = '';
       const loading = document.createElement('p');
       loading.className = 'muted';
-      loading.textContent = 'Loading uploaded attempts...';
+      loading.textContent = t('viewer.serverAttempts.loading');
       list.append(loading);
       return;
     }
@@ -4664,11 +4752,11 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     }
     const rows = Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : [];
     const slotLimit = Number(session.state.uploadedAttemptSlotLimit) || 3;
-    slotUsageLine.textContent = `${rows.length} of ${slotLimit} attempt slots used.`;
+    slotUsageLine.textContent = t('viewer.serverAttempts.slotUsage', { used: rows.length, limit: slotLimit });
     if (rows.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'muted';
-      empty.textContent = 'No uploaded attempts saved yet.';
+      empty.textContent = t('viewer.serverAttempts.empty');
       list.append(empty);
       return;
     }
@@ -4678,13 +4766,15 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       const metaWrap = document.createElement('div');
       metaWrap.className = 'uploaded-draft-meta';
       const title = document.createElement('strong');
-      title.textContent = row.title || 'Untitled worksheet';
+      title.textContent = row.title || t('common.values.untitledWorksheet');
       const subjectLine = document.createElement('div');
       subjectLine.className = 'muted uploaded-draft-uploaded-at';
-      subjectLine.textContent = `Subject: ${row.subject || '-'}`;
+      subjectLine.textContent = t('common.meta.subject', { value: row.subject || '-' });
       const updatedLine = document.createElement('div');
       updatedLine.className = 'muted uploaded-draft-uploaded-at';
-      updatedLine.textContent = `Updated: ${formatTimestampForDisplay(row.updated_at || row.updatedAt || null)}`;
+      updatedLine.textContent = t('common.meta.updated', {
+        value: formatTimestampForDisplay(row.updated_at || row.updatedAt || null),
+      });
       const badge = document.createElement('span');
       const badgeConfig = getUploadedAttemptStatusBadge(row.status);
       badge.className = badgeConfig.className;
@@ -4692,15 +4782,21 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       const details = document.createElement('details');
       details.className = 'uploaded-draft-details uploaded-draft-details--draft';
       const summary = document.createElement('summary');
-      summary.textContent = 'Details';
+      summary.textContent = t('common.sections.details');
       const detailBody = document.createElement('div');
       detailBody.className = 'muted uploaded-draft-details-body';
       const submittedLine = document.createElement('div');
-      submittedLine.textContent = `Submitted: ${row.submitted_at ? formatTimestampForDisplay(row.submitted_at) : 'No'}`;
+      submittedLine.textContent = t('common.meta.submitted', {
+        value: row.submitted_at ? formatTimestampForDisplay(row.submitted_at) : t('common.values.no'),
+      });
       const checkedLine = document.createElement('div');
-      checkedLine.textContent = `Checked: ${row.checked_at ? formatTimestampForDisplay(row.checked_at) : 'No'}`;
+      checkedLine.textContent = t('common.meta.checked', {
+        value: row.checked_at ? formatTimestampForDisplay(row.checked_at) : t('common.values.no'),
+      });
       const sizeLine = document.createElement('div');
-      sizeLine.textContent = `Artifact size: ${Number.isFinite(row.artifact_size_bytes) ? `${Math.max(1, Math.round(row.artifact_size_bytes / 1024))} KB` : 'n/a'}`;
+      sizeLine.textContent = t('common.meta.artifactSize', {
+        value: Number.isFinite(row.artifact_size_bytes) ? `${Math.max(1, Math.round(row.artifact_size_bytes / 1024))} KB` : t('common.values.na'),
+      });
       detailBody.append(submittedLine, checkedLine, sizeLine);
       details.append(summary, detailBody);
       metaWrap.append(title, subjectLine, updatedLine, badge, details);
@@ -4710,7 +4806,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       const resumeBtn = document.createElement('button');
       resumeBtn.type = 'button';
       resumeBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
-      resumeBtn.textContent = inFlightAction === 'resume' ? 'Resuming...' : 'Resume';
+      resumeBtn.textContent = inFlightAction === 'resume' ? t('viewer.serverAttempts.resuming') : t('common.actions.resume');
       resumeBtn.disabled = Boolean(inFlightAction);
       resumeBtn.addEventListener('click', async () => {
         const result = await session.resumeUploadedAttempt(row);
@@ -4724,7 +4820,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       const downloadBtn = document.createElement('button');
       downloadBtn.type = 'button';
       downloadBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
-      downloadBtn.textContent = inFlightAction === 'download' ? 'Downloading...' : 'Download ZIP';
+      downloadBtn.textContent = inFlightAction === 'download' ? t('viewer.serverAttempts.downloading') : t('common.actions.downloadZip');
       downloadBtn.disabled = Boolean(inFlightAction);
       downloadBtn.addEventListener('click', async () => {
         await session.downloadUploadedAttempt(row);
@@ -4733,7 +4829,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       const deleteBtn = document.createElement('button');
       deleteBtn.type = 'button';
       deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
-      deleteBtn.textContent = inFlightAction === 'delete' ? 'Deleting...' : 'Delete';
+      deleteBtn.textContent = inFlightAction === 'delete' ? t('viewer.serverAttempts.deleting') : t('common.actions.delete');
       deleteBtn.disabled = Boolean(inFlightAction);
       deleteBtn.addEventListener('click', async () => {
         const confirmed = await showDeleteUploadedAttemptModal(row);
@@ -4851,29 +4947,29 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   dialog.setAttribute('role', 'dialog');
   dialog.setAttribute('aria-modal', 'true');
   const heading = document.createElement('h3');
-  heading.textContent = 'Browse Published Packages';
+  heading.textContent = t('common.publishedBrowser.browsePublishedPackages');
   const filterRow = document.createElement('div');
   filterRow.className = 'browse-modal__filters';
   const titleFilterInput = document.createElement('input');
   titleFilterInput.type = 'search';
-  titleFilterInput.placeholder = 'Filter by title';
+  titleFilterInput.placeholder = t('common.publishedBrowser.filterByTitle');
   titleFilterInput.className = 'viewer-details-form__input';
-  titleFilterInput.setAttribute('aria-label', 'Filter published packages by title');
+  titleFilterInput.setAttribute('aria-label', t('common.publishedBrowser.filterByTitleAriaLabel'));
   const subjectFilterInput = document.createElement('input');
   subjectFilterInput.type = 'search';
-  subjectFilterInput.placeholder = 'Filter by subject';
+  subjectFilterInput.placeholder = t('common.publishedBrowser.filterBySubject');
   subjectFilterInput.className = 'viewer-details-form__input';
-  subjectFilterInput.setAttribute('aria-label', 'Filter published packages by subject');
+  subjectFilterInput.setAttribute('aria-label', t('common.publishedBrowser.filterBySubjectAriaLabel'));
   const ownerFilterInput = document.createElement('input');
   ownerFilterInput.type = 'search';
-  ownerFilterInput.placeholder = 'Filter by owner email';
+  ownerFilterInput.placeholder = t('common.publishedBrowser.filterByOwnerEmail');
   ownerFilterInput.className = 'viewer-details-form__input';
-  ownerFilterInput.setAttribute('aria-label', 'Filter published packages by owner');
+  ownerFilterInput.setAttribute('aria-label', t('common.publishedBrowser.filterByOwnerAriaLabel'));
   const searchBtn = document.createElement('button');
   searchBtn.type = 'button';
   searchBtn.className = 'browse-modal__search-btn';
   searchBtn.innerHTML = '<svg class="browse-modal__search-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.25" stroke="currentColor" stroke-width="1.6"></circle><path d="M12.5 12.5L16.25 16.25" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></svg>';
-  searchBtn.setAttribute('aria-label', 'Search published packages');
+  searchBtn.setAttribute('aria-label', t('common.publishedBrowser.searchAriaLabel'));
   filterRow.append(titleFilterInput, subjectFilterInput, ownerFilterInput, searchBtn);
   const list = document.createElement('div');
   list.className = 'browse-results';
@@ -4882,19 +4978,19 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.className = 'confirm-modal__btn';
-  signInBtn.textContent = 'Sign in';
+  signInBtn.textContent = t('common.actions.signIn');
   const loadMoreBtn = document.createElement('button');
   loadMoreBtn.type = 'button';
   loadMoreBtn.className = 'confirm-modal__btn';
-  loadMoreBtn.textContent = 'Load more';
+  loadMoreBtn.textContent = t('common.actions.loadMore');
   const refreshBtn = document.createElement('button');
   refreshBtn.type = 'button';
   refreshBtn.className = 'confirm-modal__btn';
-  refreshBtn.textContent = 'Refresh';
+  refreshBtn.textContent = t('common.actions.refresh');
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.className = 'confirm-modal__btn';
-  closeBtn.textContent = 'Close';
+  closeBtn.textContent = t('common.actions.close');
   actions.append(signInBtn, loadMoreBtn, refreshBtn, closeBtn);
   dialog.append(heading, filterRow, list, actions);
   overlay.append(dialog);
@@ -4927,7 +5023,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     if (document.activeElement !== ownerFilterInput) ownerFilterInput.value = String(activeFilters.owner || '');
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
-    signInBtn.textContent = signInInFlight ? 'Signing in…' : 'Sign in';
+    signInBtn.textContent = signInInFlight ? t('common.actions.signingIn') : t('common.actions.signIn');
     titleFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
     subjectFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
     ownerFilterInput.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
@@ -4939,7 +5035,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     if (!isLoggedIn) {
       const signedOut = document.createElement('p');
       signedOut.className = 'muted';
-      signedOut.textContent = 'Sign in to load published packages.';
+      signedOut.textContent = t('common.publishedBrowser.signInToLoad');
       list.append(signedOut);
       return;
     }
@@ -4953,7 +5049,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     if (session.state.isLoadingPublishedPackages) {
       const loading = document.createElement('p');
       loading.className = 'muted';
-      loading.textContent = 'Loading published packages...';
+      loading.textContent = t('common.publishedBrowser.loading');
       list.append(loading);
       return;
     }
@@ -4961,7 +5057,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     if (!publishedItems.length) {
       const empty = document.createElement('p');
       empty.className = 'muted';
-      empty.textContent = 'No published packages found.';
+      empty.textContent = t('common.publishedBrowser.empty');
       list.append(empty);
       return;
     }
@@ -4972,23 +5068,26 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       titleLine.className = 'published-result-title-line';
       const title = document.createElement('strong');
       title.className = 'published-result-title';
-      title.textContent = item.title || 'Untitled';
+      title.textContent = item.title || t('common.values.untitled');
       const publishedAt = document.createElement('span');
       publishedAt.className = 'muted';
-      publishedAt.textContent = item.published_at ? formatTimestampForDisplay(item.published_at) : 'unknown time';
+      publishedAt.textContent = item.published_at ? formatTimestampForDisplay(item.published_at) : t('common.values.unknownTime');
       titleLine.append(title, publishedAt);
       const subjectOwner = document.createElement('div');
       subjectOwner.className = 'muted published-result-subject-owner';
-      subjectOwner.textContent = `Subject: ${item.subject || '—'} · Owner: ${item.owner_email || item.owner_name || item.owner_sub || '—'}`;
+      subjectOwner.textContent = t('viewer.published.metaSubjectOwner', {
+        subject: item.subject || '—',
+        owner: item.owner_email || item.owner_name || item.owner_sub || '—',
+      });
       const idLine = document.createElement('div');
       idLine.className = 'muted viewer-published-id';
-      idLine.textContent = `Package ID: ${item.published_package_id || '—'}`;
+      idLine.textContent = t('common.meta.packageId', { value: item.published_package_id || '—' });
       const rowActions = document.createElement('div');
       rowActions.className = 'published-result-actions';
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
       openBtn.className = 'confirm-modal__btn published-result-action';
-      openBtn.textContent = 'Open package';
+      openBtn.textContent = t('common.publishedBrowser.openPackage');
       openBtn.disabled = !item.published_package_id;
       openBtn.addEventListener('click', async () => {
         const result = await session.startFromPublishedPackage(item.published_package_id, {
@@ -5166,22 +5265,22 @@ function renderViewerShell(session) {
   const stepper = document.createElement('div');
   stepper.className = 'block-stepper';
   stepper.setAttribute('role', 'list');
-  stepper.setAttribute('aria-label', 'Worksheet block progress');
+  stepper.setAttribute('aria-label', t('viewer.shell.blockProgressAriaLabel'));
 
   const navActions = document.createElement('div');
   navActions.className = 'viewer-bottom-bar__zone viewer-bottom-bar__zone--center';
   const prevBtn = document.createElement('button');
   prevBtn.type = 'button';
   prevBtn.className = 'icon-nav-btn';
-  prevBtn.textContent = '← Back';
-  prevBtn.setAttribute('aria-label', 'Go to previous block');
-  prevBtn.title = 'Previous block';
+  prevBtn.textContent = t('viewer.actions.back');
+  prevBtn.setAttribute('aria-label', t('viewer.actions.previousBlock'));
+  prevBtn.title = t('viewer.actions.previousBlockTitle');
   const nextBtn = document.createElement('button');
   nextBtn.type = 'button';
   nextBtn.className = 'icon-nav-btn';
-  nextBtn.textContent = 'Next →';
-  nextBtn.setAttribute('aria-label', 'Go to next block');
-  nextBtn.title = 'Next block';
+  nextBtn.textContent = t('viewer.actions.next');
+  nextBtn.setAttribute('aria-label', t('viewer.actions.nextBlock'));
+  nextBtn.title = t('viewer.actions.nextBlockTitle');
   navActions.append(prevBtn, nextBtn);
   const answerControls = new Map();
   const textControlFeedback = new Map();
@@ -5199,39 +5298,46 @@ function renderViewerShell(session) {
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.className = 'viewer-bottom-action-btn';
-  saveBtn.textContent = 'Save';
+  saveBtn.textContent = t('common.actions.save');
   const completeBtn = document.createElement('button');
   completeBtn.type = 'button';
   completeBtn.className = 'viewer-bottom-action-btn';
-  completeBtn.textContent = 'Submit';
+  completeBtn.textContent = t('viewer.actions.submit');
   const checkBtn = document.createElement('button');
   checkBtn.type = 'button';
   checkBtn.className = 'viewer-bottom-action-btn';
-  checkBtn.textContent = 'Check Answer';
+  checkBtn.textContent = t('viewer.actions.checkAnswer');
 
   const headerActions = document.createElement('div');
   headerActions.className = 'viewer-header-actions';
   const infoBtn = document.createElement('button');
   infoBtn.type = 'button';
   infoBtn.className = 'viewer-header-icon-btn';
-  infoBtn.setAttribute('aria-label', 'Open technical details');
-  infoBtn.title = 'Technical details';
+  infoBtn.setAttribute('aria-label', t('viewer.details.openTechnicalDetailsAriaLabel'));
+  infoBtn.title = t('viewer.details.openTechnicalDetailsTitle');
   infoBtn.innerHTML = createViewerIcon('info');
 
   const uploadAttemptBtn = document.createElement('button');
   uploadAttemptBtn.type = 'button';
   uploadAttemptBtn.className = 'viewer-header-icon-btn';
-  uploadAttemptBtn.setAttribute('aria-label', 'Save attempt to server');
-  uploadAttemptBtn.title = 'Save attempt to server';
+  uploadAttemptBtn.setAttribute('aria-label', t('viewer.upload.saveAttemptAriaLabel'));
+  uploadAttemptBtn.title = t('viewer.upload.saveAttemptTitle');
   uploadAttemptBtn.innerHTML = createViewerIcon('upload');
 
   const printReportBtn = document.createElement('button');
   printReportBtn.type = 'button';
   printReportBtn.className = 'viewer-header-icon-btn';
-  printReportBtn.setAttribute('aria-label', 'Print worksheet report');
-  printReportBtn.title = 'Print worksheet report';
+  printReportBtn.setAttribute('aria-label', t('viewer.print.printReportAriaLabel'));
+  printReportBtn.title = t('viewer.print.printReportTitle');
   printReportBtn.innerHTML = createViewerIcon('print');
-  headerActions.append(infoBtn, uploadAttemptBtn, printReportBtn);
+  const languageSelector = createLanguageSelector({
+    variant: 'icon',
+    onChange: async () => {
+      await flushLocaleChangeBeforeReload(session, 'viewer.shell');
+      window.location.reload?.();
+    },
+  });
+  headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, printReportBtn);
 
   const detailsModal = document.createElement('div');
   detailsModal.className = 'viewer-details-modal';
@@ -5243,31 +5349,31 @@ function renderViewerShell(session) {
   detailsContent.className = 'viewer-details-modal__content';
   const detailsTitle = document.createElement('h2');
   detailsTitle.id = 'viewer-details-modal-title';
-  detailsTitle.textContent = 'Technical details';
+  detailsTitle.textContent = t('viewer.details.title');
   const learnerNameForm = document.createElement('form');
   learnerNameForm.className = 'viewer-details-form';
   const learnerNameLabel = document.createElement('label');
   learnerNameLabel.className = 'viewer-details-form__label';
   learnerNameLabel.setAttribute('for', 'viewer-student-name-input');
-  learnerNameLabel.textContent = 'Student name';
+  learnerNameLabel.textContent = t('viewer.details.studentName');
   const learnerNameInput = document.createElement('input');
   learnerNameInput.id = 'viewer-student-name-input';
   learnerNameInput.className = 'viewer-details-form__input';
   learnerNameInput.type = 'text';
   learnerNameInput.maxLength = 120;
-  learnerNameInput.placeholder = 'Enter student name';
+  learnerNameInput.placeholder = t('viewer.details.studentNamePlaceholder');
   learnerNameInput.autocomplete = 'name';
   const learnerNameSaveBtn = document.createElement('button');
   learnerNameSaveBtn.type = 'submit';
   learnerNameSaveBtn.className = 'viewer-details-form__save';
-  learnerNameSaveBtn.textContent = 'Apply';
+  learnerNameSaveBtn.textContent = t('common.actions.apply');
   learnerNameForm.append(learnerNameLabel, learnerNameInput, learnerNameSaveBtn);
   const printSettingsForm = document.createElement('form');
   printSettingsForm.className = 'viewer-details-form viewer-details-form--print';
   const printSchoolNameLabel = document.createElement('label');
   printSchoolNameLabel.className = 'viewer-details-form__label';
   printSchoolNameLabel.setAttribute('for', 'viewer-print-school-name-input');
-  printSchoolNameLabel.textContent = 'Print school name';
+  printSchoolNameLabel.textContent = t('viewer.details.printSchoolName');
   const printSchoolNameInput = document.createElement('input');
   printSchoolNameInput.id = 'viewer-print-school-name-input';
   printSchoolNameInput.className = 'viewer-details-form__input';
@@ -5277,13 +5383,13 @@ function renderViewerShell(session) {
   const printSchoolNameSaveBtn = document.createElement('button');
   printSchoolNameSaveBtn.type = 'submit';
   printSchoolNameSaveBtn.className = 'viewer-details-form__save';
-  printSchoolNameSaveBtn.textContent = 'Save';
+  printSchoolNameSaveBtn.textContent = t('common.actions.save');
   printSettingsForm.append(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn);
   const detailsList = document.createElement('dl');
   detailsList.className = 'viewer-details-list';
   const detailsCloseBtn = document.createElement('button');
   detailsCloseBtn.type = 'button';
-  detailsCloseBtn.textContent = 'Close';
+  detailsCloseBtn.textContent = t('common.actions.close');
   detailsCloseBtn.className = 'viewer-details-modal__close';
   detailsContent.append(detailsTitle, learnerNameForm, printSettingsForm, detailsList, detailsCloseBtn);
   detailsModal.append(detailsContent);
@@ -5359,8 +5465,8 @@ function renderViewerShell(session) {
       const copyBtn = document.createElement('button');
       copyBtn.type = 'button';
       copyBtn.className = 'viewer-details-list__copy';
-      copyBtn.textContent = 'Copy';
-      copyBtn.setAttribute('aria-label', `Copy ${label}`);
+      copyBtn.textContent = t('common.actions.copy');
+      copyBtn.setAttribute('aria-label', t('viewer.details.copyFieldAriaLabel', { label }));
       copyBtn.addEventListener('click', async () => {
         await copyTextValue(value);
       });
@@ -5438,10 +5544,12 @@ function renderViewerShell(session) {
   const getStepperLabel = (block, counters) => {
     if (block.kind === 'content') {
       counters.content += 1;
-      return counters.content === 1 ? 'Instruction' : `Instruction ${counters.content}`;
+      return counters.content === 1
+        ? t('viewer.stepper.instruction')
+        : t('viewer.stepper.instructionNumber', { number: counters.content });
     }
     counters.question += 1;
-    return `Question ${counters.question}`;
+    return t('viewer.stepper.questionNumber', { number: counters.question });
   };
 
   const getStepperOrderSignature = (orderedBlocks) => (
@@ -5714,7 +5822,7 @@ function renderViewerShell(session) {
     const inputType = block.responseConfig?.inputType || 'text';
     const controlId = `answer-${block.blockId}`;
     label.id = `${controlId}-label`;
-    label.textContent = block.prompt?.text || 'Question';
+    label.textContent = block.prompt?.text || t('viewer.stepper.question');
     const mediaFeedback = document.createElement('p');
     mediaFeedback.className = 'viewer-media-feedback';
     mediaFeedback.setAttribute('role', 'status');
@@ -5739,8 +5847,8 @@ function renderViewerShell(session) {
       const questionAudioBtn = document.createElement('button');
       questionAudioBtn.type = 'button';
       questionAudioBtn.className = 'viewer-header-icon-btn question-card__prompt-audio-btn';
-      questionAudioBtn.setAttribute('aria-label', 'Play question audio');
-      questionAudioBtn.title = 'Play question audio';
+      questionAudioBtn.setAttribute('aria-label', t('viewer.audio.playQuestionAudioAriaLabel'));
+      questionAudioBtn.title = t('viewer.audio.playQuestionAudioTitle');
       questionAudioBtn.innerHTML = createViewerIcon('audio');
       questionAudioBtn.addEventListener('click', async () => {
         if (questionAudioBtn.disabled) return;
@@ -5763,7 +5871,7 @@ function renderViewerShell(session) {
         });
         if (!result.ok) {
           questionAudioBtn.disabled = false;
-          setMediaFeedback(result.message || 'Unable to play question audio.');
+          setMediaFeedback(result.message || t('viewer.audio.unableToPlayQuestionAudio'));
         }
       });
       promptRow.append(questionAudioBtn);
@@ -5774,12 +5882,12 @@ function renderViewerShell(session) {
       imageWrap.className = 'viewer-question-image-wrap';
       const imageEl = document.createElement('img');
       imageEl.className = 'viewer-question-image';
-      imageEl.alt = 'Question image';
+      imageEl.alt = t('viewer.print.questionImageAlt');
       imageWrap.appendChild(imageEl);
       card.append(imageWrap);
       session.storage.localAssets?.get?.(questionImageRef.assetId).then((asset) => {
         if (!asset?.binary) {
-          setMediaFeedback(`Question image is missing (${questionImageRef.assetId}).`);
+          setMediaFeedback(t('viewer.image.missingWithId', { id: questionImageRef.assetId }));
           return;
         }
         const mimeType = asset?.metadata?.mimeType || 'image/png';
@@ -5787,12 +5895,12 @@ function renderViewerShell(session) {
         imageEl.onload = () => URL.revokeObjectURL(objectUrl);
         imageEl.onerror = () => {
           URL.revokeObjectURL(objectUrl);
-          setMediaFeedback('Question image could not be rendered (file may be corrupt).');
+          setMediaFeedback(t('viewer.image.couldNotRender'));
           imageWrap.remove();
         };
         imageEl.src = objectUrl;
       }).catch(() => {
-        setMediaFeedback('Question image could not be loaded.');
+        setMediaFeedback(t('viewer.image.couldNotLoad'));
       });
     }
 
@@ -5852,14 +5960,18 @@ function renderViewerShell(session) {
         checkBody.className = 'viewer-check-banner__body';
         const checkTitle = document.createElement('p');
         checkTitle.className = 'viewer-check-banner__title';
-        checkTitle.textContent = isCorrect ? 'Correct' : isIncorrect ? 'Incorrect' : 'Not graded';
+        checkTitle.textContent = isCorrect
+          ? t('viewer.check.correct')
+          : isIncorrect
+            ? t('viewer.check.incorrect')
+            : t('viewer.check.notGraded');
         const checkDetail = document.createElement('p');
         checkDetail.className = 'viewer-check-banner__detail';
         checkDetail.textContent = isCorrect
-          ? 'Great Work!'
+          ? t('viewer.check.greatWork')
           : isIncorrect
-            ? 'Not quite.'
-            : 'Answer key missing or invalid for this question.';
+            ? t('viewer.check.notQuite')
+            : t('viewer.check.missingAnswerKey');
         checkBody.append(checkTitle, checkDetail);
         checkBanner.append(checkIcon, checkBody);
 
@@ -6063,14 +6175,14 @@ function renderViewerShell(session) {
         const rewriteButton = document.createElement('button');
         rewriteButton.type = 'button';
         rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';
-        rewriteButton.textContent = 'Rewrite';
+        rewriteButton.textContent = t('viewer.rewrite.action');
         rewriteButton.addEventListener('click', async () => {
           if (rewriteButton.disabled) {
             return;
           }
           const rewriteIntentPayload = buildViewerRewriteIntentPayloadForBlock(block);
           if (!rewriteIntentPayload) {
-            const message = 'Rewrite is available only for text-response questions.';
+            const message = t('viewer.rewrite.onlyForTextResponse');
             session.pushNotification({
               kind: 'warn',
               text: message,
@@ -6084,16 +6196,16 @@ function renderViewerShell(session) {
             return;
           }
           if (protectedActionResult?.status !== 'executed') {
-            let blockedMessage = 'Rewrite could not be started. Please try again.';
+            let blockedMessage = t('viewer.rewrite.couldNotStart');
             if (protectedActionResult?.status === 'blocked_session_probe') {
               const probeFailureMessage = protectedActionResult?.result?.error?.message
                 || protectedActionResult?.result?.result?.error?.message
                 || '';
               blockedMessage = probeFailureMessage
-                ? `Rewrite is temporarily unavailable: ${probeFailureMessage}`
-                : 'Rewrite is temporarily unavailable because session verification failed. Please try again.';
+                ? t('viewer.rewrite.temporarilyUnavailableWithReason', { reason: probeFailureMessage })
+                : t('viewer.rewrite.temporarilyUnavailableSessionCheck');
             } else if (protectedActionResult?.status === 'blocked_no_local_id') {
-              blockedMessage = 'Rewrite could not start because no active local attempt was found.';
+              blockedMessage = t('viewer.rewrite.noActiveAttempt');
             }
             session.pushNotification({
               kind: 'warn',
@@ -6112,7 +6224,7 @@ function renderViewerShell(session) {
         const undoButton = document.createElement('button');
         undoButton.type = 'button';
         undoButton.className = 'question-card__undo-btn icon-nav-btn';
-        undoButton.textContent = 'Undo';
+        undoButton.textContent = t('viewer.rewrite.undo');
         undoButton.addEventListener('click', () => {
           const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
           if (undoButton.disabled || isRewriteInFlight) {
@@ -6204,7 +6316,7 @@ function renderViewerShell(session) {
         const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;
 
         if (rewriteButton) {
-          rewriteButton.textContent = isRewriteInFlight ? 'Rewriting…' : 'Rewrite';
+          rewriteButton.textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');
           rewriteButton.disabled = !canRewrite;
         }
         if (undoButton) {
@@ -6212,9 +6324,9 @@ function renderViewerShell(session) {
         }
         if (rewriteHint) {
           if (trimmedAnswerLength === 0) {
-            rewriteHint.textContent = 'Enter text to rewrite.';
+            rewriteHint.textContent = t('viewer.rewrite.hintEnterText');
           } else if (trimmedAnswerLength > 300) {
-            rewriteHint.textContent = 'Answer is too long to rewrite (max 300 characters).';
+            rewriteHint.textContent = t('viewer.rewrite.hintTooLong', { max: 300 });
           } else {
             rewriteHint.textContent = '';
           }
@@ -6264,7 +6376,9 @@ function renderViewerShell(session) {
     const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
     const orderChanged = stepperSignature !== stepperOrderSignature;
 
-    blockHeading.textContent = currentBlock.kind === 'content' ? 'Content' : 'Question';
+    blockHeading.textContent = currentBlock.kind === 'content'
+      ? t('viewer.stepper.content')
+      : t('viewer.stepper.question');
     if (orderChanged) {
       renderStepper(orderedBlocks, currentBlockIndex, { shouldScrollToActive: activeIndexChanged || orderChanged });
     } else if (activeIndexChanged) {
@@ -6277,16 +6391,16 @@ function renderViewerShell(session) {
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
     status.textContent = session.state.isFinalizing
-      ? 'Finalizing submission…'
+      ? t('viewer.status.finalizing')
       : session.state.lastFinalizeError
         ? `⚠️ ${session.state.lastFinalizeError}`
         : session.state.status === 'completed'
-          ? `Finalized${session.state.completedAt ? ` at ${session.state.completedAt}` : ''}`
+          ? t('viewer.status.finalizedAt', { time: session.state.completedAt ? session.state.completedAt : '' })
           : session.state.lastSaveError
             ? `⚠️ ${session.state.lastSaveError}`
             : session.state.autosavePending
-              ? 'Saving…'
-              : `Saved${session.state.lastSavedAt ? ` at ${session.state.lastSavedAt}` : ''}`;
+              ? t('viewer.status.saving')
+              : t('viewer.status.savedAt', { time: session.state.lastSavedAt ? session.state.lastSavedAt : '' });
     resumeWarning.textContent = session.state.recoveryMessage ? `⚠️ ${session.state.recoveryMessage}` : '';
     resumeWarning.hidden = !session.state.recoveryMessage;
     renderViewerNotifications(session);
@@ -6306,14 +6420,17 @@ function renderViewerShell(session) {
       : 'n/a';
     const summaryParts = [];
     if (studentName) {
-      summaryParts.push(`Student ${studentName}`);
+      summaryParts.push(t('viewer.summary.student', { name: studentName }));
     }
-    summaryParts.push(`Answered ${summary.answered}/${summary.total}`);
+    summaryParts.push(t('viewer.summary.answered', { answered: summary.answered, total: summary.total }));
     if (session.state.checkResult) {
-      summaryParts.push(`Checked ${session.state.checkResult.correctCount}/${session.state.checkResult.totalQuestions} correct`);
+      summaryParts.push(t('viewer.summary.checked', {
+        correct: session.state.checkResult.correctCount,
+        total: session.state.checkResult.totalQuestions,
+      }));
     }
     summaryParts.push(status.textContent);
-    summaryParts.push(`Status ${normalizedAttemptStatus}`);
+    summaryParts.push(t('viewer.summary.status', { status: normalizedAttemptStatus }));
     answerSummary.textContent = summaryParts.join(' · ');
   };
 
@@ -6334,7 +6451,7 @@ function renderViewerShell(session) {
     if (protectedActionResult?.status !== 'executed') {
       const blockedMessage = protectedActionResult?.status === 'blocked_session_probe'
         ? SESSION_EXPIRED_MESSAGE
-        : 'Sign-in is required before uploading attempts.';
+        : t('viewer.upload.signInRequired');
       session.pushNotification({
         kind: 'warn',
         text: blockedMessage,
@@ -6415,11 +6532,11 @@ function renderViewerAuthCallbackPanel(session, options = {}) {
   panel.className = 'viewer-auth-callback-panel';
 
   const heading = document.createElement('h1');
-  heading.textContent = 'Restoring your session';
+  heading.textContent = t('viewer.recovery.restoringSession');
 
   const description = document.createElement('p');
   description.className = 'muted viewer-auth-callback-panel__status';
-  description.textContent = options.statusText || 'Checking sign-in status and restoring your previous action…';
+  description.textContent = options.statusText || t('viewer.recovery.checkingStatus');
 
   const message = document.createElement('p');
   message.className = 'viewer-start-error';
@@ -6436,7 +6553,7 @@ function renderViewerAuthCallbackPanel(session, options = {}) {
   const retryNowBtn = document.createElement('button');
   retryNowBtn.type = 'button';
   retryNowBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  retryNowBtn.textContent = 'Retry now';
+  retryNowBtn.textContent = t('viewer.recovery.retryNow');
   retryNowBtn.disabled = options.retryDisabled === true;
   retryNowBtn.addEventListener('click', async () => {
     if (typeof options.onRetryNow === 'function') {
@@ -6446,7 +6563,7 @@ function renderViewerAuthCallbackPanel(session, options = {}) {
   const continueSignInBtn = document.createElement('button');
   continueSignInBtn.type = 'button';
   continueSignInBtn.className = 'viewer-start-btn';
-  continueSignInBtn.textContent = 'Continue sign-in';
+  continueSignInBtn.textContent = t('viewer.recovery.continueSignIn');
   continueSignInBtn.disabled = options.continueSignInDisabled === true;
   continueSignInBtn.addEventListener('click', async () => {
     if (typeof options.onContinueSignIn === 'function') {
@@ -6456,7 +6573,7 @@ function renderViewerAuthCallbackPanel(session, options = {}) {
   const cancelRecoveryBtn = document.createElement('button');
   cancelRecoveryBtn.type = 'button';
   cancelRecoveryBtn.className = 'viewer-start-btn viewer-start-btn--quiet';
-  cancelRecoveryBtn.textContent = 'Cancel recovery';
+  cancelRecoveryBtn.textContent = t('viewer.recovery.cancelRecovery');
   cancelRecoveryBtn.disabled = options.cancelDisabled === true;
   cancelRecoveryBtn.addEventListener('click', async () => {
     if (typeof options.onCancelRecovery === 'function') {
@@ -6481,7 +6598,7 @@ function renderViewerFatalError(error) {
   panel.className = 'viewer-fatal-panel';
 
   const heading = document.createElement('h1');
-  heading.textContent = 'Unable to open worksheet viewer';
+  heading.textContent = t('viewer.boot.unableToOpen');
 
   const message = document.createElement('p');
   message.className = 'viewer-fatal-panel__message';
@@ -6489,7 +6606,7 @@ function renderViewerFatalError(error) {
 
   const actionsHeading = document.createElement('h2');
   actionsHeading.className = 'viewer-fatal-panel__subheading';
-  actionsHeading.textContent = 'What you can do';
+  actionsHeading.textContent = t('viewer.boot.whatYouCanDo');
 
   const actions = document.createElement('ul');
   actions.className = 'viewer-fatal-panel__actions';
@@ -6502,7 +6619,7 @@ function renderViewerFatalError(error) {
   const details = document.createElement('details');
   details.className = 'viewer-fatal-panel__details';
   const summary = document.createElement('summary');
-  summary.textContent = 'Technical details';
+  summary.textContent = t('common.sections.details');
   const detailBody = document.createElement('pre');
   detailBody.textContent = `${bootError.code}: ${bootError.technicalMessage}`;
   details.append(summary, detailBody);
@@ -6522,11 +6639,11 @@ function renderPublishedPackageAuthRecoveryPanel(session, options = {}) {
   panel.className = 'viewer-fatal-panel viewer-fatal-panel--recoverable-auth';
 
   const heading = document.createElement('h1');
-  heading.textContent = 'Sign in to open this worksheet';
+  heading.textContent = t('viewer.boot.signInToOpenWorksheet');
 
   const message = document.createElement('p');
   message.className = 'viewer-fatal-panel__message';
-  message.textContent = 'This published worksheet is available after sign-in.';
+  message.textContent = t('viewer.boot.availableAfterSignIn');
 
   const status = document.createElement('p');
   status.className = 'viewer-start-error';
@@ -6540,7 +6657,7 @@ function renderPublishedPackageAuthRecoveryPanel(session, options = {}) {
   const signInBtn = document.createElement('button');
   signInBtn.type = 'button';
   signInBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  signInBtn.textContent = 'Sign in and open worksheet';
+  signInBtn.textContent = t('viewer.boot.signInAndOpenWorksheet');
   signInBtn.disabled = options.primaryDisabled === true;
   signInBtn.addEventListener('click', async () => {
     if (typeof options.onSignInAndOpen === 'function') {
@@ -6551,7 +6668,7 @@ function renderPublishedPackageAuthRecoveryPanel(session, options = {}) {
   const startPanelBtn = document.createElement('button');
   startPanelBtn.type = 'button';
   startPanelBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  startPanelBtn.textContent = 'Go to start screen';
+  startPanelBtn.textContent = t('viewer.boot.goToStartScreen');
   startPanelBtn.disabled = options.secondaryDisabled === true;
   startPanelBtn.addEventListener('click', async () => {
     if (typeof options.onGoToStart === 'function') {
@@ -6564,7 +6681,7 @@ function renderPublishedPackageAuthRecoveryPanel(session, options = {}) {
   const details = document.createElement('details');
   details.className = 'viewer-fatal-panel__details';
   const summary = document.createElement('summary');
-  summary.textContent = 'Technical details';
+  summary.textContent = t('common.sections.details');
   const detailBody = document.createElement('pre');
   detailBody.textContent = `${bootError.code}: ${bootError.technicalMessage}`;
   details.append(summary, detailBody);
@@ -6586,10 +6703,10 @@ function renderViewerStartPanel(session, options = {}) {
   const panel = document.createElement('section');
   panel.className = 'viewer-start-panel';
   const heading = document.createElement('h1');
-  heading.textContent = 'Start Viewer';
+  heading.textContent = t('viewer.start.title');
   const description = document.createElement('p');
   description.className = 'muted';
-  description.textContent = 'Resume attempts, import a worksheet, or load a published online version.';
+  description.textContent = t('viewer.start.description');
   const resumeAttempt = options.resumeAttempt || null;
   const onResumeAttempt = typeof options.onResumeAttempt === 'function' ? options.onResumeAttempt : null;
   const onDiscardResume = typeof options.onDiscardResume === 'function' ? options.onDiscardResume : null;
@@ -6602,15 +6719,15 @@ function renderViewerStartPanel(session, options = {}) {
   const manageAttemptsBtn = document.createElement('button');
   manageAttemptsBtn.type = 'button';
   manageAttemptsBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  manageAttemptsBtn.textContent = 'Manage server attempts';
+  manageAttemptsBtn.textContent = t('viewer.start.manageServerAttempts');
   const importPackageBtn = document.createElement('button');
   importPackageBtn.type = 'button';
   importPackageBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  importPackageBtn.textContent = 'Import worksheet package (.zip)';
+  importPackageBtn.textContent = t('viewer.start.importPackage');
   const browsePublishedBtn = document.createElement('button');
   browsePublishedBtn.type = 'button';
   browsePublishedBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-  browsePublishedBtn.textContent = 'Browse published packages';
+  browsePublishedBtn.textContent = t('viewer.start.browsePublishedPackages');
 
   const packageFileInput = document.createElement('input');
   packageFileInput.type = 'file';
@@ -6628,7 +6745,7 @@ function renderViewerStartPanel(session, options = {}) {
     resumeCard = document.createElement('div');
     resumeCard.className = 'viewer-resume-card';
     const resumeTitle = document.createElement('h2');
-    resumeTitle.textContent = 'Resume previous attempt';
+    resumeTitle.textContent = t('viewer.start.resumePreviousAttempt');
     const resumeMeta = document.createElement('p');
     resumeMeta.className = 'muted';
     const resumeUpdatedAt =
@@ -6667,13 +6784,13 @@ function renderViewerStartPanel(session, options = {}) {
       || resumeAttempt?.viewerPayload?.metadata?.owner
       || '—'
     ).trim() || '—';
-    resumeMeta.textContent = `Title: ${worksheetTitle} · Subject: ${worksheetSubject} · Owner: ${worksheetOwner} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
+    resumeMeta.textContent = `${t('viewer.start.resumeMetaLabels.title')}: ${worksheetTitle} · ${t('viewer.start.resumeMetaLabels.subject')}: ${worksheetSubject} · ${t('viewer.start.resumeMetaLabels.owner')}: ${worksheetOwner} · ${formatTimestampForDisplay(resumeUpdatedAt)}`;
     const resumeActions = document.createElement('div');
     resumeActions.className = 'viewer-start-actions';
     const resumeBtn = document.createElement('button');
     resumeBtn.type = 'button';
     resumeBtn.className = 'viewer-start-btn viewer-start-btn--primary';
-    resumeBtn.textContent = 'Resume attempt';
+    resumeBtn.textContent = t('viewer.start.resumeAttempt');
     resumeBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
       if (onResumeAttempt) await onResumeAttempt();
@@ -6681,7 +6798,7 @@ function renderViewerStartPanel(session, options = {}) {
     const discardBtn = document.createElement('button');
     discardBtn.type = 'button';
     discardBtn.className = 'viewer-start-btn viewer-start-btn--secondary-danger';
-    discardBtn.textContent = 'Discard attempt';
+    discardBtn.textContent = t('viewer.start.discardAttempt');
     discardBtn.addEventListener('click', async () => {
       errorMessage.textContent = '';
       if (onDiscardResume) await onDiscardResume();
@@ -6691,7 +6808,7 @@ function renderViewerStartPanel(session, options = {}) {
   }
   const noResumeHint = document.createElement('p');
   noResumeHint.className = 'muted viewer-start-subhint';
-  noResumeHint.textContent = 'No resumable local attempt found.';
+  noResumeHint.textContent = t('viewer.start.noResume');
 
   const attemptsActions = document.createElement('div');
   attemptsActions.className = 'viewer-start-actions';
@@ -6814,32 +6931,38 @@ function renderViewerStartPanel(session, options = {}) {
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
-    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || 'unknown';
+    const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || t('common.values.unknown');
     let defaultSessionMessage = '';
     if (isLoggedIn) {
-      defaultSessionMessage = `Server session: ready (${userLabel})`;
+      defaultSessionMessage = t('viewer.start.serverSession.ready', { user: userLabel });
     } else if (isChecking) {
-      defaultSessionMessage = 'Server session: checking…';
+      defaultSessionMessage = t('viewer.start.serverSession.checking');
     } else if (session.state.serverSession?.error === SESSION_EXPIRED_MESSAGE) {
       defaultSessionMessage = SESSION_EXPIRED_MESSAGE;
     } else {
-      defaultSessionMessage = SIGNED_OUT_MESSAGE;
+      defaultSessionMessage = t('viewer.start.serverSession.loggedOut', { reason: SIGNED_OUT_MESSAGE });
     }
     sessionStatus.textContent = defaultSessionMessage;
     manageAttemptsBtn.hidden = false;
     manageAttemptsBtn.disabled = isChecking || session.state.isManagingUploadedAttempts === true;
     manageAttemptsBtn.textContent = isLoggedIn
-      ? 'Manage server attempts'
-      : 'Log in to manage server attempts';
+      ? t('viewer.start.manageServerAttempts')
+      : t('viewer.start.loginToManageServerAttempts');
     browsePublishedBtn.disabled = isChecking;
     browsePublishedBtn.textContent = isLoggedIn
-      ? 'Browse published worksheets'
-      : 'Log in to browse published worksheets';
+      ? t('viewer.start.browsePublishedWorksheets')
+      : t('viewer.start.loginToBrowsePublishedWorksheets');
     noResumeHint.hidden = Boolean(resumeAttempt);
   }
 
-  panel.append(heading, description);
-  attemptsSection.appendChild(createViewerStartSectionHeader({ icon: 'attempts', title: 'Attempts' }));
+  const languageSelector = createLanguageSelector({
+    onChange: async () => {
+      await flushLocaleChangeBeforeReload(session, 'viewer.start');
+      window.location.reload?.();
+    },
+  });
+  panel.append(languageSelector, heading, description);
+  attemptsSection.appendChild(createViewerStartSectionHeader({ icon: 'attempts', title: t('viewer.start.attempts') }));
   if (resumeCard) {
     attemptsSection.append(resumeCard);
     const attemptDivider = document.createElement('div');
@@ -6849,7 +6972,7 @@ function renderViewerStartPanel(session, options = {}) {
     attemptsSection.append(noResumeHint);
   }
   attemptsSection.append(attemptsActions);
-  worksheetsSection.appendChild(createViewerStartSectionHeader({ icon: 'worksheet', title: 'Worksheets' }));
+  worksheetsSection.appendChild(createViewerStartSectionHeader({ icon: 'worksheet', title: t('viewer.start.worksheets') }));
   worksheetsSection.append(worksheetActions);
   panel.append(
     attemptsSection,
