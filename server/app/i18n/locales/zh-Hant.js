@@ -560,9 +560,9 @@ export default {
       "student": "學生 {name}"
     },
     "upload": {
-      "progressPercent": "上載百分比",
-      "progressPreparing": "正在準備上載",
-      "progressSaving": "正在儲存",
+      "progressPercent": "正在上載作答記錄... {percent}%",
+      "progressPreparing": "正在準備上載...",
+      "progressSaving": "正在儲存上載...",
       "saveAttemptAriaLabel": "儲存作答記錄",
       "saveAttemptTitle": "儲存作答記錄",
       "signInRequired": "上載作答前需要先登入。"

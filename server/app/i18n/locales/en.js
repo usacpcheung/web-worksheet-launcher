@@ -560,9 +560,9 @@ export default {
       "student": "Student {name}"
     },
     "upload": {
-      "progressPercent": "Progress Percent",
-      "progressPreparing": "Progress Preparing",
-      "progressSaving": "Progress Saving",
+      "progressPercent": "Uploading attempt... {percent}%",
+      "progressPreparing": "Preparing upload...",
+      "progressSaving": "Saving upload...",
       "saveAttemptAriaLabel": "Save Attempt Aria Label",
       "saveAttemptTitle": "Save Attempt Title",
       "signInRequired": "Sign-in is required before uploading attempts."
