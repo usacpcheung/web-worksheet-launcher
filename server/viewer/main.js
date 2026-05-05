@@ -37,9 +37,6 @@ const VIEWER_AUTH_CALLBACK_PARAM = 'authCallback';
 const AUTH_CALLBACK_RETRY_BASE_MS = 1000;
 const AUTH_CALLBACK_RETRY_MAX_MS = 10000;
 const AUTH_CALLBACK_RETRY_BUDGET_MS = 60000;
-const ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE = 'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.';
-const ATTEMPT_UPLOAD_CONFLICT_MESSAGE = 'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.';
-const UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION = t('viewer.serverAttempts.manageRecommendation');
 const VIEWER_NOTIFICATION_DEFAULT_TTL_MS = 5000;
 const VIEWER_NOTIFICATION_ERROR_TTL_MS = 8000;
 const VIEWER_NOTIFICATION_UPLOAD_SOURCE = 'attempt.upload';
@@ -226,20 +223,41 @@ function formatUploadProgressText(progress = {}) {
   const total = Number(progress.total || 0);
   if (progress.lengthComputable && total > 0) {
     const percent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
-    return t('viewer.upload.progressPercent', { percent });
+    return t('viewer.notifications.uploadAttempt.progressPercent', { percent });
   }
   if (loaded > 0) {
-    return t('viewer.upload.progressSaving');
+    return t('viewer.notifications.uploadAttempt.saving');
   }
-  return t('viewer.upload.progressPreparing');
+  return t('viewer.notifications.uploadAttempt.preparing');
 }
 
 function formatAttemptSlotLimitMessage(slotLimit) {
   const normalizedLimit = Number(slotLimit);
   if (Number.isInteger(normalizedLimit) && normalizedLimit > 0) {
-    return t('viewer.attemptSlots.limitReached', { limit: normalizedLimit });
+    return t('viewer.notifications.uploadAttempt.slotLimitReached', { limit: normalizedLimit });
   }
-  return t('viewer.attemptSlots.limitReachedUnknown');
+  return t('viewer.notifications.uploadAttempt.slotLimitReachedUnknown');
+}
+
+function getViewerAuthNotification(key, params = {}) {
+  return t(`viewer.notifications.auth.${key}`, params);
+}
+
+function getViewerUploadAttemptMessage(errorCode, uploadResult = {}) {
+  switch (String(errorCode || '').toUpperCase()) {
+    case 'ATTEMPT_NAME_CONFLICT':
+      return t('viewer.notifications.uploadAttempt.conflict');
+    case 'ATTEMPT_SLOT_LIMIT_REACHED':
+      return formatAttemptSlotLimitMessage(uploadResult?.error?.details?.slotLimit);
+    case 'INVALID_ATTEMPT_PACKAGE':
+      return t('viewer.notifications.uploadAttempt.invalidPackage');
+    case 'AUTH_REQUIRED':
+      return t('viewer.notifications.uploadAttempt.authRequired');
+    case 'NETWORK_ERROR':
+      return t('viewer.notifications.uploadAttempt.networkFailure');
+    default:
+      return uploadResult?.error?.message || 'Attempt upload failed.';
+  }
 }
 
 function sanitizeFilenameSegment(value, fallback = 'worksheet') {
@@ -1953,7 +1971,7 @@ async function startWorksheetPrintFlow({
   if (!session?.state?.viewerPayload || session.state.status !== 'completed') {
     return {
       ok: false,
-      message: 'Submit the worksheet before printing the report.',
+      message: t('viewer.notifications.print.submitBeforePrinting'),
     };
   }
 
@@ -1961,7 +1979,7 @@ async function startWorksheetPrintFlow({
   if (!printWindow || !printWindow.document || typeof printWindow.document.open !== 'function') {
     return {
       ok: false,
-      message: 'Print window was blocked. Allow popups for this site, then try again.',
+      message: t('viewer.notifications.print.popupBlocked'),
     };
   }
   try {
@@ -1990,7 +2008,7 @@ async function startWorksheetPrintFlow({
   ) {
     return {
       ok: false,
-      message: 'Print window was closed before the report finished loading. Try printing again.',
+      message: t('viewer.notifications.print.popupClosed'),
     };
   }
 
@@ -2002,7 +2020,7 @@ async function startWorksheetPrintFlow({
   } catch {
     return {
       ok: false,
-      message: 'Unable to load the print report window. Try printing again.',
+      message: t('viewer.notifications.print.unableToLoad'),
     };
   }
   return {
@@ -3395,7 +3413,7 @@ class ViewerAttemptSession {
 
   async uploadCurrentAttemptPackage(intentPayload = {}, options = {}) {
     if (!this.state.localAttemptId || !this.state.viewerPayload) {
-      const message = 'No active local attempt is available for upload.';
+      const message = t('viewer.notifications.uploadAttempt.noActiveAttempt');
       this.state.serverActionMessage = message;
       this.pushNotification({
         kind: 'warn',
@@ -3406,7 +3424,7 @@ class ViewerAttemptSession {
       return { ok: false, status: 'no_active_attempt', error: { message } };
     }
     if (this.state.isUploadingAttemptPackage) {
-      const message = 'Upload already in progress.';
+      const message = t('viewer.notifications.uploadAttempt.alreadyInProgress');
       this.state.serverActionMessage = message;
       this.pushNotification({
         kind: 'info',
@@ -3418,7 +3436,7 @@ class ViewerAttemptSession {
     }
     const intentAttemptId = typeof intentPayload?.localAttemptId === 'string' ? intentPayload.localAttemptId : null;
     if (intentAttemptId && intentAttemptId !== this.state.localAttemptId) {
-      const message = 'Attempt upload target is stale. Please retry from the current attempt.';
+      const message = t('viewer.notifications.uploadAttempt.staleTarget');
       this.state.serverActionMessage = message;
       this.pushNotification({
         kind: 'warn',
@@ -3433,10 +3451,10 @@ class ViewerAttemptSession {
     this.state.uploadAttemptConflictContext = null;
     this.state.uploadAttemptRecoveryHint = null;
     this.state.uploadAttemptProgress = { loaded: 0, total: 0, lengthComputable: false };
-    this.state.serverActionMessage = 'Preparing upload...';
+    this.state.serverActionMessage = t('viewer.notifications.uploadAttempt.preparing');
     this.setNotificationForSource(VIEWER_NOTIFICATION_UPLOAD_SOURCE, {
       kind: 'info',
-      text: 'Preparing upload...',
+      text: this.state.serverActionMessage,
     });
     this.notifyStateChange();
 
@@ -3472,16 +3490,14 @@ class ViewerAttemptSession {
 
       if (!uploadResult?.ok) {
         const errorCode = String(uploadResult?.error?.code || '').toUpperCase();
-        let message = uploadResult?.error?.message || 'Attempt upload failed.';
+        let message = getViewerUploadAttemptMessage(errorCode, uploadResult);
         if (errorCode === 'ATTEMPT_NAME_CONFLICT') {
-          message = ATTEMPT_UPLOAD_CONFLICT_MESSAGE;
           this.state.uploadAttemptConflictContext = {
             title: uploadTitle,
             subject: uploadSubject,
             existingAttempt: uploadResult?.error?.details?.existingAttempt || null,
           };
         } else if (errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED') {
-          message = formatAttemptSlotLimitMessage(uploadResult?.error?.details?.slotLimit);
           const requestedConflictAction = options.conflictAction === 'replace'
             ? 'replace'
             : options.conflictAction === 'copy'
@@ -3493,12 +3509,6 @@ class ViewerAttemptSession {
             conflictAction: requestedConflictAction,
           };
           this.state.uploadedAttemptSlotLimit = Number(uploadResult?.error?.details?.slotLimit) || this.state.uploadedAttemptSlotLimit;
-        } else if (errorCode === 'INVALID_ATTEMPT_PACKAGE') {
-          message = 'The attempt package format is invalid. Your local attempt is still safe. Please refresh and retry.';
-        } else if (errorCode === 'AUTH_REQUIRED') {
-          message = 'Sign-in is required before saving attempts to server.';
-        } else if (errorCode === 'NETWORK_ERROR') {
-          message = ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE;
         }
         this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
         this.state.serverActionMessage = message;
@@ -3512,12 +3522,12 @@ class ViewerAttemptSession {
       }
 
       this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
-      this.state.serverActionMessage = 'Attempt saved to server.';
+      this.state.serverActionMessage = t('viewer.notifications.uploadAttempt.saved');
       this.state.uploadAttemptConflictContext = null;
       this.state.uploadAttemptRecoveryHint = null;
       this.pushNotification({
         kind: 'success',
-        text: 'Attempt saved to server.',
+        text: this.state.serverActionMessage,
         ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
       });
       this.notifyStateChange();
@@ -3525,14 +3535,14 @@ class ViewerAttemptSession {
     } catch (error) {
       console.error('[viewer] Attempt package upload failed unexpectedly.', error);
       this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
-      this.state.serverActionMessage = ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE;
+      this.state.serverActionMessage = t('viewer.notifications.uploadAttempt.networkFailure');
       this.pushNotification({
         kind: 'error',
-        text: ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE,
+        text: this.state.serverActionMessage,
         ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
       });
       this.notifyStateChange();
-      return { ok: false, status: 'upload_failed_unexpected', error: { code: 'NETWORK_ERROR', message: ATTEMPT_UPLOAD_NETWORK_FAILURE_MESSAGE } };
+      return { ok: false, status: 'upload_failed_unexpected', error: { code: 'NETWORK_ERROR', message: this.state.serverActionMessage } };
     } finally {
       this.state.isUploadingAttemptPackage = false;
       this.state.uploadAttemptProgress = null;
@@ -3610,7 +3620,7 @@ class ViewerAttemptSession {
     try {
       const result = await this.apiClient.deleteUploadedAttempt(uploadedAttemptId);
       if (!result?.ok) {
-        this.state.serverActionMessage = result?.error?.message || 'Failed to delete uploaded attempt.';
+        this.state.serverActionMessage = result?.error?.message || t('viewer.notifications.uploadedAttempt.deleteFailed');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -3619,10 +3629,10 @@ class ViewerAttemptSession {
         return result;
       }
       await this.listUploadedAttempts();
-      this.state.serverActionMessage = 'Uploaded attempt deleted from server.';
+      this.state.serverActionMessage = t('viewer.notifications.uploadedAttempt.deleted');
       this.pushNotification({
         kind: 'success',
-        text: 'Uploaded attempt deleted from server.',
+        text: this.state.serverActionMessage,
         ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
       });
       return result;
@@ -3645,7 +3655,7 @@ class ViewerAttemptSession {
     try {
       const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
       if (!artifact?.ok) {
-        this.state.serverActionMessage = artifact?.error?.message || 'Unable to download uploaded attempt.';
+        this.state.serverActionMessage = artifact?.error?.message || t('viewer.notifications.uploadedAttempt.downloadFailed');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -3655,7 +3665,7 @@ class ViewerAttemptSession {
       }
       const bytes = ensureUint8Array(artifact?.data);
       if (!bytes) {
-        const result = { ok: false, error: { code: 'INVALID_ARTIFACT', message: 'Uploaded attempt artifact is empty.' } };
+        const result = { ok: false, error: { code: 'INVALID_ARTIFACT', message: t('viewer.notifications.uploadedAttempt.artifactEmpty') } };
         this.state.serverActionMessage = result.error.message;
         this.pushNotification({
           kind: 'error',
@@ -3675,7 +3685,9 @@ class ViewerAttemptSession {
       setTimeout(() => {
         URL.revokeObjectURL(url);
       }, 1000);
-      this.state.serverActionMessage = `Downloaded uploaded attempt "${uploadedAttemptRow?.title || uploadedAttemptId}".`;
+      this.state.serverActionMessage = t('viewer.notifications.uploadedAttempt.downloaded', {
+        title: uploadedAttemptRow?.title || uploadedAttemptId,
+      });
       this.pushNotification({
         kind: 'success',
         text: this.state.serverActionMessage,
@@ -3724,7 +3736,7 @@ class ViewerAttemptSession {
     try {
       const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
       if (!artifact?.ok) {
-        this.state.serverActionMessage = artifact?.error?.message || 'Unable to resume uploaded attempt.';
+        this.state.serverActionMessage = artifact?.error?.message || t('viewer.notifications.uploadedAttempt.resumeFailed');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -3823,16 +3835,18 @@ class ViewerAttemptSession {
       await this.storage.attempts.put(restoredAttemptRecord);
       this.applyAttemptState(restoredAttemptRecord, { markDirty: false });
       this.state.checkResult = checkResult;
-      this.state.serverActionMessage = `Restored uploaded attempt as local attempt ${restoredLocalAttemptId}.`;
+      this.state.serverActionMessage = t('viewer.notifications.uploadedAttempt.restoredWithId', { id: restoredLocalAttemptId });
       this.pushNotification({
         kind: 'success',
-        text: 'Restored uploaded attempt as a new local attempt.',
+        text: t('viewer.notifications.uploadedAttempt.restored'),
         ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
       });
       this.persistResumeMetadata();
       return { ok: true, data: { localAttemptId: restoredLocalAttemptId } };
     } catch (error) {
-      this.state.utilityMessage = `Unable to resume uploaded attempt. ${error?.message || String(error)}`;
+      this.state.utilityMessage = t('viewer.notifications.uploadedAttempt.restoreFailed', {
+        reason: error?.message || String(error),
+      });
       this.state.serverActionMessage = this.state.utilityMessage;
       this.pushNotification({
         kind: 'error',
@@ -4127,7 +4141,7 @@ class ViewerAttemptSession {
           onPopupBlockedOverride({ authFlowId, finalizeFlow });
           return;
         }
-        this.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        this.state.serverActionMessage = getViewerAuthNotification('signInPopupBlocked');
         this.notifyStateChange();
       },
       onStatusMessage: (message) => {
@@ -4150,7 +4164,7 @@ class ViewerAttemptSession {
         if (this._authAutoLoadInFlightByFlowId.has(authFlowId)) return;
         this._authAutoLoadInFlightByFlowId.add(authFlowId);
         try {
-          this.state.serverActionMessage = 'Sign-in completed. Refreshing server session…';
+          this.state.serverActionMessage = getViewerAuthNotification('signInRefreshing');
           this.notifyStateChange();
           const result = await this.preflightPublishedSession();
           if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
@@ -4160,7 +4174,7 @@ class ViewerAttemptSession {
             finalizeFlow();
             return;
           }
-          const fallbackMessage = result?.result?.error?.message || this.state.serverSession?.error || 'Sign-in completed, but session is still not ready.';
+          const fallbackMessage = result?.result?.error?.message || this.state.serverSession?.error || getViewerAuthNotification('sessionNotReadyAfterSignIn');
           this.state.serverActionMessage = fallbackMessage;
           this.notifyStateChange();
           finalizeFlow();
@@ -4175,7 +4189,7 @@ class ViewerAttemptSession {
           return;
         }
         if (result?.final === false && result?.waitingForCallback === true) {
-          this.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          this.state.serverActionMessage = getViewerAuthNotification('stillWaitingForPopup');
           this.notifyStateChange();
           return;
         }
@@ -4183,7 +4197,7 @@ class ViewerAttemptSession {
           finalizeFlow();
           return;
         }
-        if (this.state.serverActionMessage === 'Sign-in popup was blocked. Allow popups for this site, then try again.') {
+        if (this.state.serverActionMessage === getViewerAuthNotification('signInPopupBlocked')) {
           finalizeFlow();
           return;
         }
@@ -4850,7 +4864,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     session.beginServerSignIn({
       onPopupBlocked: ({ finalizeFlow }) => {
         signInInFlight = false;
-        session.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        session.state.serverActionMessage = getViewerAuthNotification('signInPopupBlocked');
         session.notifyStateChange();
         renderRows();
         finalizeFlow();
@@ -4870,7 +4884,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
             await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true });
             session.state.serverActionMessage = null;
           } else {
-            session.state.serverActionMessage = readiness?.error?.message || 'Sign-in completed, but session is still not ready.';
+            session.state.serverActionMessage = readiness?.error?.message || getViewerAuthNotification('sessionNotReadyAfterSignIn');
           }
           session.notifyStateChange();
           await renderRows();
@@ -4881,7 +4895,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
         if (result?.final === false && result?.waitingForCallback === true) {
-          session.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          session.state.serverActionMessage = getViewerAuthNotification('stillWaitingForPopup');
           session.notifyStateChange();
           renderRows();
           return;
@@ -5131,7 +5145,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     session.beginServerSignIn({
       onPopupBlocked: ({ finalizeFlow }) => {
         signInInFlight = false;
-        session.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        session.state.serverActionMessage = getViewerAuthNotification('signInPopupBlocked');
         session.notifyStateChange();
         renderRows();
         finalizeFlow();
@@ -5149,7 +5163,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
             session.state.serverActionMessage = readiness?.result?.error?.message
               || session.state.serverSession?.error
-              || 'Sign-in completed, but session is still not ready.';
+              || getViewerAuthNotification('sessionNotReadyAfterSignIn');
             session.notifyStateChange();
             renderRows();
             return;
@@ -5165,7 +5179,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
         if (result?.final === false && result?.waitingForCallback === true) {
-          session.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          session.state.serverActionMessage = getViewerAuthNotification('stillWaitingForPopup');
           session.notifyStateChange();
           renderRows();
           return;
@@ -6182,7 +6196,7 @@ function renderViewerShell(session) {
           }
           const rewriteIntentPayload = buildViewerRewriteIntentPayloadForBlock(block);
           if (!rewriteIntentPayload) {
-            const message = t('viewer.rewrite.onlyForTextResponse');
+            const message = t('viewer.notifications.rewrite.onlyForTextResponse');
             session.pushNotification({
               kind: 'warn',
               text: message,
@@ -6196,16 +6210,16 @@ function renderViewerShell(session) {
             return;
           }
           if (protectedActionResult?.status !== 'executed') {
-            let blockedMessage = t('viewer.rewrite.couldNotStart');
+            let blockedMessage = t('viewer.notifications.rewrite.couldNotStart');
             if (protectedActionResult?.status === 'blocked_session_probe') {
               const probeFailureMessage = protectedActionResult?.result?.error?.message
                 || protectedActionResult?.result?.result?.error?.message
                 || '';
               blockedMessage = probeFailureMessage
-                ? t('viewer.rewrite.temporarilyUnavailableWithReason', { reason: probeFailureMessage })
-                : t('viewer.rewrite.temporarilyUnavailableSessionCheck');
+                ? t('viewer.notifications.rewrite.temporarilyUnavailableWithReason', { reason: probeFailureMessage })
+                : t('viewer.notifications.rewrite.temporarilyUnavailableSessionCheck');
             } else if (protectedActionResult?.status === 'blocked_no_local_id') {
-              blockedMessage = t('viewer.rewrite.noActiveAttempt');
+              blockedMessage = t('viewer.notifications.rewrite.noActiveAttempt');
             }
             session.pushNotification({
               kind: 'warn',
@@ -6450,8 +6464,8 @@ function renderViewerShell(session) {
     }
     if (protectedActionResult?.status !== 'executed') {
       const blockedMessage = protectedActionResult?.status === 'blocked_session_probe'
-        ? SESSION_EXPIRED_MESSAGE
-        : t('viewer.upload.signInRequired');
+        ? getViewerAuthNotification('sessionExpired')
+        : t('viewer.notifications.uploadAttempt.signInRequired');
       session.pushNotification({
         kind: 'warn',
         text: blockedMessage,
@@ -6479,7 +6493,7 @@ function renderViewerShell(session) {
         // after deleting one server row to free space, retry upload immediately.
         await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);
       } else {
-        session.state.serverActionMessage = UPLOADED_ATTEMPT_MANAGE_RECOMMENDATION;
+        session.state.serverActionMessage = t('viewer.serverAttempts.manageRecommendation');
       }
     }
     renderUI();
@@ -6866,7 +6880,7 @@ function renderViewerStartPanel(session, options = {}) {
     }
     session.beginServerSignIn({
       onPopupBlocked: ({ finalizeFlow }) => {
-        session.state.serverActionMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+        session.state.serverActionMessage = getViewerAuthNotification('signInPopupBlocked');
         session.notifyStateChange();
         renderServerControls();
         finalizeFlow();
@@ -6884,7 +6898,7 @@ function renderViewerStartPanel(session, options = {}) {
           if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
             session.state.serverActionMessage = readiness?.result?.error?.message
               || session.state.serverSession?.error
-              || 'Sign-in completed, but session is still not ready.';
+            || getViewerAuthNotification('sessionNotReadyAfterSignIn');
             session.notifyStateChange();
             renderServerControls();
             return;
@@ -6904,7 +6918,7 @@ function renderViewerStartPanel(session, options = {}) {
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
         if (result?.final === false && result?.waitingForCallback === true) {
-          session.state.serverActionMessage = 'Still waiting for sign-in confirmation from the popup…';
+          session.state.serverActionMessage = getViewerAuthNotification('stillWaitingForPopup');
           session.notifyStateChange();
           renderServerControls();
           return;

@@ -261,7 +261,7 @@ test('viewer beginServerSignIn shows popup blocked message when popup cannot ope
   session.beginServerSignIn();
   assert.equal(
     session.state.serverActionMessage,
-    'Sign-in popup was blocked. Allow popups for this site, then try again.'
+    'viewer.notifications.auth.signInPopupBlocked'
   );
 });
 
@@ -733,7 +733,7 @@ test('startWorksheetPrintFlow reports popup blocking cleanly', async () => {
 
   assert.deepEqual(result, {
     ok: false,
-    message: 'Print window was blocked. Allow popups for this site, then try again.',
+    message: 'viewer.notifications.print.popupBlocked',
   });
 });
 
@@ -851,7 +851,7 @@ test('startWorksheetPrintFlow returns friendly message when popup is closed befo
   const result = await flowPromise;
   assert.deepEqual(result, {
     ok: false,
-    message: 'Print window was closed before the report finished loading. Try printing again.',
+    message: 'viewer.notifications.print.popupClosed',
   });
 });
 
@@ -4886,11 +4886,11 @@ test('uploadCurrentAttemptPackage reports progress text while upload runs', asyn
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, true);
   assert.equal(
-    observedMessages.some((msg) => ['viewer.upload.progressPercent', 'viewer.upload.progressSaving', 'viewer.upload.progressPreparing']
+    observedMessages.some((msg) => ['viewer.notifications.uploadAttempt.progressPercent', 'viewer.notifications.uploadAttempt.saving', 'viewer.notifications.uploadAttempt.preparing']
       .some((token) => String(msg || '').includes(token))),
     true
   );
-  assert.equal(session.state.serverActionMessage, 'Attempt saved to server.');
+  assert.equal(session.state.serverActionMessage, 'viewer.notifications.uploadAttempt.saved');
 });
 
 test('uploadCurrentAttemptPackage sends sourceSubject when viewerPayload subject is blank', async () => {
@@ -4940,7 +4940,7 @@ test('uploadCurrentAttemptPackage leaves local attempt state safe on network fai
   assert.equal(JSON.stringify(session.state.answers), answersBefore);
   assert.equal(
     session.state.serverActionMessage,
-    'Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.'
+    'viewer.notifications.uploadAttempt.networkFailure'
   );
 });
 
@@ -4962,7 +4962,7 @@ test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_NAME_CONFLICT mess
   assert.equal(result.ok, false);
   assert.equal(
     session.state.serverActionMessage,
-    'An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management will be available from the uploaded attempts manager.'
+    'viewer.notifications.uploadAttempt.conflict'
   );
 });
 
@@ -4989,7 +4989,7 @@ test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_SLOT_LIMIT_REACHED
 
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
-  assert.equal(session.state.serverActionMessage, 'viewer.attemptSlots.limitReached');
+  assert.equal(session.state.serverActionMessage, 'viewer.notifications.uploadAttempt.slotLimitReached');
   assert.equal(session.state.uploadAttemptRecoveryHint?.conflictAction, 'fail_on_conflict');
 });
 
@@ -5035,7 +5035,7 @@ test('uploadCurrentAttemptPackage slot-limit message falls back when slotLimit d
 
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
-  assert.equal(session.state.serverActionMessage, 'viewer.attemptSlots.limitReachedUnknown');
+  assert.equal(session.state.serverActionMessage, 'viewer.notifications.uploadAttempt.slotLimitReachedUnknown');
 });
 
 test('uploadCurrentAttemptPackage sets conflict context for replace/copy recovery UI', async () => {
@@ -5231,7 +5231,7 @@ test('resumeUploadedAttempt surfaces failure message through serverActionMessage
   const result = await session.resumeUploadedAttempt({ uploaded_attempt_id: 'a1' });
   assert.equal(result.ok, false);
   assert.equal(typeof session.state.serverActionMessage, 'string');
-  assert.equal(session.state.serverActionMessage.includes('Unable to resume uploaded attempt.'), true);
+  assert.equal(session.state.serverActionMessage.includes('viewer.notifications.uploadedAttempt.restoreFailed'), true);
 });
 
 test('resumeUploadedAttempt surfaces API fetch failure through serverActionMessage and notification', async () => {

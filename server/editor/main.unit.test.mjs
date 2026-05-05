@@ -287,7 +287,7 @@ test('beginServerSignIn shows popup blocked message when popup cannot open', asy
 
   assert.equal(
     session.state.serverActionMessage,
-    'Sign-in popup was blocked. Allow popups for this site, then try again.'
+    'editor.notifications.auth.signInPopupBlocked'
   );
 });
 
@@ -312,7 +312,7 @@ test('beginServerSignIn clears stale popup-blocked notification before a new aut
     kind: 'error',
     category: 'server',
     source: 'auth.popup',
-    text: 'Sign-in popup was blocked. Allow popups for this site, then try again.',
+    text: 'editor.notifications.auth.signInPopupBlocked',
   });
   assert.equal(session.state.notifications.some((item) => item.source === 'auth.popup'), true);
 
@@ -437,7 +437,7 @@ test('editor upload action runs silent session preflight and blocks when session
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'Sign-in session expired. Please sign in again.');
+  assert.equal(session.state.serverActionMessage, 'editor.notifications.auth.sessionExpired');
 });
 
 test('editor upload preflight surfaces transient server/non-auth errors without expired-session copy', async () => {
@@ -495,27 +495,27 @@ test('uploadCurrentDraftToServer emits ordered notifications for progress, succe
       source: 'upload.status',
       kind: 'info',
       category: 'server',
-      text: 'Uploading draft package...',
+      text: 'editor.notifications.uploadDraft.uploading',
     },
     {
       source: 'upload.status',
       kind: 'success',
       category: 'server',
-      text: 'Uploaded draft draft_upload_1.',
+      text: 'editor.notifications.uploadDraft.uploaded',
     },
     {
       source: 'upload.refresh',
       kind: 'success',
       category: 'server',
-      text: 'Upload succeeded. Draft list refreshed.',
+      text: 'editor.notifications.uploadDraft.refreshSucceeded',
     },
   ]);
   const uploadActivityTexts = session.state.activityLog
     .filter((item) => item.source === 'upload.status' || item.source === 'upload.refresh')
     .map((item) => item.text);
-  assert.equal(uploadActivityTexts.includes('Uploading draft package...'), false);
-  assert.equal(uploadActivityTexts.includes('Uploaded draft draft_upload_1.'), true);
-  assert.equal(uploadActivityTexts.includes('Upload succeeded. Draft list refreshed.'), true);
+  assert.equal(uploadActivityTexts.includes('editor.notifications.uploadDraft.uploading'), false);
+  assert.equal(uploadActivityTexts.includes('editor.notifications.uploadDraft.uploaded'), true);
+  assert.equal(uploadActivityTexts.includes('editor.notifications.uploadDraft.refreshSucceeded'), true);
 });
 
 test('uploadCurrentDraftToServer keeps in-progress notification visible while request is in flight', async () => {
@@ -534,10 +534,10 @@ test('uploadCurrentDraftToServer keeps in-progress notification visible while re
 
   const pendingUpload = session.uploadCurrentDraftToServer();
   const inflightNotification = session.state.notifications.find((item) => (
-    item.source === 'upload.status' && item.kind === 'info' && item.text === 'Uploading draft package...'
+    item.source === 'upload.status' && item.kind === 'info' && item.text === 'editor.notifications.uploadDraft.uploading'
   ));
   assert.equal(Boolean(inflightNotification), true);
-  assert.equal(session.state.activityLog.some((item) => item.text === 'Uploading draft package...'), false);
+  assert.equal(session.state.activityLog.some((item) => item.text === 'editor.notifications.uploadDraft.uploading'), false);
 
   resolveUpload({ ok: true, data: { uploaded_draft_id: 'draft_upload_inflight' } });
   const result = await pendingUpload;
@@ -566,7 +566,7 @@ test('uploadCurrentDraftToServer blocks duplicate upload triggers while request 
   const second = await session.uploadCurrentDraftToServer();
   assert.equal(second.ok, false);
   assert.equal(second.skipped, true);
-  assert.equal(second.error.message, 'Upload already in progress.');
+  assert.equal(second.error.message, 'editor.notifications.uploadDraft.alreadyInProgress');
 
   resolveUpload({ ok: true, data: { uploaded_draft_id: 'draft_upload_dupe' } });
   const firstResult = await first;
@@ -596,7 +596,7 @@ test('uploadCurrentDraftToServer shows retry-safe message for transport failures
   assert.equal(result.ok, false);
   assert.equal(
     session.state.serverActionMessage,
-    'Upload failed before completion. Your local draft is still safe. Please retry when the network is stable.'
+    'editor.notifications.uploadDraft.networkFailure'
   );
 });
 
@@ -830,7 +830,7 @@ test('import/save/export operations emit notification records for success and er
   await session.importWorksheetJson({ title: 'Legacy', blocks: [{ kind: 'content', content: { text: 'Intro' } }] });
   const importJsonSuccess = session.state.notifications.find((item) => item.source === 'import.legacy_json' && item.kind === 'success');
   assert.equal(Boolean(importJsonSuccess), true);
-  assert.equal(importJsonSuccess.text.includes('importedId:'), true);
+  assert.equal(importJsonSuccess.text, 'editor.notifications.import.importedLegacyJson');
 
   await session.importWorksheetPackageFile({ arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }, {});
   const importPackageSuccess = session.state.notifications.find((item) => item.source === 'import.package_zip' && item.kind === 'success');
@@ -862,7 +862,7 @@ test('import/save/export operations emit notification records for success and er
 
   await assert.rejects(
     () => session.importWorksheetPackageFile(null, {}),
-    /required/
+    /editor\.notifications\.import\.zipRequired/
   );
   const importPackageError = session.state.notifications.find((item) => item.source === 'import.package_zip' && item.kind === 'error');
   assert.equal(Boolean(importPackageError), true);
@@ -1040,15 +1040,14 @@ test('publishUploadedDraftToServer emits ordered notifications and keeps termina
     .map((item) => item.text)
     .sort();
   assert.deepEqual(terminalPublishes, [
-    'Published package pkg_u1.',
-    'Published package pkg_u2.',
+    'editor.notifications.publishedPackage.published',
+    'editor.notifications.publishedPackage.published',
   ]);
   const publishActivityTexts = session.state.activityLog
     .filter((item) => item.source === 'publish.status')
     .map((item) => item.text);
-  assert.equal(publishActivityTexts.includes('Publishing…'), false);
-  assert.equal(publishActivityTexts.includes('Published package pkg_u1.'), true);
-  assert.equal(publishActivityTexts.includes('Published package pkg_u2.'), true);
+  assert.equal(publishActivityTexts.includes('editor.notifications.publishedPackage.publishing'), false);
+  assert.equal(publishActivityTexts.includes('editor.notifications.publishedPackage.published'), true);
   const refreshFollowups = session.state.notifications
     .filter((item) => item.source === 'publish.refresh')
     .map((item) => ({ source: item.source, kind: item.kind, category: item.category, text: item.text }));
@@ -1108,7 +1107,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('if (browsePublishedDialogOpen) {\n      renderPublishedBrowserModal();\n    }'), true);
   assert.equal(source.includes('if (reopenResult?.ok) {'), true);
   assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
-  assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || t('editor.notifications.failedOpenPublishedPackage');"), true);
+  assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || editorNotification('browsePublished.failedOpenPublishedPackage');"), true);
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
   assert.equal(source.includes("summary.textContent = t('common.sections.details');"), true);
@@ -1188,7 +1187,7 @@ test('multiple-choice option audio controls gate placeholder options with helper
   assert.equal(source.includes('const persistedOptionIds = new Set(normalizedOptions.map((option) => String(option?.id || \'\')));'), true);
   assert.equal(source.includes('const isPersistedOption = persistedOptionIds.has(optionId);'), true);
   assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
-  assert.equal(source.includes("t('editor.media.enterOptionTextBeforeAttachingAudio')"), true);
+  assert.equal(source.includes("editorNotification('media.optionTextRequired')"), true);
 });
 
 test('question audio row adds contextual generate/regenerate control with prompt eligibility checks', async () => {
@@ -1248,7 +1247,7 @@ test('multiple-choice option actions include contextual generate/regenerate audi
   assert.equal(source.includes("optionT2AInFlightKey = null;"), true);
   assert.equal(source.includes("actionId: 'editorOptionT2A'"), false);
   assert.equal(source.includes("await session.triggerProtectedAction('editorOptionT2A', {"), true);
-  assert.equal(source.includes("text: getProtectedActionErrorMessage(result, 'Unable to start audio generation. Please try again.'),"), true);
+  assert.equal(source.includes("text: getProtectedActionErrorMessage(result, editorNotification('audioGeneration.startFailed')),"), true);
   assert.equal(source.includes('getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)'), true);
   assert.equal(source.includes("optionActionsRow.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);"), true);
   assert.equal(source.includes("setOptionAudioMenuTriggerState(optionAudioMenuTrigger"), true);
@@ -1441,7 +1440,7 @@ test('saveNow and export failures emit error notifications', async () => {
   assert.equal(Boolean(saveError), true);
 
   session.state.draft = null;
-  await assert.rejects(() => session.exportCurrentDraftToPackageFile(), /No active draft to export/);
+  await assert.rejects(() => session.exportCurrentDraftToPackageFile(), /editor\.notifications\.export\.noActiveDraft/);
   const exportError = session.state.notifications.find((item) => item.source === 'export.package_zip' && item.kind === 'error');
   assert.equal(Boolean(exportError), true);
 });
@@ -2870,7 +2869,7 @@ test('attach option audio on non-persisted option returns missing-option with he
 
   const result = await session.attachOptionAudio('q1', 'placeholder_opt', createFakeFile({ name: 'opt.mp3', type: 'audio/mpeg' }));
   assert.equal(result.reason, 'missing-option');
-  assert.equal(session.state.mediaFeedback, 'editor.media.enterOptionTextBeforeAttachingAudio');
+  assert.equal(session.state.mediaFeedback, 'editor.notifications.media.optionTextRequired');
 });
 
 // ─── preview helper tests ────────────────────────────────────────────────────
@@ -2935,7 +2934,7 @@ test('playAssetAudio returns missing-asset when record not in storage', async ()
   const result = await session.playAssetAudio('no_such_id');
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'missing-asset');
-  assert.equal(session.state.mediaFeedback, 'Unable to load attached audio for preview.');
+  assert.equal(session.state.mediaFeedback, 'editor.notifications.media.audioPreviewLoadFailed');
 });
 
 test('playAssetAudio returns missing-binary when record has no binary', async () => {
@@ -2979,7 +2978,7 @@ test('playAssetAudio returns playback-failed and revokes URL when play() rejects
     assert.ok(revokedUrls.includes('blob:test/audio1'), 'URL should be revoked on playback failure');
     assert.equal(session.previewAudio, null);
     assert.equal(session.previewAudioUrl, null);
-    assert.equal(session.state.mediaFeedback, 'Audio playback was blocked. Try again.');
+    assert.equal(session.state.mediaFeedback, 'editor.notifications.media.audioPlaybackBlocked');
   } finally {
     URL.createObjectURL = origCreate;
     URL.revokeObjectURL = origRevoke;
@@ -3703,9 +3702,9 @@ test('deleteUploadedDraft refreshes uploaded drafts list and leaves local draft 
   assert.equal(session.state.uploadedDrafts.length, 1);
   assert.equal(session.state.uploadedDrafts[0].uploaded_draft_id, 'new-draft-id');
   assert.equal(session.state.draft.localId, 'local_draft_1');
-  assert.equal(session.state.serverActionMessage, 'Uploaded drafts refreshed.');
+  assert.equal(session.state.serverActionMessage, 'editor.notifications.uploadDraft.listRefreshed');
   assert.equal(
-    session.state.notifications.some((item) => item.text === 'Uploaded draft deleted.'),
+    session.state.notifications.some((item) => item.text === 'editor.notifications.uploadDraft.uploadedDraftDeleted'),
     true
   );
   const deleteNotifications = session.state.notifications
@@ -3716,13 +3715,13 @@ test('deleteUploadedDraft refreshes uploaded drafts list and leaves local draft 
       source: 'uploadedDraft.delete',
       kind: 'success',
       category: 'server',
-      text: 'Uploaded draft deleted.',
+      text: 'editor.notifications.uploadDraft.uploadedDraftDeleted',
     },
     {
       source: 'uploadedDraft.delete.refresh',
       kind: 'success',
       category: 'server',
-      text: 'Uploaded drafts refreshed.',
+      text: 'editor.notifications.uploadDraft.listRefreshed',
     },
   ]);
 });
@@ -3874,11 +3873,11 @@ test('loadUploadedDrafts keeps prior notification-derived server action message 
   session.pushNotification({
     kind: 'success',
     source: 'test.seed',
-    text: 'Uploaded draft draft_123.',
+    text: 'editor.notifications.uploadDraft.uploaded',
   });
   const withExistingMessage = await session.loadUploadedDrafts({ preflight: false });
   assert.equal(withExistingMessage.ok, true);
-  assert.equal(session.state.serverActionMessage, 'Uploaded draft draft_123.');
+  assert.equal(session.state.serverActionMessage, 'editor.notifications.uploadDraft.uploaded');
 
   session.clearNotificationsBySource('test.seed');
   const withoutExistingMessage = await session.loadUploadedDrafts({ preflight: false });
@@ -3935,7 +3934,7 @@ test('deleteUploadedDraft preserves success message when refresh fails', async (
   assert.equal(result.refreshResult.ok, false);
   assert.equal(session.state.serverActionMessage, 'Unable to refresh uploaded drafts.');
   assert.equal(
-    session.state.notifications.some((item) => item.text === 'Uploaded draft deleted.'),
+    session.state.notifications.some((item) => item.text === 'editor.notifications.uploadDraft.uploadedDraftDeleted'),
     true
   );
   const deleteNotifications = session.state.notifications
@@ -3946,7 +3945,7 @@ test('deleteUploadedDraft preserves success message when refresh fails', async (
       source: 'uploadedDraft.delete',
       kind: 'success',
       category: 'server',
-      text: 'Uploaded draft deleted.',
+      text: 'editor.notifications.uploadDraft.uploadedDraftDeleted',
     },
     {
       source: 'uploadedDraft.delete.refresh',
@@ -3977,20 +3976,20 @@ test('reopenPublishedPackageAsLocalCopy emits modal-open notification sequence',
       source: 'publishedPackage.open',
       kind: 'info',
       category: 'server',
-      text: 'Opening published package…',
+      text: 'editor.notifications.publishedPackage.opening',
     },
     {
       source: 'publishedPackage.open',
       kind: 'success',
       category: 'server',
-      text: 'Opened published package pkg_42 as a new local draft copy.',
+      text: 'editor.notifications.publishedPackage.openedAsLocalCopy',
     },
   ]);
   const openActivityTexts = session.state.activityLog
     .filter((item) => item.source === 'publishedPackage.open')
     .map((item) => item.text);
-  assert.equal(openActivityTexts.includes('Opening published package…'), false);
-  assert.equal(openActivityTexts.includes('Opened published package pkg_42 as a new local draft copy.'), true);
+  assert.equal(openActivityTexts.includes('editor.notifications.publishedPackage.opening'), false);
+  assert.equal(openActivityTexts.includes('editor.notifications.publishedPackage.openedAsLocalCopy'), true);
 });
 
 test('setRecoveryMessage emits visible recovery notification objects', async () => {
@@ -4265,7 +4264,7 @@ test('editor replayEditorPromptT2AIntent returns plain-language errors for inval
     target: 'question_prompt',
   });
   assert.equal(missingPrompt.ok, false);
-  assert.equal(missingPrompt.error.message, 'Enter a prompt before generating audio.');
+  assert.equal(missingPrompt.error.message, 'editor.notifications.audioGeneration.promptRequired');
 
   session.state.draft.blocks[0].prompt.text = 'a'.repeat(201);
   const tooLong = await session.replayEditorPromptT2AIntent({
@@ -4274,7 +4273,7 @@ test('editor replayEditorPromptT2AIntent returns plain-language errors for inval
     target: 'question_prompt',
   });
   assert.equal(tooLong.ok, false);
-  assert.equal(tooLong.error.message, 'Prompt must be 200 characters or fewer to generate audio.');
+  assert.equal(tooLong.error.message, 'editor.notifications.audioGeneration.promptTextTooLong');
 
   session.state.draft.blocks[0].prompt.text = 'short prompt';
   const generationFailure = await session.replayEditorPromptT2AIntent({
@@ -4283,7 +4282,7 @@ test('editor replayEditorPromptT2AIntent returns plain-language errors for inval
     target: 'question_prompt',
   });
   assert.equal(generationFailure.ok, false);
-  assert.equal(generationFailure.error.message, 'Audio generation failed. Existing audio is unchanged.');
+  assert.equal(generationFailure.error.message, 'editor.notifications.audioGeneration.failed');
   const promptRecoveryNotification = session.state.notifications
     .find((item) => item.source === 'prompt.t2a' && item.kind === 'error');
   assert.equal(Boolean(promptRecoveryNotification), true);
@@ -4360,7 +4359,7 @@ test('editor replayEditorOptionT2AIntent returns plain-language errors for inval
     target: 'option',
   });
   assert.equal(missingText.ok, false);
-  assert.equal(missingText.error.message, 'Enter option text before generating audio.');
+  assert.equal(missingText.error.message, 'editor.notifications.audioGeneration.optionTextRequired');
 
   session.state.draft.blocks[0].responseConfig.options[0].label = 'a'.repeat(201);
   const tooLong = await session.replayEditorOptionT2AIntent({
@@ -4370,7 +4369,7 @@ test('editor replayEditorOptionT2AIntent returns plain-language errors for inval
     target: 'option',
   });
   assert.equal(tooLong.ok, false);
-  assert.equal(tooLong.error.message, 'Option text must be 200 characters or fewer to generate audio.');
+  assert.equal(tooLong.error.message, 'editor.notifications.audioGeneration.optionTextTooLong');
 
   session.state.draft.blocks[0].responseConfig.options[0].label = 'short option';
   const generationFailure = await session.replayEditorOptionT2AIntent({
@@ -4380,7 +4379,7 @@ test('editor replayEditorOptionT2AIntent returns plain-language errors for inval
     target: 'option',
   });
   assert.equal(generationFailure.ok, false);
-  assert.equal(generationFailure.error.message, 'Audio generation failed. Existing audio is unchanged.');
+  assert.equal(generationFailure.error.message, 'editor.notifications.audioGeneration.failed');
   const optionRecoveryNotification = session.state.notifications
     .find((item) => item.source === 'option.t2a' && item.kind === 'error');
   assert.equal(Boolean(optionRecoveryNotification), true);
@@ -4428,8 +4427,8 @@ test('stage3: replay T2A rejects invalid binary payload shape without replacing 
 
   assert.equal(promptResult.ok, false);
   assert.equal(optionResult.ok, false);
-  assert.equal(promptResult.error.message.includes('Bridge returned invalid audio data.'), true);
-  assert.equal(optionResult.error.message.includes('Bridge returned invalid audio data.'), true);
+  assert.equal(promptResult.error.message, 'editor.notifications.audioGeneration.invalidAudioData');
+  assert.equal(optionResult.error.message, 'editor.notifications.audioGeneration.invalidAudioData');
   assert.equal(session.findBlock('q1').prompt.mediaRefs[0].assetId, 'asset_prompt_existing');
   assert.equal(
     mod.normalizeBlocks(session.state.draft.blocks)[0].responseConfig.options[0].mediaRefs[0].assetId,
@@ -4552,11 +4551,11 @@ test('stage3: api failure keeps existing prompt/option audio refs unchanged and 
   );
   assert.equal(JSON.parse(before).blocks[0].prompt.mediaRefs[0].assetId, 'asset_prompt_existing');
   assert.equal(
-    session.state.notifications.some((item) => item.text === 'Audio generation failed. Existing audio is unchanged.'),
+    session.state.notifications.some((item) => item.text === 'editor.notifications.audioGeneration.failed'),
     true
   );
   assert.equal(
-    session.state.notifications.filter((item) => item.text === 'Audio generation failed. Existing audio is unchanged.').length >= 2,
+    session.state.notifications.filter((item) => item.text === 'editor.notifications.audioGeneration.failed').length >= 2,
     true
   );
 });

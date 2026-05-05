@@ -289,9 +289,102 @@ export default {
       }
     },
     "notifications": {
-      "failedOpenPublishedPackage": "無法開啟已發布套件",
-      "openedPublishedPackageInEditor": "已在編輯器開啟已發布套件 {id}",
-      "viewerLinkCopied": "已複製檢視器連結"
+      "auth": {
+        "completeSignInPopup": "請在彈出視窗完成登入。工作階段會自動重新整理。",
+        "sessionExpired": "登入工作階段已過期。請重新登入。",
+        "sessionNotReadyAfterSignIn": "登入已完成，但工作階段仍未就緒。",
+        "signInPopupBlocked": "登入彈出視窗被封鎖。請允許此網站開啟彈出視窗後再試。",
+        "signInRefreshing": "登入已完成。正在重新整理伺服器工作階段...",
+        "stillWaitingForPopup": "仍在等待彈出視窗的登入確認...",
+        "unableToVerifySignIn": "暫時無法確認登入狀態。請稍後再試。"
+      },
+      "audioGeneration": {
+        "attachOptionFailed": "無法將產生的音訊附加至此選項。",
+        "attachPromptFailed": "無法將產生的音訊附加至此題目。",
+        "failed": "音訊產生失敗。現有音訊未有變更。",
+        "failedWithDetail": "音訊產生失敗。現有音訊未有變更。{detail}",
+        "invalidAudioData": "音訊產生失敗。現有音訊未有變更。橋接服務回傳了無效音訊資料。",
+        "optionAlreadyInProgress": "選項音訊正在產生中。",
+        "optionGenerated": "已產生並附加選項音訊。",
+        "optionTextRequired": "請先輸入選項文字，再產生音訊。",
+        "optionTextTooLong": "選項文字不可超過 {max} 個字元才可產生音訊。",
+        "promptAlreadyInProgress": "題目音訊正在產生中。",
+        "promptGenerated": "已產生並附加題目音訊。",
+        "promptRequired": "請先輸入題目文字，再產生音訊。",
+        "promptTextTooLong": "題目文字不可超過 {max} 個字元才可產生音訊。",
+        "startFailed": "無法開始產生音訊。請再試一次。"
+      },
+      "browsePublished": {
+        "failedOpenPublishedPackage": "無法開啟已發布套件。",
+        "foundCount": "找到 {count} 個已發布套件。",
+        "loadedMoreCount": "已再載入 {count} 個已發布套件。",
+        "openedPublishedPackageInEditor": "已在編輯器開啟已發布套件 {id}。"
+      },
+      "clipboard": {
+        "copiedField": "已複製{label}。",
+        "unavailable": "此瀏覽器無法使用剪貼簿複製。",
+        "viewerLinkCopied": "已複製檢視器連結。"
+      },
+      "export": {
+        "exportedPackage": "已匯出套件 {filename}。",
+        "noActiveDraft": "沒有進行中的草稿可匯出。",
+        "unableToExportPackage": "無法匯出套件。"
+      },
+      "import": {
+        "importedLegacyJson": "已匯入舊版 JSON 工作紙。",
+        "importedPackageZip": "已匯入工作紙套件。",
+        "unableToImportJson": "無法匯入工作紙 JSON。",
+        "unableToImportPackage": "無法匯入工作紙套件。",
+        "zipRequired": "需要 .zip 工作紙套件檔案。"
+      },
+      "media": {
+        "audioPlaybackBlocked": "音訊播放被封鎖。請再試一次。",
+        "audioPreviewLoadFailed": "無法載入已附加音訊作預覽。",
+        "audioPreviewPlayFailed": "無法播放已附加音訊。",
+        "noMediaAttachment": "找不到可移除的媒體附件。",
+        "optionTextRequired": "請先輸入選項文字，再附加音訊。"
+      },
+      "publishedPackage": {
+        "deleted": "已刪除已發布套件。",
+        "idRequired": "需要已發布套件 ID。",
+        "openAlreadyInProgress": "已發布套件 {id} 正在開啟中。",
+        "openedAsLocalCopy": "已將已發布套件 {id} 開啟為新的本機草稿副本。",
+        "opening": "正在開啟已發布套件...",
+        "published": "已發布套件 {id}。",
+        "publishing": "發布中..."
+      },
+      "recovery": {
+        "audioOptionContextStale": "選項音訊復原內容已過期。請從目前草稿再試一次。",
+        "audioOptionTargetMismatch": "選項音訊復原目標不相符。請從選項控制項再試一次。",
+        "audioOptionTargetUnavailable": "選項音訊復原目標已不存在。",
+        "audioPromptContextStale": "音訊復原內容已過期。請從目前草稿再試一次。",
+        "audioPromptTargetBlockUnavailable": "音訊復原目標區塊已不存在。",
+        "audioPromptTargetMismatch": "音訊復原目標不相符。請從題目控制項再試一次。",
+        "contextChanged": "草稿內容已變更，無法繼續此操作。請重新整理後再試。",
+        "noActiveDraft": "沒有進行中的本機草稿，無法繼續。請重新整理後再試。",
+        "rewriteUnavailable": "暫時無法復原改寫。請重新執行改寫。"
+      },
+      "save": {
+        "manualSaveFailed": "手動儲存失敗。",
+        "savedDraft": "已儲存草稿 {id}。"
+      },
+      "uploadDraft": {
+        "alreadyInProgress": "上載正在進行中。",
+        "draftIdRequired": "需要已上載草稿 ID。",
+        "draftSlotLimitReached": "草稿空位已達上限。",
+        "listRefreshFailed": "無法重新整理已上載草稿。",
+        "listRefreshed": "已重新整理已上載草稿。",
+        "networkFailure": "上載未完成。你的本機草稿仍然安全。請在網絡穩定後再試。",
+        "openedAsLocalCopy": "已將上載草稿 {id} 開啟為新的本機草稿副本。",
+        "publishAlreadyInProgress": "已上載草稿 {id} 正在發布中。",
+        "publishedRefreshSucceeded": "已重新整理已上載草稿。",
+        "refreshSucceeded": "上載成功。草稿清單已重新整理。",
+        "refreshing": "重新整理中...",
+        "uploading": "正在上載草稿套件...",
+        "uploaded": "已上載草稿 {id}。",
+        "uploadedDraftDeleted": "已刪除已上載草稿。",
+        "uploadedDraftsRefreshFailed": "重新整理已上載草稿失敗。"
+      }
     },
     "option": {
       "add": "新增選項",
@@ -416,8 +509,8 @@ export default {
     },
     "attemptSlots": {
       "description": "伺服器作答記錄空位用完時，請先刪除不需要的記錄。",
-      "limitReached": "Limit Reached {limit}",
-      "limitReachedUnknown": "Limit Reached",
+      "limitReached": "已達上限 {limit}",
+      "limitReachedUnknown": "已達上限",
       "noAttemptsToDelete": "沒有可刪除的作答記錄",
       "title": "作答記錄空位"
     },
@@ -464,6 +557,56 @@ export default {
       "couldNotLoad": "無法載入圖片",
       "couldNotRender": "無法顯示圖片",
       "missingWithId": "找不到 ID 為 {id} 的圖片"
+    },
+    "notifications": {
+      "auth": {
+        "completeSignInPopup": "請在彈出視窗完成登入。工作階段會自動重新整理。",
+        "sessionExpired": "工作階段已過期。請重新登入。",
+        "signedOut": "你目前已登出。請登入以使用伺服器功能。",
+        "signInPopupBlocked": "登入彈出視窗被封鎖。請允許此網站開啟彈出視窗後再試。",
+        "signInRefreshing": "登入已完成。正在重新整理伺服器工作階段...",
+        "stillWaitingForPopup": "仍在等待彈出視窗的登入確認..."
+      },
+      "print": {
+        "popupBlocked": "列印視窗被封鎖。請允許此網站開啟彈出視窗後再試。",
+        "popupClosed": "列印報告完成載入前，列印視窗已關閉。請重新列印。",
+        "submitBeforePrinting": "請先提交工作紙，然後列印報告。",
+        "unableToLoad": "無法載入列印報告視窗。請重新列印。"
+      },
+      "rewrite": {
+        "couldNotStart": "無法開始改寫。",
+        "noActiveAttempt": "沒有進行中的作答記錄。",
+        "onlyForTextResponse": "改寫只適用於文字作答。",
+        "temporarilyUnavailableSessionCheck": "正在檢查登入狀態，暫時無法改寫。",
+        "temporarilyUnavailableWithReason": "暫時無法改寫：{reason}"
+      },
+      "uploadAttempt": {
+        "alreadyInProgress": "上載正在進行中。",
+        "authRequired": "儲存作答記錄到伺服器前需要先登入。",
+        "conflict": "已有相同工作紙名稱和科目的已上載作答記錄。可在已上載作答記錄管理器處理取代或副本。",
+        "invalidPackage": "作答記錄套件格式無效。你的本機作答記錄仍然安全。請重新整理後再試。",
+        "networkFailure": "上載未完成。你的本機作答記錄仍然安全。請在網絡穩定後再試。",
+        "noActiveAttempt": "沒有可上載的本機作答記錄。",
+        "preparing": "正在準備上載...",
+        "progressPercent": "正在上載作答記錄... {percent}%",
+        "saved": "作答記錄已儲存到伺服器。",
+        "saving": "正在儲存上載...",
+        "signInRequired": "上載作答記錄前需要先登入。",
+        "slotLimitReached": "作答記錄空位已達上限（{limit}）。",
+        "slotLimitReachedUnknown": "作答記錄空位已達上限。",
+        "staleTarget": "作答記錄上載目標已過期。請從目前作答記錄再試一次。"
+      },
+      "uploadedAttempt": {
+        "artifactEmpty": "已上載作答記錄套件是空的。",
+        "deleted": "已從伺服器刪除作答記錄。",
+        "deleteFailed": "無法刪除已上載作答記錄。",
+        "downloaded": "已下載作答記錄「{title}」。",
+        "downloadFailed": "無法下載已上載作答記錄。",
+        "restoreFailed": "無法繼續已上載作答記錄。{reason}",
+        "restored": "已將作答記錄還原為新的本機作答記錄。",
+        "restoredWithId": "已將作答記錄還原為本機作答記錄 {id}。",
+        "resumeFailed": "無法繼續已上載作答記錄。"
+      }
     },
     "inputHelper": {
       "boolean": "請選擇 True / False。",
