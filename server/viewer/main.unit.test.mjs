@@ -1771,10 +1771,17 @@ test('viewer shell exposes check action only in completed state', async () => {
   assert.match(source, /checkBtn\.disabled = session\.state\.isFinalizing \|\| !checkAvailable;/);
 });
 
-test('viewer language change reload paths flush local attempt state first', async () => {
+test('viewer language change navigation flushes state and preserves local attempt intent', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  const matches = source.match(/await flushLocaleChangeBeforeReload\(session, 'viewer\.(shell|start)'\);/g) || [];
-  assert.equal(matches.length, 2);
+  const matches = source.match(/await flushLocaleChangeBeforeReload\(session, source\);/g) || [];
+  assert.equal(matches.length >= 1, true);
+  assert.match(source, /if \(session\?\.state\?\.localAttemptId\) \{\s+nextUrl\.searchParams\.set\('localAttemptId', session\.state\.localAttemptId\);/);
+  assert.match(source, /nextUrl\.searchParams\.delete\('publishedPackageId'\);/);
+  assert.match(source, /nextUrl\.searchParams\.delete\('localDraftId'\);/);
+  assert.match(source, /nextUrl\.searchParams\.delete\('importedWorksheetId'\);/);
+  assert.match(source, /nextUrl\.searchParams\.delete\('viewerPayload'\);/);
+  assert.match(source, /nextUrl\.searchParams\.delete\('snapshot'\);/);
+  assert.match(source, /window\.location\.assign\(nextUrl\.toString\(\)\);/);
 });
 
 test('active viewer uses compact language icon menu in the header actions', async () => {
@@ -1783,7 +1790,7 @@ test('active viewer uses compact language icon menu in the header actions', asyn
   assert.match(source, /if \(variant === 'icon'\)/);
   assert.match(source, /trigger\.className = 'viewer-header-icon-btn language-selector__trigger';/);
   assert.match(source, /trigger\.innerHTML = createViewerIcon\('language'\);/);
-  assert.match(source, /variant: 'icon',\s+onChange: async \(\) => \{\s+await flushLocaleChangeBeforeReload\(session, 'viewer\.shell'\);/);
+  assert.match(source, /variant: 'icon',\s+onChange: async \(\) => \{\s+await navigateForLocaleChange\(session, 'viewer\.shell'\);/);
 });
 
 test('viewer details action stays available for print settings copy', async () => {
@@ -3242,6 +3249,8 @@ function findNodeByClass(root, className) {
 function findNodeByText(root, text) {
   return collectNodes(root).find((node) => node.textContent === text);
 }
+
+
 
 test('bootstrapViewer on bare /viewer/ opens start panel with explicit resume action instead of auto-resume', { concurrency: false }, async () => {
   const { document } = createFakeDom();

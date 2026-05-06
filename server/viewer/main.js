@@ -1484,6 +1484,26 @@ function classifyPrintSectionBreakMode({
   return 'keep';
 }
 
+
+function buildLocaleChangeNavigationUrl(session) {
+  const nextUrl = new URL(window.location.href);
+  if (session?.state?.localAttemptId) {
+    nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+  }
+  nextUrl.searchParams.delete('publishedPackageId');
+  nextUrl.searchParams.delete('localDraftId');
+  nextUrl.searchParams.delete('importedWorksheetId');
+  nextUrl.searchParams.delete('viewerPayload');
+  nextUrl.searchParams.delete('snapshot');
+  nextUrl.searchParams.delete('payload');
+  return nextUrl;
+}
+
+async function navigateForLocaleChange(session, source = 'viewer') {
+  await flushLocaleChangeBeforeReload(session, source);
+  const nextUrl = buildLocaleChangeNavigationUrl(session);
+  window.location.assign(nextUrl.toString());
+}
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -5158,8 +5178,7 @@ function renderViewerShell(session) {
   const languageSelector = createLanguageSelector({
     variant: 'icon',
     onChange: async () => {
-      await flushLocaleChangeBeforeReload(session, 'viewer.shell');
-      window.location.reload?.();
+      await navigateForLocaleChange(session, 'viewer.shell');
     },
   });
   headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, printReportBtn);
@@ -6782,8 +6801,7 @@ function renderViewerStartPanel(session, options = {}) {
 
   const languageSelector = createLanguageSelector({
     onChange: async () => {
-      await flushLocaleChangeBeforeReload(session, 'viewer.start');
-      window.location.reload?.();
+      await navigateForLocaleChange(session, 'viewer.start');
     },
   });
   panel.append(languageSelector, heading, description);
