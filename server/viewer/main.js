@@ -1654,23 +1654,17 @@ function buildWorksheetPrintReportHtml(reportModel) {
       </div>
     `
     : '';
-  const subjectMeta = reportModel.subject
+  const submittedMeta = reportModel.submittedAtLabel
     ? `
       <div class="print-meta-item">
-        <dt>${escapeHtml(t('viewer.print.meta.subject'))}</dt>
-        <dd>${escapeHtml(reportModel.subject)}</dd>
+        <dt>${escapeHtml(t('viewer.print.meta.submittedAt'))}</dt>
+        <dd>${escapeHtml(reportModel.submittedAtLabel)}</dd>
       </div>
     `
     : '';
-  const submittedMeta = `
-      <div class="print-meta-item print-meta-item--wide">
-        <dt>${escapeHtml(t('viewer.print.meta.submittedAt'))}</dt>
-        <dd>${escapeHtml(reportModel.submittedAtLabel || t('common.values.notRecorded'))}</dd>
-      </div>
-  `;
   const checkedRow = reportModel.checkedSummary
     ? `
-      <div class="print-meta-item print-meta-item--wide">
+      <div class="print-meta-item">
         <dt>${escapeHtml(t('viewer.print.meta.checkResult'))}</dt>
         <dd>${escapeHtml(reportModel.checkedSummary)}</dd>
       </div>
@@ -1729,7 +1723,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>${escapeHtml(reportModel.title)} - ${escapeHtml(t('viewer.print.reportTitleSuffix'))}</title>
+  <title>${escapeHtml(reportModel.title)}</title>
   <style>
     @page {
       size: A4 portrait;
@@ -1760,51 +1754,49 @@ function buildWorksheetPrintReportHtml(reportModel) {
     }
 
     .print-header {
-      border-bottom: 1px solid #9aa1ad;
-      padding-bottom: 6mm;
-      margin-bottom: 6mm;
+      border-bottom: 0.3mm solid #cfd5de;
+      padding-bottom: 2.5mm;
+      margin-bottom: 5mm;
       break-after: avoid;
     }
 
     .print-school {
-      margin: 0 0 2mm;
-      font-size: 11pt;
+      margin: 0 0 1.2mm;
+      text-align: center;
+      font-size: 17pt;
+      line-height: 1.2;
       font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.01em;
     }
 
     .print-title {
-      margin: 0 0 4mm;
-      font-size: 18pt;
-      line-height: 1.15;
+      margin: 0 0 2.4mm;
+      text-align: center;
+      font-size: 15.5pt;
+      line-height: 1.2;
       font-weight: 700;
     }
 
     .print-meta {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      column-gap: 10mm;
-      row-gap: 1.5mm;
+      grid-template-columns: minmax(24mm, 30mm) 1fr;
+      column-gap: 3mm;
+      row-gap: 1.2mm;
       margin: 0;
     }
 
     .print-meta-item {
-      display: grid;
-      grid-template-columns: 28mm 1fr;
-      gap: 3mm;
-    }
-
-    .print-meta-item--wide {
-      grid-column: 1 / -1;
+      display: contents;
     }
 
     .print-meta-item dt {
+      margin: 0;
       font-weight: 700;
     }
 
     .print-meta-item dd {
       margin: 0;
+      font-weight: 400;
     }
 
     .print-question {
@@ -1923,7 +1915,6 @@ function buildWorksheetPrintReportHtml(reportModel) {
       <h1 class="print-title">${escapeHtml(reportModel.title)}</h1>
       <dl class="print-meta">
         ${studentMeta}
-        ${subjectMeta}
         ${submittedMeta}
         ${checkedRow}
       </dl>

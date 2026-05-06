@@ -480,8 +480,8 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
   const html = mod.buildWorksheetPrintReportHtml(report);
   assert.equal(html.includes('>Student<'), false);
   assert.equal(html.includes('Hong Kong Red Cross Hospital Schools'), true);
-  assert.equal(html.includes('<dt>viewer.print.meta.subject</dt>'), true);
-  assert.equal(html.includes('Mathematics'), true);
+  assert.equal(html.includes('<dt>viewer.print.meta.subject</dt>'), false);
+  assert.equal(html.includes('Mathematics'), false);
   assert.equal(html.includes('<dt>viewer.print.meta.submittedAt</dt>'), true);
   assert.equal(html.includes('viewer.print.questionImageUnavailable'), true);
   assert.equal(html.includes('viewer.print.answerPrefix'), true);
