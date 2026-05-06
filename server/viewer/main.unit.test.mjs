@@ -47,6 +47,7 @@ async function loadViewerModule(overrides = {}) {
       return { ok: false, status: 'not_ready', user: null, error: result?.error || { message: 'auth required' } };
     }),
     AUTH_POPUP_FLOW_DEFAULTS: overrides.AUTH_POPUP_FLOW_DEFAULTS || { pollIntervalMs: 1000, pollTimeoutMs: 15000 },
+    PRINT_REPORT_CSS: overrides.PRINT_REPORT_CSS || '@page { size: A4 portrait; } .print-header{} .print-school{} .print-title{} .print-meta{} .print-question-section--keep { break-inside: avoid; } .print-question-section--image { break-inside: auto; } .print-question-image { max-height: 75mm; object-fit: contain; }',
     startAuthPopupFlow: overrides.startAuthPopupFlow || ((options = {}) => {
       const popupWindow = globalThis.window?.open?.(
         options.apiClient.getSessionSignInUrl({ source: options.source, authFlowId: options.authFlowId }),
@@ -159,6 +160,11 @@ async function loadViewerModule(overrides = {}) {
       name: 'replace published package service imports with test bag bindings',
       pattern: /import\s*\{\s*DEFAULT_PUBLISHED_PACKAGE_LIMIT\s*,\s*fetchPublishedPackagesPage\s*,\s*mergePublishedPackageRows\s*,\s*normalizePaginationState\s*,\s*normalizePublishedPackageFilters\s*,\s*\}\s*from\s*['"]\.\.\/app\/api\/published-packages-service\.js['"];/,
       replacement: 'const DEFAULT_PUBLISHED_PACKAGE_LIMIT = __testBag.DEFAULT_PUBLISHED_PACKAGE_LIMIT;\nconst fetchPublishedPackagesPage = __testBag.fetchPublishedPackagesPage;\nconst mergePublishedPackageRows = __testBag.mergePublishedPackageRows;\nconst normalizePaginationState = __testBag.normalizePaginationState;\nconst normalizePublishedPackageFilters = __testBag.normalizePublishedPackageFilters;',
+    },
+    {
+      name: 'replace print report styles import with test bag binding',
+      pattern: /import\s*\{\s*PRINT_REPORT_CSS\s*\}\s*from\s*['"]\.\/print-report-styles\.js['"];/,
+      replacement: 'const PRINT_REPORT_CSS = __testBag.PRINT_REPORT_CSS;',
     },
     {
       name: 'replace i18n import with test bag bindings',
@@ -540,8 +546,10 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('print-question-section--flow'), true);
   assert.equal(normalizedHtml.includes('>viewer.print.questionHeading<'), true);
   assert.equal(normalizedHtml.includes('>viewer.print.checkedResultHeading<'), true);
-  assert.equal(normalizedHtml.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
-  assert.equal(normalizedHtml.includes('.print-question-section--image {\n      break-inside: auto;'), true);
+  assert.equal(normalizedHtml.includes('.print-question-section--keep'), true);
+  assert.equal(normalizedHtml.includes('break-inside: avoid;'), true);
+  assert.equal(normalizedHtml.includes('.print-question-section--image'), true);
+  assert.equal(normalizedHtml.includes('break-inside: auto;'), true);
   const mediumPromptIndex = normalizedHtml.indexOf('<p class="print-question-text">Medium prompt</p>');
   const imageSectionIndex = normalizedHtml.indexOf('<section class="print-question-section print-question-section--image print-question-section--flow">');
   assert.equal(mediumPromptIndex >= 0, true);
@@ -558,6 +566,25 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('border-bottom: 1px solid #dde2e8;'), false);
 });
 
+
+
+test('buildWorksheetPrintReportHtml includes core print style selectors from stylesheet module', async () => {
+  const mod = await loadViewerModule();
+  const html = mod.buildWorksheetPrintReportHtml({
+    schoolName: 'School',
+    title: 'Worksheet',
+    subject: '',
+    studentName: '',
+    submittedAtLabel: '',
+    checkedSummary: '',
+    questions: [],
+  });
+
+  assert.equal(html.includes('.print-header'), true);
+  assert.equal(html.includes('.print-school'), true);
+  assert.equal(html.includes('.print-title'), true);
+  assert.equal(html.includes('.print-meta'), true);
+});
 test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
   const mod = await loadViewerModule();
   const html = mod.buildWorksheetPrintReportHtml({
