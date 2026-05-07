@@ -596,16 +596,6 @@ export default {
         "staleTarget": "作答記錄上載目標已過期。請從目前作答記錄再試一次。"
       },
       "localAttemptExport": {
-        "noActiveAttempt": "No active local attempt is available for export.",
-        "exported": "Attempt package exported.",
-        "failed": "Unable to export attempt package. Your local attempt is still safe."
-      },
-      "localAttemptImport": {
-        "zipRequired": "A .zip attempt package file is required.",
-        "invalidPackage": "Invalid attempt package. Please choose a valid attempt package (.zip).",
-        "failed": "Unable to import attempt package. Your existing local attempts are unchanged."
-      },
-      "localAttemptExport": {
         "noActiveAttempt": "沒有可匯出的本機作答記錄。",
         "exported": "已匯出作答套件。",
         "failed": "無法匯出作答套件。你的本機作答記錄仍然安全。"
@@ -613,6 +603,7 @@ export default {
       "localAttemptImport": {
         "zipRequired": "需要 .zip 作答套件檔案。",
         "invalidPackage": "作答套件無效。請選擇有效的作答套件（.zip）。",
+        "worksheetPackageNotAttempt": "這是工作紙套件，不是作答套件。請選擇包含已儲存答案的作答套件（.zip）。",
         "failed": "無法匯入作答套件。現有本機作答記錄未有變更。"
       },
       "uploadedAttempt": {

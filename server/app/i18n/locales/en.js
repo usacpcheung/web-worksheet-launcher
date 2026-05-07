@@ -603,17 +603,8 @@ export default {
       "localAttemptImport": {
         "zipRequired": "A .zip attempt package file is required.",
         "invalidPackage": "Invalid attempt package. Please choose a valid attempt package (.zip).",
+        "worksheetPackageNotAttempt": "This is a worksheet package, not an attempt package. Choose an attempt package (.zip) that includes saved answers.",
         "failed": "Unable to import attempt package. Your existing local attempts are unchanged."
-      },
-      "localAttemptExport": {
-        "noActiveAttempt": "沒有可匯出的本機作答記錄。",
-        "exported": "已匯出作答套件。",
-        "failed": "無法匯出作答套件。你的本機作答記錄仍然安全。"
-      },
-      "localAttemptImport": {
-        "zipRequired": "需要 .zip 作答套件檔案。",
-        "invalidPackage": "作答套件無效。請選擇有效的作答套件（.zip）。",
-        "failed": "無法匯入作答套件。現有本機作答記錄未有變更。"
       },
       "uploadedAttempt": {
         "artifactEmpty": "Uploaded attempt artifact is empty.",

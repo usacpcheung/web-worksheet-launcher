@@ -473,6 +473,69 @@ function parseUploadedAttemptPackage(zipBytes) {
   return { manifest, worksheet, attempt, assets };
 }
 
+function parseLocalAttemptPackage(zipBytes) {
+  let files;
+  try {
+    files = parseStoredZip(zipBytes);
+  } catch {
+    throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
+  }
+
+  const manifestEntry = files.get('manifest.json');
+  if (!manifestEntry) {
+    throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
+  }
+
+  let manifest;
+  try {
+    manifest = JSON.parse(decodeUtf8(manifestEntry));
+  } catch {
+    throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
+  }
+
+  if (manifest?.format === 'worksheet-package') {
+    throw new Error(t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'));
+  }
+  if (manifest?.format !== 'worksheet-attempt-package' || manifest?.packageVersion !== 1) {
+    throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
+  }
+
+  const worksheetEntry = files.get('content/worksheet.json');
+  const attemptEntry = files.get('content/attempt.json');
+  if (!worksheetEntry || !attemptEntry) {
+    throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
+  }
+
+  let worksheet;
+  let attempt;
+  try {
+    worksheet = JSON.parse(decodeUtf8(worksheetEntry));
+    attempt = JSON.parse(decodeUtf8(attemptEntry));
+  } catch {
+    throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
+  }
+
+  const assets = [];
+  const assetManifest = Array.isArray(manifest?.assets) ? manifest.assets : [];
+  assetManifest.forEach((asset) => {
+    const assetId = typeof asset?.assetId === 'string' ? asset.assetId : '';
+    const path = typeof asset?.path === 'string' ? asset.path : '';
+    if (!assetId || !path || !path.startsWith('media/')) return;
+    const binary = files.get(path);
+    if (!binary) return;
+    assets.push({
+      assetId,
+      path,
+      mimeType: typeof asset?.mimeType === 'string' ? asset.mimeType : null,
+      kind: asset?.kind || null,
+      usage: asset?.usage || null,
+      binary,
+    });
+  });
+
+  return { manifest, worksheet, attempt, assets };
+}
+
 function normalizeRestoredCheckStatus(value) {
   if (value === true) return 'correct';
   if (value === false) return 'incorrect';
@@ -2096,6 +2159,7 @@ class ViewerAttemptSession {
       lastSavedRevision: 0,
       recoveryMessage: null,
       checkResult: null,
+      restoredAttemptCheckResult: null,
       utilityMessage: null,
       notifications: [],
       undoBuffer: {},
@@ -2475,6 +2539,9 @@ class ViewerAttemptSession {
       const resumeStartIndex = computeResumeStartBlockIndex(normalizedPayload, mergedAnswers, attemptRecord);
       const orderedBlocks = [...(normalizedPayload.blocks || [])].sort((a, b) => a.position - b.position);
       const activeBlock = orderedBlocks[resumeStartIndex] || null;
+      const restoredAttemptCheckResult = isRecord(attemptRecord.restoredAttemptCheckResult)
+        ? attemptRecord.restoredAttemptCheckResult
+        : null;
 
       this.applyAttemptState(
         {
@@ -2492,6 +2559,8 @@ class ViewerAttemptSession {
         },
         { markDirty: false }
       );
+      this.state.checkResult = restoredAttemptCheckResult;
+      this.state.restoredAttemptCheckResult = restoredAttemptCheckResult;
 
       return true;
     } catch (error) {
@@ -2701,6 +2770,7 @@ class ViewerAttemptSession {
     this.state.isFinalizing = false;
     this.state.lastFinalizeError = null;
     this.state.checkResult = null;
+    this.state.restoredAttemptCheckResult = null;
     this.state.undoBuffer = {};
     this.state.isRewriting = false;
     this.state.rewritingBlockId = null;
@@ -2878,6 +2948,9 @@ class ViewerAttemptSession {
         updatedAt,
       },
     };
+    if (this.state.restoredAttemptCheckResult) {
+      attemptRecord.restoredAttemptCheckResult = this.state.restoredAttemptCheckResult;
+    }
 
     this.inFlightSaveCount += 1;
     this.state.autosavePending = true;
@@ -3290,11 +3363,24 @@ class ViewerAttemptSession {
       : ensureUint8Array(fileOrBytes);
     if (!bytes) throw new Error(t('viewer.notifications.localAttemptImport.zipRequired'));
     try {
-      const packageModel = parseUploadedAttemptPackage(bytes);
-      const restored = await this.resumeUploadedAttempt({ uploaded_attempt_id: '__local_import__', subject: packageModel?.worksheet?.subject || '' , owner_email: packageModel?.worksheet?.owner || '' , __artifactData: bytes});
-      return restored;
+      const packageModel = parseLocalAttemptPackage(bytes);
+      return await this.restoreAttemptPackageAsLocalAttempt(packageModel, {
+        subject: packageModel?.worksheet?.subject || '',
+        owner: packageModel?.worksheet?.owner || '',
+        worksheetOrigin: 'local_attempt_package_import',
+        assetOrigin: 'local_attempt_package_import',
+        attemptOrigin: 'imported_attempt_package',
+        successMessage: t('viewer.notifications.uploadedAttempt.restored'),
+        serverActionMessage: null,
+      });
     } catch (error) {
-      throw new Error(error?.message || t('viewer.notifications.localAttemptImport.invalidPackage'));
+      const message = error?.message || t('viewer.notifications.localAttemptImport.invalidPackage');
+      const safeMessages = new Set([
+        t('viewer.notifications.localAttemptImport.zipRequired'),
+        t('viewer.notifications.localAttemptImport.invalidPackage'),
+        t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'),
+      ]);
+      throw new Error(safeMessages.has(message) ? message : t('viewer.notifications.localAttemptImport.failed'));
     }
   }
 
@@ -3612,6 +3698,126 @@ class ViewerAttemptSession {
     };
   }
 
+  async restoreAttemptPackageAsLocalAttempt(packageModel, options = {}) {
+    const importedAt = nowIso();
+    const rawAttempt = packageModel?.attempt && typeof packageModel.attempt === 'object' ? packageModel.attempt : {};
+    const attemptStatus = String(rawAttempt.status || 'in_progress');
+    const isInProgress = attemptStatus === 'in_progress';
+    const isChecked = attemptStatus === 'checked';
+    const isSubmitted = attemptStatus === 'submitted';
+    if (!isInProgress && !isChecked && !isSubmitted) {
+      throw new Error(options.unsupportedStatusMessage || t('viewer.notifications.localAttemptImport.invalidPackage'));
+    }
+
+    const importedRecord = {
+      localId: createLocalId('imported'),
+      worksheet: packageModel.worksheet,
+      importedAt,
+      metadata: {
+        localId: null,
+        origin: options.worksheetOrigin || 'uploaded_attempt_restore',
+        updatedAt: importedAt,
+      },
+    };
+    importedRecord.metadata.localId = importedRecord.localId;
+    const payload = resolveImportedWorksheetPayload(importedRecord);
+    await this.validateViewerPayload(payload);
+
+    const restoredLocalAttemptId = createLocalId('attempt');
+    const restoredStartedAt = rawAttempt.createdAt || nowIso();
+    const restoredUpdatedAt = rawAttempt.updatedAt || nowIso();
+    const checkResult = isChecked ? this.mapUploadedAttemptCheckResult(rawAttempt.checking) : null;
+    const restoredSubject = String(options.subject || '').trim();
+    const restoredOwner = String(options.owner || '').trim();
+    const sourceId = getSourceIdentity('imported_worksheet', { sourceImportedWorksheetId: importedRecord.localId });
+    const sourceFingerprint = computeViewerPayloadFingerprint(payload);
+    const restoredAttemptRecord = {
+      localId: restoredLocalAttemptId,
+      localAttemptId: restoredLocalAttemptId,
+      viewerPayload: payload,
+      learnerId: DEFAULT_LEARNER_ID,
+      worksheetId: payload?.worksheetId || null,
+      snapshotId: payload?.snapshotId || null,
+      sourceType: 'imported_worksheet',
+      sourceId,
+      sourceFingerprint,
+      sourceLocalDraftId: null,
+      sourceImportedWorksheetId: importedRecord.localId,
+      lastActiveBlockId: payload?.blocks?.[0]?.blockId || null,
+      lastActiveIndex: 0,
+      studentName: '',
+      status: isInProgress ? 'in_progress' : 'completed',
+      startedAt: restoredStartedAt,
+      lastSavedAt: restoredUpdatedAt,
+      completedAt: isInProgress ? null : (rawAttempt.submittedAt || restoredUpdatedAt),
+      submittedAt: isInProgress ? null : (rawAttempt.submittedAt || null),
+      answers: rawAttempt.answers && typeof rawAttempt.answers === 'object' ? rawAttempt.answers : {},
+      subject: restoredSubject,
+      owner: restoredOwner,
+      restoredAttemptCheckResult: checkResult,
+      metadata: {
+        localId: restoredLocalAttemptId,
+        origin: options.attemptOrigin || 'imported_worksheet',
+        sourceImportedWorksheetId: importedRecord.localId,
+        sourceId,
+        sourceFingerprint,
+        subject: restoredSubject,
+        owner: restoredOwner,
+        updatedAt: restoredUpdatedAt,
+      },
+    };
+
+    const persistedAssetIds = [];
+    let didPersistImportedWorksheet = false;
+    let didAttemptPersistAttempt = false;
+    try {
+      await this.storage.importedWorksheets.put(importedRecord);
+      didPersistImportedWorksheet = true;
+      for (const asset of Array.isArray(packageModel.assets) ? packageModel.assets : []) {
+        if (!asset?.assetId || !(asset.binary instanceof Uint8Array)) continue;
+        await this.storage.localAssets.put({
+          localId: asset.assetId,
+          binary: asset.binary,
+          metadata: {
+            localId: asset.assetId,
+            origin: options.assetOrigin || 'uploaded_attempt_restore',
+            updatedAt: importedAt,
+            mimeType: asset.mimeType || null,
+            kind: asset.kind || null,
+            usage: asset.usage || null,
+            path: asset.path || null,
+          },
+        });
+        persistedAssetIds.push(asset.assetId);
+      }
+      didAttemptPersistAttempt = true;
+      await this.storage.attempts.put(restoredAttemptRecord);
+    } catch (error) {
+      await Promise.all(persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {})));
+      if (didPersistImportedWorksheet) {
+        await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
+      }
+      if (didAttemptPersistAttempt) {
+        await this.storage.attempts?.remove?.(restoredLocalAttemptId).catch(() => {});
+      }
+      throw error;
+    }
+
+    this.applyAttemptState(restoredAttemptRecord, { markDirty: false });
+    this.state.checkResult = checkResult;
+    this.state.restoredAttemptCheckResult = checkResult;
+    this.state.serverActionMessage = options.serverActionMessage === undefined
+      ? t('viewer.notifications.uploadedAttempt.restoredWithId', { id: restoredLocalAttemptId })
+      : options.serverActionMessage;
+    this.pushNotification({
+      kind: 'success',
+      text: options.successMessage || t('viewer.notifications.uploadedAttempt.restored'),
+      ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+    });
+    this.persistResumeMetadata();
+    return { ok: true, data: { localAttemptId: restoredLocalAttemptId } };
+  }
+
   async resumeUploadedAttempt(uploadedAttemptRow) {
     const uploadedAttemptId = uploadedAttemptRow?.uploaded_attempt_id || null;
     if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
@@ -3632,104 +3838,14 @@ class ViewerAttemptSession {
         return artifact;
       }
       const packageModel = parseUploadedAttemptPackage(artifact.data);
-      const importedAt = nowIso();
-      const importedRecord = {
-        localId: createLocalId('imported'),
-        worksheet: packageModel.worksheet,
-        importedAt,
-        metadata: {
-          localId: null,
-          origin: 'uploaded_attempt_restore',
-          updatedAt: importedAt,
-        },
-      };
-      importedRecord.metadata.localId = importedRecord.localId;
-      const payload = resolveImportedWorksheetPayload(importedRecord);
-      await this.validateViewerPayload(payload);
-
-      const persistedAssetIds = [];
-      try {
-        await this.storage.importedWorksheets.put(importedRecord);
-        for (const asset of packageModel.assets) {
-          if (!asset?.assetId || !(asset.binary instanceof Uint8Array)) continue;
-          await this.storage.localAssets.put({
-            localId: asset.assetId,
-            binary: asset.binary,
-            metadata: {
-              localId: asset.assetId,
-              origin: 'uploaded_attempt_restore',
-              updatedAt: importedAt,
-              mimeType: asset.mimeType || null,
-              kind: asset.kind || null,
-              usage: asset.usage || null,
-              path: asset.path || null,
-            },
-          });
-          persistedAssetIds.push(asset.assetId);
-        }
-      } catch (error) {
-        await Promise.all(persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {})));
-        await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
-        throw error;
-      }
-
-      const rawAttempt = packageModel.attempt && typeof packageModel.attempt === 'object' ? packageModel.attempt : {};
-      const attemptStatus = String(rawAttempt.status || 'in_progress');
-      const restoredLocalAttemptId = createLocalId('attempt');
-      const restoredStartedAt = rawAttempt.createdAt || nowIso();
-      const restoredUpdatedAt = rawAttempt.updatedAt || nowIso();
-      const isInProgress = attemptStatus === 'in_progress';
-      const isChecked = attemptStatus === 'checked';
-      const isSubmitted = attemptStatus === 'submitted';
-      if (!isInProgress && !isChecked && !isSubmitted) {
-        throw new Error('Uploaded attempt status is not supported.');
-      }
-      const checkResult = isChecked ? this.mapUploadedAttemptCheckResult(rawAttempt.checking) : null;
-      const restoredAttemptRecord = {
-        localId: restoredLocalAttemptId,
-        localAttemptId: restoredLocalAttemptId,
-        viewerPayload: payload,
-        learnerId: DEFAULT_LEARNER_ID,
-        worksheetId: payload?.worksheetId || null,
-        snapshotId: payload?.snapshotId || null,
-        sourceType: 'imported_worksheet',
-        sourceId: getSourceIdentity('imported_worksheet', { sourceImportedWorksheetId: importedRecord.localId }),
-        sourceFingerprint: computeViewerPayloadFingerprint(payload),
-        sourceLocalDraftId: null,
-        sourceImportedWorksheetId: importedRecord.localId,
-        lastActiveBlockId: payload?.blocks?.[0]?.blockId || null,
-        lastActiveIndex: 0,
-        studentName: '',
-        status: isInProgress ? 'in_progress' : 'completed',
-        startedAt: restoredStartedAt,
-        lastSavedAt: restoredUpdatedAt,
-        completedAt: isInProgress ? null : (rawAttempt.submittedAt || restoredUpdatedAt),
-        submittedAt: isInProgress ? null : (rawAttempt.submittedAt || null),
-        answers: rawAttempt.answers && typeof rawAttempt.answers === 'object' ? rawAttempt.answers : {},
-        subject: String(uploadedAttemptRow?.subject || '').trim(),
-        owner: String(uploadedAttemptRow?.owner_email || uploadedAttemptRow?.owner_name || uploadedAttemptRow?.owner_sub || '').trim(),
-        metadata: {
-          localId: restoredLocalAttemptId,
-          origin: 'imported_worksheet',
-          sourceImportedWorksheetId: importedRecord.localId,
-          sourceId: getSourceIdentity('imported_worksheet', { sourceImportedWorksheetId: importedRecord.localId }),
-          sourceFingerprint: computeViewerPayloadFingerprint(payload),
-          subject: String(uploadedAttemptRow?.subject || '').trim(),
-          owner: String(uploadedAttemptRow?.owner_email || uploadedAttemptRow?.owner_name || uploadedAttemptRow?.owner_sub || '').trim(),
-          updatedAt: restoredUpdatedAt,
-        },
-      };
-      await this.storage.attempts.put(restoredAttemptRecord);
-      this.applyAttemptState(restoredAttemptRecord, { markDirty: false });
-      this.state.checkResult = checkResult;
-      this.state.serverActionMessage = t('viewer.notifications.uploadedAttempt.restoredWithId', { id: restoredLocalAttemptId });
-      this.pushNotification({
-        kind: 'success',
-        text: t('viewer.notifications.uploadedAttempt.restored'),
-        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      return await this.restoreAttemptPackageAsLocalAttempt(packageModel, {
+        subject: uploadedAttemptRow?.subject || '',
+        owner: uploadedAttemptRow?.owner_email || uploadedAttemptRow?.owner_name || uploadedAttemptRow?.owner_sub || '',
+        worksheetOrigin: 'uploaded_attempt_restore',
+        assetOrigin: 'uploaded_attempt_restore',
+        attemptOrigin: 'imported_worksheet',
+        unsupportedStatusMessage: 'Uploaded attempt status is not supported.',
       });
-      this.persistResumeMetadata();
-      return { ok: true, data: { localAttemptId: restoredLocalAttemptId } };
     } catch (error) {
       this.state.utilityMessage = t('viewer.notifications.uploadedAttempt.restoreFailed', {
         reason: error?.message || String(error),
@@ -6734,7 +6850,7 @@ function renderViewerStartPanel(session, options = {}) {
 
   const attemptsActions = document.createElement('div');
   attemptsActions.className = 'viewer-start-actions';
-  attemptsActions.append(manageAttemptsBtn, importAttemptPackageBtn);
+  attemptsActions.append(importAttemptPackageBtn, manageAttemptsBtn);
   const worksheetActions = document.createElement('div');
   worksheetActions.className = 'viewer-start-actions';
   worksheetActions.append(importPackageBtn, browsePublishedBtn);
