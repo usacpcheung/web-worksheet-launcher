@@ -466,6 +466,7 @@ export default {
       "manageServerAttempts": "Manage server attempts",
       "loginToManageServerAttempts": "Log in to manage server attempts",
       "importPackage": "Import worksheet package (.zip)",
+      "importAttemptPackage": "Import attempt package (.zip)",
       "browsePublishedPackages": "Browse published packages",
       "browsePublishedWorksheets": "Browse published worksheets",
       "loginToBrowsePublishedWorksheets": "Log in to browse published worksheets",
@@ -594,6 +595,26 @@ export default {
         "slotLimitReachedUnknown": "Attempt slot limit reached.",
         "staleTarget": "Attempt upload target is stale. Please retry from the current attempt."
       },
+      "localAttemptExport": {
+        "noActiveAttempt": "No active local attempt is available for export.",
+        "exported": "Attempt package exported.",
+        "failed": "Unable to export attempt package. Your local attempt is still safe."
+      },
+      "localAttemptImport": {
+        "zipRequired": "A .zip attempt package file is required.",
+        "invalidPackage": "Invalid attempt package. Please choose a valid attempt package (.zip).",
+        "failed": "Unable to import attempt package. Your existing local attempts are unchanged."
+      },
+      "localAttemptExport": {
+        "noActiveAttempt": "沒有可匯出的本機作答記錄。",
+        "exported": "已匯出作答套件。",
+        "failed": "無法匯出作答套件。你的本機作答記錄仍然安全。"
+      },
+      "localAttemptImport": {
+        "zipRequired": "需要 .zip 作答套件檔案。",
+        "invalidPackage": "作答套件無效。請選擇有效的作答套件（.zip）。",
+        "failed": "無法匯入作答套件。現有本機作答記錄未有變更。"
+      },
       "uploadedAttempt": {
         "artifactEmpty": "Uploaded attempt artifact is empty.",
         "deleted": "Uploaded attempt deleted from server.",
@@ -706,6 +727,8 @@ export default {
       "progressSaving": "Saving upload...",
       "saveAttemptAriaLabel": "Save Attempt Aria Label",
       "saveAttemptTitle": "Save Attempt Title",
+      "exportAttemptAriaLabel": "Export attempt package (.zip)",
+      "exportAttemptTitle": "Export attempt package (.zip)",
       "signInRequired": "Sign-in is required before uploading attempts."
     }
   }

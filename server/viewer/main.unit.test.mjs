@@ -4698,6 +4698,21 @@ test('viewer header actions include server-save icon wiring and protected upload
   assert.equal(source.includes('await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);'), true);
 });
 
+
+
+test('viewer header actions include local attempt export icon wiring', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("exportAttemptBtn.setAttribute('aria-label', t('viewer.upload.exportAttemptAriaLabel'));"), true);
+  assert.equal(source.includes("exportAttemptBtn.innerHTML = createViewerIcon('download');"), true);
+  assert.equal(source.includes('await session.exportCurrentAttemptPackage();'), true);
+});
+
+test('start panel includes attempt package import action in attempts section', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("importAttemptPackageBtn.textContent = t('viewer.start.importAttemptPackage');"), true);
+  assert.equal(source.includes('attemptsActions.append(manageAttemptsBtn, importAttemptPackageBtn);'), true);
+});
+
 test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and media entries', async () => {
   const mod = await loadViewerModule();
   const assetBytes = new Uint8Array([1, 2, 3, 4]);
@@ -5205,6 +5220,17 @@ test('deleteUploadedAttemptAndRefresh calls delete then refreshes list', async (
   const result = await session.deleteUploadedAttemptAndRefresh('attempt_1');
   assert.equal(result.ok, true);
   assert.deepEqual(calls, ['delete:attempt_1', 'list']);
+});
+
+
+
+test('importAttemptPackageFromFile rejects non-zip filename safely', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set: () => {} } });
+  await assert.rejects(
+    () => session.importAttemptPackageFromFile({ name: 'attempt.txt', arrayBuffer: async () => new ArrayBuffer(0) }),
+    /zipRequired/
+  );
 });
 
 test('resumeUploadedAttempt restores uploaded package into a new local attempt', async () => {

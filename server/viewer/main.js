@@ -305,6 +305,7 @@ function createViewerIcon(name) {
   const icons = {
     info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
     upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
+    download: `<svg ${svgAttrs}><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>`,
     audio: `<svg ${svgAttrs}><path d="M11 5 6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18.5 6a8.5 8.5 0 0 1 0 12"></path></svg>`,
     attempts: `<svg ${svgAttrs}><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><circle cx="4" cy="6" r="1.5"></circle><circle cx="4" cy="12" r="1.5"></circle><circle cx="4" cy="18" r="1.5"></circle></svg>`,
     worksheet: `<svg ${svgAttrs}><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v6h6"></path></svg>`,
@@ -3242,6 +3243,61 @@ class ViewerAttemptSession {
     };
   }
 
+
+
+  async exportCurrentAttemptPackage() {
+    if (!this.state.localAttemptId || !this.state.viewerPayload) {
+      const message = t('viewer.notifications.localAttemptExport.noActiveAttempt');
+      this.state.utilityMessage = message;
+      this.pushNotification({ kind: 'warn', text: message, ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS });
+      this.notifyStateChange();
+      return { ok: false, error: { code: 'NO_ACTIVE_ATTEMPT', message } };
+    }
+    try {
+      await this.flushLocalStateForAuthRedirect();
+      const packageResult = await this.buildUploadedAttemptPackage();
+      const blob = new Blob([packageResult.bytes], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = formatAttemptDownloadFilename({ title: this.state.viewerPayload?.title, updatedAt: nowIso() });
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const message = t('viewer.notifications.localAttemptExport.exported');
+      this.state.serverActionMessage = message;
+      this.pushNotification({ kind: 'success', text: message, ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS });
+      this.notifyStateChange();
+      return { ok: true };
+    } catch (error) {
+      const message = t('viewer.notifications.localAttemptExport.failed');
+      this.state.utilityMessage = message;
+      this.pushNotification({ kind: 'error', text: message, ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS });
+      this.notifyStateChange();
+      return { ok: false, error: { code: 'LOCAL_ATTEMPT_EXPORT_FAILED', message } };
+    }
+  }
+
+  async importAttemptPackageFromFile(fileOrBytes) {
+    const file = fileOrBytes && typeof fileOrBytes === 'object' && 'arrayBuffer' in fileOrBytes ? fileOrBytes : null;
+    const name = String(file?.name || '').toLowerCase();
+    if (file && !name.endsWith('.zip')) {
+      throw new Error(t('viewer.notifications.localAttemptImport.zipRequired'));
+    }
+    const bytes = file
+      ? new Uint8Array(await file.arrayBuffer())
+      : ensureUint8Array(fileOrBytes);
+    if (!bytes) throw new Error(t('viewer.notifications.localAttemptImport.zipRequired'));
+    try {
+      const packageModel = parseUploadedAttemptPackage(bytes);
+      const restored = await this.resumeUploadedAttempt({ uploaded_attempt_id: '__local_import__', subject: packageModel?.worksheet?.subject || '' , owner_email: packageModel?.worksheet?.owner || '' , __artifactData: bytes});
+      return restored;
+    } catch (error) {
+      throw new Error(error?.message || t('viewer.notifications.localAttemptImport.invalidPackage'));
+    }
+  }
+
   async uploadCurrentAttemptPackage(intentPayload = {}, options = {}) {
     if (!this.state.localAttemptId || !this.state.viewerPayload) {
       const message = t('viewer.notifications.uploadAttempt.noActiveAttempt');
@@ -3484,7 +3540,7 @@ class ViewerAttemptSession {
     };
     this.notifyStateChange();
     try {
-      const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
+      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData } : await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
       if (!artifact?.ok) {
         this.state.serverActionMessage = artifact?.error?.message || t('viewer.notifications.uploadedAttempt.downloadFailed');
         this.pushNotification({
@@ -3565,7 +3621,7 @@ class ViewerAttemptSession {
     };
     this.notifyStateChange();
     try {
-      const artifact = await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
+      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData } : await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
       if (!artifact?.ok) {
         this.state.serverActionMessage = artifact?.error?.message || t('viewer.notifications.uploadedAttempt.resumeFailed');
         this.pushNotification({
@@ -5169,6 +5225,13 @@ function renderViewerShell(session) {
   uploadAttemptBtn.title = t('viewer.upload.saveAttemptTitle');
   uploadAttemptBtn.innerHTML = createViewerIcon('upload');
 
+  const exportAttemptBtn = document.createElement('button');
+  exportAttemptBtn.type = 'button';
+  exportAttemptBtn.className = 'viewer-header-icon-btn';
+  exportAttemptBtn.setAttribute('aria-label', t('viewer.upload.exportAttemptAriaLabel'));
+  exportAttemptBtn.title = t('viewer.upload.exportAttemptTitle');
+  exportAttemptBtn.innerHTML = createViewerIcon('download');
+
   const printReportBtn = document.createElement('button');
   printReportBtn.type = 'button';
   printReportBtn.className = 'viewer-header-icon-btn';
@@ -5181,7 +5244,7 @@ function renderViewerShell(session) {
       await navigateForLocaleChange(session, 'viewer.shell');
     },
   });
-  headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, printReportBtn);
+  headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, exportAttemptBtn, printReportBtn);
 
   const detailsModal = document.createElement('div');
   detailsModal.className = 'viewer-details-modal';
@@ -6257,6 +6320,7 @@ function renderViewerShell(session) {
     printReportBtn.hidden = !printAvailable;
     printReportBtn.disabled = session.state.isFinalizing || !printAvailable;
     uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
+    exportAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
     const normalizedAttemptStatus = session.state.status
@@ -6287,6 +6351,10 @@ function renderViewerShell(session) {
     await session.saveNow();
     renderUI();
   });
+  exportAttemptBtn.addEventListener('click', async () => {
+    await session.exportCurrentAttemptPackage();
+  });
+
   uploadAttemptBtn.addEventListener('click', async () => {
     const protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
     if (protectedActionResult?.status === 'redirected') {
@@ -6654,12 +6722,47 @@ function renderViewerStartPanel(session, options = {}) {
   noResumeHint.className = 'muted viewer-start-subhint';
   noResumeHint.textContent = t('viewer.start.noResume');
 
+  const importAttemptPackageBtn = document.createElement('button');
+  importAttemptPackageBtn.type = 'button';
+  importAttemptPackageBtn.className = 'viewer-start-btn viewer-start-btn--secondary';
+  importAttemptPackageBtn.textContent = t('viewer.start.importAttemptPackage');
+
+  const attemptPackageFileInput = document.createElement('input');
+  attemptPackageFileInput.type = 'file';
+  attemptPackageFileInput.accept = 'application/zip,.zip';
+  attemptPackageFileInput.hidden = true;
+
   const attemptsActions = document.createElement('div');
   attemptsActions.className = 'viewer-start-actions';
-  attemptsActions.append(manageAttemptsBtn);
+  attemptsActions.append(manageAttemptsBtn, importAttemptPackageBtn);
   const worksheetActions = document.createElement('div');
   worksheetActions.className = 'viewer-start-actions';
   worksheetActions.append(importPackageBtn, browsePublishedBtn);
+
+  importAttemptPackageBtn.addEventListener('click', () => {
+    errorMessage.textContent = '';
+    attemptPackageFileInput.click();
+  });
+
+  attemptPackageFileInput.addEventListener('change', async () => {
+    const selected = attemptPackageFileInput.files?.[0];
+    if (!selected) return;
+    try {
+      const result = await session.importAttemptPackageFromFile(selected);
+      if (!result?.ok) throw new Error(result?.error?.message || t('viewer.notifications.localAttemptImport.failed'));
+      if (session.state.localAttemptId) {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
+        window.history.replaceState({}, '', nextUrl);
+      }
+      renderViewerShell(session);
+      window.viewerSession = session;
+    } catch (error) {
+      errorMessage.textContent = error?.message || t('viewer.notifications.localAttemptImport.failed');
+    } finally {
+      attemptPackageFileInput.value = '';
+    }
+  });
 
   importPackageBtn.addEventListener('click', () => {
     errorMessage.textContent = '';
@@ -6822,6 +6925,7 @@ function renderViewerStartPanel(session, options = {}) {
     worksheetsSection,
     sessionStatus,
     packageFileInput,
+    attemptPackageFileInput,
     errorMessage
   );
   app.innerHTML = '';
