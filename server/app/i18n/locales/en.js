@@ -83,7 +83,7 @@ export default {
       "addContent": "Add Content",
       "addQuestion": "Add Question",
       "openViewer": "Open in Viewer (same tab)",
-      "importPackage": "Import package (.zip) / legacy JSON",
+      "importPackage": "Import package (.zip)",
       "exportPackage": "Export package (.zip)",
       "more": "More"
     },
@@ -331,9 +331,7 @@ export default {
         "unableToExportPackage": "Unable to export package."
       },
       "import": {
-        "importedLegacyJson": "Imported legacy JSON worksheet.",
         "importedPackageZip": "Imported worksheet package.",
-        "unableToImportJson": "Unable to import worksheet JSON.",
         "unableToImportPackage": "Unable to import worksheet package.",
         "zipRequired": "A .zip worksheet package file is required."
       },

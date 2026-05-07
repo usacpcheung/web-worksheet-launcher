@@ -83,7 +83,7 @@ export default {
       "addContent": "新增內容",
       "addQuestion": "新增題目",
       "openViewer": "在檢視器開啟（同一分頁）",
-      "importPackage": "匯入套件（.zip）/ 舊版 JSON",
+      "importPackage": "匯入套件（.zip）",
       "exportPackage": "匯出套件（.zip）",
       "more": "更多"
     },
@@ -331,9 +331,7 @@ export default {
         "unableToExportPackage": "無法匯出套件。"
       },
       "import": {
-        "importedLegacyJson": "已匯入舊版 JSON 工作紙。",
         "importedPackageZip": "已匯入工作紙套件。",
-        "unableToImportJson": "無法匯入工作紙 JSON。",
         "unableToImportPackage": "無法匯入工作紙套件。",
         "zipRequired": "需要 .zip 工作紙套件檔案。"
       },

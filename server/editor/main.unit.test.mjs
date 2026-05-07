@@ -11,7 +11,7 @@ async function loadEditorModule() {
   const rewrittenSource = rewriteModuleSourceForTests(source, [
     {
       name: 'replace editor dependency imports with test doubles',
-      pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*mapLegacyJsonToPackageModel,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
+      pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
       replacement: `const editorStorage = {
   drafts: { get: async () => null, put: async (value) => value, delete: async () => {} },
   importedWorksheets: { put: async () => {} },
@@ -34,20 +34,6 @@ const createServerApiClient = () => ({
 const createWorksheetPackageFromDraft = (draft, assets) => {
   globalThis.__lastCreateWorksheetPackageCall = { draft, assets };
   return { bytes: new Uint8Array([1, 2, 3]) };
-};
-const mapLegacyJsonToPackageModel = (input) => {
-  if (!input || typeof input !== 'object' || !Array.isArray(input.blocks) || input.blocks.length === 0) {
-    throw new Error('Imported worksheet must have a non-empty blocks array.');
-  }
-  return {
-    worksheet: {
-      title: String(input.title || 'Imported worksheet'),
-      blocks: input.blocks,
-      metadata: input.metadata || {},
-    },
-    manifest: { format: 'worksheet-package', packageVersion: 1, assets: [] },
-    assets: [],
-  };
 };
 const parseWorksheetPackage = () => ({ manifest: {}, worksheet: { title: 'Pkg', blocks: [] }, assets: [] });
 `,
@@ -782,40 +768,6 @@ test('persistRestoreMetadata preserves explicit empty hash and zero-like scroll 
   assert.equal(saved.scrollToken, 0);
 });
 
-test('importWorksheetJson throws clear parse error for invalid JSON text', async () => {
-  const mod = await loadEditorModule();
-
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-
-  await assert.rejects(
-    () => session.importWorksheetJson('{not-valid-json', {}),
-    /Imported worksheet JSON could not be parsed/
-  );
-  const importError = session.state.notifications.find((item) => item.source === 'import.legacy_json');
-  assert.equal(importError?.kind, 'error');
-  assert.equal(importError?.text.includes('could not be parsed'), true);
-});
-
-test('importWorksheetJson rejects legacy JSON without blocks array', async () => {
-  const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-
-  await assert.rejects(
-    () => session.importWorksheetJson({ title: 'bad legacy' }, {}),
-    /non-empty blocks array/
-  );
-  const importError = session.state.notifications.find((item) => item.source === 'import.legacy_json');
-  assert.equal(importError?.kind, 'error');
-});
-
 test('import/save/export operations emit notification records for success and error outcomes', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({
@@ -826,11 +778,6 @@ test('import/save/export operations emit notification records for success and er
   });
   await session.createOrOpenByLocalDraftId('draft_notifications');
   clearTimeout(session.autosaveTimer);
-
-  await session.importWorksheetJson({ title: 'Legacy', blocks: [{ kind: 'content', content: { text: 'Intro' } }] });
-  const importJsonSuccess = session.state.notifications.find((item) => item.source === 'import.legacy_json' && item.kind === 'success');
-  assert.equal(Boolean(importJsonSuccess), true);
-  assert.equal(importJsonSuccess.text, 'editor.notifications.import.importedLegacyJson');
 
   await session.importWorksheetPackageFile({ arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }, {});
   const importPackageSuccess = session.state.notifications.find((item) => item.source === 'import.package_zip' && item.kind === 'success');
@@ -2583,37 +2530,6 @@ test('autosave persists normalized contractDraft with typed correctAnswer', asyn
 
   const savedQuestion = lastPersisted.contractDraft.blocks.find((entry) => entry.blockId === block.blockId);
   assert.deepEqual(savedQuestion.responseConfig.correctAnswer, ['A', 'B']);
-});
-
-test('importWorksheetJson convert flow preserves normalized correctAnswer values', async () => {
-  const mod = await loadEditorModule();
-  const session = new mod.EditorDraftSession({
-    drafts: { get: async () => null, put: async (v) => v },
-    importedWorksheets: { put: async () => {} },
-    resumeFlags: { get: () => null, set: () => {} },
-  });
-
-  await session.importWorksheetJson({
-    title: 'Imported',
-    blocks: [
-      {
-        blockId: 'q_import',
-        kind: 'question',
-        position: 0,
-        prompt: { text: 'Pick', format: 'plain_text' },
-        responseConfig: {
-          inputType: 'multiple_choice',
-          selectionMode: 'single',
-          options: [{ value: 'A', label: 'A' }, { value: 'B', label: 'B' }],
-          correctAnswer: 'A',
-        },
-      },
-    ],
-  }, { convertToEditableDraft: true });
-
-  const importedQuestion = session.state.draft.blocks.find((entry) => entry.blockId === 'q_import');
-  assert.equal(importedQuestion.responseConfig.correctAnswer, 'A');
-  assert.equal(typeof importedQuestion.responseConfig.correctAnswerOptionId, 'string');
 });
 
 test('number validation helper reports min > max error', async () => {
