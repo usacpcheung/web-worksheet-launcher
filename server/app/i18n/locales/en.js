@@ -661,7 +661,7 @@ export default {
       "retryNow": "Retry Now"
     },
     "rewrite": {
-      "action": "Action",
+      "action": "Rewrite",
       "couldNotStart": "Could Not Start",
       "hintEnterText": "Hint Enter Text",
       "hintTooLong": "Hint Too Long {max}",

@@ -6840,7 +6840,7 @@ function renderViewerStartPanel(session, options = {}) {
 
   const importAttemptPackageBtn = document.createElement('button');
   importAttemptPackageBtn.type = 'button';
-  importAttemptPackageBtn.className = 'viewer-start-btn viewer-start-btn--secondary';
+  importAttemptPackageBtn.className = 'viewer-start-btn viewer-start-btn--primary';
   importAttemptPackageBtn.textContent = t('viewer.start.importAttemptPackage');
 
   const attemptPackageFileInput = document.createElement('input');

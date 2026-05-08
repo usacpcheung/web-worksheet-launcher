@@ -4741,6 +4741,7 @@ test('local attempt backup locale entries are not duplicated or cross-locale mix
   assert.equal((zhSource.match(/"localAttemptImport"/g) || []).length, 1);
   assert.equal(/沒有可匯出的本機作答記錄|作答套件無效|需要 \.zip 作答套件檔案/.test(enSource), false);
   assert.equal(/No active local attempt is available for export|Invalid attempt package|A \.zip attempt package file is required/.test(zhSource), false);
+  assert.equal(enSource.includes('"action": "Rewrite"'), true);
 });
 
 test('viewer header actions include local attempt export icon wiring', async () => {
@@ -4752,6 +4753,7 @@ test('viewer header actions include local attempt export icon wiring', async () 
 
 test('start panel includes attempt package import action in attempts section', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("importAttemptPackageBtn.className = 'viewer-start-btn viewer-start-btn--primary';"), true);
   assert.equal(source.includes("importAttemptPackageBtn.textContent = t('viewer.start.importAttemptPackage');"), true);
   assert.equal(source.includes('attemptsActions.append(importAttemptPackageBtn, manageAttemptsBtn);'), true);
 });
