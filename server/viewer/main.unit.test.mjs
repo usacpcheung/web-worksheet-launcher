@@ -47,6 +47,7 @@ async function loadViewerModule(overrides = {}) {
       return { ok: false, status: 'not_ready', user: null, error: result?.error || { message: 'auth required' } };
     }),
     AUTH_POPUP_FLOW_DEFAULTS: overrides.AUTH_POPUP_FLOW_DEFAULTS || { pollIntervalMs: 1000, pollTimeoutMs: 15000 },
+    PRINT_REPORT_CSS: overrides.PRINT_REPORT_CSS || '@page { size: A4 portrait; } .print-header{} .print-school{} .print-title{} .print-meta{} .print-question-section--keep { break-inside: avoid; } .print-question-section--image { break-inside: auto; } .print-question-image { max-height: 75mm; object-fit: contain; }',
     startAuthPopupFlow: overrides.startAuthPopupFlow || ((options = {}) => {
       const popupWindow = globalThis.window?.open?.(
         options.apiClient.getSessionSignInUrl({ source: options.source, authFlowId: options.authFlowId }),
@@ -159,6 +160,11 @@ async function loadViewerModule(overrides = {}) {
       name: 'replace published package service imports with test bag bindings',
       pattern: /import\s*\{\s*DEFAULT_PUBLISHED_PACKAGE_LIMIT\s*,\s*fetchPublishedPackagesPage\s*,\s*mergePublishedPackageRows\s*,\s*normalizePaginationState\s*,\s*normalizePublishedPackageFilters\s*,\s*\}\s*from\s*['"]\.\.\/app\/api\/published-packages-service\.js['"];/,
       replacement: 'const DEFAULT_PUBLISHED_PACKAGE_LIMIT = __testBag.DEFAULT_PUBLISHED_PACKAGE_LIMIT;\nconst fetchPublishedPackagesPage = __testBag.fetchPublishedPackagesPage;\nconst mergePublishedPackageRows = __testBag.mergePublishedPackageRows;\nconst normalizePaginationState = __testBag.normalizePaginationState;\nconst normalizePublishedPackageFilters = __testBag.normalizePublishedPackageFilters;',
+    },
+    {
+      name: 'replace print report styles import with test bag binding',
+      pattern: /import\s*\{\s*PRINT_REPORT_CSS\s*\}\s*from\s*['"]\.\/print-report-styles\.js['"];/,
+      replacement: 'const PRINT_REPORT_CSS = __testBag.PRINT_REPORT_CSS;',
     },
     {
       name: 'replace i18n import with test bag bindings',
@@ -480,8 +486,8 @@ test('buildWorksheetPrintReportHtml omits empty student row and renders missing 
   const html = mod.buildWorksheetPrintReportHtml(report);
   assert.equal(html.includes('>Student<'), false);
   assert.equal(html.includes('Hong Kong Red Cross Hospital Schools'), true);
-  assert.equal(html.includes('<dt>viewer.print.meta.subject</dt>'), true);
-  assert.equal(html.includes('Mathematics'), true);
+  assert.equal(html.includes('<dt>viewer.print.meta.subject</dt>'), false);
+  assert.equal(html.includes('Mathematics'), false);
   assert.equal(html.includes('<dt>viewer.print.meta.submittedAt</dt>'), true);
   assert.equal(html.includes('viewer.print.questionImageUnavailable'), true);
   assert.equal(html.includes('viewer.print.answerPrefix'), true);
@@ -540,8 +546,10 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('print-question-section--flow'), true);
   assert.equal(normalizedHtml.includes('>viewer.print.questionHeading<'), true);
   assert.equal(normalizedHtml.includes('>viewer.print.checkedResultHeading<'), true);
-  assert.equal(normalizedHtml.includes('.print-question-section--keep {\n      break-inside: avoid;'), true);
-  assert.equal(normalizedHtml.includes('.print-question-section--image {\n      break-inside: auto;'), true);
+  assert.equal(normalizedHtml.includes('.print-question-section--keep'), true);
+  assert.equal(normalizedHtml.includes('break-inside: avoid;'), true);
+  assert.equal(normalizedHtml.includes('.print-question-section--image'), true);
+  assert.equal(normalizedHtml.includes('break-inside: auto;'), true);
   const mediumPromptIndex = normalizedHtml.indexOf('<p class="print-question-text">Medium prompt</p>');
   const imageSectionIndex = normalizedHtml.indexOf('<section class="print-question-section print-question-section--image print-question-section--flow">');
   assert.equal(mediumPromptIndex >= 0, true);
@@ -558,6 +566,25 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('border-bottom: 1px solid #dde2e8;'), false);
 });
 
+
+
+test('buildWorksheetPrintReportHtml includes core print style selectors from stylesheet module', async () => {
+  const mod = await loadViewerModule();
+  const html = mod.buildWorksheetPrintReportHtml({
+    schoolName: 'School',
+    title: 'Worksheet',
+    subject: '',
+    studentName: '',
+    submittedAtLabel: '',
+    checkedSummary: '',
+    questions: [],
+  });
+
+  assert.equal(html.includes('.print-header'), true);
+  assert.equal(html.includes('.print-school'), true);
+  assert.equal(html.includes('.print-title'), true);
+  assert.equal(html.includes('.print-meta'), true);
+});
 test('buildWorksheetPrintReportHtml escapes image src attributes', async () => {
   const mod = await loadViewerModule();
   const html = mod.buildWorksheetPrintReportHtml({
@@ -1744,10 +1771,17 @@ test('viewer shell exposes check action only in completed state', async () => {
   assert.match(source, /checkBtn\.disabled = session\.state\.isFinalizing \|\| !checkAvailable;/);
 });
 
-test('viewer language change reload paths flush local attempt state first', async () => {
+test('viewer language change navigation flushes state and preserves local attempt intent', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  const matches = source.match(/await flushLocaleChangeBeforeReload\(session, 'viewer\.(shell|start)'\);/g) || [];
-  assert.equal(matches.length, 2);
+  const matches = source.match(/await flushLocaleChangeBeforeReload\(session, source\);/g) || [];
+  assert.equal(matches.length >= 1, true);
+  assert.match(source, /if \(session\?\.state\?\.localAttemptId\) \{\s+nextUrl\.searchParams\.set\('localAttemptId', session\.state\.localAttemptId\);/);
+  assert.match(source, /nextUrl\.searchParams\.delete\('publishedPackageId'\);/);
+  assert.match(source, /nextUrl\.searchParams\.delete\('localDraftId'\);/);
+  assert.match(source, /nextUrl\.searchParams\.delete\('importedWorksheetId'\);/);
+  assert.match(source, /nextUrl\.searchParams\.delete\('viewerPayload'\);/);
+  assert.match(source, /nextUrl\.searchParams\.delete\('snapshot'\);/);
+  assert.match(source, /window\.location\.assign\(nextUrl\.toString\(\)\);/);
 });
 
 test('active viewer uses compact language icon menu in the header actions', async () => {
@@ -1756,7 +1790,7 @@ test('active viewer uses compact language icon menu in the header actions', asyn
   assert.match(source, /if \(variant === 'icon'\)/);
   assert.match(source, /trigger\.className = 'viewer-header-icon-btn language-selector__trigger';/);
   assert.match(source, /trigger\.innerHTML = createViewerIcon\('language'\);/);
-  assert.match(source, /variant: 'icon',\s+onChange: async \(\) => \{\s+await flushLocaleChangeBeforeReload\(session, 'viewer\.shell'\);/);
+  assert.match(source, /variant: 'icon',\s+onChange: async \(\) => \{\s+await navigateForLocaleChange\(session, 'viewer\.shell'\);/);
 });
 
 test('viewer details action stays available for print settings copy', async () => {
@@ -3216,6 +3250,8 @@ function findNodeByText(root, text) {
   return collectNodes(root).find((node) => node.textContent === text);
 }
 
+
+
 test('bootstrapViewer on bare /viewer/ opens start panel with explicit resume action instead of auto-resume', { concurrency: false }, async () => {
   const { document } = createFakeDom();
   let renderedSession = null;
@@ -4170,6 +4206,38 @@ test('autosave payload does not persist transient checkResult', async () => {
 
   await session.autosave();
   assert.equal(Object.hasOwn(persisted, 'checkResult'), false);
+  assert.equal(Object.hasOwn(persisted, 'restoredAttemptCheckResult'), false);
+});
+
+test('autosave preserves scoped imported attempt checked results without persisting transient checkResult', async () => {
+  const mod = await loadViewerModule();
+  let persisted = null;
+  const session = new mod.ViewerAttemptSession({
+    attempts: { put: async (value) => { persisted = value; return value; } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  session.state.localAttemptId = 'attempt_import_checked';
+  session.state.viewerPayload = {
+    worksheetId: 'ws_1',
+    snapshotId: 'snap_1',
+    blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q1' }, responseConfig: { inputType: 'text' } }],
+  };
+  session.state.answers = { q1: { value: 'A' } };
+  session.state.checkResult = { correctCount: 99, totalQuestions: 99 };
+  session.state.restoredAttemptCheckResult = {
+    correctCount: 1,
+    totalQuestions: 1,
+    statusByBlockId: { q1: 'correct' },
+    byBlockId: { q1: true },
+  };
+  session.state.attemptRevision = 1;
+
+  await session.autosave();
+
+  assert.equal(Object.hasOwn(persisted, 'checkResult'), false);
+  assert.equal(persisted.restoredAttemptCheckResult.statusByBlockId.q1, 'correct');
+  assert.equal(persisted.restoredAttemptCheckResult.correctCount, 1);
 });
 
 
@@ -4660,6 +4728,34 @@ test('viewer header actions include server-save icon wiring and protected upload
   assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', t('viewer.upload.saveAttemptAriaLabel'));"), true);
   assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
   assert.equal(source.includes('await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);'), true);
+});
+
+
+
+test('local attempt backup locale entries are not duplicated or cross-locale mixed', async () => {
+  const enSource = await fs.readFile(path.resolve('server/app/i18n/locales/en.js'), 'utf8');
+  const zhSource = await fs.readFile(path.resolve('server/app/i18n/locales/zh-Hant.js'), 'utf8');
+  assert.equal((enSource.match(/"localAttemptExport"/g) || []).length, 1);
+  assert.equal((enSource.match(/"localAttemptImport"/g) || []).length, 1);
+  assert.equal((zhSource.match(/"localAttemptExport"/g) || []).length, 1);
+  assert.equal((zhSource.match(/"localAttemptImport"/g) || []).length, 1);
+  assert.equal(/沒有可匯出的本機作答記錄|作答套件無效|需要 \.zip 作答套件檔案/.test(enSource), false);
+  assert.equal(/No active local attempt is available for export|Invalid attempt package|A \.zip attempt package file is required/.test(zhSource), false);
+  assert.equal(enSource.includes('"action": "Rewrite"'), true);
+});
+
+test('viewer header actions include local attempt export icon wiring', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("exportAttemptBtn.setAttribute('aria-label', t('viewer.upload.exportAttemptAriaLabel'));"), true);
+  assert.equal(source.includes("exportAttemptBtn.innerHTML = createViewerIcon('download');"), true);
+  assert.equal(source.includes('await session.exportCurrentAttemptPackage();'), true);
+});
+
+test('start panel includes attempt package import action in attempts section', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
+  assert.equal(source.includes("importAttemptPackageBtn.className = 'viewer-start-btn viewer-start-btn--primary';"), true);
+  assert.equal(source.includes("importAttemptPackageBtn.textContent = t('viewer.start.importAttemptPackage');"), true);
+  assert.equal(source.includes('attemptsActions.append(importAttemptPackageBtn, manageAttemptsBtn);'), true);
 });
 
 test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and media entries', async () => {
@@ -5169,6 +5265,288 @@ test('deleteUploadedAttemptAndRefresh calls delete then refreshes list', async (
   const result = await session.deleteUploadedAttemptAndRefresh('attempt_1');
   assert.equal(result.ok, true);
   assert.deepEqual(calls, ['delete:attempt_1', 'list']);
+});
+
+
+
+test('importAttemptPackageFromFile rejects non-zip filename safely', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set: () => {} } });
+  await assert.rejects(
+    () => session.importAttemptPackageFromFile({ name: 'attempt.txt', arrayBuffer: async () => new ArrayBuffer(0) }),
+    /zipRequired/
+  );
+});
+
+test('exportCurrentAttemptPackage exports active attempt without login or upload', async () => {
+  const mod = await loadViewerModule();
+  let uploadCalls = 0;
+  let flushCalls = 0;
+  let clicked = false;
+  let exportedBlob = null;
+  const previousDocument = globalThis.document;
+  const previousUrl = globalThis.URL;
+  globalThis.document = {
+    body: { appendChild: () => {} },
+    createElement: (tagName) => {
+      assert.equal(tagName, 'a');
+      return {
+        href: '',
+        download: '',
+        click: () => { clicked = true; },
+        remove: () => {},
+      };
+    },
+  };
+  globalThis.URL = {
+    createObjectURL: (blob) => {
+      exportedBlob = blob;
+      return 'blob:attempt-export';
+    },
+    revokeObjectURL: () => {},
+  };
+  try {
+    const session = new mod.ViewerAttemptSession({
+      resumeFlags: { get: () => null, set: () => {} },
+      localAssets: {
+        get: async () => ({ binary: new Uint8Array([7, 8, 9]), metadata: { mimeType: 'image/png' } }),
+      },
+    }, {
+      apiClient: {
+        uploadAttemptPackage: async () => {
+          uploadCalls += 1;
+          throw new Error('upload should not be called');
+        },
+      },
+    });
+    session.state.localAttemptId = 'attempt_export_local';
+    session.state.status = 'completed';
+    session.state.startedAt = '2026-05-01T00:00:00.000Z';
+    session.state.lastSavedAt = '2026-05-01T00:01:00.000Z';
+    session.state.submittedAt = '2026-05-01T00:02:00.000Z';
+    session.state.answers = { q1: { value: 'Typed answer' } };
+    session.state.checkResult = {
+      correctCount: 1,
+      totalQuestions: 1,
+      statusByBlockId: { q1: 'correct' },
+    };
+    session.state.viewerPayload = {
+      title: 'Export Sheet',
+      subject: 'Math',
+      blocks: [
+        {
+          blockId: 'q1',
+          kind: 'question',
+          position: 0,
+          prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'asset_1' }] },
+          responseConfig: { inputType: 'text' },
+        },
+      ],
+    };
+    const originalFlush = session.flushLocalStateForAuthRedirect.bind(session);
+    session.flushLocalStateForAuthRedirect = async () => {
+      flushCalls += 1;
+      return originalFlush();
+    };
+
+    const result = await session.exportCurrentAttemptPackage();
+
+    assert.equal(result.ok, true);
+    assert.equal(clicked, true);
+    assert.equal(uploadCalls, 0);
+    assert.equal(flushCalls, 1);
+    const exportedBytes = new Uint8Array(await exportedBlob.arrayBuffer());
+    const files = parseStoredZip(exportedBytes);
+    const attempt = JSON.parse(decodeUtf8(files.get('content/attempt.json')));
+    assert.equal(attempt.status, 'checked');
+    assert.equal(attempt.answers.q1.value, 'Typed answer');
+    assert.equal(attempt.checking.items.q1.result, 'correct');
+    assert.equal(files.has('media/asset_1'), true);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.URL = previousUrl;
+  }
+});
+
+test('importAttemptPackageFromFile creates a new local attempt and preserves checked state after resume', async () => {
+  const mod = await loadViewerModule();
+  const packageBytes = createStoredZip([
+    { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion: 1, assets: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Restored Checked', subject: 'ICT', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] }) },
+    { path: 'content/attempt.json', data: JSON.stringify({ status: 'checked', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', submittedAt: '2026-01-02T00:00:00.000Z', answers: { q1: { value: 'A' } }, checking: { checkedAt: '2026-01-02T00:01:00.000Z', correctCount: 1, totalQuestions: 1, items: { q1: { result: 'correct' } } } }) },
+  ]);
+  const importedWorksheets = new Map();
+  const attempts = new Map([['attempt_existing', { localId: 'attempt_existing', answers: { q1: { value: 'old' } } }]]);
+  const storage = {
+    resumeFlags: { get: () => null, set: () => {} },
+    importedWorksheets: {
+      put: async (record) => { importedWorksheets.set(record.localId, record); return record; },
+      get: async (id) => importedWorksheets.get(id) || null,
+      remove: async (id) => { importedWorksheets.delete(id); },
+    },
+    localAssets: { put: async (record) => record, remove: async () => {} },
+    attempts: {
+      put: async (record) => { attempts.set(record.localId, record); return record; },
+      get: async (id) => attempts.get(id) || null,
+      remove: async (id) => { attempts.delete(id); },
+    },
+  };
+  const session = new mod.ViewerAttemptSession(storage);
+
+  const result = await session.importAttemptPackageFromFile({
+    name: 'checked-attempt.zip',
+    arrayBuffer: async () => packageBytes.buffer.slice(packageBytes.byteOffset, packageBytes.byteOffset + packageBytes.byteLength),
+  });
+
+  assert.equal(result.ok, true);
+  const restoredAttemptId = result.data.localAttemptId;
+  assert.notEqual(restoredAttemptId, 'attempt_existing');
+  assert.equal(attempts.has('attempt_existing'), true);
+  assert.equal(session.state.localAttemptId, restoredAttemptId);
+  assert.equal(session.state.status, 'completed');
+  assert.equal(session.state.submittedAt, '2026-01-02T00:00:00.000Z');
+  assert.equal(session.state.checkResult.statusByBlockId.q1, 'correct');
+  assert.equal(attempts.get(restoredAttemptId).restoredAttemptCheckResult.statusByBlockId.q1, 'correct');
+
+  const resumedSession = new mod.ViewerAttemptSession(storage);
+  const resumed = await resumedSession.tryResumeAttempt(restoredAttemptId);
+  assert.equal(resumed, true);
+  assert.equal(resumedSession.state.checkResult.statusByBlockId.q1, 'correct');
+  assert.equal(resumedSession.state.answers.q1.value, 'A');
+});
+
+test('importAttemptPackageFromFile rejects worksheet packages and missing required files without creating attempts', async () => {
+  const mod = await loadViewerModule();
+  const worksheetPackageBytes = createStoredZip([
+    { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-package', packageVersion: 1 }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Blank', blocks: [] }) },
+  ]);
+  const missingAttemptBytes = createStoredZip([
+    { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion: 1, assets: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'No Attempt', blocks: [] }) },
+  ]);
+  let attemptPutCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+    importedWorksheets: { put: async (record) => record, remove: async () => {} },
+    localAssets: { put: async (record) => record, remove: async () => {} },
+    attempts: { put: async (record) => { attemptPutCalls += 1; return record; } },
+  });
+
+  await assert.rejects(
+    () => session.importAttemptPackageFromFile({ name: 'worksheet.zip', arrayBuffer: async () => worksheetPackageBytes.buffer.slice(worksheetPackageBytes.byteOffset, worksheetPackageBytes.byteOffset + worksheetPackageBytes.byteLength) }),
+    /worksheetPackageNotAttempt/
+  );
+  await assert.rejects(
+    () => session.importAttemptPackageFromFile({ name: 'missing-attempt.zip', arrayBuffer: async () => missingAttemptBytes.buffer.slice(missingAttemptBytes.byteOffset, missingAttemptBytes.byteOffset + missingAttemptBytes.byteLength) }),
+    /invalidPackage/
+  );
+  assert.equal(attemptPutCalls, 0);
+});
+
+test('importAttemptPackageFromFile validates attempt status before writing local records', async () => {
+  const mod = await loadViewerModule();
+  const packageBytes = createStoredZip([
+    { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion: 1, assets: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Bad Status', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] }) },
+    { path: 'content/attempt.json', data: JSON.stringify({ status: 'archived', answers: {} }) },
+  ]);
+  let importedPutCalls = 0;
+  let assetPutCalls = 0;
+  let attemptPutCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+    importedWorksheets: { put: async (record) => { importedPutCalls += 1; return record; }, remove: async () => {} },
+    localAssets: { put: async (record) => { assetPutCalls += 1; return record; }, remove: async () => {} },
+    attempts: { put: async (record) => { attemptPutCalls += 1; return record; } },
+  });
+
+  await assert.rejects(
+    () => session.importAttemptPackageFromFile({ name: 'bad-status.zip', arrayBuffer: async () => packageBytes.buffer.slice(packageBytes.byteOffset, packageBytes.byteOffset + packageBytes.byteLength) }),
+    /invalidPackage/
+  );
+  assert.equal(importedPutCalls, 0);
+  assert.equal(assetPutCalls, 0);
+  assert.equal(attemptPutCalls, 0);
+});
+
+test('importAttemptPackageFromFile cleans up worksheet and assets when attempt persistence fails', async () => {
+  const mod = await loadViewerModule();
+  const packageBytes = createStoredZip([
+    {
+      path: 'manifest.json',
+      data: JSON.stringify({
+        format: 'worksheet-attempt-package',
+        packageVersion: 1,
+        assets: [{ assetId: 'asset_cleanup', path: 'media/asset_cleanup', mimeType: 'image/png' }],
+      }),
+    },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Cleanup', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q', mediaRefs: [{ usage: 'question_image', assetId: 'asset_cleanup' }] }, responseConfig: { inputType: 'text' } }] }) },
+    { path: 'content/attempt.json', data: JSON.stringify({ status: 'submitted', submittedAt: '2026-01-02T00:00:00.000Z', answers: { q1: { value: 'A' } } }) },
+    { path: 'media/asset_cleanup', data: new Uint8Array([1, 2, 3]) },
+  ]);
+  const removedAssets = [];
+  const removedWorksheets = [];
+  let attemptPutCalls = 0;
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+    importedWorksheets: {
+      put: async (record) => record,
+      remove: async (id) => { removedWorksheets.push(id); },
+    },
+    localAssets: {
+      put: async (record) => record,
+      remove: async (id) => { removedAssets.push(id); },
+    },
+    attempts: {
+      put: async () => {
+        attemptPutCalls += 1;
+        throw new Error('attempt write failed');
+      },
+      remove: async () => {},
+    },
+  });
+
+  await assert.rejects(
+    () => session.importAttemptPackageFromFile({ name: 'cleanup.zip', arrayBuffer: async () => packageBytes.buffer.slice(packageBytes.byteOffset, packageBytes.byteOffset + packageBytes.byteLength) }),
+    /failed/
+  );
+  assert.equal(attemptPutCalls, 1);
+  assert.deepEqual(removedAssets, ['asset_cleanup']);
+  assert.equal(removedWorksheets.length, 1);
+});
+
+test('importAttemptPackageFromFile removes generated attempt when put writes then throws', async () => {
+  const mod = await loadViewerModule();
+  const packageBytes = createStoredZip([
+    { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion: 1, assets: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Partial Attempt', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] }) },
+    { path: 'content/attempt.json', data: JSON.stringify({ status: 'submitted', submittedAt: '2026-01-02T00:00:00.000Z', answers: { q1: { value: 'A' } } }) },
+  ]);
+  const writtenAttempts = new Set();
+  const removedAttempts = [];
+  const session = new mod.ViewerAttemptSession({
+    resumeFlags: { get: () => null, set: () => {} },
+    importedWorksheets: { put: async (record) => record, remove: async () => {} },
+    localAssets: { put: async (record) => record, remove: async () => {} },
+    attempts: {
+      put: async (record) => {
+        writtenAttempts.add(record.localId);
+        throw new Error('indexeddb failed after write');
+      },
+      remove: async (id) => {
+        removedAttempts.push(id);
+        writtenAttempts.delete(id);
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => session.importAttemptPackageFromFile({ name: 'partial-attempt.zip', arrayBuffer: async () => packageBytes.buffer.slice(packageBytes.byteOffset, packageBytes.byteOffset + packageBytes.byteLength) }),
+    /failed/
+  );
+  assert.equal(removedAttempts.length, 1);
+  assert.equal(writtenAttempts.size, 0);
 });
 
 test('resumeUploadedAttempt restores uploaded package into a new local attempt', async () => {

@@ -83,7 +83,7 @@ export default {
       "addContent": "新增內容",
       "addQuestion": "新增題目",
       "openViewer": "在檢視器開啟（同一分頁）",
-      "importPackage": "匯入套件（.zip）/ 舊版 JSON",
+      "importPackage": "匯入套件（.zip）",
       "exportPackage": "匯出套件（.zip）",
       "more": "更多"
     },
@@ -331,9 +331,7 @@ export default {
         "unableToExportPackage": "無法匯出套件。"
       },
       "import": {
-        "importedLegacyJson": "已匯入舊版 JSON 工作紙。",
         "importedPackageZip": "已匯入工作紙套件。",
-        "unableToImportJson": "無法匯入工作紙 JSON。",
         "unableToImportPackage": "無法匯入工作紙套件。",
         "zipRequired": "需要 .zip 工作紙套件檔案。"
       },
@@ -468,6 +466,7 @@ export default {
       "manageServerAttempts": "管理伺服器作答記錄",
       "loginToManageServerAttempts": "登入以管理伺服器作答記錄",
       "importPackage": "匯入工作紙套件（.zip）",
+      "importAttemptPackage": "匯入作答套件（.zip）",
       "browsePublishedPackages": "瀏覽已發布套件",
       "browsePublishedWorksheets": "瀏覽已發布工作紙",
       "loginToBrowsePublishedWorksheets": "登入以瀏覽已發布工作紙",
@@ -596,6 +595,17 @@ export default {
         "slotLimitReachedUnknown": "作答記錄空位已達上限。",
         "staleTarget": "作答記錄上載目標已過期。請從目前作答記錄再試一次。"
       },
+      "localAttemptExport": {
+        "noActiveAttempt": "沒有可匯出的本機作答記錄。",
+        "exported": "已匯出作答套件。",
+        "failed": "無法匯出作答套件。你的本機作答記錄仍然安全。"
+      },
+      "localAttemptImport": {
+        "zipRequired": "需要 .zip 作答套件檔案。",
+        "invalidPackage": "作答套件無效。請選擇有效的作答套件（.zip）。",
+        "worksheetPackageNotAttempt": "這是工作紙套件，不是作答套件。請選擇包含已儲存答案的作答套件（.zip）。",
+        "failed": "無法匯入作答套件。現有本機作答記錄未有變更。"
+      },
       "uploadedAttempt": {
         "artifactEmpty": "已上載作答記錄套件是空的。",
         "deleted": "已從伺服器刪除作答記錄。",
@@ -708,6 +718,8 @@ export default {
       "progressSaving": "正在儲存上載...",
       "saveAttemptAriaLabel": "儲存作答記錄",
       "saveAttemptTitle": "儲存作答記錄",
+      "exportAttemptAriaLabel": "匯出作答套件（.zip）",
+      "exportAttemptTitle": "匯出作答套件（.zip）",
       "signInRequired": "上載作答前需要先登入。"
     }
   }
