@@ -3,7 +3,6 @@ import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 import { createServerApiClient } from '../app/api/server-api-client.js';
 import {
   createWorksheetPackageFromDraft,
-  mapLegacyJsonToPackageModel,
   parseWorksheetPackage,
 } from './worksheet-package.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
@@ -2514,95 +2513,6 @@ class EditorDraftSession {
     }
   }
 
-  async importWorksheetJson(jsonInput, options = {}) {
-    try {
-      let parsed = jsonInput;
-      if (typeof jsonInput === 'string') {
-        try {
-          parsed = JSON.parse(jsonInput);
-        } catch (error) {
-          throw new Error(`Imported worksheet JSON could not be parsed: ${error?.message || String(error)}`);
-        }
-      }
-
-      const mapped = mapLegacyJsonToPackageModel(parsed);
-      const importedLocalId = createLocalId('imported');
-      const importedRecord = {
-        localId: importedLocalId,
-        worksheet: mapped.worksheet,
-        packageManifest: mapped.manifest,
-        metadata: {
-          localId: importedLocalId,
-          origin: 'legacy_json_import',
-          updatedAt: nowIso(),
-        },
-      };
-
-      await this.storage.importedWorksheets.put(importedRecord);
-
-      if (options.convertToEditableDraft) {
-        // Validate and extract blocks from parsed JSON
-        // Clear any pending autosave before replacing the draft
-        clearTimeout(this.autosaveTimer);
-        this.autosaveTimer = null;
-        this.state.autosavePending = false;
-        try {
-          // For round-trip imports (exporting and re-importing), preserve metadata if present
-          // Otherwise, use 'imported_file' as default origin
-          const importedMetadata = {
-            createdAt: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.createdAt) || nowIso(),
-            serverLink: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.serverLink) || null,
-            importedFrom: 'legacy_json',
-            modelVersion: 'package-compatible-v1',
-            subject: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.subject) || '',
-          };
-
-          const draft = createDraftRecord({
-            title: mapped.worksheet.title || 'Imported worksheet',
-            blocks: mapped.worksheet.blocks,
-            assets: [],
-            origin: 'legacy_json_import',
-            metadata: importedMetadata,
-          });
-
-          this.state.draft = draft;
-          this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
-          this.state.draftRevision += 1;
-          this.state.lastImportedAt = nowIso();
-          this.validateCurrentDraft();
-          try {
-            await this.autosave();
-          } catch (error) {
-            console.warn('Initial autosave after import failed; draft remains in-memory.', error);
-          }
-          this.persistRestoreMetadata();
-          const successMessage = editorNotification('import.importedLegacyJson');
-          this.pushNotification({ kind: 'success', category: 'editor', source: 'import.legacy_json', text: successMessage });
-          this.notifyStateChange();
-          return { importedRecord, draftRecord: this.state.draft };
-        } catch (error) {
-          this.state.autosavePending = false;
-          this.notifyStateChange();
-          throw error;
-        }
-      }
-
-      const successMessage = editorNotification('import.importedLegacyJson');
-      this.pushNotification({ kind: 'success', category: 'editor', source: 'import.legacy_json', text: successMessage });
-      this.notifyStateChange();
-      return { importedRecord, draftRecord: null };
-    } catch (error) {
-      this.pushNotification({
-        kind: 'error',
-        category: 'editor',
-        source: 'import.legacy_json',
-        text: error?.message || editorNotification('import.unableToImportJson'),
-      });
-      this.notifyStateChange();
-      throw error;
-    }
-  }
-
   async importWorksheetPackageFile(file, options = {}) {
     try {
       if (!file || typeof file.arrayBuffer !== 'function') {
@@ -3801,7 +3711,7 @@ function renderEditorShell(session) {
   blockKind.className = 'control';
   const importFileInput = document.createElement('input');
   importFileInput.type = 'file';
-  importFileInput.accept = 'application/zip,.zip,application/json,.json';
+  importFileInput.accept = 'application/zip,.zip';
   importFileInput.style.display = 'none';
   const metadataSection = document.createElement('section');
   metadataSection.className = 'editor-metadata-section';
@@ -6927,12 +6837,19 @@ function renderEditorShell(session) {
     const [file] = importFileInput.files || [];
     if (!file) return;
     const isZipFile = file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip';
-    if (isZipFile) {
-      await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
-    } else {
-      const fileText = await file.text();
-      await session.importWorksheetJson(fileText, { convertToEditableDraft: true });
+    if (!isZipFile) {
+      session.pushNotification({
+        kind: 'error',
+        category: 'editor',
+        source: 'import.package_zip',
+        text: editorNotification('import.zipRequired'),
+      });
+      session.notifyStateChange();
+      importFileInput.value = '';
+      updateSummary();
+      return;
     }
+    await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
     importFileInput.value = '';
     updateSummary();
   });
