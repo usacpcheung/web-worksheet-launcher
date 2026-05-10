@@ -63,3 +63,18 @@ test('t supports simple interpolation', async () => {
     'Uploading draft package... 50% (1 MB / 2 MB)'
   );
 });
+
+test('viewer upload notification interpolation preserves percent symbol', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+  mod.setLocale('en', { persist: false });
+
+  assert.equal(mod.t('viewer.notifications.uploadAttempt.progressPercent', { percent: 42 }), 'Uploading attempt... 42%');
+});
+
+test('zh-Hant attempt slot limit strings are translated', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+  mod.setLocale('zh-Hant', { persist: false });
+
+  assert.equal(mod.t('viewer.attemptSlots.limitReached', { limit: 3 }), '已達上限 3');
+  assert.equal(mod.t('viewer.attemptSlots.limitReachedUnknown'), '已達上限');
+});
