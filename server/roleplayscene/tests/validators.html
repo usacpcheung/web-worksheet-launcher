@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Validator Smoke Tests</title>
+</head>
+<body>
+  <h1>Validator Smoke Tests</h1>
+  <p>Open the console to view results.</p>
+  <script type="module">
+    import { validateProject } from '../scripts/editor/validators.js';
+    import { createProject, createScene, SceneType, createChoice } from '../scripts/model.js';
+
+    function logResult(label, condition) {
+      const status = condition ? 'OK' : 'FAIL';
+      console.log(`${status}: ${label}`);
+    }
+
+    const baseProject = createProject();
+    const endScene = createScene({ type: SceneType.END });
+    const midScene = createScene();
+    baseProject.scenes.push(midScene, endScene);
+    baseProject.scenes[0].choices = [createChoice({ label: 'To mid', nextSceneId: midScene.id })];
+    midScene.choices = [createChoice({ label: 'To end', nextSceneId: endScene.id })];
+
+    const okResult = validateProject(baseProject);
+    logResult('Valid project passes', okResult.errors.length === 0);
+
+    const multiStart = createProject();
+    multiStart.scenes.push(createScene({ type: SceneType.START }));
+    const multiStartResult = validateProject(multiStart);
+    logResult('Multiple start scenes flagged', multiStartResult.errors.some(msg => msg.includes('exactly 1 start')));
+
+    const unreachable = createProject();
+    const isolated = createScene();
+    unreachable.scenes.push(isolated);
+    const unreachableResult = validateProject(unreachable);
+    logResult('Unreachable scene flagged', unreachableResult.errors.some(msg => msg.includes('unreachable')));
+  </script>
+</body>
+</html>

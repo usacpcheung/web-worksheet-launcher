@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RolePlayScene</title>
+  <link rel="stylesheet" href="./styles/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>RolePlayScene</h1>
+    <nav class="toolbar">
+      <button id="mode-edit" class="active">Edit</button>
+      <button id="mode-play">Play</button>
+      <button id="import-btn" title="Import project (.json or .zip)">Import</button>
+      <button id="export-btn" title="Export project archive (.zip)">Export</button>
+      <label class="file-input">
+        <input type="file" id="file-input" accept=".json,.zip" hidden />
+      </label>
+      <label class="toolbar__locale">
+        <span class="toolbar__locale-label">Language</span>
+        <select id="locale-select"></select>
+      </label>
+    </nav>
+  </header>
+
+  <div id="app-messages" class="app-messages" aria-live="polite" role="status" hidden>
+    <div class="app-messages__content">
+      <span class="app-messages__text"></span>
+      <div class="app-messages__details validation-results" hidden></div>
+    </div>
+    <button type="button" class="app-messages__dismiss" aria-label="Dismiss message">&times;</button>
+  </div>
+
+  <main id="app" class="layout">
+    <section id="left-pane" class="pane">
+      <!-- Editor graph or Player stage will render here -->
+    </section>
+    <section id="right-pane" class="pane">
+      <!-- Inspector or Dialogue panel will render here -->
+    </section>
+  </main>
+
+  <script type="module" src="./scripts/main.js"></script>
+</body>
+</html>
