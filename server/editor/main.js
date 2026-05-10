@@ -3,7 +3,6 @@ import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 import { createServerApiClient } from '../app/api/server-api-client.js';
 import {
   createWorksheetPackageFromDraft,
-  mapLegacyJsonToPackageModel,
   parseWorksheetPackage,
 } from './worksheet-package.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
@@ -109,6 +108,28 @@ function isRecord(value) {
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function editorNotification(key, params = {}) {
+  return t(`editor.notifications.${key}`, params);
+}
+
+function getProtectedActionErrorMessage(result, fallbackText = editorNotification('audioGeneration.startFailed')) {
+  const status = String(result?.status || '').trim();
+  const detail = String(result?.error?.message || result?.result?.error?.message || '').trim();
+  if (detail) {
+    return detail;
+  }
+  if (status === 'blocked_no_local_id') {
+    return editorNotification('recovery.noActiveDraft');
+  }
+  if (status === 'blocked_session_probe') {
+    return editorNotification('auth.unableToVerifySignIn');
+  }
+  if (status === 'invalid_context' || status === 'invalid_intent' || status === 'intent_invalid') {
+    return editorNotification('recovery.contextChanged');
+  }
+  return fallbackText;
 }
 
 function normalizeMediaUsage(usage) {
@@ -1369,12 +1390,12 @@ class EditorDraftSession {
       return { ok: false, reason: 'superseded' };
     }
     if (!record) {
-      this.setMediaFeedback('Unable to load attached audio for preview.');
+      this.setMediaFeedback(editorNotification('media.audioPreviewLoadFailed'));
       return { ok: false, reason: 'missing-asset' };
     }
     const objectUrl = this.createObjectUrlForAsset(record, 'audio/mpeg');
     if (!objectUrl) {
-      this.setMediaFeedback('Unable to load attached audio for preview.');
+      this.setMediaFeedback(editorNotification('media.audioPreviewLoadFailed'));
       return { ok: false, reason: 'missing-binary' };
     }
 
@@ -1389,7 +1410,7 @@ class EditorDraftSession {
     }, { once: true });
     audio.addEventListener('error', () => {
       if (this.previewAudio !== audio) return;
-      this.setMediaFeedback('Unable to play attached audio.');
+      this.setMediaFeedback(editorNotification('media.audioPreviewPlayFailed'));
       this.finalizePreviewAudio('error');
     }, { once: true });
 
@@ -1407,7 +1428,7 @@ class EditorDraftSession {
         return { ok: false, reason: 'superseded' };
       }
       this.finalizePreviewAudio('error');
-      this.setMediaFeedback('Audio playback was blocked. Try again.');
+      this.setMediaFeedback(editorNotification('media.audioPlaybackBlocked'));
       return { ok: false, reason: 'playback-failed' };
     }
   }
@@ -1571,7 +1592,7 @@ class EditorDraftSession {
     if (!target || target.kind !== 'question') return { ok: false, reason: 'missing-question' };
     const currentRef = getSingleMediaRef(target.prompt?.mediaRefs, usage);
     if (!currentRef) {
-      this.setMediaFeedback('No media attachment found to remove.');
+      this.setMediaFeedback(editorNotification('media.noMediaAttachment'));
       return { ok: false, reason: 'missing-media' };
     }
     if (options.confirmRemove !== true) {
@@ -1618,7 +1639,7 @@ class EditorDraftSession {
     if (responseConfig.inputType !== 'multiple_choice') return { ok: false, reason: 'not-multiple-choice' };
     const existingOption = (responseConfig.options || []).map((option) => normalizeResponseOption(option)).find((o) => o.id === optionId);
     if (!existingOption) {
-      this.setMediaFeedback(t('editor.media.enterOptionTextBeforeAttachingAudio'));
+      this.setMediaFeedback(editorNotification('media.optionTextRequired'));
       return { ok: false, reason: 'missing-option' };
     }
     const currentRef = getSingleMediaRef(existingOption.mediaRefs, 'option_audio');
@@ -2492,99 +2513,10 @@ class EditorDraftSession {
     }
   }
 
-  async importWorksheetJson(jsonInput, options = {}) {
-    try {
-      let parsed = jsonInput;
-      if (typeof jsonInput === 'string') {
-        try {
-          parsed = JSON.parse(jsonInput);
-        } catch (error) {
-          throw new Error(`Imported worksheet JSON could not be parsed: ${error?.message || String(error)}`);
-        }
-      }
-
-      const mapped = mapLegacyJsonToPackageModel(parsed);
-      const importedLocalId = createLocalId('imported');
-      const importedRecord = {
-        localId: importedLocalId,
-        worksheet: mapped.worksheet,
-        packageManifest: mapped.manifest,
-        metadata: {
-          localId: importedLocalId,
-          origin: 'legacy_json_import',
-          updatedAt: nowIso(),
-        },
-      };
-
-      await this.storage.importedWorksheets.put(importedRecord);
-
-      if (options.convertToEditableDraft) {
-        // Validate and extract blocks from parsed JSON
-        // Clear any pending autosave before replacing the draft
-        clearTimeout(this.autosaveTimer);
-        this.autosaveTimer = null;
-        this.state.autosavePending = false;
-        try {
-          // For round-trip imports (exporting and re-importing), preserve metadata if present
-          // Otherwise, use 'imported_file' as default origin
-          const importedMetadata = {
-            createdAt: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.createdAt) || nowIso(),
-            serverLink: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.serverLink) || null,
-            importedFrom: 'legacy_json',
-            modelVersion: 'package-compatible-v1',
-            subject: (isRecord(mapped.worksheet.metadata) && mapped.worksheet.metadata.subject) || '',
-          };
-
-          const draft = createDraftRecord({
-            title: mapped.worksheet.title || 'Imported worksheet',
-            blocks: mapped.worksheet.blocks,
-            assets: [],
-            origin: 'legacy_json_import',
-            metadata: importedMetadata,
-          });
-
-          this.state.draft = draft;
-          this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
-          this.state.draftRevision += 1;
-          this.state.lastImportedAt = nowIso();
-          this.validateCurrentDraft();
-          try {
-            await this.autosave();
-          } catch (error) {
-            console.warn('Initial autosave after import failed; draft remains in-memory.', error);
-          }
-          this.persistRestoreMetadata();
-          const successMessage = `Imported legacy_json worksheet (importedId: ${importedRecord.localId}, draftId: ${this.state.draft.localId}).`;
-          this.pushNotification({ kind: 'success', category: 'editor', source: 'import.legacy_json', text: successMessage });
-          this.notifyStateChange();
-          return { importedRecord, draftRecord: this.state.draft };
-        } catch (error) {
-          this.state.autosavePending = false;
-          this.notifyStateChange();
-          throw error;
-        }
-      }
-
-      const successMessage = `Imported legacy_json worksheet (importedId: ${importedRecord.localId}, draftId: none).`;
-      this.pushNotification({ kind: 'success', category: 'editor', source: 'import.legacy_json', text: successMessage });
-      this.notifyStateChange();
-      return { importedRecord, draftRecord: null };
-    } catch (error) {
-      this.pushNotification({
-        kind: 'error',
-        category: 'editor',
-        source: 'import.legacy_json',
-        text: error?.message || 'Unable to import worksheet JSON.',
-      });
-      this.notifyStateChange();
-      throw error;
-    }
-  }
-
   async importWorksheetPackageFile(file, options = {}) {
     try {
       if (!file || typeof file.arrayBuffer !== 'function') {
-        throw new Error('A .zip worksheet package file is required.');
+        throw new Error(editorNotification('import.zipRequired'));
       }
 
       const parsedPackage = parseWorksheetPackage(await file.arrayBuffer());
@@ -2656,7 +2588,7 @@ class EditorDraftSession {
     });
 
       if (!options.convertToEditableDraft) {
-        const successMessage = `Imported package_zip worksheet (importedId: ${importedRecord.localId}, draftId: none).`;
+        const successMessage = editorNotification('import.importedPackageZip');
         this.pushNotification({ kind: 'success', category: 'editor', source: 'import.package_zip', text: successMessage });
         this.notifyStateChange();
         return { importedRecord, draftRecord: null };
@@ -2696,7 +2628,7 @@ class EditorDraftSession {
       this.validateCurrentDraft();
       await this.autosave();
       this.persistRestoreMetadata();
-      const successMessage = `Imported package_zip worksheet (importedId: ${importedRecord.localId}, draftId: ${this.state.draft.localId}).`;
+      const successMessage = editorNotification('import.importedPackageZip');
       this.pushNotification({ kind: 'success', category: 'editor', source: 'import.package_zip', text: successMessage });
       this.notifyStateChange();
       return { importedRecord, draftRecord: this.state.draft };
@@ -2705,7 +2637,7 @@ class EditorDraftSession {
         kind: 'error',
         category: 'editor',
         source: 'import.package_zip',
-        text: error?.message || 'Unable to import worksheet package.',
+        text: error?.message || editorNotification('import.unableToImportPackage'),
       });
       this.notifyStateChange();
       throw error;
@@ -2720,7 +2652,9 @@ class EditorDraftSession {
         kind: 'success',
         category: 'editor',
         source: 'save.manual',
-        text: `Saved draft ${persisted?.localId || this.state.draft?.localId || 'unknown'}.`,
+        text: editorNotification('save.savedDraft', {
+          id: persisted?.localId || this.state.draft?.localId || t('common.values.unknown'),
+        }),
       });
       this.notifyStateChange();
       return persisted;
@@ -2730,7 +2664,7 @@ class EditorDraftSession {
         kind: 'error',
         category: 'editor',
         source: 'save.manual',
-        text: error?.message || 'Manual save failed.',
+        text: error?.message || editorNotification('save.manualSaveFailed'),
       });
       this.notifyStateChange();
       throw error;
@@ -2742,7 +2676,7 @@ class EditorDraftSession {
     let link = null;
     try {
       if (!this.state.draft) {
-        throw new Error('No active draft to export.');
+        throw new Error(editorNotification('export.noActiveDraft'));
       }
 
       const timestampToken = new Date().toISOString().replace(/[:.]/g, '-');
@@ -2760,7 +2694,7 @@ class EditorDraftSession {
         kind: 'success',
         category: 'editor',
         source: 'export.package_zip',
-        text: `Exported package ${filename}.`,
+        text: editorNotification('export.exportedPackage', { filename }),
       });
       this.notifyStateChange();
       return filename;
@@ -2769,7 +2703,7 @@ class EditorDraftSession {
         kind: 'error',
         category: 'editor',
         source: 'export.package_zip',
-        text: error?.message || 'Unable to export package.',
+        text: error?.message || editorNotification('export.unableToExportPackage'),
       });
       this.notifyStateChange();
       throw error;
@@ -2785,7 +2719,7 @@ class EditorDraftSession {
 
   async buildCurrentDraftPackageZipBytes() {
     if (!this.state.draft) {
-      throw new Error('No active draft to export.');
+      throw new Error(editorNotification('export.noActiveDraft'));
     }
     const assets = new Map();
     const draftAssets = normalizeDraftAssets(this.state.draft.assets);
@@ -2836,7 +2770,7 @@ class EditorDraftSession {
           kind: 'error',
           category: 'server',
           source: 'auth.popup',
-          text: 'Sign-in popup was blocked. Allow popups for this site, then try again.',
+          text: editorNotification('auth.signInPopupBlocked'),
         });
         this.notifyStateChange();
       },
@@ -2847,7 +2781,7 @@ class EditorDraftSession {
             kind: 'info',
             category: 'server',
             source: 'auth.status',
-            text: message,
+            text: editorNotification('auth.completeSignInPopup'),
             logActivity: false,
           });
           this.notifyStateChange();
@@ -2859,7 +2793,7 @@ class EditorDraftSession {
           kind: 'info',
           category: 'server',
           source: 'auth.status',
-          text: 'Sign-in completed. Refreshing server session…',
+          text: editorNotification('auth.signInRefreshing'),
           logActivity: false,
         });
         this.notifyStateChange();
@@ -2875,7 +2809,7 @@ class EditorDraftSession {
           kind: 'error',
           category: 'server',
           source: 'auth.status',
-          text: result.error?.message || 'Sign-in completed, but session is still not ready.',
+          text: result.error?.message || editorNotification('auth.sessionNotReadyAfterSignIn'),
         });
         this.notifyStateChange();
         finalizeFlow();
@@ -2887,7 +2821,7 @@ class EditorDraftSession {
             kind: 'info',
             category: 'server',
             source: 'auth.status',
-            text: 'Still waiting for sign-in confirmation from the popup…',
+            text: editorNotification('auth.stillWaitingForPopup'),
             logActivity: false,
           });
           this.notifyStateChange();
@@ -2963,7 +2897,7 @@ class EditorDraftSession {
       || authStatus === 403
     );
     const authMessage = isExplicitAuthFailure
-      ? 'Sign-in session expired. Please sign in again.'
+      ? editorNotification('auth.sessionExpired')
       : (result.error?.message || notReadyMessage);
     this.pushNotification({
       kind: isExplicitAuthFailure ? 'warn' : 'error',
@@ -2980,7 +2914,7 @@ class EditorDraftSession {
       return {
         ok: false,
         skipped: true,
-        error: { message: 'Upload already in progress.' },
+        error: { message: editorNotification('uploadDraft.alreadyInProgress') },
       };
     }
     this.state.isUploadingDraft = true;
@@ -2989,7 +2923,7 @@ class EditorDraftSession {
       kind: 'info',
       category: 'server',
       source: 'upload.status',
-      text: 'Uploading draft package...',
+      text: editorNotification('uploadDraft.uploading'),
       logActivity: false,
     });
     this.notifyStateChange();
@@ -3033,9 +2967,12 @@ class EditorDraftSession {
           }
         }
         const isTransportFailure = String(result?.error?.code || '') === 'NETWORK_ERROR';
+        const isSlotLimit = String(result?.error?.code || '').toUpperCase() === 'DRAFT_SLOT_LIMIT_REACHED';
         const errorText = isTransportFailure
-          ? 'Upload failed before completion. Your local draft is still safe. Please retry when the network is stable.'
-          : result.error.message;
+          ? editorNotification('uploadDraft.networkFailure')
+          : isSlotLimit
+            ? editorNotification('uploadDraft.draftSlotLimitReached')
+            : result.error.message;
         this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: errorText });
         this.notifyStateChange();
         return result;
@@ -3045,7 +2982,7 @@ class EditorDraftSession {
         kind: 'success',
         category: 'server',
         source: 'upload.status',
-        text: `Uploaded draft ${result.data.uploaded_draft_id}.`,
+        text: editorNotification('uploadDraft.uploaded', { id: result.data.uploaded_draft_id }),
       });
       const refreshResult = await this.loadUploadedDrafts({ preflight: false });
       if (refreshResult?.ok) {
@@ -3058,14 +2995,14 @@ class EditorDraftSession {
           kind: 'success',
           category: 'server',
           source: 'upload.refresh',
-          text: foundUploadedDraft ? 'Uploaded drafts refreshed.' : 'Upload succeeded. Draft list refreshed.',
+          text: foundUploadedDraft ? editorNotification('uploadDraft.listRefreshed') : editorNotification('uploadDraft.refreshSucceeded'),
         });
       } else {
         this.pushNotification({
           kind: 'warn',
           category: 'server',
           source: 'upload.refresh',
-          text: refreshResult?.error?.message || 'Unable to refresh uploaded drafts.',
+          text: refreshResult?.error?.message || editorNotification('uploadDraft.listRefreshFailed'),
         });
       }
       this.notifyStateChange();
@@ -3080,17 +3017,17 @@ class EditorDraftSession {
   async publishUploadedDraftToServer(uploadedDraftId, metadata = {}) {
     const normalizedUploadedDraftId = String(uploadedDraftId || '').trim();
     if (!normalizedUploadedDraftId) {
-      return { ok: false, error: { message: 'Uploaded draft ID is required.' } };
+      return { ok: false, error: { message: editorNotification('uploadDraft.draftIdRequired') } };
     }
     if (this.state.publishingDraftIds.has(normalizedUploadedDraftId)) {
       return {
         ok: false,
         skipped: true,
-        error: { message: `Publish already in progress for uploaded draft ${normalizedUploadedDraftId}.` },
+        error: { message: editorNotification('uploadDraft.publishAlreadyInProgress', { id: normalizedUploadedDraftId }) },
       };
     }
     this.state.publishingDraftIds.add(normalizedUploadedDraftId);
-    this.pushNotification({ kind: 'info', category: 'server', source: 'publish.status', text: 'Publishing…', logActivity: false });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'publish.status', text: editorNotification('publishedPackage.publishing'), logActivity: false });
     this.notifyStateChange();
     try {
       const sessionReady = await this.ensureServerSessionReady();
@@ -3109,7 +3046,7 @@ class EditorDraftSession {
         kind: 'success',
         category: 'server',
         source: 'publish.status',
-        text: `Published package ${publishResult.data.published_package_id}.`,
+        text: editorNotification('publishedPackage.published', { id: publishResult.data.published_package_id }),
       });
       const refreshResult = await this.loadUploadedDrafts({ preflight: false });
       if (refreshResult?.ok) {
@@ -3117,14 +3054,14 @@ class EditorDraftSession {
           kind: 'success',
           category: 'server',
           source: 'publish.refresh',
-          text: 'Uploaded drafts refreshed.',
+          text: editorNotification('uploadDraft.publishedRefreshSucceeded'),
         });
       } else {
         this.pushNotification({
           kind: 'warn',
           category: 'server',
           source: 'publish.refresh',
-          text: refreshResult?.error?.message || 'Unable to refresh uploaded drafts.',
+          text: refreshResult?.error?.message || editorNotification('uploadDraft.listRefreshFailed'),
         });
       }
       this.notifyStateChange();
@@ -3152,7 +3089,7 @@ class EditorDraftSession {
 
       this._loadUploadedDraftsActiveCount += 1;
       this.state.isLoadingUploadedDrafts = this._loadUploadedDraftsActiveCount > 0;
-      this.pushNotification({ kind: 'info', category: 'server', source: 'uploadedDrafts.refresh', text: 'Refreshing…', logActivity: false });
+      this.pushNotification({ kind: 'info', category: 'server', source: 'uploadedDrafts.refresh', text: editorNotification('uploadDraft.refreshing'), logActivity: false });
       this.notifyStateChange();
 
       try {
@@ -3209,7 +3146,7 @@ class EditorDraftSession {
       kind: 'success',
       category: 'server',
       source: 'uploadedDraft.open',
-      text: `Opened uploaded draft ${uploadedDraftId} as a new local draft copy.`,
+      text: editorNotification('uploadDraft.openedAsLocalCopy', { id: uploadedDraftId }),
     });
     this.notifyStateChange();
     return { ok: true, data: imported };
@@ -3218,17 +3155,17 @@ class EditorDraftSession {
   async reopenPublishedPackageAsLocalCopy(publishedPackageId) {
     const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
     if (!normalizedPublishedPackageId) {
-      return { ok: false, error: { message: 'Published package ID is required.' } };
+      return { ok: false, error: { message: editorNotification('publishedPackage.idRequired') } };
     }
     if (this.state.openingPublishedPackageIds.has(normalizedPublishedPackageId)) {
       return {
         ok: false,
         skipped: true,
-        error: { message: `Open already in progress for published package ${normalizedPublishedPackageId}.` },
+        error: { message: editorNotification('publishedPackage.openAlreadyInProgress', { id: normalizedPublishedPackageId }) },
       };
     }
     this.state.openingPublishedPackageIds.add(normalizedPublishedPackageId);
-    this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: 'Opening published package…', logActivity: false });
+    this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: editorNotification('publishedPackage.opening'), logActivity: false });
     this.notifyStateChange();
     try {
       const sessionReady = await this.ensureServerSessionReady();
@@ -3247,7 +3184,7 @@ class EditorDraftSession {
         kind: 'success',
         category: 'server',
         source: 'publishedPackage.open',
-        text: `Opened published package ${normalizedPublishedPackageId} as a new local draft copy.`,
+        text: editorNotification('publishedPackage.openedAsLocalCopy', { id: normalizedPublishedPackageId }),
       });
       this.notifyStateChange();
       return { ok: true, data: imported };
@@ -3266,13 +3203,13 @@ class EditorDraftSession {
       this.notifyStateChange();
       return result;
     }
-    const successMessage = 'Uploaded draft deleted.';
+    const successMessage = editorNotification('uploadDraft.uploadedDraftDeleted');
     this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete', text: successMessage });
     const refreshResult = await this.loadUploadedDrafts({ preflight: false });
     if (refreshResult && refreshResult.ok) {
-      this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete.refresh', text: 'Uploaded drafts refreshed.' });
+      this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete.refresh', text: editorNotification('uploadDraft.listRefreshed') });
     } else if (refreshResult && !refreshResult.ok) {
-      const refreshMessage = refreshResult.error?.message || 'Uploaded drafts refresh failed.';
+      const refreshMessage = refreshResult.error?.message || editorNotification('uploadDraft.uploadedDraftsRefreshFailed');
       this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDraft.delete.refresh', text: refreshMessage });
     }
     this.notifyStateChange();
@@ -3285,7 +3222,7 @@ class EditorDraftSession {
   async deletePublishedPackage(publishedPackageId) {
     const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
     if (!normalizedPublishedPackageId) {
-      return { ok: false, error: { message: 'Published package ID is required.' } };
+      return { ok: false, error: { message: editorNotification('publishedPackage.idRequired') } };
     }
     const sessionReady = await this.ensureServerSessionReady();
     if (!sessionReady.ok) return sessionReady.result;
@@ -3295,7 +3232,7 @@ class EditorDraftSession {
       this.notifyStateChange();
       return result;
     }
-    this.pushNotification({ kind: 'success', category: 'server', source: 'publishedPackage.delete', text: 'Published package deleted.' });
+    this.pushNotification({ kind: 'success', category: 'server', source: 'publishedPackage.delete', text: editorNotification('publishedPackage.deleted') });
     this.notifyStateChange();
     return result;
   }
@@ -3383,7 +3320,7 @@ class EditorDraftSession {
       case 'editorOptionT2A':
         return this.replayEditorOptionT2AIntent(payload);
       case 'resumeRewriteAfterLogin':
-        this.setRecoveryMessage('Rewrite recovery is not available yet. Please run Rewrite again.');
+        this.setRecoveryMessage(editorNotification('recovery.rewriteUnavailable'));
         return { ok: true, status: 'deferred_editor_rewrite' };
       default:
         this.setRecoveryMessage(null);
@@ -3397,13 +3334,13 @@ class EditorDraftSession {
     if (!localDraftId || !intentDraftId || localDraftId !== intentDraftId) {
       return {
         ok: false,
-        message: 'Audio recovery context is stale. Please retry from the current draft.',
+        message: editorNotification('recovery.audioPromptContextStale'),
       };
     }
     if (payload.target !== 'question_prompt') {
       return {
         ok: false,
-        message: 'Audio recovery target mismatch. Please retry from the prompt control.',
+        message: editorNotification('recovery.audioPromptTargetMismatch'),
       };
     }
     const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
@@ -3411,7 +3348,7 @@ class EditorDraftSession {
     if (!block || block.kind !== 'question') {
       return {
         ok: false,
-        message: 'Audio recovery target block is no longer available.',
+        message: editorNotification('recovery.audioPromptTargetBlockUnavailable'),
       };
     }
     return { ok: true };
@@ -3432,7 +3369,7 @@ class EditorDraftSession {
     const promptText = String(block?.prompt?.text || '').trim();
     const inFlightKey = `prompt:${blockId}`;
     if (this._promptT2AInFlightTargets.has(inFlightKey)) {
-      const message = 'Question prompt audio generation is already in progress.';
+      const message = editorNotification('audioGeneration.promptAlreadyInProgress');
       this.setRecoveryMessage(message);
       this.pushNotification({
         kind: 'info',
@@ -3444,7 +3381,7 @@ class EditorDraftSession {
       return { ok: false, status: 'already_in_flight', error: { message } };
     }
     if (!promptText) {
-      const message = 'Enter a prompt before generating audio.';
+      const message = editorNotification('audioGeneration.promptRequired');
       this.setRecoveryMessage(message);
       this.notifyStateChange();
       return {
@@ -3454,7 +3391,7 @@ class EditorDraftSession {
       };
     }
     if (promptText.length > T2A_TEXT_MAX_LENGTH) {
-      const message = `Prompt must be ${T2A_TEXT_MAX_LENGTH} characters or fewer to generate audio.`;
+      const message = editorNotification('audioGeneration.promptTextTooLong', { max: T2A_TEXT_MAX_LENGTH });
       this.setRecoveryMessage(message);
       this.notifyStateChange();
       return {
@@ -3469,8 +3406,8 @@ class EditorDraftSession {
       if (!audioResult?.ok) {
         const detail = String(audioResult?.error?.message || '').trim();
         const message = detail
-          ? `Audio generation failed. Existing audio is unchanged. ${detail}`
-          : 'Audio generation failed. Existing audio is unchanged.';
+          ? editorNotification('audioGeneration.failedWithDetail', { detail })
+          : editorNotification('audioGeneration.failed');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -3483,7 +3420,7 @@ class EditorDraftSession {
       }
       const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
       if (!audioBytes) {
-        const message = 'Audio generation failed. Existing audio is unchanged. Bridge returned invalid audio data.';
+        const message = editorNotification('audioGeneration.invalidAudioData');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -3500,7 +3437,7 @@ class EditorDraftSession {
         confirmReplace: hasExistingQuestionAudio,
       });
       if (!attachResult?.ok) {
-        const message = String(attachResult?.error?.message || '').trim() || 'Could not attach generated audio to this question.';
+        const message = String(attachResult?.error?.message || '').trim() || editorNotification('audioGeneration.attachPromptFailed');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -3511,12 +3448,12 @@ class EditorDraftSession {
         this.notifyStateChange();
         return { ok: false, status: 'attach_failed', error: { message } };
       }
-      this.setRecoveryMessage('Question prompt audio generated and attached.');
+      this.setRecoveryMessage(editorNotification('audioGeneration.promptGenerated'));
       this.pushNotification({
         kind: 'success',
         category: 'editor',
         source: 'prompt.t2a',
-        text: 'Question prompt audio generated and attached.',
+        text: editorNotification('audioGeneration.promptGenerated'),
       });
       this.notifyStateChange();
       return { ok: true, status: 'generated_editor_prompt_t2a', data: { blockId } };
@@ -3531,13 +3468,13 @@ class EditorDraftSession {
     if (!localDraftId || !intentDraftId || localDraftId !== intentDraftId) {
       return {
         ok: false,
-        message: 'Option audio recovery context is stale. Please retry from the current draft.',
+        message: editorNotification('recovery.audioOptionContextStale'),
       };
     }
     if (payload.target !== 'option') {
       return {
         ok: false,
-        message: 'Option audio recovery target mismatch. Please retry from an option control.',
+        message: editorNotification('recovery.audioOptionTargetMismatch'),
       };
     }
     const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
@@ -3546,7 +3483,7 @@ class EditorDraftSession {
     if (!block || block.kind !== 'question') {
       return {
         ok: false,
-        message: 'Option audio recovery block is no longer available.',
+        message: editorNotification('recovery.audioPromptTargetBlockUnavailable'),
       };
     }
     const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
@@ -3560,7 +3497,7 @@ class EditorDraftSession {
     if (!hasOption) {
       return {
         ok: false,
-        message: 'Option audio recovery target is no longer available.',
+        message: editorNotification('recovery.audioOptionTargetUnavailable'),
       };
     }
     return { ok: true };
@@ -3580,7 +3517,7 @@ class EditorDraftSession {
     const optionId = String(payload.optionId);
     const inFlightKey = `option:${blockId}:${optionId}`;
     if (this._optionT2AInFlightTargets.has(inFlightKey)) {
-      const message = 'Option audio generation is already in progress.';
+      const message = editorNotification('audioGeneration.optionAlreadyInProgress');
       this.setRecoveryMessage(message);
       this.pushNotification({
         kind: 'info',
@@ -3598,7 +3535,7 @@ class EditorDraftSession {
     const selectedOption = normalizedOptions.find((item) => item.id === optionId) || null;
     const optionText = String(selectedOption?.label ?? selectedOption?.value ?? '').trim();
     if (!optionText) {
-      const message = 'Enter option text before generating audio.';
+      const message = editorNotification('audioGeneration.optionTextRequired');
       this.setRecoveryMessage(message);
       this.notifyStateChange();
       return {
@@ -3608,7 +3545,7 @@ class EditorDraftSession {
       };
     }
     if (optionText.length > T2A_TEXT_MAX_LENGTH) {
-      const message = `Option text must be ${T2A_TEXT_MAX_LENGTH} characters or fewer to generate audio.`;
+      const message = editorNotification('audioGeneration.optionTextTooLong', { max: T2A_TEXT_MAX_LENGTH });
       this.setRecoveryMessage(message);
       this.notifyStateChange();
       return {
@@ -3623,8 +3560,8 @@ class EditorDraftSession {
       if (!audioResult?.ok) {
         const detail = String(audioResult?.error?.message || '').trim();
         const message = detail
-          ? `Audio generation failed. Existing audio is unchanged. ${detail}`
-          : 'Audio generation failed. Existing audio is unchanged.';
+          ? editorNotification('audioGeneration.failedWithDetail', { detail })
+          : editorNotification('audioGeneration.failed');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -3637,7 +3574,7 @@ class EditorDraftSession {
       }
       const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
       if (!audioBytes) {
-        const message = 'Audio generation failed. Existing audio is unchanged. Bridge returned invalid audio data.';
+        const message = editorNotification('audioGeneration.invalidAudioData');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -3654,7 +3591,7 @@ class EditorDraftSession {
         confirmReplace: hasExistingOptionAudio,
       });
       if (!attachResult?.ok) {
-        const message = String(attachResult?.error?.message || '').trim() || 'Could not attach generated audio to this option.';
+        const message = String(attachResult?.error?.message || '').trim() || editorNotification('audioGeneration.attachOptionFailed');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -3665,12 +3602,12 @@ class EditorDraftSession {
         this.notifyStateChange();
         return { ok: false, status: 'attach_failed', error: { message } };
       }
-      this.setRecoveryMessage('Option audio generated and attached.');
+      this.setRecoveryMessage(editorNotification('audioGeneration.optionGenerated'));
       this.pushNotification({
         kind: 'success',
         category: 'editor',
         source: 'option.t2a',
-        text: 'Option audio generated and attached.',
+        text: editorNotification('audioGeneration.optionGenerated'),
       });
       this.notifyStateChange();
       return { ok: true, status: 'generated_editor_option_t2a', data: { blockId, optionId } };
@@ -3774,7 +3711,7 @@ function renderEditorShell(session) {
   blockKind.className = 'control';
   const importFileInput = document.createElement('input');
   importFileInput.type = 'file';
-  importFileInput.accept = 'application/zip,.zip,application/json,.json';
+  importFileInput.accept = 'application/zip,.zip';
   importFileInput.style.display = 'none';
   const metadataSection = document.createElement('section');
   metadataSection.className = 'editor-metadata-section';
@@ -4137,24 +4074,6 @@ function renderEditorShell(session) {
     }
   }
 
-  function getProtectedActionErrorMessage(result, fallbackText) {
-    const status = String(result?.status || '').trim();
-    const detail = String(result?.error?.message || result?.result?.error?.message || '').trim();
-    if (detail) {
-      return detail;
-    }
-    if (status === 'blocked_no_local_id') {
-      return 'Could not continue because no local draft is active. Please refresh and try again.';
-    }
-    if (status === 'blocked_session_probe') {
-      return 'Unable to verify sign-in status right now. Please try again.';
-    }
-    if (status === 'invalid_context' || status === 'invalid_intent' || status === 'intent_invalid') {
-      return 'Could not continue this action because the draft context changed. Please refresh and try again.';
-    }
-    return fallbackText;
-  }
-
   async function copyTextToClipboard(text) {
     const value = String(text || '').trim();
     if (!value) return false;
@@ -4224,8 +4143,8 @@ function renderEditorShell(session) {
       notifyClipboardResult({
         copied,
         source,
-        successText: `${title} copied.`,
-        failureText: 'Clipboard copy is unavailable in this browser.',
+        successText: editorNotification('clipboard.copiedField', { label: title }),
+        failureText: editorNotification('clipboard.unavailable'),
       });
       window.setTimeout(() => {
         copyBtn.textContent = copyLabel;
@@ -4679,8 +4598,8 @@ function renderEditorShell(session) {
       kind: 'success',
       source: 'browse.published.search',
       text: append
-        ? `Loaded ${resultItems.length} more published package${resultItems.length === 1 ? '' : 's'}.`
-        : `Found ${resultItems.length} published package${resultItems.length === 1 ? '' : 's'}.`,
+        ? editorNotification('browsePublished.loadedMoreCount', { count: resultItems.length })
+        : editorNotification('browsePublished.foundCount', { count: resultItems.length }),
     });
     renderPublishedBrowserModal();
   }
@@ -4767,8 +4686,8 @@ function renderEditorShell(session) {
             kind: copied ? 'success' : 'warn',
             source: 'clipboard.publishedId',
             text: copied
-              ? t('editor.notifications.viewerLinkCopied')
-              : t('common.clipboard.unavailable'),
+              ? editorNotification('clipboard.viewerLinkCopied')
+              : editorNotification('clipboard.unavailable'),
           });
         });
         const openInEditorBtn = document.createElement('button');
@@ -4786,11 +4705,11 @@ function renderEditorShell(session) {
             emitPublishedBrowseNotification({
               kind: 'success',
               source: 'browse.published.open',
-              text: t('editor.notifications.openedPublishedPackageInEditor', { id: item.published_package_id }),
+              text: editorNotification('browsePublished.openedPublishedPackageInEditor', { id: item.published_package_id }),
             });
             browsePublishedDialogOpen = false;
           } else {
-            const openError = session.state.serverActionMessage || reopenResult?.error?.message || t('editor.notifications.failedOpenPublishedPackage');
+            const openError = session.state.serverActionMessage || reopenResult?.error?.message || editorNotification('browsePublished.failedOpenPublishedPackage');
             browsePublishedState = {
               ...browsePublishedState,
               error: openError,
@@ -5859,15 +5778,15 @@ function renderEditorShell(session) {
             kind: 'error',
             category: 'editor',
             source: 'prompt.t2a',
-            text: getProtectedActionErrorMessage(result, 'Unable to start audio generation. Please try again.'),
+            text: getProtectedActionErrorMessage(result, editorNotification('audioGeneration.startFailed')),
           });
           session.notifyStateChange();
         }
       } catch (error) {
         const detail = String(error?.message || '').trim();
         const text = detail
-          ? `Audio generation failed. Existing audio is unchanged. ${detail}`
-          : 'Audio generation failed. Existing audio is unchanged.';
+          ? editorNotification('audioGeneration.failedWithDetail', { detail })
+          : editorNotification('audioGeneration.failed');
         session.pushNotification({
           kind: 'error',
           category: 'editor',
@@ -6146,7 +6065,7 @@ function renderEditorShell(session) {
         optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
         optionAudioBtn.addEventListener('click', () => {
           if (!isPersistedOption) {
-            session.setMediaFeedback(t('editor.media.enterOptionTextBeforeAttachingAudio'));
+            session.setMediaFeedback(editorNotification('media.optionTextRequired'));
             updateSummary();
             return;
           }
@@ -6217,7 +6136,7 @@ function renderEditorShell(session) {
         optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;
         optionT2ABtn.addEventListener('click', async () => {
           if (!isPersistedOption) {
-            session.setMediaFeedback(t('editor.media.enterOptionTextBeforeAttachingAudio'));
+            session.setMediaFeedback(editorNotification('audioGeneration.optionTextRequired'));
             updateSummary();
             return;
           }
@@ -6263,15 +6182,15 @@ function renderEditorShell(session) {
                 kind: 'error',
                 category: 'editor',
                 source: 'option.t2a',
-                text: getProtectedActionErrorMessage(result, 'Unable to start audio generation. Please try again.'),
+                text: getProtectedActionErrorMessage(result, editorNotification('audioGeneration.startFailed')),
               });
               session.notifyStateChange();
             }
           } catch (error) {
             const detail = String(error?.message || '').trim();
             const text = detail
-              ? `Audio generation failed. Existing audio is unchanged. ${detail}`
-              : 'Audio generation failed. Existing audio is unchanged.';
+              ? editorNotification('audioGeneration.failedWithDetail', { detail })
+              : editorNotification('audioGeneration.failed');
             session.pushNotification({
               kind: 'error',
               category: 'editor',
@@ -6422,7 +6341,7 @@ function renderEditorShell(session) {
           emitServerNotification({
             kind: copied ? 'success' : 'warn',
             source: 'clipboard.publishedViewerLink',
-            text: copied ? t('editor.notifications.viewerLinkCopied') : t('common.clipboard.unavailable'),
+            text: copied ? editorNotification('clipboard.viewerLinkCopied') : editorNotification('clipboard.unavailable'),
           });
         });
         actions.appendChild(copyBtn);
@@ -6918,12 +6837,19 @@ function renderEditorShell(session) {
     const [file] = importFileInput.files || [];
     if (!file) return;
     const isZipFile = file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip';
-    if (isZipFile) {
-      await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
-    } else {
-      const fileText = await file.text();
-      await session.importWorksheetJson(fileText, { convertToEditableDraft: true });
+    if (!isZipFile) {
+      session.pushNotification({
+        kind: 'error',
+        category: 'editor',
+        source: 'import.package_zip',
+        text: editorNotification('import.zipRequired'),
+      });
+      session.notifyStateChange();
+      importFileInput.value = '';
+      updateSummary();
+      return;
     }
+    await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
     importFileInput.value = '';
     updateSummary();
   });

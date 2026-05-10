@@ -83,7 +83,7 @@ export default {
       "addContent": "Add Content",
       "addQuestion": "Add Question",
       "openViewer": "Open in Viewer (same tab)",
-      "importPackage": "Import package (.zip) / legacy JSON",
+      "importPackage": "Import package (.zip)",
       "exportPackage": "Export package (.zip)",
       "more": "More"
     },
@@ -289,9 +289,100 @@ export default {
       }
     },
     "notifications": {
-      "failedOpenPublishedPackage": "Failed Open Published Package",
-      "openedPublishedPackageInEditor": "Opened Published Package In Editor {id}",
-      "viewerLinkCopied": "Viewer Link Copied"
+      "auth": {
+        "completeSignInPopup": "Complete sign-in in the popup. Session will refresh automatically.",
+        "sessionExpired": "Sign-in session expired. Please sign in again.",
+        "sessionNotReadyAfterSignIn": "Sign-in completed, but session is still not ready.",
+        "signInPopupBlocked": "Sign-in popup was blocked. Allow popups for this site, then try again.",
+        "signInRefreshing": "Sign-in completed. Refreshing server session...",
+        "stillWaitingForPopup": "Still waiting for sign-in confirmation from the popup...",
+        "unableToVerifySignIn": "Unable to verify sign-in status right now. Please try again."
+      },
+      "audioGeneration": {
+        "attachOptionFailed": "Could not attach generated audio to this option.",
+        "attachPromptFailed": "Could not attach generated audio to this question.",
+        "failed": "Audio generation failed. Existing audio is unchanged.",
+        "failedWithDetail": "Audio generation failed. Existing audio is unchanged. {detail}",
+        "invalidAudioData": "Audio generation failed. Existing audio is unchanged. Bridge returned invalid audio data.",
+        "optionAlreadyInProgress": "Option audio generation is already in progress.",
+        "optionGenerated": "Option audio generated and attached.",
+        "optionTextRequired": "Enter option text before generating audio.",
+        "optionTextTooLong": "Option text must be {max} characters or fewer to generate audio.",
+        "promptAlreadyInProgress": "Question prompt audio generation is already in progress.",
+        "promptGenerated": "Question prompt audio generated and attached.",
+        "promptRequired": "Enter a prompt before generating audio.",
+        "promptTextTooLong": "Prompt must be {max} characters or fewer to generate audio.",
+        "startFailed": "Unable to start audio generation. Please try again."
+      },
+      "browsePublished": {
+        "failedOpenPublishedPackage": "Failed to open published package.",
+        "foundCount": "Found {count} published package(s).",
+        "loadedMoreCount": "Loaded {count} more published package(s).",
+        "openedPublishedPackageInEditor": "Opened published package {id} in editor."
+      },
+      "clipboard": {
+        "copiedField": "{label} copied.",
+        "unavailable": "Clipboard copy is unavailable in this browser.",
+        "viewerLinkCopied": "Viewer link copied."
+      },
+      "export": {
+        "exportedPackage": "Exported package {filename}.",
+        "noActiveDraft": "No active draft to export.",
+        "unableToExportPackage": "Unable to export package."
+      },
+      "import": {
+        "importedPackageZip": "Imported worksheet package.",
+        "unableToImportPackage": "Unable to import worksheet package.",
+        "zipRequired": "A .zip worksheet package file is required."
+      },
+      "media": {
+        "audioPlaybackBlocked": "Audio playback was blocked. Try again.",
+        "audioPreviewLoadFailed": "Unable to load attached audio for preview.",
+        "audioPreviewPlayFailed": "Unable to play attached audio.",
+        "noMediaAttachment": "No media attachment found to remove.",
+        "optionTextRequired": "Enter option text before attaching audio."
+      },
+      "publishedPackage": {
+        "deleted": "Published package deleted.",
+        "idRequired": "Published package ID is required.",
+        "openAlreadyInProgress": "Open already in progress for published package {id}.",
+        "openedAsLocalCopy": "Opened published package {id} as a new local draft copy.",
+        "opening": "Opening published package...",
+        "published": "Published package {id}.",
+        "publishing": "Publishing..."
+      },
+      "recovery": {
+        "audioOptionContextStale": "Option audio recovery context is stale. Please retry from the current draft.",
+        "audioOptionTargetMismatch": "Option audio recovery target mismatch. Please retry from an option control.",
+        "audioOptionTargetUnavailable": "Option audio recovery target is no longer available.",
+        "audioPromptContextStale": "Audio recovery context is stale. Please retry from the current draft.",
+        "audioPromptTargetBlockUnavailable": "Audio recovery target block is no longer available.",
+        "audioPromptTargetMismatch": "Audio recovery target mismatch. Please retry from the prompt control.",
+        "contextChanged": "Could not continue this action because the draft context changed. Please refresh and try again.",
+        "noActiveDraft": "Could not continue because no local draft is active. Please refresh and try again.",
+        "rewriteUnavailable": "Rewrite recovery is not available yet. Please run Rewrite again."
+      },
+      "save": {
+        "manualSaveFailed": "Manual save failed.",
+        "savedDraft": "Saved draft {id}."
+      },
+      "uploadDraft": {
+        "alreadyInProgress": "Upload already in progress.",
+        "draftIdRequired": "Uploaded draft ID is required.",
+        "draftSlotLimitReached": "Draft slot limit reached.",
+        "listRefreshFailed": "Unable to refresh uploaded drafts.",
+        "listRefreshed": "Uploaded drafts refreshed.",
+        "networkFailure": "Upload failed before completion. Your local draft is still safe. Please retry when the network is stable.",
+        "openedAsLocalCopy": "Opened uploaded draft {id} as a new local draft copy.",
+        "publishAlreadyInProgress": "Publish already in progress for uploaded draft {id}.",
+        "publishedRefreshSucceeded": "Uploaded drafts refreshed.",
+        "refreshSucceeded": "Upload succeeded. Draft list refreshed.",
+        "refreshing": "Refreshing...",
+        "uploading": "Uploading draft package...",
+        "uploaded": "Uploaded draft {id}.",
+        "uploadedDraftDeleted": "Uploaded draft deleted.",
+        "uploadedDraftsRefreshFailed": "Uploaded drafts refresh failed."
+      }
     },
     "option": {
       "add": "Add",
@@ -375,6 +466,7 @@ export default {
       "manageServerAttempts": "Manage server attempts",
       "loginToManageServerAttempts": "Log in to manage server attempts",
       "importPackage": "Import worksheet package (.zip)",
+      "importAttemptPackage": "Import attempt package (.zip)",
       "browsePublishedPackages": "Browse published packages",
       "browsePublishedWorksheets": "Browse published worksheets",
       "loginToBrowsePublishedWorksheets": "Log in to browse published worksheets",
@@ -465,6 +557,67 @@ export default {
       "couldNotRender": "Could Not Render",
       "missingWithId": "Missing With Id {id}"
     },
+    "notifications": {
+      "auth": {
+        "completeSignInPopup": "Complete sign-in in the popup. Session will refresh automatically.",
+        "sessionExpired": "Session expired. Please log in again.",
+        "signedOut": "You are currently signed out. Log in to use server features.",
+        "signInPopupBlocked": "Sign-in popup was blocked. Allow popups for this site, then try again.",
+        "signInRefreshing": "Sign-in completed. Refreshing server session...",
+        "stillWaitingForPopup": "Still waiting for sign-in confirmation from the popup..."
+      },
+      "print": {
+        "popupBlocked": "Print window was blocked. Allow popups for this site, then try again.",
+        "popupClosed": "Print window was closed before the report finished loading. Try printing again.",
+        "submitBeforePrinting": "Submit the worksheet before printing the report.",
+        "unableToLoad": "Unable to load the print report window. Try printing again."
+      },
+      "rewrite": {
+        "couldNotStart": "Could not start rewrite.",
+        "noActiveAttempt": "No active attempt is available.",
+        "onlyForTextResponse": "Rewrite is only available for text responses.",
+        "temporarilyUnavailableSessionCheck": "Rewrite is temporarily unavailable while sign-in status is checked.",
+        "temporarilyUnavailableWithReason": "Rewrite is temporarily unavailable: {reason}"
+      },
+      "uploadAttempt": {
+        "alreadyInProgress": "Upload already in progress.",
+        "authRequired": "Sign-in is required before saving attempts to server.",
+        "conflict": "An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management is available from the uploaded attempts manager.",
+        "invalidPackage": "The attempt package format is invalid. Your local attempt is still safe. Please refresh and retry.",
+        "networkFailure": "Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.",
+        "noActiveAttempt": "No active local attempt is available for upload.",
+        "preparing": "Preparing upload...",
+        "progressPercent": "Uploading attempt... {percent}%",
+        "saved": "Attempt saved to server.",
+        "saving": "Saving upload...",
+        "signInRequired": "Sign-in is required before uploading attempts.",
+        "slotLimitReached": "Attempt slot limit reached ({limit}).",
+        "slotLimitReachedUnknown": "Attempt slot limit reached.",
+        "staleTarget": "Attempt upload target is stale. Please retry from the current attempt."
+      },
+      "localAttemptExport": {
+        "noActiveAttempt": "No active local attempt is available for export.",
+        "exported": "Attempt package exported.",
+        "failed": "Unable to export attempt package. Your local attempt is still safe."
+      },
+      "localAttemptImport": {
+        "zipRequired": "A .zip attempt package file is required.",
+        "invalidPackage": "Invalid attempt package. Please choose a valid attempt package (.zip).",
+        "worksheetPackageNotAttempt": "This is a worksheet package, not an attempt package. Choose an attempt package (.zip) that includes saved answers.",
+        "failed": "Unable to import attempt package. Your existing local attempts are unchanged."
+      },
+      "uploadedAttempt": {
+        "artifactEmpty": "Uploaded attempt artifact is empty.",
+        "deleted": "Uploaded attempt deleted from server.",
+        "deleteFailed": "Failed to delete uploaded attempt.",
+        "downloaded": "Downloaded uploaded attempt \"{title}\".",
+        "downloadFailed": "Unable to download uploaded attempt.",
+        "restoreFailed": "Unable to resume uploaded attempt. {reason}",
+        "restored": "Restored uploaded attempt as a new local attempt.",
+        "restoredWithId": "Restored uploaded attempt as local attempt {id}.",
+        "resumeFailed": "Unable to resume uploaded attempt."
+      }
+    },
     "inputHelper": {
       "boolean": "Choose True / False.",
       "multipleChoiceMulti": "Choose one or more options.",
@@ -508,7 +661,7 @@ export default {
       "retryNow": "Retry Now"
     },
     "rewrite": {
-      "action": "Action",
+      "action": "Rewrite",
       "couldNotStart": "Could Not Start",
       "hintEnterText": "Hint Enter Text",
       "hintTooLong": "Hint Too Long {max}",
@@ -565,6 +718,8 @@ export default {
       "progressSaving": "Saving upload...",
       "saveAttemptAriaLabel": "Save Attempt Aria Label",
       "saveAttemptTitle": "Save Attempt Title",
+      "exportAttemptAriaLabel": "Export attempt package (.zip)",
+      "exportAttemptTitle": "Export attempt package (.zip)",
       "signInRequired": "Sign-in is required before uploading attempts."
     }
   }
