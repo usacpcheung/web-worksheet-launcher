@@ -466,6 +466,7 @@ export default {
       "manageServerAttempts": "Manage server attempts",
       "loginToManageServerAttempts": "Log in to manage server attempts",
       "importPackage": "Import worksheet package (.zip)",
+      "importAttemptPackage": "Import attempt package (.zip)",
       "browsePublishedPackages": "Browse published packages",
       "browsePublishedWorksheets": "Browse published worksheets",
       "loginToBrowsePublishedWorksheets": "Log in to browse published worksheets",
@@ -594,6 +595,17 @@ export default {
         "slotLimitReachedUnknown": "Attempt slot limit reached.",
         "staleTarget": "Attempt upload target is stale. Please retry from the current attempt."
       },
+      "localAttemptExport": {
+        "noActiveAttempt": "No active local attempt is available for export.",
+        "exported": "Attempt package exported.",
+        "failed": "Unable to export attempt package. Your local attempt is still safe."
+      },
+      "localAttemptImport": {
+        "zipRequired": "A .zip attempt package file is required.",
+        "invalidPackage": "Invalid attempt package. Please choose a valid attempt package (.zip).",
+        "worksheetPackageNotAttempt": "This is a worksheet package, not an attempt package. Choose an attempt package (.zip) that includes saved answers.",
+        "failed": "Unable to import attempt package. Your existing local attempts are unchanged."
+      },
       "uploadedAttempt": {
         "artifactEmpty": "Uploaded attempt artifact is empty.",
         "deleted": "Uploaded attempt deleted from server.",
@@ -649,7 +661,7 @@ export default {
       "retryNow": "Retry Now"
     },
     "rewrite": {
-      "action": "Action",
+      "action": "Rewrite",
       "couldNotStart": "Could Not Start",
       "hintEnterText": "Hint Enter Text",
       "hintTooLong": "Hint Too Long {max}",
@@ -706,6 +718,8 @@ export default {
       "progressSaving": "Saving upload...",
       "saveAttemptAriaLabel": "Save Attempt Aria Label",
       "saveAttemptTitle": "Save Attempt Title",
+      "exportAttemptAriaLabel": "Export attempt package (.zip)",
+      "exportAttemptTitle": "Export attempt package (.zip)",
       "signInRequired": "Sign-in is required before uploading attempts."
     }
   }
