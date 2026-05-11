@@ -1,6 +1,7 @@
 import { createProject, createScene, SceneType } from './model.js';
 import { zip, unzip } from './utils/zip.js';
 import { seedIdSequencesFromProject } from './utils/id.js';
+import { validateProject } from './editor/validators.js';
 
 const DB_NAME = 'roleplayscene';
 const DB_VERSION = 1;
@@ -8,6 +9,23 @@ const PROJECT_STORE = 'project';
 const PROJECT_KEY = 'snapshot';
 const SAVE_DEBOUNCE_MS = 500;
 const ARCHIVE_MANIFEST_VERSION = 1;
+
+export const ImportErrorCode = Object.freeze({
+  INVALID_ZIP: 'invalid_zip',
+  MISSING_PROJECT_JSON: 'missing_project_json',
+  INVALID_JSON: 'invalid_json',
+  INVALID_PROJECT: 'invalid_project',
+});
+
+export class ProjectImportError extends Error {
+  constructor(code, message, details = {}) {
+    super(message);
+    this.name = 'ProjectImportError';
+    this.code = code;
+    this.errors = Array.isArray(details.errors) ? details.errors : [];
+    this.warnings = Array.isArray(details.warnings) ? details.warnings : [];
+  }
+}
 
 function noop() {}
 
@@ -212,7 +230,7 @@ function buildManifest(snapshot) {
   return { manifest, binaries };
 }
 
-function restoreAsset(manifestAsset, files) {
+function restoreAsset(manifestAsset, files, warnings) {
   if (!manifestAsset) return null;
   const name = manifestAsset.name ?? '';
   const path = manifestAsset.path ?? null;
@@ -221,10 +239,13 @@ function restoreAsset(manifestAsset, files) {
     const blob = new Blob([files[path]], { type });
     return { name, blob };
   }
+  if (path && warnings) {
+    warnings.push(path);
+  }
   return { name, blob: null };
 }
 
-function manifestToSerialized(manifest, files) {
+function manifestToSerialized(manifest, files, warnings = []) {
   if (!manifest) return null;
   const scenes = Array.isArray(manifest.scenes) ? manifest.scenes.slice(0, 20) : [];
   return {
@@ -234,11 +255,11 @@ function manifestToSerialized(manifest, files) {
       return {
         id: scene.id,
         type: scene.type,
-        image: restoreAsset(scene.image, files),
-        backgroundAudio: restoreAsset(scene.backgroundAudio, files),
+        image: restoreAsset(scene.image, files, warnings),
+        backgroundAudio: restoreAsset(scene.backgroundAudio, files, warnings),
         dialogue: dialogue.map(line => ({
           text: line.text ?? '',
-          audio: restoreAsset(line.audio, files),
+          audio: restoreAsset(line.audio, files, warnings),
         })),
         choices: Array.isArray(scene.choices)
           ? scene.choices.map(choice => ({
@@ -502,56 +523,123 @@ export async function setupPersistence(store, { showMessage = noop } = {}) {
   };
 }
 
-export async function importProject(store, file) {
-  const previous = store.get().project;
-  const name = file?.name ? String(file.name).toLowerCase() : '';
-  const mime = file?.type ? String(file.type).toLowerCase() : '';
-  const isZip = name.endsWith('.zip') || mime === 'application/zip' || mime === 'application/x-zip-compressed';
-
-  if (isZip) {
-    const serialized = await extractProjectFromArchive(file);
-    const hydrated = hydrateProject(serialized, { previousProject: previous });
-    seedIdSequencesFromProject(hydrated);
-    store.set({ project: hydrated });
-    await reseedPersistence(hydrated);
-    return;
+function serializePlainProjectJson(json) {
+  if (!json || typeof json !== 'object' || Array.isArray(json)) {
+    throw new ProjectImportError(ImportErrorCode.INVALID_JSON, 'Project JSON must be an object');
   }
-
-  const text = await file.text();
-  const json = JSON.parse(text);
   const scenes = Array.isArray(json.scenes) ? json.scenes.slice(0, 20) : [];
-  const serialized = {
+  return {
     meta: { ...json.meta },
     scenes,
     assets: Array.isArray(json.assets) ? json.assets.slice() : [],
   };
-  const hydrated = hydrateProject(serialized, { previousProject: previous });
-  seedIdSequencesFromProject(hydrated);
-  store.set({ project: hydrated });
-  await reseedPersistence(hydrated);
 }
 
-export async function extractProjectFromArchive(fileOrBytes) {
+function validateImportedProject(project, warnings = []) {
+  const validation = validateProject(project);
+  if (validation.errors.length) {
+    revokeProjectObjectUrls(project);
+    throw new ProjectImportError(
+      ImportErrorCode.INVALID_PROJECT,
+      'Imported project failed validation',
+      {
+        errors: validation.errors,
+        warnings: [...validation.warnings, ...warnings],
+      },
+    );
+  }
+  return {
+    errors: validation.errors,
+    warnings: [...validation.warnings, ...warnings],
+  };
+}
+
+export async function prepareProjectImport(file) {
+  const name = file?.name ? String(file.name).toLowerCase() : '';
+  const mime = file?.type ? String(file.type).toLowerCase() : '';
+  const isZip = name.endsWith('.zip') || mime === 'application/zip' || mime === 'application/x-zip-compressed';
+  const isJson = name.endsWith('.json') || mime === 'application/json' || mime === 'text/json' || !isZip;
+
+  let serialized;
+  let missingMediaPaths = [];
+
+  if (isZip) {
+    const extracted = await extractProjectFromArchive(file, { includeWarnings: true });
+    serialized = extracted.serialized;
+    missingMediaPaths = [...new Set(extracted.missingMediaPaths)];
+  } else if (isJson) {
+    let json;
+    try {
+      const text = await file.text();
+      json = JSON.parse(text);
+    } catch (err) {
+      throw new ProjectImportError(ImportErrorCode.INVALID_JSON, 'Project JSON is unreadable');
+    }
+    serialized = serializePlainProjectJson(json);
+  }
+
+  const project = hydrateProject(serialized);
+  const validation = validateImportedProject(project);
+  return {
+    project,
+    validation,
+    missingMediaPaths,
+  };
+}
+
+export async function applyPreparedProjectImport(store, preparedImport) {
+  const project = preparedImport?.project;
+  if (!project) {
+    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Prepared import is missing project data');
+  }
+  const previous = store.get().project;
+  revokeProjectObjectUrls(previous);
+  seedIdSequencesFromProject(project);
+  store.set({ project });
+  await reseedPersistence(project);
+}
+
+export async function importProject(store, file) {
+  const prepared = await prepareProjectImport(file);
+  await applyPreparedProjectImport(store, prepared);
+  return prepared;
+}
+
+export async function extractProjectFromArchive(fileOrBytes, options = {}) {
   const buffer = fileOrBytes instanceof Uint8Array
     ? fileOrBytes
     : new Uint8Array(await fileOrBytes.arrayBuffer());
-  const unpacked = await unzip(buffer);
+  let unpacked;
+  try {
+    unpacked = await unzip(buffer);
+  } catch (err) {
+    throw new ProjectImportError(ImportErrorCode.INVALID_ZIP, 'Project archive is unreadable');
+  }
   const projectEntry = unpacked['project.json'];
   if (!projectEntry) {
-    throw new Error('Archive is missing project.json');
+    throw new ProjectImportError(ImportErrorCode.MISSING_PROJECT_JSON, 'Archive is missing project.json');
   }
   const decoder = new TextDecoder();
-  const parsed = JSON.parse(decoder.decode(projectEntry));
+  let parsed;
+  try {
+    parsed = JSON.parse(decoder.decode(projectEntry));
+  } catch (err) {
+    throw new ProjectImportError(ImportErrorCode.INVALID_JSON, 'Archive project.json is invalid');
+  }
   const manifestVersion = parsed.manifestVersion ?? 0;
   const manifest = manifestVersion ? parsed.project : parsed;
   const files = { ...unpacked };
   delete files['project.json'];
   if (!manifest || typeof manifest !== 'object') {
-    throw new Error('Archive manifest missing project data');
+    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Archive manifest missing project data');
   }
-  const serialized = manifestToSerialized(manifest, files);
+  const missingMediaPaths = [];
+  const serialized = manifestToSerialized(manifest, files, missingMediaPaths);
   if (!serialized) {
-    throw new Error('Archive manifest invalid');
+    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Archive manifest invalid');
+  }
+  if (options.includeWarnings) {
+    return { serialized, missingMediaPaths };
   }
   return serialized;
 }

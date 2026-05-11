@@ -2,7 +2,14 @@ import { Store } from './state.js';
 import { renderEditor } from './editor/editor.js';
 import { renderPlayer } from './player/player.js';
 import { ensureAudioGate } from './player/audio.js';
-import { importProject, exportProject, setupPersistence } from './storage.js';
+import {
+  applyPreparedProjectImport,
+  exportProject,
+  ImportErrorCode,
+  prepareProjectImport,
+  revokeProjectObjectUrls,
+  setupPersistence,
+} from './storage.js';
 import { validateProject } from './editor/validators.js';
 import { renderValidation } from './editor/inspector.js';
 import { translate, onLocaleChange, getAvailableLocales } from './i18n.js';
@@ -24,6 +31,11 @@ const fileInput = document.getElementById('file-input');
 const topbarTitle = document.querySelector('.topbar h1');
 const localeSelect = document.getElementById('locale-select');
 const localeLabel = document.querySelector('.toolbar__locale-label');
+const importConfirmOverlay = document.getElementById('import-confirm-overlay');
+const importConfirmTitle = document.getElementById('import-confirm-title');
+const importConfirmBody = document.getElementById('import-confirm-body');
+const importConfirmAccept = document.getElementById('import-confirm-accept');
+const importConfirmCancel = document.getElementById('import-confirm-cancel');
 
 const store = new Store();
 
@@ -31,6 +43,7 @@ let mode = 'edit'; // 'edit' | 'play'
 let teardown = null;
 let persistenceCleanup = () => {};
 let lastMessagePayload = null;
+let activeImportConfirmation = null;
 
 const LOCALE_STORAGE_KEY = 'roleplayscene:locale';
 
@@ -60,6 +73,18 @@ function updateToolbarText() {
   }
   if (dismissButton) {
     dismissButton.setAttribute('aria-label', translate('toolbar.dismissMessage'));
+  }
+  if (importConfirmTitle) {
+    importConfirmTitle.textContent = translate('messages.importConfirmTitle');
+  }
+  if (importConfirmBody) {
+    importConfirmBody.textContent = translate('messages.importConfirmBody');
+  }
+  if (importConfirmAccept) {
+    importConfirmAccept.textContent = translate('messages.importConfirmAccept');
+  }
+  if (importConfirmCancel) {
+    importConfirmCancel.textContent = translate('messages.importConfirmCancel');
   }
 }
 
@@ -168,6 +193,89 @@ function clearMessage() {
   messageHost.setAttribute('hidden', '');
 }
 
+function showImportError(err) {
+  const errors = Array.isArray(err?.errors) ? err.errors : [];
+  const warnings = Array.isArray(err?.warnings) ? err.warnings : [];
+  const codeToTextId = {
+    [ImportErrorCode.INVALID_ZIP]: 'messages.importInvalidZip',
+    [ImportErrorCode.MISSING_PROJECT_JSON]: 'messages.importMissingProjectJson',
+    [ImportErrorCode.INVALID_JSON]: 'messages.importInvalidJson',
+    [ImportErrorCode.INVALID_PROJECT]: 'messages.importInvalidProject',
+  };
+  showMessage({
+    textId: codeToTextId[err?.code] ?? 'messages.importFailedSafe',
+    errors,
+    warnings,
+  });
+}
+
+function closeImportConfirmation(result) {
+  if (!activeImportConfirmation) return;
+  const { resolve, previousFocus } = activeImportConfirmation;
+  activeImportConfirmation = null;
+  importConfirmOverlay.hidden = true;
+  importConfirmOverlay.setAttribute('hidden', '');
+  document.removeEventListener('keydown', handleImportConfirmationKeydown);
+  if (previousFocus && typeof previousFocus.focus === 'function') {
+    previousFocus.focus();
+  }
+  resolve(result);
+}
+
+function handleImportConfirmationKeydown(event) {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeImportConfirmation(false);
+    return;
+  }
+  if (event.key === 'Tab' && importConfirmAccept && importConfirmCancel) {
+    const controls = [importConfirmCancel, importConfirmAccept];
+    const currentIndex = controls.indexOf(document.activeElement);
+    if (currentIndex === -1) return;
+    event.preventDefault();
+    const nextIndex = event.shiftKey
+      ? (currentIndex + controls.length - 1) % controls.length
+      : (currentIndex + 1) % controls.length;
+    controls[nextIndex].focus();
+  }
+}
+
+function confirmProjectImport() {
+  if (!importConfirmOverlay || !importConfirmAccept || !importConfirmCancel) {
+    return Promise.resolve(globalThis.confirm?.(translate('messages.importConfirmBody')) ?? false);
+  }
+  if (activeImportConfirmation) {
+    closeImportConfirmation(false);
+  }
+  updateToolbarText();
+  importConfirmOverlay.hidden = false;
+  importConfirmOverlay.removeAttribute('hidden');
+  document.addEventListener('keydown', handleImportConfirmationKeydown);
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  requestAnimationFrame(() => {
+    importConfirmAccept.focus();
+  });
+  return new Promise((resolve) => {
+    activeImportConfirmation = { resolve, previousFocus };
+  });
+}
+
+if (importConfirmAccept) {
+  importConfirmAccept.addEventListener('click', () => closeImportConfirmation(true));
+}
+
+if (importConfirmCancel) {
+  importConfirmCancel.addEventListener('click', () => closeImportConfirmation(false));
+}
+
+if (importConfirmOverlay) {
+  importConfirmOverlay.addEventListener('click', (event) => {
+    if (event.target === importConfirmOverlay) {
+      closeImportConfirmation(false);
+    }
+  });
+}
+
 if (dismissButton) {
   dismissButton.addEventListener('click', () => {
     clearMessage();
@@ -209,14 +317,35 @@ btnImport.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
+  let preparedImport = null;
   try {
     showMessage({ textId: 'messages.importingProject' });
-    await importProject(store, file);
-    showMessage({ textId: 'messages.importedProject' });
+    preparedImport = await prepareProjectImport(file);
+    const shouldImport = await confirmProjectImport();
+    if (!shouldImport) {
+      revokeProjectObjectUrls(preparedImport.project);
+      showMessage({ textId: 'messages.importCanceled' });
+      return;
+    }
+    await applyPreparedProjectImport(store, preparedImport);
+    const missingMediaWarnings = preparedImport.missingMediaPaths.map(path => (
+      translate('messages.importMissingMediaWarning', { path })
+    ));
+    const validationWarnings = Array.isArray(preparedImport.validation?.warnings)
+      ? preparedImport.validation.warnings
+      : [];
+    const warnings = [...validationWarnings, ...missingMediaWarnings];
+    showMessage({
+      textId: warnings.length ? 'messages.importedProjectWithWarnings' : 'messages.importedProject',
+      warnings,
+    });
     setMode('edit');
   } catch (err) {
     console.error(err);
-    showMessage({ textId: 'messages.importFailed' });
+    if (preparedImport?.project && store.get().project !== preparedImport.project) {
+      revokeProjectObjectUrls(preparedImport.project);
+    }
+    showImportError(err);
   } finally {
     fileInput.value = '';
   }

@@ -32,6 +32,23 @@
     <button type="button" class="app-messages__dismiss" aria-label="Dismiss message">&times;</button>
   </div>
 
+  <div id="import-confirm-overlay" class="confirm-overlay" hidden>
+    <section
+      class="confirm-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="import-confirm-title"
+      aria-describedby="import-confirm-body"
+    >
+      <h2 id="import-confirm-title"></h2>
+      <p id="import-confirm-body"></p>
+      <div class="confirm-actions">
+        <button type="button" id="import-confirm-cancel" class="confirm-actions__secondary"></button>
+        <button type="button" id="import-confirm-accept" class="confirm-actions__primary"></button>
+      </div>
+    </section>
+  </div>
+
   <main id="app" class="layout">
     <section id="left-pane" class="pane">
       <!-- Editor graph or Player stage will render here -->

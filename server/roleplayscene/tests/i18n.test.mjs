@@ -53,6 +53,23 @@ try {
     '可選的提示卡文字',
     'Inspector cue-card placeholder should resolve from Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('messages.importConfirmTitle'),
+    '取代目前專案？',
+    'Import confirmation title should resolve from Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('messages.importMissingMediaWarning', { path: 'media/missing.mp3' }),
+    '缺少媒體檔案：media/missing.mp3',
+    'Import missing-media warning should resolve from Traditional Chinese locale',
+  );
+
+  setActiveLocale('en');
+  assert.strictEqual(
+    translate('messages.importConfirmAccept'),
+    'Replace and import',
+    'Import confirmation action should resolve from English locale',
+  );
 
   setActiveLocale('fr');
 

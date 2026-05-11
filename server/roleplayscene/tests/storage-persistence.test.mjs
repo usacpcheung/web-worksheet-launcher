@@ -8,9 +8,12 @@ import {
   setupPersistence,
   createProjectArchive,
   importProject,
+  prepareProjectImport,
+  applyPreparedProjectImport,
   extractProjectFromArchive,
+  ImportErrorCode,
 } from '../scripts/storage.js';
-import { unzip } from '../scripts/utils/zip.js';
+import { zip, unzip } from '../scripts/utils/zip.js';
 import { translate, setActiveLocale } from '../scripts/i18n.js';
 import { newId, resetIdSequences } from '../scripts/utils/id.js';
 
@@ -35,16 +38,24 @@ const audioBlob = new Blob(['audio-data'], { type: 'audio/mpeg' });
 
 const sourceProject = createProject({
   meta: { title: 'Persistent Adventure', version: 3 },
-  scenes: [createScene({
-    id: 'scene-1',
-    type: SceneType.START,
-    image: { name: 'cover.png', objectUrl: 'blob:legacy-img', blob: imageBlob },
-    backgroundAudio: { name: 'bg.mp3', objectUrl: 'blob:legacy-bg', blob: audioBlob },
-    dialogue: [
-      { text: 'Welcome!', audio: { name: 'line.mp3', objectUrl: 'blob:legacy-line', blob: audioBlob } },
-    ],
-    choices: [{ id: 'choice-1', label: 'Continue', nextSceneId: null, cueCardText: 'Keep eye contact.' }],
-  })],
+  scenes: [
+    createScene({
+      id: 'scene-1',
+      type: SceneType.START,
+      image: { name: 'cover.png', objectUrl: 'blob:legacy-img', blob: imageBlob },
+      backgroundAudio: { name: 'bg.mp3', objectUrl: 'blob:legacy-bg', blob: audioBlob },
+      dialogue: [
+        { text: 'Welcome!', audio: { name: 'line.mp3', objectUrl: 'blob:legacy-line', blob: audioBlob } },
+      ],
+      choices: [{ id: 'choice-1', label: 'Continue', nextSceneId: 'scene-end', cueCardText: 'Keep eye contact.' }],
+    }),
+    createScene({
+      id: 'scene-end',
+      type: SceneType.END,
+      dialogue: [{ text: 'Goodbye', audio: null }],
+      choices: [],
+    }),
+  ],
 });
 
 const serialised = serializeProject(sourceProject);
@@ -113,16 +124,28 @@ assert.strictEqual(importedProject.scenes[0].choices[0].cueCardText, 'Keep eye c
 
 const legacySnapshot = {
   meta: { title: 'Legacy Project', version: 1 },
-  scenes: [{
-    id: 'scene-legacy',
-    type: SceneType.START,
-    image: { name: 'legacy.png' },
-    backgroundAudio: null,
-    dialogue: [{ text: 'Hi there', audio: { name: 'legacy.mp3' } }],
-    choices: [{ id: 'legacy-choice', label: 'Next', nextSceneId: null }],
-    autoNextSceneId: null,
-    notes: '',
-  }],
+  scenes: [
+    {
+      id: 'scene-legacy',
+      type: SceneType.START,
+      image: { name: 'legacy.png' },
+      backgroundAudio: null,
+      dialogue: [{ text: 'Hi there', audio: { name: 'legacy.mp3' } }],
+      choices: [{ id: 'legacy-choice', label: 'Next', nextSceneId: 'scene-legacy-end' }],
+      autoNextSceneId: null,
+      notes: '',
+    },
+    {
+      id: 'scene-legacy-end',
+      type: SceneType.END,
+      image: null,
+      backgroundAudio: null,
+      dialogue: [{ text: 'Bye', audio: null }],
+      choices: [],
+      autoNextSceneId: null,
+      notes: '',
+    },
+  ],
   assets: [],
 };
 const legacyFile = new File([JSON.stringify(legacySnapshot, null, 2)], 'legacy.json', { type: 'application/json' });
@@ -137,16 +160,28 @@ assert.strictEqual(legacyProject.scenes[0].choices[0].cueCardText, '', 'legacy c
 
 const plainImportSnapshot = {
   meta: { title: 'Plain Import', version: 2 },
-  scenes: [{
-    id: 'scene-plain',
-    type: SceneType.START,
-    image: null,
-    backgroundAudio: null,
-    dialogue: [{ text: 'Hello', audio: null }],
-    choices: [{ id: 'plain-choice', label: 'Go', nextSceneId: null }],
-    autoNextSceneId: null,
-    notes: '',
-  }],
+  scenes: [
+    {
+      id: 'scene-plain',
+      type: SceneType.START,
+      image: null,
+      backgroundAudio: null,
+      dialogue: [{ text: 'Hello', audio: null }],
+      choices: [{ id: 'plain-choice', label: 'Go', nextSceneId: 'scene-plain-end' }],
+      autoNextSceneId: null,
+      notes: '',
+    },
+    {
+      id: 'scene-plain-end',
+      type: SceneType.END,
+      image: null,
+      backgroundAudio: null,
+      dialogue: [{ text: 'End', audio: null }],
+      choices: [],
+      autoNextSceneId: null,
+      notes: '',
+    },
+  ],
   assets: [],
 };
 const plainFile = new File([JSON.stringify(plainImportSnapshot, null, 2)], 'plain.json', { type: 'application/json' });
@@ -234,5 +269,155 @@ assert.strictEqual(
   'Pause after greeting.',
   'cueCardText should survive archive export/import round-trip without data loss',
 );
+
+const existingProject = createProject({
+  meta: { title: 'Existing Project', version: 1 },
+  scenes: [
+    createScene({
+      id: 'existing-start',
+      type: SceneType.START,
+      dialogue: [{ text: 'Keep me', audio: null }],
+      choices: [{ id: 'existing-choice', label: 'Done', nextSceneId: 'existing-end' }],
+    }),
+    createScene({
+      id: 'existing-end',
+      type: SceneType.END,
+      dialogue: [{ text: 'Done', audio: null }],
+      choices: [],
+    }),
+  ],
+});
+
+const replacementProject = createProject({
+  meta: { title: 'Replacement Project', version: 1 },
+  scenes: [
+    createScene({
+      id: 'replacement-start',
+      type: SceneType.START,
+      dialogue: [{ text: 'Replace me in only after confirm', audio: null }],
+      choices: [{ id: 'replacement-choice', label: 'Done', nextSceneId: 'replacement-end' }],
+    }),
+    createScene({
+      id: 'replacement-end',
+      type: SceneType.END,
+      dialogue: [{ text: 'Done', audio: null }],
+      choices: [],
+    }),
+  ],
+});
+
+const replacementFile = new File(
+  [JSON.stringify(serializeProject(replacementProject), null, 2)],
+  'replacement.json',
+  { type: 'application/json' },
+);
+const safetyStore = new Store();
+safetyStore.set({ project: existingProject });
+const preparedReplacement = await prepareProjectImport(replacementFile);
+assert.strictEqual(
+  safetyStore.get().project.meta.title,
+  'Existing Project',
+  'preparing an import must not mutate the current store before confirmation',
+);
+revokeProjectObjectUrls(preparedReplacement.project);
+
+const confirmedStore = new Store();
+confirmedStore.set({ project: existingProject });
+const confirmedPrepared = await prepareProjectImport(replacementFile);
+await applyPreparedProjectImport(confirmedStore, confirmedPrepared);
+assert.strictEqual(
+  confirmedStore.get().project.meta.title,
+  'Replacement Project',
+  'applying a prepared import should replace the project after confirmation',
+);
+
+const badZipStore = new Store();
+badZipStore.set({ project: existingProject });
+const badZipFile = new File([new Uint8Array([1, 2, 3])], 'bad.zip', { type: 'application/zip' });
+await assert.rejects(
+  () => importProject(badZipStore, badZipFile),
+  err => err?.code === ImportErrorCode.INVALID_ZIP,
+  'invalid ZIP should reject with INVALID_ZIP',
+);
+assert.strictEqual(badZipStore.get().project.meta.title, 'Existing Project', 'invalid ZIP must not overwrite current project');
+
+const missingProjectArchive = await zip({
+  'not-project.json': new TextEncoder().encode('{}'),
+});
+const missingProjectFile = new File([new Blob([missingProjectArchive], { type: 'application/zip' })], 'missing-project.zip', { type: 'application/zip' });
+await assert.rejects(
+  () => importProject(badZipStore, missingProjectFile),
+  err => err?.code === ImportErrorCode.MISSING_PROJECT_JSON,
+  'archive missing project.json should reject with MISSING_PROJECT_JSON',
+);
+assert.strictEqual(badZipStore.get().project.meta.title, 'Existing Project', 'missing project.json must not overwrite current project');
+
+const invalidJsonFile = new File(['{not json'], 'invalid.json', { type: 'application/json' });
+await assert.rejects(
+  () => importProject(badZipStore, invalidJsonFile),
+  err => err?.code === ImportErrorCode.INVALID_JSON,
+  'invalid JSON should reject with INVALID_JSON',
+);
+assert.strictEqual(badZipStore.get().project.meta.title, 'Existing Project', 'invalid JSON must not overwrite current project');
+
+const invalidProjectFile = new File(
+  [JSON.stringify({ meta: { title: 'Invalid Project' }, scenes: [] })],
+  'invalid-project.json',
+  { type: 'application/json' },
+);
+await assert.rejects(
+  () => importProject(badZipStore, invalidProjectFile),
+  err => err?.code === ImportErrorCode.INVALID_PROJECT && err.errors.length > 0,
+  'validation errors should reject with INVALID_PROJECT',
+);
+assert.strictEqual(badZipStore.get().project.meta.title, 'Existing Project', 'invalid project must not overwrite current project');
+
+const missingMediaArchive = await zip({
+  'project.json': new TextEncoder().encode(JSON.stringify({
+    manifestVersion: 1,
+    project: {
+      meta: { title: 'Missing Media Archive', version: 1 },
+      scenes: [
+        {
+          id: 'missing-media-start',
+          type: SceneType.START,
+          image: { name: 'missing.png', type: 'image/png', size: 100, path: 'media/missing/image.png' },
+          backgroundAudio: null,
+          dialogue: [
+            {
+              text: 'Missing audio',
+              audio: { name: 'missing.mp3', type: 'audio/mpeg', size: 100, path: 'media/missing/dialogue.mp3' },
+            },
+          ],
+          choices: [{ id: 'missing-media-choice', label: 'Done', nextSceneId: 'missing-media-end', cueCardText: '' }],
+          autoNextSceneId: null,
+          notes: '',
+        },
+        {
+          id: 'missing-media-end',
+          type: SceneType.END,
+          image: null,
+          backgroundAudio: null,
+          dialogue: [{ text: 'Done', audio: null }],
+          choices: [],
+          autoNextSceneId: null,
+          notes: '',
+        },
+      ],
+      assets: [],
+    },
+  })),
+});
+const missingMediaFile = new File(
+  [new Blob([missingMediaArchive], { type: 'application/zip' })],
+  'missing-media.zip',
+  { type: 'application/zip' },
+);
+const missingMediaPrepared = await prepareProjectImport(missingMediaFile);
+assert.ok(
+  missingMediaPrepared.missingMediaPaths.length >= 2,
+  'legacy import with missing media should prepare successfully with warning-only missing media paths',
+);
+revokeProjectObjectUrls(missingMediaPrepared.project);
 
 console.log('storage persistence helpers tests passed');
