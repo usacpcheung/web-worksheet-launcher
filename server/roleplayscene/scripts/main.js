@@ -199,6 +199,9 @@ function showImportError(err) {
   const codeToTextId = {
     [ImportErrorCode.INVALID_ZIP]: 'messages.importInvalidZip',
     [ImportErrorCode.MISSING_PROJECT_JSON]: 'messages.importMissingProjectJson',
+    [ImportErrorCode.MISSING_PACKAGE_MANIFEST]: 'messages.importMissingPackageManifest',
+    [ImportErrorCode.MISSING_PACKAGE_PROJECT]: 'messages.importMissingPackageProject',
+    [ImportErrorCode.UNSUPPORTED_PACKAGE]: 'messages.importUnsupportedPackage',
     [ImportErrorCode.INVALID_JSON]: 'messages.importInvalidJson',
     [ImportErrorCode.INVALID_PROJECT]: 'messages.importInvalidProject',
   };

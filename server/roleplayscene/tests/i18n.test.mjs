@@ -63,12 +63,22 @@ try {
     '缺少媒體檔案：media/missing.mp3',
     'Import missing-media warning should resolve from Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('messages.importMissingPackageProject'),
+    '匯入失敗：套件缺少 content/project.json。',
+    'New package missing-project error should resolve from Traditional Chinese locale',
+  );
 
   setActiveLocale('en');
   assert.strictEqual(
     translate('messages.importConfirmAccept'),
     'Replace and import',
     'Import confirmation action should resolve from English locale',
+  );
+  assert.strictEqual(
+    translate('messages.importUnsupportedPackage'),
+    'Import failed: this RolePlayScene package format is not supported.',
+    'Unsupported package error should resolve from English locale',
   );
 
   setActiveLocale('fr');

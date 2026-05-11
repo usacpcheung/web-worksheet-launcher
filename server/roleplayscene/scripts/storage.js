@@ -7,11 +7,18 @@ const DB_VERSION = 1;
 const PROJECT_STORE = 'project';
 const PROJECT_KEY = 'snapshot';
 const SAVE_DEBOUNCE_MS = 500;
-const ARCHIVE_MANIFEST_VERSION = 1;
+export const PACKAGE_FORMAT = 'roleplayscene-package';
+export const PACKAGE_VERSION = 1;
+const PACKAGE_MANIFEST_PATH = 'manifest.json';
+const PACKAGE_PROJECT_PATH = 'content/project.json';
+const LEGACY_PROJECT_PATH = 'project.json';
 
 export const ImportErrorCode = Object.freeze({
   INVALID_ZIP: 'invalid_zip',
   MISSING_PROJECT_JSON: 'missing_project_json',
+  MISSING_PACKAGE_MANIFEST: 'missing_package_manifest',
+  MISSING_PACKAGE_PROJECT: 'missing_package_project',
+  UNSUPPORTED_PACKAGE: 'unsupported_package',
   INVALID_JSON: 'invalid_json',
   INVALID_PROJECT: 'invalid_project',
 });
@@ -166,9 +173,23 @@ function collectAsset({
   const ext = getExtension(name) || '.bin';
   const basePath = `media/${sceneSegment}/${baseName}${ext}`;
   const path = ensureUniquePath(basePath, usedPaths);
-  binaries.push({ path, blob });
   const type = blob.type || 'application/octet-stream';
   const size = typeof blob.size === 'number' ? blob.size : 0;
+  const packageKind = kind === 'image' ? 'image' : 'audio';
+  const usageByKind = {
+    image: 'scene_image',
+    background: 'scene_background_audio',
+    dialogue: 'dialogue_audio',
+  };
+  binaries.push({
+    path,
+    blob,
+    name,
+    kind: packageKind,
+    usage: usageByKind[kind] || kind,
+    mimeType: type,
+    byteLength: size,
+  });
   return { name, type, size, path };
 }
 
@@ -284,14 +305,31 @@ export async function createProjectArchive(project) {
   if (!snapshot) {
     throw new Error('Failed to serialise project');
   }
-  const { manifest, binaries } = buildManifest(snapshot);
+  const { manifest: projectPayload, binaries } = buildManifest(snapshot);
   const encoder = new TextEncoder();
   const payload = {
-    manifestVersion: ARCHIVE_MANIFEST_VERSION,
-    project: manifest,
+    manifest: {
+      format: PACKAGE_FORMAT,
+      packageVersion: PACKAGE_VERSION,
+      createdAt: new Date().toISOString(),
+      project: {
+        title: projectPayload.meta?.title ?? '',
+        version: projectPayload.meta?.version ?? 1,
+      },
+      assets: binaries.map(({ path, kind, usage, byteLength, mimeType, name }) => ({
+        path,
+        kind,
+        usage,
+        byteLength,
+        mimeType,
+        name,
+      })),
+    },
+    project: projectPayload,
   };
   const entries = {
-    'project.json': encoder.encode(JSON.stringify(payload, null, 2)),
+    [PACKAGE_MANIFEST_PATH]: encoder.encode(JSON.stringify(payload.manifest, null, 2)),
+    [PACKAGE_PROJECT_PATH]: encoder.encode(JSON.stringify(projectPayload, null, 2)),
   };
   for (const { path, blob } of binaries) {
     const buffer = await blob.arrayBuffer();
@@ -605,21 +643,46 @@ export async function extractProjectFromArchive(fileOrBytes, options = {}) {
   } catch (err) {
     throw new ProjectImportError(ImportErrorCode.INVALID_ZIP, 'Project archive is unreadable');
   }
-  const projectEntry = unpacked['project.json'];
-  if (!projectEntry) {
-    throw new ProjectImportError(ImportErrorCode.MISSING_PROJECT_JSON, 'Archive is missing project.json');
-  }
   const decoder = new TextDecoder();
-  let parsed;
-  try {
-    parsed = JSON.parse(decoder.decode(projectEntry));
-  } catch (err) {
-    throw new ProjectImportError(ImportErrorCode.INVALID_JSON, 'Archive project.json is invalid');
+
+  function parseJsonEntry(entry, message) {
+    try {
+      return JSON.parse(decoder.decode(entry));
+    } catch (err) {
+      throw new ProjectImportError(ImportErrorCode.INVALID_JSON, message);
+    }
   }
-  const manifestVersion = parsed.manifestVersion ?? 0;
-  const manifest = manifestVersion ? parsed.project : parsed;
+
+  let manifest;
   const files = { ...unpacked };
-  delete files['project.json'];
+  if (unpacked[PACKAGE_MANIFEST_PATH]) {
+    const packageManifest = parseJsonEntry(unpacked[PACKAGE_MANIFEST_PATH], 'Archive manifest.json is invalid');
+    if (
+      packageManifest?.format !== PACKAGE_FORMAT
+      || packageManifest?.packageVersion !== PACKAGE_VERSION
+    ) {
+      throw new ProjectImportError(ImportErrorCode.UNSUPPORTED_PACKAGE, 'Unsupported RolePlayScene package format');
+    }
+    const projectEntry = unpacked[PACKAGE_PROJECT_PATH];
+    if (!projectEntry) {
+      throw new ProjectImportError(ImportErrorCode.MISSING_PACKAGE_PROJECT, 'Archive is missing content/project.json');
+    }
+    manifest = parseJsonEntry(projectEntry, 'Archive content/project.json is invalid');
+    delete files[PACKAGE_MANIFEST_PATH];
+    delete files[PACKAGE_PROJECT_PATH];
+  } else {
+    if (unpacked[PACKAGE_PROJECT_PATH]) {
+      throw new ProjectImportError(ImportErrorCode.MISSING_PACKAGE_MANIFEST, 'Archive is missing manifest.json');
+    }
+    const projectEntry = unpacked[LEGACY_PROJECT_PATH];
+    if (!projectEntry) {
+      throw new ProjectImportError(ImportErrorCode.MISSING_PROJECT_JSON, 'Archive is missing project.json');
+    }
+    const parsed = parseJsonEntry(projectEntry, 'Archive project.json is invalid');
+    const manifestVersion = parsed.manifestVersion ?? 0;
+    manifest = manifestVersion ? parsed.project : parsed;
+    delete files[LEGACY_PROJECT_PATH];
+  }
   if (!manifest || typeof manifest !== 'object') {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Archive manifest missing project data');
   }
