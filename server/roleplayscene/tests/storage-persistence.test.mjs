@@ -361,16 +361,51 @@ await assert.rejects(
 assert.strictEqual(badZipStore.get().project.meta.title, 'Existing Project', 'invalid JSON must not overwrite current project');
 
 const invalidProjectFile = new File(
-  [JSON.stringify({ meta: { title: 'Invalid Project' }, scenes: [] })],
+  [JSON.stringify({ meta: { title: 'Invalid Project' }, scenes: null })],
   'invalid-project.json',
   { type: 'application/json' },
 );
 await assert.rejects(
   () => importProject(badZipStore, invalidProjectFile),
-  err => err?.code === ImportErrorCode.INVALID_PROJECT && err.errors.length > 0,
-  'validation errors should reject with INVALID_PROJECT',
+  err => err?.code === ImportErrorCode.INVALID_PROJECT,
+  'structurally invalid project should reject with INVALID_PROJECT',
 );
-assert.strictEqual(badZipStore.get().project.meta.title, 'Existing Project', 'invalid project must not overwrite current project');
+assert.strictEqual(badZipStore.get().project.meta.title, 'Existing Project', 'structurally invalid project must not overwrite current project');
+
+const incompleteDraftProject = createProject({
+  meta: { title: 'Incomplete Draft', version: 1 },
+  scenes: [
+    createScene({
+      id: 'draft-start',
+      type: SceneType.START,
+      dialogue: [{ text: 'Still drafting', audio: null }],
+      choices: [{ id: 'draft-choice', label: 'Unlinked', nextSceneId: null }],
+    }),
+  ],
+});
+const { archiveData: incompleteDraftArchiveData } = await createProjectArchive(incompleteDraftProject);
+const incompleteDraftFile = new File(
+  [new Blob([incompleteDraftArchiveData], { type: 'application/zip' })],
+  'incomplete-draft.zip',
+  { type: 'application/zip' },
+);
+const incompleteDraftPrepared = await prepareProjectImport(incompleteDraftFile);
+assert.strictEqual(
+  incompleteDraftPrepared.project.meta.title,
+  'Incomplete Draft',
+  'exported editable drafts with no end scene or complete connections should import back successfully',
+);
+assert.deepStrictEqual(
+  incompleteDraftPrepared.validation.errors,
+  [],
+  'import preparation should not report play validation errors for incomplete drafts',
+);
+assert.deepStrictEqual(
+  incompleteDraftPrepared.validation.warnings,
+  [],
+  'import preparation should leave graph completeness warnings to Play validation',
+);
+revokeProjectObjectUrls(incompleteDraftPrepared.project);
 
 const missingMediaArchive = await zip({
   'project.json': new TextEncoder().encode(JSON.stringify({

@@ -1,7 +1,6 @@
 import { createProject, createScene, SceneType } from './model.js';
 import { zip, unzip } from './utils/zip.js';
 import { seedIdSequencesFromProject } from './utils/id.js';
-import { validateProject } from './editor/validators.js';
 
 const DB_NAME = 'roleplayscene';
 const DB_VERSION = 1;
@@ -527,6 +526,9 @@ function serializePlainProjectJson(json) {
   if (!json || typeof json !== 'object' || Array.isArray(json)) {
     throw new ProjectImportError(ImportErrorCode.INVALID_JSON, 'Project JSON must be an object');
   }
+  if (!Array.isArray(json.scenes)) {
+    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scenes must be an array');
+  }
   const scenes = Array.isArray(json.scenes) ? json.scenes.slice(0, 20) : [];
   return {
     meta: { ...json.meta },
@@ -535,23 +537,11 @@ function serializePlainProjectJson(json) {
   };
 }
 
-function validateImportedProject(project, warnings = []) {
-  const validation = validateProject(project);
-  if (validation.errors.length) {
-    revokeProjectObjectUrls(project);
-    throw new ProjectImportError(
-      ImportErrorCode.INVALID_PROJECT,
-      'Imported project failed validation',
-      {
-        errors: validation.errors,
-        warnings: [...validation.warnings, ...warnings],
-      },
-    );
+function validateImportDraftShape(project) {
+  if (!project || !Array.isArray(project.scenes)) {
+    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scenes are missing');
   }
-  return {
-    errors: validation.errors,
-    warnings: [...validation.warnings, ...warnings],
-  };
+  return { errors: [], warnings: [] };
 }
 
 export async function prepareProjectImport(file) {
@@ -579,7 +569,7 @@ export async function prepareProjectImport(file) {
   }
 
   const project = hydrateProject(serialized);
-  const validation = validateImportedProject(project);
+  const validation = validateImportDraftShape(project);
   return {
     project,
     validation,
@@ -632,6 +622,9 @@ export async function extractProjectFromArchive(fileOrBytes, options = {}) {
   delete files['project.json'];
   if (!manifest || typeof manifest !== 'object') {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Archive manifest missing project data');
+  }
+  if (!Array.isArray(manifest.scenes)) {
+    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Archive project scenes must be an array');
   }
   const missingMediaPaths = [];
   const serialized = manifestToSerialized(manifest, files, missingMediaPaths);
