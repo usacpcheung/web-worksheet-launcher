@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Blob as NodeBlob, File as NodeFile } from 'node:buffer';
 import { Store } from '../scripts/state.js';
 import { createProject, createScene, SceneType } from '../scripts/model.js';
 import {
@@ -18,6 +19,13 @@ import {
 import { zip, unzip } from '../scripts/utils/zip.js';
 import { translate, setActiveLocale } from '../scripts/i18n.js';
 import { newId, resetIdSequences } from '../scripts/utils/id.js';
+
+if (typeof globalThis.Blob === 'undefined') {
+  globalThis.Blob = NodeBlob;
+}
+if (typeof globalThis.File === 'undefined') {
+  globalThis.File = NodeFile;
+}
 
 const originalCreateObjectURL = URL.createObjectURL;
 const originalRevokeObjectURL = URL.revokeObjectURL;
