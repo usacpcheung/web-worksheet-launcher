@@ -9,6 +9,7 @@ import {
   validateRolePlayScenePackage,
 } from './roleplayscene-package.js';
 import { createStoredZip } from '../../editor/zip-utils.js';
+import { zipSync } from '../../roleplayscene/scripts/vendor/fflate.module.js';
 
 function createProject(overrides = {}) {
   return {
@@ -86,6 +87,25 @@ function createPackageZip({
   return createStoredZip(entries);
 }
 
+function createCompressedPackageZip({
+  manifest = createManifest(),
+  project = createProject(),
+  mediaEntries = {
+    'media/scene-start/image.png': 'image',
+    'media/scene-start/dialogue-1.mp3': 'audio',
+  },
+} = {}) {
+  const encoder = new TextEncoder();
+  const entries = {
+    'manifest.json': encoder.encode(JSON.stringify(manifest)),
+    'content/project.json': encoder.encode(JSON.stringify(project)),
+  };
+  for (const [path, data] of Object.entries(mediaEntries)) {
+    entries[path] = encoder.encode(data);
+  }
+  return zipSync(entries);
+}
+
 test('validateRolePlayScenePackage accepts valid v2 packages and returns metadata', () => {
   const result = validateRolePlayScenePackage(createPackageZip());
 
@@ -98,6 +118,15 @@ test('validateRolePlayScenePackage accepts valid v2 packages and returns metadat
   assert.equal(result.metadata.missingMediaCount, 0);
   assert.equal(result.metadata.validationWarningCount, 0);
   assert.deepEqual(result.warnings, []);
+});
+
+test('validateRolePlayScenePackage accepts fflate-compressed RolePlayScene exports', () => {
+  const result = validateRolePlayScenePackage(createCompressedPackageZip());
+
+  assert.equal(result.ok, true);
+  assert.equal(result.metadata.title, 'Clinic Practice');
+  assert.equal(result.metadata.sceneCount, 1);
+  assert.equal(result.metadata.mediaCount, 2);
 });
 
 test('validateRolePlayScenePackage rejects legacy RolePlayScene ZIPs', () => {
@@ -144,7 +173,8 @@ test('validateRolePlayScenePackage rejects invalid project JSON and scene shape'
     { path: 'content/project.json', data: '{not json' },
   ]));
   assert.equal(invalidProjectJson.ok, false);
-  assert.equal(invalidProjectJson.error.code, 'INVALID_PROJECT_JSON');
+  assert.equal(invalidProjectJson.error.code, 'INVALID_ROLEPLAYSCENE_PROJECT_JSON');
+  assert.equal(invalidProjectJson.error.details.reason, 'RolePlayScene package content/project.json is malformed.');
 
   const missingScenes = validateRolePlayScenePackage(createPackageZip({ project: { meta: { title: 'No Scenes' } } }));
   assert.equal(missingScenes.ok, false);
@@ -153,6 +183,17 @@ test('validateRolePlayScenePackage rejects invalid project JSON and scene shape'
   const emptyScenes = validateRolePlayScenePackage(createPackageZip({ project: createProject({ scenes: [] }) }));
   assert.equal(emptyScenes.ok, false);
   assert.equal(emptyScenes.error.code, 'INVALID_ROLEPLAYSCENE_PROJECT');
+});
+
+test('validateRolePlayScenePackage rejects invalid manifest JSON distinctly from project JSON', () => {
+  const invalidManifestJson = validateRolePlayScenePackage(createStoredZip([
+    { path: 'manifest.json', data: '{not json' },
+    { path: 'content/project.json', data: JSON.stringify(createProject()) },
+  ]));
+
+  assert.equal(invalidManifestJson.ok, false);
+  assert.equal(invalidManifestJson.error.code, 'INVALID_ROLEPLAYSCENE_MANIFEST_JSON');
+  assert.equal(invalidManifestJson.error.details.reason, 'RolePlayScene package manifest.json is malformed.');
 });
 
 test('validateRolePlayScenePackage rejects projects without a start scene', () => {

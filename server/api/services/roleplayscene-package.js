@@ -1,4 +1,5 @@
-import { parseStoredZip, decodeUtf8 } from '../../editor/zip-utils.js';
+import { decodeUtf8 } from '../../editor/zip-utils.js';
+import { unzipSync } from '../../roleplayscene/scripts/vendor/fflate.module.js';
 
 export const ROLEPLAYSCENE_PACKAGE_FORMAT = 'roleplayscene-package';
 export const ROLEPLAYSCENE_PACKAGE_VERSION = 1;
@@ -13,16 +14,26 @@ function normalizeText(value, fallback = '') {
   return normalized || fallback;
 }
 
-function parseJsonEntry(files, path, errorCode, message) {
+function parseZipEntries(zipBytes) {
+  const entries = unzipSync(zipBytes);
+  return new Map(Object.entries(entries));
+}
+
+function parseJsonEntry(files, path, {
+  missingCode,
+  missingMessage,
+  invalidCode,
+  invalidMessage,
+}) {
   const bytes = files.get(path);
   if (!bytes) {
-    throw Object.assign(new Error(message), { code: errorCode });
+    throw Object.assign(new Error(missingMessage), { code: missingCode });
   }
   try {
     return JSON.parse(decodeUtf8(bytes));
   } catch (error) {
-    throw Object.assign(new Error(message), {
-      code: 'INVALID_PROJECT_JSON',
+    throw Object.assign(new Error(invalidMessage), {
+      code: invalidCode,
       cause: error,
     });
   }
@@ -85,7 +96,7 @@ export function createRolePlaySceneDraftArtifactStoreInput({ identity, uploadedD
 export function validateRolePlayScenePackage(zipBytes) {
   let files;
   try {
-    files = parseStoredZip(zipBytes);
+    files = parseZipEntries(zipBytes);
   } catch (error) {
     return fail('INVALID_ROLEPLAYSCENE_PACKAGE_ZIP', 'Uploaded RolePlayScene package is not a readable ZIP file.', {
       reason: error?.message || 'ZIP parsing failed.',
@@ -94,7 +105,12 @@ export function validateRolePlayScenePackage(zipBytes) {
 
   let manifest;
   try {
-    manifest = parseJsonEntry(files, MANIFEST_PATH, 'ROLEPLAYSCENE_PACKAGE_MISSING_MANIFEST', 'RolePlayScene package is missing manifest.json.');
+    manifest = parseJsonEntry(files, MANIFEST_PATH, {
+      missingCode: 'ROLEPLAYSCENE_PACKAGE_MISSING_MANIFEST',
+      missingMessage: 'RolePlayScene package is missing manifest.json.',
+      invalidCode: 'INVALID_ROLEPLAYSCENE_MANIFEST_JSON',
+      invalidMessage: 'RolePlayScene package manifest.json is malformed.',
+    });
   } catch (error) {
     return fail(error.code || 'INVALID_ROLEPLAYSCENE_MANIFEST', 'Uploaded RolePlayScene package manifest is invalid.', {
       reason: error.message,
@@ -116,7 +132,12 @@ export function validateRolePlayScenePackage(zipBytes) {
 
   let project;
   try {
-    project = parseJsonEntry(files, PROJECT_PATH, 'ROLEPLAYSCENE_PACKAGE_MISSING_PROJECT', 'RolePlayScene package is missing content/project.json.');
+    project = parseJsonEntry(files, PROJECT_PATH, {
+      missingCode: 'ROLEPLAYSCENE_PACKAGE_MISSING_PROJECT',
+      missingMessage: 'RolePlayScene package is missing content/project.json.',
+      invalidCode: 'INVALID_ROLEPLAYSCENE_PROJECT_JSON',
+      invalidMessage: 'RolePlayScene package content/project.json is malformed.',
+    });
   } catch (error) {
     return fail(error.code || 'INVALID_ROLEPLAYSCENE_PROJECT_JSON', 'Uploaded RolePlayScene project JSON is invalid.', {
       reason: error.message,
