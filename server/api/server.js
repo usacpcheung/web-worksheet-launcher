@@ -4,6 +4,7 @@ import { loadConfig } from './config.js';
 import { requireAuthenticatedIdentity, AuthError } from './auth.js';
 import { PackageArtifactStore } from './storage/package-artifact-store.js';
 import { PackageService } from './services/package-service.js';
+import { RolePlaySceneDraftService } from './services/roleplayscene-draft-service.js';
 import { assertUuid, parseOptionalNonNegativeInt } from './validation.js';
 
 function json(res, statusCode, payload) {
@@ -70,8 +71,15 @@ function isDraftDetailRoute(segments) {
 function isAttemptDetailRoute(segments) {
   return segments[0] === 'api' && segments[1] === 'v1' && segments[2] === 'attempts' && !!segments[3];
 }
+function isRolePlaySceneDraftDetailRoute(segments) {
+  return segments[0] === 'api'
+    && segments[1] === 'v1'
+    && segments[2] === 'roleplayscene'
+    && segments[3] === 'drafts'
+    && !!segments[4];
+}
 
-export function createRequestHandler({ service, artifactStore, config }) {
+export function createRequestHandler({ service, rolePlaySceneDraftService, artifactStore, config }) {
   return async function requestHandler(req, res) {
     try {
       const url = new URL(req.url || '/', 'http://localhost');
@@ -134,6 +142,90 @@ export function createRequestHandler({ service, artifactStore, config }) {
           draftSlotLimit: config.draftSlotLimit,
         }));
       }
+
+      if (req.method === 'POST' && url.pathname === '/api/v1/roleplayscene/drafts/upload') {
+        const contentType = String(req.headers['content-type'] || '').toLowerCase();
+        if (!contentType.includes('application/zip')) {
+          return json(res, 415, fail('UNSUPPORTED_MEDIA_TYPE', 'Upload RolePlayScene draft requires Content-Type: application/zip'));
+        }
+        let zipBytes;
+        try {
+          zipBytes = await readRequestBody(req, Number(config.packageUploadMaxBytes) || 30 * 1024 * 1024);
+        } catch (error) {
+          if (error instanceof RequestBodyTooLargeError) {
+            return json(res, 413, fail('PACKAGE_UPLOAD_TOO_LARGE', 'Uploaded package is too large.'));
+          }
+          throw error;
+        }
+        const result = await rolePlaySceneDraftService.uploadRolePlaySceneDraft({
+          identity,
+          title: url.searchParams.get('title') || '',
+          description: url.searchParams.get('description') || '',
+          zipBytes,
+          conflictAction: url.searchParams.get('conflictAction') || '',
+        });
+        if (!result.ok) {
+          return json(res, result.statusCode, fail(result.error.code, result.error.message, result.error.details));
+        }
+        return json(res, result.statusCode, ok(result.data));
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/v1/roleplayscene/drafts') {
+        const rows = await rolePlaySceneDraftService.listOwnRolePlaySceneDrafts(identity);
+        return json(res, 200, ok({
+          items: rows,
+          draftSlotLimit: config.draftSlotLimit,
+        }));
+      }
+
+      if (req.method === 'DELETE' && isRolePlaySceneDraftDetailRoute(segments)) {
+        if (segments.length !== 5) {
+          return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        }
+        const validatedUploadedDraftId = assertUuid(segments[4], {
+          code: 'INVALID_ROLEPLAYSCENE_UPLOADED_DRAFT_ID',
+          message: 'roleplaysceneUploadedDraftId must be a valid UUID.',
+        });
+        if (!validatedUploadedDraftId.ok) {
+          return json(res, 400, fail(validatedUploadedDraftId.error.code, validatedUploadedDraftId.error.message));
+        }
+        const result = await rolePlaySceneDraftService.deleteOwnRolePlaySceneDraft({
+          identity,
+          uploadedDraftId: validatedUploadedDraftId.value,
+        });
+        if (!result.ok) {
+          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+        }
+        return json(res, result.statusCode, ok(result.data));
+      }
+
+      if (req.method === 'GET' && isRolePlaySceneDraftDetailRoute(segments)) {
+        if (!(segments.length === 6 && segments[5] === 'artifact')) {
+          return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        }
+        const validatedUploadedDraftId = assertUuid(segments[4], {
+          code: 'INVALID_ROLEPLAYSCENE_UPLOADED_DRAFT_ID',
+          message: 'roleplaysceneUploadedDraftId must be a valid UUID.',
+        });
+        if (!validatedUploadedDraftId.ok) {
+          return json(res, 400, fail(validatedUploadedDraftId.error.code, validatedUploadedDraftId.error.message));
+        }
+        const draft = await rolePlaySceneDraftService.loadOwnRolePlaySceneDraftArtifact({
+          identity,
+          uploadedDraftId: validatedUploadedDraftId.value,
+        });
+        if (!draft) {
+          return json(res, 404, fail('ROLEPLAYSCENE_DRAFT_NOT_FOUND', 'RolePlayScene uploaded draft was not found for this owner.'));
+        }
+        const zipBytes = await artifactStore.readArtifact(draft.artifact_path);
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/zip');
+        res.setHeader('content-disposition', 'attachment; filename="roleplayscene-draft.zip"');
+        res.setHeader('content-length', String(zipBytes.byteLength));
+        res.end(zipBytes);
+        return;
+      }
+
       if (req.method === 'POST' && url.pathname === '/api/v1/attempts/upload') {
         const contentType = String(req.headers['content-type'] || '').toLowerCase();
         if (!contentType.includes('application/zip')) return json(res, 415, fail('UNSUPPORTED_MEDIA_TYPE', 'Upload attempt requires Content-Type: application/zip'));
@@ -392,8 +484,15 @@ export async function createApiServer(overrides = {}) {
   }
   const artifactStore = overrides.artifactStore || new PackageArtifactStore({ storageRoot: config.storageRoot });
   const service = overrides.service || new PackageService({ db, artifactStore, config });
+  const rolePlaySceneDraftService = overrides.rolePlaySceneDraftService
+    || new RolePlaySceneDraftService({ db, artifactStore, config });
 
-  const server = http.createServer(createRequestHandler({ service, artifactStore, config }));
+  const server = http.createServer(createRequestHandler({
+    service,
+    rolePlaySceneDraftService,
+    artifactStore,
+    config,
+  }));
 
   return {
     config,

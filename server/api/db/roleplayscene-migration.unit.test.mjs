@@ -26,3 +26,15 @@ test('RolePlayScene uploaded draft migration uses isolated tables and indexes', 
   assert.match(sql, /ux_roleplayscene_uploaded_drafts_owner_title/);
   assert.match(sql, /owner_sub,\s*lower\(regexp_replace\(btrim\(coalesce\(title, ''\)\), '\\s\+', ' ', 'g'\)\)/);
 });
+
+test('RolePlayScene uploaded draft publish marker migration is isolated', async () => {
+  const sql = await fs.readFile(
+    path.join(__dirname, 'migrations', '012_roleplayscene_uploaded_draft_publish_markers.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /ALTER TABLE roleplayscene_uploaded_drafts/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS last_published_artifact_sha256 TEXT/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS last_published_at TIMESTAMPTZ/);
+  assert.doesNotMatch(sql, /ALTER TABLE uploaded_drafts\b/);
+});
