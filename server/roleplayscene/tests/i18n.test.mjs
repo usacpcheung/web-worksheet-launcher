@@ -68,6 +68,16 @@ try {
     '匯入失敗：套件缺少 content/project.json。',
     'New package missing-project error should resolve from Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('server.manageTitle'),
+    '管理已上傳的 RolePlayScene 草稿',
+    'Server draft manager title should resolve from Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('server.slotUsage', { used: 2, limit: 3 }),
+    '已使用 2 / 3 個伺服器草稿欄位。',
+    'Server slot usage should resolve from Traditional Chinese locale',
+  );
 
   setActiveLocale('en');
   assert.strictEqual(
@@ -79,6 +89,16 @@ try {
     translate('messages.importUnsupportedPackage'),
     'Import failed: this RolePlayScene package format is not supported.',
     'Unsupported package error should resolve from English locale',
+  );
+  assert.strictEqual(
+    translate('server.conflictCopy'),
+    'Save as copy',
+    'Server conflict copy action should resolve from English locale',
+  );
+  assert.strictEqual(
+    translate('server.missingMediaBadge', { count: 2 }),
+    '2 missing media',
+    'Server missing-media badge should resolve from English locale',
   );
 
   setActiveLocale('fr');

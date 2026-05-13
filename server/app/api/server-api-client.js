@@ -468,6 +468,26 @@ function createServerApiClient(options = {}) {
     deleteUploadedDraft(uploadedDraftId) {
       return requestJson(`/drafts/${uploadedDraftId}`, { method: 'DELETE' });
     },
+    listRolePlaySceneDrafts() {
+      return requestJson('/roleplayscene/drafts');
+    },
+    uploadRolePlaySceneDraftPackage(zipBytes, metadata = {}, options = {}) {
+      return uploadZip('/roleplayscene/drafts/upload', zipBytes, {
+        query: {
+          title: metadata.title || '',
+          description: metadata.description || '',
+          conflictAction: metadata.conflictAction || '',
+        },
+        onProgress: options.onProgress,
+        signal: options.signal,
+      });
+    },
+    fetchRolePlaySceneDraftArtifact(uploadedDraftId) {
+      return requestZip(`/roleplayscene/drafts/${uploadedDraftId}/artifact`);
+    },
+    deleteRolePlaySceneDraft(uploadedDraftId) {
+      return requestJson(`/roleplayscene/drafts/${uploadedDraftId}`, { method: 'DELETE' });
+    },
     listUploadedAttempts() {
       return requestJson('/attempts');
     },
