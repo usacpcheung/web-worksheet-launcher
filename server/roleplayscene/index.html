@@ -14,8 +14,8 @@
       <button id="mode-play">Play</button>
       <button id="import-btn" title="Import project (.json or .zip)">Import</button>
       <button id="export-btn" title="Export project archive (.zip)">Export</button>
-      <span class="toolbar__server" aria-live="polite">
-        <span id="server-status" class="server-status">Server: checking...</span>
+      <span class="toolbar__server">
+        <span id="server-status" class="server-status" aria-live="polite">Server: checking...</span>
         <button id="server-signin-btn" type="button">Sign in</button>
         <button id="server-save-btn" type="button">Save to Server</button>
         <button id="server-manage-btn" type="button">Manage Drafts</button>
@@ -61,6 +61,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="server-modal-title"
+      tabindex="-1"
     >
       <div class="server-modal__header">
         <h2 id="server-modal-title"></h2>

@@ -25,19 +25,22 @@ const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePla
 const fetchIndex = mainSource.indexOf('apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId)', openFunctionIndex);
 const prepareIndex = mainSource.indexOf('preparedImport = await prepareProjectImport', openFunctionIndex);
 const confirmIndex = mainSource.indexOf('const shouldImport = await confirmProjectImport()', openFunctionIndex);
+const closeModalBeforeConfirmIndex = mainSource.indexOf("closeServerModal('import-confirm')", openFunctionIndex);
 const applyIndex = mainSource.indexOf('await applyPreparedProjectImport(store, preparedImport)', openFunctionIndex);
 const revokeIndex = mainSource.indexOf('revokeProjectObjectUrls(preparedImport.project)', openFunctionIndex);
 
 assert.ok(openFunctionIndex > -1, 'uploaded draft open flow should exist');
 assert.ok(fetchIndex > openFunctionIndex, 'uploaded draft open flow should fetch the ZIP before import preparation');
 assert.ok(prepareIndex > fetchIndex, 'uploaded draft open flow should prepare the ZIP before confirmation');
+assert.ok(closeModalBeforeConfirmIndex > prepareIndex && closeModalBeforeConfirmIndex < confirmIndex, 'uploaded draft open flow should close the server modal before import confirmation');
 assert.ok(confirmIndex > prepareIndex, 'uploaded draft open flow should confirm before replacing the local project');
 assert.ok(applyIndex > confirmIndex, 'uploaded draft open flow should apply only after confirmation');
 assert.ok(revokeIndex > confirmIndex, 'cancelled uploaded draft opens should revoke candidate object URLs');
 
 assert.ok(
   mainSource.includes("code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT'")
-    && mainSource.includes("conflictAction: choice"),
+    && mainSource.includes("conflictAction: choice")
+    && mainSource.includes('return await uploadCurrentProjectToServer({ conflictAction: choice });'),
   'upload conflict flow should expose replace/copy and retry with conflictAction',
 );
 assert.ok(
@@ -49,14 +52,25 @@ assert.ok(
   mainSource.includes('missing_media_count')
     && mainSource.includes('validation_warning_count')
     && mainSource.includes('publish_state')
-    && mainSource.includes('artifact_size_bytes'),
+    && mainSource.includes('artifact_size_bytes')
+    && mainSource.includes("translate('server.meta.missingMedia')")
+    && mainSource.includes("translate('server.meta.validationWarnings')"),
   'uploaded draft manager should surface server metadata and warnings',
 );
 assert.ok(
-  indexSource.includes('id="server-status"')
+  mainSource.includes('function handleServerModalKeydown(event)')
+    && mainSource.includes("event.key === 'Escape'")
+    && mainSource.includes("event.key !== 'Tab'")
+    && mainSource.includes('current?.previousFocus?.isConnected'),
+  'server modal should support Escape, focus trapping, and focus restoration',
+);
+assert.ok(
+  indexSource.includes('id="server-status" class="server-status" aria-live="polite"')
+    && !indexSource.includes('class="toolbar__server" aria-live=')
     && indexSource.includes('id="server-save-btn"')
     && indexSource.includes('id="server-manage-btn"')
-    && indexSource.includes('id="server-modal-overlay"'),
+    && indexSource.includes('id="server-modal-overlay"')
+    && indexSource.includes('tabindex="-1"'),
   'server status/actions and manager modal should be present in the static markup',
 );
 

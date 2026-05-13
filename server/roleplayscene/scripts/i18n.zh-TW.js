@@ -71,6 +71,8 @@ addTranslations('zh-TW', {
       id: '草稿 ID',
       publishState: '發布狀態',
       size: '封存大小',
+      missingMedia: '缺少媒體',
+      validationWarnings: '驗證警告',
       created: '建立時間',
       updated: '更新時間',
     },

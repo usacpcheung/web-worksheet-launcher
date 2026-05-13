@@ -100,6 +100,11 @@ try {
     '2 missing media',
     'Server missing-media badge should resolve from English locale',
   );
+  assert.strictEqual(
+    translate('server.meta.validationWarnings'),
+    'Validation warnings',
+    'Server validation-warning metadata label should resolve from English locale',
+  );
 
   setActiveLocale('fr');
 

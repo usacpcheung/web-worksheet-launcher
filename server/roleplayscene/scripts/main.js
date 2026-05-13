@@ -45,6 +45,7 @@ const importConfirmBody = document.getElementById('import-confirm-body');
 const importConfirmAccept = document.getElementById('import-confirm-accept');
 const importConfirmCancel = document.getElementById('import-confirm-cancel');
 const serverModalOverlay = document.getElementById('server-modal-overlay');
+const serverModalDialog = serverModalOverlay?.querySelector('.server-modal') || null;
 const serverModalTitle = document.getElementById('server-modal-title');
 const serverModalBody = document.getElementById('server-modal-body');
 const serverModalActions = document.getElementById('server-modal-actions');
@@ -335,12 +336,53 @@ function setServerModalActions(actions = []) {
   });
 }
 
+function getFocusableElements(root) {
+  if (!root) return [];
+  return Array.from(root.querySelectorAll([
+    'a[href]',
+    'button:not([disabled])',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(','))).filter((element) => {
+    if (!(element instanceof HTMLElement)) return false;
+    return element.offsetParent !== null || element === document.activeElement;
+  });
+}
+
+function handleServerModalKeydown(event) {
+  if (!activeServerModal) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeServerModal();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const focusable = getFocusableElements(serverModalDialog || serverModalOverlay);
+  if (!focusable.length) {
+    event.preventDefault();
+    serverModalDialog?.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function openServerModal({ title, bodyRenderer, actions = [], onClose = null }) {
   if (!serverModalOverlay || !serverModalTitle || !serverModalBody) return;
-  if (activeServerModal?.onClose) {
-    activeServerModal.onClose('replace');
+  if (activeServerModal) {
+    closeServerModal('replace');
   }
-  activeServerModal = { onClose };
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  activeServerModal = { onClose, previousFocus };
   serverModalTitle.textContent = title;
   serverModalBody.innerHTML = '';
   if (typeof bodyRenderer === 'function') {
@@ -349,6 +391,11 @@ function openServerModal({ title, bodyRenderer, actions = [], onClose = null }) 
   setServerModalActions(actions);
   serverModalOverlay.hidden = false;
   serverModalOverlay.removeAttribute('hidden');
+  document.addEventListener('keydown', handleServerModalKeydown);
+  requestAnimationFrame(() => {
+    const focusable = getFocusableElements(serverModalDialog || serverModalOverlay);
+    (focusable[0] || serverModalDialog)?.focus();
+  });
 }
 
 function closeServerModal(reason = 'close') {
@@ -359,6 +406,10 @@ function closeServerModal(reason = 'close') {
   serverModalOverlay.setAttribute('hidden', '');
   if (serverModalBody) serverModalBody.innerHTML = '';
   if (serverModalActions) serverModalActions.innerHTML = '';
+  document.removeEventListener('keydown', handleServerModalKeydown);
+  if (current?.previousFocus?.isConnected && typeof current.previousFocus.focus === 'function') {
+    current.previousFocus.focus();
+  }
   if (current?.onClose) current.onClose(reason);
 }
 
@@ -581,6 +632,8 @@ function renderDraftMetadata(container, draft) {
     [translate('server.meta.id'), getRolePlaySceneDraftId(draft) || '-'],
     [translate('server.meta.publishState'), translate(`server.publishState.${draft?.publish_state || 'draft_only'}`, { default: draft?.publish_state || 'draft_only' })],
     [translate('server.meta.size'), formatBytes(draft?.artifact_size_bytes)],
+    [translate('server.meta.missingMedia'), String(Number(draft?.missing_media_count || 0))],
+    [translate('server.meta.validationWarnings'), String(Number(draft?.validation_warning_count || 0))],
     [translate('server.meta.created'), formatTimestamp(draft?.created_at)],
     [translate('server.meta.updated'), formatTimestamp(draft?.updated_at)],
   ];
@@ -738,7 +791,7 @@ async function uploadCurrentProjectToServer({ conflictAction = '' } = {}) {
         if (choice === 'replace' || choice === 'copy') {
           isUploadingDraft = false;
           updateServerSessionUi();
-          return uploadCurrentProjectToServer({ conflictAction: choice });
+          return await uploadCurrentProjectToServer({ conflictAction: choice });
         }
         showMessage({ textId: 'server.uploadCanceled' });
         return result;
@@ -793,6 +846,7 @@ async function openUploadedRolePlaySceneDraft(draft) {
       artifact.data,
       `${sanitizeFilename(draft?.title, 'roleplayscene-draft')}.zip`,
     ));
+    closeServerModal('import-confirm');
     const shouldImport = await confirmProjectImport();
     if (!shouldImport) {
       revokeProjectObjectUrls(preparedImport.project);
@@ -812,7 +866,6 @@ async function openUploadedRolePlaySceneDraft(draft) {
         : 'server.openedDraft',
       warnings: [...validationWarnings, ...missingMediaWarnings],
     });
-    closeServerModal();
     setMode('edit');
   } catch (err) {
     console.error(err);

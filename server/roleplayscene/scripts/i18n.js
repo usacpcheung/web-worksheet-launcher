@@ -70,6 +70,8 @@ const translations = {
         id: 'Draft ID',
         publishState: 'Publish state',
         size: 'Artifact size',
+        missingMedia: 'Missing media',
+        validationWarnings: 'Validation warnings',
         created: 'Created',
         updated: 'Updated',
       },
