@@ -78,6 +78,11 @@ try {
     '已使用 2 / 3 個伺服器草稿欄位。',
     'Server slot usage should resolve from Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('server.slotRecoveryTitle'),
+    '伺服器草稿欄位已滿',
+    'Server slot recovery title should resolve from Traditional Chinese locale',
+  );
 
   setActiveLocale('en');
   assert.strictEqual(
@@ -99,6 +104,11 @@ try {
     translate('server.missingMediaBadge', { count: 2 }),
     '2 missing media',
     'Server missing-media badge should resolve from English locale',
+  );
+  assert.strictEqual(
+    translate('server.slotRecoveryDescription'),
+    'Delete one uploaded RolePlayScene draft to free a slot. After deletion, this save will retry automatically.',
+    'Server slot recovery description should resolve from English locale',
   );
   assert.strictEqual(
     translate('server.meta.validationWarnings'),

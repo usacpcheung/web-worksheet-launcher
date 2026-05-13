@@ -717,10 +717,17 @@ function renderUploadedDraftManager({
   slotLimit = uploadedDraftSlotLimit,
   onDraftDeleted = null,
   onClose = null,
+  recoveryMode = false,
 } = {}) {
   openServerModal({
-    title: translate('server.manageTitle'),
+    title: recoveryMode ? translate('server.slotRecoveryTitle') : translate('server.manageTitle'),
     bodyRenderer: (body) => {
+      if (recoveryMode) {
+        const recoveryMessage = document.createElement('p');
+        recoveryMessage.className = 'server-slot-recovery-message';
+        recoveryMessage.textContent = translate('server.slotRecoveryDescription');
+        body.appendChild(recoveryMessage);
+      }
       const slotUsage = document.createElement('p');
       slotUsage.className = 'server-slot-usage';
       slotUsage.textContent = translate('server.slotUsage', {
@@ -736,11 +743,15 @@ function renderUploadedDraftManager({
         onClick: async () => {
           const result = await loadUploadedRolePlaySceneDrafts({ preflight: true, showManager: false });
           if (result?.ok) {
-            renderUploadedDraftManager({ onDraftDeleted, onClose });
+            renderUploadedDraftManager({ onDraftDeleted, onClose, recoveryMode });
           }
         },
       },
-      { label: translate('server.close'), onClick: () => closeServerModal(), className: 'confirm-actions__secondary' },
+      {
+        label: translate(recoveryMode ? 'server.cancelUpload' : 'server.close'),
+        onClick: () => closeServerModal(),
+        className: 'confirm-actions__secondary',
+      },
     ],
     onClose,
   });
@@ -757,6 +768,7 @@ function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploa
     renderUploadedDraftManager({
       drafts,
       slotLimit,
+      recoveryMode: true,
       onDraftDeleted: () => {
         closeServerModal('slot-recovery-delete');
         settle({ deleted: true });

@@ -54,8 +54,15 @@ assert.ok(
   mainSource.includes('function showSlotLimitRecoveryModal')
     && mainSource.includes('onDraftDeleted: () =>')
     && mainSource.includes("closeServerModal('slot-recovery-delete')")
-    && mainSource.includes('settle({ deleted: true })'),
-  'slot-limit recovery should resolve when the user deletes a draft',
+    && mainSource.includes('settle({ deleted: true })')
+    && mainSource.includes('recoveryMode: true'),
+  'slot-limit recovery should resolve when the user deletes a draft and render recovery-specific UI',
+);
+assert.ok(
+  mainSource.includes("translate('server.slotRecoveryTitle')")
+    && mainSource.includes("translate('server.slotRecoveryDescription')")
+    && mainSource.includes("translate(recoveryMode ? 'server.cancelUpload' : 'server.close')"),
+  'slot-limit recovery modal should clearly explain that deleting a draft frees a slot and continues upload',
 );
 assert.ok(
   mainSource.includes('missing_media_count')
