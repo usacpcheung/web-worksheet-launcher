@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import {
   ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET,
+  rewriteRolePlayScenePackageTitle,
   validateRolePlayScenePackage,
 } from './roleplayscene-package.js';
 
@@ -431,14 +432,28 @@ export class RolePlaySceneDraftService {
         ? await this.findAvailableCopyTitle({ client, identity, title: normalizedTitle })
         : normalizedTitle;
       const uploadedDraftId = crypto.randomUUID();
-      artifact = await this.createDraftArtifact({ identity, uploadedDraftId, zipBytes });
+      const storedZipBytes = finalTitle !== normalizedTitle
+        ? Buffer.from(rewriteRolePlayScenePackageTitle(zipBytes, finalTitle))
+        : zipBytes;
+      const storedValidation = storedZipBytes === zipBytes
+        ? validation
+        : validateRolePlayScenePackage(storedZipBytes);
+      if (!storedValidation.ok) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 400,
+          error: storedValidation.error,
+        };
+      }
+      artifact = await this.createDraftArtifact({ identity, uploadedDraftId, zipBytes: storedZipBytes });
       const row = await this.createUploadedDraftRow({
         client,
         identity,
         title: finalTitle,
         description: normalizedDescription,
         artifact,
-        validation,
+        validation: storedValidation,
         uploadedDraftId,
       });
 
@@ -449,7 +464,7 @@ export class RolePlaySceneDraftService {
         statusCode: 201,
         data: {
           ...row,
-          warnings: validation.warnings,
+          warnings: storedValidation.warnings,
         },
       };
     } catch (error) {

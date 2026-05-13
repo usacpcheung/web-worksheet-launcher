@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { RolePlaySceneDraftService } from './roleplayscene-draft-service.js';
+import { validateRolePlayScenePackage } from './roleplayscene-package.js';
 import { createStoredZip } from '../../editor/zip-utils.js';
 
 const identity = {
@@ -322,7 +323,7 @@ test('uploadRolePlaySceneDraft default conflict returns ROLEPLAYSCENE_DRAFT_NAME
   assert.deepEqual(result.error.details.uploadedDrafts, [{ roleplayscene_uploaded_draft_id: 'old-r', title: 'Clinic Practice' }]);
 });
 
-test('uploadRolePlaySceneDraft copy creates suffixed server title without rewriting ZIP bytes', async () => {
+test('uploadRolePlaySceneDraft copy stores artifact with server-selected copy title inside package', async () => {
   let storedBytes = null;
   const zipBytes = createRolePlaySceneZip();
   const db = createFakeDb({
@@ -355,7 +356,12 @@ test('uploadRolePlaySceneDraft copy creates suffixed server title without rewrit
 
   assert.equal(result.ok, true);
   assert.equal(result.data.title, 'Clinic Practice (3)');
-  assert.equal(storedBytes, zipBytes);
+  assert.notEqual(storedBytes, zipBytes);
+  const storedValidation = validateRolePlayScenePackage(storedBytes);
+  assert.equal(storedValidation.ok, true);
+  assert.equal(storedValidation.metadata.title, 'Clinic Practice (3)');
+  assert.equal(storedValidation.manifest.project.title, 'Clinic Practice (3)');
+  assert.equal(storedValidation.project.meta.title, 'Clinic Practice (3)');
 });
 
 test('uploadRolePlaySceneDraft slot limit returns uploaded drafts and does not store artifact', async () => {

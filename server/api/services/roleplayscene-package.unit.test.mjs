@@ -6,6 +6,7 @@ import {
   ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET,
   ROLEPLAYSCENE_PACKAGE_FORMAT,
   ROLEPLAYSCENE_PACKAGE_VERSION,
+  rewriteRolePlayScenePackageTitle,
   validateRolePlayScenePackage,
 } from './roleplayscene-package.js';
 import { createStoredZip } from '../../editor/zip-utils.js';
@@ -127,6 +128,18 @@ test('validateRolePlayScenePackage accepts fflate-compressed RolePlayScene expor
   assert.equal(result.metadata.title, 'Clinic Practice');
   assert.equal(result.metadata.sceneCount, 1);
   assert.equal(result.metadata.mediaCount, 2);
+});
+
+test('rewriteRolePlayScenePackageTitle updates manifest and project title while preserving media', () => {
+  const rewritten = rewriteRolePlayScenePackageTitle(createCompressedPackageZip(), 'Clinic Practice (2)');
+  const result = validateRolePlayScenePackage(rewritten);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.metadata.title, 'Clinic Practice (2)');
+  assert.equal(result.manifest.project.title, 'Clinic Practice (2)');
+  assert.equal(result.project.meta.title, 'Clinic Practice (2)');
+  assert.equal(result.metadata.mediaCount, 2);
+  assert.deepEqual(result.warnings, []);
 });
 
 test('validateRolePlayScenePackage rejects legacy RolePlayScene ZIPs', () => {

@@ -1,4 +1,4 @@
-import { decodeUtf8 } from '../../editor/zip-utils.js';
+import { createStoredZip, decodeUtf8 } from '../../editor/zip-utils.js';
 import { unzipSync } from '../../roleplayscene/scripts/vendor/fflate.module.js';
 
 export const ROLEPLAYSCENE_PACKAGE_FORMAT = 'roleplayscene-package';
@@ -8,6 +8,7 @@ export const ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET = 'roleplayscene/drafts';
 const MANIFEST_PATH = 'manifest.json';
 const PROJECT_PATH = 'content/project.json';
 const MEDIA_PREFIX = 'media/';
+const textEncoder = new TextEncoder();
 
 function normalizeText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -91,6 +92,52 @@ export function createRolePlaySceneDraftArtifactStoreInput({ identity, uploadedD
     artifactId: uploadedDraftId,
     bytes: zipBytes,
   };
+}
+
+export function rewriteRolePlayScenePackageTitle(zipBytes, title) {
+  const files = parseZipEntries(zipBytes);
+  const manifest = parseJsonEntry(files, MANIFEST_PATH, {
+    missingCode: 'ROLEPLAYSCENE_PACKAGE_MISSING_MANIFEST',
+    missingMessage: 'RolePlayScene package is missing manifest.json.',
+    invalidCode: 'INVALID_ROLEPLAYSCENE_MANIFEST_JSON',
+    invalidMessage: 'RolePlayScene package manifest.json is malformed.',
+  });
+  const project = parseJsonEntry(files, PROJECT_PATH, {
+    missingCode: 'ROLEPLAYSCENE_PACKAGE_MISSING_PROJECT',
+    missingMessage: 'RolePlayScene package is missing content/project.json.',
+    invalidCode: 'INVALID_ROLEPLAYSCENE_PROJECT_JSON',
+    invalidMessage: 'RolePlayScene package content/project.json is malformed.',
+  });
+  const nextTitle = normalizeText(title, normalizeText(project?.meta?.title ?? manifest?.project?.title, 'Untitled RolePlayScene'));
+  const nextManifest = {
+    ...manifest,
+    project: {
+      ...(manifest?.project && typeof manifest.project === 'object' && !Array.isArray(manifest.project)
+        ? manifest.project
+        : {}),
+      title: nextTitle,
+    },
+  };
+  const nextProject = {
+    ...project,
+    meta: {
+      ...(project?.meta && typeof project.meta === 'object' && !Array.isArray(project.meta)
+        ? project.meta
+        : {}),
+      title: nextTitle,
+    },
+  };
+
+  const entries = [...files.entries()].map(([path, bytes]) => {
+    if (path === MANIFEST_PATH) {
+      return { path, data: textEncoder.encode(JSON.stringify(nextManifest, null, 2)) };
+    }
+    if (path === PROJECT_PATH) {
+      return { path, data: textEncoder.encode(JSON.stringify(nextProject, null, 2)) };
+    }
+    return { path, data: bytes };
+  });
+  return createStoredZip(entries);
 }
 
 export function validateRolePlayScenePackage(zipBytes) {
