@@ -40,13 +40,22 @@ assert.ok(revokeIndex > confirmIndex, 'cancelled uploaded draft opens should rev
 assert.ok(
   mainSource.includes("code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT'")
     && mainSource.includes("conflictAction: choice")
-    && mainSource.includes('return await uploadCurrentProjectToServer({ conflictAction: choice });'),
+    && mainSource.includes('return await uploadCurrentProjectToServer({ conflictAction: choice, preflight: false });'),
   'upload conflict flow should expose replace/copy and retry with conflictAction',
 );
 assert.ok(
   mainSource.includes("code === 'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED'")
-    && mainSource.includes('result.error?.details?.uploadedDrafts'),
-  'slot-limit flow should use the server-provided uploaded draft list',
+    && mainSource.includes('result.error?.details?.uploadedDrafts')
+    && mainSource.includes('showSlotLimitRecoveryModal({ drafts: uploadedDrafts, slotLimit: uploadedDraftSlotLimit })')
+    && mainSource.includes('return await uploadCurrentProjectToServer({ conflictAction, preflight: false });'),
+  'slot-limit flow should use the server-provided draft list and retry with the preserved conflict action after deletion',
+);
+assert.ok(
+  mainSource.includes('function showSlotLimitRecoveryModal')
+    && mainSource.includes('onDraftDeleted: () =>')
+    && mainSource.includes("closeServerModal('slot-recovery-delete')")
+    && mainSource.includes('settle({ deleted: true })'),
+  'slot-limit recovery should resolve when the user deletes a draft',
 );
 assert.ok(
   mainSource.includes('missing_media_count')

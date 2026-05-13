@@ -668,7 +668,7 @@ function appendDraftWarningBadges(container, draft) {
   container.appendChild(badges);
 }
 
-function renderUploadedDraftRows(container, drafts) {
+function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null } = {}) {
   const list = document.createElement('div');
   list.className = 'server-draft-list';
   if (!drafts.length) {
@@ -704,7 +704,7 @@ function renderUploadedDraftRows(container, drafts) {
     const downloadButton = createButton(translate('server.downloadDraft'));
     downloadButton.addEventListener('click', () => downloadUploadedRolePlaySceneDraft(draft));
     const deleteButton = createButton(translate('server.deleteDraft'), 'server-danger-action');
-    deleteButton.addEventListener('click', () => deleteUploadedRolePlaySceneDraft(draft));
+    deleteButton.addEventListener('click', () => deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted }));
     actions.append(openButton, downloadButton, deleteButton);
     row.appendChild(actions);
     list.appendChild(row);
@@ -712,7 +712,12 @@ function renderUploadedDraftRows(container, drafts) {
   container.appendChild(list);
 }
 
-function renderUploadedDraftManager({ drafts = uploadedDrafts, slotLimit = uploadedDraftSlotLimit } = {}) {
+function renderUploadedDraftManager({
+  drafts = uploadedDrafts,
+  slotLimit = uploadedDraftSlotLimit,
+  onDraftDeleted = null,
+  onClose = null,
+} = {}) {
   openServerModal({
     title: translate('server.manageTitle'),
     bodyRenderer: (body) => {
@@ -723,7 +728,7 @@ function renderUploadedDraftManager({ drafts = uploadedDrafts, slotLimit = uploa
         limit: slotLimit || 3,
       });
       body.appendChild(slotUsage);
-      renderUploadedDraftRows(body, drafts);
+      renderUploadedDraftRows(body, drafts, { onDraftDeleted });
     },
     actions: [
       {
@@ -731,12 +736,37 @@ function renderUploadedDraftManager({ drafts = uploadedDrafts, slotLimit = uploa
         onClick: async () => {
           const result = await loadUploadedRolePlaySceneDrafts({ preflight: true, showManager: false });
           if (result?.ok) {
-            renderUploadedDraftManager();
+            renderUploadedDraftManager({ onDraftDeleted, onClose });
           }
         },
       },
       { label: translate('server.close'), onClick: () => closeServerModal(), className: 'confirm-actions__secondary' },
     ],
+    onClose,
+  });
+}
+
+function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploadedDraftSlotLimit } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    renderUploadedDraftManager({
+      drafts,
+      slotLimit,
+      onDraftDeleted: () => {
+        closeServerModal('slot-recovery-delete');
+        settle({ deleted: true });
+      },
+      onClose: (reason) => {
+        if (reason !== 'slot-recovery-delete' && reason !== 'replace') {
+          settle({ deleted: false });
+        }
+      },
+    });
   });
 }
 
@@ -768,10 +798,12 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
   }
 }
 
-async function uploadCurrentProjectToServer({ conflictAction = '' } = {}) {
+async function uploadCurrentProjectToServer({ conflictAction = '', preflight = true } = {}) {
   if (isUploadingDraft) return { ok: false, skipped: true };
-  const sessionReady = await ensureServerSessionReady();
-  if (!sessionReady.ok) return sessionReady.result;
+  if (preflight !== false) {
+    const sessionReady = await ensureServerSessionReady();
+    if (!sessionReady.ok) return sessionReady.result;
+  }
   isUploadingDraft = true;
   updateServerSessionUi();
   try {
@@ -791,7 +823,7 @@ async function uploadCurrentProjectToServer({ conflictAction = '' } = {}) {
         if (choice === 'replace' || choice === 'copy') {
           isUploadingDraft = false;
           updateServerSessionUi();
-          return await uploadCurrentProjectToServer({ conflictAction: choice });
+          return await uploadCurrentProjectToServer({ conflictAction: choice, preflight: false });
         }
         showMessage({ textId: 'server.uploadCanceled' });
         return result;
@@ -805,7 +837,12 @@ async function uploadCurrentProjectToServer({ conflictAction = '' } = {}) {
           ? result.error.details.uploadedDrafts
           : uploadedDrafts;
         showMessage({ textId: 'server.slotLimitReached' });
-        renderUploadedDraftManager({ drafts: uploadedDrafts, slotLimit: uploadedDraftSlotLimit });
+        const recovery = await showSlotLimitRecoveryModal({ drafts: uploadedDrafts, slotLimit: uploadedDraftSlotLimit });
+        if (recovery?.deleted) {
+          isUploadingDraft = false;
+          updateServerSessionUi();
+          return await uploadCurrentProjectToServer({ conflictAction, preflight: false });
+        }
         return result;
       }
       showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
@@ -898,7 +935,7 @@ async function downloadUploadedRolePlaySceneDraft(draft) {
   showMessage({ textId: 'server.downloadedDraft' });
 }
 
-async function deleteUploadedRolePlaySceneDraft(draft) {
+async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null } = {}) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId) return;
   const choice = await showDeleteDraftConfirmation(draft);
@@ -911,6 +948,10 @@ async function deleteUploadedRolePlaySceneDraft(draft) {
     return;
   }
   showMessage({ textId: 'server.deletedDraft' });
+  if (typeof onDraftDeleted === 'function') {
+    onDraftDeleted(result);
+    return result;
+  }
   const refreshResult = await loadUploadedRolePlaySceneDrafts({ preflight: false });
   if (refreshResult?.ok) {
     renderUploadedDraftManager();
