@@ -2,8 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import {
   ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET,
+  ROLEPLAYSCENE_PUBLISHED_ARTIFACT_BUCKET,
   rewriteRolePlayScenePackageTitle,
   validateRolePlayScenePackage,
+  validateRolePlayScenePackageForPublish,
 } from './roleplayscene-package.js';
 
 function normalizeText(value, fallback = '') {
@@ -162,6 +164,15 @@ export class RolePlaySceneDraftService {
       ownerSub: identity.sub,
       bucket: ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET,
       artifactId: uploadedDraftId,
+      bytes: zipBytes,
+    });
+  }
+
+  async createPublishedArtifact({ identity, publishedSceneId, zipBytes }) {
+    return this.artifactStore.storeArtifact({
+      ownerSub: identity.sub,
+      bucket: ROLEPLAYSCENE_PUBLISHED_ARTIFACT_BUCKET,
+      artifactId: publishedSceneId,
       bytes: zipBytes,
     });
   }
@@ -484,6 +495,180 @@ export class RolePlaySceneDraftService {
       [uploadedDraftId, identity.sub]
     );
     return result.rowCount === 0 ? null : result.rows[0];
+  }
+
+  async publishRolePlaySceneFromDraft({ identity, uploadedDraftId, title = '' }) {
+    const client = await this.db.connect();
+    let artifact = null;
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
+      const draftRes = await client.query(
+        `SELECT
+          roleplayscene_uploaded_draft_id,
+          owner_sub,
+          title,
+          description,
+          artifact_path,
+          artifact_sha256,
+          artifact_size_bytes,
+          last_published_artifact_sha256
+         FROM roleplayscene_uploaded_drafts
+         WHERE roleplayscene_uploaded_draft_id = $1 AND owner_sub = $2
+         FOR UPDATE`,
+        [uploadedDraftId, identity.sub]
+      );
+
+      if (draftRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 404,
+          error: {
+            code: 'ROLEPLAYSCENE_DRAFT_NOT_FOUND',
+            message: 'RolePlayScene uploaded draft was not found for this owner.',
+          },
+        };
+      }
+
+      const draft = draftRes.rows[0];
+      if (
+        normalizeText(draft.artifact_sha256, '')
+        && draft.artifact_sha256 === draft.last_published_artifact_sha256
+      ) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 409,
+          error: {
+            code: 'ROLEPLAYSCENE_DRAFT_ARTIFACT_ALREADY_PUBLISHED',
+            message: 'This RolePlayScene uploaded draft artifact has already been published.',
+            details: {
+              uploadedDraftId: draft.roleplayscene_uploaded_draft_id,
+              artifactSha256: draft.artifact_sha256,
+            },
+          },
+        };
+      }
+
+      const normalizedPublishedTitle = normalizeText(title, draft.title || 'Untitled RolePlayScene');
+      const conflictRes = await client.query(
+        `SELECT
+          roleplayscene_published_scene_id,
+          title,
+          owner_sub,
+          owner_email,
+          owner_name,
+          published_at,
+          source_roleplayscene_uploaded_draft_id
+         FROM roleplayscene_published_scenes
+         WHERE owner_sub = $1
+           AND lower(regexp_replace(btrim(coalesce(title, '')), '\\s+', ' ', 'g')) = $2
+         ORDER BY published_at DESC, created_at DESC, roleplayscene_published_scene_id DESC
+         LIMIT 1`,
+        [identity.sub, normalizeConflictText(normalizedPublishedTitle)]
+      );
+      if (conflictRes.rowCount > 0) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 409,
+          error: {
+            code: 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT',
+            message: 'A published RolePlayScene with this title already exists.',
+            details: {
+              existingScene: conflictRes.rows[0],
+              requestedTitle: normalizedPublishedTitle,
+            },
+          },
+        };
+      }
+
+      const zipBytes = await this.artifactStore.readArtifact(draft.artifact_path);
+      const validation = validateRolePlayScenePackageForPublish(zipBytes);
+      if (!validation.ok) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 400,
+          error: validation.error,
+        };
+      }
+
+      const publishedSceneId = crypto.randomUUID();
+      artifact = await this.createPublishedArtifact({ identity, publishedSceneId, zipBytes });
+      const publishedRes = await client.query(
+        `INSERT INTO roleplayscene_published_scenes(
+          roleplayscene_published_scene_id,
+          owner_sub,
+          owner_email,
+          owner_name,
+          source_roleplayscene_uploaded_draft_id,
+          title,
+          description,
+          package_version,
+          artifact_path,
+          artifact_sha256,
+          artifact_size_bytes,
+          scene_count,
+          media_count,
+          missing_media_count,
+          validation_warning_count
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        RETURNING
+          roleplayscene_published_scene_id,
+          owner_sub,
+          owner_email,
+          owner_name,
+          source_roleplayscene_uploaded_draft_id,
+          title,
+          description,
+          package_version,
+          artifact_sha256,
+          artifact_size_bytes,
+          scene_count,
+          media_count,
+          missing_media_count,
+          validation_warning_count,
+          published_at`,
+        [
+          publishedSceneId,
+          identity.sub,
+          identity.email,
+          identity.name,
+          draft.roleplayscene_uploaded_draft_id,
+          normalizedPublishedTitle,
+          draft.description || validation.metadata.description || '',
+          validation.metadata.packageVersion,
+          artifact.artifactPath,
+          artifact.artifactSha256,
+          artifact.artifactSizeBytes,
+          validation.metadata.sceneCount,
+          validation.metadata.mediaCount,
+          validation.metadata.missingMediaCount,
+          validation.metadata.validationWarningCount,
+        ]
+      );
+
+      await client.query(
+        `UPDATE roleplayscene_uploaded_drafts
+         SET last_published_artifact_sha256 = $2,
+             last_published_at = now(),
+             updated_at = now()
+         WHERE roleplayscene_uploaded_draft_id = $1 AND owner_sub = $3`,
+        [draft.roleplayscene_uploaded_draft_id, draft.artifact_sha256, identity.sub]
+      );
+
+      await client.query('COMMIT');
+      artifact = null;
+      return { ok: true, statusCode: 201, data: publishedRes.rows[0] };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      await deleteArtifactIfPresent(artifact);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async deleteOwnRolePlaySceneDraft({ identity, uploadedDraftId }) {

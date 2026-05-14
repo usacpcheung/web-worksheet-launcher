@@ -226,6 +226,33 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
         return;
       }
 
+      if (req.method === 'POST' && url.pathname === '/api/v1/roleplayscene/published') {
+        const payload = await readJsonBody(req);
+        if (!payload.uploadedDraftId) {
+          return json(
+            res,
+            400,
+            fail('INVALID_REQUEST', 'publish requires uploadedDraftId in JSON body.')
+          );
+        }
+        const validatedUploadedDraftId = assertUuid(payload.uploadedDraftId, {
+          code: 'INVALID_ROLEPLAYSCENE_UPLOADED_DRAFT_ID',
+          message: 'roleplaysceneUploadedDraftId must be a valid UUID.',
+        });
+        if (!validatedUploadedDraftId.ok) {
+          return json(res, 400, fail(validatedUploadedDraftId.error.code, validatedUploadedDraftId.error.message));
+        }
+        const result = await rolePlaySceneDraftService.publishRolePlaySceneFromDraft({
+          identity,
+          uploadedDraftId: validatedUploadedDraftId.value,
+          title: typeof payload.title === 'string' ? payload.title : '',
+        });
+        if (!result.ok) {
+          return json(res, result.statusCode, fail(result.error.code, result.error.message, result.error.details));
+        }
+        return json(res, result.statusCode, ok(result.data));
+      }
+
       if (req.method === 'POST' && url.pathname === '/api/v1/attempts/upload') {
         const contentType = String(req.headers['content-type'] || '').toLowerCase();
         if (!contentType.includes('application/zip')) return json(res, 415, fail('UNSUPPORTED_MEDIA_TYPE', 'Upload attempt requires Content-Type: application/zip'));

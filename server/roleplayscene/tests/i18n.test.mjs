@@ -83,6 +83,11 @@ try {
     '伺服器草稿欄位已滿',
     'Server slot recovery title should resolve from Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('server.publishConflictTitle'),
+    '已存在同名發布項目',
+    'Server publish conflict title should resolve from Traditional Chinese locale',
+  );
 
   setActiveLocale('en');
   assert.strictEqual(
@@ -114,6 +119,16 @@ try {
     translate('server.meta.validationWarnings'),
     'Validation warnings',
     'Server validation-warning metadata label should resolve from English locale',
+  );
+  assert.strictEqual(
+    translate('server.publishNewVersion'),
+    'Publish new version',
+    'Server publish-new-version action should resolve from English locale',
+  );
+  assert.strictEqual(
+    translate('server.publishConflictBody', { title: 'Clinic' }),
+    'A published RolePlayScene named "Clinic" already exists. Edit the title and try again.',
+    'Server publish conflict body should resolve from English locale and interpolate title',
   );
 
   setActiveLocale('fr');

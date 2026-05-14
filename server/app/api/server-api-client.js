@@ -488,6 +488,15 @@ function createServerApiClient(options = {}) {
     deleteRolePlaySceneDraft(uploadedDraftId) {
       return requestJson(`/roleplayscene/drafts/${uploadedDraftId}`, { method: 'DELETE' });
     },
+    publishRolePlaySceneFromUploadedDraft(uploadedDraftId, metadata = {}) {
+      return requestJson('/roleplayscene/published', {
+        method: 'POST',
+        body: {
+          uploadedDraftId,
+          title: metadata.title || '',
+        },
+      });
+    },
     listUploadedAttempts() {
       return requestJson('/attempts');
     },

@@ -66,6 +66,7 @@ let uploadedDrafts = [];
 let uploadedDraftSlotLimit = 3;
 let isLoadingUploadedDrafts = false;
 let isUploadingDraft = false;
+const publishingDraftIds = new Set();
 
 const LOCALE_STORAGE_KEY = 'roleplayscene:locale';
 
@@ -625,6 +626,73 @@ async function showDeleteDraftConfirmation(draft) {
   });
 }
 
+function showPublishDraftModal(draft, initialTitle = '') {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const settle = (value) => {
+      if (resolved) return;
+      resolved = true;
+      resolve(value);
+    };
+    openServerModal({
+      title: translate('server.publishTitle'),
+      bodyRenderer: (body) => {
+        const description = document.createElement('p');
+        description.textContent = translate('server.publishBody');
+        const field = document.createElement('label');
+        field.className = 'field';
+        const label = document.createElement('span');
+        label.textContent = translate('server.publishTitleLabel');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = initialTitle || draft?.title || translate('server.values.untitledDraft');
+        input.maxLength = 160;
+        input.setAttribute('aria-label', translate('server.publishTitleLabel'));
+        field.append(label, input);
+        body.append(description, field);
+      },
+      actions: [
+        {
+          label: translate('server.cancel'),
+          className: 'confirm-actions__secondary',
+          onClick: () => {
+            settle(null);
+            closeServerModal('publish-cancel');
+          },
+        },
+        {
+          label: translate('server.publishConfirm'),
+          className: 'confirm-actions__primary',
+          onClick: () => {
+            const input = serverModalBody?.querySelector('input[type="text"]');
+            const title = String(input?.value || '').trim();
+            if (!title) {
+              showMessage({ textId: 'server.publishTitleRequired' });
+              input?.focus();
+              return;
+            }
+            settle({ title });
+            closeServerModal('publish-confirm');
+          },
+        },
+      ],
+      onClose: () => settle(null),
+    });
+  });
+}
+
+async function showPublishConflictModal(result) {
+  const requestedTitle = result?.error?.details?.requestedTitle || '';
+  return chooseFromServerModal({
+    title: translate('server.publishConflictTitle'),
+    message: translate('server.publishConflictBody', { title: requestedTitle || translate('server.values.untitledDraft') }),
+    actions: [
+      { label: translate('server.publishEditTitle'), value: 'edit', className: 'confirm-actions__primary' },
+      { label: translate('server.cancel'), value: null, className: 'confirm-actions__secondary' },
+    ],
+  });
+}
+
 function renderDraftMetadata(container, draft) {
   const metadata = document.createElement('dl');
   metadata.className = 'server-draft-meta';
@@ -703,9 +771,25 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null } = 
     openButton.addEventListener('click', () => openUploadedRolePlaySceneDraft(draft));
     const downloadButton = createButton(translate('server.downloadDraft'));
     downloadButton.addEventListener('click', () => downloadUploadedRolePlaySceneDraft(draft));
+    actions.append(openButton, downloadButton);
+    const publishState = draft?.publish_state || 'draft_only';
+    if (publishState !== 'current_version_published') {
+      const uploadedDraftId = getRolePlaySceneDraftId(draft);
+      const publishButton = createButton(
+        publishingDraftIds.has(uploadedDraftId)
+          ? translate('server.publishing')
+          : publishState === 'unpublished_changes'
+            ? translate('server.publishNewVersion')
+            : translate('server.publishDraft'),
+        'confirm-actions__primary'
+      );
+      publishButton.disabled = publishingDraftIds.has(uploadedDraftId);
+      publishButton.addEventListener('click', () => publishUploadedRolePlaySceneDraft(draft));
+      actions.appendChild(publishButton);
+    }
     const deleteButton = createButton(translate('server.deleteDraft'), 'server-danger-action');
     deleteButton.addEventListener('click', () => deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted }));
-    actions.append(openButton, downloadButton, deleteButton);
+    actions.appendChild(deleteButton);
     row.appendChild(actions);
     list.appendChild(row);
   });
@@ -875,6 +959,56 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
   } finally {
     isUploadingDraft = false;
     updateServerSessionUi();
+  }
+}
+
+async function publishUploadedRolePlaySceneDraft(draft) {
+  const uploadedDraftId = getRolePlaySceneDraftId(draft);
+  if (!uploadedDraftId || publishingDraftIds.has(uploadedDraftId)) return;
+  let attemptedTitle = draft?.title || translate('server.values.untitledDraft');
+  while (true) {
+    const modalResult = await showPublishDraftModal(draft, attemptedTitle);
+    if (!modalResult) {
+      showMessage({ textId: 'server.publishCanceled' });
+      return;
+    }
+    attemptedTitle = modalResult.title;
+    publishingDraftIds.add(uploadedDraftId);
+    renderUploadedDraftManager();
+    showMessage({ textId: 'server.publishingMessage' });
+    let result;
+    try {
+      const sessionReady = await ensureServerSessionReady();
+      if (!sessionReady.ok) {
+        showMessage({ text: sessionReady.result?.error?.message || translate('server.signInRequired') });
+        return;
+      }
+      result = await apiClient.publishRolePlaySceneFromUploadedDraft(uploadedDraftId, { title: attemptedTitle });
+    } catch (err) {
+      showMessage({ text: err?.message || translate('server.publishFailed') });
+      return;
+    } finally {
+      publishingDraftIds.delete(uploadedDraftId);
+      if (!serverModalOverlay?.hidden) renderUploadedDraftManager();
+    }
+
+    if (result?.ok) {
+      showMessage({
+        textId: 'server.published',
+        textArgs: { id: result.data?.roleplayscene_published_scene_id || '' },
+      });
+      await loadUploadedRolePlaySceneDrafts({ preflight: false, showManager: true });
+      return;
+    }
+    if (result?.error?.code === 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT') {
+      showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
+      const choice = await showPublishConflictModal(result);
+      if (choice === 'edit') continue;
+      showMessage({ textId: 'server.publishCanceled' });
+      return;
+    }
+    showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
+    return;
   }
 }
 

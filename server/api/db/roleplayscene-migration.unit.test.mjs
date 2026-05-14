@@ -38,3 +38,25 @@ test('RolePlayScene uploaded draft publish marker migration is isolated', async 
   assert.match(sql, /ADD COLUMN IF NOT EXISTS last_published_at TIMESTAMPTZ/);
   assert.doesNotMatch(sql, /ALTER TABLE uploaded_drafts\b/);
 });
+
+test('RolePlayScene published scene migration uses isolated table and indexes', async () => {
+  const sql = await fs.readFile(
+    path.join(__dirname, 'migrations', '013_roleplayscene_published_scenes.sql'),
+    'utf8'
+  );
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS roleplayscene_published_scenes/);
+  assert.doesNotMatch(sql, /CREATE TABLE IF NOT EXISTS published_packages\b/);
+  assert.match(sql, /roleplayscene_published_scene_id UUID PRIMARY KEY/);
+  assert.match(sql, /source_roleplayscene_uploaded_draft_id UUID REFERENCES roleplayscene_uploaded_drafts/);
+  assert.match(sql, /description TEXT NOT NULL DEFAULT ''/);
+  assert.match(sql, /package_version INTEGER NOT NULL/);
+  assert.match(sql, /scene_count INTEGER NOT NULL CHECK \(scene_count > 0\)/);
+  assert.match(sql, /media_count INTEGER NOT NULL DEFAULT 0/);
+  assert.match(sql, /missing_media_count INTEGER NOT NULL DEFAULT 0/);
+  assert.match(sql, /validation_warning_count INTEGER NOT NULL DEFAULT 0/);
+  assert.match(sql, /idx_roleplayscene_published_scenes_published_at/);
+  assert.match(sql, /idx_roleplayscene_published_scenes_source_draft/);
+  assert.match(sql, /ux_roleplayscene_published_scenes_owner_title/);
+  assert.match(sql, /owner_sub,\s*lower\(regexp_replace\(btrim\(coalesce\(title, ''\)\), '\\s\+', ' ', 'g'\)\)/);
+});

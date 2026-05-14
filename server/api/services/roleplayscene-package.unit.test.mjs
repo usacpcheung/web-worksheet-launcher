@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import {
   createRolePlaySceneDraftArtifactStoreInput,
   getRolePlaySceneDraftArtifactBucket,
+  getRolePlayScenePublishedArtifactBucket,
   ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET,
+  ROLEPLAYSCENE_PUBLISHED_ARTIFACT_BUCKET,
   ROLEPLAYSCENE_PACKAGE_FORMAT,
   ROLEPLAYSCENE_PACKAGE_VERSION,
   rewriteRolePlayScenePackageTitle,
   validateRolePlayScenePackage,
+  validateRolePlayScenePackageForPublish,
 } from './roleplayscene-package.js';
 import { createStoredZip } from '../../editor/zip-utils.js';
 import { zipSync } from '../../roleplayscene/scripts/vendor/fflate.module.js';
@@ -242,6 +245,41 @@ test('validateRolePlayScenePackage accepts missing referenced media with warning
   assert.equal(result.warnings[0].path, 'media/scene-start/dialogue-1.mp3');
 });
 
+test('validateRolePlayScenePackageForPublish rejects missing media', () => {
+  const result = validateRolePlayScenePackageForPublish(createPackageZip({
+    mediaEntries: {},
+  }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'INVALID_ROLEPLAYSCENE_PUBLISH_PACKAGE');
+  assert.equal(result.error.details.missingMediaCount, 2);
+});
+
+test('validateRolePlayScenePackageForPublish rejects play-level graph errors', () => {
+  const result = validateRolePlayScenePackageForPublish(createPackageZip({
+    project: createProject({
+      scenes: [
+        {
+          id: 'scene-start',
+          type: 'start',
+          image: null,
+          backgroundAudio: null,
+          dialogue: [],
+          choices: [{ id: 'choice-1', label: 'Broken', nextSceneId: 'missing-scene' }],
+          autoNextSceneId: null,
+        },
+      ],
+    }),
+    manifest: createManifest({ assets: [] }),
+    mediaEntries: {},
+  }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'INVALID_ROLEPLAYSCENE_PUBLISH_PACKAGE');
+  assert.equal(result.error.details.errors.some(message => message.includes('at least 1 end scene')), true);
+  assert.equal(result.error.details.errors.some(message => message.includes('missing scene')), true);
+});
+
 test('validateRolePlayScenePackage allows extra unreferenced media', () => {
   const result = validateRolePlayScenePackage(createPackageZip({
     mediaEntries: {
@@ -258,6 +296,8 @@ test('validateRolePlayScenePackage allows extra unreferenced media', () => {
 
 test('RolePlayScene draft artifact bucket stays isolated from worksheet buckets', () => {
   assert.equal(getRolePlaySceneDraftArtifactBucket(), 'roleplayscene/drafts');
+  assert.equal(getRolePlayScenePublishedArtifactBucket(), 'roleplayscene/published');
+  assert.equal(ROLEPLAYSCENE_PUBLISHED_ARTIFACT_BUCKET, 'roleplayscene/published');
   assert.equal(ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET.includes('drafts'), true);
   assert.notEqual(ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET, 'drafts');
   assert.notEqual(ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET, 'attempts');

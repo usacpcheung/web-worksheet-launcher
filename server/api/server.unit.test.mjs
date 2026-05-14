@@ -76,6 +76,9 @@ async function withServer({
           data: { roleplayscene_uploaded_draft_id: 'x', deleted: true },
         };
       },
+      async publishRolePlaySceneFromDraft() {
+        return { ok: true, statusCode: 201, data: { roleplayscene_published_scene_id: 'p1' } };
+      },
       ...rolePlaySceneDraftService,
     },
     artifactStore: {
@@ -585,6 +588,105 @@ test('roleplayscene routes do not affect existing worksheet draft route namespac
 
   assert.equal(worksheetCalled, true);
   assert.equal(roleplayCalled, true);
+});
+
+test('POST /api/v1/roleplayscene/published rejects malformed uploadedDraftId with 400', async () => {
+  let publishCalled = false;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async publishRolePlaySceneFromDraft() {
+          publishCalled = true;
+          return { ok: true, statusCode: 201, data: {} };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({ uploadedDraftId: 'not-a-uuid' }),
+      });
+      assert.equal(res.status, 400);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'INVALID_ROLEPLAYSCENE_UPLOADED_DRAFT_ID');
+    }
+  );
+  assert.equal(publishCalled, false);
+});
+
+test('POST /api/v1/roleplayscene/published forwards title and uploaded draft id', async () => {
+  let received = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async publishRolePlaySceneFromDraft(payload) {
+          received = payload;
+          return {
+            ok: true,
+            statusCode: 201,
+            data: { roleplayscene_published_scene_id: 'p1', title: payload.title },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+          title: 'Published Clinic',
+        }),
+      });
+      assert.equal(res.status, 201);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data, { roleplayscene_published_scene_id: 'p1', title: 'Published Clinic' });
+    }
+  );
+
+  assert.deepEqual(received, {
+    identity: { sub: 'user-sub', email: null, name: null },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Published Clinic',
+  });
+});
+
+test('POST /api/v1/roleplayscene/published maps service errors with details', async () => {
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async publishRolePlaySceneFromDraft() {
+          return {
+            ok: false,
+            statusCode: 409,
+            error: {
+              code: 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT',
+              message: 'A published RolePlayScene with this title already exists.',
+              details: { requestedTitle: 'Published Clinic' },
+            },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+          title: 'Published Clinic',
+        }),
+      });
+      assert.equal(res.status, 409);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT');
+      assert.deepEqual(payload.error.details, { requestedTitle: 'Published Clinic' });
+    }
+  );
 });
 
 test('POST /api/v1/published returns 413 with REQUEST_BODY_TOO_LARGE when body exceeds configured max', async () => {

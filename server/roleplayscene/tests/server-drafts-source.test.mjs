@@ -20,6 +20,14 @@ assert.ok(
   mainSource.includes('apiClient.deleteRolePlaySceneDraft(uploadedDraftId)'),
   'RolePlayScene should delete uploaded drafts through the PR5 API client method',
 );
+assert.ok(
+  mainSource.includes('apiClient.publishRolePlaySceneFromUploadedDraft(uploadedDraftId')
+    && mainSource.includes('function showPublishDraftModal')
+    && mainSource.includes("code === 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT'")
+    && mainSource.includes('showPublishConflictModal(result)')
+    && mainSource.includes('await loadUploadedRolePlaySceneDrafts({ preflight: false, showManager: true })'),
+  'RolePlayScene should publish uploaded drafts, expose edit-title conflict recovery, and refresh draft markers',
+);
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
 const fetchIndex = mainSource.indexOf('apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId)', openFunctionIndex);
@@ -72,6 +80,13 @@ assert.ok(
     && mainSource.includes("translate('server.meta.missingMedia')")
     && mainSource.includes("translate('server.meta.validationWarnings')"),
   'uploaded draft manager should surface server metadata and warnings',
+);
+assert.ok(
+  mainSource.includes("publishState !== 'current_version_published'")
+    && mainSource.includes("translate('server.publishDraft')")
+    && mainSource.includes("translate('server.publishNewVersion')")
+    && mainSource.includes('publishUploadedRolePlaySceneDraft(draft)'),
+  'uploaded draft manager should show publish actions only for draft-only and unpublished-changes rows',
 );
 assert.ok(
   mainSource.includes('function handleServerModalKeydown(event)')

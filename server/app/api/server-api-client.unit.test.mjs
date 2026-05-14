@@ -210,6 +210,28 @@ test('deleteRolePlaySceneDraft sends DELETE to canonical roleplayscene drafts pa
   assert.equal(requestedMethod, 'DELETE');
 });
 
+test('publishRolePlaySceneFromUploadedDraft sends uploadedDraftId and title', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  let requestBody = null;
+  globalThis.fetch = async (url, request = {}) => {
+    requestedUrl = url;
+    requestBody = request.body;
+    return mockJsonResponse(201, { ok: true, data: { roleplayscene_published_scene_id: 'p1' } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.publishRolePlaySceneFromUploadedDraft('550e8400-e29b-41d4-a716-446655440000', {
+    title: 'Published clinic',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published');
+  assert.deepEqual(JSON.parse(requestBody), {
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Published clinic',
+  });
+});
+
 test('uploadDraftPackage emits upload progress when XHR progress events exist', async () => {
   setTestWindow();
   const previousXhr = globalThis.XMLHttpRequest;
