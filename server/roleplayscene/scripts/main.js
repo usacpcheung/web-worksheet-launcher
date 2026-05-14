@@ -736,7 +736,7 @@ function appendDraftWarningBadges(container, draft) {
   container.appendChild(badges);
 }
 
-function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null } = {}) {
+function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, allowPublish = true } = {}) {
   const list = document.createElement('div');
   list.className = 'server-draft-list';
   if (!drafts.length) {
@@ -773,7 +773,7 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null } = 
     downloadButton.addEventListener('click', () => downloadUploadedRolePlaySceneDraft(draft));
     actions.append(openButton, downloadButton);
     const publishState = draft?.publish_state || 'draft_only';
-    if (publishState !== 'current_version_published') {
+    if (allowPublish && publishState !== 'current_version_published') {
       const uploadedDraftId = getRolePlaySceneDraftId(draft);
       const publishButton = createButton(
         publishingDraftIds.has(uploadedDraftId)
@@ -819,7 +819,7 @@ function renderUploadedDraftManager({
         limit: slotLimit || 3,
       });
       body.appendChild(slotUsage);
-      renderUploadedDraftRows(body, drafts, { onDraftDeleted });
+      renderUploadedDraftRows(body, drafts, { onDraftDeleted, allowPublish: !recoveryMode });
     },
     actions: [
       {

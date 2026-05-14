@@ -67,6 +67,12 @@ assert.ok(
   'slot-limit recovery should resolve when the user deletes a draft and render recovery-specific UI',
 );
 assert.ok(
+  mainSource.includes('allowPublish = true')
+    && mainSource.includes("if (allowPublish && publishState !== 'current_version_published')")
+    && mainSource.includes('renderUploadedDraftRows(body, drafts, { onDraftDeleted, allowPublish: !recoveryMode })'),
+  'slot-limit recovery should hide publish actions so the upload recovery promise can only resolve through delete or cancel',
+);
+assert.ok(
   mainSource.includes("translate('server.slotRecoveryTitle')")
     && mainSource.includes("translate('server.slotRecoveryDescription')")
     && mainSource.includes("translate(recoveryMode ? 'server.cancelUpload' : 'server.close')"),
