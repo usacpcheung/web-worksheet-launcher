@@ -1,7 +1,6 @@
 import { Store } from './state.js';
 import { renderEditor } from './editor/editor.js';
 import { renderPlayer } from './player/player.js';
-import { ensureAudioGate } from './player/audio.js';
 import {
   applyPreparedProjectImport,
   createProjectArchive,
@@ -1117,10 +1116,10 @@ function exitPublishedPlay() {
 async function openPublishedRolePlayScene(scene) {
   const sceneId = getRolePlayScenePublishedSceneId(scene);
   if (!sceneId) return;
-  return openPublishedRolePlaySceneById(sceneId, { scene, unlockAudio: true });
+  return openPublishedRolePlaySceneById(sceneId, { scene });
 }
 
-async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse', unlockAudio = false } = {}) {
+async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse' } = {}) {
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) {
     if (source === 'direct') {
@@ -1160,9 +1159,6 @@ async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, 
     playStore.set({ project: preparedImport.project });
     publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata };
     closeServerModal('published-open');
-    if (unlockAudio) {
-      ensureAudioGate(playStore);
-    }
     setMode('play');
     showMessage({ textId: 'published.opened' });
     return { ok: true };
@@ -1544,7 +1540,7 @@ btnPlay.addEventListener('click', () => {
     });
     return;
   }
-  ensureAudioGate(store);
+  store.set({ audioGate: false });
   setMode('play');
   clearMessage();
 });

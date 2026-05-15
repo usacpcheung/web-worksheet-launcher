@@ -292,6 +292,31 @@ resetAudioSpies();
 
 resetAudioSpies();
 
+{
+  const introProject = createIntroOnlyProject({ name: 'Loop', objectUrl: 'bg-loop.ogg' });
+  const { uiHost, cleanup } = renderWithProject(introProject);
+
+  const introSlider = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
+  const introMute = findByText(uiHost, 'Mute background music');
+  logResult('Intro renders background controls before audio gate opens', Boolean(introSlider) && Boolean(introMute));
+  logResult('Intro does not autoplay before Begin Story', FakeAudio.playCalls.length === 0);
+
+  if (introMute) {
+    introMute.dispatchEvent('click');
+  }
+
+  const startButton = findByText(uiHost, 'Begin Story');
+  if (startButton) {
+    startButton.dispatchEvent('click');
+  }
+
+  logResult('Muted intro preference prevents Begin Story background playback', FakeAudio.playCalls.length === 0);
+
+  cleanup();
+}
+
+resetAudioSpies();
+
 const store = new Store();
 const project = {
   meta: { title: 'Audio Test' },
@@ -366,6 +391,13 @@ const cleanup = renderPlayer(store, stageHost, uiHost, () => {});
 
 logResult('Background idle before Begin Story', FakeAudio.playCalls.length === 0);
 
+const introVolumeSlider = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
+logResult('Background controls render before Begin Story', Boolean(introVolumeSlider));
+if (introVolumeSlider) {
+  introVolumeSlider.value = '0.6';
+  introVolumeSlider.dispatchEvent('input', { target: introVolumeSlider });
+}
+
 const startButton = findByText(uiHost, 'Begin Story');
 logResult('Begin Story button renders', Boolean(startButton));
 if (startButton) {
@@ -376,13 +408,13 @@ const backgroundInstance = FakeAudio.instances[0] ?? null;
 logResult('Background track plays after Begin Story', FakeAudio.playCalls[0] === 'bg-loop.ogg');
 logResult('Background track loops enabled', backgroundInstance?.loop === true);
 logResult('Background track playing', backgroundInstance?.paused === false);
-logResult('Background track default volume applied', Math.abs((backgroundInstance?.volume ?? 0) - 0.4) < 0.001);
+logResult('Background track uses intro volume preference after Begin Story', Math.abs((backgroundInstance?.volume ?? 0) - 0.6) < 0.001);
 
 const volumeSliderInitial = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
 logResult('Background volume slider renders', Boolean(volumeSliderInitial));
 logResult(
-  'Background slider default value',
-  Boolean(volumeSliderInitial) && Math.abs(Number(volumeSliderInitial.value) - 0.4) < 0.001,
+  'Background slider keeps intro volume preference',
+  Boolean(volumeSliderInitial) && Math.abs(Number(volumeSliderInitial.value) - 0.6) < 0.001,
 );
 
 if (volumeSliderInitial) {

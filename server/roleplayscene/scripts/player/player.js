@@ -228,7 +228,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage) {
     });
     uiPanel.append(title, startBtn);
 
-    if (state.audioGate && introBackgroundSource) {
+    if (introBackgroundSource) {
       appendBackgroundAudioControls(uiPanel, createBackgroundAudioControls());
     }
   }

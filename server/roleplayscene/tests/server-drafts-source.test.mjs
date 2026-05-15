@@ -84,10 +84,11 @@ assert.ok(
 );
 assert.ok(
   mainSource.includes('publishedPlay.store.setLocale(nextLocale)')
-    && mainSource.includes('return openPublishedRolePlaySceneById(sceneId, { scene, unlockAudio: true })')
-    && mainSource.includes('if (unlockAudio)')
-    && mainSource.includes('ensureAudioGate(playStore)'),
-  'published play should sync locale and only unlock audio for user-gesture opens, not direct URLs',
+    && mainSource.includes('return openPublishedRolePlaySceneById(sceneId, { scene })')
+    && mainSource.includes('store.set({ audioGate: false })')
+    && !mainSource.includes('unlockAudio')
+    && !mainSource.includes('ensureAudioGate(playStore)'),
+  'published play should sync locale without unlocking audio before the Begin Story gesture',
 );
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
