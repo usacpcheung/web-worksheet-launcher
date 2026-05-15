@@ -257,7 +257,10 @@ function setMode(next) {
     appRoot.classList.toggle('layout--published-play', publishedPlay.active);
   }
   if (mode === 'edit') {
-    teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage);
+    teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {
+      apiClient,
+      ensureServerSessionReady,
+    });
   } else {
     teardown = renderPlayer(getActiveStore(), elLeft, elRight, showMessage);
   }

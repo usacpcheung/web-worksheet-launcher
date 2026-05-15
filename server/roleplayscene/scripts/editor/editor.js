@@ -3,8 +3,13 @@ import { renderInspector } from './inspector.js';
 import { validateProject } from './validators.js';
 import { canAddDialogueLine, createScene, SceneType } from '../model.js';
 import { translate } from '../i18n.js';
+import {
+  ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH,
+  getRolePlaySceneT2APresetById,
+  getRolePlaySceneT2ATextState,
+} from '../t2a-presets.js';
 
-export function renderEditor(store, leftEl, rightEl, showMessage) {
+export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) {
   leftEl.innerHTML = '';
   rightEl.innerHTML = '';
 
@@ -16,6 +21,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
   rightEl.appendChild(inspectorHost);
 
   let selectedId = store.get().project.scenes[0]?.id ?? null;
+  const apiClient = options.apiClient || null;
+  const ensureServerSessionReady = options.ensureServerSessionReady || null;
+  const dialogueT2AInFlightKeys = new Set();
 
   const unsubscribe = store.subscribe(() => {
     syncSelection();
@@ -92,6 +100,8 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
       onRemoveDialogue: removeDialogue,
       onUpdateDialogueText: updateDialogueText,
       onSetDialogueAudio: setDialogueAudio,
+      onGenerateDialogueAudio: generateDialogueAudio,
+      isDialogueAudioGenerating: (sceneId, index) => dialogueT2AInFlightKeys.has(getDialogueT2AKey(sceneId, index)),
       onAddChoice: addChoice,
       onRemoveChoice: removeChoice,
       onUpdateChoice: updateChoice,
@@ -348,6 +358,86 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
       });
       return { ...prev, scenes };
     });
+  }
+
+  function getDialogueT2AKey(sceneId, index) {
+    return `${sceneId}:${index}`;
+  }
+
+  function createAudioFileFromBytes(bytes, name = 'generated-dialogue-audio.mp3') {
+    if (typeof File === 'function') {
+      return new File([bytes], name, { type: 'audio/mpeg' });
+    }
+    const blob = new Blob([bytes], { type: 'audio/mpeg' });
+    Object.defineProperty(blob, 'name', {
+      value: String(name || 'generated-dialogue-audio.mp3'),
+      configurable: true,
+    });
+    return blob;
+  }
+
+  async function generateDialogueAudio(sceneId, index, presetId) {
+    const key = getDialogueT2AKey(sceneId, index);
+    if (dialogueT2AInFlightKeys.has(key)) return;
+    const scene = store.get().project.scenes.find((candidate) => candidate.id === sceneId);
+    const line = scene?.dialogue?.[index] || null;
+    const textState = getRolePlaySceneT2ATextState(line?.text || '');
+    if (!textState.hasText) {
+      showMessage({ textId: 'inspector.dialogue.t2aTextRequired' });
+      return;
+    }
+    if (textState.exceedsLimit) {
+      showMessage({
+        textId: 'inspector.dialogue.t2aTextTooLong',
+        textArgs: { max: ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH },
+      });
+      return;
+    }
+    if (!apiClient?.generateAudioFromText || typeof ensureServerSessionReady !== 'function') {
+      showMessage({ textId: 'inspector.dialogue.t2aUnavailable' });
+      return;
+    }
+    dialogueT2AInFlightKeys.add(key);
+    update();
+    try {
+      const sessionReady = await ensureServerSessionReady();
+      if (!sessionReady?.ok) {
+        return;
+      }
+      if (line?.audio) {
+        const confirmed = globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio')) ?? false;
+        if (!confirmed) {
+          showMessage({ textId: 'inspector.dialogue.t2aCanceled' });
+          return;
+        }
+      }
+      const preset = getRolePlaySceneT2APresetById(presetId);
+      const result = await apiClient.generateAudioFromText(textState.trimmedText, preset.options || {});
+      if (!result?.ok || !(result.data instanceof Uint8Array) || result.data.byteLength <= 0) {
+        const detail = String(result?.error?.message || '').trim();
+        showMessage({
+          textId: detail ? 'inspector.dialogue.t2aFailedWithDetail' : 'inspector.dialogue.t2aFailed',
+          textArgs: { detail },
+        });
+        return;
+      }
+      const safeSceneId = String(sceneId).replace(/[^a-z0-9_-]+/gi, '-');
+      const generatedFile = createAudioFileFromBytes(result.data, `${safeSceneId}-line-${index + 1}.mp3`);
+      setDialogueAudio(sceneId, index, generatedFile);
+      showMessage({
+        textId: 'inspector.dialogue.t2aGenerated',
+        textArgs: { index: index + 1 },
+      });
+    } catch (error) {
+      const detail = String(error?.message || '').trim();
+      showMessage({
+        textId: detail ? 'inspector.dialogue.t2aFailedWithDetail' : 'inspector.dialogue.t2aFailed',
+        textArgs: { detail },
+      });
+    } finally {
+      dialogueT2AInFlightKeys.delete(key);
+      update();
+    }
   }
 
   function addChoice(sceneId, choice) {
