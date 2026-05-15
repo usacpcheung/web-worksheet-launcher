@@ -288,6 +288,23 @@ test('fetchRolePlayScenePublishedSceneArtifact parses zip payload', async () => 
   assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
 });
 
+test('deleteRolePlayScenePublishedScene sends DELETE to published scene path', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  let requestedMethod = null;
+  globalThis.fetch = async (url, request = {}) => {
+    requestedUrl = url;
+    requestedMethod = request.method;
+    return mockJsonResponse(200, { ok: true, data: { deleted: true } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.deleteRolePlayScenePublishedScene('550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(requestedMethod, 'DELETE');
+});
+
 test('uploadDraftPackage emits upload progress when XHR progress events exist', async () => {
   setTestWindow();
   const previousXhr = globalThis.XMLHttpRequest;

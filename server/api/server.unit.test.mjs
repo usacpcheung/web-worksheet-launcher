@@ -85,6 +85,13 @@ async function withServer({
       async loadPublishedRolePlaySceneScene() {
         return null;
       },
+      async deleteOwnPublishedRolePlayScene() {
+        return {
+          ok: true,
+          statusCode: 200,
+          data: { roleplayscene_published_scene_id: 'p1', deleted: true },
+        };
+      },
       ...rolePlaySceneDraftService,
     },
     artifactStore: {
@@ -830,6 +837,63 @@ test('GET /api/v1/roleplayscene/published/:id/artifact returns exact zip bytes',
     }
   );
   assert.equal(artifactPath, 'roleplayscene/published/p1.zip');
+});
+
+test('DELETE /api/v1/roleplayscene/published/:id rejects malformed ids', async () => {
+  let deleteCalled = false;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async deleteOwnPublishedRolePlayScene() {
+          deleteCalled = true;
+          return { ok: true, statusCode: 200, data: {} };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/not-a-uuid`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 400);
+      const payload = await res.json();
+      assert.equal(payload.error.code, 'INVALID_ROLEPLAYSCENE_PUBLISHED_SCENE_ID');
+    }
+  );
+  assert.equal(deleteCalled, false);
+});
+
+test('DELETE /api/v1/roleplayscene/published/:id forwards owner-scoped delete', async () => {
+  let received = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async deleteOwnPublishedRolePlayScene(payload) {
+          received = payload;
+          return {
+            ok: true,
+            statusCode: 200,
+            data: { roleplayscene_published_scene_id: payload.publishedSceneId, deleted: true },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const id = '550e8400-e29b-41d4-a716-446655440000';
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/${id}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data, { roleplayscene_published_scene_id: id, deleted: true });
+    }
+  );
+  assert.deepEqual(received, {
+    identity: { sub: 'user-sub', email: null, name: null },
+    publishedSceneId: '550e8400-e29b-41d4-a716-446655440000',
+  });
 });
 
 test('POST /api/v1/published returns 413 with REQUEST_BODY_TOO_LARGE when body exceeds configured max', async () => {

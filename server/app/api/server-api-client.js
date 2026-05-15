@@ -515,6 +515,9 @@ function createServerApiClient(options = {}) {
     fetchRolePlayScenePublishedSceneArtifact(publishedSceneId) {
       return requestZip(`/roleplayscene/published/${publishedSceneId}/artifact`);
     },
+    deleteRolePlayScenePublishedScene(publishedSceneId) {
+      return requestJson(`/roleplayscene/published/${publishedSceneId}`, { method: 'DELETE' });
+    },
     listUploadedAttempts() {
       return requestJson('/attempts');
     },

@@ -765,6 +765,52 @@ export class RolePlaySceneDraftService {
     };
   }
 
+  async deleteOwnPublishedRolePlayScene({ identity, publishedSceneId }) {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const deleted = await client.query(
+        `DELETE FROM roleplayscene_published_scenes
+         WHERE roleplayscene_published_scene_id = $1 AND owner_sub = $2
+         RETURNING roleplayscene_published_scene_id, artifact_path`,
+        [publishedSceneId, identity.sub]
+      );
+
+      if (deleted.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 404,
+          error: {
+            code: 'ROLEPLAYSCENE_PUBLISHED_SCENE_NOT_FOUND',
+            message: 'Published RolePlayScene was not found for this owner.',
+          },
+        };
+      }
+
+      await client.query('COMMIT');
+      const deletedScene = deleted.rows[0];
+      await deleteArtifactBestEffort({
+        artifactStore: this.artifactStore,
+        artifactPath: deletedScene.artifact_path,
+      });
+
+      return {
+        ok: true,
+        statusCode: 200,
+        data: {
+          roleplayscene_published_scene_id: deletedScene.roleplayscene_published_scene_id,
+          deleted: true,
+        },
+      };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async deleteOwnRolePlaySceneDraft({ identity, uploadedDraftId }) {
     const client = await this.db.connect();
     try {

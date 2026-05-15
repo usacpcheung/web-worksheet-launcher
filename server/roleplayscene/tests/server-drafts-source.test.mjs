@@ -35,9 +35,18 @@ assert.ok(
   mainSource.includes('apiClient.listRolePlayScenePublishedScenes')
     && mainSource.includes('apiClient.fetchRolePlayScenePublishedScene(publishedSceneId)')
     && mainSource.includes('apiClient.fetchRolePlayScenePublishedSceneArtifact(publishedSceneId)')
+    && mainSource.includes('apiClient.deleteRolePlayScenePublishedScene(sceneId)')
     && mainSource.includes('function renderPublishedBrowserModal')
     && mainSource.includes('function openPublishedRolePlaySceneById'),
-  'RolePlayScene should browse published scenes and fetch metadata/artifacts through PR8 API client methods',
+  'RolePlayScene should browse/open/download/delete published scenes through PR8 API client methods',
+);
+assert.ok(
+  mainSource.includes("const currentUserSub = serverSession.user?.sub || ''")
+    && mainSource.includes("if (currentUserSub && scene?.owner_sub === currentUserSub)")
+    && mainSource.includes('function showDeletePublishedSceneConfirmation')
+    && mainSource.includes('function deletePublishedRolePlayScene')
+    && mainSource.includes("await loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: true })"),
+  'published browser should show owner-only delete with confirmation and refresh after deletion',
 );
 assert.ok(
   mainSource.includes('let publishedPlay = { active: false, store: null, preparedImport: null, scene: null }')

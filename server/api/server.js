@@ -292,6 +292,27 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
         return json(res, 200, ok(result));
       }
 
+      if (req.method === 'DELETE' && isRolePlayScenePublishedDetailRoute(segments)) {
+        if (segments.length !== 5) {
+          return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        }
+        const validatedPublishedSceneId = assertUuid(segments[4], {
+          code: 'INVALID_ROLEPLAYSCENE_PUBLISHED_SCENE_ID',
+          message: 'roleplayscenePublishedSceneId must be a valid UUID.',
+        });
+        if (!validatedPublishedSceneId.ok) {
+          return json(res, 400, fail(validatedPublishedSceneId.error.code, validatedPublishedSceneId.error.message));
+        }
+        const result = await rolePlaySceneDraftService.deleteOwnPublishedRolePlayScene({
+          identity,
+          publishedSceneId: validatedPublishedSceneId.value,
+        });
+        if (!result.ok) {
+          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+        }
+        return json(res, result.statusCode, ok(result.data));
+      }
+
       if (req.method === 'GET' && isRolePlayScenePublishedDetailRoute(segments)) {
         if (!(segments.length === 5 || (segments.length === 6 && segments[5] === 'artifact'))) {
           return json(res, 404, fail('NOT_FOUND', 'Route not found.'));

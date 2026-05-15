@@ -689,6 +689,18 @@ async function showDeleteDraftConfirmation(draft) {
   });
 }
 
+async function showDeletePublishedSceneConfirmation(scene) {
+  const title = scene?.title || translate('published.values.untitledScene');
+  return chooseFromServerModal({
+    title: translate('published.deleteTitle'),
+    message: translate('published.deleteBody', { title }),
+    actions: [
+      { label: translate('published.deleteConfirm'), value: 'delete', className: 'confirm-actions__primary server-danger-action' },
+      { label: translate('server.cancel'), value: null, className: 'confirm-actions__secondary' },
+    ],
+  });
+}
+
 function showPublishDraftModal(draft, initialTitle = '') {
   return new Promise((resolve) => {
     let resolved = false;
@@ -969,6 +981,12 @@ function renderPublishedSceneRows(container, scenes) {
     const downloadButton = createButton(translate('published.download'));
     downloadButton.addEventListener('click', () => downloadPublishedRolePlayScene(scene));
     actions.append(openButton, downloadButton);
+    const currentUserSub = serverSession.user?.sub || '';
+    if (currentUserSub && scene?.owner_sub === currentUserSub) {
+      const deleteButton = createButton(translate('published.delete'), 'server-danger-action');
+      deleteButton.addEventListener('click', () => deletePublishedRolePlayScene(scene));
+      actions.appendChild(deleteButton);
+    }
     row.appendChild(actions);
     list.appendChild(row);
   });
@@ -1158,6 +1176,22 @@ async function downloadPublishedRolePlayScene(scene) {
   anchor.remove();
   URL.revokeObjectURL(url);
   showMessage({ textId: 'published.downloaded' });
+}
+
+async function deletePublishedRolePlayScene(scene) {
+  const sceneId = getRolePlayScenePublishedSceneId(scene);
+  if (!sceneId) return;
+  const choice = await showDeletePublishedSceneConfirmation(scene);
+  if (choice !== 'delete') return;
+  const sessionReady = await ensureServerSessionReady();
+  if (!sessionReady.ok) return;
+  const result = await apiClient.deleteRolePlayScenePublishedScene(sceneId);
+  if (!result.ok) {
+    showMessage({ text: getServerErrorMessage(result, 'published.deleteFailed') });
+    return;
+  }
+  showMessage({ textId: 'published.deleted' });
+  await loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: true });
 }
 
 function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploadedDraftSlotLimit } = {}) {
