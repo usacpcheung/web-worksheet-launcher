@@ -376,12 +376,49 @@ function getDirectPublishedSceneIdFromLocation() {
   }
 }
 
+function buildPublishedScenePlayUrl(sceneId) {
+  const url = new URL(globalThis.location?.href || 'http://localhost/roleplayscene/');
+  url.searchParams.set('publishedSceneId', sceneId);
+  url.searchParams.delete('authReturn');
+  url.hash = '';
+  return url.toString();
+}
+
 function createButton(label, className = '') {
   const button = document.createElement('button');
   button.type = 'button';
   button.textContent = label;
   if (className) button.className = className;
   return button;
+}
+
+function createActionLink(label, href, className = '') {
+  const link = document.createElement('a');
+  link.href = href;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = label;
+  link.className = ['server-action-link', className].filter(Boolean).join(' ');
+  return link;
+}
+
+async function copyTextToClipboard(text) {
+  if (globalThis.navigator?.clipboard?.writeText) {
+    await globalThis.navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand('copy');
+  } finally {
+    textarea.remove();
+  }
 }
 
 function setServerModalActions(actions = []) {
@@ -975,15 +1012,20 @@ function renderPublishedSceneRows(container, scenes) {
     renderPublishedSceneMetadata(row, scene);
     const actions = document.createElement('div');
     actions.className = 'server-draft-row__actions';
-    const openButton = createButton(
-      openingPublishedSceneIds.has(sceneId) ? translate('published.opening') : translate('published.open'),
-      'confirm-actions__primary'
-    );
-    openButton.disabled = openingPublishedSceneIds.has(sceneId);
-    openButton.addEventListener('click', () => openPublishedRolePlayScene(scene));
+    const playUrl = buildPublishedScenePlayUrl(sceneId);
+    const playLink = createActionLink(translate('published.playLink'), playUrl, 'confirm-actions__primary');
+    const copyLinkButton = createButton(translate('published.copyLink'));
+    copyLinkButton.addEventListener('click', () => {
+      copyTextToClipboard(playUrl)
+        .then(() => showMessage({ textId: 'published.linkCopied' }))
+        .catch((err) => {
+          console.error(err);
+          showMessage({ textId: 'published.linkCopyFailed' });
+        });
+    });
     const downloadButton = createButton(translate('published.download'));
     downloadButton.addEventListener('click', () => downloadPublishedRolePlayScene(scene));
-    actions.append(openButton, downloadButton);
+    actions.append(playLink, copyLinkButton, downloadButton);
     const currentUserSub = serverSession.user?.sub || '';
     if (currentUserSub && scene?.owner_sub === currentUserSub) {
       const deleteButton = createButton(translate('published.delete'), 'server-danger-action');

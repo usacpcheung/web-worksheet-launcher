@@ -83,6 +83,15 @@ assert.ok(
   'published browser refresh/search/load-more controls should be disabled while loading',
 );
 assert.ok(
+  mainSource.includes('function buildPublishedScenePlayUrl(sceneId)')
+    && mainSource.includes("url.searchParams.set('publishedSceneId', sceneId)")
+    && mainSource.includes("url.searchParams.delete('authReturn')")
+    && mainSource.includes("const playLink = createActionLink(translate('published.playLink'), playUrl, 'confirm-actions__primary')")
+    && mainSource.includes("copyTextToClipboard(playUrl)")
+    && !mainSource.includes("openButton.addEventListener('click', () => openPublishedRolePlayScene(scene))"),
+  'published browser should expose copyable direct play links instead of an in-modal open button',
+);
+assert.ok(
   mainSource.includes('publishedPlay.store.setLocale(nextLocale)')
     && mainSource.includes('return openPublishedRolePlaySceneById(sceneId, { scene })')
     && mainSource.includes('store.set({ audioGate: false })')
