@@ -297,20 +297,33 @@ resetAudioSpies();
   const { uiHost, cleanup } = renderWithProject(introProject);
 
   const introSlider = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
-  const introMute = findByText(uiHost, 'Mute background music');
-  logResult('Intro renders background controls before audio gate opens', Boolean(introSlider) && Boolean(introMute));
+  const introUnmute = findByText(uiHost, 'Unmute background music');
+  logResult('Intro renders disabled background controls before audio gate opens', Boolean(introSlider?.disabled) && Boolean(introUnmute));
   logResult('Intro does not autoplay before Begin Story', FakeAudio.playCalls.length === 0);
 
-  if (introMute) {
-    introMute.dispatchEvent('click');
+  if (introUnmute) {
+    introUnmute.dispatchEvent('click');
   }
+
+  logResult('Intro unmute starts background playback', FakeAudio.playCalls[0] === 'bg-loop.ogg');
+  const introMute = findByText(uiHost, 'Mute background music');
+  logResult('Intro unmute enables volume controls', Boolean(introSlider) && !introSlider.disabled && Boolean(introMute));
+
+  cleanup();
+}
+
+resetAudioSpies();
+
+{
+  const introProject = createIntroOnlyProject({ name: 'Loop', objectUrl: 'bg-loop.ogg' });
+  const { uiHost, cleanup } = renderWithProject(introProject);
 
   const startButton = findByText(uiHost, 'Begin Story');
   if (startButton) {
     startButton.dispatchEvent('click');
   }
 
-  logResult('Muted intro preference prevents Begin Story background playback', FakeAudio.playCalls.length === 0);
+  logResult('Default off intro preference prevents Begin Story background playback', FakeAudio.playCalls.length === 0);
 
   cleanup();
 }
@@ -391,13 +404,20 @@ const cleanup = renderPlayer(store, stageHost, uiHost, () => {});
 
 logResult('Background idle before Begin Story', FakeAudio.playCalls.length === 0);
 
+const introUnmuteButton = findByText(uiHost, 'Unmute background music');
+logResult('Background controls render before Begin Story', Boolean(introUnmuteButton));
+if (introUnmuteButton) {
+  introUnmuteButton.dispatchEvent('click');
+}
+
 const introVolumeSlider = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
-logResult('Background controls render before Begin Story', Boolean(introVolumeSlider));
+logResult('Background controls enable after intro unmute', Boolean(introVolumeSlider) && !introVolumeSlider.disabled);
 if (introVolumeSlider) {
   introVolumeSlider.value = '0.6';
   introVolumeSlider.dispatchEvent('input', { target: introVolumeSlider });
 }
 
+const introPlayCountAfterUnmute = FakeAudio.playCalls.length;
 const startButton = findByText(uiHost, 'Begin Story');
 logResult('Begin Story button renders', Boolean(startButton));
 if (startButton) {
@@ -406,6 +426,7 @@ if (startButton) {
 
 const backgroundInstance = FakeAudio.instances[0] ?? null;
 logResult('Background track plays after Begin Story', FakeAudio.playCalls[0] === 'bg-loop.ogg');
+logResult('Begin Story does not duplicate already playing intro background', FakeAudio.playCalls.length === introPlayCountAfterUnmute);
 logResult('Background track loops enabled', backgroundInstance?.loop === true);
 logResult('Background track playing', backgroundInstance?.paused === false);
 logResult('Background track uses intro volume preference after Begin Story', Math.abs((backgroundInstance?.volume ?? 0) - 0.6) < 0.001);

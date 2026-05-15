@@ -103,7 +103,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage) {
     backgroundTrack.stop();
   }
 
-  function createBackgroundAudioControls() {
+  function createBackgroundAudioControls({ activationSource = null } = {}) {
     return {
       volume: backgroundVolume,
       muted: backgroundMuted,
@@ -113,6 +113,12 @@ export function renderPlayer(store, leftEl, rightEl, showMessage) {
       },
       onToggleMute: () => {
         backgroundMuted = !backgroundMuted;
+        if (!backgroundMuted && activationSource && !store.get().audioGate) {
+          ensureAudioGate(store);
+          backgroundTrack.setVolume(backgroundVolume);
+          backgroundTrack.exitDuckedState();
+          backgroundTrack.play(activationSource);
+        }
         backgroundTrack.setMuted(backgroundMuted);
         return backgroundMuted;
       },
@@ -205,6 +211,10 @@ export function renderPlayer(store, leftEl, rightEl, showMessage) {
       stage.appendChild(introStage);
     }
 
+    if (!state.audioGate && introBackgroundSource) {
+      backgroundMuted = true;
+    }
+
     if (state.audioGate && introBackgroundSource) {
       backgroundTrack.setVolume(backgroundVolume);
       backgroundTrack.setMuted(backgroundMuted);
@@ -229,7 +239,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage) {
     uiPanel.append(title, startBtn);
 
     if (introBackgroundSource) {
-      appendBackgroundAudioControls(uiPanel, createBackgroundAudioControls());
+      appendBackgroundAudioControls(uiPanel, createBackgroundAudioControls({ activationSource: introBackgroundSource }));
     }
   }
 
