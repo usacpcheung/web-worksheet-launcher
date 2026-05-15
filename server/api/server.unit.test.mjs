@@ -79,6 +79,12 @@ async function withServer({
       async publishRolePlaySceneFromDraft() {
         return { ok: true, statusCode: 201, data: { roleplayscene_published_scene_id: 'p1' } };
       },
+      async listPublishedRolePlaySceneScenes() {
+        return { items: [], limit: 20, offset: 0, hasMore: false };
+      },
+      async loadPublishedRolePlaySceneScene() {
+        return null;
+      },
       ...rolePlaySceneDraftService,
     },
     artifactStore: {
@@ -687,6 +693,143 @@ test('POST /api/v1/roleplayscene/published maps service errors with details', as
       assert.deepEqual(payload.error.details, { requestedTitle: 'Published Clinic' });
     }
   );
+});
+
+test('GET /api/v1/roleplayscene/published forwards filters and pagination', async () => {
+  let received = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async listPublishedRolePlaySceneScenes(payload) {
+          received = payload;
+          return {
+            items: [{ roleplayscene_published_scene_id: 'p1', title: 'Clinic' }],
+            limit: payload.limit,
+            offset: payload.offset,
+            hasMore: false,
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published?q=clinic&title=Greeting&description=Practice&owner=teacher&limit=12&offset=24`, {
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data.items, [{ roleplayscene_published_scene_id: 'p1', title: 'Clinic' }]);
+    }
+  );
+  assert.deepEqual(received, {
+    query: 'clinic',
+    title: 'Greeting',
+    description: 'Practice',
+    owner: 'teacher',
+    limit: 12,
+    offset: 24,
+  });
+});
+
+test('GET /api/v1/roleplayscene/published/:id rejects malformed ids', async () => {
+  let loadCalled = false;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async loadPublishedRolePlaySceneScene() {
+          loadCalled = true;
+          return null;
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/not-a-uuid`, { headers: authHeaders });
+      assert.equal(res.status, 400);
+      const payload = await res.json();
+      assert.equal(payload.error.code, 'INVALID_ROLEPLAYSCENE_PUBLISHED_SCENE_ID');
+    }
+  );
+  assert.equal(loadCalled, false);
+});
+
+test('GET /api/v1/roleplayscene/published/:id returns metadata without owner scope', async () => {
+  let receivedId = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async loadPublishedRolePlaySceneScene(publishedSceneId) {
+          receivedId = publishedSceneId;
+          return {
+            roleplayscene_published_scene_id: publishedSceneId,
+            owner_sub: 'other-owner',
+            title: 'Clinic',
+            artifact_path: 'roleplayscene/published/p1.zip',
+            artifact_sha256: 'sha',
+            artifact_size_bytes: 4,
+            published_at: '2026-05-14T00:00:00.000Z',
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const id = '550e8400-e29b-41d4-a716-446655440000';
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/${id}`, { headers: authHeaders });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.owner_sub, 'other-owner');
+      assert.equal(payload.data.artifact_path, undefined);
+    }
+  );
+  assert.equal(receivedId, '550e8400-e29b-41d4-a716-446655440000');
+});
+
+test('GET /api/v1/roleplayscene/published/:id returns 404 for missing published scene', async () => {
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async loadPublishedRolePlaySceneScene() {
+          return null;
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000`, {
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 404);
+      const payload = await res.json();
+      assert.equal(payload.error.code, 'ROLEPLAYSCENE_PUBLISHED_SCENE_NOT_FOUND');
+    }
+  );
+});
+
+test('GET /api/v1/roleplayscene/published/:id/artifact returns exact zip bytes', async () => {
+  let artifactPath = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async loadPublishedRolePlaySceneScene() {
+          return { artifact_path: 'roleplayscene/published/p1.zip' };
+        },
+      },
+      artifactStore: {
+        async readArtifact(pathValue) {
+          artifactPath = pathValue;
+          return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000/artifact`, {
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'application/zip');
+      assert.deepEqual(Array.from(new Uint8Array(await res.arrayBuffer())), [0x50, 0x4b, 0x03, 0x04]);
+    }
+  );
+  assert.equal(artifactPath, 'roleplayscene/published/p1.zip');
 });
 
 test('POST /api/v1/published returns 413 with REQUEST_BODY_TOO_LARGE when body exceeds configured max', async () => {

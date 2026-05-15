@@ -35,6 +35,8 @@ const serverStatus = document.getElementById('server-status');
 const serverSignInButton = document.getElementById('server-signin-btn');
 const serverSaveButton = document.getElementById('server-save-btn');
 const serverManageButton = document.getElementById('server-manage-btn');
+const serverBrowsePublishedButton = document.getElementById('server-browse-published-btn');
+const publishedExitButton = document.getElementById('published-exit-btn');
 const fileInput = document.getElementById('file-input');
 const topbarTitle = document.querySelector('.topbar h1');
 const localeSelect = document.getElementById('locale-select');
@@ -67,6 +69,14 @@ let uploadedDraftSlotLimit = 3;
 let isLoadingUploadedDrafts = false;
 let isUploadingDraft = false;
 const publishingDraftIds = new Set();
+let publishedScenes = [];
+let publishedScenesHasMore = false;
+let publishedScenesNextOffset = null;
+let publishedScenesFilters = { q: '', title: '', description: '', owner: '' };
+let isLoadingPublishedScenes = false;
+let openingPublishedSceneIds = new Set();
+let publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
+let pendingDirectPublishedSceneId = '';
 
 const LOCALE_STORAGE_KEY = 'roleplayscene:locale';
 
@@ -158,6 +168,14 @@ function updateToolbarText() {
       ? translate('server.refreshing')
       : translate('server.manage');
   }
+  if (serverBrowsePublishedButton) {
+    serverBrowsePublishedButton.textContent = isLoadingPublishedScenes
+      ? translate('published.refreshing')
+      : translate('published.browse');
+  }
+  if (publishedExitButton) {
+    publishedExitButton.textContent = translate('published.exit');
+  }
   if (localeLabel) {
     localeLabel.textContent = translate('toolbar.languageLabel');
   }
@@ -218,6 +236,10 @@ function refreshLocaleUI(nextLocale) {
   setMode(mode);
 }
 
+function getActiveStore() {
+  return publishedPlay.active && publishedPlay.store ? publishedPlay.store : store;
+}
+
 function setMode(next) {
   if (teardown) {
     teardown();
@@ -229,12 +251,14 @@ function setMode(next) {
   if (appRoot) {
     appRoot.classList.toggle('layout--edit', mode === 'edit');
     appRoot.classList.toggle('layout--play', mode === 'play');
+    appRoot.classList.toggle('layout--published-play', publishedPlay.active);
   }
   if (mode === 'edit') {
-    teardown = renderEditor(store, elLeft, elRight, showMessage);
+    teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage);
   } else {
-    teardown = renderPlayer(store, elLeft, elRight, showMessage);
+    teardown = renderPlayer(getActiveStore(), elLeft, elRight, showMessage);
   }
+  updatePublishedPlayUi();
 }
 
 function showMessage(msg) {
@@ -315,6 +339,37 @@ function updateServerSessionUi() {
   if (serverManageButton) {
     serverManageButton.disabled = isLoadingUploadedDrafts;
     serverManageButton.textContent = isLoadingUploadedDrafts ? translate('server.refreshing') : translate('server.manage');
+  }
+  if (serverBrowsePublishedButton) {
+    serverBrowsePublishedButton.disabled = isLoadingPublishedScenes;
+    serverBrowsePublishedButton.textContent = isLoadingPublishedScenes ? translate('published.refreshing') : translate('published.browse');
+  }
+  updatePublishedPlayUi();
+}
+
+function updatePublishedPlayUi() {
+  const inPublishedPlay = Boolean(publishedPlay.active);
+  [btnEdit, btnImport, btnExport, serverSaveButton, serverManageButton].forEach((control) => {
+    if (control) control.hidden = inPublishedPlay;
+  });
+  if (btnPlay) {
+    btnPlay.hidden = false;
+    btnPlay.disabled = inPublishedPlay;
+  }
+  if (serverBrowsePublishedButton) {
+    serverBrowsePublishedButton.hidden = false;
+  }
+  if (publishedExitButton) {
+    publishedExitButton.hidden = !inPublishedPlay;
+  }
+}
+
+function getDirectPublishedSceneIdFromLocation() {
+  try {
+    const params = new URLSearchParams(globalThis.location?.search || '');
+    return String(params.get('publishedSceneId') || '').trim();
+  } catch (err) {
+    return '';
   }
 }
 
@@ -495,6 +550,14 @@ function startServerSignIn() {
       updateServerSessionUi();
       showMessage({ textId: 'server.signedIn' });
       activeAuthFlow = null;
+      if (pendingDirectPublishedSceneId) {
+        const sceneId = pendingDirectPublishedSceneId;
+        pendingDirectPublishedSceneId = '';
+        openPublishedRolePlaySceneById(sceneId, { source: 'direct' }).catch((err) => {
+          console.error(err);
+          showMessage({ textId: 'published.openFailed' });
+        });
+      }
     },
     onSessionNotReady: (result) => {
       if (result?.waitingForCallback) {
@@ -841,6 +904,262 @@ function renderUploadedDraftManager({
   });
 }
 
+function getRolePlayScenePublishedSceneId(scene) {
+  return String(scene?.roleplayscene_published_scene_id || scene?.publishedSceneId || '').trim();
+}
+
+function renderPublishedSceneMetadata(container, scene) {
+  const metadata = document.createElement('dl');
+  metadata.className = 'server-draft-meta';
+  const ownerLabel = scene?.owner_email || scene?.owner_name || translate('published.values.unknownOwner');
+  const rows = [
+    [translate('published.meta.id'), getRolePlayScenePublishedSceneId(scene) || '-'],
+    [translate('published.meta.owner'), ownerLabel],
+    [translate('published.meta.size'), formatBytes(scene?.artifact_size_bytes)],
+    [translate('published.meta.scenes'), String(Number(scene?.scene_count || 0))],
+    [translate('published.meta.media'), String(Number(scene?.media_count || 0))],
+    [translate('published.meta.validationWarnings'), String(Number(scene?.validation_warning_count || 0))],
+    [translate('published.meta.published'), formatTimestamp(scene?.published_at)],
+  ];
+  rows.forEach(([term, value]) => {
+    const dt = document.createElement('dt');
+    dt.textContent = term;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    metadata.append(dt, dd);
+  });
+  container.appendChild(metadata);
+}
+
+function renderPublishedSceneRows(container, scenes) {
+  const list = document.createElement('div');
+  list.className = 'server-draft-list published-scene-list';
+  if (!scenes.length) {
+    const empty = document.createElement('p');
+    empty.className = 'server-empty';
+    empty.textContent = translate('published.noScenes');
+    list.appendChild(empty);
+    container.appendChild(list);
+    return;
+  }
+  scenes.forEach((scene) => {
+    const sceneId = getRolePlayScenePublishedSceneId(scene);
+    const row = document.createElement('article');
+    row.className = 'server-draft-row published-scene-row';
+    const header = document.createElement('div');
+    header.className = 'server-draft-row__header';
+    const title = document.createElement('h3');
+    title.textContent = scene?.title || translate('published.values.untitledScene');
+    header.appendChild(title);
+    if (isNonEmptyString(scene?.description)) {
+      const description = document.createElement('p');
+      description.textContent = scene.description;
+      header.appendChild(description);
+    }
+    row.appendChild(header);
+    renderPublishedSceneMetadata(row, scene);
+    const actions = document.createElement('div');
+    actions.className = 'server-draft-row__actions';
+    const openButton = createButton(
+      openingPublishedSceneIds.has(sceneId) ? translate('published.opening') : translate('published.open'),
+      'confirm-actions__primary'
+    );
+    openButton.disabled = openingPublishedSceneIds.has(sceneId);
+    openButton.addEventListener('click', () => openPublishedRolePlayScene(scene));
+    const downloadButton = createButton(translate('published.download'));
+    downloadButton.addEventListener('click', () => downloadPublishedRolePlayScene(scene));
+    actions.append(openButton, downloadButton);
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
+  container.appendChild(list);
+}
+
+function renderPublishedBrowserModal() {
+  openServerModal({
+    title: translate('published.browseTitle'),
+    bodyRenderer: (body) => {
+      const form = document.createElement('form');
+      form.className = 'published-browser-filters';
+      const queryInput = document.createElement('input');
+      queryInput.type = 'search';
+      queryInput.name = 'q';
+      queryInput.value = publishedScenesFilters.q;
+      queryInput.placeholder = translate('published.searchPlaceholder');
+      queryInput.setAttribute('aria-label', translate('published.searchLabel'));
+      const ownerInput = document.createElement('input');
+      ownerInput.type = 'search';
+      ownerInput.name = 'owner';
+      ownerInput.value = publishedScenesFilters.owner;
+      ownerInput.placeholder = translate('published.ownerPlaceholder');
+      ownerInput.setAttribute('aria-label', translate('published.ownerLabel'));
+      const searchButton = createButton(translate('published.search'), 'confirm-actions__primary');
+      searchButton.type = 'submit';
+      form.append(queryInput, ownerInput, searchButton);
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        publishedScenesFilters = {
+          ...publishedScenesFilters,
+          q: String(queryInput.value || '').trim(),
+          owner: String(ownerInput.value || '').trim(),
+        };
+        loadPublishedRolePlaySceneScenes({ preflight: true, showBrowser: true }).catch((err) => {
+          console.error(err);
+          showMessage({ textId: 'published.listFailed' });
+        });
+      });
+      body.appendChild(form);
+      renderPublishedSceneRows(body, publishedScenes);
+    },
+    actions: [
+      {
+        label: translate('published.refresh'),
+        onClick: () => loadPublishedRolePlaySceneScenes({ preflight: true, showBrowser: true }),
+      },
+      {
+        label: translate('published.loadMore'),
+        disabled: !publishedScenesHasMore,
+        onClick: () => loadPublishedRolePlaySceneScenes({ preflight: true, append: true, showBrowser: true }),
+      },
+      {
+        label: translate('server.close'),
+        className: 'confirm-actions__secondary',
+        onClick: () => closeServerModal(),
+      },
+    ],
+  });
+}
+
+async function loadPublishedRolePlaySceneScenes({
+  preflight = true,
+  append = false,
+  showBrowser = false,
+} = {}) {
+  if (preflight) {
+    const sessionReady = await ensureServerSessionReady();
+    if (!sessionReady.ok) return sessionReady.result;
+  }
+  isLoadingPublishedScenes = true;
+  updateServerSessionUi();
+  try {
+    const offset = append ? Number(publishedScenesNextOffset || publishedScenes.length || 0) : 0;
+    const result = await apiClient.listRolePlayScenePublishedScenes({
+      ...publishedScenesFilters,
+      limit: 20,
+      offset,
+    });
+    if (!result.ok) {
+      showMessage({ text: getServerErrorMessage(result, 'published.listFailed') });
+      return result;
+    }
+    const incoming = Array.isArray(result.data?.items) ? result.data.items : [];
+    publishedScenes = append ? [...publishedScenes, ...incoming] : incoming;
+    publishedScenesHasMore = result.data?.hasMore === true;
+    publishedScenesNextOffset = Number.isFinite(Number(result.data?.nextOffset)) ? Number(result.data.nextOffset) : null;
+    if (showBrowser) {
+      renderPublishedBrowserModal();
+    }
+    return result;
+  } finally {
+    isLoadingPublishedScenes = false;
+    updateServerSessionUi();
+  }
+}
+
+function exitPublishedPlay() {
+  if (publishedPlay.preparedImport?.project) {
+    revokeProjectObjectUrls(publishedPlay.preparedImport.project);
+  }
+  publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
+  setMode('edit');
+  showMessage({ textId: 'published.exited' });
+}
+
+async function openPublishedRolePlayScene(scene) {
+  const sceneId = getRolePlayScenePublishedSceneId(scene);
+  if (!sceneId) return;
+  return openPublishedRolePlaySceneById(sceneId, { scene });
+}
+
+async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse' } = {}) {
+  const sessionReady = await ensureServerSessionReady();
+  if (!sessionReady.ok) {
+    if (source === 'direct') {
+      pendingDirectPublishedSceneId = publishedSceneId;
+    }
+    return sessionReady.result;
+  }
+  if (openingPublishedSceneIds.has(publishedSceneId)) return;
+  openingPublishedSceneIds.add(publishedSceneId);
+  if (!serverModalOverlay?.hidden) renderPublishedBrowserModal();
+  let preparedImport = null;
+  try {
+    showMessage({ textId: 'published.opening' });
+    let metadata = scene;
+    if (!metadata) {
+      const metadataResult = await apiClient.fetchRolePlayScenePublishedScene(publishedSceneId);
+      if (!metadataResult.ok) {
+        showMessage({ text: getServerErrorMessage(metadataResult, 'published.openFailed') });
+        return metadataResult;
+      }
+      metadata = metadataResult.data;
+    }
+    const artifact = await apiClient.fetchRolePlayScenePublishedSceneArtifact(publishedSceneId);
+    if (!artifact.ok) {
+      showMessage({ text: getServerErrorMessage(artifact, 'published.openFailed') });
+      return artifact;
+    }
+    preparedImport = await prepareProjectImport(createZipFileFromBytes(
+      artifact.data,
+      `${sanitizeFilename(metadata?.title, 'roleplayscene-published')}.zip`,
+    ));
+    if (publishedPlay.preparedImport?.project) {
+      revokeProjectObjectUrls(publishedPlay.preparedImport.project);
+    }
+    const playStore = new Store();
+    playStore.setLocale(store.get().locale);
+    playStore.set({ project: preparedImport.project });
+    publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata };
+    closeServerModal('published-open');
+    ensureAudioGate(playStore);
+    setMode('play');
+    showMessage({ textId: 'published.opened' });
+    return { ok: true };
+  } catch (err) {
+    if (preparedImport?.project) {
+      revokeProjectObjectUrls(preparedImport.project);
+    }
+    console.error(err);
+    showImportError(err);
+    return { ok: false, error: { message: err?.message || String(err) } };
+  } finally {
+    openingPublishedSceneIds.delete(publishedSceneId);
+    if (!serverModalOverlay?.hidden) renderPublishedBrowserModal();
+  }
+}
+
+async function downloadPublishedRolePlayScene(scene) {
+  const sceneId = getRolePlayScenePublishedSceneId(scene);
+  if (!sceneId) return;
+  const sessionReady = await ensureServerSessionReady();
+  if (!sessionReady.ok) return;
+  const artifact = await apiClient.fetchRolePlayScenePublishedSceneArtifact(sceneId);
+  if (!artifact.ok) {
+    showMessage({ text: getServerErrorMessage(artifact, 'published.downloadFailed') });
+    return;
+  }
+  const blob = new Blob([artifact.data], { type: 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${sanitizeFilename(scene?.title, 'roleplayscene-published')}.zip`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  showMessage({ textId: 'published.downloaded' });
+}
+
 function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploadedDraftSlotLimit } = {}) {
   return new Promise((resolve) => {
     let settled = false;
@@ -1140,6 +1459,10 @@ if (dismissButton) {
 
 btnEdit.addEventListener('click', () => setMode('edit'));
 btnPlay.addEventListener('click', () => {
+  if (publishedPlay.active) {
+    setMode('play');
+    return;
+  }
   const result = validateProject(store.get().project);
   if (result.errors.length) {
     showMessage({
@@ -1183,6 +1506,13 @@ serverManageButton?.addEventListener('click', () => {
     showMessage({ textId: 'server.listFailed' });
   });
 });
+serverBrowsePublishedButton?.addEventListener('click', () => {
+  loadPublishedRolePlaySceneScenes({ preflight: true, showBrowser: true }).catch((err) => {
+    console.error(err);
+    showMessage({ textId: 'published.listFailed' });
+  });
+});
+publishedExitButton?.addEventListener('click', () => exitPublishedPlay());
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
@@ -1255,6 +1585,13 @@ async function bootstrap() {
     updateServerSessionUi();
   });
   setMode('edit');
+  const directPublishedSceneId = getDirectPublishedSceneIdFromLocation();
+  if (directPublishedSceneId) {
+    openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' }).catch((err) => {
+      console.error(err);
+      showMessage({ textId: 'published.openFailed' });
+    });
+  }
 }
 
 bootstrap();
@@ -1289,5 +1626,8 @@ window.addEventListener('beforeunload', () => {
   }
   if (activeAuthFlow?.cancel) {
     activeAuthFlow.cancel();
+  }
+  if (publishedPlay.preparedImport?.project) {
+    revokeProjectObjectUrls(publishedPlay.preparedImport.project);
   }
 });

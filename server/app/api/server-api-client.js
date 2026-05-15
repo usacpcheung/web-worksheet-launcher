@@ -497,6 +497,24 @@ function createServerApiClient(options = {}) {
         },
       });
     },
+    listRolePlayScenePublishedScenes(filters = {}) {
+      return requestJson('/roleplayscene/published', {
+        query: {
+          q: filters.q || '',
+          title: filters.title || '',
+          description: filters.description || '',
+          owner: filters.owner || '',
+          limit: filters.limit ?? '',
+          offset: filters.offset ?? '',
+        },
+      });
+    },
+    fetchRolePlayScenePublishedScene(publishedSceneId) {
+      return requestJson(`/roleplayscene/published/${publishedSceneId}`);
+    },
+    fetchRolePlayScenePublishedSceneArtifact(publishedSceneId) {
+      return requestZip(`/roleplayscene/published/${publishedSceneId}/artifact`);
+    },
     listUploadedAttempts() {
       return requestJson('/attempts');
     },

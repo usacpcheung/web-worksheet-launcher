@@ -232,6 +232,62 @@ test('publishRolePlaySceneFromUploadedDraft sends uploadedDraftId and title', as
   });
 });
 
+test('listRolePlayScenePublishedScenes builds query URL', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return mockJsonResponse(200, { ok: true, data: { items: [] } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.listRolePlayScenePublishedScenes({
+    q: 'clinic',
+    title: 'Greeting',
+    description: 'Practice',
+    owner: 'teacher@example.test',
+    limit: 20,
+    offset: 40,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(
+    requestedUrl,
+    '/api/worksheet-launcher/v1/roleplayscene/published?q=clinic&title=Greeting&description=Practice&owner=teacher%40example.test&limit=20&offset=40'
+  );
+});
+
+test('fetchRolePlayScenePublishedScene builds detail URL', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return mockJsonResponse(200, { ok: true, data: { roleplayscene_published_scene_id: 'p1' } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.fetchRolePlayScenePublishedScene('550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000');
+});
+
+test('fetchRolePlayScenePublishedSceneArtifact parses zip payload', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
+      status: 200,
+      headers: { 'content-type': 'application/zip' },
+    });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.fetchRolePlayScenePublishedSceneArtifact('550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000/artifact');
+  assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
+});
+
 test('uploadDraftPackage emits upload progress when XHR progress events exist', async () => {
   setTestWindow();
   const previousXhr = globalThis.XMLHttpRequest;

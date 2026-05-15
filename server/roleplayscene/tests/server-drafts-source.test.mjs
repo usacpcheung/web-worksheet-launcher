@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 
 const mainSource = await readFile(new URL('../scripts/main.js', import.meta.url), 'utf8');
 const indexSource = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+const publishedOpenFunctionIndex = mainSource.indexOf('async function openPublishedRolePlaySceneById');
+const publishedOpenFunctionEndIndex = mainSource.indexOf('async function downloadPublishedRolePlayScene', publishedOpenFunctionIndex);
+const publishedOpenSource = mainSource.slice(publishedOpenFunctionIndex, publishedOpenFunctionEndIndex);
 
 assert.ok(
   mainSource.includes('apiClient.listRolePlaySceneDrafts()'),
@@ -27,6 +30,34 @@ assert.ok(
     && mainSource.includes('showPublishConflictModal(result)')
     && mainSource.includes('await loadUploadedRolePlaySceneDrafts({ preflight: false, showManager: true })'),
   'RolePlayScene should publish uploaded drafts, expose edit-title conflict recovery, and refresh draft markers',
+);
+assert.ok(
+  mainSource.includes('apiClient.listRolePlayScenePublishedScenes')
+    && mainSource.includes('apiClient.fetchRolePlayScenePublishedScene(publishedSceneId)')
+    && mainSource.includes('apiClient.fetchRolePlayScenePublishedSceneArtifact(publishedSceneId)')
+    && mainSource.includes('function renderPublishedBrowserModal')
+    && mainSource.includes('function openPublishedRolePlaySceneById'),
+  'RolePlayScene should browse published scenes and fetch metadata/artifacts through PR8 API client methods',
+);
+assert.ok(
+  mainSource.includes('let publishedPlay = { active: false, store: null, preparedImport: null, scene: null }')
+    && mainSource.includes('const playStore = new Store()')
+    && mainSource.includes('playStore.set({ project: preparedImport.project })')
+    && !publishedOpenSource.includes('applyPreparedProjectImport'),
+  'published scene open should use an isolated in-memory store rather than replacing the local autosaved project',
+);
+assert.ok(
+  mainSource.includes('publishedPlay.preparedImport?.project')
+    && mainSource.includes('revokeProjectObjectUrls(publishedPlay.preparedImport.project)')
+    && mainSource.includes('function exitPublishedPlay')
+    && indexSource.includes('id="published-exit-btn"'),
+  'published play mode should revoke object URLs and provide an explicit exit action',
+);
+assert.ok(
+  mainSource.includes("params.get('publishedSceneId')")
+    && mainSource.includes("openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' })")
+    && mainSource.includes('pendingDirectPublishedSceneId'),
+  'direct publishedSceneId URLs should open published scenes and support sign-in recovery',
 );
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
@@ -106,6 +137,7 @@ assert.ok(
     && !indexSource.includes('class="toolbar__server" aria-live=')
     && indexSource.includes('id="server-save-btn"')
     && indexSource.includes('id="server-manage-btn"')
+    && indexSource.includes('id="server-browse-published-btn"')
     && indexSource.includes('id="server-modal-overlay"')
     && indexSource.includes('tabindex="-1"'),
   'server status/actions and manager modal should be present in the static markup',
