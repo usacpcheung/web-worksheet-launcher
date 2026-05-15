@@ -15,14 +15,25 @@ assert.equal(defaultPreset.id, 'default_professional_female');
 assert.deepEqual(defaultPreset.options, {}, 'default preset should rely on rewrite-bridge voice defaults');
 
 assert.deepEqual(
-  getRolePlaySceneT2APresetById('cantonese_playful_man_pitch_2').options,
+  getRolePlaySceneT2APresetById('cantonese_playful_man_pitch_6').options,
   {
     voice_id: 'Cantonese_PlayfulMan',
     speed: 1,
     volume: 1,
-    pitch: 2,
+    pitch: 6,
   },
   'high-pitch playful man should send the requested pitch override',
+);
+
+assert.deepEqual(
+  getRolePlaySceneT2APresetById('cantonese_cute_girl').options,
+  {
+    voice_id: 'Cantonese_CuteGirl',
+    speed: 1,
+    volume: 1,
+    pitch: 3,
+  },
+  'cute girl should send the requested pitch override',
 );
 
 assert.deepEqual(
