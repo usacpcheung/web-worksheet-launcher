@@ -68,6 +68,27 @@ assert.ok(
     && mainSource.includes('pendingDirectPublishedSceneId'),
   'direct publishedSceneId URLs should open published scenes and support sign-in recovery',
 );
+assert.ok(
+  mainSource.includes('let publishedScenesRequestId = 0')
+    && mainSource.includes("return { ok: false, skipped: true, status: 'already_loading' }")
+    && mainSource.includes('const requestId = ++publishedScenesRequestId')
+    && mainSource.includes('if (requestId !== publishedScenesRequestId)')
+    && mainSource.includes('if (requestId === publishedScenesRequestId)'),
+  'published browser loads should guard against duplicate in-flight requests and ignore stale responses',
+);
+assert.ok(
+  mainSource.includes('searchButton.disabled = isLoadingPublishedScenes')
+    && mainSource.includes("label: isLoadingPublishedScenes ? translate('published.refreshing') : translate('published.refresh')")
+    && mainSource.includes('disabled: isLoadingPublishedScenes || !publishedScenesHasMore'),
+  'published browser refresh/search/load-more controls should be disabled while loading',
+);
+assert.ok(
+  mainSource.includes('publishedPlay.store.setLocale(nextLocale)')
+    && mainSource.includes('return openPublishedRolePlaySceneById(sceneId, { scene, unlockAudio: true })')
+    && mainSource.includes('if (unlockAudio)')
+    && mainSource.includes('ensureAudioGate(playStore)'),
+  'published play should sync locale and only unlock audio for user-gesture opens, not direct URLs',
+);
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
 const fetchIndex = mainSource.indexOf('apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId)', openFunctionIndex);

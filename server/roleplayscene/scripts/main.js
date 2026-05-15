@@ -74,6 +74,7 @@ let publishedScenesHasMore = false;
 let publishedScenesNextOffset = null;
 let publishedScenesFilters = { q: '', title: '', description: '', owner: '' };
 let isLoadingPublishedScenes = false;
+let publishedScenesRequestId = 0;
 let openingPublishedSceneIds = new Set();
 let publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
 let pendingDirectPublishedSceneId = '';
@@ -225,6 +226,9 @@ function populateLocaleOptions() {
 
 function refreshLocaleUI(nextLocale) {
   document.documentElement?.setAttribute('lang', nextLocale);
+  if (publishedPlay.store) {
+    publishedPlay.store.setLocale(nextLocale);
+  }
   updateToolbarText();
   populateLocaleOptions();
   if (localeSelect) {
@@ -1013,6 +1017,7 @@ function renderPublishedBrowserModal() {
       ownerInput.setAttribute('aria-label', translate('published.ownerLabel'));
       const searchButton = createButton(translate('published.search'), 'confirm-actions__primary');
       searchButton.type = 'submit';
+      searchButton.disabled = isLoadingPublishedScenes;
       form.append(queryInput, ownerInput, searchButton);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -1031,12 +1036,13 @@ function renderPublishedBrowserModal() {
     },
     actions: [
       {
-        label: translate('published.refresh'),
+        label: isLoadingPublishedScenes ? translate('published.refreshing') : translate('published.refresh'),
+        disabled: isLoadingPublishedScenes,
         onClick: () => loadPublishedRolePlaySceneScenes({ preflight: true, showBrowser: true }),
       },
       {
         label: translate('published.loadMore'),
-        disabled: !publishedScenesHasMore,
+        disabled: isLoadingPublishedScenes || !publishedScenesHasMore,
         onClick: () => loadPublishedRolePlaySceneScenes({ preflight: true, append: true, showBrowser: true }),
       },
       {
@@ -1053,13 +1059,20 @@ async function loadPublishedRolePlaySceneScenes({
   append = false,
   showBrowser = false,
 } = {}) {
-  if (preflight) {
-    const sessionReady = await ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
+  if (isLoadingPublishedScenes) {
+    return { ok: false, skipped: true, status: 'already_loading' };
   }
+  const requestId = ++publishedScenesRequestId;
   isLoadingPublishedScenes = true;
   updateServerSessionUi();
+  if (showBrowser && !serverModalOverlay?.hidden) {
+    renderPublishedBrowserModal();
+  }
   try {
+    if (preflight) {
+      const sessionReady = await ensureServerSessionReady();
+      if (!sessionReady.ok) return sessionReady.result;
+    }
     const offset = append ? Number(publishedScenesNextOffset || publishedScenes.length || 0) : 0;
     const result = await apiClient.listRolePlayScenePublishedScenes({
       ...publishedScenesFilters,
@@ -1070,6 +1083,9 @@ async function loadPublishedRolePlaySceneScenes({
       showMessage({ text: getServerErrorMessage(result, 'published.listFailed') });
       return result;
     }
+    if (requestId !== publishedScenesRequestId) {
+      return { ok: false, skipped: true, status: 'stale_response' };
+    }
     const incoming = Array.isArray(result.data?.items) ? result.data.items : [];
     publishedScenes = append ? [...publishedScenes, ...incoming] : incoming;
     publishedScenesHasMore = result.data?.hasMore === true;
@@ -1079,8 +1095,13 @@ async function loadPublishedRolePlaySceneScenes({
     }
     return result;
   } finally {
-    isLoadingPublishedScenes = false;
-    updateServerSessionUi();
+    if (requestId === publishedScenesRequestId) {
+      isLoadingPublishedScenes = false;
+      updateServerSessionUi();
+      if (showBrowser && !serverModalOverlay?.hidden) {
+        renderPublishedBrowserModal();
+      }
+    }
   }
 }
 
@@ -1096,10 +1117,10 @@ function exitPublishedPlay() {
 async function openPublishedRolePlayScene(scene) {
   const sceneId = getRolePlayScenePublishedSceneId(scene);
   if (!sceneId) return;
-  return openPublishedRolePlaySceneById(sceneId, { scene });
+  return openPublishedRolePlaySceneById(sceneId, { scene, unlockAudio: true });
 }
 
-async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse' } = {}) {
+async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse', unlockAudio = false } = {}) {
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) {
     if (source === 'direct') {
@@ -1139,7 +1160,9 @@ async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, 
     playStore.set({ project: preparedImport.project });
     publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata };
     closeServerModal('published-open');
-    ensureAudioGate(playStore);
+    if (unlockAudio) {
+      ensureAudioGate(playStore);
+    }
     setMode('play');
     showMessage({ textId: 'published.opened' });
     return { ok: true };
