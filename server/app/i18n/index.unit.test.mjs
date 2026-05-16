@@ -64,6 +64,31 @@ test('t supports simple interpolation', async () => {
   );
 });
 
+test('shared locales expose modular RolePlayScene namespace', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+
+  mod.setLocale('en', { persist: false });
+  assert.equal(mod.t('roleplayscene.toolbar.edit'), 'Edit');
+  assert.equal(mod.t('roleplayscene.inspector.dialogue.generateAudio'), 'Generate audio');
+
+  mod.setLocale('zh-TW', { persist: false });
+  assert.equal(mod.getLocale(), 'zh-Hant');
+  assert.equal(mod.t('roleplayscene.toolbar.edit'), '編輯');
+  assert.equal(mod.t('roleplayscene.server.manageTitle'), '管理已上傳的 RolePlayScene 草稿');
+});
+
+test('onLocaleChange notifies subscribers when shared locale changes', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+  const observed = [];
+  const unsubscribe = mod.onLocaleChange((locale) => observed.push(locale));
+
+  mod.setLocale('zh-HK', { persist: false });
+  mod.setLocale('en', { persist: false });
+  unsubscribe();
+
+  assert.deepEqual(observed.slice(-2), ['zh-Hant', 'en']);
+});
+
 test('viewer upload notification interpolation preserves percent symbol', async () => {
   const mod = await import(`./index.js?case=${Math.random()}`);
   mod.setLocale('en', { persist: false });

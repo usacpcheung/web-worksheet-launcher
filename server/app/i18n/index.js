@@ -10,6 +10,7 @@ const locales = Object.freeze({
 });
 
 let currentLocale = DEFAULT_LOCALE;
+const listeners = new Set();
 
 function getGlobalStorage() {
   try {
@@ -60,10 +61,20 @@ export function resolveInitialLocale(options = {}) {
 
 export function setLocale(locale, options = {}) {
   const nextLocale = normalizeLocale(locale);
+  const previousLocale = currentLocale;
   currentLocale = nextLocale;
   if (options.persist !== false) {
     const storage = Object.hasOwn(options, 'storage') ? options.storage : getGlobalStorage();
     writeSavedLocale(nextLocale, storage);
+  }
+  if (nextLocale !== previousLocale) {
+    for (const handler of listeners) {
+      try {
+        handler(currentLocale);
+      } catch (error) {
+        console.error('Locale listener failed', error);
+      }
+    }
   }
   return currentLocale;
 }
@@ -74,6 +85,14 @@ export function getLocale() {
 
 export function getAvailableLocales() {
   return Object.keys(locales);
+}
+
+export function onLocaleChange(handler) {
+  if (typeof handler !== 'function') {
+    return () => {};
+  }
+  listeners.add(handler);
+  return () => listeners.delete(handler);
 }
 
 function readPath(source, key) {
