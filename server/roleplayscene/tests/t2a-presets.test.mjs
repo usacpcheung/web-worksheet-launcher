@@ -14,15 +14,17 @@ assert.equal(ROLEPLAYSCENE_T2A_PRESETS.length, 5, 'RolePlayScene should expose f
 
 const [defaultPreset] = ROLEPLAYSCENE_T2A_PRESETS;
 assert.equal(defaultPreset.id, 'default_professional_female');
-assert.deepEqual(defaultPreset.options, {}, 'default preset should rely on rewrite-bridge voice defaults');
+assert.deepEqual(defaultPreset.options, {
+  speed: 1.2,
+}, 'default preset should use the rewrite-bridge voice default with a shared speed override');
 
 assert.deepEqual(
   getRolePlaySceneT2APresetById('cantonese_playful_man').options,
   {
     voice_id: 'Cantonese_PlayfulMan',
-    speed: 1,
+    speed: 1.2,
     volume: 1,
-    pitch: -2,
+    pitch: -1,
   },
   'playful man should send the requested lower pitch override',
 );
@@ -31,7 +33,7 @@ assert.deepEqual(
   getRolePlaySceneT2APresetById('cantonese_playful_man_pitch_3').options,
   {
     voice_id: 'Cantonese_PlayfulMan',
-    speed: 1,
+    speed: 1.2,
     volume: 1,
     pitch: 3,
   },
@@ -42,7 +44,7 @@ assert.deepEqual(
   getRolePlaySceneT2APresetById('cantonese_cute_girl').options,
   {
     voice_id: 'Cantonese_CuteGirl',
-    speed: 1,
+    speed: 1.2,
     volume: 1,
     pitch: 2,
   },
@@ -53,7 +55,7 @@ assert.deepEqual(
   getRolePlaySceneT2APresetById('cantonese_gentle_lady').options,
   {
     voice_id: 'Cantonese_GentleLady',
-    speed: 1,
+    speed: 1.2,
     volume: 1,
     pitch: 0,
   },
