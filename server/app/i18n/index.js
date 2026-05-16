@@ -12,6 +12,10 @@ const locales = Object.freeze({
 let currentLocale = DEFAULT_LOCALE;
 const listeners = new Set();
 
+function hasOwn(source, key) {
+  return Object.prototype.hasOwnProperty.call(source, key);
+}
+
 function getGlobalStorage() {
   try {
     return globalThis.localStorage || null;
@@ -52,8 +56,8 @@ function getBrowserLanguage(navigatorLike = globalThis.navigator) {
 }
 
 export function resolveInitialLocale(options = {}) {
-  const storage = Object.hasOwn(options, 'storage') ? options.storage : getGlobalStorage();
-  const navigatorLike = Object.hasOwn(options, 'navigator') ? options.navigator : globalThis.navigator;
+  const storage = hasOwn(options, 'storage') ? options.storage : getGlobalStorage();
+  const navigatorLike = hasOwn(options, 'navigator') ? options.navigator : globalThis.navigator;
   const saved = readSavedLocale(storage);
   if (saved) return normalizeLocale(saved);
   return normalizeLocale(getBrowserLanguage(navigatorLike));
@@ -64,7 +68,7 @@ export function setLocale(locale, options = {}) {
   const previousLocale = currentLocale;
   currentLocale = nextLocale;
   if (options.persist !== false) {
-    const storage = Object.hasOwn(options, 'storage') ? options.storage : getGlobalStorage();
+    const storage = hasOwn(options, 'storage') ? options.storage : getGlobalStorage();
     writeSavedLocale(nextLocale, storage);
   }
   if (nextLocale !== previousLocale) {
@@ -97,13 +101,13 @@ export function onLocaleChange(handler) {
 
 function readPath(source, key) {
   return String(key || '').split('.').reduce((value, part) => (
-    value && Object.hasOwn(value, part) ? value[part] : undefined
+    value && hasOwn(value, part) ? value[part] : undefined
   ), source);
 }
 
 function interpolate(template, params = {}) {
   return String(template).replace(/\{([A-Za-z0-9_]+)\}/g, (match, name) => (
-    Object.hasOwn(params, name) ? String(params[name]) : match
+    hasOwn(params, name) ? String(params[name]) : match
   ));
 }
 

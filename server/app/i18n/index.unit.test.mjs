@@ -35,6 +35,23 @@ test('unknown locales fall back to English', async () => {
   assert.equal(mod.setLocale('fr-FR', { storage: createStorage() }), 'en');
 });
 
+test('shared i18n runtime does not require Object.hasOwn browser support', async () => {
+  const originalHasOwn = Object.hasOwn;
+  try {
+    Object.hasOwn = undefined;
+    const mod = await import(`./index.js?case=no-has-own-${Math.random()}`);
+
+    assert.equal(
+      mod.resolveInitialLocale({ storage: createStorage(), navigator: { language: 'zh-HK' } }),
+      'zh-Hant'
+    );
+    mod.setLocale('zh-Hant', { persist: false });
+    assert.equal(mod.t('roleplayscene.toolbar.edit'), '編輯');
+  } finally {
+    Object.hasOwn = originalHasOwn;
+  }
+});
+
 test('setLocale saves preference to worksheetLauncher.locale', async () => {
   const mod = await import(`./index.js?case=${Math.random()}`);
   const storage = createStorage();
