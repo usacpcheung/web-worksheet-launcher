@@ -3,6 +3,7 @@ import { translate } from '../i18n.js';
 import {
   ROLEPLAYSCENE_T2A_PRESETS,
   ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH,
+  getRolePlaySceneT2APresetFromAudioName,
   getRolePlaySceneT2ATextState,
 } from '../t2a-presets.js';
 
@@ -226,6 +227,25 @@ export function renderInspector(hostEl, project, scene, actions) {
       audioInfo.className = 'audio-info';
       const audioName = line.audio.name || '';
       audioInfo.textContent = translate('inspector.dialogue.audioAttached', { name: audioName });
+      const t2aPreset = getRolePlaySceneT2APresetFromAudioName(audioName);
+      if (t2aPreset) {
+        const presetBadge = document.createElement('span');
+        presetBadge.className = 'audio-info__badge';
+        presetBadge.textContent = translate('inspector.dialogue.t2aPresetBadge', {
+          preset: translate(t2aPreset.labelKey),
+        });
+        audioInfo.appendChild(presetBadge);
+      }
+      if (line.audio.objectUrl) {
+        const isPreviewingAudio = actions.isDialogueAudioPreviewing?.(scene.id, index) === true;
+        const previewAudio = document.createElement('button');
+        previewAudio.type = 'button';
+        previewAudio.textContent = isPreviewingAudio
+          ? translate('inspector.dialogue.stopAudioPreview')
+          : translate('inspector.dialogue.playAudioPreview');
+        previewAudio.addEventListener('click', () => actions.onPreviewDialogueAudio?.(scene.id, index));
+        audioInfo.appendChild(previewAudio);
+      }
       const removeAudio = document.createElement('button');
       removeAudio.type = 'button';
       removeAudio.textContent = translate('inspector.dialogue.removeAudio');

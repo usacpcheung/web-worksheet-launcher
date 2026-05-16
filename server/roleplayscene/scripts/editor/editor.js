@@ -5,6 +5,7 @@ import { canAddDialogueLine, createScene, SceneType } from '../model.js';
 import { translate } from '../i18n.js';
 import {
   ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH,
+  createRolePlaySceneT2AAudioFilename,
   getRolePlaySceneT2APresetById,
   getRolePlaySceneT2ATextState,
 } from '../t2a-presets.js';
@@ -24,6 +25,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   const apiClient = options.apiClient || null;
   const ensureServerSessionReady = options.ensureServerSessionReady || null;
   const dialogueT2AInFlightKeys = new Set();
+  let activeDialoguePreview = null;
 
   const unsubscribe = store.subscribe(() => {
     syncSelection();
@@ -31,12 +33,14 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   });
 
   function cleanup() {
+    stopDialoguePreview({ refresh: false });
     unsubscribe();
   }
 
   function syncSelection() {
     const { project } = store.get();
     if (!project.scenes.some(scene => scene.id === selectedId)) {
+      stopDialoguePreview({ refresh: false });
       selectedId = project.scenes[0]?.id ?? null;
     }
   }
@@ -63,6 +67,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   function update() {
     const { project } = store.get();
     const scene = project.scenes.find(s => s.id === selectedId) ?? null;
+    stopDialoguePreviewIfStale(project);
     const otherStarts = scene
       ? project.scenes.filter(s => s.id !== scene.id && s.type === SceneType.START).length
       : 0;
@@ -83,6 +88,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       : null;
 
     renderGraph(graphHost, project, selectedId, (id) => {
+      if (id !== selectedId) {
+        stopDialoguePreview({ refresh: false });
+      }
       selectedId = id;
       update();
     });
@@ -102,6 +110,8 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       onSetDialogueAudio: setDialogueAudio,
       onGenerateDialogueAudio: generateDialogueAudio,
       isDialogueAudioGenerating: (sceneId, index) => dialogueT2AInFlightKeys.has(getDialogueT2AKey(sceneId, index)),
+      onPreviewDialogueAudio: previewDialogueAudio,
+      isDialogueAudioPreviewing: (sceneId, index) => activeDialoguePreview?.key === getDialogueT2AKey(sceneId, index),
       onAddChoice: addChoice,
       onRemoveChoice: removeChoice,
       onUpdateChoice: updateChoice,
@@ -308,6 +318,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function removeDialogue(sceneId, index) {
+    if (activeDialoguePreview?.sceneId === sceneId && index <= activeDialoguePreview.index) {
+      stopDialoguePreview();
+    }
     mutateProject(prev => {
       const scenes = prev.scenes.map(scene => {
         if (scene.id !== sceneId) return scene;
@@ -337,6 +350,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function setDialogueAudio(sceneId, index, file) {
+    if (activeDialoguePreview?.key === getDialogueT2AKey(sceneId, index)) {
+      stopDialoguePreview();
+    }
     mutateProject(prev => {
       const scenes = prev.scenes.map(scene => {
         if (scene.id !== sceneId) return scene;
@@ -362,6 +378,81 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
 
   function getDialogueT2AKey(sceneId, index) {
     return `${sceneId}:${index}`;
+  }
+
+  function getDialogueLine(sceneId, index, project = store.get().project) {
+    const scene = project.scenes.find((candidate) => candidate.id === sceneId);
+    return scene?.dialogue?.[index] || null;
+  }
+
+  function stopDialoguePreview({ refresh = true } = {}) {
+    const preview = activeDialoguePreview;
+    if (!preview) return;
+    activeDialoguePreview = null;
+    try {
+      preview.audio.pause();
+      preview.audio.currentTime = 0;
+    } catch (error) {
+      console.warn('Failed to stop dialogue audio preview', error);
+    }
+    if (refresh) {
+      update();
+    }
+  }
+
+  function stopDialoguePreviewIfStale(project) {
+    if (!activeDialoguePreview) return;
+    const line = getDialogueLine(activeDialoguePreview.sceneId, activeDialoguePreview.index, project);
+    if (line?.audio?.objectUrl !== activeDialoguePreview.src) {
+      stopDialoguePreview({ refresh: false });
+    }
+  }
+
+  function previewDialogueAudio(sceneId, index) {
+    const key = getDialogueT2AKey(sceneId, index);
+    if (activeDialoguePreview?.key === key) {
+      stopDialoguePreview();
+      return;
+    }
+    const line = getDialogueLine(sceneId, index);
+    const src = line?.audio?.objectUrl || null;
+    if (!src || typeof Audio !== 'function') {
+      showMessage({ textId: 'inspector.dialogue.audioPreviewFailed' });
+      return;
+    }
+    stopDialoguePreview({ refresh: false });
+    const audio = new Audio(src);
+    activeDialoguePreview = { key, sceneId, index, src, audio };
+    audio.addEventListener('ended', () => {
+      if (activeDialoguePreview?.audio === audio) {
+        stopDialoguePreview();
+      }
+    });
+    audio.addEventListener('error', () => {
+      if (activeDialoguePreview?.audio === audio) {
+        stopDialoguePreview();
+        showMessage({ textId: 'inspector.dialogue.audioPreviewFailed' });
+      }
+    });
+    try {
+      const playAttempt = audio.play();
+      if (playAttempt && typeof playAttempt.catch === 'function') {
+        playAttempt.catch((error) => {
+          if (activeDialoguePreview?.audio === audio) {
+            console.warn('Dialogue audio preview failed', error);
+            stopDialoguePreview();
+            showMessage({ textId: 'inspector.dialogue.audioPreviewFailed' });
+          }
+        });
+      }
+      update();
+    } catch (error) {
+      console.warn('Dialogue audio preview failed', error);
+      if (activeDialoguePreview?.audio === audio) {
+        stopDialoguePreview();
+      }
+      showMessage({ textId: 'inspector.dialogue.audioPreviewFailed' });
+    }
   }
 
   function createAudioFileFromBytes(bytes, name = 'generated-dialogue-audio.mp3') {
@@ -422,7 +513,10 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         return;
       }
       const safeSceneId = String(sceneId).replace(/[^a-z0-9_-]+/gi, '-');
-      const generatedFile = createAudioFileFromBytes(result.data, `${safeSceneId}-line-${index + 1}.mp3`);
+      const generatedFile = createAudioFileFromBytes(
+        result.data,
+        createRolePlaySceneT2AAudioFilename(safeSceneId, index, preset.id),
+      );
       setDialogueAudio(sceneId, index, generatedFile);
       showMessage({
         textId: 'inspector.dialogue.t2aGenerated',

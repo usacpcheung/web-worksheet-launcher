@@ -112,10 +112,28 @@ assert.ok(
 );
 assert.ok(
   editorSource.includes('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {})')
-    && editorSource.includes('createAudioFileFromBytes(result.data')
+    && editorSource.includes('createAudioFileFromBytes(')
+    && editorSource.includes('result.data,')
+    && editorSource.includes('createRolePlaySceneT2AAudioFilename(')
+    && editorSource.includes('safeSceneId, index, preset.id')
     && editorSource.includes('setDialogueAudio(sceneId, index, generatedFile)')
     && editorSource.includes("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))"),
   'RolePlayScene editor should generate MP3 bytes through T2A and attach them through the existing dialogue audio path',
+);
+assert.ok(
+  editorSource.includes('let activeDialoguePreview = null')
+    && editorSource.includes('function previewDialogueAudio(sceneId, index)')
+    && editorSource.includes('new Audio(src)')
+    && editorSource.includes('stopDialoguePreview({ refresh: false })')
+    && editorSource.includes("showMessage({ textId: 'inspector.dialogue.audioPreviewFailed' })")
+    && editorSource.includes('onPreviewDialogueAudio: previewDialogueAudio')
+    && editorSource.includes('isDialogueAudioPreviewing: (sceneId, index)'),
+  'RolePlayScene editor should manage one active edit-mode dialogue audio preview with cleanup and failure messaging',
+);
+assert.ok(
+  editorSource.includes('stopDialoguePreview({ refresh: false });\r\n    unsubscribe();')
+    || editorSource.includes('stopDialoguePreview({ refresh: false });\n    unsubscribe();'),
+  'RolePlayScene editor teardown should stop active dialogue audio previews',
 );
 assert.ok(
   dialogueT2ASource.indexOf("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))") > -1
@@ -130,6 +148,16 @@ assert.ok(
     && inspectorSource.includes('generateAudio.disabled = !t2aState.eligible || isGeneratingAudio')
     && inspectorSource.includes('ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH'),
   'RolePlayScene inspector should render per-line T2A preset controls with text eligibility gating',
+);
+assert.ok(
+  inspectorSource.includes('getRolePlaySceneT2APresetFromAudioName(audioName)')
+    && inspectorSource.includes("presetBadge.className = 'audio-info__badge'")
+    && inspectorSource.includes("translate('inspector.dialogue.t2aPresetBadge'")
+    && inspectorSource.includes('actions.isDialogueAudioPreviewing?.(scene.id, index) === true')
+    && inspectorSource.includes("actions.onPreviewDialogueAudio?.(scene.id, index)")
+    && inspectorSource.includes("translate('inspector.dialogue.playAudioPreview')")
+    && inspectorSource.includes("translate('inspector.dialogue.stopAudioPreview')"),
+  'RolePlayScene inspector should render edit-mode audio preview controls and best-effort T2A preset badges',
 );
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');

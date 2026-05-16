@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   ROLEPLAYSCENE_T2A_PRESETS,
   ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH,
+  createRolePlaySceneT2AAudioFilename,
   getRolePlaySceneT2APresetById,
+  getRolePlaySceneT2APresetFromAudioName,
   getRolePlaySceneT2ATextState,
 } from '../scripts/t2a-presets.js';
 
@@ -56,6 +58,22 @@ assert.deepEqual(
     pitch: 0,
   },
   'gentle lady should use the MiniMax Cantonese voice id',
+);
+
+assert.equal(
+  createRolePlaySceneT2AAudioFilename('scene 3', 1, 'cantonese_playful_man_pitch_3'),
+  'scene-3-line-2-t2a-playful-man-pitch-3.mp3',
+  'generated T2A filenames should include scene, line, and preset slug',
+);
+assert.equal(
+  getRolePlaySceneT2APresetFromAudioName('scene-3-line-2-t2a-playful-man-pitch-3.mp3')?.id,
+  'cantonese_playful_man_pitch_3',
+  'generated filenames should resolve back to a preset for best-effort badges',
+);
+assert.equal(
+  getRolePlaySceneT2APresetFromAudioName('manual-upload.mp3'),
+  null,
+  'manual filenames should not resolve to T2A preset badges',
 );
 
 assert.equal(getRolePlaySceneT2ATextState('  hello  ').eligible, true);

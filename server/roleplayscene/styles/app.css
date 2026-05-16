@@ -369,7 +369,8 @@ button:disabled {
 .dialogue-line, .choice-row { display: grid; gap: var(--space-xs); padding: var(--space-sm); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-surface); box-shadow: var(--shadow-subtle); }
 .dialogue-line textarea { width: 100%; }
 .choice-row textarea { width: 100%; resize: vertical; }
-.audio-info { font-size: var(--font-size-sm); color: var(--color-text-muted); display: flex; align-items: center; gap: var(--space-xs); }
+.audio-info { font-size: var(--font-size-sm); color: var(--color-text-muted); display: flex; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.audio-info__badge { border: 1px solid var(--color-border); border-radius: 999px; padding: 0 var(--space-xs); color: var(--color-text); background: var(--color-surface-muted); }
 .player-panel { display: grid; gap: var(--space-lg); }
 .player-history { display: grid; gap: var(--space-xs); padding: var(--space-sm) var(--space-md); background: var(--color-surface-alt); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); box-shadow: var(--shadow-subtle); }
 .player-history-title { margin: 0; font-size: var(--font-size-sm); color: var(--color-text); text-transform: uppercase; letter-spacing: 0.03em; }

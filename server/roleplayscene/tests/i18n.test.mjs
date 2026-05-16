@@ -88,6 +88,16 @@ try {
     '已存在同名發布項目',
     'Server publish conflict title should resolve from Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('inspector.dialogue.playAudioPreview'),
+    '播放',
+    'Dialogue audio preview play action should resolve from Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('inspector.dialogue.t2aPresetBadge', { preset: '可愛女聲' }),
+    'T2A：可愛女聲',
+    'Dialogue T2A preset badge should resolve from Traditional Chinese locale',
+  );
 
   setActiveLocale('en');
   assert.strictEqual(
@@ -129,6 +139,16 @@ try {
     translate('server.publishConflictBody', { title: 'Clinic' }),
     'A published RolePlayScene named "Clinic" already exists. Edit the title and try again.',
     'Server publish conflict body should resolve from English locale and interpolate title',
+  );
+  assert.strictEqual(
+    translate('inspector.dialogue.stopAudioPreview'),
+    'Stop',
+    'Dialogue audio preview stop action should resolve from English locale',
+  );
+  assert.strictEqual(
+    translate('inspector.dialogue.audioPreviewFailed'),
+    'Unable to play this audio preview.',
+    'Dialogue audio preview failure should resolve from English locale',
   );
 
   setActiveLocale('fr');
