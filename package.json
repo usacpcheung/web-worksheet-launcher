@@ -6,10 +6,17 @@
   "scripts": {
     "test": "node --test server",
     "migrate": "node server/api/db/migrate.js",
-    "start:api": "node server/api/server.js"
+    "start:api": "node server/api/server.js",
+    "pw:install": "playwright install chromium",
+    "serve:static": "node scripts/static-server.mjs",
+    "smoke:roleplayscene": "node scripts/roleplayscene-smoke.mjs",
+    "smoke:roleplayscene:headed": "node scripts/roleplayscene-smoke.mjs --headed"
   },
   "dependencies": {
-    "pg": "^8.16.0",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
   }
 }
