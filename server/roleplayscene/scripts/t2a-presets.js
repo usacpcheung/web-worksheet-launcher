@@ -13,17 +13,17 @@ export const ROLEPLAYSCENE_T2A_PRESETS = Object.freeze([
       voice_id: 'Cantonese_PlayfulMan',
       speed: 1,
       volume: 1,
-      pitch: 0,
+      pitch: -2,
     }),
   }),
   Object.freeze({
-    id: 'cantonese_playful_man_pitch_6',
+    id: 'cantonese_playful_man_pitch_3',
     labelKey: 'inspector.dialogue.t2aPreset.playfulManHighPitch',
     options: Object.freeze({
       voice_id: 'Cantonese_PlayfulMan',
       speed: 1,
       volume: 1,
-      pitch: 6,
+      pitch: 3,
     }),
   }),
   Object.freeze({
@@ -33,7 +33,7 @@ export const ROLEPLAYSCENE_T2A_PRESETS = Object.freeze([
       voice_id: 'Cantonese_CuteGirl',
       speed: 1,
       volume: 1,
-      pitch: 3,
+      pitch: 2,
     }),
   }),
   Object.freeze({
