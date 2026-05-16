@@ -488,6 +488,36 @@ function createServerApiClient(options = {}) {
     deleteRolePlaySceneDraft(uploadedDraftId) {
       return requestJson(`/roleplayscene/drafts/${uploadedDraftId}`, { method: 'DELETE' });
     },
+    publishRolePlaySceneFromUploadedDraft(uploadedDraftId, metadata = {}) {
+      return requestJson('/roleplayscene/published', {
+        method: 'POST',
+        body: {
+          uploadedDraftId,
+          title: metadata.title || '',
+        },
+      });
+    },
+    listRolePlayScenePublishedScenes(filters = {}) {
+      return requestJson('/roleplayscene/published', {
+        query: {
+          q: filters.q || '',
+          title: filters.title || '',
+          description: filters.description || '',
+          owner: filters.owner || '',
+          limit: filters.limit ?? '',
+          offset: filters.offset ?? '',
+        },
+      });
+    },
+    fetchRolePlayScenePublishedScene(publishedSceneId) {
+      return requestJson(`/roleplayscene/published/${publishedSceneId}`);
+    },
+    fetchRolePlayScenePublishedSceneArtifact(publishedSceneId) {
+      return requestZip(`/roleplayscene/published/${publishedSceneId}/artifact`);
+    },
+    deleteRolePlayScenePublishedScene(publishedSceneId) {
+      return requestJson(`/roleplayscene/published/${publishedSceneId}`, { method: 'DELETE' });
+    },
     listUploadedAttempts() {
       return requestJson('/attempts');
     },
@@ -633,15 +663,21 @@ function createServerApiClient(options = {}) {
       }
       return { ok: true, data: { text: rewrittenText }, status: response.status };
     },
-    generateAudioFromText(text) {
+    generateAudioFromText(text, options = {}) {
+      const payload = {
+        text: String(text),
+        format: 'mp3',
+        response_mode: 'binary',
+      };
+      ['voice_id', 'speed', 'volume', 'pitch'].forEach((key) => {
+        if (options?.[key] !== undefined && options?.[key] !== null && options?.[key] !== '') {
+          payload[key] = options[key];
+        }
+      });
       return requestBinary('/t2a', 'audio/mpeg', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          text: String(text),
-          format: 'mp3',
-          response_mode: 'binary',
-        }),
+        body: JSON.stringify(payload),
       });
     },
   };

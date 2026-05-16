@@ -64,6 +64,36 @@ function createRolePlaySceneZip({
   ]);
 }
 
+function createPublishableRolePlaySceneZip(overrides = {}) {
+  return createRolePlaySceneZip({
+    ...overrides,
+    manifest: overrides.manifest || createManifest({ assets: [] }),
+    project: overrides.project || createProject({
+      scenes: [
+        {
+          id: 'scene-start',
+          type: 'start',
+          image: null,
+          backgroundAudio: null,
+          dialogue: [{ text: 'Hello', audio: null }],
+          choices: [{ id: 'choice-1', label: 'Finish', nextSceneId: 'scene-end', cueCardText: '' }],
+          autoNextSceneId: null,
+        },
+        {
+          id: 'scene-end',
+          type: 'end',
+          image: null,
+          backgroundAudio: null,
+          dialogue: [],
+          choices: [],
+          autoNextSceneId: null,
+        },
+      ],
+    }),
+    mediaEntries: overrides.mediaEntries || {},
+  });
+}
+
 function createFakeDb({
   draftCount = 0,
   listRows = [],
@@ -205,6 +235,83 @@ function createService({ db, artifactStore }) {
     artifactStore,
     config: { draftSlotLimit: 3 },
   });
+}
+
+function createPublishDb({
+  draftRow,
+  publishedConflict = null,
+  failPublishedInsert = false,
+} = {}) {
+  const state = { queries: [], values: [] };
+  const row = draftRow === undefined ? {
+    roleplayscene_uploaded_draft_id: '550e8400-e29b-41d4-a716-446655440000',
+    owner_sub: 'oidc-sub',
+    title: 'Clinic Practice',
+    description: 'Draft conversation practice.',
+    artifact_path: 'roleplayscene/drafts/source.zip',
+    artifact_sha256: 'sha-draft',
+    artifact_size_bytes: 4,
+    last_published_artifact_sha256: null,
+  } : draftRow;
+  async function query(sql, values = []) {
+    state.queries.push(sql);
+    state.values.push(values);
+    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.includes('SELECT pg_advisory_xact_lock(hashtext($1))')) {
+      return { rows: [{ pg_advisory_xact_lock: '' }], rowCount: 1 };
+    }
+    if (sql.includes('FROM roleplayscene_uploaded_drafts') && sql.includes('FOR UPDATE')) {
+      if (!row) return { rows: [], rowCount: 0 };
+      return { rows: [row], rowCount: 1 };
+    }
+    if (sql.includes('FROM roleplayscene_published_scenes') && sql.includes('LIMIT 1')) {
+      if (publishedConflict) return { rows: [publishedConflict], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.includes('INSERT INTO roleplayscene_published_scenes')) {
+      if (failPublishedInsert) throw new Error('published insert failed');
+      return {
+        rows: [{
+          roleplayscene_published_scene_id: values[0],
+          owner_sub: values[1],
+          owner_email: values[2],
+          owner_name: values[3],
+          source_roleplayscene_uploaded_draft_id: values[4],
+          title: values[5],
+          description: values[6],
+          package_version: values[7],
+          artifact_sha256: values[9],
+          artifact_size_bytes: values[10],
+          scene_count: values[11],
+          media_count: values[12],
+          missing_media_count: values[13],
+          validation_warning_count: values[14],
+          published_at: '2026-05-14T00:00:00.000Z',
+        }],
+        rowCount: 1,
+      };
+    }
+    if (sql.includes('UPDATE roleplayscene_uploaded_drafts') && sql.includes('last_published_artifact_sha256')) {
+      return { rows: [], rowCount: 1 };
+    }
+    throw new Error(`Unhandled RolePlayScene publish test query: ${sql}`);
+  }
+  return {
+    state,
+    async query(sql, values = []) {
+      return query(sql, values);
+    },
+    async connect() {
+      return {
+        async query(sql, values = []) {
+          return query(sql, values);
+        },
+        release() {},
+      };
+    },
+  };
 }
 
 function createConflictRow(overrides = {}) {
@@ -623,6 +730,227 @@ test('listOwnRolePlaySceneDrafts excludes artifact_path and includes publish_sta
   assert.equal(rows[0].publish_state, 'unpublished_changes');
 });
 
+test('publishRolePlaySceneFromDraft copies artifact and updates uploaded draft marker', async () => {
+  const zipBytes = createPublishableRolePlaySceneZip();
+  const db = createPublishDb();
+  let stored = null;
+  const service = createService({
+    db,
+    artifactStore: {
+      async readArtifact(artifactPath) {
+        assert.equal(artifactPath, 'roleplayscene/drafts/source.zip');
+        return zipBytes;
+      },
+      async storeArtifact(input) {
+        stored = input;
+        return {
+          artifactPath: 'roleplayscene/published/new.zip',
+          absolutePath: '/tmp/new.zip',
+          artifactSha256: 'sha-published',
+          artifactSizeBytes: input.bytes.length,
+        };
+      },
+    },
+  });
+
+  const result = await service.publishRolePlaySceneFromDraft({
+    identity,
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Published Clinic',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.statusCode, 201);
+  assert.equal(result.data.title, 'Published Clinic');
+  assert.equal(result.data.source_roleplayscene_uploaded_draft_id, '550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(stored.bucket, 'roleplayscene/published');
+  assert.equal(stored.ownerSub, 'oidc-sub');
+  assert.deepEqual(stored.bytes, zipBytes);
+  assert.equal(db.state.queries.some(sql => sql.includes('SET last_published_artifact_sha256')), true);
+});
+
+test('publishRolePlaySceneFromDraft is owner scoped', async () => {
+  const service = createService({
+    db: createPublishDb({ draftRow: null }),
+    artifactStore: {
+      async readArtifact() {
+        throw new Error('should not read artifact');
+      },
+      async storeArtifact() {
+        throw new Error('should not store artifact');
+      },
+    },
+  });
+
+  const result = await service.publishRolePlaySceneFromDraft({
+    identity,
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Published Clinic',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 404);
+  assert.equal(result.error.code, 'ROLEPLAYSCENE_DRAFT_NOT_FOUND');
+});
+
+test('publishRolePlaySceneFromDraft rejects already published artifact', async () => {
+  const service = createService({
+    db: createPublishDb({
+      draftRow: {
+        roleplayscene_uploaded_draft_id: '550e8400-e29b-41d4-a716-446655440000',
+        owner_sub: 'oidc-sub',
+        title: 'Clinic Practice',
+        description: '',
+        artifact_path: 'roleplayscene/drafts/source.zip',
+        artifact_sha256: 'sha-draft',
+        artifact_size_bytes: 4,
+        last_published_artifact_sha256: 'sha-draft',
+      },
+    }),
+    artifactStore: {
+      async readArtifact() {
+        throw new Error('should not read artifact');
+      },
+      async storeArtifact() {
+        throw new Error('should not store artifact');
+      },
+    },
+  });
+
+  const result = await service.publishRolePlaySceneFromDraft({
+    identity,
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Published Clinic',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 409);
+  assert.equal(result.error.code, 'ROLEPLAYSCENE_DRAFT_ARTIFACT_ALREADY_PUBLISHED');
+});
+
+test('publishRolePlaySceneFromDraft rejects same-owner title conflict', async () => {
+  const service = createService({
+    db: createPublishDb({
+      publishedConflict: {
+        roleplayscene_published_scene_id: 'published-existing',
+        title: 'Published Clinic',
+      },
+    }),
+    artifactStore: {
+      async readArtifact() {
+        throw new Error('should not read artifact');
+      },
+      async storeArtifact() {
+        throw new Error('should not store artifact');
+      },
+    },
+  });
+
+  const result = await service.publishRolePlaySceneFromDraft({
+    identity,
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Published Clinic',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 409);
+  assert.equal(result.error.code, 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT');
+  assert.equal(result.error.details.requestedTitle, 'Published Clinic');
+});
+
+test('publishRolePlaySceneFromDraft rejects missing media and play validation failures', async () => {
+  const missingMediaService = createService({
+    db: createPublishDb(),
+    artifactStore: {
+      async readArtifact() {
+        return createRolePlaySceneZip({
+          mediaEntries: { 'media/scene-start/image.png': 'image' },
+        });
+      },
+      async storeArtifact() {
+        throw new Error('should not store artifact');
+      },
+    },
+  });
+
+  const missingMedia = await missingMediaService.publishRolePlaySceneFromDraft({
+    identity,
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Published Clinic',
+  });
+  assert.equal(missingMedia.ok, false);
+  assert.equal(missingMedia.statusCode, 400);
+  assert.equal(missingMedia.error.code, 'INVALID_ROLEPLAYSCENE_PUBLISH_PACKAGE');
+  assert.equal(missingMedia.error.details.missingMediaCount > 0, true);
+
+  const brokenGraphService = createService({
+    db: createPublishDb(),
+    artifactStore: {
+      async readArtifact() {
+        return createPublishableRolePlaySceneZip({
+          project: createProject({
+            scenes: [
+              {
+                id: 'scene-start',
+                type: 'start',
+                image: null,
+                backgroundAudio: null,
+                dialogue: [],
+                choices: [{ id: 'choice-1', label: 'Broken', nextSceneId: 'missing-scene' }],
+                autoNextSceneId: null,
+              },
+            ],
+          }),
+          manifest: createManifest({ assets: [] }),
+        });
+      },
+      async storeArtifact() {
+        throw new Error('should not store artifact');
+      },
+    },
+  });
+  const brokenGraph = await brokenGraphService.publishRolePlaySceneFromDraft({
+    identity,
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Published Clinic',
+  });
+  assert.equal(brokenGraph.ok, false);
+  assert.equal(brokenGraph.error.details.errors.some(message => message.includes('missing scene')), true);
+});
+
+test('publishRolePlaySceneFromDraft removes staged artifact when DB insert fails', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'roleplayscene-publish-insert-fail-'));
+  const artifactPath = path.join(tempDir, 'published.zip');
+  await fs.writeFile(artifactPath, Buffer.from([1, 2, 3]));
+  const service = createService({
+    db: createPublishDb({ failPublishedInsert: true }),
+    artifactStore: {
+      async readArtifact() {
+        return createPublishableRolePlaySceneZip();
+      },
+      async storeArtifact() {
+        return {
+          artifactPath: 'roleplayscene/published/new.zip',
+          absolutePath: artifactPath,
+          artifactSha256: 'sha-published',
+          artifactSizeBytes: 4,
+        };
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => service.publishRolePlaySceneFromDraft({
+      identity,
+      uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+      title: 'Published Clinic',
+    }),
+    /published insert failed/
+  );
+  await assert.rejects(() => fs.stat(artifactPath), /ENOENT/);
+  await fs.rm(tempDir, { recursive: true, force: true });
+});
+
 test('uploadRolePlaySceneDraft succeeds with missing media and stores warning counts', async () => {
   const db = createFakeDb();
   const service = createService({
@@ -652,4 +980,135 @@ test('uploadRolePlaySceneDraft succeeds with missing media and stores warning co
   assert.equal(result.data.missing_media_count, 1);
   assert.equal(result.data.validation_warning_count, 1);
   assert.equal(result.data.warnings[0].code, 'ROLEPLAYSCENE_MEDIA_MISSING');
+});
+
+test('listPublishedRolePlaySceneScenes filters and paginates published scenes', async () => {
+  let captured = null;
+  const service = createService({
+    db: {
+      async query(sql, values) {
+        captured = { sql, values };
+        return {
+          rows: [
+            { roleplayscene_published_scene_id: 'p1', title: 'One' },
+            { roleplayscene_published_scene_id: 'p2', title: 'Two' },
+          ],
+        };
+      },
+    },
+    artifactStore: {},
+  });
+
+  const result = await service.listPublishedRolePlaySceneScenes({
+    query: 'clinic',
+    title: 'greeting',
+    description: 'practice',
+    owner: 'teacher',
+    limit: 1,
+    offset: 20,
+  });
+
+  assert.deepEqual(result.items, [{ roleplayscene_published_scene_id: 'p1', title: 'One' }]);
+  assert.equal(result.hasMore, true);
+  assert.equal(result.nextOffset, 21);
+  assert.match(captured.sql, /FROM roleplayscene_published_scenes/);
+  assert.match(captured.sql, /lower\(description\) LIKE/);
+  assert.deepEqual(captured.values, ['%clinic%', '%greeting%', '%practice%', '%teacher%', 2, 20]);
+});
+
+test('loadPublishedRolePlaySceneScene returns metadata and artifact path by id', async () => {
+  let captured = null;
+  const service = createService({
+    db: {
+      async query(sql, values) {
+        captured = { sql, values };
+        return {
+          rowCount: 1,
+          rows: [{
+            roleplayscene_published_scene_id: values[0],
+            title: 'Clinic',
+            artifact_path: 'roleplayscene/published/p1.zip',
+          }],
+        };
+      },
+    },
+    artifactStore: {},
+  });
+
+  const result = await service.loadPublishedRolePlaySceneScene('published-id');
+  assert.equal(result.roleplayscene_published_scene_id, 'published-id');
+  assert.equal(result.artifact_path, 'roleplayscene/published/p1.zip');
+  assert.match(captured.sql, /WHERE roleplayscene_published_scene_id = \$1/);
+  assert.deepEqual(captured.values, ['published-id']);
+});
+
+test('deleteOwnPublishedRolePlayScene deletes owner row then best-effort removes artifact', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'roleplayscene-delete-published-'));
+  const artifactPath = path.join(tempDir, 'published.zip');
+  await fs.writeFile(artifactPath, Buffer.from([1, 2, 3]));
+  const queries = [];
+  const service = createService({
+    db: {
+      async connect() {
+        return {
+          async query(sql, values = []) {
+            queries.push(sql);
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 };
+            if (sql.includes('DELETE FROM roleplayscene_published_scenes')) {
+              assert.deepEqual(values, ['published-id', identity.sub]);
+              return {
+                rows: [{
+                  roleplayscene_published_scene_id: values[0],
+                  artifact_path: 'roleplayscene/published/published.zip',
+                }],
+                rowCount: 1,
+              };
+            }
+            throw new Error(`Unhandled delete published query: ${sql}`);
+          },
+          release() {},
+        };
+      },
+    },
+    artifactStore: {
+      resolveAbsolutePath(artifactPathValue) {
+        assert.equal(artifactPathValue, 'roleplayscene/published/published.zip');
+        return artifactPath;
+      },
+    },
+  });
+
+  const result = await service.deleteOwnPublishedRolePlayScene({ identity, publishedSceneId: 'published-id' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { roleplayscene_published_scene_id: 'published-id', deleted: true });
+  assert.equal(queries.includes('COMMIT'), true);
+  await assert.rejects(() => fs.stat(artifactPath), /ENOENT/);
+  await fs.rm(tempDir, { recursive: true, force: true });
+});
+
+test('deleteOwnPublishedRolePlayScene returns not found for non-owner rows', async () => {
+  const service = createService({
+    db: {
+      async connect() {
+        return {
+          async query(sql) {
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 };
+            if (sql.includes('DELETE FROM roleplayscene_published_scenes')) return { rows: [], rowCount: 0 };
+            throw new Error(`Unhandled delete published query: ${sql}`);
+          },
+          release() {},
+        };
+      },
+    },
+    artifactStore: {
+      resolveAbsolutePath() {
+        throw new Error('should not cleanup missing published scene');
+      },
+    },
+  });
+
+  const result = await service.deleteOwnPublishedRolePlayScene({ identity, publishedSceneId: 'missing-id' });
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 404);
+  assert.equal(result.error.code, 'ROLEPLAYSCENE_PUBLISHED_SCENE_NOT_FOUND');
 });
