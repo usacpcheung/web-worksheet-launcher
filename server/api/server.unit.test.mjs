@@ -6,7 +6,13 @@ import path from 'node:path';
 import net from 'node:net';
 import { createApiServer } from './server.js';
 
-async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test', configOverrides = {} }, fn) {
+async function withServer({
+  service = {},
+  rolePlaySceneDraftService = {},
+  artifactStore = {},
+  nodeEnv = 'test',
+  configOverrides = {},
+}, fn) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'worksheet-server-test-'));
   const openSockets = new Set();
   const api = await createApiServer({
@@ -20,6 +26,7 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test', 
       },
       browsePageLimitDefault: 20,
       browsePageLimitMax: 100,
+      draftSlotLimit: 3,
       attemptSlotLimit: 3,
       packageUploadMaxBytes: 31457280,
       ...configOverrides,
@@ -51,6 +58,41 @@ async function withServer({ service = {}, artifactStore = {}, nodeEnv = 'test', 
         return { ok: true, statusCode: 200, data: { published_package_id: 'x', deleted: true } };
       },
       ...service,
+    },
+    rolePlaySceneDraftService: {
+      async uploadRolePlaySceneDraft() {
+        return { ok: true, statusCode: 201, data: {} };
+      },
+      async listOwnRolePlaySceneDrafts() {
+        return [];
+      },
+      async loadOwnRolePlaySceneDraftArtifact() {
+        return null;
+      },
+      async deleteOwnRolePlaySceneDraft() {
+        return {
+          ok: true,
+          statusCode: 200,
+          data: { roleplayscene_uploaded_draft_id: 'x', deleted: true },
+        };
+      },
+      async publishRolePlaySceneFromDraft() {
+        return { ok: true, statusCode: 201, data: { roleplayscene_published_scene_id: 'p1' } };
+      },
+      async listPublishedRolePlaySceneScenes() {
+        return { items: [], limit: 20, offset: 0, hasMore: false };
+      },
+      async loadPublishedRolePlaySceneScene() {
+        return null;
+      },
+      async deleteOwnPublishedRolePlayScene() {
+        return {
+          ok: true,
+          statusCode: 200,
+          data: { roleplayscene_published_scene_id: 'p1', deleted: true },
+        };
+      },
+      ...rolePlaySceneDraftService,
     },
     artifactStore: {
       async readArtifact() {
@@ -318,6 +360,540 @@ test('GET /api/v1/drafts returns uploaded drafts list with draft slot limit', as
       assert.equal(payload.data.draftSlotLimit, 5);
     }
   );
+});
+
+test('POST /api/v1/roleplayscene/drafts/upload requires application/zip', async () => {
+  let uploadCalled = false;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async uploadRolePlaySceneDraft() {
+          uploadCalled = true;
+          return { ok: true, statusCode: 201, data: {} };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/drafts/upload`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      assert.equal(res.status, 415);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'UNSUPPORTED_MEDIA_TYPE');
+    }
+  );
+  assert.equal(uploadCalled, false);
+});
+
+test('POST /api/v1/roleplayscene/drafts/upload forwards title description conflictAction', async () => {
+  let received = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async uploadRolePlaySceneDraft(payload) {
+          received = payload;
+          return {
+            ok: true,
+            statusCode: 201,
+            data: { roleplayscene_uploaded_draft_id: 'r1', warnings: [] },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const zipBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+      const res = await fetch(
+        `${baseUrl}/api/v1/roleplayscene/drafts/upload?title=Clinic&description=Draft&conflictAction=copy`,
+        {
+          method: 'POST',
+          headers: { ...authHeaders, 'content-type': 'application/zip' },
+          body: zipBytes,
+        }
+      );
+      assert.equal(res.status, 201);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.roleplayscene_uploaded_draft_id, 'r1');
+    }
+  );
+
+  assert.equal(received.title, 'Clinic');
+  assert.equal(received.description, 'Draft');
+  assert.equal(received.conflictAction, 'copy');
+  assert.deepEqual(Array.from(received.zipBytes), [0x50, 0x4b, 0x03, 0x04]);
+});
+
+test('POST /api/v1/roleplayscene/drafts/upload maps validator errors to 400', async () => {
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async uploadRolePlaySceneDraft() {
+          return {
+            ok: false,
+            statusCode: 400,
+            error: {
+              code: 'INVALID_ROLEPLAYSCENE_PROJECT_JSON',
+              message: 'Uploaded RolePlayScene project JSON is invalid.',
+              details: { reason: 'bad json' },
+            },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/drafts/upload`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/zip' },
+        body: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+      });
+      assert.equal(res.status, 400);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'INVALID_ROLEPLAYSCENE_PROJECT_JSON');
+      assert.deepEqual(payload.error.details, { reason: 'bad json' });
+    }
+  );
+});
+
+test('GET /api/v1/roleplayscene/drafts returns items and draft slot limit', async () => {
+  let identitySub = null;
+  await withServer(
+    {
+      configOverrides: { draftSlotLimit: 5 },
+      rolePlaySceneDraftService: {
+        async listOwnRolePlaySceneDrafts(identity) {
+          identitySub = identity.sub;
+          return [{ roleplayscene_uploaded_draft_id: 'r1', title: 'Clinic' }];
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/drafts`, { headers: authHeaders });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data.items, [{ roleplayscene_uploaded_draft_id: 'r1', title: 'Clinic' }]);
+      assert.equal(payload.data.draftSlotLimit, 5);
+    }
+  );
+  assert.equal(identitySub, 'user-sub');
+});
+
+test('GET /api/v1/roleplayscene/drafts/:id/artifact validates UUID and returns ZIP bytes', async () => {
+  await withServer({}, async (baseUrl) => {
+    const badRes = await fetch(`${baseUrl}/api/v1/roleplayscene/drafts/not-a-uuid/artifact`, {
+      headers: authHeaders,
+    });
+    assert.equal(badRes.status, 400);
+    const badPayload = await badRes.json();
+    assert.equal(badPayload.error.code, 'INVALID_ROLEPLAYSCENE_UPLOADED_DRAFT_ID');
+  });
+
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async loadOwnRolePlaySceneDraftArtifact({ uploadedDraftId }) {
+          assert.equal(uploadedDraftId, '550e8400-e29b-41d4-a716-446655440000');
+          return { artifact_path: 'roleplayscene/drafts/user-sub/abc.zip' };
+        },
+      },
+      artifactStore: {
+        async readArtifact(artifactPath) {
+          assert.equal(artifactPath, 'roleplayscene/drafts/user-sub/abc.zip');
+          return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(
+        `${baseUrl}/api/v1/roleplayscene/drafts/550e8400-e29b-41d4-a716-446655440000/artifact`,
+        { headers: authHeaders }
+      );
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'application/zip');
+      assert.equal(res.headers.get('content-disposition'), 'attachment; filename="roleplayscene-draft.zip"');
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      assert.deepEqual(Array.from(bytes), [0x50, 0x4b, 0x03, 0x04]);
+    }
+  );
+});
+
+test('DELETE /api/v1/roleplayscene/drafts/:id validates UUID and returns delete payload', async () => {
+  await withServer({}, async (baseUrl) => {
+    const badRes = await fetch(`${baseUrl}/api/v1/roleplayscene/drafts/not-a-uuid`, {
+      method: 'DELETE',
+      headers: authHeaders,
+    });
+    assert.equal(badRes.status, 400);
+    const badPayload = await badRes.json();
+    assert.equal(badPayload.error.code, 'INVALID_ROLEPLAYSCENE_UPLOADED_DRAFT_ID');
+  });
+
+  let received = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async deleteOwnRolePlaySceneDraft(payload) {
+          received = payload;
+          return {
+            ok: true,
+            statusCode: 200,
+            data: {
+              roleplayscene_uploaded_draft_id: payload.uploadedDraftId,
+              deleted: true,
+            },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const draftId = '550e8400-e29b-41d4-a716-446655440000';
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/drafts/${draftId}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.deepEqual(payload.data, {
+        roleplayscene_uploaded_draft_id: draftId,
+        deleted: true,
+      });
+    }
+  );
+
+  assert.deepEqual(received, {
+    identity: { sub: 'user-sub', email: null, name: null },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+  });
+});
+
+test('roleplayscene routes do not affect existing worksheet draft route namespace', async () => {
+  let worksheetCalled = false;
+  let roleplayCalled = false;
+  await withServer(
+    {
+      service: {
+        async listOwnDrafts() {
+          worksheetCalled = true;
+          return [{ uploaded_draft_id: 'worksheet-draft' }];
+        },
+      },
+      rolePlaySceneDraftService: {
+        async listOwnRolePlaySceneDrafts() {
+          roleplayCalled = true;
+          return [{ roleplayscene_uploaded_draft_id: 'roleplay-draft' }];
+        },
+      },
+    },
+    async (baseUrl) => {
+      const worksheetRes = await fetch(`${baseUrl}/api/v1/drafts`, { headers: authHeaders });
+      const worksheetPayload = await worksheetRes.json();
+      assert.deepEqual(worksheetPayload.data.items, [{ uploaded_draft_id: 'worksheet-draft' }]);
+
+      const roleplayRes = await fetch(`${baseUrl}/api/v1/roleplayscene/drafts`, { headers: authHeaders });
+      const roleplayPayload = await roleplayRes.json();
+      assert.deepEqual(roleplayPayload.data.items, [{ roleplayscene_uploaded_draft_id: 'roleplay-draft' }]);
+    }
+  );
+
+  assert.equal(worksheetCalled, true);
+  assert.equal(roleplayCalled, true);
+});
+
+test('POST /api/v1/roleplayscene/published rejects malformed uploadedDraftId with 400', async () => {
+  let publishCalled = false;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async publishRolePlaySceneFromDraft() {
+          publishCalled = true;
+          return { ok: true, statusCode: 201, data: {} };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({ uploadedDraftId: 'not-a-uuid' }),
+      });
+      assert.equal(res.status, 400);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'INVALID_ROLEPLAYSCENE_UPLOADED_DRAFT_ID');
+    }
+  );
+  assert.equal(publishCalled, false);
+});
+
+test('POST /api/v1/roleplayscene/published forwards title and uploaded draft id', async () => {
+  let received = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async publishRolePlaySceneFromDraft(payload) {
+          received = payload;
+          return {
+            ok: true,
+            statusCode: 201,
+            data: { roleplayscene_published_scene_id: 'p1', title: payload.title },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+          title: 'Published Clinic',
+        }),
+      });
+      assert.equal(res.status, 201);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data, { roleplayscene_published_scene_id: 'p1', title: 'Published Clinic' });
+    }
+  );
+
+  assert.deepEqual(received, {
+    identity: { sub: 'user-sub', email: null, name: null },
+    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+    title: 'Published Clinic',
+  });
+});
+
+test('POST /api/v1/roleplayscene/published maps service errors with details', async () => {
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async publishRolePlaySceneFromDraft() {
+          return {
+            ok: false,
+            statusCode: 409,
+            error: {
+              code: 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT',
+              message: 'A published RolePlayScene with this title already exists.',
+              details: { requestedTitle: 'Published Clinic' },
+            },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published`, {
+        method: 'POST',
+        headers: { ...authHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+          title: 'Published Clinic',
+        }),
+      });
+      assert.equal(res.status, 409);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT');
+      assert.deepEqual(payload.error.details, { requestedTitle: 'Published Clinic' });
+    }
+  );
+});
+
+test('GET /api/v1/roleplayscene/published forwards filters and pagination', async () => {
+  let received = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async listPublishedRolePlaySceneScenes(payload) {
+          received = payload;
+          return {
+            items: [{ roleplayscene_published_scene_id: 'p1', title: 'Clinic' }],
+            limit: payload.limit,
+            offset: payload.offset,
+            hasMore: false,
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published?q=clinic&title=Greeting&description=Practice&owner=teacher&limit=12&offset=24`, {
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data.items, [{ roleplayscene_published_scene_id: 'p1', title: 'Clinic' }]);
+    }
+  );
+  assert.deepEqual(received, {
+    query: 'clinic',
+    title: 'Greeting',
+    description: 'Practice',
+    owner: 'teacher',
+    limit: 12,
+    offset: 24,
+  });
+});
+
+test('GET /api/v1/roleplayscene/published/:id rejects malformed ids', async () => {
+  let loadCalled = false;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async loadPublishedRolePlaySceneScene() {
+          loadCalled = true;
+          return null;
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/not-a-uuid`, { headers: authHeaders });
+      assert.equal(res.status, 400);
+      const payload = await res.json();
+      assert.equal(payload.error.code, 'INVALID_ROLEPLAYSCENE_PUBLISHED_SCENE_ID');
+    }
+  );
+  assert.equal(loadCalled, false);
+});
+
+test('GET /api/v1/roleplayscene/published/:id returns metadata without owner scope', async () => {
+  let receivedId = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async loadPublishedRolePlaySceneScene(publishedSceneId) {
+          receivedId = publishedSceneId;
+          return {
+            roleplayscene_published_scene_id: publishedSceneId,
+            owner_sub: 'other-owner',
+            title: 'Clinic',
+            artifact_path: 'roleplayscene/published/p1.zip',
+            artifact_sha256: 'sha',
+            artifact_size_bytes: 4,
+            published_at: '2026-05-14T00:00:00.000Z',
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const id = '550e8400-e29b-41d4-a716-446655440000';
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/${id}`, { headers: authHeaders });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.equal(payload.data.owner_sub, 'other-owner');
+      assert.equal(payload.data.artifact_path, undefined);
+    }
+  );
+  assert.equal(receivedId, '550e8400-e29b-41d4-a716-446655440000');
+});
+
+test('GET /api/v1/roleplayscene/published/:id returns 404 for missing published scene', async () => {
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async loadPublishedRolePlaySceneScene() {
+          return null;
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000`, {
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 404);
+      const payload = await res.json();
+      assert.equal(payload.error.code, 'ROLEPLAYSCENE_PUBLISHED_SCENE_NOT_FOUND');
+    }
+  );
+});
+
+test('GET /api/v1/roleplayscene/published/:id/artifact returns exact zip bytes', async () => {
+  let artifactPath = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async loadPublishedRolePlaySceneScene() {
+          return { artifact_path: 'roleplayscene/published/p1.zip' };
+        },
+      },
+      artifactStore: {
+        async readArtifact(pathValue) {
+          artifactPath = pathValue;
+          return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000/artifact`, {
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'application/zip');
+      assert.deepEqual(Array.from(new Uint8Array(await res.arrayBuffer())), [0x50, 0x4b, 0x03, 0x04]);
+    }
+  );
+  assert.equal(artifactPath, 'roleplayscene/published/p1.zip');
+});
+
+test('DELETE /api/v1/roleplayscene/published/:id rejects malformed ids', async () => {
+  let deleteCalled = false;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async deleteOwnPublishedRolePlayScene() {
+          deleteCalled = true;
+          return { ok: true, statusCode: 200, data: {} };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/not-a-uuid`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 400);
+      const payload = await res.json();
+      assert.equal(payload.error.code, 'INVALID_ROLEPLAYSCENE_PUBLISHED_SCENE_ID');
+    }
+  );
+  assert.equal(deleteCalled, false);
+});
+
+test('DELETE /api/v1/roleplayscene/published/:id forwards owner-scoped delete', async () => {
+  let received = null;
+  await withServer(
+    {
+      rolePlaySceneDraftService: {
+        async deleteOwnPublishedRolePlayScene(payload) {
+          received = payload;
+          return {
+            ok: true,
+            statusCode: 200,
+            data: { roleplayscene_published_scene_id: payload.publishedSceneId, deleted: true },
+          };
+        },
+      },
+    },
+    async (baseUrl) => {
+      const id = '550e8400-e29b-41d4-a716-446655440000';
+      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published/${id}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data, { roleplayscene_published_scene_id: id, deleted: true });
+    }
+  );
+  assert.deepEqual(received, {
+    identity: { sub: 'user-sub', email: null, name: null },
+    publishedSceneId: '550e8400-e29b-41d4-a716-446655440000',
+  });
 });
 
 test('POST /api/v1/published returns 413 with REQUEST_BODY_TOO_LARGE when body exceeds configured max', async () => {

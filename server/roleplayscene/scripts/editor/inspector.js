@@ -1,5 +1,11 @@
 import { MAX_DIALOGUE_LINES, SceneType, createChoice } from '../model.js';
 import { translate } from '../i18n.js';
+import {
+  ROLEPLAYSCENE_T2A_PRESETS,
+  ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH,
+  getRolePlaySceneT2APresetFromAudioName,
+  getRolePlaySceneT2ATextState,
+} from '../t2a-presets.js';
 
 function attachComposedValueListener(field, callback) {
   let composing = false;
@@ -221,6 +227,25 @@ export function renderInspector(hostEl, project, scene, actions) {
       audioInfo.className = 'audio-info';
       const audioName = line.audio.name || '';
       audioInfo.textContent = translate('inspector.dialogue.audioAttached', { name: audioName });
+      const t2aPreset = getRolePlaySceneT2APresetFromAudioName(audioName);
+      if (t2aPreset) {
+        const presetBadge = document.createElement('span');
+        presetBadge.className = 'audio-info__badge';
+        presetBadge.textContent = translate('inspector.dialogue.t2aPresetBadge', {
+          preset: translate(t2aPreset.labelKey),
+        });
+        audioInfo.appendChild(presetBadge);
+      }
+      if (line.audio.objectUrl) {
+        const isPreviewingAudio = actions.isDialogueAudioPreviewing?.(scene.id, index) === true;
+        const previewAudio = document.createElement('button');
+        previewAudio.type = 'button';
+        previewAudio.textContent = isPreviewingAudio
+          ? translate('inspector.dialogue.stopAudioPreview')
+          : translate('inspector.dialogue.playAudioPreview');
+        previewAudio.addEventListener('click', () => actions.onPreviewDialogueAudio?.(scene.id, index));
+        audioInfo.appendChild(previewAudio);
+      }
       const removeAudio = document.createElement('button');
       removeAudio.type = 'button';
       removeAudio.textContent = translate('inspector.dialogue.removeAudio');
@@ -228,6 +253,51 @@ export function renderInspector(hostEl, project, scene, actions) {
       audioInfo.appendChild(removeAudio);
       lineField.appendChild(audioInfo);
     }
+
+    const t2aState = getRolePlaySceneT2ATextState(line.text || '');
+    const isGeneratingAudio = actions.isDialogueAudioGenerating?.(scene.id, index) === true;
+    const t2aControls = document.createElement('div');
+    t2aControls.className = 'dialogue-t2a-controls';
+
+    const presetLabel = document.createElement('label');
+    presetLabel.className = 'dialogue-t2a-controls__preset';
+    const presetText = document.createElement('span');
+    presetText.textContent = translate('inspector.dialogue.t2aPresetLabel');
+    presetLabel.appendChild(presetText);
+    const presetSelect = document.createElement('select');
+    presetSelect.dataset.focusKey = `dialogue-t2a-preset-${scene.id}-${index}`;
+    ROLEPLAYSCENE_T2A_PRESETS.forEach((preset) => {
+      const option = document.createElement('option');
+      option.value = preset.id;
+      option.textContent = translate(preset.labelKey);
+      presetSelect.appendChild(option);
+    });
+    presetLabel.appendChild(presetSelect);
+
+    const generateAudio = document.createElement('button');
+    generateAudio.type = 'button';
+    generateAudio.textContent = isGeneratingAudio
+      ? translate('inspector.dialogue.generatingAudio')
+      : line.audio
+        ? translate('inspector.dialogue.regenerateAudio')
+        : translate('inspector.dialogue.generateAudio');
+    generateAudio.disabled = !t2aState.eligible || isGeneratingAudio;
+    generateAudio.addEventListener('click', () => {
+      actions.onGenerateDialogueAudio?.(scene.id, index, presetSelect.value);
+    });
+
+    const t2aHint = document.createElement('p');
+    t2aHint.className = 'hint dialogue-t2a-controls__hint';
+    if (!t2aState.hasText) {
+      t2aHint.textContent = translate('inspector.dialogue.t2aTextRequired');
+    } else if (t2aState.exceedsLimit) {
+      t2aHint.textContent = translate('inspector.dialogue.t2aTextTooLong', { max: ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH });
+    } else {
+      t2aHint.hidden = true;
+    }
+
+    t2aControls.append(presetLabel, generateAudio);
+    lineField.append(t2aControls, t2aHint);
 
     const removeLineBtn = document.createElement('button');
     removeLineBtn.type = 'button';
