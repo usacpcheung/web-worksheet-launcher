@@ -5,12 +5,16 @@ const mainSource = await readFile(new URL('../scripts/main.js', import.meta.url)
 const indexSource = await readFile(new URL('../index.html', import.meta.url), 'utf8');
 const editorSource = await readFile(new URL('../scripts/editor/editor.js', import.meta.url), 'utf8');
 const inspectorSource = await readFile(new URL('../scripts/editor/inspector.js', import.meta.url), 'utf8');
+const playerSource = await readFile(new URL('../scripts/player/player.js', import.meta.url), 'utf8');
 const publishedOpenFunctionIndex = mainSource.indexOf('async function openPublishedRolePlaySceneById');
 const publishedOpenFunctionEndIndex = mainSource.indexOf('async function downloadPublishedRolePlayScene', publishedOpenFunctionIndex);
 const publishedOpenSource = mainSource.slice(publishedOpenFunctionIndex, publishedOpenFunctionEndIndex);
 const dialogueT2AFunctionIndex = editorSource.indexOf('async function generateDialogueAudio');
 const dialogueT2AFunctionEndIndex = editorSource.indexOf('function addChoice', dialogueT2AFunctionIndex);
 const dialogueT2ASource = editorSource.slice(dialogueT2AFunctionIndex, dialogueT2AFunctionEndIndex);
+const refreshLocaleFunctionIndex = mainSource.indexOf('function refreshLocaleUI');
+const refreshLocaleFunctionEndIndex = mainSource.indexOf('function getActiveStore', refreshLocaleFunctionIndex);
+const refreshLocaleSource = mainSource.slice(refreshLocaleFunctionIndex, refreshLocaleFunctionEndIndex);
 
 assert.ok(
   mainSource.includes('apiClient.listRolePlaySceneDrafts()'),
@@ -103,6 +107,12 @@ assert.ok(
     && !mainSource.includes('unlockAudio')
     && !mainSource.includes('ensureAudioGate(playStore)'),
   'published play should sync locale without unlocking audio before the Begin Story gesture',
+);
+assert.ok(
+  refreshLocaleFunctionIndex > -1
+    && !refreshLocaleSource.includes('setMode(mode)')
+    && /if \(!currentSceneId\) \{\s*renderIntro\(\);\s*return;\s*\}/.test(playerSource),
+  'locale refresh should update labels without rebuilding the active mode, and player subscriptions should redraw intro text without resetting an active run',
 );
 assert.ok(
   mainSource.includes('teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {')

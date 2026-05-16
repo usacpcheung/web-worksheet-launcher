@@ -233,7 +233,6 @@ function refreshLocaleUI(nextLocale) {
   if (lastMessagePayload) {
     showMessage(lastMessagePayload);
   }
-  setMode(mode);
 }
 
 function getActiveStore() {
