@@ -3,8 +3,14 @@ import { renderInspector } from './inspector.js';
 import { validateProject } from './validators.js';
 import { canAddDialogueLine, createScene, SceneType } from '../model.js';
 import { translate } from '../i18n.js';
+import {
+  ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH,
+  createRolePlaySceneT2AAudioFilename,
+  getRolePlaySceneT2APresetById,
+  getRolePlaySceneT2ATextState,
+} from '../t2a-presets.js';
 
-export function renderEditor(store, leftEl, rightEl, showMessage) {
+export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) {
   leftEl.innerHTML = '';
   rightEl.innerHTML = '';
 
@@ -16,6 +22,11 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
   rightEl.appendChild(inspectorHost);
 
   let selectedId = store.get().project.scenes[0]?.id ?? null;
+  const apiClient = options.apiClient || null;
+  const ensureServerSessionReady = options.ensureServerSessionReady || null;
+  const dialogueT2AInFlightKeys = new Set();
+  let activeDialoguePreview = null;
+  let disposed = false;
 
   const unsubscribe = store.subscribe(() => {
     syncSelection();
@@ -23,12 +34,15 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
   });
 
   function cleanup() {
+    disposed = true;
+    stopDialoguePreview({ refresh: false });
     unsubscribe();
   }
 
   function syncSelection() {
     const { project } = store.get();
     if (!project.scenes.some(scene => scene.id === selectedId)) {
+      stopDialoguePreview({ refresh: false });
       selectedId = project.scenes[0]?.id ?? null;
     }
   }
@@ -53,8 +67,10 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
   }
 
   function update() {
+    if (disposed) return;
     const { project } = store.get();
     const scene = project.scenes.find(s => s.id === selectedId) ?? null;
+    stopDialoguePreviewIfStale(project);
     const otherStarts = scene
       ? project.scenes.filter(s => s.id !== scene.id && s.type === SceneType.START).length
       : 0;
@@ -75,6 +91,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
       : null;
 
     renderGraph(graphHost, project, selectedId, (id) => {
+      if (id !== selectedId) {
+        stopDialoguePreview({ refresh: false });
+      }
       selectedId = id;
       update();
     });
@@ -92,6 +111,10 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
       onRemoveDialogue: removeDialogue,
       onUpdateDialogueText: updateDialogueText,
       onSetDialogueAudio: setDialogueAudio,
+      onGenerateDialogueAudio: generateDialogueAudio,
+      isDialogueAudioGenerating: (sceneId, index) => dialogueT2AInFlightKeys.has(getDialogueT2AKey(sceneId, index)),
+      onPreviewDialogueAudio: previewDialogueAudio,
+      isDialogueAudioPreviewing: (sceneId, index) => activeDialoguePreview?.key === getDialogueT2AKey(sceneId, index),
       onAddChoice: addChoice,
       onRemoveChoice: removeChoice,
       onUpdateChoice: updateChoice,
@@ -298,6 +321,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
   }
 
   function removeDialogue(sceneId, index) {
+    if (activeDialoguePreview?.sceneId === sceneId && index <= activeDialoguePreview.index) {
+      stopDialoguePreview();
+    }
     mutateProject(prev => {
       const scenes = prev.scenes.map(scene => {
         if (scene.id !== sceneId) return scene;
@@ -327,6 +353,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
   }
 
   function setDialogueAudio(sceneId, index, file) {
+    if (activeDialoguePreview?.key === getDialogueT2AKey(sceneId, index)) {
+      stopDialoguePreview();
+    }
     mutateProject(prev => {
       const scenes = prev.scenes.map(scene => {
         if (scene.id !== sceneId) return scene;
@@ -348,6 +377,210 @@ export function renderEditor(store, leftEl, rightEl, showMessage) {
       });
       return { ...prev, scenes };
     });
+  }
+
+  function getDialogueT2AKey(sceneId, index) {
+    return `${sceneId}:${index}`;
+  }
+
+  function getDialogueLine(sceneId, index, project = store.get().project) {
+    const scene = project.scenes.find((candidate) => candidate.id === sceneId);
+    return scene?.dialogue?.[index] || null;
+  }
+
+  function getCurrentT2ALine(sceneId, index, expectedText) {
+    const currentLine = getDialogueLine(sceneId, index);
+    const currentTextState = getRolePlaySceneT2ATextState(currentLine?.text || '');
+    if (!currentLine || currentTextState.trimmedText !== expectedText) {
+      showMessage({ textId: 'inspector.dialogue.t2aLineChanged' });
+      return null;
+    }
+    return currentLine;
+  }
+
+  function stopDialoguePreview({ refresh = true } = {}) {
+    const preview = activeDialoguePreview;
+    if (!preview) return;
+    activeDialoguePreview = null;
+    try {
+      preview.audio.pause();
+      preview.audio.currentTime = 0;
+    } catch (error) {
+      console.warn('Failed to stop dialogue audio preview', error);
+    }
+    if (refresh) {
+      update();
+    }
+  }
+
+  function stopDialoguePreviewIfStale(project) {
+    if (!activeDialoguePreview) return;
+    const line = getDialogueLine(activeDialoguePreview.sceneId, activeDialoguePreview.index, project);
+    if (line?.audio?.objectUrl !== activeDialoguePreview.src) {
+      stopDialoguePreview({ refresh: false });
+    }
+  }
+
+  function previewDialogueAudio(sceneId, index) {
+    const key = getDialogueT2AKey(sceneId, index);
+    if (activeDialoguePreview?.key === key) {
+      stopDialoguePreview();
+      return;
+    }
+    const line = getDialogueLine(sceneId, index);
+    const src = line?.audio?.objectUrl || null;
+    if (!src || typeof Audio !== 'function') {
+      showMessage({ textId: 'inspector.dialogue.audioPreviewFailed' });
+      return;
+    }
+    stopDialoguePreview({ refresh: false });
+    const audio = new Audio(src);
+    activeDialoguePreview = { key, sceneId, index, src, audio };
+    audio.addEventListener('ended', () => {
+      if (activeDialoguePreview?.audio === audio) {
+        stopDialoguePreview();
+      }
+    });
+    audio.addEventListener('error', () => {
+      if (activeDialoguePreview?.audio === audio) {
+        stopDialoguePreview();
+        showMessage({ textId: 'inspector.dialogue.audioPreviewFailed' });
+      }
+    });
+    try {
+      const playAttempt = audio.play();
+      if (playAttempt && typeof playAttempt.catch === 'function') {
+        playAttempt.catch((error) => {
+          if (activeDialoguePreview?.audio === audio) {
+            console.warn('Dialogue audio preview failed', error);
+            stopDialoguePreview();
+            showMessage({ textId: 'inspector.dialogue.audioPreviewFailed' });
+          }
+        });
+      }
+      update();
+    } catch (error) {
+      console.warn('Dialogue audio preview failed', error);
+      if (activeDialoguePreview?.audio === audio) {
+        stopDialoguePreview();
+      }
+      showMessage({ textId: 'inspector.dialogue.audioPreviewFailed' });
+    }
+  }
+
+  function createAudioFileFromBytes(bytes, name = 'generated-dialogue-audio.mp3') {
+    if (typeof File === 'function') {
+      return new File([bytes], name, { type: 'audio/mpeg' });
+    }
+    const blob = new Blob([bytes], { type: 'audio/mpeg' });
+    Object.defineProperty(blob, 'name', {
+      value: String(name || 'generated-dialogue-audio.mp3'),
+      configurable: true,
+    });
+    return blob;
+  }
+
+  async function generateDialogueAudio(sceneId, index, presetId) {
+    const key = getDialogueT2AKey(sceneId, index);
+    if (dialogueT2AInFlightKeys.has(key)) return;
+    const scene = store.get().project.scenes.find((candidate) => candidate.id === sceneId);
+    const line = scene?.dialogue?.[index] || null;
+    const textState = getRolePlaySceneT2ATextState(line?.text || '');
+    if (!textState.hasText) {
+      showMessage({ textId: 'inspector.dialogue.t2aTextRequired' });
+      return;
+    }
+    if (textState.exceedsLimit) {
+      showMessage({
+        textId: 'inspector.dialogue.t2aTextTooLong',
+        textArgs: { max: ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH },
+      });
+      return;
+    }
+    if (!apiClient?.generateAudioFromText || typeof ensureServerSessionReady !== 'function') {
+      showMessage({ textId: 'inspector.dialogue.t2aUnavailable' });
+      return;
+    }
+    dialogueT2AInFlightKeys.add(key);
+    update();
+    let confirmedAudioSignature = null;
+    try {
+      const sessionReady = await ensureServerSessionReady();
+      if (disposed) {
+        return;
+      }
+      if (!sessionReady?.ok) {
+        return;
+      }
+      const lineBeforeGenerate = getCurrentT2ALine(sceneId, index, textState.trimmedText);
+      if (!lineBeforeGenerate) {
+        return;
+      }
+      if (lineBeforeGenerate.audio) {
+        const confirmed = globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio')) ?? false;
+        if (!confirmed) {
+          showMessage({ textId: 'inspector.dialogue.t2aCanceled' });
+          return;
+        }
+        confirmedAudioSignature = getAudioSignature(lineBeforeGenerate.audio);
+      }
+      const preset = getRolePlaySceneT2APresetById(presetId);
+      const result = await apiClient.generateAudioFromText(textState.trimmedText, preset.options || {});
+      if (disposed) {
+        return;
+      }
+      if (!result?.ok || !(result.data instanceof Uint8Array) || result.data.byteLength <= 0) {
+        const detail = String(result?.error?.message || '').trim();
+        showMessage({
+          textId: detail ? 'inspector.dialogue.t2aFailedWithDetail' : 'inspector.dialogue.t2aFailed',
+          textArgs: { detail },
+        });
+        return;
+      }
+      const lineBeforeAttach = getCurrentT2ALine(sceneId, index, textState.trimmedText);
+      if (!lineBeforeAttach) {
+        return;
+      }
+      const currentAudioSignature = getAudioSignature(lineBeforeAttach.audio);
+      if (currentAudioSignature && currentAudioSignature !== confirmedAudioSignature) {
+        const confirmed = globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio')) ?? false;
+        if (!confirmed) {
+          showMessage({ textId: 'inspector.dialogue.t2aCanceled' });
+          return;
+        }
+      }
+      const safeSceneId = String(sceneId).replace(/[^a-z0-9_-]+/gi, '-');
+      const generatedFile = createAudioFileFromBytes(
+        result.data,
+        createRolePlaySceneT2AAudioFilename(safeSceneId, index, preset.id),
+      );
+      setDialogueAudio(sceneId, index, generatedFile);
+      showMessage({
+        textId: 'inspector.dialogue.t2aGenerated',
+        textArgs: { index: index + 1 },
+      });
+    } catch (error) {
+      const detail = String(error?.message || '').trim();
+      showMessage({
+        textId: detail ? 'inspector.dialogue.t2aFailedWithDetail' : 'inspector.dialogue.t2aFailed',
+        textArgs: { detail },
+      });
+    } finally {
+      dialogueT2AInFlightKeys.delete(key);
+      if (!disposed) {
+        update();
+      }
+    }
+  }
+
+  function getAudioSignature(audio) {
+    if (!audio) return null;
+    return [
+      audio.name || '',
+      audio.objectUrl || '',
+      typeof audio.blob?.size === 'number' ? audio.blob.size : '',
+      audio.blob?.type || '',
+    ].join('|');
   }
 
   function addChoice(sceneId, choice) {

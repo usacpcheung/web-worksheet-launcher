@@ -1,4 +1,7 @@
+import roleplayscene from './roleplayscene/en.js';
+
 export default {
+  roleplayscene,
   "common": {
     "actions": {
       "save": "Save",

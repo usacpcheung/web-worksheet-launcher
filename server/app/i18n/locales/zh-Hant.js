@@ -1,4 +1,7 @@
+import roleplayscene from './roleplayscene/zh-Hant.js';
+
 export default {
+  roleplayscene,
   "common": {
     "actions": {
       "save": "儲存",
