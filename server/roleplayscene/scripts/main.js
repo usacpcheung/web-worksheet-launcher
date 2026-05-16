@@ -12,11 +12,10 @@ import {
 } from './storage.js';
 import { validateProject } from './editor/validators.js';
 import { renderValidation } from './editor/inspector.js';
-import { translate, onLocaleChange, getAvailableLocales } from './i18n.js';
+import { translate, onLocaleChange, getAvailableLocales, LOCALE_STORAGE_KEY } from './i18n.js';
 import { createServerApiClient } from '../../app/api/server-api-client.js';
 import { probeSession } from '../../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../../app/auth/auth-popup-flow.js';
-import './i18n.zh-TW.js';
 
 const appRoot = document.getElementById('app');
 const elLeft = document.getElementById('left-pane');
@@ -78,7 +77,7 @@ let openingPublishedSceneIds = new Set();
 let publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
 let pendingDirectPublishedSceneId = '';
 
-const LOCALE_STORAGE_KEY = 'roleplayscene:locale';
+const LEGACY_LOCALE_STORAGE_KEY = 'roleplayscene:locale';
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -236,7 +235,26 @@ function refreshLocaleUI(nextLocale) {
   if (lastMessagePayload) {
     showMessage(lastMessagePayload);
   }
-  setMode(mode);
+}
+
+function migrateLegacyLocalePreference() {
+  let storage = null;
+  try {
+    storage = globalThis.localStorage || null;
+  } catch {
+    storage = null;
+  }
+  if (!storage) return;
+  try {
+    if (storage.getItem(LOCALE_STORAGE_KEY)) return;
+    const legacyLocale = storage.getItem(LEGACY_LOCALE_STORAGE_KEY);
+    if (!legacyLocale) return;
+    store.setLocale(legacyLocale);
+    storage.setItem(LOCALE_STORAGE_KEY, store.get().locale);
+    storage.removeItem?.(LEGACY_LOCALE_STORAGE_KEY);
+  } catch {
+    // Locale migration should not block app startup.
+  }
 }
 
 function getActiveStore() {
@@ -1660,16 +1678,7 @@ btnExport.addEventListener('click', async () => {
 });
 
 async function bootstrap() {
-  const storedLocale = (() => {
-    try {
-      return globalThis.localStorage?.getItem(LOCALE_STORAGE_KEY) ?? null;
-    } catch (err) {
-      return null;
-    }
-  })();
-  if (storedLocale) {
-    store.setLocale(storedLocale);
-  }
+  migrateLegacyLocalePreference();
   refreshLocaleUI(store.get().locale);
   try {
     persistenceCleanup = await setupPersistence(store, { showMessage });
@@ -1698,20 +1707,10 @@ if (localeSelect) {
   localeSelect.addEventListener('change', (event) => {
     const selected = event.target.value;
     store.setLocale(selected);
-    try {
-      globalThis.localStorage?.setItem(LOCALE_STORAGE_KEY, store.get().locale);
-    } catch (err) {
-      // Ignore storage failures for locale preference.
-    }
   });
 }
 
 onLocaleChange((nextLocale) => {
-  try {
-    globalThis.localStorage?.setItem(LOCALE_STORAGE_KEY, nextLocale);
-  } catch (err) {
-    // Ignore storage failures.
-  }
   refreshLocaleUI(nextLocale);
 });
 

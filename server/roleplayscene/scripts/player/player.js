@@ -38,8 +38,11 @@ export function renderPlayer(store, leftEl, rightEl, showMessage) {
   };
 
   const unsubscribe = store.subscribe(() => {
-    if (!currentSceneId) return;
     const { project } = store.get();
+    if (!currentSceneId) {
+      renderIntro();
+      return;
+    }
     syncHistoryWithProject(project);
 
     if (!sceneHistory.length) {

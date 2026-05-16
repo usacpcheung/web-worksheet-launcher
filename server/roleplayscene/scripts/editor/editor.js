@@ -26,6 +26,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   const ensureServerSessionReady = options.ensureServerSessionReady || null;
   const dialogueT2AInFlightKeys = new Set();
   let activeDialoguePreview = null;
+  let disposed = false;
 
   const unsubscribe = store.subscribe(() => {
     syncSelection();
@@ -33,6 +34,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   });
 
   function cleanup() {
+    disposed = true;
     stopDialoguePreview({ refresh: false });
     unsubscribe();
   }
@@ -65,6 +67,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function update() {
+    if (disposed) return;
     const { project } = store.get();
     const scene = project.scenes.find(s => s.id === selectedId) ?? null;
     stopDialoguePreviewIfStale(project);
@@ -385,6 +388,16 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     return scene?.dialogue?.[index] || null;
   }
 
+  function getCurrentT2ALine(sceneId, index, expectedText) {
+    const currentLine = getDialogueLine(sceneId, index);
+    const currentTextState = getRolePlaySceneT2ATextState(currentLine?.text || '');
+    if (!currentLine || currentTextState.trimmedText !== expectedText) {
+      showMessage({ textId: 'inspector.dialogue.t2aLineChanged' });
+      return null;
+    }
+    return currentLine;
+  }
+
   function stopDialoguePreview({ refresh = true } = {}) {
     const preview = activeDialoguePreview;
     if (!preview) return;
@@ -490,20 +503,32 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     }
     dialogueT2AInFlightKeys.add(key);
     update();
+    let confirmedAudioSignature = null;
     try {
       const sessionReady = await ensureServerSessionReady();
+      if (disposed) {
+        return;
+      }
       if (!sessionReady?.ok) {
         return;
       }
-      if (line?.audio) {
+      const lineBeforeGenerate = getCurrentT2ALine(sceneId, index, textState.trimmedText);
+      if (!lineBeforeGenerate) {
+        return;
+      }
+      if (lineBeforeGenerate.audio) {
         const confirmed = globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio')) ?? false;
         if (!confirmed) {
           showMessage({ textId: 'inspector.dialogue.t2aCanceled' });
           return;
         }
+        confirmedAudioSignature = getAudioSignature(lineBeforeGenerate.audio);
       }
       const preset = getRolePlaySceneT2APresetById(presetId);
       const result = await apiClient.generateAudioFromText(textState.trimmedText, preset.options || {});
+      if (disposed) {
+        return;
+      }
       if (!result?.ok || !(result.data instanceof Uint8Array) || result.data.byteLength <= 0) {
         const detail = String(result?.error?.message || '').trim();
         showMessage({
@@ -511,6 +536,18 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
           textArgs: { detail },
         });
         return;
+      }
+      const lineBeforeAttach = getCurrentT2ALine(sceneId, index, textState.trimmedText);
+      if (!lineBeforeAttach) {
+        return;
+      }
+      const currentAudioSignature = getAudioSignature(lineBeforeAttach.audio);
+      if (currentAudioSignature && currentAudioSignature !== confirmedAudioSignature) {
+        const confirmed = globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio')) ?? false;
+        if (!confirmed) {
+          showMessage({ textId: 'inspector.dialogue.t2aCanceled' });
+          return;
+        }
       }
       const safeSceneId = String(sceneId).replace(/[^a-z0-9_-]+/gi, '-');
       const generatedFile = createAudioFileFromBytes(
@@ -530,8 +567,20 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       });
     } finally {
       dialogueT2AInFlightKeys.delete(key);
-      update();
+      if (!disposed) {
+        update();
+      }
     }
+  }
+
+  function getAudioSignature(audio) {
+    if (!audio) return null;
+    return [
+      audio.name || '',
+      audio.objectUrl || '',
+      typeof audio.blob?.size === 'number' ? audio.blob.size : '',
+      audio.blob?.type || '',
+    ].join('|');
   }
 
   function addChoice(sceneId, choice) {
