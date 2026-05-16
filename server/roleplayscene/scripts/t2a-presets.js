@@ -5,9 +5,7 @@ export const ROLEPLAYSCENE_T2A_PRESETS = Object.freeze([
     id: 'default_professional_female',
     labelKey: 'inspector.dialogue.t2aPreset.professionalFemale',
     slug: 'professional-female',
-    options: Object.freeze({
-      speed: 1.2,
-    }),
+    options: Object.freeze({}),
   }),
   Object.freeze({
     id: 'cantonese_playful_man',
@@ -15,7 +13,7 @@ export const ROLEPLAYSCENE_T2A_PRESETS = Object.freeze([
     slug: 'playful-man',
     options: Object.freeze({
       voice_id: 'Cantonese_PlayfulMan',
-      speed: 1.2,
+      speed: 1.1,
       volume: 1,
       pitch: -1,
     }),
@@ -26,7 +24,7 @@ export const ROLEPLAYSCENE_T2A_PRESETS = Object.freeze([
     slug: 'playful-man-pitch-3',
     options: Object.freeze({
       voice_id: 'Cantonese_PlayfulMan',
-      speed: 1.2,
+      speed: 1.1,
       volume: 1,
       pitch: 3,
     }),
@@ -37,7 +35,7 @@ export const ROLEPLAYSCENE_T2A_PRESETS = Object.freeze([
     slug: 'cute-girl',
     options: Object.freeze({
       voice_id: 'Cantonese_CuteGirl',
-      speed: 1.2,
+      speed: 1.1,
       volume: 1,
       pitch: 2,
     }),
@@ -48,7 +46,7 @@ export const ROLEPLAYSCENE_T2A_PRESETS = Object.freeze([
     slug: 'gentle-lady',
     options: Object.freeze({
       voice_id: 'Cantonese_GentleLady',
-      speed: 1.2,
+      speed: 1.1,
       volume: 1,
       pitch: 0,
     }),
