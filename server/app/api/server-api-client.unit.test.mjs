@@ -232,6 +232,79 @@ test('publishRolePlaySceneFromUploadedDraft sends uploadedDraftId and title', as
   });
 });
 
+test('listRolePlayScenePublishedScenes builds query URL', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return mockJsonResponse(200, { ok: true, data: { items: [] } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.listRolePlayScenePublishedScenes({
+    q: 'clinic',
+    title: 'Greeting',
+    description: 'Practice',
+    owner: 'teacher@example.test',
+    limit: 20,
+    offset: 40,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(
+    requestedUrl,
+    '/api/worksheet-launcher/v1/roleplayscene/published?q=clinic&title=Greeting&description=Practice&owner=teacher%40example.test&limit=20&offset=40'
+  );
+});
+
+test('fetchRolePlayScenePublishedScene builds detail URL', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return mockJsonResponse(200, { ok: true, data: { roleplayscene_published_scene_id: 'p1' } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.fetchRolePlayScenePublishedScene('550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000');
+});
+
+test('fetchRolePlayScenePublishedSceneArtifact parses zip payload', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  globalThis.fetch = async (url) => {
+    requestedUrl = url;
+    return new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
+      status: 200,
+      headers: { 'content-type': 'application/zip' },
+    });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.fetchRolePlayScenePublishedSceneArtifact('550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000/artifact');
+  assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
+});
+
+test('deleteRolePlayScenePublishedScene sends DELETE to published scene path', async () => {
+  setTestWindow();
+  let requestedUrl = null;
+  let requestedMethod = null;
+  globalThis.fetch = async (url, request = {}) => {
+    requestedUrl = url;
+    requestedMethod = request.method;
+    return mockJsonResponse(200, { ok: true, data: { deleted: true } });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.deleteRolePlayScenePublishedScene('550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(result.ok, true);
+  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000');
+  assert.equal(requestedMethod, 'DELETE');
+});
+
 test('uploadDraftPackage emits upload progress when XHR progress events exist', async () => {
   setTestWindow();
   const previousXhr = globalThis.XMLHttpRequest;
@@ -531,6 +604,35 @@ test('generateAudioFromText returns Uint8Array for audio/mpeg non-empty bytes', 
   assert.equal(result.ok, true);
   assert.equal(result.data instanceof Uint8Array, true);
   assert.deepEqual(Array.from(result.data), [1, 2, 3]);
+});
+
+test('generateAudioFromText includes optional voice controls only when provided', async () => {
+  setTestWindow();
+  globalThis.fetch = async (url, request = {}) => {
+    assert.equal(url, '/api/rewrite-bridge/t2a');
+    assert.deepEqual(JSON.parse(request.body), {
+      text: 'hello',
+      format: 'mp3',
+      response_mode: 'binary',
+      voice_id: 'Cantonese_PlayfulMan',
+      speed: 1,
+      volume: 1,
+      pitch: 2,
+    });
+    return new Response(new Uint8Array([1, 2, 3]), {
+      status: 200,
+      headers: { 'content-type': 'audio/mpeg' },
+    });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.generateAudioFromText('hello', {
+    voice_id: 'Cantonese_PlayfulMan',
+    speed: 1,
+    volume: 1,
+    pitch: 2,
+  });
+  assert.equal(result.ok, true);
 });
 
 test('generateAudioFromText returns BRIDGE_EMPTY_RESPONSE for zero-byte payload', async () => {

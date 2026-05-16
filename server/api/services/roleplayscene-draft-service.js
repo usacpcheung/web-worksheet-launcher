@@ -671,6 +671,146 @@ export class RolePlaySceneDraftService {
     }
   }
 
+  async loadPublishedRolePlaySceneScene(publishedSceneId) {
+    const result = await this.db.query(
+      `SELECT
+        roleplayscene_published_scene_id,
+        owner_sub,
+        owner_email,
+        owner_name,
+        source_roleplayscene_uploaded_draft_id,
+        title,
+        description,
+        package_version,
+        artifact_path,
+        artifact_sha256,
+        artifact_size_bytes,
+        scene_count,
+        media_count,
+        missing_media_count,
+        validation_warning_count,
+        published_at
+       FROM roleplayscene_published_scenes
+       WHERE roleplayscene_published_scene_id = $1`,
+      [publishedSceneId]
+    );
+    return result.rowCount === 0 ? null : result.rows[0];
+  }
+
+  async listPublishedRolePlaySceneScenes({
+    query = '',
+    title = '',
+    description = '',
+    owner = '',
+    limit = 20,
+    offset = 0,
+  } = {}) {
+    const values = [];
+    const clauses = [];
+    if (query) {
+      values.push(`%${String(query).toLowerCase()}%`);
+      clauses.push(
+        `(lower(title) LIKE $${values.length} OR lower(description) LIKE $${values.length} OR lower(owner_email) LIKE $${values.length} OR lower(owner_name) LIKE $${values.length})`
+      );
+    }
+    if (title) {
+      values.push(`%${String(title).toLowerCase()}%`);
+      clauses.push(`lower(title) LIKE $${values.length}`);
+    }
+    if (description) {
+      values.push(`%${String(description).toLowerCase()}%`);
+      clauses.push(`lower(description) LIKE $${values.length}`);
+    }
+    if (owner) {
+      values.push(`%${String(owner).toLowerCase()}%`);
+      clauses.push(`(lower(owner_email) LIKE $${values.length} OR lower(owner_name) LIKE $${values.length})`);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    values.push(limit + 1);
+    const limitPlaceholder = `$${values.length}`;
+    values.push(offset);
+    const offsetPlaceholder = `$${values.length}`;
+    const result = await this.db.query(
+      `SELECT
+        roleplayscene_published_scene_id,
+        owner_sub,
+        owner_email,
+        owner_name,
+        source_roleplayscene_uploaded_draft_id,
+        title,
+        description,
+        package_version,
+        artifact_sha256,
+        artifact_size_bytes,
+        scene_count,
+        media_count,
+        missing_media_count,
+        validation_warning_count,
+        published_at
+       FROM roleplayscene_published_scenes
+       ${where}
+       ORDER BY published_at DESC, created_at DESC, roleplayscene_published_scene_id DESC
+       LIMIT ${limitPlaceholder}
+       OFFSET ${offsetPlaceholder}`,
+      values
+    );
+    const hasMore = result.rows.length > limit;
+    const items = hasMore ? result.rows.slice(0, limit) : result.rows;
+    return {
+      items,
+      limit,
+      offset,
+      hasMore,
+      ...(hasMore ? { nextOffset: offset + items.length } : {}),
+    };
+  }
+
+  async deleteOwnPublishedRolePlayScene({ identity, publishedSceneId }) {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const deleted = await client.query(
+        `DELETE FROM roleplayscene_published_scenes
+         WHERE roleplayscene_published_scene_id = $1 AND owner_sub = $2
+         RETURNING roleplayscene_published_scene_id, artifact_path`,
+        [publishedSceneId, identity.sub]
+      );
+
+      if (deleted.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          statusCode: 404,
+          error: {
+            code: 'ROLEPLAYSCENE_PUBLISHED_SCENE_NOT_FOUND',
+            message: 'Published RolePlayScene was not found for this owner.',
+          },
+        };
+      }
+
+      await client.query('COMMIT');
+      const deletedScene = deleted.rows[0];
+      await deleteArtifactBestEffort({
+        artifactStore: this.artifactStore,
+        artifactPath: deletedScene.artifact_path,
+      });
+
+      return {
+        ok: true,
+        statusCode: 200,
+        data: {
+          roleplayscene_published_scene_id: deletedScene.roleplayscene_published_scene_id,
+          deleted: true,
+        },
+      };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async deleteOwnRolePlaySceneDraft({ identity, uploadedDraftId }) {
     const client = await this.db.connect();
     try {

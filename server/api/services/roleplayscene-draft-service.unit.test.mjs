@@ -981,3 +981,134 @@ test('uploadRolePlaySceneDraft succeeds with missing media and stores warning co
   assert.equal(result.data.validation_warning_count, 1);
   assert.equal(result.data.warnings[0].code, 'ROLEPLAYSCENE_MEDIA_MISSING');
 });
+
+test('listPublishedRolePlaySceneScenes filters and paginates published scenes', async () => {
+  let captured = null;
+  const service = createService({
+    db: {
+      async query(sql, values) {
+        captured = { sql, values };
+        return {
+          rows: [
+            { roleplayscene_published_scene_id: 'p1', title: 'One' },
+            { roleplayscene_published_scene_id: 'p2', title: 'Two' },
+          ],
+        };
+      },
+    },
+    artifactStore: {},
+  });
+
+  const result = await service.listPublishedRolePlaySceneScenes({
+    query: 'clinic',
+    title: 'greeting',
+    description: 'practice',
+    owner: 'teacher',
+    limit: 1,
+    offset: 20,
+  });
+
+  assert.deepEqual(result.items, [{ roleplayscene_published_scene_id: 'p1', title: 'One' }]);
+  assert.equal(result.hasMore, true);
+  assert.equal(result.nextOffset, 21);
+  assert.match(captured.sql, /FROM roleplayscene_published_scenes/);
+  assert.match(captured.sql, /lower\(description\) LIKE/);
+  assert.deepEqual(captured.values, ['%clinic%', '%greeting%', '%practice%', '%teacher%', 2, 20]);
+});
+
+test('loadPublishedRolePlaySceneScene returns metadata and artifact path by id', async () => {
+  let captured = null;
+  const service = createService({
+    db: {
+      async query(sql, values) {
+        captured = { sql, values };
+        return {
+          rowCount: 1,
+          rows: [{
+            roleplayscene_published_scene_id: values[0],
+            title: 'Clinic',
+            artifact_path: 'roleplayscene/published/p1.zip',
+          }],
+        };
+      },
+    },
+    artifactStore: {},
+  });
+
+  const result = await service.loadPublishedRolePlaySceneScene('published-id');
+  assert.equal(result.roleplayscene_published_scene_id, 'published-id');
+  assert.equal(result.artifact_path, 'roleplayscene/published/p1.zip');
+  assert.match(captured.sql, /WHERE roleplayscene_published_scene_id = \$1/);
+  assert.deepEqual(captured.values, ['published-id']);
+});
+
+test('deleteOwnPublishedRolePlayScene deletes owner row then best-effort removes artifact', async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'roleplayscene-delete-published-'));
+  const artifactPath = path.join(tempDir, 'published.zip');
+  await fs.writeFile(artifactPath, Buffer.from([1, 2, 3]));
+  const queries = [];
+  const service = createService({
+    db: {
+      async connect() {
+        return {
+          async query(sql, values = []) {
+            queries.push(sql);
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 };
+            if (sql.includes('DELETE FROM roleplayscene_published_scenes')) {
+              assert.deepEqual(values, ['published-id', identity.sub]);
+              return {
+                rows: [{
+                  roleplayscene_published_scene_id: values[0],
+                  artifact_path: 'roleplayscene/published/published.zip',
+                }],
+                rowCount: 1,
+              };
+            }
+            throw new Error(`Unhandled delete published query: ${sql}`);
+          },
+          release() {},
+        };
+      },
+    },
+    artifactStore: {
+      resolveAbsolutePath(artifactPathValue) {
+        assert.equal(artifactPathValue, 'roleplayscene/published/published.zip');
+        return artifactPath;
+      },
+    },
+  });
+
+  const result = await service.deleteOwnPublishedRolePlayScene({ identity, publishedSceneId: 'published-id' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { roleplayscene_published_scene_id: 'published-id', deleted: true });
+  assert.equal(queries.includes('COMMIT'), true);
+  await assert.rejects(() => fs.stat(artifactPath), /ENOENT/);
+  await fs.rm(tempDir, { recursive: true, force: true });
+});
+
+test('deleteOwnPublishedRolePlayScene returns not found for non-owner rows', async () => {
+  const service = createService({
+    db: {
+      async connect() {
+        return {
+          async query(sql) {
+            if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 };
+            if (sql.includes('DELETE FROM roleplayscene_published_scenes')) return { rows: [], rowCount: 0 };
+            throw new Error(`Unhandled delete published query: ${sql}`);
+          },
+          release() {},
+        };
+      },
+    },
+    artifactStore: {
+      resolveAbsolutePath() {
+        throw new Error('should not cleanup missing published scene');
+      },
+    },
+  });
+
+  const result = await service.deleteOwnPublishedRolePlayScene({ identity, publishedSceneId: 'missing-id' });
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 404);
+  assert.equal(result.error.code, 'ROLEPLAYSCENE_PUBLISHED_SCENE_NOT_FOUND');
+});

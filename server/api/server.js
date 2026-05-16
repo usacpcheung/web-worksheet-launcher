@@ -79,6 +79,14 @@ function isRolePlaySceneDraftDetailRoute(segments) {
     && !!segments[4];
 }
 
+function isRolePlayScenePublishedDetailRoute(segments) {
+  return segments[0] === 'api'
+    && segments[1] === 'v1'
+    && segments[2] === 'roleplayscene'
+    && segments[3] === 'published'
+    && !!segments[4];
+}
+
 export function createRequestHandler({ service, rolePlaySceneDraftService, artifactStore, config }) {
   return async function requestHandler(req, res) {
     try {
@@ -251,6 +259,86 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
           return json(res, result.statusCode, fail(result.error.code, result.error.message, result.error.details));
         }
         return json(res, result.statusCode, ok(result.data));
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/v1/roleplayscene/published') {
+        const parsedLimit = parseOptionalNonNegativeInt(url.searchParams.get('limit'), {
+          field: 'limit',
+          max: config.browsePageLimitMax,
+          defaultValue: config.browsePageLimitDefault,
+        });
+        if (!parsedLimit.ok) {
+          return json(res, 400, fail(parsedLimit.error.code, parsedLimit.error.message));
+        }
+        if (parsedLimit.value === 0) {
+          return json(res, 400, fail('INVALID_QUERY_PARAM', 'limit must be greater than 0.'));
+        }
+        const parsedOffset = parseOptionalNonNegativeInt(url.searchParams.get('offset'), {
+          field: 'offset',
+          max: Number.MAX_SAFE_INTEGER,
+          defaultValue: 0,
+        });
+        if (!parsedOffset.ok) {
+          return json(res, 400, fail(parsedOffset.error.code, parsedOffset.error.message));
+        }
+        const result = await rolePlaySceneDraftService.listPublishedRolePlaySceneScenes({
+          query: url.searchParams.get('q') || '',
+          title: url.searchParams.get('title') || '',
+          description: url.searchParams.get('description') || '',
+          owner: url.searchParams.get('owner') || '',
+          limit: parsedLimit.value,
+          offset: parsedOffset.value,
+        });
+        return json(res, 200, ok(result));
+      }
+
+      if (req.method === 'DELETE' && isRolePlayScenePublishedDetailRoute(segments)) {
+        if (segments.length !== 5) {
+          return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        }
+        const validatedPublishedSceneId = assertUuid(segments[4], {
+          code: 'INVALID_ROLEPLAYSCENE_PUBLISHED_SCENE_ID',
+          message: 'roleplayscenePublishedSceneId must be a valid UUID.',
+        });
+        if (!validatedPublishedSceneId.ok) {
+          return json(res, 400, fail(validatedPublishedSceneId.error.code, validatedPublishedSceneId.error.message));
+        }
+        const result = await rolePlaySceneDraftService.deleteOwnPublishedRolePlayScene({
+          identity,
+          publishedSceneId: validatedPublishedSceneId.value,
+        });
+        if (!result.ok) {
+          return json(res, result.statusCode, fail(result.error.code, result.error.message));
+        }
+        return json(res, result.statusCode, ok(result.data));
+      }
+
+      if (req.method === 'GET' && isRolePlayScenePublishedDetailRoute(segments)) {
+        if (!(segments.length === 5 || (segments.length === 6 && segments[5] === 'artifact'))) {
+          return json(res, 404, fail('NOT_FOUND', 'Route not found.'));
+        }
+        const validatedPublishedSceneId = assertUuid(segments[4], {
+          code: 'INVALID_ROLEPLAYSCENE_PUBLISHED_SCENE_ID',
+          message: 'roleplayscenePublishedSceneId must be a valid UUID.',
+        });
+        if (!validatedPublishedSceneId.ok) {
+          return json(res, 400, fail(validatedPublishedSceneId.error.code, validatedPublishedSceneId.error.message));
+        }
+        const row = await rolePlaySceneDraftService.loadPublishedRolePlaySceneScene(validatedPublishedSceneId.value);
+        if (!row) {
+          return json(res, 404, fail('ROLEPLAYSCENE_PUBLISHED_SCENE_NOT_FOUND', 'Published RolePlayScene was not found.'));
+        }
+        if (segments[5] === 'artifact') {
+          const zipBytes = await artifactStore.readArtifact(row.artifact_path);
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/zip');
+          res.setHeader('content-disposition', 'attachment; filename="roleplayscene-published.zip"');
+          res.setHeader('content-length', String(zipBytes.byteLength));
+          res.end(zipBytes);
+          return;
+        }
+        const { artifact_path: _artifactPath, ...publicRow } = row;
+        return json(res, 200, ok(publicRow));
       }
 
       if (req.method === 'POST' && url.pathname === '/api/v1/attempts/upload') {
