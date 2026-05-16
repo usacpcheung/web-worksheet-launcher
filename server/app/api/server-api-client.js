@@ -663,15 +663,21 @@ function createServerApiClient(options = {}) {
       }
       return { ok: true, data: { text: rewrittenText }, status: response.status };
     },
-    generateAudioFromText(text) {
+    generateAudioFromText(text, options = {}) {
+      const payload = {
+        text: String(text),
+        format: 'mp3',
+        response_mode: 'binary',
+      };
+      ['voice_id', 'speed', 'volume', 'pitch'].forEach((key) => {
+        if (options?.[key] !== undefined && options?.[key] !== null && options?.[key] !== '') {
+          payload[key] = options[key];
+        }
+      });
       return requestBinary('/t2a', 'audio/mpeg', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          text: String(text),
-          format: 'mp3',
-          response_mode: 'binary',
-        }),
+        body: JSON.stringify(payload),
       });
     },
   };

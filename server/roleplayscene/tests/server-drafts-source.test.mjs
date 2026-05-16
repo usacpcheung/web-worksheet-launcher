@@ -3,9 +3,18 @@ import { readFile } from 'node:fs/promises';
 
 const mainSource = await readFile(new URL('../scripts/main.js', import.meta.url), 'utf8');
 const indexSource = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+const editorSource = await readFile(new URL('../scripts/editor/editor.js', import.meta.url), 'utf8');
+const inspectorSource = await readFile(new URL('../scripts/editor/inspector.js', import.meta.url), 'utf8');
+const playerSource = await readFile(new URL('../scripts/player/player.js', import.meta.url), 'utf8');
 const publishedOpenFunctionIndex = mainSource.indexOf('async function openPublishedRolePlaySceneById');
 const publishedOpenFunctionEndIndex = mainSource.indexOf('async function downloadPublishedRolePlayScene', publishedOpenFunctionIndex);
 const publishedOpenSource = mainSource.slice(publishedOpenFunctionIndex, publishedOpenFunctionEndIndex);
+const dialogueT2AFunctionIndex = editorSource.indexOf('async function generateDialogueAudio');
+const dialogueT2AFunctionEndIndex = editorSource.indexOf('function addChoice', dialogueT2AFunctionIndex);
+const dialogueT2ASource = editorSource.slice(dialogueT2AFunctionIndex, dialogueT2AFunctionEndIndex);
+const refreshLocaleFunctionIndex = mainSource.indexOf('function refreshLocaleUI');
+const refreshLocaleFunctionEndIndex = mainSource.indexOf('function getActiveStore', refreshLocaleFunctionIndex);
+const refreshLocaleSource = mainSource.slice(refreshLocaleFunctionIndex, refreshLocaleFunctionEndIndex);
 
 assert.ok(
   mainSource.includes('apiClient.listRolePlaySceneDrafts()'),
@@ -99,6 +108,75 @@ assert.ok(
     && !mainSource.includes('ensureAudioGate(playStore)'),
   'published play should sync locale without unlocking audio before the Begin Story gesture',
 );
+assert.ok(
+  refreshLocaleFunctionIndex > -1
+    && !refreshLocaleSource.includes('setMode(mode)')
+    && /if \(!currentSceneId\) \{\s*renderIntro\(\);\s*return;\s*\}/.test(playerSource),
+  'locale refresh should update labels without rebuilding the active mode, and player subscriptions should redraw intro text without resetting an active run',
+);
+assert.ok(
+  mainSource.includes('teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {')
+    && mainSource.includes('apiClient,')
+    && mainSource.includes('ensureServerSessionReady,'),
+  'RolePlayScene editor should receive server API/session hooks for protected T2A generation',
+);
+assert.ok(
+  editorSource.includes('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {})')
+    && editorSource.includes('createAudioFileFromBytes(')
+    && editorSource.includes('result.data,')
+    && editorSource.includes('createRolePlaySceneT2AAudioFilename(')
+    && editorSource.includes('safeSceneId, index, preset.id')
+    && editorSource.includes('setDialogueAudio(sceneId, index, generatedFile)')
+    && editorSource.includes("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))"),
+  'RolePlayScene editor should generate MP3 bytes through T2A and attach them through the existing dialogue audio path',
+);
+assert.ok(
+  editorSource.includes('let disposed = false')
+    && editorSource.includes('disposed = true')
+    && editorSource.includes('function getCurrentT2ALine(sceneId, index, expectedText)')
+    && editorSource.includes("showMessage({ textId: 'inspector.dialogue.t2aLineChanged' })")
+    && editorSource.includes('if (!disposed) {\n        update();\n      }'),
+  'RolePlayScene dialogue T2A should ignore stale async results after line changes or editor teardown',
+);
+assert.ok(
+  editorSource.includes('let activeDialoguePreview = null')
+    && editorSource.includes('function previewDialogueAudio(sceneId, index)')
+    && editorSource.includes('new Audio(src)')
+    && editorSource.includes('stopDialoguePreview({ refresh: false })')
+    && editorSource.includes("showMessage({ textId: 'inspector.dialogue.audioPreviewFailed' })")
+    && editorSource.includes('onPreviewDialogueAudio: previewDialogueAudio')
+    && editorSource.includes('isDialogueAudioPreviewing: (sceneId, index)'),
+  'RolePlayScene editor should manage one active edit-mode dialogue audio preview with cleanup and failure messaging',
+);
+assert.ok(
+  editorSource.includes('stopDialoguePreview({ refresh: false });\r\n    unsubscribe();')
+    || editorSource.includes('stopDialoguePreview({ refresh: false });\n    unsubscribe();'),
+  'RolePlayScene editor teardown should stop active dialogue audio previews',
+);
+assert.ok(
+  dialogueT2ASource.indexOf("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))") > -1
+    && dialogueT2ASource.indexOf("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))")
+      < dialogueT2ASource.indexOf('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {})')
+    && dialogueT2ASource.includes("showMessage({ textId: 'inspector.dialogue.t2aCanceled' })"),
+  'RolePlayScene dialogue T2A should confirm replacement before calling the bridge and cancel without generation',
+);
+assert.ok(
+  inspectorSource.includes('ROLEPLAYSCENE_T2A_PRESETS.forEach')
+    && inspectorSource.includes("actions.onGenerateDialogueAudio?.(scene.id, index, presetSelect.value)")
+    && inspectorSource.includes('generateAudio.disabled = !t2aState.eligible || isGeneratingAudio')
+    && inspectorSource.includes('ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH'),
+  'RolePlayScene inspector should render per-line T2A preset controls with text eligibility gating',
+);
+assert.ok(
+  inspectorSource.includes('getRolePlaySceneT2APresetFromAudioName(audioName)')
+    && inspectorSource.includes("presetBadge.className = 'audio-info__badge'")
+    && inspectorSource.includes("translate('inspector.dialogue.t2aPresetBadge'")
+    && inspectorSource.includes('actions.isDialogueAudioPreviewing?.(scene.id, index) === true')
+    && inspectorSource.includes("actions.onPreviewDialogueAudio?.(scene.id, index)")
+    && inspectorSource.includes("translate('inspector.dialogue.playAudioPreview')")
+    && inspectorSource.includes("translate('inspector.dialogue.stopAudioPreview')"),
+  'RolePlayScene inspector should render edit-mode audio preview controls and best-effort T2A preset badges',
+);
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
 const fetchIndex = mainSource.indexOf('apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId)', openFunctionIndex);
@@ -148,6 +226,14 @@ assert.ok(
     && mainSource.includes("translate('server.slotRecoveryDescription')")
     && mainSource.includes("translate(recoveryMode ? 'server.cancelUpload' : 'server.close')"),
   'slot-limit recovery modal should clearly explain that deleting a draft frees a slot and continues upload',
+);
+assert.ok(
+  mainSource.includes("const LEGACY_LOCALE_STORAGE_KEY = 'roleplayscene:locale'")
+    && mainSource.includes('function migrateLegacyLocalePreference()')
+    && mainSource.includes('storage.getItem(LOCALE_STORAGE_KEY)')
+    && mainSource.includes('storage.removeItem?.(LEGACY_LOCALE_STORAGE_KEY)')
+    && mainSource.indexOf('migrateLegacyLocalePreference();') < mainSource.indexOf('refreshLocaleUI(store.get().locale);'),
+  'RolePlayScene should migrate the old standalone locale preference into the shared locale storage key before initial render',
 );
 assert.ok(
   mainSource.includes('missing_media_count')

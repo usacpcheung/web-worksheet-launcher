@@ -606,6 +606,35 @@ test('generateAudioFromText returns Uint8Array for audio/mpeg non-empty bytes', 
   assert.deepEqual(Array.from(result.data), [1, 2, 3]);
 });
 
+test('generateAudioFromText includes optional voice controls only when provided', async () => {
+  setTestWindow();
+  globalThis.fetch = async (url, request = {}) => {
+    assert.equal(url, '/api/rewrite-bridge/t2a');
+    assert.deepEqual(JSON.parse(request.body), {
+      text: 'hello',
+      format: 'mp3',
+      response_mode: 'binary',
+      voice_id: 'Cantonese_PlayfulMan',
+      speed: 1,
+      volume: 1,
+      pitch: 2,
+    });
+    return new Response(new Uint8Array([1, 2, 3]), {
+      status: 200,
+      headers: { 'content-type': 'audio/mpeg' },
+    });
+  };
+
+  const client = createServerApiClient();
+  const result = await client.generateAudioFromText('hello', {
+    voice_id: 'Cantonese_PlayfulMan',
+    speed: 1,
+    volume: 1,
+    pitch: 2,
+  });
+  assert.equal(result.ok, true);
+});
+
 test('generateAudioFromText returns BRIDGE_EMPTY_RESPONSE for zero-byte payload', async () => {
   setTestWindow();
   globalThis.fetch = async () => new Response(new Uint8Array([]), {
