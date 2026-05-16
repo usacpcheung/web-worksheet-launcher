@@ -7,6 +7,7 @@ const {
   getActiveLocale,
   getAvailableLocales,
   onLocaleChange,
+  LOCALE_STORAGE_KEY,
 } = await import('../scripts/i18n.js');
 
 function resetLocale() {
@@ -24,6 +25,7 @@ try {
   assert.strictEqual(ensureLocale('zh-TW'), 'zh-Hant', 'zh-TW should normalize through shared i18n');
   assert.strictEqual(ensureLocale('zh-HK'), 'zh-Hant', 'zh-HK should normalize through shared i18n');
   assert.strictEqual(ensureLocale('zz'), 'en', 'Unknown locales should resolve to English');
+  assert.strictEqual(LOCALE_STORAGE_KEY, 'worksheetLauncher.locale', 'RolePlayScene should expose the shared locale storage key');
 
   setActiveLocale('zh-TW');
   assert.strictEqual(getActiveLocale(), 'zh-Hant', 'Active locale should use the shared zh-Hant code');
@@ -71,6 +73,11 @@ try {
     translate('inspector.dialogue.t2aPresetBadge', { preset: '可愛女聲' }),
     'T2A：可愛女聲',
     'Dialogue T2A preset badge should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('inspector.dialogue.t2aLineChanged'),
+    '音訊生成已取消，因為這句台詞已被修改。',
+    'Dialogue T2A stale-line warning should resolve from shared Traditional Chinese locale',
   );
 
   setActiveLocale('en');

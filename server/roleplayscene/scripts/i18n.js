@@ -1,6 +1,7 @@
 import {
   getAvailableLocales as getSharedAvailableLocales,
   getLocale,
+  LOCALE_STORAGE_KEY,
   normalizeLocale,
   onLocaleChange,
   setLocale,
@@ -36,6 +37,7 @@ export function ensureLocale(locale) {
 }
 
 export { onLocaleChange };
+export { LOCALE_STORAGE_KEY };
 
 export function translate(id, vars = {}) {
   if (!id) {

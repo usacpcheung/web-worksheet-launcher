@@ -131,6 +131,14 @@ assert.ok(
   'RolePlayScene editor should generate MP3 bytes through T2A and attach them through the existing dialogue audio path',
 );
 assert.ok(
+  editorSource.includes('let disposed = false')
+    && editorSource.includes('disposed = true')
+    && editorSource.includes('function getCurrentT2ALine(sceneId, index, expectedText)')
+    && editorSource.includes("showMessage({ textId: 'inspector.dialogue.t2aLineChanged' })")
+    && editorSource.includes('if (!disposed) {\n        update();\n      }'),
+  'RolePlayScene dialogue T2A should ignore stale async results after line changes or editor teardown',
+);
+assert.ok(
   editorSource.includes('let activeDialoguePreview = null')
     && editorSource.includes('function previewDialogueAudio(sceneId, index)')
     && editorSource.includes('new Audio(src)')
@@ -218,6 +226,14 @@ assert.ok(
     && mainSource.includes("translate('server.slotRecoveryDescription')")
     && mainSource.includes("translate(recoveryMode ? 'server.cancelUpload' : 'server.close')"),
   'slot-limit recovery modal should clearly explain that deleting a draft frees a slot and continues upload',
+);
+assert.ok(
+  mainSource.includes("const LEGACY_LOCALE_STORAGE_KEY = 'roleplayscene:locale'")
+    && mainSource.includes('function migrateLegacyLocalePreference()')
+    && mainSource.includes('storage.getItem(LOCALE_STORAGE_KEY)')
+    && mainSource.includes('storage.removeItem?.(LEGACY_LOCALE_STORAGE_KEY)')
+    && mainSource.indexOf('migrateLegacyLocalePreference();') < mainSource.indexOf('refreshLocaleUI(store.get().locale);'),
+  'RolePlayScene should migrate the old standalone locale preference into the shared locale storage key before initial render',
 );
 assert.ok(
   mainSource.includes('missing_media_count')
