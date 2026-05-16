@@ -81,6 +81,8 @@ export default {
     "publishEditTitle": "編輯標題",
     "missingMediaCount": "伺服器回報缺少 {count} 個媒體檔案。",
     "validationWarningCount": "伺服器回報 {count} 個驗證警告。",
+    "publishedLiveBadge": "已發布",
+    "publishedDeletedBadge": "已發布副本已刪除",
     "missingMediaBadge": "缺少 {count} 個媒體",
     "validationWarningBadge": "{count} 個警告",
     "meta": {

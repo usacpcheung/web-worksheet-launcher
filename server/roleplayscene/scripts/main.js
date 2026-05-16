@@ -854,9 +854,21 @@ function renderDraftMetadata(container, draft) {
 function appendDraftWarningBadges(container, draft) {
   const missingMediaCount = Number(draft?.missing_media_count || 0);
   const validationWarningCount = Number(draft?.validation_warning_count || 0);
-  if (missingMediaCount <= 0 && validationWarningCount <= 0) return;
+  const publishState = draft?.publish_state || 'draft_only';
+  const publishedSceneId = String(draft?.published_scene_id || draft?.roleplayscene_published_scene_id || '').trim();
+  const showPublishedDeleted = publishState === 'current_version_published' && !publishedSceneId;
+  const showPublishedLive = publishState === 'current_version_published' && Boolean(publishedSceneId);
+  if (missingMediaCount <= 0 && validationWarningCount <= 0 && !showPublishedDeleted && !showPublishedLive) return;
   const badges = document.createElement('div');
   badges.className = 'server-draft-badges';
+  if (showPublishedLive || showPublishedDeleted) {
+    const badge = document.createElement('span');
+    badge.className = showPublishedLive
+      ? 'server-draft-badge server-draft-badge--ok'
+      : 'server-draft-badge server-draft-badge--warn';
+    badge.textContent = translate(showPublishedLive ? 'server.publishedLiveBadge' : 'server.publishedDeletedBadge');
+    badges.appendChild(badge);
+  }
   if (missingMediaCount > 0) {
     const badge = document.createElement('span');
     badge.className = 'server-draft-badge server-draft-badge--warn';

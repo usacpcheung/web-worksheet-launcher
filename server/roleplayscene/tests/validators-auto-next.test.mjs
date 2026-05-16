@@ -46,4 +46,15 @@ const missingTarget = [
 result = validateProject({ scenes: missingTarget });
 assert(result.errors.some(msg => msg.includes('auto-advances to missing scene')), 'auto-next target must exist');
 
+const duplicateAndMissingIds = [
+  makeScene('start', SceneType.START, { autoNextSceneId: 'dup' }),
+  makeScene('dup', SceneType.INTERMEDIATE, { autoNextSceneId: 'end' }),
+  makeScene('dup', SceneType.INTERMEDIATE, { autoNextSceneId: 'end' }),
+  makeScene('', SceneType.END),
+  makeScene('end', SceneType.END),
+];
+result = validateProject({ scenes: duplicateAndMissingIds });
+assert(result.errors.some(msg => msg.includes('Scene ID "dup" is duplicated')), 'scene IDs must be unique');
+assert(result.errors.some(msg => msg.includes('is missing an ID')), 'scene IDs must be non-empty');
+
 console.log('auto-next validator tests passed');

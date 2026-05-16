@@ -239,10 +239,12 @@ assert.ok(
   mainSource.includes('missing_media_count')
     && mainSource.includes('validation_warning_count')
     && mainSource.includes('publish_state')
+    && mainSource.includes('published_scene_id')
+    && mainSource.includes("translate(showPublishedLive ? 'server.publishedLiveBadge' : 'server.publishedDeletedBadge')")
     && mainSource.includes('artifact_size_bytes')
     && mainSource.includes("translate('server.meta.missingMedia')")
     && mainSource.includes("translate('server.meta.validationWarnings')"),
-  'uploaded draft manager should surface server metadata and warnings',
+  'uploaded draft manager should surface server metadata, warnings, and live/deleted published-copy status',
 );
 assert.ok(
   mainSource.includes("publishState !== 'current_version_published'")
@@ -267,6 +269,20 @@ assert.ok(
     && indexSource.includes('id="server-modal-overlay"')
     && indexSource.includes('tabindex="-1"'),
   'server status/actions and manager modal should be present in the static markup',
+);
+
+assert.ok(
+  inspectorSource.includes("const sceneHeading = document.createElement('h3')")
+    && inspectorSource.includes('sceneHeading.textContent = scene.id')
+    && !inspectorSource.includes('header.innerHTML = `<h3>${scene.id}</h3>`'),
+  'RolePlayScene inspector should render imported scene IDs as text, not HTML',
+);
+
+assert.ok(
+  editorSource.includes("inspectorHost.querySelectorAll('[data-focus-key]')")
+    && editorSource.includes('element.dataset?.focusKey === focusKey')
+    && !editorSource.includes('inspectorHost.querySelector(`[data-focus-key="${focusKey}"]`)'),
+  'RolePlayScene editor should restore focus without interpolating imported IDs into CSS selectors',
 );
 
 console.log('server draft source tests passed');

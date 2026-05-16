@@ -88,31 +88,48 @@ export class RolePlaySceneDraftService {
     const executor = clientOverride || this.db;
     const result = await executor.query(
       `SELECT
-        roleplayscene_uploaded_draft_id,
-        owner_sub,
-        owner_email,
-        owner_name,
-        title,
-        description,
-        package_version,
-        artifact_sha256,
-        artifact_size_bytes,
-        scene_count,
-        media_count,
-        missing_media_count,
-        validation_warning_count,
-        last_published_artifact_sha256,
-        last_published_at,
+        d.roleplayscene_uploaded_draft_id,
+        d.owner_sub,
+        d.owner_email,
+        d.owner_name,
+        d.title,
+        d.description,
+        d.package_version,
+        d.artifact_sha256,
+        d.artifact_size_bytes,
+        d.scene_count,
+        d.media_count,
+        d.missing_media_count,
+        d.validation_warning_count,
+        d.last_published_artifact_sha256,
+        d.last_published_at,
         CASE
-          WHEN last_published_artifact_sha256 IS NULL THEN 'draft_only'
-          WHEN artifact_sha256 = last_published_artifact_sha256 THEN 'current_version_published'
+          WHEN d.last_published_artifact_sha256 IS NULL THEN 'draft_only'
+          WHEN d.artifact_sha256 = d.last_published_artifact_sha256 THEN 'current_version_published'
           ELSE 'unpublished_changes'
         END AS publish_state,
-        created_at,
-        updated_at
-       FROM roleplayscene_uploaded_drafts
-       WHERE owner_sub = $1
-       ORDER BY created_at DESC`,
+        d.created_at,
+        d.updated_at,
+        p.roleplayscene_published_scene_id AS published_scene_id,
+        p.title AS published_title,
+        p.owner_email AS published_owner_email,
+        p.owner_name AS published_owner_name,
+        p.published_at
+       FROM roleplayscene_uploaded_drafts d
+       LEFT JOIN LATERAL (
+         SELECT
+           roleplayscene_published_scene_id,
+           title,
+           owner_email,
+           owner_name,
+           published_at
+         FROM roleplayscene_published_scenes
+         WHERE source_roleplayscene_uploaded_draft_id = d.roleplayscene_uploaded_draft_id
+         ORDER BY published_at DESC, created_at DESC, roleplayscene_published_scene_id DESC
+         LIMIT 1
+       ) p ON TRUE
+       WHERE d.owner_sub = $1
+       ORDER BY d.created_at DESC`,
       [identity.sub]
     );
     return result.rows;

@@ -10,6 +10,18 @@ export function validateProject(project) {
 
   const scenes = project.scenes;
   const sceneIds = new Set(scenes.map(scene => scene.id));
+  const seenSceneIds = new Set();
+  for (const [index, scene] of scenes.entries()) {
+    const sceneId = typeof scene?.id === 'string' ? scene.id.trim() : '';
+    if (!sceneId) {
+      errors.push(`Scene ${index + 1} is missing an ID.`);
+      continue;
+    }
+    if (seenSceneIds.has(sceneId)) {
+      errors.push(`Scene ID "${sceneId}" is duplicated.`);
+    }
+    seenSceneIds.add(sceneId);
+  }
 
   const startScenes = scenes.filter(scene => scene.type === SceneType.START);
   if (startScenes.length !== 1) {

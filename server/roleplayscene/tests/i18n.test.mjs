@@ -70,6 +70,11 @@ try {
     'Server publish conflict title should resolve from shared Traditional Chinese locale',
   );
   assert.strictEqual(
+    translate('server.publishedDeletedBadge'),
+    '已發布副本已刪除',
+    'Deleted published-copy badge should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
     translate('inspector.dialogue.t2aPresetBadge', { preset: '可愛女聲' }),
     'T2A：可愛女聲',
     'Dialogue T2A preset badge should resolve from shared Traditional Chinese locale',
@@ -100,6 +105,11 @@ try {
     translate('server.publishConflictBody', { title: 'Clinic' }),
     'A published RolePlayScene named "Clinic" already exists. Edit the title and try again.',
     'Server publish conflict body should resolve from shared English locale and interpolate title',
+  );
+  assert.strictEqual(
+    translate('server.publishedLiveBadge'),
+    'Published',
+    'Live published-copy badge should resolve from shared English locale',
   );
   assert.strictEqual(
     translate('inspector.dialogue.audioPreviewFailed'),

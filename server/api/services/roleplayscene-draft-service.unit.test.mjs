@@ -133,8 +133,8 @@ function createFakeDb({
     }
     if (
       sql.includes('FROM roleplayscene_uploaded_drafts')
-      && sql.includes('ORDER BY created_at DESC')
-      && !sql.includes('LIMIT 1')
+      && sql.includes('LEFT JOIN LATERAL')
+      && (sql.includes('ORDER BY created_at DESC') || sql.includes('ORDER BY d.created_at DESC'))
     ) {
       return { rows: listRows, rowCount: listRows.length };
     }
@@ -702,7 +702,7 @@ test('deleteOwnRolePlaySceneDraft succeeds if artifact cleanup fails', async () 
   }
 });
 
-test('listOwnRolePlaySceneDrafts excludes artifact_path and includes publish_state', async () => {
+test('listOwnRolePlaySceneDrafts excludes artifact_path and includes publish_state plus latest published scene', async () => {
   let capturedSql = '';
   const service = createService({
     db: {
@@ -716,6 +716,8 @@ test('listOwnRolePlaySceneDrafts excludes artifact_path and includes publish_sta
               artifact_sha256: 'sha-new',
               last_published_artifact_sha256: 'sha-old',
               publish_state: 'unpublished_changes',
+              published_scene_id: 'published-1',
+              published_title: 'Clinic Live',
             },
           ],
           rowCount: 1,
@@ -727,7 +729,10 @@ test('listOwnRolePlaySceneDrafts excludes artifact_path and includes publish_sta
 
   const rows = await service.listOwnRolePlaySceneDrafts({ sub: 'oidc-sub' });
   assert.equal(capturedSql.includes('artifact_path'), false);
+  assert.match(capturedSql, /LEFT JOIN LATERAL/);
+  assert.match(capturedSql, /source_roleplayscene_uploaded_draft_id = d\.roleplayscene_uploaded_draft_id/);
   assert.equal(rows[0].publish_state, 'unpublished_changes');
+  assert.equal(rows[0].published_scene_id, 'published-1');
 });
 
 test('publishRolePlaySceneFromDraft copies artifact and updates uploaded draft marker', async () => {

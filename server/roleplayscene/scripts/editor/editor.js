@@ -124,7 +124,8 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     });
 
     if (focusKey) {
-      const nextFocus = inspectorHost.querySelector(`[data-focus-key="${focusKey}"]`);
+      const nextFocus = Array.from(inspectorHost.querySelectorAll('[data-focus-key]'))
+        .find(element => element.dataset?.focusKey === focusKey);
       if (nextFocus && typeof nextFocus.focus === 'function') {
         nextFocus.focus();
         if (

@@ -311,6 +311,11 @@ button:disabled {
   background: var(--color-warning-bg);
   border-color: var(--color-warning-border);
 }
+.server-draft-badge--ok {
+  color: var(--color-accent-strong);
+  background: #dbeafe;
+  border-color: var(--color-accent-soft);
+}
 .published-browser-filters {
   display: grid;
   grid-template-columns: minmax(12rem, 1fr) minmax(10rem, 0.8fr) auto;

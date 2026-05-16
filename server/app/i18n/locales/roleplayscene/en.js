@@ -81,6 +81,8 @@ export default {
     "publishEditTitle": "Edit title",
     "missingMediaCount": "{count} missing media file(s) reported by the server.",
     "validationWarningCount": "{count} validation warning(s) reported by the server.",
+    "publishedLiveBadge": "Published",
+    "publishedDeletedBadge": "Published copy deleted",
     "missingMediaBadge": "{count} missing media",
     "validationWarningBadge": "{count} warning(s)",
     "meta": {

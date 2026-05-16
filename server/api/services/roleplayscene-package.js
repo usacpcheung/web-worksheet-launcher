@@ -155,6 +155,18 @@ function validateRolePlaySceneProjectForPlay(project) {
 
   const scenes = project.scenes;
   const sceneIds = new Set(scenes.map(scene => scene?.id).filter(Boolean));
+  const seenSceneIds = new Set();
+  for (const [index, scene] of scenes.entries()) {
+    const sceneId = typeof scene?.id === 'string' ? scene.id.trim() : '';
+    if (!sceneId) {
+      errors.push(`Scene ${index + 1} is missing an ID.`);
+      continue;
+    }
+    if (seenSceneIds.has(sceneId)) {
+      errors.push(`Scene ID "${sceneId}" is duplicated.`);
+    }
+    seenSceneIds.add(sceneId);
+  }
   const startScenes = scenes.filter(scene => scene?.type === 'start');
   if (startScenes.length !== 1) {
     errors.push(`Project must have exactly 1 start scene (found ${startScenes.length}).`);

@@ -61,7 +61,9 @@ export function renderInspector(hostEl, project, scene, actions) {
 
   const header = document.createElement('div');
   header.className = 'inspector-header';
-  header.innerHTML = `<h3>${scene.id}</h3>`;
+  const sceneHeading = document.createElement('h3');
+  sceneHeading.textContent = scene.id;
+  header.appendChild(sceneHeading);
 
   const controls = document.createElement('div');
   controls.className = 'inspector-actions';
