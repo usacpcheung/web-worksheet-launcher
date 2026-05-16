@@ -15,7 +15,7 @@ Phase 1 establishes contracts and file scaffolding only.
 ## Editor/Viewer route assumptions
 
 - Canonical product-style routes are `/editor/` and `/viewer/`.
-- Static or nested deployments may instead serve those entries from file paths such as `server/editor/index.html` and `server/viewer/index.html`.
+- Static or nested deployments may instead serve those entries from file paths such as `server/editor/index.html`, `server/viewer/index.html`, and `server/roleplayscene/index.html`.
 - Editor-to-viewer navigation should therefore resolve relative to the current page location (for example, sibling `../viewer/`) rather than hardcoding an absolute `/viewer/` URL.
 
 ## Parent launcher SDK source
@@ -99,6 +99,7 @@ npm run start:api
 
 - `server/editor/`: local-first editor with top-level Upload Draft, labeled draft metadata (Worksheet Title + Subject), row-based publish from uploaded drafts, and a dedicated published-package browser modal.
 - `server/viewer/`: local-first runtime app for attempts and published-package open flows.
+- `server/roleplayscene/`: local-first RolePlayScene builder/player ported as static assets, preserving its standalone autosave, import/export, and playback behavior.
 - `server/api/`: Node API foundation for server-backed draft upload/publish/load/browse.
 - `server/app/contracts/`: shared local payload validators/mappers (includes transitional snapshot naming for compatibility).
 - `server/app/auth/`: shared client-side auth-return gate used by editor/viewer protected-action stubs while API integrations are still being wired directly.
