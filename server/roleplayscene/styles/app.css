@@ -370,6 +370,15 @@ button:disabled {
 .field > span { font-size: var(--font-size-sm); color: var(--color-text-muted); }
 .image-preview { min-height: 120px; background: var(--color-surface-alt); border: 1px dashed var(--color-border); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .image-preview img { max-width: 100%; max-height: 160px; object-fit: cover; }
+.speech-bubble-editor { display: grid; gap: var(--space-xs); padding: var(--space-sm); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-surface); }
+.speech-bubble-editor__toggle { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); }
+.speech-bubble-stage { position: relative; min-height: 160px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-alt); overflow: hidden; display: flex; align-items: center; justify-content: center; cursor: crosshair; touch-action: manipulation; }
+.speech-bubble-stage img { width: 100%; max-height: 220px; object-fit: contain; pointer-events: none; }
+.speech-bubble-anchor-marker { position: absolute; transform: translate(-50%, -50%); width: 32px; height: 32px; border-radius: 999px; border: 2px solid #ffffff; background: #2563eb; color: #ffffff; font-weight: 700; box-shadow: var(--shadow-soft); cursor: pointer; }
+.speech-bubble-anchor-marker.is-selected { background: #f97316; outline: 3px solid rgba(249, 115, 22, 0.25); }
+.speech-bubble-anchor-list { display: grid; gap: var(--space-2xs); list-style: none; padding: 0; margin: 0; }
+.speech-bubble-anchor-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); flex-wrap: wrap; }
+.dialogue-bubble-controls { display: grid; gap: var(--space-xs); grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); padding: var(--space-xs); border-radius: var(--radius-sm); background: var(--color-surface-alt); }
 .dialogue-editor, .choice-editor { display: grid; gap: var(--space-sm); }
 .dialogue-line, .choice-row { display: grid; gap: var(--space-xs); padding: var(--space-sm); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-surface); box-shadow: var(--shadow-subtle); }
 .dialogue-line textarea { width: 100%; }

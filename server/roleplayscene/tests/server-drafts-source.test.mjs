@@ -178,6 +178,23 @@ assert.ok(
   'RolePlayScene inspector should render edit-mode audio preview controls and best-effort T2A preset badges',
 );
 
+assert.ok(
+  inspectorSource.includes('speech-bubble-editor')
+    && inspectorSource.includes('speech-bubble-stage')
+    && inspectorSource.includes("translate('inspector.speechBubble.title')")
+    && inspectorSource.includes('onAddOrMoveSpeechBubbleAnchor')
+    && inspectorSource.includes('onUpdateDialogueBubble'),
+  'RolePlayScene inspector should expose speech bubble authoring controls',
+);
+
+assert.ok(
+  editorSource.includes('MAX_SPEECH_BUBBLE_ANCHORS')
+    && editorSource.includes('deleteSpeechBubbleAnchor')
+    && editorSource.includes("globalThis.confirm?.(translate('inspector.speechBubble.confirmDeleteUsedAnchor'")
+    && editorSource.includes('bubble: { mode: BubbleMode.CENTER, anchorId: null }'),
+  'RolePlayScene editor should enforce anchor limits and clear used anchor assignments after confirmation',
+);
+
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
 const fetchIndex = mainSource.indexOf('apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId)', openFunctionIndex);
 const prepareIndex = mainSource.indexOf('preparedImport = await prepareProjectImport', openFunctionIndex);

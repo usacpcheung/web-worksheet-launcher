@@ -232,6 +232,7 @@ function buildManifest(snapshot) {
             usedPaths,
             binaries,
           }),
+          bubble: line.bubble ? { ...line.bubble } : undefined,
         })),
         choices: Array.isArray(scene.choices)
           ? scene.choices.map(choice => ({
@@ -243,6 +244,14 @@ function buildManifest(snapshot) {
           : [],
         autoNextSceneId: scene.autoNextSceneId ?? null,
         notes: scene.notes ?? '',
+        speechBubble: scene.speechBubble
+          ? {
+            enabled: scene.speechBubble.enabled === true,
+            anchors: Array.isArray(scene.speechBubble.anchors)
+              ? scene.speechBubble.anchors.map(anchor => ({ ...anchor }))
+              : [],
+          }
+          : undefined,
       };
     }),
     assets: Array.isArray(snapshot.assets) ? snapshot.assets.slice() : [],
@@ -280,6 +289,7 @@ function manifestToSerialized(manifest, files, warnings = []) {
         dialogue: dialogue.map(line => ({
           text: line.text ?? '',
           audio: restoreAsset(line.audio, files, warnings),
+          bubble: line.bubble ? { ...line.bubble } : undefined,
         })),
         choices: Array.isArray(scene.choices)
           ? scene.choices.map(choice => ({
@@ -291,6 +301,14 @@ function manifestToSerialized(manifest, files, warnings = []) {
           : [],
         autoNextSceneId: scene.autoNextSceneId ?? null,
         notes: scene.notes ?? '',
+        speechBubble: scene.speechBubble
+          ? {
+            enabled: scene.speechBubble.enabled === true,
+            anchors: Array.isArray(scene.speechBubble.anchors)
+              ? scene.speechBubble.anchors.map(anchor => ({ ...anchor }))
+              : [],
+          }
+          : undefined,
       };
     }),
     assets: Array.isArray(manifest.assets) ? manifest.assets.slice() : [],
@@ -378,6 +396,7 @@ export function serializeProject(project) {
           audio: line.audio
             ? { name: line.audio.name ?? '', blob: line.audio.blob ?? null }
             : null,
+          bubble: line.bubble ? { ...line.bubble } : undefined,
         })),
         choices: choices.map(choice => ({
           id: choice.id,
@@ -387,6 +406,14 @@ export function serializeProject(project) {
         })),
         autoNextSceneId: scene.autoNextSceneId ?? null,
         notes: scene.notes ?? '',
+        speechBubble: scene.speechBubble
+          ? {
+            enabled: scene.speechBubble.enabled === true,
+            anchors: Array.isArray(scene.speechBubble.anchors)
+              ? scene.speechBubble.anchors.map(anchor => ({ ...anchor }))
+              : [],
+          }
+          : undefined,
       };
     }),
     assets: Array.isArray(project.assets) ? project.assets.slice() : [],
@@ -435,6 +462,7 @@ export function hydrateProject(serialized, { previousProject = null } = {}) {
               objectUrl: audioBlob ? safeCreateObjectURL(audioBlob) : null,
             }
             : null,
+          bubble: line.bubble ? { ...line.bubble } : undefined,
         };
       }),
       choices: Array.isArray(scene.choices) ? scene.choices.map(choice => ({
@@ -445,6 +473,14 @@ export function hydrateProject(serialized, { previousProject = null } = {}) {
       })) : [],
       autoNextSceneId: scene.autoNextSceneId ?? null,
       notes: scene.notes ?? '',
+      speechBubble: scene.speechBubble
+        ? {
+          enabled: scene.speechBubble.enabled === true,
+          anchors: Array.isArray(scene.speechBubble.anchors)
+            ? scene.speechBubble.anchors.map(anchor => ({ ...anchor }))
+            : [],
+        }
+        : undefined,
     };
   });
 

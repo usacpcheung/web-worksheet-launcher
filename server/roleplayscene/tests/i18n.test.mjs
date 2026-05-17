@@ -84,6 +84,11 @@ try {
     '音訊生成已取消，因為這句台詞已被修改。',
     'Dialogue T2A stale-line warning should resolve from shared Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('inspector.speechBubble.anchorUsage', { label: 'A', count: 2 }),
+    '定位點 A：被 2 句台詞使用',
+    'Speech bubble anchor usage should resolve from shared Traditional Chinese locale',
+  );
 
   setActiveLocale('en');
   assert.strictEqual(
@@ -115,6 +120,11 @@ try {
     translate('inspector.dialogue.audioPreviewFailed'),
     'Unable to play this audio preview.',
     'Dialogue audio preview failure should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('inspector.speechBubble.lineModes.center'),
+    'Center narration',
+    'Speech bubble line mode should resolve from shared English locale',
   );
   assert.strictEqual(
     translate('missing.key', { default: 'Fallback {value}', value: 'text' }),

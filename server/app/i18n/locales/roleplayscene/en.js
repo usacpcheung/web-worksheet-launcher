@@ -205,6 +205,27 @@ export default {
       "empty": "No background track selected.",
       "remove": "Remove background music"
     },
+    "speechBubble": {
+      "title": "Speech bubble mode",
+      "previewHint": "Click the preview to add an anchor. Select an anchor, then click the preview to move it.",
+      "stageLabel": "Speech bubble anchor editor",
+      "anchorLimit": "Speech bubble anchor limit reached ({max}).",
+      "anchorCount": "{count} of {max} anchors used.",
+      "anchorUsage": "Anchor {label}: used by {count} dialogue line(s)",
+      "selectAnchor": "Select anchor {label}",
+      "selectedAnchor": "Selected",
+      "moveAnchor": "Move",
+      "deleteAnchor": "Delete",
+      "confirmDeleteUsedAnchor": "Delete anchor {label}? This will clear {count} dialogue assignment(s).",
+      "lineModeLabel": "Speech bubble",
+      "lineAnchorLabel": "Anchor",
+      "lineAnchorMissing": "Select anchor",
+      "lineModes": {
+        "anchor": "Anchor bubble",
+        "center": "Center narration",
+        "hidden": "Hidden"
+      }
+    },
     "dialogue": {
       "title": "Dialogue (max 3 lines)",
       "lineLabel": "Line {index}",

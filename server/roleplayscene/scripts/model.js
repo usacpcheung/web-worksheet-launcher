@@ -8,6 +8,53 @@ export const SceneType = Object.freeze({
 });
 
 export const MAX_DIALOGUE_LINES = 3;
+export const MAX_SPEECH_BUBBLE_ANCHORS = 4;
+
+export const BubbleMode = Object.freeze({
+  ANCHOR: 'anchor',
+  CENTER: 'center',
+  HIDDEN: 'hidden',
+});
+
+const ANCHOR_LABELS = ['A', 'B', 'C', 'D'];
+
+function normaliseCoordinate(value, fallback = 0.5) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(1, number));
+}
+
+function normaliseSpeechBubbleAnchor(anchor = {}, index = 0) {
+  return {
+    id: String(anchor.id ?? newId('anchor')),
+    label: String(anchor.label ?? ANCHOR_LABELS[index] ?? String(index + 1)),
+    x: normaliseCoordinate(anchor.x),
+    y: normaliseCoordinate(anchor.y),
+  };
+}
+
+function normaliseLineBubble(bubble = {}) {
+  const mode = Object.values(BubbleMode).includes(bubble.mode)
+    ? bubble.mode
+    : BubbleMode.CENTER;
+  const result = {
+    mode,
+    anchorId: mode === BubbleMode.ANCHOR && bubble.anchorId != null ? String(bubble.anchorId) : null,
+  };
+  if (bubble.x !== undefined) result.x = normaliseCoordinate(bubble.x);
+  if (bubble.y !== undefined) result.y = normaliseCoordinate(bubble.y);
+  return result;
+}
+
+function normaliseSpeechBubble(value = {}) {
+  const anchors = Array.isArray(value.anchors)
+    ? value.anchors.slice(0, MAX_SPEECH_BUBBLE_ANCHORS).map(normaliseSpeechBubbleAnchor)
+    : [];
+  return {
+    enabled: value.enabled === true,
+    anchors,
+  };
+}
 
 function normaliseDialogueLine(line = {}) {
   return {
@@ -19,6 +66,7 @@ function normaliseDialogueLine(line = {}) {
         blob: line.audio.blob ?? null,
       }
       : null,
+    bubble: normaliseLineBubble(line.bubble),
   };
 }
 
@@ -41,6 +89,7 @@ export function createScene(options = {}) {
     choices = [],
     autoNextSceneId = null,
     notes = '',
+    speechBubble = {},
   } = options;
 
   const normalisedDialogue = dialogue.length
@@ -68,6 +117,7 @@ export function createScene(options = {}) {
     choices: choices.slice(0, 3).map(normaliseChoice),
     autoNextSceneId: type === SceneType.END ? null : (autoNextSceneId ?? null),
     notes,
+    speechBubble: normaliseSpeechBubble(speechBubble),
   };
 }
 

@@ -205,6 +205,27 @@ export default {
       "empty": "未選擇背景音樂。",
       "remove": "移除背景音樂"
     },
+    "speechBubble": {
+      "title": "對話泡泡模式",
+      "previewHint": "點擊預覽圖可新增定位點。選取定位點後，再點擊預覽圖可移動它。",
+      "stageLabel": "對話泡泡定位點編輯器",
+      "anchorLimit": "已達對話泡泡定位點上限（{max}）。",
+      "anchorCount": "已使用 {count} / {max} 個定位點。",
+      "anchorUsage": "定位點 {label}：被 {count} 句台詞使用",
+      "selectAnchor": "選取定位點 {label}",
+      "selectedAnchor": "已選取",
+      "moveAnchor": "移動",
+      "deleteAnchor": "刪除",
+      "confirmDeleteUsedAnchor": "刪除定位點 {label}？這會清除 {count} 個台詞指定。",
+      "lineModeLabel": "對話泡泡",
+      "lineAnchorLabel": "定位點",
+      "lineAnchorMissing": "選擇定位點",
+      "lineModes": {
+        "anchor": "定位泡泡",
+        "center": "置中旁白",
+        "hidden": "隱藏"
+      }
+    },
     "dialogue": {
       "title": "對話（最多 3 行）",
       "lineLabel": "第 {index} 行",

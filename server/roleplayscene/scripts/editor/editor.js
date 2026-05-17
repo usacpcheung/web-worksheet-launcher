@@ -1,7 +1,7 @@
 import { renderGraph } from './graph.js';
 import { renderInspector } from './inspector.js';
 import { validateProject } from './validators.js';
-import { canAddDialogueLine, createScene, SceneType } from '../model.js';
+import { BubbleMode, MAX_SPEECH_BUBBLE_ANCHORS, canAddDialogueLine, createScene, SceneType } from '../model.js';
 import { translate } from '../i18n.js';
 import {
   ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH,
@@ -27,6 +27,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   const dialogueT2AInFlightKeys = new Set();
   let activeDialoguePreview = null;
   let disposed = false;
+  let selectedSpeechBubbleAnchorId = null;
 
   const unsubscribe = store.subscribe(() => {
     syncSelection();
@@ -60,9 +61,18 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       dialogue: scene.dialogue.map(line => ({
         text: line.text,
         audio: line.audio ? { ...line.audio } : null,
+        bubble: line.bubble ? { ...line.bubble } : undefined,
       })),
       choices: scene.choices.map(choice => ({ ...choice })),
       autoNextSceneId: scene.autoNextSceneId ?? null,
+      speechBubble: scene.speechBubble
+        ? {
+          enabled: scene.speechBubble.enabled === true,
+          anchors: Array.isArray(scene.speechBubble.anchors)
+            ? scene.speechBubble.anchors.map(anchor => ({ ...anchor }))
+            : [],
+        }
+        : undefined,
     };
   }
 
@@ -115,6 +125,12 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       isDialogueAudioGenerating: (sceneId, index) => dialogueT2AInFlightKeys.has(getDialogueT2AKey(sceneId, index)),
       onPreviewDialogueAudio: previewDialogueAudio,
       isDialogueAudioPreviewing: (sceneId, index) => activeDialoguePreview?.key === getDialogueT2AKey(sceneId, index),
+      onToggleSpeechBubble: toggleSpeechBubble,
+      onAddOrMoveSpeechBubbleAnchor: addOrMoveSpeechBubbleAnchor,
+      onSelectSpeechBubbleAnchor: selectSpeechBubbleAnchor,
+      onDeleteSpeechBubbleAnchor: deleteSpeechBubbleAnchor,
+      isSpeechBubbleAnchorSelected: (anchorId) => selectedSpeechBubbleAnchorId === anchorId,
+      onUpdateDialogueBubble: updateDialogueBubble,
       onAddChoice: addChoice,
       onRemoveChoice: removeChoice,
       onUpdateChoice: updateChoice,
@@ -308,13 +324,140 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     }
   }
 
+  function getNextAnchorLabel(anchors = []) {
+    const used = new Set(anchors.map(anchor => anchor.label));
+    for (const label of ['A', 'B', 'C', 'D']) {
+      if (!used.has(label)) return label;
+    }
+    return String(anchors.length + 1);
+  }
+
+  function getAnchorUsage(scene, anchorId) {
+    return (scene?.dialogue || []).filter(line => (
+      line.bubble?.mode === BubbleMode.ANCHOR && line.bubble.anchorId === anchorId
+    )).length;
+  }
+
+  function toggleSpeechBubble(sceneId, enabled) {
+    mutateProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        draft.speechBubble = {
+          enabled: enabled === true,
+          anchors: Array.isArray(draft.speechBubble?.anchors)
+            ? draft.speechBubble.anchors.map(anchor => ({ ...anchor }))
+            : [],
+        };
+        return draft;
+      }),
+    }));
+  }
+
+  function selectSpeechBubbleAnchor(sceneId, anchorId) {
+    const scene = store.get().project.scenes.find(item => item.id === sceneId);
+    const exists = scene?.speechBubble?.anchors?.some(anchor => anchor.id === anchorId);
+    selectedSpeechBubbleAnchorId = exists && selectedSpeechBubbleAnchorId !== anchorId ? anchorId : null;
+    update();
+  }
+
+  function addOrMoveSpeechBubbleAnchor(sceneId, point) {
+    const x = Math.max(0, Math.min(1, Number(point?.x)));
+    const y = Math.max(0, Math.min(1, Number(point?.y)));
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+    mutateProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        const anchors = Array.isArray(draft.speechBubble?.anchors)
+          ? draft.speechBubble.anchors.map(anchor => ({ ...anchor }))
+          : [];
+        const selectedIndex = selectedSpeechBubbleAnchorId
+          ? anchors.findIndex(anchor => anchor.id === selectedSpeechBubbleAnchorId)
+          : -1;
+        if (selectedIndex >= 0) {
+          anchors[selectedIndex] = { ...anchors[selectedIndex], x, y };
+          draft.dialogue = draft.dialogue.map(line => {
+            if (line.bubble?.mode !== BubbleMode.ANCHOR || line.bubble.anchorId !== selectedSpeechBubbleAnchorId) {
+              return line;
+            }
+            return {
+              ...line,
+              bubble: {
+                ...line.bubble,
+                x,
+                y,
+              },
+            };
+          });
+        } else if (anchors.length < MAX_SPEECH_BUBBLE_ANCHORS) {
+          const anchorId = `anchor-${Date.now().toString(36)}-${anchors.length + 1}`;
+          anchors.push({
+            id: anchorId,
+            label: getNextAnchorLabel(anchors),
+            x,
+            y,
+          });
+          selectedSpeechBubbleAnchorId = anchorId;
+        } else {
+          showMessage({ textId: 'inspector.speechBubble.anchorLimit', textArgs: { max: MAX_SPEECH_BUBBLE_ANCHORS } });
+        }
+        draft.speechBubble = {
+          enabled: draft.speechBubble?.enabled === true,
+          anchors,
+        };
+        return draft;
+      }),
+    }));
+  }
+
+  function deleteSpeechBubbleAnchor(sceneId, anchorId) {
+    const scene = store.get().project.scenes.find(item => item.id === sceneId);
+    if (!scene) return;
+    const anchor = scene.speechBubble?.anchors?.find(item => item.id === anchorId);
+    if (!anchor) return;
+    const usage = getAnchorUsage(scene, anchorId);
+    if (usage > 0) {
+      const confirmed = globalThis.confirm?.(translate('inspector.speechBubble.confirmDeleteUsedAnchor', {
+        label: anchor.label || anchorId,
+        count: usage,
+      })) ?? false;
+      if (!confirmed) return;
+    }
+    mutateProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(item => {
+        if (item.id !== sceneId) return item;
+        const draft = cloneScene(item);
+        draft.speechBubble = {
+          enabled: draft.speechBubble?.enabled === true,
+          anchors: (draft.speechBubble?.anchors || []).filter(candidate => candidate.id !== anchorId),
+        };
+        draft.dialogue = draft.dialogue.map(line => {
+          if (line.bubble?.mode !== BubbleMode.ANCHOR || line.bubble.anchorId !== anchorId) return line;
+          return {
+            ...line,
+            bubble: { mode: BubbleMode.CENTER, anchorId: null },
+          };
+        });
+        return draft;
+      }),
+    }));
+    if (selectedSpeechBubbleAnchorId === anchorId) {
+      selectedSpeechBubbleAnchorId = null;
+    }
+  }
+
   function addDialogue(sceneId) {
     mutateProject(prev => {
       const scenes = prev.scenes.map(scene => {
         if (scene.id !== sceneId) return scene;
         if (!canAddDialogueLine(scene.dialogue)) return scene;
         const draft = cloneScene(scene);
-        draft.dialogue = [...draft.dialogue, { text: '', audio: null }];
+        draft.dialogue = [...draft.dialogue, { text: '', audio: null, bubble: { mode: BubbleMode.CENTER, anchorId: null } }];
         return draft;
       });
       return { ...prev, scenes };
@@ -351,6 +494,39 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       });
       return { ...prev, scenes };
     });
+  }
+
+  function updateDialogueBubble(sceneId, index, updates = {}) {
+    mutateProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        if (!draft.dialogue[index]) return draft;
+        const current = draft.dialogue[index].bubble || { mode: BubbleMode.CENTER, anchorId: null };
+        const mode = Object.values(BubbleMode).includes(updates.mode)
+          ? updates.mode
+          : current.mode;
+        const next = {
+          mode,
+          anchorId: mode === BubbleMode.ANCHOR
+            ? (updates.anchorId !== undefined ? updates.anchorId : current.anchorId)
+            : null,
+        };
+        const anchor = next.anchorId
+          ? (draft.speechBubble?.anchors || []).find(item => item.id === next.anchorId)
+          : null;
+        if (anchor) {
+          next.x = anchor.x;
+          next.y = anchor.y;
+        }
+        draft.dialogue[index] = {
+          ...draft.dialogue[index],
+          bubble: next,
+        };
+        return draft;
+      }),
+    }));
   }
 
   function setDialogueAudio(sceneId, index, file) {
