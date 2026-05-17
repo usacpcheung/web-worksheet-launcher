@@ -533,6 +533,13 @@ export function renderPlayerUI({
     document.addEventListener('pointerdown', handleDocumentPointerDown);
   }
 
+  const cleanupCueCardListeners = () => {
+    if (typeof document?.removeEventListener === 'function') {
+      document.removeEventListener('keydown', handleDocumentKeydown);
+      document.removeEventListener('pointerdown', handleDocumentPointerDown);
+    }
+  };
+
   const requestDuck = () => {
     try {
       duckBackgroundAudio?.();
@@ -614,7 +621,10 @@ export function renderPlayerUI({
     const placeholder = document.createElement('p');
     placeholder.textContent = translate('player.noSceneSelected');
     uiEl.appendChild(placeholder);
-    return () => stopDialoguePlayback();
+    return () => {
+      cleanupCueCardListeners();
+      stopDialoguePlayback();
+    };
   }
 
   const speechBubbleEnabled = scene.speechBubble?.enabled === true;
@@ -900,7 +910,13 @@ export function renderPlayerUI({
     let activePageIndex = 0;
     let speechAudioActive = false;
     let speechPlayAllActive = false;
+    let speechRunToken = 0;
     const speechTimers = new Set();
+
+    const nextSpeechRunToken = () => {
+      speechRunToken += 1;
+      return speechRunToken;
+    };
 
     const clearSpeechTimers = () => {
       speechTimers.forEach(timer => {
@@ -925,6 +941,7 @@ export function renderPlayerUI({
 
     const stopSpeechPlayback = ({ keepActive = true } = {}) => {
       clearSpeechTimers();
+      nextSpeechRunToken();
       speechPlayAllActive = false;
       speechAudioActive = false;
       dialogueAudio.stop();
@@ -996,6 +1013,7 @@ export function renderPlayerUI({
       const entry = visibleEntries[activeVisibleIndex];
       if (!entry) return;
       clearSpeechTimers();
+      const runToken = nextSpeechRunToken();
       activePageIndex = 0;
       speechPlayAllActive = speechPlayAllActive || autoAdvance;
       const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
@@ -1004,6 +1022,19 @@ export function renderPlayerUI({
 
       if (entry.line.audio?.objectUrl) {
         speechAudioActive = true;
+        let audioDone = false;
+        let presentationDone = !speechPlayAllActive;
+        const completePlayAllWhenReady = () => {
+          if (runToken !== speechRunToken || !speechPlayAllActive) {
+            renderSpeechState();
+            return;
+          }
+          if (audioDone && presentationDone) {
+            completeCurrentSpeechLine();
+          } else {
+            renderSpeechState();
+          }
+        };
         requestDuck();
         const audioSeconds = getLineAudioDurationSeconds(entry.line, pages);
         schedulePaging({
@@ -1011,24 +1042,35 @@ export function renderPlayerUI({
           totalSeconds: audioSeconds,
         });
         if (speechPlayAllActive) {
-          scheduleSpeechTimer(() => completeCurrentSpeechLine(), getPresentationSeconds(pages, audioSeconds) * 1000);
+          scheduleSpeechTimer(() => {
+            if (runToken !== speechRunToken) return;
+            presentationDone = true;
+            completePlayAllWhenReady();
+          }, getPresentationSeconds(pages, audioSeconds) * 1000);
         }
         dialogueAudio.playClip({
           src: entry.line.audio.objectUrl,
           onComplete: () => {
             releaseDuck();
+            if (runToken !== speechRunToken) return;
             speechAudioActive = false;
-            renderSpeechState();
+            audioDone = true;
+            completePlayAllWhenReady();
           },
           onCancel: () => {
             releaseDuck();
+            if (runToken !== speechRunToken) return;
             speechAudioActive = false;
             renderSpeechState();
           },
           onError: (error) => {
-            console.warn(translate('player.dialogue.playbackError'), error);
+            console.warn(translate('player.speechBubble.playbackError'), error);
             releaseDuck();
+            if (runToken !== speechRunToken) return;
+            clearSpeechTimers();
+            nextSpeechRunToken();
             speechAudioActive = false;
+            speechPlayAllActive = false;
             renderSpeechState();
           },
         });
@@ -1054,6 +1096,7 @@ export function renderPlayerUI({
 
     const setActiveSpeechLine = (nextIndex, { autoplay = false } = {}) => {
       clearSpeechTimers();
+      nextSpeechRunToken();
       dialogueAudio.stop();
       releaseDuck();
       speechAudioActive = false;
@@ -1071,6 +1114,7 @@ export function renderPlayerUI({
       const entry = visibleEntries[activeVisibleIndex];
       if (!entry) return;
       clearSpeechTimers();
+      nextSpeechRunToken();
       speechPlayAllActive = false;
       const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
       const pages = splitSpeechBubbleText(entry.line.text || translate('player.dialogue.lineFallback', { index: entry.index + 1 }), mode);
@@ -1219,6 +1263,8 @@ export function renderPlayerUI({
 
     return () => {
       clearSpeechTimers();
+      nextSpeechRunToken();
+      cleanupCueCardListeners();
       closeCueCard();
       stopDialoguePlayback();
     };
@@ -1452,10 +1498,7 @@ export function renderPlayerUI({
   uiEl.appendChild(choiceBox);
 
   return () => {
-    if (typeof document?.removeEventListener === 'function') {
-      document.removeEventListener('keydown', handleDocumentKeydown);
-      document.removeEventListener('pointerdown', handleDocumentPointerDown);
-    }
+    cleanupCueCardListeners();
     closeCueCard();
     stopDialoguePlayback();
   };
