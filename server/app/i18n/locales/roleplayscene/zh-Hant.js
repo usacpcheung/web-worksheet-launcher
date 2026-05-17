@@ -319,6 +319,21 @@ export default {
       "lineFallback": "（第 {index} 行）",
       "playbackError": "音訊播放失敗"
     },
+    "speechBubble": {
+      "startDialogue": "開始對話",
+      "play": "播放",
+      "stop": "停止",
+      "previous": "上一句",
+      "next": "下一句",
+      "playAll": "全部播放",
+      "stopAll": "停止全部",
+      "previousPage": "‹",
+      "nextPage": "›",
+      "pageStatus": "{current} / {total}",
+      "noAudio": "沒有音訊",
+      "noDialogue": "此場景沒有可顯示的對話。",
+      "playbackError": "無法播放此對話泡泡音訊。"
+    },
     "choices": {
       "endMessage": "劇終",
       "continue": "繼續",

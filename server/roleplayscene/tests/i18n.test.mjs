@@ -89,6 +89,16 @@ try {
     '定位點 A：被 2 句台詞使用',
     'Speech bubble anchor usage should resolve from shared Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('player.speechBubble.startDialogue'),
+    '開始對話',
+    'Speech bubble playback start action should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('player.speechBubble.pageStatus', { current: 2, total: 3 }),
+    '2 / 3',
+    'Speech bubble playback page status should resolve from shared Traditional Chinese locale',
+  );
 
   setActiveLocale('en');
   assert.strictEqual(
@@ -125,6 +135,16 @@ try {
     translate('inspector.speechBubble.lineModes.center'),
     'Center narration',
     'Speech bubble line mode should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('player.speechBubble.stopAll'),
+    'Stop All',
+    'Speech bubble playback stop-all action should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('player.speechBubble.noDialogue'),
+    'No visible dialogue for this scene.',
+    'Speech bubble playback no-dialogue message should resolve from shared English locale',
   );
   assert.strictEqual(
     translate('missing.key', { default: 'Fallback {value}', value: 'text' }),

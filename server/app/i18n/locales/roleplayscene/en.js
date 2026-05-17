@@ -319,6 +319,21 @@ export default {
       "lineFallback": "(Line {index})",
       "playbackError": "Audio playback failed"
     },
+    "speechBubble": {
+      "startDialogue": "Start dialogue",
+      "play": "Play",
+      "stop": "Stop",
+      "previous": "Previous",
+      "next": "Next",
+      "playAll": "Play All",
+      "stopAll": "Stop All",
+      "previousPage": "‹",
+      "nextPage": "›",
+      "pageStatus": "{current} / {total}",
+      "noAudio": "No audio",
+      "noDialogue": "No visible dialogue for this scene.",
+      "playbackError": "Unable to play this speech bubble audio."
+    },
     "choices": {
       "endMessage": "The End",
       "continue": "Continue",
