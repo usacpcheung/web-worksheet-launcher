@@ -48,6 +48,7 @@ export function seedIdSequence(prefix, maxValue) {
 export function seedIdSequencesFromProject(project) {
   let maxScene = 0;
   let maxChoice = 0;
+  let maxAnchor = 0;
   const scenes = Array.isArray(project?.scenes) ? project.scenes : [];
   scenes.forEach((scene) => {
     const sceneValue = parseIdNumericSuffix(scene?.id, 'scene');
@@ -61,10 +62,18 @@ export function seedIdSequencesFromProject(project) {
         maxChoice = choiceValue;
       }
     });
+    const anchors = Array.isArray(scene?.speechBubble?.anchors) ? scene.speechBubble.anchors : [];
+    anchors.forEach((anchor) => {
+      const anchorValue = parseIdNumericSuffix(anchor?.id, 'anchor');
+      if (anchorValue != null && anchorValue > maxAnchor) {
+        maxAnchor = anchorValue;
+      }
+    });
   });
 
   seedIdSequence('scene', maxScene);
   seedIdSequence('choice', maxChoice);
+  seedIdSequence('anchor', maxAnchor);
 }
 
 export function resetIdSequences() {

@@ -9,6 +9,7 @@ import {
   getRolePlaySceneT2APresetById,
   getRolePlaySceneT2ATextState,
 } from '../t2a-presets.js';
+import { newId } from '../utils/id.js';
 
 export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) {
   leftEl.innerHTML = '';
@@ -394,7 +395,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
             };
           });
         } else if (anchors.length < MAX_SPEECH_BUBBLE_ANCHORS) {
-          const anchorId = `anchor-${Date.now().toString(36)}-${anchors.length + 1}`;
+          const anchorId = newId('anchor');
           anchors.push({
             id: anchorId,
             label: getNextAnchorLabel(anchors),

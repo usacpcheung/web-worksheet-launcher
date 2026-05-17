@@ -31,6 +31,10 @@ function attachComposedValueListener(field, callback) {
   });
 }
 
+function getClampedPercent(value) {
+  return Math.max(0, Math.min(1, Number(value))) * 100;
+}
+
 export function renderInspector(hostEl, project, scene, actions) {
   hostEl.innerHTML = '';
   hostEl.classList.add('inspector');
@@ -175,18 +179,22 @@ export function renderInspector(hostEl, project, scene, actions) {
     anchorStage.className = 'speech-bubble-stage';
     anchorStage.setAttribute('role', 'group');
     anchorStage.setAttribute('aria-label', translate('inspector.speechBubble.stageLabel'));
+    const anchorFrame = document.createElement('div');
+    anchorFrame.className = scene.image?.objectUrl
+      ? 'speech-bubble-stage__frame'
+      : 'speech-bubble-stage__frame speech-bubble-stage__frame--empty';
     if (scene.image?.objectUrl) {
       const anchorImage = document.createElement('img');
       anchorImage.src = scene.image.objectUrl;
       anchorImage.alt = translate('inspector.image.previewAlt', { sceneId: scene.id });
-      anchorStage.appendChild(anchorImage);
+      anchorFrame.appendChild(anchorImage);
     } else {
       const emptyStage = document.createElement('span');
       emptyStage.textContent = translate('inspector.image.empty');
-      anchorStage.appendChild(emptyStage);
+      anchorFrame.appendChild(emptyStage);
     }
-    anchorStage.addEventListener('click', (event) => {
-      const rect = anchorStage.getBoundingClientRect();
+    anchorFrame.addEventListener('click', (event) => {
+      const rect = anchorFrame.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       actions.onAddOrMoveSpeechBubbleAnchor?.(scene.id, {
         x: (event.clientX - rect.left) / rect.width,
@@ -202,16 +210,17 @@ export function renderInspector(hostEl, project, scene, actions) {
         marker.classList.add('is-selected');
       }
       marker.textContent = anchor.label || '';
-      marker.style.left = `${Math.max(0, Math.min(1, Number(anchor.x))) * 100}%`;
-      marker.style.top = `${Math.max(0, Math.min(1, Number(anchor.y))) * 100}%`;
+      marker.style.left = `${getClampedPercent(anchor.x)}%`;
+      marker.style.top = `${getClampedPercent(anchor.y)}%`;
       marker.setAttribute('aria-label', translate('inspector.speechBubble.selectAnchor', { label: anchor.label || anchor.id }));
       marker.addEventListener('click', (event) => {
         event.stopPropagation();
         actions.onSelectSpeechBubbleAnchor?.(scene.id, anchor.id);
       });
-      anchorStage.appendChild(marker);
+      anchorFrame.appendChild(marker);
     });
 
+    anchorStage.appendChild(anchorFrame);
     speechSection.appendChild(anchorStage);
 
     const count = document.createElement('p');
