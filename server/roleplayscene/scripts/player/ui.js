@@ -106,34 +106,23 @@ function getElementSize(element, fallbackWidth, fallbackHeight) {
 
 function buildSpeechBubblePath(width, height, tail) {
   const radius = Math.min(26, Math.max(16, Math.min(width, height) * 0.18));
-  const baseHalf = Math.min(13, Math.max(8, width * 0.032));
+  const baseHalf = Math.min(16, Math.max(10, width * 0.04));
   const attachX = clampNumber(tail.attachX, radius + baseHalf, width - radius - baseHalf);
   const attachY = tail.side === 'top' ? 0 : height;
-  const rawTipX = tail.tipX;
-  const rawTipY = tail.tipY;
-  const tailDx = rawTipX - attachX;
-  const tailDy = rawTipY - attachY;
-  const tailLength = Math.hypot(tailDx, tailDy) || 1;
-  const maxTailLength = Math.min(105, Math.max(56, width * 0.24));
-  const tailScale = Math.min(1, maxTailLength / tailLength);
-  const tipX = attachX + tailDx * tailScale;
-  const tipY = attachY + tailDy * tailScale;
-  const direction = tail.side === 'top' ? -1 : 1;
-  const firstControlX = attachX + baseHalf * 0.95;
-  const firstControlY = attachY + direction * 2;
-  const secondControlX = tipX + (attachX - tipX) * 0.18;
-  const secondControlY = tipY - direction * 6;
-  const thirdControlX = tipX + (attachX - tipX) * 0.34;
-  const thirdControlY = tipY + direction * 16;
-  const fourthControlX = attachX - baseHalf * 0.75;
-  const fourthControlY = attachY + direction * 3;
+  const baseY = tail.side === 'top' ? attachY : attachY;
+  const tipX = tail.tipX;
+  const tipY = tail.tipY;
+  const curveX = (attachX + tipX) / 2;
+  const curveY = tail.side === 'top'
+    ? Math.min(attachY - 4, (attachY + tipY) / 2)
+    : Math.max(attachY + 4, (attachY + tipY) / 2);
 
   if (tail.side === 'top') {
     return [
       `M ${radius} 0`,
       `H ${attachX - baseHalf}`,
-      `C ${fourthControlX} ${fourthControlY} ${thirdControlX} ${thirdControlY} ${tipX} ${tipY}`,
-      `C ${secondControlX} ${secondControlY} ${firstControlX} ${firstControlY} ${attachX + baseHalf} ${attachY}`,
+      `Q ${curveX} ${curveY} ${tipX} ${tipY}`,
+      `Q ${curveX + baseHalf * 0.35} ${curveY} ${attachX + baseHalf} ${baseY}`,
       `H ${width - radius}`,
       `Q ${width} 0 ${width} ${radius}`,
       `V ${height - radius}`,
@@ -153,8 +142,8 @@ function buildSpeechBubblePath(width, height, tail) {
     `V ${height - radius}`,
     `Q ${width} ${height} ${width - radius} ${height}`,
     `H ${attachX + baseHalf}`,
-    `C ${firstControlX} ${firstControlY} ${secondControlX} ${secondControlY} ${tipX} ${tipY}`,
-    `C ${thirdControlX} ${thirdControlY} ${fourthControlX} ${fourthControlY} ${attachX - baseHalf} ${attachY}`,
+    `Q ${curveX + baseHalf * 0.35} ${curveY} ${tipX} ${tipY}`,
+    `Q ${curveX} ${curveY} ${attachX - baseHalf} ${baseY}`,
     `H ${radius}`,
     `Q 0 ${height} 0 ${height - radius}`,
     `V ${radius}`,
