@@ -98,6 +98,18 @@ class StubElement {
   getAttribute(name) {
     return this.attributes[name];
   }
+
+  get offsetWidth() {
+    if (hasClass(this, 'speech-play-overlay')) return 1000;
+    if (hasClass(this, 'speech-play-bubble-wrap')) return 340;
+    return 0;
+  }
+
+  get offsetHeight() {
+    if (hasClass(this, 'speech-play-overlay')) return 600;
+    if (hasClass(this, 'speech-play-bubble-wrap')) return 120;
+    return 0;
+  }
 }
 
 class StubDocument {
@@ -106,6 +118,10 @@ class StubDocument {
   }
 
   createElement(tagName) {
+    return new StubElement(tagName);
+  }
+
+  createElementNS(_namespace, tagName) {
     return new StubElement(tagName);
   }
 
@@ -299,10 +315,12 @@ try {
   findButtonByText(uiEl, translate('player.speechBubble.startDialogue')).dispatchEvent('click');
   assert.equal(FakeAudio.playCalls[0], 'line-1.mp3', 'Start dialogue should autoplay the first line when audio exists');
 
-  let bubble = findByClass(stageEl, 'speech-play-bubble--anchor');
+  let bubble = findByClass(stageEl, 'speech-play-bubble-wrap--anchor');
   assert.ok(bubble, 'Anchor dialogue should render an anchor bubble');
-  assert.equal(bubble.style.left, '88%', 'Anchor bubble should clamp near the right edge');
-  assert.equal(bubble.style.top, '12%', 'Anchor bubble should clamp near the top edge');
+  assert.ok(findByClass(bubble, 'speech-play-bubble-shape')?.getAttribute('d'), 'Anchor bubble should draw an SVG comic tail shape');
+  assert.ok(bubble.classList.contains('speech-play-bubble-wrap--positioned'), 'Anchor bubble should be measured before it is shown');
+  assert.match(bubble.style.left, /px$/, 'Anchor bubble should be positioned in stage pixels');
+  assert.match(bubble.style.top, /px$/, 'Anchor bubble should be positioned in stage pixels');
   assert.match(collectText(bubble), /Hello from the anchor/);
 
   findButtonByText(uiEl, translate('player.speechBubble.next')).dispatchEvent('click');

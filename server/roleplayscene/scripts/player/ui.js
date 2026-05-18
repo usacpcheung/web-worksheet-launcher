@@ -83,10 +83,118 @@ function getSpeechBubbleAnchor(scene, line) {
   return anchors.find(anchor => anchor.id === line?.bubble?.anchorId) || null;
 }
 
-function clampPercent(value, min = 12, max = 88) {
+function clampNumber(value, min, max) {
   const number = Number(value);
-  if (!Number.isFinite(number)) return 50;
-  return Math.max(min, Math.min(max, number * 100));
+  if (!Number.isFinite(number)) return min;
+  return Math.max(min, Math.min(max, number));
+}
+
+function createSvgElement(tagName) {
+  return document.createElementNS
+    ? document.createElementNS('http://www.w3.org/2000/svg', tagName)
+    : document.createElement(tagName);
+}
+
+function getElementSize(element, fallbackWidth, fallbackHeight) {
+  const width = Number(element?.offsetWidth || element?.getBoundingClientRect?.().width);
+  const height = Number(element?.offsetHeight || element?.getBoundingClientRect?.().height);
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : fallbackWidth,
+    height: Number.isFinite(height) && height > 0 ? height : fallbackHeight,
+  };
+}
+
+function buildSpeechBubblePath(width, height, tail) {
+  const radius = Math.min(26, Math.max(16, Math.min(width, height) * 0.18));
+  const baseHalf = Math.min(28, Math.max(18, width * 0.08));
+  const attachX = clampNumber(tail.attachX, radius + baseHalf, width - radius - baseHalf);
+  const attachY = tail.side === 'top' ? 0 : height;
+  const baseY = tail.side === 'top' ? attachY : attachY;
+  const tipX = tail.tipX;
+  const tipY = tail.tipY;
+  const curveX = (attachX + tipX) / 2;
+  const curveY = tail.side === 'top'
+    ? Math.min(attachY - 8, (attachY + tipY) / 2)
+    : Math.max(attachY + 8, (attachY + tipY) / 2);
+
+  if (tail.side === 'top') {
+    return [
+      `M ${radius} 0`,
+      `H ${attachX - baseHalf}`,
+      `Q ${curveX} ${curveY} ${tipX} ${tipY}`,
+      `Q ${curveX + baseHalf * 0.6} ${curveY} ${attachX + baseHalf} ${baseY}`,
+      `H ${width - radius}`,
+      `Q ${width} 0 ${width} ${radius}`,
+      `V ${height - radius}`,
+      `Q ${width} ${height} ${width - radius} ${height}`,
+      `H ${radius}`,
+      `Q 0 ${height} 0 ${height - radius}`,
+      `V ${radius}`,
+      `Q 0 0 ${radius} 0`,
+      'Z',
+    ].join(' ');
+  }
+
+  return [
+    `M ${radius} 0`,
+    `H ${width - radius}`,
+    `Q ${width} 0 ${width} ${radius}`,
+    `V ${height - radius}`,
+    `Q ${width} ${height} ${width - radius} ${height}`,
+    `H ${attachX + baseHalf}`,
+    `Q ${curveX + baseHalf * 0.6} ${curveY} ${tipX} ${tipY}`,
+    `Q ${curveX} ${curveY} ${attachX - baseHalf} ${baseY}`,
+    `H ${radius}`,
+    `Q 0 ${height} 0 ${height - radius}`,
+    `V ${radius}`,
+    `Q 0 0 ${radius} 0`,
+    'Z',
+  ].join(' ');
+}
+
+function positionAnchorSpeechBubble(overlay, bubble, path, anchor) {
+  const overlaySize = getElementSize(overlay, 640, 360);
+  const bubbleSize = getElementSize(bubble, 340, 120);
+  const anchorX = clampNumber(Number(anchor?.x), 0, 1) * overlaySize.width;
+  const anchorY = clampNumber(Number(anchor?.y), 0, 1) * overlaySize.height;
+  const gap = 30;
+  const margin = 12;
+  const candidates = [
+    { name: 'above-right', left: anchorX + gap, top: anchorY - bubbleSize.height - gap, side: 'bottom', attachRatio: 0.2, preference: 0 },
+    { name: 'above-left', left: anchorX - bubbleSize.width - gap, top: anchorY - bubbleSize.height - gap, side: 'bottom', attachRatio: 0.8, preference: 1 },
+    { name: 'below-right', left: anchorX + gap, top: anchorY + gap, side: 'top', attachRatio: 0.2, preference: 2 },
+    { name: 'below-left', left: anchorX - bubbleSize.width - gap, top: anchorY + gap, side: 'top', attachRatio: 0.8, preference: 3 },
+  ];
+
+  const scored = candidates.map(candidate => {
+    const overflowLeft = Math.max(0, margin - candidate.left);
+    const overflowTop = Math.max(0, margin - candidate.top);
+    const overflowRight = Math.max(0, candidate.left + bubbleSize.width + margin - overlaySize.width);
+    const overflowBottom = Math.max(0, candidate.top + bubbleSize.height + margin - overlaySize.height);
+    const overflow = overflowLeft + overflowTop + overflowRight + overflowBottom;
+    return {
+      ...candidate,
+      score: overflow * 100 + candidate.preference,
+    };
+  }).sort((a, b) => a.score - b.score)[0];
+
+  const left = clampNumber(scored.left, margin, Math.max(margin, overlaySize.width - bubbleSize.width - margin));
+  const top = clampNumber(scored.top, margin, Math.max(margin, overlaySize.height - bubbleSize.height - margin));
+  const tipX = anchorX - left;
+  const tipY = anchorY - top;
+  const attachX = bubbleSize.width * scored.attachRatio;
+
+  bubble.style.left = `${left}px`;
+  bubble.style.top = `${top}px`;
+  bubble.classList.add('speech-play-bubble-wrap--positioned');
+  bubble.setAttribute('data-tail-side', scored.side);
+  bubble.setAttribute('data-tail-anchor', scored.name);
+  path.setAttribute('d', buildSpeechBubblePath(bubbleSize.width, bubbleSize.height, {
+    side: scored.side,
+    attachX,
+    tipX,
+    tipY,
+  }));
 }
 
 function hasSpeechLineContent(line) {
@@ -1135,30 +1243,61 @@ export function renderPlayerUI({
 
       if (activeEntry && speechBubbleOverlay) {
         const anchor = getSpeechBubbleAnchor(scene, activeEntry.line);
-        const bubble = document.createElement('div');
-        bubble.className = activeMode === BubbleMode.ANCHOR
-          ? 'speech-play-bubble speech-play-bubble--anchor'
-          : 'speech-play-bubble speech-play-bubble--center';
-        bubble.classList.toggle('is-playing', speechAudioActive);
-        if (anchor || activeEntry.line.bubble?.x != null) {
-          const x = anchor?.x ?? activeEntry.line.bubble?.x;
-          const y = anchor?.y ?? activeEntry.line.bubble?.y;
-          bubble.style.left = `${clampPercent(x)}%`;
-          bubble.style.top = `${clampPercent(y)}%`;
+        const fallbackAnchor = activeEntry.line.bubble?.x != null || activeEntry.line.bubble?.y != null
+          ? { x: activeEntry.line.bubble?.x ?? 0.5, y: activeEntry.line.bubble?.y ?? 0.5 }
+          : null;
+        const anchorPoint = anchor || fallbackAnchor;
+
+        if (activeMode === BubbleMode.ANCHOR && anchorPoint) {
+          const bubble = document.createElement('div');
+          bubble.className = 'speech-play-bubble-wrap speech-play-bubble-wrap--anchor';
+          bubble.classList.toggle('is-playing', speechAudioActive);
+
+          const svg = createSvgElement('svg');
+          svg.classList.add('speech-play-bubble-svg');
+          svg.setAttribute('aria-hidden', 'true');
+          svg.setAttribute('focusable', 'false');
+
+          const shape = createSvgElement('path');
+          shape.classList.add('speech-play-bubble-shape');
+          svg.appendChild(shape);
+          bubble.appendChild(svg);
+
+          const textLayer = document.createElement('div');
+          textLayer.className = 'speech-play-bubble-text';
+          const text = document.createElement('p');
+          text.textContent = page;
+          textLayer.appendChild(text);
+          if (pages.length > 1) {
+            const pageStatus = document.createElement('span');
+            pageStatus.className = 'speech-play-page-status';
+            pageStatus.textContent = translate('player.speechBubble.pageStatus', {
+              current: activePageIndex + 1,
+              total: pages.length,
+            });
+            textLayer.appendChild(pageStatus);
+          }
+          bubble.appendChild(textLayer);
+          speechBubbleOverlay.appendChild(bubble);
+          positionAnchorSpeechBubble(speechBubbleOverlay, bubble, shape, anchorPoint);
+        } else {
+          const bubble = document.createElement('div');
+          bubble.className = 'speech-play-bubble speech-play-bubble--center';
+          bubble.classList.toggle('is-playing', speechAudioActive);
+          const text = document.createElement('p');
+          text.textContent = page;
+          bubble.appendChild(text);
+          if (pages.length > 1) {
+            const pageStatus = document.createElement('span');
+            pageStatus.className = 'speech-play-page-status';
+            pageStatus.textContent = translate('player.speechBubble.pageStatus', {
+              current: activePageIndex + 1,
+              total: pages.length,
+            });
+            bubble.appendChild(pageStatus);
+          }
+          speechBubbleOverlay.appendChild(bubble);
         }
-        const text = document.createElement('p');
-        text.textContent = page;
-        bubble.appendChild(text);
-        if (pages.length > 1) {
-          const pageStatus = document.createElement('span');
-          pageStatus.className = 'speech-play-page-status';
-          pageStatus.textContent = translate('player.speechBubble.pageStatus', {
-            current: activePageIndex + 1,
-            total: pages.length,
-          });
-          bubble.appendChild(pageStatus);
-        }
-        speechBubbleOverlay.appendChild(bubble);
       }
 
       const controls = document.createElement('div');

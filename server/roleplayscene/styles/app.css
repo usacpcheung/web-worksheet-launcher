@@ -396,25 +396,48 @@ button:disabled {
   max-width: min(560px, 86vw);
   border-radius: var(--radius-md);
 }
-.speech-play-bubble--anchor::after {
-  content: '';
+.speech-play-bubble-wrap {
   position: absolute;
-  left: 50%;
-  bottom: -14px;
-  width: 20px;
-  height: 20px;
-  background: rgba(255, 255, 255, 0.95);
-  border-right: 2px solid var(--color-text);
-  border-bottom: 2px solid var(--color-text);
-  transform: translateX(-50%) rotate(45deg);
+  min-width: min(220px, 76vw);
+  max-width: min(420px, 78vw);
+  color: var(--color-text);
+  opacity: 0;
+  pointer-events: none;
+}
+.speech-play-bubble-wrap--positioned {
+  animation: speechBubbleAnchorIn 0.18s ease forwards;
+}
+.speech-play-bubble-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 0;
+}
+.speech-play-bubble-shape {
+  fill: rgba(255, 255, 255, 0.96);
+  stroke: var(--color-text);
+  stroke-linejoin: round;
+  stroke-width: 4px;
+  filter: drop-shadow(0 14px 20px rgba(15, 23, 42, 0.16));
+}
+.speech-play-bubble-text {
+  position: relative;
+  z-index: 1;
+  padding: var(--space-sm) var(--space-md);
 }
 .speech-play-bubble.is-playing {
   background: rgba(219, 234, 254, 0.96);
 }
-.speech-play-bubble.is-playing::after {
-  background: rgba(219, 234, 254, 0.96);
+.speech-play-bubble-wrap.is-playing .speech-play-bubble-shape {
+  fill: rgba(219, 234, 254, 0.97);
+  stroke: var(--color-accent);
+  animation: speechBubblePulse 1.2s ease-in-out infinite;
 }
-.speech-play-bubble p {
+.speech-play-bubble p,
+.speech-play-bubble-text p {
   margin: 0;
   font-size: var(--font-size-base);
   line-height: 1.45;
@@ -460,6 +483,25 @@ button:disabled {
   to {
     opacity: 1;
     transform: translate(-50%, -50%);
+  }
+}
+@keyframes speechBubbleAnchorIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes speechBubblePulse {
+  0%,
+  100% {
+    stroke-width: 4px;
+  }
+  50% {
+    stroke-width: 5px;
   }
 }
 .graph-container { min-height: 100%; overflow: auto; padding: var(--space-md); }
