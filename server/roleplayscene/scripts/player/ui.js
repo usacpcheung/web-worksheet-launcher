@@ -106,7 +106,7 @@ function getElementSize(element, fallbackWidth, fallbackHeight) {
 
 function buildSpeechBubblePath(width, height, tail) {
   const radius = Math.min(26, Math.max(16, Math.min(width, height) * 0.18));
-  const baseHalf = Math.min(28, Math.max(18, width * 0.08));
+  const baseHalf = Math.min(16, Math.max(10, width * 0.04));
   const attachX = clampNumber(tail.attachX, radius + baseHalf, width - radius - baseHalf);
   const attachY = tail.side === 'top' ? 0 : height;
   const baseY = tail.side === 'top' ? attachY : attachY;
@@ -114,15 +114,15 @@ function buildSpeechBubblePath(width, height, tail) {
   const tipY = tail.tipY;
   const curveX = (attachX + tipX) / 2;
   const curveY = tail.side === 'top'
-    ? Math.min(attachY - 8, (attachY + tipY) / 2)
-    : Math.max(attachY + 8, (attachY + tipY) / 2);
+    ? Math.min(attachY - 4, (attachY + tipY) / 2)
+    : Math.max(attachY + 4, (attachY + tipY) / 2);
 
   if (tail.side === 'top') {
     return [
       `M ${radius} 0`,
       `H ${attachX - baseHalf}`,
       `Q ${curveX} ${curveY} ${tipX} ${tipY}`,
-      `Q ${curveX + baseHalf * 0.6} ${curveY} ${attachX + baseHalf} ${baseY}`,
+      `Q ${curveX + baseHalf * 0.35} ${curveY} ${attachX + baseHalf} ${baseY}`,
       `H ${width - radius}`,
       `Q ${width} 0 ${width} ${radius}`,
       `V ${height - radius}`,
@@ -142,7 +142,7 @@ function buildSpeechBubblePath(width, height, tail) {
     `V ${height - radius}`,
     `Q ${width} ${height} ${width - radius} ${height}`,
     `H ${attachX + baseHalf}`,
-    `Q ${curveX + baseHalf * 0.6} ${curveY} ${tipX} ${tipY}`,
+    `Q ${curveX + baseHalf * 0.35} ${curveY} ${tipX} ${tipY}`,
     `Q ${curveX} ${curveY} ${attachX - baseHalf} ${baseY}`,
     `H ${radius}`,
     `Q 0 ${height} 0 ${height - radius}`,
