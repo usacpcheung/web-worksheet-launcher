@@ -106,12 +106,17 @@ function getElementSize(element, fallbackWidth, fallbackHeight) {
 
 function buildSpeechBubblePath(width, height, tail) {
   const radius = Math.min(26, Math.max(16, Math.min(width, height) * 0.18));
-  const baseHalf = Math.min(16, Math.max(10, width * 0.04));
+  const baseHalf = Math.min(14, Math.max(9, width * 0.035));
   const attachX = clampNumber(tail.attachX, radius + baseHalf, width - radius - baseHalf);
   const attachY = tail.side === 'top' ? 0 : height;
   const baseY = tail.side === 'top' ? attachY : attachY;
-  const tipX = tail.tipX;
-  const tipY = tail.tipY;
+  const dx = tail.tipX - attachX;
+  const dy = tail.tipY - attachY;
+  const distance = Math.hypot(dx, dy) || 1;
+  const maxTailLength = Math.min(54, Math.max(42, width * 0.14));
+  const scale = Math.min(1, maxTailLength / distance);
+  const tipX = attachX + dx * scale;
+  const tipY = attachY + dy * scale;
   const curveX = (attachX + tipX) / 2;
   const curveY = tail.side === 'top'
     ? Math.min(attachY - 4, (attachY + tipY) / 2)
