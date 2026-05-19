@@ -5,6 +5,7 @@ const mainSource = await readFile(new URL('../scripts/main.js', import.meta.url)
 const indexSource = await readFile(new URL('../index.html', import.meta.url), 'utf8');
 const editorSource = await readFile(new URL('../scripts/editor/editor.js', import.meta.url), 'utf8');
 const inspectorSource = await readFile(new URL('../scripts/editor/inspector.js', import.meta.url), 'utf8');
+const speechBubbleInspectorSource = await readFile(new URL('../scripts/editor/speech-bubble-inspector.js', import.meta.url), 'utf8');
 const playerSource = await readFile(new URL('../scripts/player/player.js', import.meta.url), 'utf8');
 const publishedOpenFunctionIndex = mainSource.indexOf('async function openPublishedRolePlaySceneById');
 const publishedOpenFunctionEndIndex = mainSource.indexOf('async function downloadPublishedRolePlayScene', publishedOpenFunctionIndex);
@@ -179,11 +180,13 @@ assert.ok(
 );
 
 assert.ok(
-  inspectorSource.includes('speech-bubble-editor')
-    && inspectorSource.includes('speech-bubble-stage')
-    && inspectorSource.includes("translate('inspector.speechBubble.title')")
-    && inspectorSource.includes('onAddOrMoveSpeechBubbleAnchor')
-    && inspectorSource.includes('onUpdateDialogueBubble'),
+  inspectorSource.includes('renderSpeechBubbleEditorSection(scene, actions)')
+    && inspectorSource.includes('renderDialogueBubbleControls({ scene, line, index, anchors, actions })')
+    && speechBubbleInspectorSource.includes('speech-bubble-editor')
+    && speechBubbleInspectorSource.includes('speech-bubble-stage')
+    && speechBubbleInspectorSource.includes("translate('inspector.speechBubble.title')")
+    && speechBubbleInspectorSource.includes('onAddOrMoveSpeechBubbleAnchor')
+    && speechBubbleInspectorSource.includes('onUpdateDialogueBubble'),
   'RolePlayScene inspector should expose speech bubble authoring controls',
 );
 
