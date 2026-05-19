@@ -401,11 +401,11 @@ button:disabled {
   min-width: min(220px, 76vw);
   max-width: min(420px, 78vw);
   color: var(--color-text);
-  opacity: 0;
+  opacity: 1;
   pointer-events: none;
 }
 .speech-play-bubble-wrap--positioned {
-  animation: speechBubbleAnchorIn 0.18s ease forwards;
+  opacity: 1;
 }
 .speech-play-bubble-svg {
   position: absolute;
@@ -429,12 +429,17 @@ button:disabled {
   padding: var(--space-sm) var(--space-md);
 }
 .speech-play-bubble.is-playing {
-  background: rgba(219, 234, 254, 0.96);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 0 12px rgba(37, 99, 235, 0.22),
+    var(--shadow-soft);
 }
 .speech-play-bubble-wrap.is-playing .speech-play-bubble-shape {
-  fill: rgba(219, 234, 254, 0.97);
-  stroke: var(--color-accent);
-  animation: speechBubblePulse 1.2s ease-in-out infinite;
+  fill: rgba(255, 255, 255, 0.96);
+  stroke: var(--color-text);
+  filter:
+    drop-shadow(0 0 10px rgba(37, 99, 235, 0.24))
+    drop-shadow(0 10px 14px rgba(15, 23, 42, 0.12));
 }
 .speech-play-bubble p,
 .speech-play-bubble-text p {
@@ -483,25 +488,6 @@ button:disabled {
   to {
     opacity: 1;
     transform: translate(-50%, -50%);
-  }
-}
-@keyframes speechBubbleAnchorIn {
-  from {
-    opacity: 0;
-    transform: translateY(4px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-@keyframes speechBubblePulse {
-  0%,
-  100% {
-    stroke-width: 2.5px;
-  }
-  50% {
-    stroke-width: 3.5px;
   }
 }
 .graph-container { min-height: 100%; overflow: auto; padding: var(--space-md); }
