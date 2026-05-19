@@ -1,10 +1,6 @@
 import { BubbleMode, MAX_SPEECH_BUBBLE_ANCHORS } from '../model.js';
 import { translate } from '../i18n.js';
 
-function getClampedPercent(value) {
-  return Math.max(0, Math.min(1, Number(value))) * 100;
-}
-
 export function renderSpeechBubbleEditorSection(scene, actions) {
   const speechBubble = scene.speechBubble || { enabled: false, anchors: [] };
   const anchors = Array.isArray(speechBubble.anchors) ? speechBubble.anchors : [];
@@ -28,56 +24,8 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
   if (speechBubble.enabled) {
     const helper = document.createElement('p');
     helper.className = 'hint';
-    helper.textContent = translate('inspector.speechBubble.previewHint');
+    helper.textContent = translate('inspector.speechBubble.scenePreviewHint');
     speechSection.appendChild(helper);
-
-    const anchorStage = document.createElement('div');
-    anchorStage.className = 'speech-bubble-stage';
-    anchorStage.setAttribute('role', 'group');
-    anchorStage.setAttribute('aria-label', translate('inspector.speechBubble.stageLabel'));
-    const anchorFrame = document.createElement('div');
-    anchorFrame.className = scene.image?.objectUrl
-      ? 'speech-bubble-stage__frame'
-      : 'speech-bubble-stage__frame speech-bubble-stage__frame--empty';
-    if (scene.image?.objectUrl) {
-      const anchorImage = document.createElement('img');
-      anchorImage.src = scene.image.objectUrl;
-      anchorImage.alt = translate('inspector.image.previewAlt', { sceneId: scene.id });
-      anchorFrame.appendChild(anchorImage);
-    } else {
-      const emptyStage = document.createElement('span');
-      emptyStage.textContent = translate('inspector.image.empty');
-      anchorFrame.appendChild(emptyStage);
-    }
-    anchorFrame.addEventListener('click', (event) => {
-      const rect = anchorFrame.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-      actions.onAddOrMoveSpeechBubbleAnchor?.(scene.id, {
-        x: (event.clientX - rect.left) / rect.width,
-        y: (event.clientY - rect.top) / rect.height,
-      });
-    });
-
-    anchors.forEach((anchor) => {
-      const marker = document.createElement('button');
-      marker.type = 'button';
-      marker.className = 'speech-bubble-anchor-marker';
-      if (actions.isSpeechBubbleAnchorSelected?.(anchor.id)) {
-        marker.classList.add('is-selected');
-      }
-      marker.textContent = anchor.label || '';
-      marker.style.left = `${getClampedPercent(anchor.x)}%`;
-      marker.style.top = `${getClampedPercent(anchor.y)}%`;
-      marker.setAttribute('aria-label', translate('inspector.speechBubble.selectAnchor', { label: anchor.label || anchor.id }));
-      marker.addEventListener('click', (event) => {
-        event.stopPropagation();
-        actions.onSelectSpeechBubbleAnchor?.(scene.id, anchor.id);
-      });
-      anchorFrame.appendChild(marker);
-    });
-
-    anchorStage.appendChild(anchorFrame);
-    speechSection.appendChild(anchorStage);
 
     const count = document.createElement('p');
     count.className = 'hint';

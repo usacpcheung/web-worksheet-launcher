@@ -90,6 +90,11 @@ try {
     'Speech bubble anchor usage should resolve from shared Traditional Chinese locale',
   );
   assert.strictEqual(
+    translate('editor.views.scenePreview'),
+    '場景預覽',
+    'Scene Preview view label should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
     translate('player.speechBubble.startDialogue'),
     '開始對話',
     'Speech bubble playback start action should resolve from shared Traditional Chinese locale',
@@ -135,6 +140,16 @@ try {
     translate('inspector.speechBubble.lineModes.center'),
     'Center narration',
     'Speech bubble line mode should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('editor.views.storyMap'),
+    'Story Map',
+    'Story Map view label should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('editor.scenePreview.anchorHint'),
+    'Place anchors on the scene preview.',
+    'Scene Preview anchor hint should resolve from shared English locale',
   );
   assert.strictEqual(
     translate('player.speechBubble.stopAll'),

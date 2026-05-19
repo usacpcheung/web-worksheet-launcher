@@ -116,17 +116,12 @@ export function renderInspector(hostEl, project, scene, actions) {
   imageLabel.textContent = translate('inspector.image.label');
   imageField.appendChild(imageLabel);
 
-  const imagePreview = document.createElement('div');
-  imagePreview.className = 'image-preview';
-  if (scene.image?.objectUrl) {
-    const img = document.createElement('img');
-    img.src = scene.image.objectUrl;
-    img.alt = translate('inspector.image.previewAlt', { sceneId: scene.id });
-    imagePreview.appendChild(img);
-  } else {
-    imagePreview.textContent = translate('inspector.image.empty');
-  }
-  imageField.appendChild(imagePreview);
+  const imageStatus = document.createElement('p');
+  imageStatus.className = 'hint image-status';
+  imageStatus.textContent = scene.image
+    ? translate('inspector.image.attached', { name: scene.image.name || translate('inspector.image.fallbackName') })
+    : translate('inspector.image.empty');
+  imageField.appendChild(imageStatus);
 
   const imageInput = document.createElement('input');
   imageInput.type = 'file';

@@ -14,6 +14,19 @@ export default {
     },
     "dismissMessage": "關閉訊息"
   },
+  "editor": {
+    "views": {
+      "storyMap": "故事地圖",
+      "scenePreview": "場景預覽"
+    },
+    "scenePreview": {
+      "title": "場景預覽：{sceneId}",
+      "stageLabel": "{sceneId} 的場景預覽",
+      "anchorHint": "在場景預覽上放置定位點。",
+      "noScene": "請選擇要預覽的場景。",
+      "noImage": "未選擇圖片。"
+    }
+  },
   "server": {
     "signIn": "登入",
     "save": "儲存到伺服器",
@@ -196,6 +209,8 @@ export default {
       "label": "舞台圖片",
       "previewAlt": "{sceneId} 預覽",
       "empty": "未選擇圖片。",
+      "attached": "已附加：{name}",
+      "fallbackName": "未命名圖片",
       "remove": "移除圖片"
     },
     "background": {
@@ -207,8 +222,7 @@ export default {
     },
     "speechBubble": {
       "title": "對話泡泡模式",
-      "previewHint": "點擊預覽圖可新增定位點。選取定位點後，再點擊預覽圖可移動它。",
-      "stageLabel": "對話泡泡定位點編輯器",
+      "scenePreviewHint": "請在場景預覽中放置與移動定位點。",
       "anchorLimit": "已達對話泡泡定位點上限（{max}）。",
       "anchorCount": "已使用 {count} / {max} 個定位點。",
       "anchorUsage": "定位點 {label}：被 {count} 句台詞使用",

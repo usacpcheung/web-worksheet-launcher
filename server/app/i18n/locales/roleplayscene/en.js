@@ -14,6 +14,19 @@ export default {
     },
     "dismissMessage": "Dismiss message"
   },
+  "editor": {
+    "views": {
+      "storyMap": "Story Map",
+      "scenePreview": "Scene Preview"
+    },
+    "scenePreview": {
+      "title": "Scene Preview: {sceneId}",
+      "stageLabel": "Scene preview for {sceneId}",
+      "anchorHint": "Place anchors on the scene preview.",
+      "noScene": "Select a scene to preview.",
+      "noImage": "No image selected."
+    }
+  },
   "server": {
     "signIn": "Sign in",
     "save": "Save to Server",
@@ -196,6 +209,8 @@ export default {
       "label": "Stage image",
       "previewAlt": "{sceneId} preview",
       "empty": "No image selected.",
+      "attached": "Attached: {name}",
+      "fallbackName": "Untitled image",
       "remove": "Remove image"
     },
     "background": {
@@ -207,8 +222,7 @@ export default {
     },
     "speechBubble": {
       "title": "Speech bubble mode",
-      "previewHint": "Click the preview to add an anchor. Select an anchor, then click the preview to move it.",
-      "stageLabel": "Speech bubble anchor editor",
+      "scenePreviewHint": "Place and move anchors in Scene Preview.",
       "anchorLimit": "Speech bubble anchor limit reached ({max}).",
       "anchorCount": "{count} of {max} anchors used.",
       "anchorUsage": "Anchor {label}: used by {count} dialogue line(s)",

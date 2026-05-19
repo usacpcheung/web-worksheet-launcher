@@ -1,5 +1,6 @@
 import { renderGraph } from './graph.js';
 import { renderInspector } from './inspector.js';
+import { renderScenePreview } from './scene-preview.js';
 import { validateProject } from './validators.js';
 import { BubbleMode, MAX_SPEECH_BUBBLE_ANCHORS, canAddDialogueLine, createScene, SceneType } from '../model.js';
 import { translate } from '../i18n.js';
@@ -15,14 +16,19 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   leftEl.innerHTML = '';
   rightEl.innerHTML = '';
 
-  const graphHost = document.createElement('div');
-  graphHost.className = 'graph-container';
-  leftEl.appendChild(graphHost);
+  const leftToolbar = document.createElement('div');
+  leftToolbar.className = 'editor-view-switch';
+  leftEl.appendChild(leftToolbar);
+
+  const leftContent = document.createElement('div');
+  leftContent.className = 'editor-left-content';
+  leftEl.appendChild(leftContent);
 
   const inspectorHost = document.createElement('div');
   rightEl.appendChild(inspectorHost);
 
   let selectedId = store.get().project.scenes[0]?.id ?? null;
+  let leftView = 'storyMap';
   const apiClient = options.apiClient || null;
   const ensureServerSessionReady = options.ensureServerSessionReady || null;
   const dialogueT2AInFlightKeys = new Set();
@@ -101,13 +107,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       ? activeElement.selectionEnd
       : null;
 
-    renderGraph(graphHost, project, selectedId, (id) => {
-      if (id !== selectedId) {
-        stopDialoguePreview({ refresh: false });
-      }
-      selectedId = id;
-      update();
-    });
+    renderLeftPane(project, scene);
 
     const validationResults = validateProject(project);
 
@@ -325,6 +325,54 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     }
   }
 
+  function renderLeftPane(project, scene) {
+    leftToolbar.innerHTML = '';
+    const views = [
+      { id: 'storyMap', label: translate('editor.views.storyMap') },
+      { id: 'scenePreview', label: translate('editor.views.scenePreview') },
+    ];
+    views.forEach((view) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = view.label;
+      button.className = 'editor-view-switch__button';
+      if (leftView === view.id) {
+        button.classList.add('is-active');
+      }
+      button.setAttribute('aria-pressed', leftView === view.id ? 'true' : 'false');
+      button.addEventListener('click', () => {
+        if (leftView === view.id) return;
+        leftView = view.id;
+        update();
+      });
+      leftToolbar.appendChild(button);
+    });
+
+    leftContent.innerHTML = '';
+    leftContent.className = leftView === 'scenePreview'
+      ? 'editor-left-content editor-left-content--scene-preview'
+      : 'editor-left-content editor-left-content--story-map';
+    if (leftView === 'scenePreview') {
+      renderScenePreview(leftContent, scene, {
+        onAddOrMoveSpeechBubbleAnchor: addOrMoveSpeechBubbleAnchor,
+        onSelectSpeechBubbleAnchor: selectSpeechBubbleAnchor,
+        isSpeechBubbleAnchorSelected: (anchorId) => selectedSpeechBubbleAnchorId === anchorId,
+      });
+      return;
+    }
+
+    const graphHost = document.createElement('div');
+    graphHost.className = 'graph-container';
+    leftContent.appendChild(graphHost);
+    renderGraph(graphHost, project, selectedId, (id) => {
+      if (id !== selectedId) {
+        stopDialoguePreview({ refresh: false });
+      }
+      selectedId = id;
+      update();
+    });
+  }
+
   function getNextAnchorLabel(anchors = []) {
     const used = new Set(anchors.map(anchor => anchor.label));
     for (const label of ['A', 'B', 'C', 'D']) {
@@ -340,6 +388,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function toggleSpeechBubble(sceneId, enabled) {
+    if (enabled === true) {
+      leftView = 'scenePreview';
+    }
     mutateProject(prev => ({
       ...prev,
       scenes: prev.scenes.map(scene => {
@@ -360,6 +411,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     const scene = store.get().project.scenes.find(item => item.id === sceneId);
     const exists = scene?.speechBubble?.anchors?.some(anchor => anchor.id === anchorId);
     selectedSpeechBubbleAnchorId = exists && selectedSpeechBubbleAnchorId !== anchorId ? anchorId : null;
+    if (exists) {
+      leftView = 'scenePreview';
+    }
     update();
   }
 
