@@ -2,6 +2,7 @@ export default {
   "toolbar": {
     "appName": "RolePlayScene",
     "edit": "Edit",
+    "backToEdit": "Back to Edit",
     "play": "Play",
     "import": "Import",
     "export": "Export",
@@ -196,6 +197,7 @@ export default {
     "projectTitlePlaceholder": "Untitled Role Play",
     "emptyState": "No scenes yet. Use “Add Scene” to begin.",
     "header": {
+      "previewCurrentScene": "Preview Current Scene",
       "addScene": "Add Scene",
       "deleteScene": "Delete Scene"
     },

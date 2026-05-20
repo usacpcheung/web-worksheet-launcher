@@ -69,17 +69,25 @@ export function renderInspector(hostEl, project, scene, actions) {
   const controls = document.createElement('div');
   controls.className = 'inspector-actions';
 
+  const previewBtn = document.createElement('button');
+  previewBtn.type = 'button';
+  previewBtn.className = 'inspector-actions__preview';
+  previewBtn.textContent = translate('inspector.header.previewCurrentScene');
+  previewBtn.addEventListener('click', () => actions.onPreviewCurrentScene?.(scene.id));
+
   const addBtn = document.createElement('button');
+  addBtn.type = 'button';
   addBtn.textContent = translate('inspector.header.addScene');
   addBtn.addEventListener('click', () => actions.onAddScene?.());
   addBtn.disabled = project.scenes.length >= 20;
 
   const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
   deleteBtn.textContent = translate('inspector.header.deleteScene');
   deleteBtn.addEventListener('click', () => actions.onDeleteScene?.(scene.id));
   deleteBtn.disabled = !actions.canDeleteScene;
 
-  controls.append(addBtn, deleteBtn);
+  controls.append(previewBtn, addBtn, deleteBtn);
   header.appendChild(controls);
   hostEl.appendChild(header);
 

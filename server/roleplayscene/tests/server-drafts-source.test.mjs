@@ -119,8 +119,23 @@ assert.ok(
 assert.ok(
   mainSource.includes('teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {')
     && mainSource.includes('apiClient,')
-    && mainSource.includes('ensureServerSessionReady,'),
+    && mainSource.includes('ensureServerSessionReady,')
+    && mainSource.includes('initialSelectedSceneId: editorSession.selectedSceneId')
+    && mainSource.includes('onPreviewCurrentScene: startEditorScenePreview'),
   'RolePlayScene editor should receive server API/session hooks for protected T2A generation',
+);
+assert.ok(
+  mainSource.includes('let editorSession = {')
+    && mainSource.includes('let editorPreview = null')
+    && mainSource.includes('function startEditorScenePreview')
+    && mainSource.includes('ensureAudioGate(store)')
+    && mainSource.includes("translate('toolbar.backToEdit')")
+    && mainSource.includes('function returnFromEditorScenePreview')
+    && mainSource.includes('editorPreview.returnSceneId')
+    && mainSource.includes('btnPlay.hidden = inEditorPreview ? true : false')
+    && playerSource.includes('options.initialSceneId')
+    && playerSource.includes('beginRunAt(initialScene.id)'),
+  'RolePlayScene should launch editor current-scene previews through the real player and return to saved editor context',
 );
 assert.ok(
   editorSource.includes('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {})')
@@ -305,8 +320,10 @@ assert.ok(
 assert.ok(
   inspectorSource.includes("const sceneHeading = document.createElement('h3')")
     && inspectorSource.includes('sceneHeading.textContent = scene.id')
+    && inspectorSource.includes("translate('inspector.header.previewCurrentScene')")
+    && inspectorSource.includes('actions.onPreviewCurrentScene?.(scene.id)')
     && !inspectorSource.includes('header.innerHTML = `<h3>${scene.id}</h3>`'),
-  'RolePlayScene inspector should render imported scene IDs as text, not HTML',
+  'RolePlayScene inspector should render imported scene IDs as text, not HTML, and expose current-scene preview',
 );
 
 assert.ok(

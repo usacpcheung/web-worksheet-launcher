@@ -2,6 +2,7 @@ export default {
   "toolbar": {
     "appName": "RolePlayScene",
     "edit": "編輯",
+    "backToEdit": "返回編輯",
     "play": "播放",
     "import": "匯入",
     "export": "匯出",
@@ -196,6 +197,7 @@ export default {
     "projectTitlePlaceholder": "未命名角色互動",
     "emptyState": "尚無場景。請使用「新增場景」開始。",
     "header": {
+      "previewCurrentScene": "預覽目前場景",
       "addScene": "新增場景",
       "deleteScene": "刪除場景"
     },

@@ -95,6 +95,11 @@ try {
     'Scene Preview view label should resolve from shared Traditional Chinese locale',
   );
   assert.strictEqual(
+    translate('inspector.header.previewCurrentScene'),
+    '預覽目前場景',
+    'Preview Current Scene action should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
     translate('player.speechBubble.startDialogue'),
     '開始對話',
     'Speech bubble playback start action should resolve from shared Traditional Chinese locale',
@@ -150,6 +155,11 @@ try {
     translate('editor.scenePreview.anchorHint'),
     'Place anchors on the scene preview.',
     'Scene Preview anchor hint should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('toolbar.backToEdit'),
+    'Back to Edit',
+    'Back to Edit toolbar action should resolve from shared English locale',
   );
   assert.strictEqual(
     translate('player.speechBubble.stopAll'),

@@ -3,7 +3,7 @@ import { renderPlayerUI } from './ui.js';
 import { SceneType } from '../model.js';
 import { translate } from '../i18n.js';
 
-export function renderPlayer(store, leftEl, rightEl, showMessage) {
+export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) {
   leftEl.innerHTML = '';
   rightEl.innerHTML = '';
 
@@ -439,6 +439,11 @@ export function renderPlayer(store, leftEl, rightEl, showMessage) {
     };
   }
 
-  renderIntro();
+  const initialScene = findSceneById(store.get().project, options.initialSceneId);
+  if (initialScene) {
+    beginRunAt(initialScene.id);
+  } else {
+    renderIntro();
+  }
   return cleanup;
 }

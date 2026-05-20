@@ -27,14 +27,22 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   const inspectorHost = document.createElement('div');
   rightEl.appendChild(inspectorHost);
 
-  let selectedId = store.get().project.scenes[0]?.id ?? null;
-  let leftView = 'storyMap';
+  let selectedId = options.initialSelectedSceneId ?? store.get().project.scenes[0]?.id ?? null;
+  let leftView = ['storyMap', 'scenePreview'].includes(options.initialLeftView)
+    ? options.initialLeftView
+    : 'storyMap';
   const apiClient = options.apiClient || null;
   const ensureServerSessionReady = options.ensureServerSessionReady || null;
+  const onEditorContextChange = typeof options.onEditorContextChange === 'function'
+    ? options.onEditorContextChange
+    : null;
+  const onPreviewCurrentScene = typeof options.onPreviewCurrentScene === 'function'
+    ? options.onPreviewCurrentScene
+    : null;
   const dialogueT2AInFlightKeys = new Set();
   let activeDialoguePreview = null;
   let disposed = false;
-  let selectedSpeechBubbleAnchorId = null;
+  let selectedSpeechBubbleAnchorId = options.initialSelectedSpeechBubbleAnchorId ?? null;
 
   const unsubscribe = store.subscribe(() => {
     syncSelection();
@@ -53,6 +61,20 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       stopDialoguePreview({ refresh: false });
       selectedId = project.scenes[0]?.id ?? null;
     }
+    const scene = project.scenes.find(item => item.id === selectedId);
+    const selectedAnchorExists = Boolean(selectedSpeechBubbleAnchorId)
+      && scene?.speechBubble?.anchors?.some(anchor => anchor.id === selectedSpeechBubbleAnchorId);
+    if (!selectedAnchorExists) {
+      selectedSpeechBubbleAnchorId = null;
+    }
+  }
+
+  function notifyEditorContextChange() {
+    onEditorContextChange?.({
+      selectedSceneId: selectedId,
+      leftView,
+      selectedSpeechBubbleAnchorId,
+    });
   }
 
   function mutateProject(mutator) {
@@ -136,9 +158,11 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       onRemoveChoice: removeChoice,
       onUpdateChoice: updateChoice,
       onSetAutoNext: setAutoNext,
+      onPreviewCurrentScene: previewCurrentScene,
       canDeleteScene,
       validationResults,
     });
+    notifyEditorContextChange();
 
     if (focusKey) {
       const nextFocus = Array.from(inspectorHost.querySelectorAll('[data-focus-key]'))
@@ -183,10 +207,12 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       scenes: [...prev.scenes, newScene],
     }));
     selectedId = newScene.id;
+    selectedSpeechBubbleAnchorId = null;
     showMessage({
       textId: 'inspector.notifications.sceneAdded',
       textArgs: { id: newScene.id },
     });
+    update();
   }
 
   function deleteScene(sceneId) {
@@ -225,10 +251,12 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     });
     const nextProject = store.get().project;
     selectedId = nextProject.scenes[0]?.id ?? null;
+    selectedSpeechBubbleAnchorId = null;
     showMessage({
       textId: 'inspector.notifications.sceneDeleted',
       textArgs: { id: sceneId },
     });
+    update();
   }
 
   function setSceneType(sceneId, type) {
@@ -369,7 +397,19 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         stopDialoguePreview({ refresh: false });
       }
       selectedId = id;
+      selectedSpeechBubbleAnchorId = null;
       update();
+    });
+  }
+
+  function previewCurrentScene(sceneId) {
+    const scene = store.get().project.scenes.find(item => item.id === sceneId);
+    if (!scene) return;
+    notifyEditorContextChange();
+    onPreviewCurrentScene?.({
+      sceneId: scene.id,
+      leftView,
+      selectedSpeechBubbleAnchorId,
     });
   }
 

@@ -1,6 +1,7 @@
 import { Store } from './state.js';
 import { renderEditor } from './editor/editor.js';
 import { renderPlayer } from './player/player.js';
+import { ensureAudioGate } from './player/audio.js';
 import {
   applyPreparedProjectImport,
   createProjectArchive,
@@ -56,6 +57,12 @@ const apiClient = createServerApiClient();
 
 let mode = 'edit'; // 'edit' | 'play'
 let teardown = null;
+let editorSession = {
+  selectedSceneId: null,
+  leftView: 'storyMap',
+  selectedSpeechBubbleAnchorId: null,
+};
+let editorPreview = null;
 let persistenceCleanup = () => {};
 let lastMessagePayload = null;
 let activeImportConfirmation = null;
@@ -141,7 +148,9 @@ function updateToolbarText() {
     topbarTitle.textContent = translate('toolbar.appName');
   }
   if (btnEdit) {
-    btnEdit.textContent = translate('toolbar.edit');
+    btnEdit.textContent = editorPreview && !publishedPlay.active
+      ? translate('toolbar.backToEdit')
+      : translate('toolbar.edit');
   }
   if (btnPlay) {
     btnPlay.textContent = translate('toolbar.play');
@@ -261,7 +270,7 @@ function getActiveStore() {
   return publishedPlay.active && publishedPlay.store ? publishedPlay.store : store;
 }
 
-function setMode(next) {
+function setMode(next, options = {}) {
   if (teardown) {
     teardown();
     teardown = null;
@@ -278,11 +287,78 @@ function setMode(next) {
     teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {
       apiClient,
       ensureServerSessionReady,
+      initialSelectedSceneId: editorSession.selectedSceneId,
+      initialLeftView: editorSession.leftView,
+      initialSelectedSpeechBubbleAnchorId: editorSession.selectedSpeechBubbleAnchorId,
+      onEditorContextChange: updateEditorSession,
+      onPreviewCurrentScene: startEditorScenePreview,
     });
   } else {
-    teardown = renderPlayer(getActiveStore(), elLeft, elRight, showMessage);
+    teardown = renderPlayer(getActiveStore(), elLeft, elRight, showMessage, {
+      initialSceneId: options.initialSceneId ?? null,
+    });
   }
+  updateToolbarText();
   updatePublishedPlayUi();
+}
+
+function updateEditorSession(nextContext = {}) {
+  editorSession = {
+    selectedSceneId: nextContext.selectedSceneId ?? null,
+    leftView: ['storyMap', 'scenePreview'].includes(nextContext.leftView)
+      ? nextContext.leftView
+      : 'storyMap',
+    selectedSpeechBubbleAnchorId: nextContext.selectedSpeechBubbleAnchorId ?? null,
+  };
+}
+
+function blurActiveElement() {
+  const activeElement = document.activeElement;
+  if (
+    typeof HTMLElement === 'function'
+    && activeElement instanceof HTMLElement
+    && typeof activeElement.blur === 'function'
+  ) {
+    activeElement.blur();
+  }
+}
+
+function startEditorScenePreview(context = {}) {
+  const sceneId = context.sceneId ?? editorSession.selectedSceneId;
+  const sceneExists = store.get().project.scenes.some(scene => scene.id === sceneId);
+  if (!sceneExists) {
+    showMessage({ textId: 'player.sceneMissing' });
+    return;
+  }
+  blurActiveElement();
+  updateEditorSession({
+    selectedSceneId: sceneId,
+    leftView: context.leftView ?? editorSession.leftView,
+    selectedSpeechBubbleAnchorId: context.selectedSpeechBubbleAnchorId ?? editorSession.selectedSpeechBubbleAnchorId,
+  });
+  editorPreview = {
+    initialSceneId: sceneId,
+    returnSceneId: sceneId,
+    returnLeftView: editorSession.leftView,
+    returnSelectedSpeechBubbleAnchorId: editorSession.selectedSpeechBubbleAnchorId,
+  };
+  ensureAudioGate(store);
+  setMode('play', { initialSceneId: sceneId });
+  clearMessage();
+}
+
+function returnFromEditorScenePreview() {
+  if (!editorPreview) {
+    setMode('edit');
+    return;
+  }
+  editorSession = {
+    selectedSceneId: editorPreview.returnSceneId,
+    leftView: editorPreview.returnLeftView,
+    selectedSpeechBubbleAnchorId: editorPreview.returnSelectedSpeechBubbleAnchorId,
+  };
+  editorPreview = null;
+  setMode('edit');
 }
 
 function showMessage(msg) {
@@ -373,12 +449,16 @@ function updateServerSessionUi() {
 
 function updatePublishedPlayUi() {
   const inPublishedPlay = Boolean(publishedPlay.active);
+  const inEditorPreview = Boolean(editorPreview) && !inPublishedPlay;
   [btnEdit, btnImport, btnExport, serverSaveButton, serverManageButton].forEach((control) => {
     if (control) control.hidden = inPublishedPlay;
   });
+  if (btnEdit && !inPublishedPlay) {
+    btnEdit.hidden = false;
+  }
   if (btnPlay) {
-    btnPlay.hidden = false;
-    btnPlay.disabled = inPublishedPlay;
+    btnPlay.hidden = inEditorPreview ? true : false;
+    btnPlay.disabled = inPublishedPlay || inEditorPreview;
   }
   if (serverBrowsePublishedButton) {
     serverBrowsePublishedButton.hidden = false;
@@ -1183,6 +1263,7 @@ function exitPublishedPlay() {
   if (publishedPlay.preparedImport?.project) {
     revokeProjectObjectUrls(publishedPlay.preparedImport.project);
   }
+  editorPreview = null;
   publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
   setMode('edit');
   showMessage({ textId: 'published.exited' });
@@ -1232,6 +1313,7 @@ async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, 
     const playStore = new Store();
     playStore.setLocale(store.get().locale);
     playStore.set({ project: preparedImport.project });
+    editorPreview = null;
     publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata };
     closeServerModal('published-open');
     setMode('play');
@@ -1585,10 +1667,20 @@ if (dismissButton) {
   });
 }
 
-btnEdit.addEventListener('click', () => setMode('edit'));
+btnEdit.addEventListener('click', () => {
+  if (editorPreview && !publishedPlay.active) {
+    returnFromEditorScenePreview();
+    return;
+  }
+  editorPreview = null;
+  setMode('edit');
+});
 btnPlay.addEventListener('click', () => {
   if (publishedPlay.active) {
     setMode('play');
+    return;
+  }
+  if (editorPreview) {
     return;
   }
   const result = validateProject(store.get().project);
@@ -1615,6 +1707,7 @@ btnPlay.addEventListener('click', () => {
     });
     return;
   }
+  editorPreview = null;
   store.set({ audioGate: false });
   setMode('play');
   clearMessage();

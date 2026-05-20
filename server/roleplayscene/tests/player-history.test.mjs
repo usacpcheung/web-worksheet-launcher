@@ -306,3 +306,19 @@ logResult(
 );
 
 cleanup();
+
+const previewStageHost = new StubElement('div');
+const previewUiHost = new StubElement('div');
+const previewCleanup = renderPlayer(store, previewStageHost, previewUiHost, () => {}, { initialSceneId: 'middle' });
+
+const previewBeginButton = findButtonByText(previewUiHost, 'Begin Story');
+logResult('Initial scene preview skips intro', !previewBeginButton);
+const previewHistoryButtons = getHistoryButtons(previewUiHost);
+logResult(
+  'Initial scene preview starts history at requested scene',
+  previewHistoryButtons.length === 1 && previewHistoryButtons[0]?.dataset?.sceneId === 'middle',
+);
+const previewNextChoice = findButtonByText(previewUiHost, 'To end');
+logResult('Initial scene preview renders requested scene choices', Boolean(previewNextChoice));
+
+previewCleanup();
