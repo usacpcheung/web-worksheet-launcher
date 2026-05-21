@@ -234,10 +234,16 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   incomingEdges.forEach(edgeList => {
     edgeList.sort((a, b) => getPositionSortValue(a.sourceId) - getPositionSortValue(b.sourceId));
   });
-  const createPath = (pathData, className, withArrow = false) => {
+  const getBundleStrokeWidth = routeCount => (
+    Math.min(3.4, 1.4 + (Math.max(1, routeCount) - 1) * 0.9)
+  );
+  const createPath = (pathData, className, withArrow = false, strokeWidth = null) => {
     const path = document.createElementNS(SVG_NS, 'path');
     path.setAttribute('d', pathData);
     path.classList.add('graph-connector');
+    if (strokeWidth !== null) {
+      path.style.strokeWidth = String(strokeWidth);
+    }
     if (withArrow) {
       path.setAttribute('marker-end', 'url(#graph-arrowhead)');
     }
@@ -245,6 +251,45 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
       path.classList.add(className);
     }
     connectorsGroup.appendChild(path);
+  };
+  const createBundlePathData = (sourceX, sourceY, laneY, minX, maxX) => {
+    const radius = Math.min(10, Math.max(0, laneY - sourceY) / 2);
+    const segments = [];
+    if (minX < sourceX) {
+      const leftRadius = Math.min(radius, (sourceX - minX) / 2);
+      segments.push([
+        `M ${sourceX} ${sourceY}`,
+        `L ${sourceX} ${laneY - leftRadius}`,
+        `Q ${sourceX} ${laneY} ${sourceX - leftRadius} ${laneY}`,
+        `L ${minX} ${laneY}`,
+      ].join(' '));
+    }
+    if (maxX > sourceX) {
+      const rightRadius = Math.min(radius, (maxX - sourceX) / 2);
+      segments.push([
+        `M ${sourceX} ${sourceY}`,
+        `L ${sourceX} ${laneY - rightRadius}`,
+        `Q ${sourceX} ${laneY} ${sourceX + rightRadius} ${laneY}`,
+        `L ${maxX} ${laneY}`,
+      ].join(' '));
+    }
+    if (!segments.length) {
+      segments.push(`M ${sourceX} ${sourceY} L ${sourceX} ${laneY}`);
+    }
+    return segments.join(' ');
+  };
+  const createBranchPathData = (sourceX, targetX, laneY, targetY) => {
+    const horizontal = targetX - sourceX;
+    const radius = Math.min(8, Math.abs(horizontal) / 2, Math.max(0, targetY - laneY) / 2);
+    if (radius < 1) {
+      return `M ${targetX} ${laneY} L ${targetX} ${targetY}`;
+    }
+    const direction = Math.sign(horizontal) || 1;
+    return [
+      `M ${targetX - direction * radius} ${laneY}`,
+      `Q ${targetX} ${laneY} ${targetX} ${laneY + radius}`,
+      `L ${targetX} ${targetY}`,
+    ].join(' ');
   };
 
   outgoingEdges.forEach((sourceEdges, sourceId) => {
@@ -274,14 +319,15 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
       });
       const minX = Math.min(sourceX, ...targetXs);
       const maxX = Math.max(sourceX, ...targetXs);
+      const bundleWidth = getBundleStrokeWidth(rowEdges.length);
 
-      createPath(`M ${sourceX} ${sourceY} L ${sourceX} ${laneY} M ${minX} ${laneY} L ${maxX} ${laneY}`, null);
+      createPath(createBundlePathData(sourceX, sourceY, laneY, minX, maxX), 'graph-connector--bundle', false, bundleWidth);
 
       rowEdges.forEach((edge, index) => {
         const targetPosition = layout.positions.get(edge.targetId);
         if (!targetPosition) return;
         const targetX = targetXs[index] ?? getNodeCenterX(targetPosition);
-        createPath(`M ${targetX} ${laneY} L ${targetX} ${targetY}`, edge.className, true);
+        createPath(createBranchPathData(sourceX, targetX, laneY, targetY), edge.className, true);
       });
     });
   });

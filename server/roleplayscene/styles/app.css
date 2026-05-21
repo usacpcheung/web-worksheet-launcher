@@ -727,6 +727,7 @@ button:disabled {
 .graph-node-thumb { clip-path: inset(0 round var(--radius-md)); }
 .graph-connectors { fill: none; stroke: #a8b1bf; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.9; }
 .graph-arrowhead { fill: none; stroke: #a8b1bf; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.graph-connector--bundle { opacity: 0.72; }
 .graph-connectors path { transition: stroke 0.2s ease; }
 .inspector {
   display: grid;
