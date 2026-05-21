@@ -465,6 +465,7 @@ export function renderInspector(hostEl, project, scene, actions) {
   });
 
   const addChoiceBtn = createActionButton(translate('inspector.choices.add'));
+  addChoiceBtn.classList.add('choice-add-action');
   addChoiceBtn.textContent = translate('inspector.choices.add');
   addChoiceBtn.addEventListener('click', () => actions.onAddChoice?.(scene.id, createChoice()));
   addChoiceBtn.disabled = scene.choices.length >= 3 || scene.type === SceneType.END;
@@ -503,6 +504,7 @@ export function renderInspector(hostEl, project, scene, actions) {
     });
 
     const autoNextField = createField(translate('inspector.choices.autoAdvanceLabel'), autoNextSelect);
+    autoNextField.classList.add('choice-auto-next');
 
     if (hasChoices) {
       const helper = document.createElement('p');
