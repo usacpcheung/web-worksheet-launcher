@@ -32,15 +32,112 @@ function attachComposedValueListener(field, callback) {
   });
 }
 
+const ICONS = {
+  info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>',
+  image: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="8.5" cy="10.5" r="1.5"></circle><path d="M21 15l-4.5-4.5L7 20"></path>',
+  audio: '<path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle>',
+  dialogue: '<path d="M21 11.5a8 8 0 0 1-8 8H7l-4 3v-6.2A8 8 0 1 1 21 11.5Z"></path>',
+  list: '<path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path>',
+};
+
+function createEditorIcon(name) {
+  const icon = document.createElement('span');
+  icon.className = 'rps-editor-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICONS.info}</svg>`;
+  return icon;
+}
+
+function createInspectorSection(title, iconName, className = '') {
+  const section = document.createElement('section');
+  section.className = `rps-inspector-section ${className}`.trim();
+
+  const header = document.createElement('div');
+  header.className = 'rps-inspector-section__header';
+  header.appendChild(createEditorIcon(iconName));
+
+  const heading = document.createElement('h4');
+  heading.textContent = title;
+  header.appendChild(heading);
+
+  const body = document.createElement('div');
+  body.className = 'rps-inspector-section__body';
+
+  section.append(header, body);
+  return { section, body };
+}
+
+function createField(labelText, control, className = '') {
+  const field = document.createElement('label');
+  field.className = `field ${className}`.trim();
+  const label = document.createElement('span');
+  label.textContent = labelText;
+  field.append(label, control);
+  return field;
+}
+
+function applyButtonClass(button, variant = 'neutral') {
+  button.classList.add('rps-editor-action', `rps-editor-action--${variant}`);
+  return button;
+}
+
+function createActionButton(label, variant = 'neutral') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  return applyButtonClass(button, variant);
+}
+
+function createMediaRow({ label, status, input, actions = [] }) {
+  const row = document.createElement('div');
+  row.className = 'rps-media-row';
+
+  const meta = document.createElement('div');
+  meta.className = 'rps-media-row__meta';
+  const title = document.createElement('span');
+  title.className = 'rps-media-row__title';
+  title.textContent = label;
+  const statusText = document.createElement('span');
+  statusText.className = 'rps-media-row__status';
+  statusText.textContent = status;
+  meta.append(title, statusText);
+
+  const actionGroup = document.createElement('div');
+  actionGroup.className = 'rps-media-row__actions';
+  if (input) {
+    input.classList.add('rps-media-row__file');
+    actionGroup.appendChild(input);
+  }
+  actions.forEach(action => actionGroup.appendChild(action));
+
+  row.append(meta, actionGroup);
+  return row;
+}
+
+function createLightRow(titleText, className = '') {
+  const row = document.createElement('div');
+  row.className = `rps-light-row ${className}`.trim();
+
+  const header = document.createElement('div');
+  header.className = 'rps-light-row__header';
+  const title = document.createElement('h5');
+  title.textContent = titleText;
+  header.appendChild(title);
+
+  const actions = document.createElement('div');
+  actions.className = 'rps-light-row__actions';
+
+  const body = document.createElement('div');
+  body.className = 'rps-light-row__body';
+
+  row.append(header, body);
+  return { row, header, body, actions };
+}
+
 export function renderInspector(hostEl, project, scene, actions) {
   hostEl.innerHTML = '';
   hostEl.classList.add('inspector');
 
-  const projectTitleField = document.createElement('label');
-  projectTitleField.className = 'field';
-  const projectTitleLabel = document.createElement('span');
-  projectTitleLabel.textContent = translate('inspector.projectTitleLabel');
-  projectTitleField.appendChild(projectTitleLabel);
   const projectTitleInput = document.createElement('input');
   projectTitleInput.type = 'text';
   projectTitleInput.value = project.meta?.title ?? '';
@@ -50,7 +147,7 @@ export function renderInspector(hostEl, project, scene, actions) {
   attachComposedValueListener(projectTitleInput, (value) => {
     actions.onUpdateProjectTitle?.(value);
   });
-  projectTitleField.appendChild(projectTitleInput);
+  const projectTitleField = createField(translate('inspector.projectTitleLabel'), projectTitleInput);
   hostEl.appendChild(projectTitleField);
 
   if (!scene) {
@@ -72,17 +169,20 @@ export function renderInspector(hostEl, project, scene, actions) {
   const previewBtn = document.createElement('button');
   previewBtn.type = 'button';
   previewBtn.className = 'inspector-actions__preview';
+  applyButtonClass(previewBtn, 'preview');
   previewBtn.textContent = translate('inspector.header.previewCurrentScene');
   previewBtn.addEventListener('click', () => actions.onPreviewCurrentScene?.(scene.id));
 
   const addBtn = document.createElement('button');
   addBtn.type = 'button';
+  applyButtonClass(addBtn);
   addBtn.textContent = translate('inspector.header.addScene');
   addBtn.addEventListener('click', () => actions.onAddScene?.());
   addBtn.disabled = project.scenes.length >= 20;
 
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
+  applyButtonClass(deleteBtn, 'danger');
   deleteBtn.textContent = translate('inspector.header.deleteScene');
   deleteBtn.addEventListener('click', () => actions.onDeleteScene?.(scene.id));
   deleteBtn.disabled = !actions.canDeleteScene;
@@ -91,12 +191,7 @@ export function renderInspector(hostEl, project, scene, actions) {
   header.appendChild(controls);
   hostEl.appendChild(header);
 
-  // Scene type selector
-  const typeField = document.createElement('label');
-  typeField.className = 'field';
-  const typeLabel = document.createElement('span');
-  typeLabel.textContent = translate('inspector.sceneTypeLabel');
-  typeField.appendChild(typeLabel);
+  const basics = createInspectorSection(translate('inspector.sections.sceneBasics'), 'info', 'rps-inspector-section--basics');
   const typeSelect = document.createElement('select');
   typeSelect.dataset.focusKey = `scene-type-${scene.id}`;
   const sceneTypeOptions = [
@@ -114,23 +209,13 @@ export function renderInspector(hostEl, project, scene, actions) {
   typeSelect.addEventListener('change', () => {
     actions.onSetSceneType?.(scene.id, typeSelect.value);
   });
-  typeField.appendChild(typeSelect);
-  hostEl.appendChild(typeField);
+  basics.body.appendChild(createField(translate('inspector.sceneTypeLabel'), typeSelect));
+  hostEl.appendChild(basics.section);
 
-  // Image upload
-  const imageField = document.createElement('div');
-  imageField.className = 'field';
-  const imageLabel = document.createElement('span');
-  imageLabel.textContent = translate('inspector.image.label');
-  imageField.appendChild(imageLabel);
-
-  const imageStatus = document.createElement('p');
-  imageStatus.className = 'hint image-status';
-  imageStatus.textContent = scene.image
+  const mediaSection = createInspectorSection(translate('inspector.sections.sceneMedia'), 'image', 'rps-inspector-section--media');
+  const imageStatus = scene.image
     ? translate('inspector.image.attached', { name: scene.image.name || translate('inspector.image.fallbackName') })
     : translate('inspector.image.empty');
-  imageField.appendChild(imageStatus);
-
   const imageInput = document.createElement('input');
   imageInput.type = 'file';
   imageInput.accept = 'image/*';
@@ -138,41 +223,28 @@ export function renderInspector(hostEl, project, scene, actions) {
     const file = event.target.files?.[0];
     actions.onSetSceneImage?.(scene.id, file || null);
   });
-  imageField.appendChild(imageInput);
-
+  const imageActions = [];
   if (scene.image) {
-    const removeImageBtn = document.createElement('button');
-    removeImageBtn.type = 'button';
+    const removeImageBtn = createActionButton(translate('inspector.image.remove'), 'danger');
     removeImageBtn.textContent = translate('inspector.image.remove');
     removeImageBtn.addEventListener('click', () => actions.onSetSceneImage?.(scene.id, null));
-    imageField.appendChild(removeImageBtn);
+    imageActions.push(removeImageBtn);
   }
-
-  hostEl.appendChild(imageField);
+  mediaSection.body.appendChild(createMediaRow({
+    label: translate('inspector.image.label'),
+    status: imageStatus,
+    input: imageInput,
+    actions: imageActions,
+  }));
 
   const speechBubble = scene.speechBubble || { enabled: false, anchors: [] };
   const anchors = Array.isArray(speechBubble.anchors) ? speechBubble.anchors : [];
-  hostEl.appendChild(renderSpeechBubbleEditorSection(scene, actions));
 
-  const backgroundField = document.createElement('div');
-  backgroundField.className = 'field';
-  const backgroundLabel = document.createElement('span');
-  backgroundLabel.textContent = translate('inspector.background.label');
-  backgroundField.appendChild(backgroundLabel);
-
-  if (scene.backgroundAudio) {
-    const info = document.createElement('div');
-    info.className = 'audio-info';
-    const trackName = scene.backgroundAudio.name || translate('inspector.background.fallbackName');
-    info.textContent = translate('inspector.background.attached', { name: trackName });
-    backgroundField.appendChild(info);
-  } else {
-    const emptyInfo = document.createElement('p');
-    emptyInfo.className = 'hint';
-    emptyInfo.textContent = translate('inspector.background.empty');
-    backgroundField.appendChild(emptyInfo);
-  }
-
+  const backgroundStatus = scene.backgroundAudio
+    ? translate('inspector.background.attached', {
+        name: scene.backgroundAudio.name || translate('inspector.background.fallbackName'),
+      })
+    : translate('inspector.background.empty');
   const backgroundInput = document.createElement('input');
   backgroundInput.type = 'file';
   backgroundInput.accept = 'audio/*';
@@ -180,33 +252,28 @@ export function renderInspector(hostEl, project, scene, actions) {
     const file = event.target.files?.[0];
     actions.onSetSceneBackgroundAudio?.(scene.id, file || null);
   });
-  backgroundField.appendChild(backgroundInput);
-
+  const backgroundActions = [];
   if (scene.backgroundAudio) {
-    const removeBgButton = document.createElement('button');
-    removeBgButton.type = 'button';
+    const removeBgButton = createActionButton(translate('inspector.background.remove'), 'danger');
     removeBgButton.textContent = translate('inspector.background.remove');
     removeBgButton.addEventListener('click', () => actions.onSetSceneBackgroundAudio?.(scene.id, null));
-    backgroundField.appendChild(removeBgButton);
+    backgroundActions.push(removeBgButton);
   }
+  mediaSection.body.appendChild(createMediaRow({
+    label: translate('inspector.background.label'),
+    status: backgroundStatus,
+    input: backgroundInput,
+    actions: backgroundActions,
+  }));
+  hostEl.appendChild(mediaSection.section);
+  hostEl.appendChild(renderSpeechBubbleEditorSection(scene, actions));
 
-  hostEl.appendChild(backgroundField);
-
-  // Dialogue
-  const dialogueSection = document.createElement('section');
-  dialogueSection.className = 'dialogue-editor';
-  const dialogueHeader = document.createElement('h4');
-  dialogueHeader.textContent = translate('inspector.dialogue.title');
-  dialogueSection.appendChild(dialogueHeader);
+  const dialogue = createInspectorSection(translate('inspector.dialogue.title'), 'dialogue', 'dialogue-editor');
 
   scene.dialogue.forEach((line, index) => {
-    const lineField = document.createElement('div');
-    lineField.className = 'dialogue-line';
+    const lineParts = createLightRow(translate('inspector.dialogue.lineLabel', { index: index + 1 }), 'dialogue-line');
+    const lineField = lineParts.row;
 
-    const textLabel = document.createElement('label');
-    const textSpan = document.createElement('span');
-    textSpan.textContent = translate('inspector.dialogue.lineLabel', { index: index + 1 });
-    textLabel.appendChild(textSpan);
     const textarea = document.createElement('textarea');
     textarea.value = line.text || '';
     textarea.rows = 2;
@@ -214,13 +281,11 @@ export function renderInspector(hostEl, project, scene, actions) {
     attachComposedValueListener(textarea, (value) => {
       actions.onUpdateDialogueText?.(scene.id, index, value);
     });
-    textLabel.appendChild(textarea);
-    lineField.appendChild(textLabel);
+    lineParts.body.appendChild(createField(
+      translate('inspector.dialogue.lineLabel', { index: index + 1 }),
+      textarea,
+    ));
 
-    const audioLabel = document.createElement('label');
-    const audioSpan = document.createElement('span');
-    audioSpan.textContent = translate('inspector.dialogue.audioLabel');
-    audioLabel.appendChild(audioSpan);
     const audioInput = document.createElement('input');
     audioInput.type = 'file';
     audioInput.accept = 'audio/mpeg,audio/mp3';
@@ -229,14 +294,11 @@ export function renderInspector(hostEl, project, scene, actions) {
       const file = event.target.files?.[0];
       actions.onSetDialogueAudio?.(scene.id, index, file || null);
     });
-    audioLabel.appendChild(audioInput);
-    lineField.appendChild(audioLabel);
-
+    const audioActions = [];
+    let audioStatus = translate('inspector.dialogue.audioLabel');
     if (line.audio) {
-      const audioInfo = document.createElement('div');
-      audioInfo.className = 'audio-info';
       const audioName = line.audio.name || '';
-      audioInfo.textContent = translate('inspector.dialogue.audioAttached', { name: audioName });
+      audioStatus = translate('inspector.dialogue.audioAttached', { name: audioName });
       const t2aPreset = getRolePlaySceneT2APresetFromAudioName(audioName);
       if (t2aPreset) {
         const presetBadge = document.createElement('span');
@@ -244,25 +306,33 @@ export function renderInspector(hostEl, project, scene, actions) {
         presetBadge.textContent = translate('inspector.dialogue.t2aPresetBadge', {
           preset: translate(t2aPreset.labelKey),
         });
-        audioInfo.appendChild(presetBadge);
+        audioActions.push(presetBadge);
       }
       if (line.audio.objectUrl) {
         const isPreviewingAudio = actions.isDialogueAudioPreviewing?.(scene.id, index) === true;
-        const previewAudio = document.createElement('button');
-        previewAudio.type = 'button';
+        const previewAudio = createActionButton(
+          isPreviewingAudio
+            ? translate('inspector.dialogue.stopAudioPreview')
+            : translate('inspector.dialogue.playAudioPreview'),
+          'neutral',
+        );
         previewAudio.textContent = isPreviewingAudio
           ? translate('inspector.dialogue.stopAudioPreview')
           : translate('inspector.dialogue.playAudioPreview');
         previewAudio.addEventListener('click', () => actions.onPreviewDialogueAudio?.(scene.id, index));
-        audioInfo.appendChild(previewAudio);
+        audioActions.push(previewAudio);
       }
-      const removeAudio = document.createElement('button');
-      removeAudio.type = 'button';
+      const removeAudio = createActionButton(translate('inspector.dialogue.removeAudio'), 'danger');
       removeAudio.textContent = translate('inspector.dialogue.removeAudio');
       removeAudio.addEventListener('click', () => actions.onSetDialogueAudio?.(scene.id, index, null));
-      audioInfo.appendChild(removeAudio);
-      lineField.appendChild(audioInfo);
+      audioActions.push(removeAudio);
     }
+    lineParts.body.appendChild(createMediaRow({
+      label: translate('inspector.dialogue.audioLabel'),
+      status: audioStatus,
+      input: audioInput,
+      actions: audioActions,
+    }));
 
     const t2aState = getRolePlaySceneT2ATextState(line.text || '');
     const isGeneratingAudio = actions.isDialogueAudioGenerating?.(scene.id, index) === true;
@@ -286,6 +356,7 @@ export function renderInspector(hostEl, project, scene, actions) {
 
     const generateAudio = document.createElement('button');
     generateAudio.type = 'button';
+    applyButtonClass(generateAudio);
     generateAudio.textContent = isGeneratingAudio
       ? translate('inspector.dialogue.generatingAudio')
       : line.audio
@@ -307,47 +378,41 @@ export function renderInspector(hostEl, project, scene, actions) {
     }
 
     t2aControls.append(presetLabel, generateAudio);
-    lineField.append(t2aControls, t2aHint);
+    lineParts.body.append(t2aControls, t2aHint);
 
     if (speechBubble.enabled) {
-      lineField.appendChild(renderDialogueBubbleControls({ scene, line, index, anchors, actions }));
+      lineParts.body.appendChild(renderDialogueBubbleControls({ scene, line, index, anchors, actions }));
     }
 
-    const removeLineBtn = document.createElement('button');
-    removeLineBtn.type = 'button';
+    const removeLineBtn = createActionButton(translate('inspector.dialogue.deleteLine'), 'danger');
     removeLineBtn.textContent = translate('inspector.dialogue.deleteLine');
     removeLineBtn.addEventListener('click', () => actions.onRemoveDialogue?.(scene.id, index));
     removeLineBtn.disabled = scene.dialogue.length <= 1;
-    lineField.appendChild(removeLineBtn);
+    lineParts.actions.appendChild(removeLineBtn);
+    lineParts.header.appendChild(lineParts.actions);
 
-    dialogueSection.appendChild(lineField);
+    dialogue.body.appendChild(lineField);
   });
 
-  const addLineBtn = document.createElement('button');
-  addLineBtn.type = 'button';
+  const addLineBtn = createActionButton(translate('inspector.dialogue.addLine'));
   addLineBtn.textContent = translate('inspector.dialogue.addLine');
   addLineBtn.addEventListener('click', () => actions.onAddDialogue?.(scene.id));
   addLineBtn.disabled = scene.dialogue.length >= MAX_DIALOGUE_LINES;
-  dialogueSection.appendChild(addLineBtn);
-  hostEl.appendChild(dialogueSection);
+  dialogue.body.appendChild(addLineBtn);
+  hostEl.appendChild(dialogue.section);
 
-  // Choices
-  const choiceSection = document.createElement('section');
-  choiceSection.className = 'choice-editor';
-  const choiceHeader = document.createElement('h4');
-  choiceHeader.textContent = translate('inspector.choices.title');
-  choiceSection.appendChild(choiceHeader);
+  const choices = createInspectorSection(translate('inspector.choices.title'), 'list', 'choice-editor');
 
   if (!scene.choices.length) {
     const emptyMessage = document.createElement('p');
     emptyMessage.className = 'empty';
     emptyMessage.textContent = translate('inspector.choices.empty');
-    choiceSection.appendChild(emptyMessage);
+    choices.body.appendChild(emptyMessage);
   }
 
   scene.choices.forEach((choice, index) => {
-    const choiceRow = document.createElement('div');
-    choiceRow.className = 'choice-row';
+    const choiceParts = createLightRow(`${translate('inspector.choices.labelPlaceholder')} ${index + 1}`, 'choice-row');
+    const choiceRow = choiceParts.row;
 
     const labelInput = document.createElement('textarea');
     labelInput.placeholder = translate('inspector.choices.labelPlaceholder');
@@ -357,13 +422,7 @@ export function renderInspector(hostEl, project, scene, actions) {
     attachComposedValueListener(labelInput, (value) => {
       actions.onUpdateChoice?.(scene.id, index, { label: value });
     });
-    choiceRow.appendChild(labelInput);
-
-    const cueCardField = document.createElement('label');
-    cueCardField.className = 'field';
-    const cueCardLabel = document.createElement('span');
-    cueCardLabel.textContent = translate('inspector.choices.cueCardLabel');
-    cueCardField.appendChild(cueCardLabel);
+    choiceParts.body.appendChild(createField(translate('inspector.choices.labelPlaceholder'), labelInput));
 
     const cueCardInput = document.createElement('textarea');
     cueCardInput.placeholder = translate('inspector.choices.cueCardPlaceholder');
@@ -373,8 +432,7 @@ export function renderInspector(hostEl, project, scene, actions) {
     attachComposedValueListener(cueCardInput, (value) => {
       actions.onUpdateChoice?.(scene.id, index, { cueCardText: value });
     });
-    cueCardField.appendChild(cueCardInput);
-    choiceRow.appendChild(cueCardField);
+    choiceParts.body.appendChild(createField(translate('inspector.choices.cueCardLabel'), cueCardInput));
 
     const select = document.createElement('select');
     select.dataset.focusKey = `choice-target-${scene.id}-${index}`;
@@ -393,31 +451,24 @@ export function renderInspector(hostEl, project, scene, actions) {
       const value = select.value || null;
       actions.onUpdateChoice?.(scene.id, index, { nextSceneId: value });
     });
-    choiceRow.appendChild(select);
+    choiceParts.body.appendChild(createField(translate('inspector.choices.destinationPlaceholder'), select));
 
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
+    const removeBtn = createActionButton(translate('inspector.choices.remove'), 'danger');
     removeBtn.textContent = translate('inspector.choices.remove');
     removeBtn.addEventListener('click', () => actions.onRemoveChoice?.(scene.id, index));
-    choiceRow.appendChild(removeBtn);
+    choiceParts.actions.appendChild(removeBtn);
+    choiceParts.header.appendChild(choiceParts.actions);
 
-    choiceSection.appendChild(choiceRow);
+    choices.body.appendChild(choiceRow);
   });
 
-  const addChoiceBtn = document.createElement('button');
-  addChoiceBtn.type = 'button';
+  const addChoiceBtn = createActionButton(translate('inspector.choices.add'));
   addChoiceBtn.textContent = translate('inspector.choices.add');
   addChoiceBtn.addEventListener('click', () => actions.onAddChoice?.(scene.id, createChoice()));
   addChoiceBtn.disabled = scene.choices.length >= 3 || scene.type === SceneType.END;
-  choiceSection.appendChild(addChoiceBtn);
+  choices.body.appendChild(addChoiceBtn);
 
   if (scene.type !== SceneType.END) {
-    const autoNextField = document.createElement('label');
-    autoNextField.className = 'field';
-    const autoNextLabel = document.createElement('span');
-    autoNextLabel.textContent = translate('inspector.choices.autoAdvanceLabel');
-    autoNextField.appendChild(autoNextLabel);
-
     const autoNextSelect = document.createElement('select');
     autoNextSelect.dataset.focusKey = `auto-next-${scene.id}`;
 
@@ -449,7 +500,7 @@ export function renderInspector(hostEl, project, scene, actions) {
       actions.onSetAutoNext?.(scene.id, value);
     });
 
-    autoNextField.appendChild(autoNextSelect);
+    const autoNextField = createField(translate('inspector.choices.autoAdvanceLabel'), autoNextSelect);
 
     if (hasChoices) {
       const helper = document.createElement('p');
@@ -458,9 +509,9 @@ export function renderInspector(hostEl, project, scene, actions) {
       autoNextField.appendChild(helper);
     }
 
-    choiceSection.appendChild(autoNextField);
+    choices.body.appendChild(autoNextField);
   }
-  hostEl.appendChild(choiceSection);
+  hostEl.appendChild(choices.section);
 
 }
 

@@ -196,6 +196,10 @@ export default {
     "projectTitleLabel": "Project title",
     "projectTitlePlaceholder": "Untitled Role Play",
     "emptyState": "No scenes yet. Use “Add Scene” to begin.",
+    "sections": {
+      "sceneBasics": "Scene basics",
+      "sceneMedia": "Scene media"
+    },
     "header": {
       "previewCurrentScene": "Preview Current Scene",
       "addScene": "Add Scene",

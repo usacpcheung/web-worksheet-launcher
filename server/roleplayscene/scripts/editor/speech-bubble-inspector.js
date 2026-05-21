@@ -5,7 +5,21 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
   const speechBubble = scene.speechBubble || { enabled: false, anchors: [] };
   const anchors = Array.isArray(speechBubble.anchors) ? speechBubble.anchors : [];
   const speechSection = document.createElement('section');
-  speechSection.className = 'speech-bubble-editor';
+  speechSection.className = 'rps-inspector-section speech-bubble-editor';
+
+  const header = document.createElement('div');
+  header.className = 'rps-inspector-section__header';
+  const icon = document.createElement('span');
+  icon.className = 'rps-editor-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8 8 0 0 1-8 8H7l-4 3v-6.2A8 8 0 1 1 21 11.5Z"></path></svg>';
+  const heading = document.createElement('h4');
+  heading.textContent = translate('inspector.speechBubble.title');
+  header.append(icon, heading);
+  speechSection.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'rps-inspector-section__body speech-bubble-editor__body';
 
   const speechToggle = document.createElement('label');
   speechToggle.className = 'field speech-bubble-editor__toggle';
@@ -19,13 +33,13 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
     actions.onToggleSpeechBubble?.(scene.id, speechCheckbox.checked);
   });
   speechToggle.appendChild(speechCheckbox);
-  speechSection.appendChild(speechToggle);
+  body.appendChild(speechToggle);
 
   if (speechBubble.enabled) {
     const helper = document.createElement('p');
     helper.className = 'hint';
     helper.textContent = translate('inspector.speechBubble.scenePreviewHint');
-    speechSection.appendChild(helper);
+    body.appendChild(helper);
 
     const count = document.createElement('p');
     count.className = 'hint';
@@ -33,7 +47,7 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
       count: anchors.length,
       max: MAX_SPEECH_BUBBLE_ANCHORS,
     });
-    speechSection.appendChild(count);
+    body.appendChild(count);
 
     if (anchors.length) {
       const anchorList = document.createElement('ul');
@@ -51,6 +65,7 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
         item.appendChild(label);
         const selectButton = document.createElement('button');
         selectButton.type = 'button';
+        selectButton.className = 'rps-editor-action rps-editor-action--neutral';
         selectButton.textContent = actions.isSpeechBubbleAnchorSelected?.(anchor.id)
           ? translate('inspector.speechBubble.selectedAnchor')
           : translate('inspector.speechBubble.moveAnchor');
@@ -58,15 +73,17 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
         item.appendChild(selectButton);
         const deleteButton = document.createElement('button');
         deleteButton.type = 'button';
+        deleteButton.className = 'rps-editor-action rps-editor-action--danger';
         deleteButton.textContent = translate('inspector.speechBubble.deleteAnchor');
         deleteButton.addEventListener('click', () => actions.onDeleteSpeechBubbleAnchor?.(scene.id, anchor.id));
         item.appendChild(deleteButton);
         anchorList.appendChild(item);
       });
-      speechSection.appendChild(anchorList);
+      body.appendChild(anchorList);
     }
   }
 
+  speechSection.appendChild(body);
   return speechSection;
 }
 

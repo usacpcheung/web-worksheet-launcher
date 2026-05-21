@@ -196,6 +196,10 @@ export default {
     "projectTitleLabel": "專案標題",
     "projectTitlePlaceholder": "未命名角色互動",
     "emptyState": "尚無場景。請使用「新增場景」開始。",
+    "sections": {
+      "sceneBasics": "場景基本資料",
+      "sceneMedia": "場景媒體"
+    },
     "header": {
       "previewCurrentScene": "預覽目前場景",
       "addScene": "新增場景",
