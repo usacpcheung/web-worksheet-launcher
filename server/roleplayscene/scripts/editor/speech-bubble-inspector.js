@@ -58,11 +58,14 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
         )).length;
         const item = document.createElement('li');
         const label = document.createElement('span');
+        label.className = 'speech-bubble-anchor-list__label';
         label.textContent = translate('inspector.speechBubble.anchorUsage', {
           label: anchor.label || anchor.id,
           count: usage,
         });
         item.appendChild(label);
+        const itemActions = document.createElement('div');
+        itemActions.className = 'speech-bubble-anchor-list__actions';
         const selectButton = document.createElement('button');
         selectButton.type = 'button';
         selectButton.className = 'rps-editor-action rps-editor-action--neutral';
@@ -70,13 +73,14 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
           ? translate('inspector.speechBubble.selectedAnchor')
           : translate('inspector.speechBubble.moveAnchor');
         selectButton.addEventListener('click', () => actions.onSelectSpeechBubbleAnchor?.(scene.id, anchor.id));
-        item.appendChild(selectButton);
+        itemActions.appendChild(selectButton);
         const deleteButton = document.createElement('button');
         deleteButton.type = 'button';
         deleteButton.className = 'rps-editor-action rps-editor-action--danger';
         deleteButton.textContent = translate('inspector.speechBubble.deleteAnchor');
         deleteButton.addEventListener('click', () => actions.onDeleteSpeechBubbleAnchor?.(scene.id, anchor.id));
-        item.appendChild(deleteButton);
+        itemActions.appendChild(deleteButton);
+        item.appendChild(itemActions);
         anchorList.appendChild(item);
       });
       body.appendChild(anchorList);
