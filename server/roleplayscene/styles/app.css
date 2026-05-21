@@ -903,6 +903,7 @@ button:disabled {
   border-bottom: 0;
 }
 .dialogue-line:first-of-type {
+  border-top: 0;
   border-top-left-radius: var(--radius-sm);
   border-top-right-radius: var(--radius-sm);
 }
@@ -1005,6 +1006,7 @@ button:disabled {
   border-bottom: 0;
 }
 .choice-row:first-of-type {
+  border-top: 0;
   border-top-left-radius: var(--radius-sm);
   border-top-right-radius: var(--radius-sm);
 }
