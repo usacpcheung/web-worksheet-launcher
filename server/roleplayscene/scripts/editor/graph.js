@@ -223,72 +223,72 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   });
 
   const getNodeLeft = position => COLUMN_GAP + position.column * (NODE_WIDTH + COLUMN_GAP);
+  const getNodeCenterX = position => getNodeLeft(position) + NODE_WIDTH / 2;
   const getPortX = (position, edgeIndex, edgeCount) => (
     getNodeLeft(position) + (NODE_WIDTH * (edgeIndex + 1)) / (edgeCount + 1)
   );
-  const laneGroups = new Map();
-  edges.forEach(edge => {
-    const sourcePosition = layout.positions.get(edge.sourceId);
-    const targetPosition = layout.positions.get(edge.targetId);
-    if (!sourcePosition || !targetPosition) return;
-    const key = `${sourcePosition.row}:${targetPosition.row}`;
-    if (!laneGroups.has(key)) laneGroups.set(key, []);
-    laneGroups.get(key).push(edge);
+  const getPositionSortValue = id => {
+    const position = layout.positions.get(id);
+    return position ? (position.column * 1000) + position.row : 0;
+  };
+  outgoingEdges.forEach(edgeList => {
+    edgeList.sort((a, b) => getPositionSortValue(a.targetId) - getPositionSortValue(b.targetId));
   });
-  const getLaneY = (sourceY, targetY, edge, key) => {
-    const laneList = laneGroups.get(key) ?? [edge];
-    const laneIndex = laneList.indexOf(edge);
-    const laneCount = laneList.length;
-    const gap = targetY - sourceY;
-    if (gap <= 0) {
-      return sourceY + ROW_GAP / 2 + laneIndex * 8;
-    }
-    return sourceY + (gap * (laneIndex + 1)) / (laneCount + 1);
-  };
-  const createOrthogonalPathData = (sourceX, sourceY, targetX, targetY, laneY) => {
-    const horizontal = Math.abs(targetX - sourceX);
-    if (horizontal < 4) {
-      return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
-    }
-    const xDirection = Math.sign(targetX - sourceX);
-    const sourceDirection = Math.sign(laneY - sourceY) || 1;
-    const targetDirection = Math.sign(targetY - laneY) || 1;
-    const radius = Math.min(10, horizontal / 2, Math.abs(laneY - sourceY) / 2, Math.abs(targetY - laneY) / 2);
-    const sourceCornerY = laneY - sourceDirection * radius;
-    const sourceCornerX = sourceX + xDirection * radius;
-    const targetCornerX = targetX - xDirection * radius;
-    const targetCornerY = laneY + targetDirection * radius;
-    return [
-      `M ${sourceX} ${sourceY}`,
-      `L ${sourceX} ${sourceCornerY}`,
-      `Q ${sourceX} ${laneY} ${sourceCornerX} ${laneY}`,
-      `L ${targetCornerX} ${laneY}`,
-      `Q ${targetX} ${laneY} ${targetX} ${targetCornerY}`,
-      `L ${targetX} ${targetY}`,
-    ].join(' ');
-  };
-
-  edges.forEach(edge => {
-    const sourcePosition = layout.positions.get(edge.sourceId);
-    const targetPosition = layout.positions.get(edge.targetId);
-    if (!sourcePosition || !targetPosition) return;
-
-    const sourceList = outgoingEdges.get(edge.sourceId) ?? [edge];
-    const targetList = incomingEdges.get(edge.targetId) ?? [edge];
-    const sourceX = getPortX(sourcePosition, sourceList.indexOf(edge), sourceList.length);
-    const sourceY = ROW_GAP + sourcePosition.row * (NODE_HEIGHT + ROW_GAP) + NODE_HEIGHT;
-    const targetX = getPortX(targetPosition, targetList.indexOf(edge), targetList.length);
-    const targetY = ROW_GAP + targetPosition.row * (NODE_HEIGHT + ROW_GAP);
-    const laneKey = `${sourcePosition.row}:${targetPosition.row}`;
-    const laneY = getLaneY(sourceY, targetY, edge, laneKey);
+  incomingEdges.forEach(edgeList => {
+    edgeList.sort((a, b) => getPositionSortValue(a.sourceId) - getPositionSortValue(b.sourceId));
+  });
+  const createPath = (pathData, className, withArrow = false) => {
     const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d', createOrthogonalPathData(sourceX, sourceY, targetX, targetY, laneY));
-    path.setAttribute('marker-end', 'url(#graph-arrowhead)');
+    path.setAttribute('d', pathData);
     path.classList.add('graph-connector');
-    if (edge.className) {
-      path.classList.add(edge.className);
+    if (withArrow) {
+      path.setAttribute('marker-end', 'url(#graph-arrowhead)');
+    }
+    if (className) {
+      path.classList.add(className);
     }
     connectorsGroup.appendChild(path);
+  };
+
+  outgoingEdges.forEach((sourceEdges, sourceId) => {
+    const sourcePosition = layout.positions.get(sourceId);
+    if (!sourcePosition) return;
+    const sourceX = getNodeCenterX(sourcePosition);
+    const sourceY = ROW_GAP + sourcePosition.row * (NODE_HEIGHT + ROW_GAP) + NODE_HEIGHT;
+    const edgesByTargetRow = new Map();
+    sourceEdges.forEach(edge => {
+      const targetPosition = layout.positions.get(edge.targetId);
+      if (!targetPosition) return;
+      if (!edgesByTargetRow.has(targetPosition.row)) {
+        edgesByTargetRow.set(targetPosition.row, []);
+      }
+      edgesByTargetRow.get(targetPosition.row).push(edge);
+    });
+
+    edgesByTargetRow.forEach((rowEdges, targetRow) => {
+      const firstTargetPosition = layout.positions.get(rowEdges[0]?.targetId);
+      if (!firstTargetPosition) return;
+      const targetY = ROW_GAP + targetRow * (NODE_HEIGHT + ROW_GAP);
+      const gap = targetY - sourceY;
+      const laneY = gap > 0 ? sourceY + Math.max(12, gap * 0.45) : sourceY + ROW_GAP / 2;
+      const targetXs = rowEdges.map(edge => {
+        const targetPosition = layout.positions.get(edge.targetId);
+        const targetList = incomingEdges.get(edge.targetId) ?? [edge];
+        return targetPosition ? getPortX(targetPosition, targetList.indexOf(edge), targetList.length) : sourceX;
+      });
+      const minX = Math.min(sourceX, ...targetXs);
+      const maxX = Math.max(sourceX, ...targetXs);
+
+      createPath(`M ${sourceX} ${sourceY} L ${sourceX} ${laneY} M ${minX} ${laneY} L ${maxX} ${laneY}`, null);
+
+      rowEdges.forEach((edge, index) => {
+        const targetPosition = layout.positions.get(edge.targetId);
+        if (!targetPosition) return;
+        const targetList = incomingEdges.get(edge.targetId) ?? [edge];
+        const targetX = targetXs[index] ?? getPortX(targetPosition, targetList.indexOf(edge), targetList.length);
+        createPath(`M ${targetX} ${laneY} L ${targetX} ${targetY}`, edge.className, true);
+      });
+    });
   });
 
   svg.appendChild(connectorsGroup);
