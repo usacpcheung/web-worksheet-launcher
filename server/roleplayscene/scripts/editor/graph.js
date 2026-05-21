@@ -173,15 +173,15 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   const defs = document.createElementNS(SVG_NS, 'defs');
   const marker = document.createElementNS(SVG_NS, 'marker');
   marker.setAttribute('id', 'graph-arrowhead');
-  marker.setAttribute('markerWidth', '10');
-  marker.setAttribute('markerHeight', '10');
-  marker.setAttribute('refX', '8');
-  marker.setAttribute('refY', '5');
+  marker.setAttribute('markerWidth', '8');
+  marker.setAttribute('markerHeight', '8');
+  marker.setAttribute('refX', '7');
+  marker.setAttribute('refY', '4');
   marker.setAttribute('orient', 'auto');
   marker.setAttribute('markerUnits', 'strokeWidth');
 
   const markerPath = document.createElementNS(SVG_NS, 'path');
-  markerPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+  markerPath.setAttribute('d', 'M 0 0 L 8 4 L 0 8 z');
   markerPath.setAttribute('class', 'graph-arrowhead');
 
   marker.appendChild(markerPath);
@@ -191,41 +191,64 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   const connectorsGroup = document.createElementNS(SVG_NS, 'g');
   connectorsGroup.classList.add('graph-connectors');
 
+  const edges = [];
   nodes.forEach(scene => {
     const sourcePosition = layout.positions.get(scene.id);
     if (!sourcePosition) return;
-    const sourceX = COLUMN_GAP + sourcePosition.column * (NODE_WIDTH + COLUMN_GAP) + NODE_WIDTH / 2;
-    const sourceY = ROW_GAP + sourcePosition.row * (NODE_HEIGHT + ROW_GAP) + NODE_HEIGHT;
-
     const seenTargets = new Set();
-
-    const renderConnector = (targetId, className) => {
+    const addEdge = (targetId, className) => {
       if (!targetId || seenTargets.has(targetId)) return;
       const targetPosition = layout.positions.get(targetId);
       if (!targetPosition) return;
       seenTargets.add(targetId);
-      const targetX = COLUMN_GAP + targetPosition.column * (NODE_WIDTH + COLUMN_GAP) + NODE_WIDTH / 2;
-      const targetY = ROW_GAP + targetPosition.row * (NODE_HEIGHT + ROW_GAP);
-      const midY = sourceY === targetY
-        ? sourceY + NODE_HEIGHT / 2
-        : (sourceY + targetY) / 2;
-      const path = document.createElementNS(SVG_NS, 'path');
-      path.setAttribute('d', `M ${sourceX} ${sourceY} C ${sourceX} ${midY} ${targetX} ${midY} ${targetX} ${targetY}`);
-      path.setAttribute('marker-end', 'url(#graph-arrowhead)');
-      path.classList.add('graph-connector');
-      if (className) {
-        path.classList.add(className);
-      }
-      connectorsGroup.appendChild(path);
+      edges.push({ sourceId: scene.id, targetId, className });
     };
 
     (scene.choices ?? []).forEach(choice => {
-      renderConnector(choice.nextSceneId, null);
+      addEdge(choice.nextSceneId, null);
     });
 
     if (scene.autoNextSceneId) {
-      renderConnector(scene.autoNextSceneId, 'is-auto-next');
+      addEdge(scene.autoNextSceneId, 'is-auto-next');
     }
+  });
+
+  const outgoingEdges = new Map();
+  const incomingEdges = new Map();
+  edges.forEach(edge => {
+    if (!outgoingEdges.has(edge.sourceId)) outgoingEdges.set(edge.sourceId, []);
+    if (!incomingEdges.has(edge.targetId)) incomingEdges.set(edge.targetId, []);
+    outgoingEdges.get(edge.sourceId).push(edge);
+    incomingEdges.get(edge.targetId).push(edge);
+  });
+
+  const getNodeLeft = position => COLUMN_GAP + position.column * (NODE_WIDTH + COLUMN_GAP);
+  const getPortX = (position, edgeIndex, edgeCount) => (
+    getNodeLeft(position) + (NODE_WIDTH * (edgeIndex + 1)) / (edgeCount + 1)
+  );
+
+  edges.forEach(edge => {
+    const sourcePosition = layout.positions.get(edge.sourceId);
+    const targetPosition = layout.positions.get(edge.targetId);
+    if (!sourcePosition || !targetPosition) return;
+
+    const sourceList = outgoingEdges.get(edge.sourceId) ?? [edge];
+    const targetList = incomingEdges.get(edge.targetId) ?? [edge];
+    const sourceX = getPortX(sourcePosition, sourceList.indexOf(edge), sourceList.length);
+    const sourceY = ROW_GAP + sourcePosition.row * (NODE_HEIGHT + ROW_GAP) + NODE_HEIGHT;
+    const targetX = getPortX(targetPosition, targetList.indexOf(edge), targetList.length);
+    const targetY = ROW_GAP + targetPosition.row * (NODE_HEIGHT + ROW_GAP);
+    const midY = sourceY === targetY
+      ? sourceY + NODE_HEIGHT / 2
+      : (sourceY + targetY) / 2;
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', `M ${sourceX} ${sourceY} C ${sourceX} ${midY} ${targetX} ${midY} ${targetX} ${targetY}`);
+    path.setAttribute('marker-end', 'url(#graph-arrowhead)');
+    path.classList.add('graph-connector');
+    if (edge.className) {
+      path.classList.add(edge.className);
+    }
+    connectorsGroup.appendChild(path);
   });
 
   svg.appendChild(connectorsGroup);
