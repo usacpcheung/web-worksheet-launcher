@@ -841,10 +841,9 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
-  padding: var(--space-sm);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-  background: #f8fafc;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 .speech-bubble-editor__toggle input[type="checkbox"] {
   width: 1.1rem;
@@ -869,8 +868,8 @@ button:disabled {
   align-items: center;
   gap: var(--space-xs);
   padding: var(--space-sm);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
+  border: 0;
+  border-radius: var(--radius-md);
   background: #f8fafc;
 }
 .speech-bubble-anchor-list__label {
