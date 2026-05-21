@@ -224,9 +224,6 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
 
   const getNodeLeft = position => COLUMN_GAP + position.column * (NODE_WIDTH + COLUMN_GAP);
   const getNodeCenterX = position => getNodeLeft(position) + NODE_WIDTH / 2;
-  const getPortX = (position, edgeIndex, edgeCount) => (
-    getNodeLeft(position) + (NODE_WIDTH * (edgeIndex + 1)) / (edgeCount + 1)
-  );
   const getPositionSortValue = id => {
     const position = layout.positions.get(id);
     return position ? (position.column * 1000) + position.row : 0;
@@ -273,8 +270,7 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
       const laneY = gap > 0 ? sourceY + Math.max(12, gap * 0.45) : sourceY + ROW_GAP / 2;
       const targetXs = rowEdges.map(edge => {
         const targetPosition = layout.positions.get(edge.targetId);
-        const targetList = incomingEdges.get(edge.targetId) ?? [edge];
-        return targetPosition ? getPortX(targetPosition, targetList.indexOf(edge), targetList.length) : sourceX;
+        return targetPosition ? getNodeCenterX(targetPosition) : sourceX;
       });
       const minX = Math.min(sourceX, ...targetXs);
       const maxX = Math.max(sourceX, ...targetXs);
@@ -284,8 +280,7 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
       rowEdges.forEach((edge, index) => {
         const targetPosition = layout.positions.get(edge.targetId);
         if (!targetPosition) return;
-        const targetList = incomingEdges.get(edge.targetId) ?? [edge];
-        const targetX = targetXs[index] ?? getPortX(targetPosition, targetList.indexOf(edge), targetList.length);
+        const targetX = targetXs[index] ?? getNodeCenterX(targetPosition);
         createPath(`M ${targetX} ${laneY} L ${targetX} ${targetY}`, edge.className, true);
       });
     });
