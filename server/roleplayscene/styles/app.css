@@ -34,6 +34,10 @@
 }
 html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: var(--color-text); background: var(--color-bg); font-size: var(--font-size-base); }
 body { display: flex; flex-direction: column; min-height: 100vh; }
+body.roleplayscene-editor-mode {
+  height: 100vh;
+  overflow: hidden;
+}
 button, select, input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
 button {
   border: 1px solid var(--color-border);
@@ -331,7 +335,10 @@ button:disabled {
   background: var(--color-danger-bg);
 }
 .layout { flex: 1; display: grid; grid-template-columns: minmax(0, 0.6fr) minmax(0, 0.4fr); gap: 0; min-height: 0; }
-.layout.layout--edit { grid-template-columns: minmax(0, 0.6fr) minmax(0, 0.4fr); }
+.layout.layout--edit {
+  grid-template-columns: minmax(0, 0.6fr) minmax(0, 0.4fr);
+  overflow: hidden;
+}
 .layout.layout--published-play { grid-template-columns: minmax(0, 0.68fr) minmax(0, 0.32fr); }
 .pane { border-right: 1px solid var(--color-border-subtle); padding: var(--space-md); overflow: auto; background: var(--color-surface); }
 .pane:last-child { border-right: none; }

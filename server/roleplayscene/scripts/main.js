@@ -283,6 +283,7 @@ function setMode(next, options = {}) {
     appRoot.classList.toggle('layout--play', mode === 'play');
     appRoot.classList.toggle('layout--published-play', publishedPlay.active);
   }
+  document.body?.classList.toggle('roleplayscene-editor-mode', mode === 'edit');
   if (mode === 'edit') {
     teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {
       apiClient,
