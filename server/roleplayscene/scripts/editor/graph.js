@@ -175,7 +175,7 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   marker.setAttribute('id', 'graph-arrowhead');
   marker.setAttribute('markerWidth', '8');
   marker.setAttribute('markerHeight', '8');
-  marker.setAttribute('refX', '6');
+  marker.setAttribute('refX', '7');
   marker.setAttribute('refY', '4');
   marker.setAttribute('orient', 'auto');
   marker.setAttribute('markerUnits', 'strokeWidth');
@@ -226,6 +226,47 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   const getPortX = (position, edgeIndex, edgeCount) => (
     getNodeLeft(position) + (NODE_WIDTH * (edgeIndex + 1)) / (edgeCount + 1)
   );
+  const laneGroups = new Map();
+  edges.forEach(edge => {
+    const sourcePosition = layout.positions.get(edge.sourceId);
+    const targetPosition = layout.positions.get(edge.targetId);
+    if (!sourcePosition || !targetPosition) return;
+    const key = `${sourcePosition.row}:${targetPosition.row}`;
+    if (!laneGroups.has(key)) laneGroups.set(key, []);
+    laneGroups.get(key).push(edge);
+  });
+  const getLaneY = (sourceY, targetY, edge, key) => {
+    const laneList = laneGroups.get(key) ?? [edge];
+    const laneIndex = laneList.indexOf(edge);
+    const laneCount = laneList.length;
+    const gap = targetY - sourceY;
+    if (gap <= 0) {
+      return sourceY + ROW_GAP / 2 + laneIndex * 8;
+    }
+    return sourceY + (gap * (laneIndex + 1)) / (laneCount + 1);
+  };
+  const createOrthogonalPathData = (sourceX, sourceY, targetX, targetY, laneY) => {
+    const horizontal = Math.abs(targetX - sourceX);
+    if (horizontal < 4) {
+      return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+    }
+    const xDirection = Math.sign(targetX - sourceX);
+    const sourceDirection = Math.sign(laneY - sourceY) || 1;
+    const targetDirection = Math.sign(targetY - laneY) || 1;
+    const radius = Math.min(10, horizontal / 2, Math.abs(laneY - sourceY) / 2, Math.abs(targetY - laneY) / 2);
+    const sourceCornerY = laneY - sourceDirection * radius;
+    const sourceCornerX = sourceX + xDirection * radius;
+    const targetCornerX = targetX - xDirection * radius;
+    const targetCornerY = laneY + targetDirection * radius;
+    return [
+      `M ${sourceX} ${sourceY}`,
+      `L ${sourceX} ${sourceCornerY}`,
+      `Q ${sourceX} ${laneY} ${sourceCornerX} ${laneY}`,
+      `L ${targetCornerX} ${laneY}`,
+      `Q ${targetX} ${laneY} ${targetX} ${targetCornerY}`,
+      `L ${targetX} ${targetY}`,
+    ].join(' ');
+  };
 
   edges.forEach(edge => {
     const sourcePosition = layout.positions.get(edge.sourceId);
@@ -238,11 +279,10 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
     const sourceY = ROW_GAP + sourcePosition.row * (NODE_HEIGHT + ROW_GAP) + NODE_HEIGHT;
     const targetX = getPortX(targetPosition, targetList.indexOf(edge), targetList.length);
     const targetY = ROW_GAP + targetPosition.row * (NODE_HEIGHT + ROW_GAP);
-    const midY = sourceY === targetY
-      ? sourceY + NODE_HEIGHT / 2
-      : (sourceY + targetY) / 2;
+    const laneKey = `${sourcePosition.row}:${targetPosition.row}`;
+    const laneY = getLaneY(sourceY, targetY, edge, laneKey);
     const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d', `M ${sourceX} ${sourceY} C ${sourceX} ${midY} ${targetX} ${midY} ${targetX} ${targetY}`);
+    path.setAttribute('d', createOrthogonalPathData(sourceX, sourceY, targetX, targetY, laneY));
     path.setAttribute('marker-end', 'url(#graph-arrowhead)');
     path.classList.add('graph-connector');
     if (edge.className) {
