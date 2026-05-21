@@ -88,7 +88,7 @@ function createActionButton(label, variant = 'neutral') {
   return applyButtonClass(button, variant);
 }
 
-function createMediaRow({ label, status, input, actions = [] }) {
+function createMediaRow({ label, status, input, inputLabel, actions = [] }) {
   const row = document.createElement('div');
   row.className = 'rps-media-row';
 
@@ -106,7 +106,9 @@ function createMediaRow({ label, status, input, actions = [] }) {
   actionGroup.className = 'rps-media-row__actions';
   if (input) {
     input.classList.add('rps-media-row__file');
-    actionGroup.appendChild(input);
+    const trigger = createActionButton(inputLabel || label);
+    trigger.addEventListener('click', () => input.click());
+    actionGroup.append(trigger, input);
   }
   actions.forEach(action => actionGroup.appendChild(action));
 
@@ -234,6 +236,7 @@ export function renderInspector(hostEl, project, scene, actions) {
     label: translate('inspector.image.label'),
     status: imageStatus,
     input: imageInput,
+    inputLabel: scene.image ? translate('inspector.mediaActions.replace') : translate('inspector.mediaActions.choose'),
     actions: imageActions,
   }));
 
@@ -263,6 +266,7 @@ export function renderInspector(hostEl, project, scene, actions) {
     label: translate('inspector.background.label'),
     status: backgroundStatus,
     input: backgroundInput,
+    inputLabel: scene.backgroundAudio ? translate('inspector.mediaActions.replace') : translate('inspector.mediaActions.choose'),
     actions: backgroundActions,
   }));
   hostEl.appendChild(mediaSection.section);
@@ -281,10 +285,7 @@ export function renderInspector(hostEl, project, scene, actions) {
     attachComposedValueListener(textarea, (value) => {
       actions.onUpdateDialogueText?.(scene.id, index, value);
     });
-    lineParts.body.appendChild(createField(
-      translate('inspector.dialogue.lineLabel', { index: index + 1 }),
-      textarea,
-    ));
+    lineParts.body.appendChild(createField(translate('inspector.dialogue.textLabel'), textarea));
 
     const audioInput = document.createElement('input');
     audioInput.type = 'file';
@@ -331,6 +332,7 @@ export function renderInspector(hostEl, project, scene, actions) {
       label: translate('inspector.dialogue.audioLabel'),
       status: audioStatus,
       input: audioInput,
+      inputLabel: line.audio ? translate('inspector.mediaActions.replace') : translate('inspector.mediaActions.choose'),
       actions: audioActions,
     }));
 

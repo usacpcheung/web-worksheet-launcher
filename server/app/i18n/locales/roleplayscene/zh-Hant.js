@@ -200,6 +200,10 @@ export default {
       "sceneBasics": "場景基本資料",
       "sceneMedia": "場景媒體"
     },
+    "mediaActions": {
+      "choose": "選擇檔案",
+      "replace": "替換"
+    },
     "header": {
       "previewCurrentScene": "預覽目前場景",
       "addScene": "新增場景",
@@ -249,6 +253,7 @@ export default {
     "dialogue": {
       "title": "對話（最多 3 行）",
       "lineLabel": "第 {index} 行",
+      "textLabel": "台詞文字",
       "audioLabel": "音訊（可選 mp3）",
       "audioAttached": "已附加：{name}",
       "removeAudio": "移除音訊",

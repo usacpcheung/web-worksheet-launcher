@@ -200,6 +200,10 @@ export default {
       "sceneBasics": "Scene basics",
       "sceneMedia": "Scene media"
     },
+    "mediaActions": {
+      "choose": "Choose file",
+      "replace": "Replace"
+    },
     "header": {
       "previewCurrentScene": "Preview Current Scene",
       "addScene": "Add Scene",
@@ -249,6 +253,7 @@ export default {
     "dialogue": {
       "title": "Dialogue (max 3 lines)",
       "lineLabel": "Line {index}",
+      "textLabel": "Dialogue text",
       "audioLabel": "Audio (optional mp3)",
       "audioAttached": "Attached: {name}",
       "removeAudio": "Remove audio",
