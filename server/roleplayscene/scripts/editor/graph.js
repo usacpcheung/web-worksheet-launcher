@@ -175,13 +175,13 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   marker.setAttribute('id', 'graph-arrowhead');
   marker.setAttribute('markerWidth', '8');
   marker.setAttribute('markerHeight', '8');
-  marker.setAttribute('refX', '7');
+  marker.setAttribute('refX', '6');
   marker.setAttribute('refY', '4');
   marker.setAttribute('orient', 'auto');
   marker.setAttribute('markerUnits', 'strokeWidth');
 
   const markerPath = document.createElementNS(SVG_NS, 'path');
-  markerPath.setAttribute('d', 'M 0 0 L 8 4 L 0 8 z');
+  markerPath.setAttribute('d', 'M 1 1 L 7 4 L 1 7');
   markerPath.setAttribute('class', 'graph-arrowhead');
 
   marker.appendChild(markerPath);
