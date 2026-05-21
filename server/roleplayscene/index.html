@@ -10,10 +10,14 @@
   <header class="topbar">
     <h1>RolePlayScene</h1>
     <nav class="toolbar">
-      <button id="mode-edit" class="active">Edit</button>
-      <button id="mode-play">Play</button>
-      <button id="import-btn" title="Import project (.json or .zip)">Import</button>
-      <button id="export-btn" title="Export project archive (.zip)">Export</button>
+      <span class="toolbar__mode" aria-label="Mode">
+        <button id="mode-edit" class="active">Edit</button>
+        <button id="mode-play">Play</button>
+      </span>
+      <span class="toolbar__files">
+        <button id="import-btn" title="Import project (.json or .zip)">Import</button>
+        <button id="export-btn" title="Export project archive (.zip)">Export</button>
+      </span>
       <span class="toolbar__server">
         <span id="server-status" class="server-status" aria-live="polite">Server: checking...</span>
         <button id="server-signin-btn" type="button">Sign in</button>
