@@ -356,7 +356,6 @@ export function renderSpeechBubblePlayerUI({
     speechPlayAllActive = speechPlayAllActive || autoAdvance;
     const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
     const pages = splitSpeechBubbleText(entry.line.text || translate('player.dialogue.lineFallback', { index: entry.index + 1 }), mode);
-    renderSpeechState();
 
     if (entry.line.audio?.objectUrl) {
       speechAudioActive = true;
