@@ -1099,7 +1099,7 @@ button:disabled {
 .dialogue-speaker-field {
   max-width: 18rem;
 }
-.dialogue-speaker-add {
+.dialogue-line .dialogue-speaker-add {
   grid-template-columns: minmax(12rem, 18rem) auto;
   justify-content: start;
   align-items: end;
