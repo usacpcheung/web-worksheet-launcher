@@ -5,7 +5,13 @@ function createCueCardIcon() {
   const svg = document.createElementNS
     ? document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     : document.createElement('svg');
-  svg.className = 'player-choice-cue-icon theater-icon';
+  if (svg.classList?.add) {
+    svg.classList.add('player-choice-cue-icon', 'theater-icon');
+  } else if (typeof svg.className === 'string') {
+    svg.className = 'player-choice-cue-icon theater-icon';
+  } else {
+    svg.setAttribute('class', 'player-choice-cue-icon theater-icon');
+  }
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('aria-hidden', 'true');
   svg.setAttribute('focusable', 'false');
