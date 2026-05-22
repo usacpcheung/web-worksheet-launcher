@@ -726,7 +726,7 @@ button:disabled {
 .graph-node-subtitle { font-size: var(--font-size-xs); fill: var(--color-text-muted); }
 .graph-node-thumb { clip-path: inset(0 round var(--radius-md)); }
 .graph-connectors { fill: none; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; opacity: 0.88; }
-.graph-arrowhead { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.graph-arrowhead { stroke: none; }
 .graph-connector--related { stroke-width: 2; opacity: 1; }
 .graph-connector--dimmed { opacity: 0.22; }
 .graph-connectors path { transition: opacity 0.2s ease, stroke 0.2s ease, stroke-width 0.2s ease; }

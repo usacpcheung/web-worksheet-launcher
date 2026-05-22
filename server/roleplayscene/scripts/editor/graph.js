@@ -175,17 +175,17 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   CONNECTOR_COLORS.forEach((color, index) => {
     const marker = document.createElementNS(SVG_NS, 'marker');
     marker.setAttribute('id', `graph-arrowhead-${index}`);
-    marker.setAttribute('markerWidth', '8');
-    marker.setAttribute('markerHeight', '8');
-    marker.setAttribute('refX', '7');
-    marker.setAttribute('refY', '4');
+    marker.setAttribute('markerWidth', '7');
+    marker.setAttribute('markerHeight', '7');
+    marker.setAttribute('refX', '6.2');
+    marker.setAttribute('refY', '3.5');
     marker.setAttribute('orient', 'auto');
     marker.setAttribute('markerUnits', 'strokeWidth');
 
     const markerPath = document.createElementNS(SVG_NS, 'path');
-    markerPath.setAttribute('d', 'M 1 1 L 7 4 L 1 7');
+    markerPath.setAttribute('d', 'M 0 0 L 7 3.5 L 0 7 z');
     markerPath.setAttribute('class', 'graph-arrowhead');
-    markerPath.setAttribute('stroke', color);
+    markerPath.setAttribute('fill', color);
 
     marker.appendChild(markerPath);
     defs.appendChild(marker);
@@ -231,6 +231,7 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
     sourceColorIndex.set(sceneId, index % CONNECTOR_COLORS.length);
   });
   const getNodeLeft = position => COLUMN_GAP + position.column * (NODE_WIDTH + COLUMN_GAP);
+  const getNodeCenterX = position => getNodeLeft(position) + NODE_WIDTH / 2;
   const getPortX = (position, edgeIndex, edgeCount) => (
     getNodeLeft(position) + (NODE_WIDTH * (edgeIndex + 1)) / (edgeCount + 1)
   );
@@ -305,6 +306,14 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
       `L ${targetX} ${targetY}`,
     ].join(' ');
   };
+  const createDirectPathData = (sourcePosition, sourceY, targetPosition, targetY) => {
+    const sourceCenterX = getNodeCenterX(sourcePosition);
+    const targetCenterX = getNodeCenterX(targetPosition);
+    if (Math.abs(sourceCenterX - targetCenterX) <= 24) {
+      return `M ${sourceCenterX} ${sourceY} L ${targetCenterX} ${targetY}`;
+    }
+    return null;
+  };
 
   edges.forEach(edge => {
     const sourcePosition = layout.positions.get(edge.sourceId);
@@ -319,7 +328,8 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
     const laneKey = `${sourcePosition.row}:${targetPosition.row}`;
     const laneY = getLaneY(sourceY, targetY, edge, laneKey);
     const colorIndex = sourceColorIndex.get(edge.sourceId) ?? 0;
-    createPath(edge, createOrthogonalPathData(sourceX, sourceY, targetX, targetY, laneY), colorIndex);
+    const directPath = createDirectPathData(sourcePosition, sourceY, targetPosition, targetY);
+    createPath(edge, directPath || createOrthogonalPathData(sourceX, sourceY, targetX, targetY, laneY), colorIndex);
   });
 
   svg.appendChild(connectorsGroup);
