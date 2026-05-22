@@ -179,7 +179,7 @@ const cueTrigger = findElement(stageEl, el => el.className === 'player-choice-cu
 assert(cueTrigger, 'cue card trigger should render for cue text');
 cueTrigger.dispatchEvent('click');
 
-const cueBody = findElement(uiEl, el => el.className === 'player-cue-body');
+const cueBody = findElement(stageEl, el => el.className === 'player-cue-body');
 assert(cueBody, 'cue body should render');
 assert.equal(cueBody.textContent, multilineCueCard, 'cue body should preserve multiline text');
 assert.equal(cueBody.innerHTML, '', 'cue body should not inject HTML from cue card content');

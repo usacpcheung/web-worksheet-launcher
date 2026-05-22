@@ -311,10 +311,10 @@ try {
 
   let { stageEl, uiEl } = render(scene, () => {}, { speakers: [{ id: 'speaker-kelvin', name: 'Kelvin' }] });
   assert.ok(findByClass(stageEl, 'speech-play-overlay'), 'Bubble-enabled scenes should render an image overlay');
-  assert.ok(findByClass(uiEl, 'speech-play-panel'), 'Bubble-enabled scenes should render the speech controller');
+  assert.ok(findByClass(stageEl, 'speech-play-panel'), 'Bubble-enabled scenes should render the speech controller');
   assert.equal(findByClass(uiEl, 'player-dialogue'), null, 'Bubble-enabled scenes should not render the normal dialogue list');
 
-  findButtonByText(uiEl, translate('player.speechBubble.play')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.play')).dispatchEvent('click');
   assert.equal(FakeAudio.playCalls[0], 'line-1.mp3', 'Start dialogue should autoplay the first line when audio exists');
 
   let bubble = findByClass(stageEl, 'speech-play-bubble-wrap--anchor');
@@ -326,7 +326,7 @@ try {
   assert.match(collectText(bubble), /Hello from the anchor/);
   assert.match(collectText(bubble), /Kelvin:/, 'Speech bubble should render assigned speaker name');
 
-  findButtonByText(uiEl, translate('player.speechBubble.next')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
   bubble = findByClass(stageEl, 'speech-play-bubble--center');
   assert.ok(bubble, 'Next should skip hidden lines and render center narration');
   assert.match(collectText(bubble), /Narration in the center/);
@@ -355,15 +355,15 @@ try {
     choices: [],
   };
   ({ stageEl, uiEl } = render(scene));
-  findButtonByText(uiEl, translate('player.speechBubble.play')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.play')).dispatchEvent('click');
   const centerBubble = findByClass(stageEl, 'speech-play-bubble--center');
-  findButtonByText(uiEl, translate('player.speechBubble.stop')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.stop')).dispatchEvent('click');
   assert.equal(
     findByClass(stageEl, 'speech-play-bubble--center'),
     centerBubble,
     'Stopping center narration playback should not recreate the visible bubble',
   );
-  findButtonByText(uiEl, translate('player.speechBubble.play')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.play')).dispatchEvent('click');
   assert.equal(
     findByClass(stageEl, 'speech-play-bubble--center'),
     centerBubble,
@@ -395,9 +395,9 @@ try {
     choices: [],
   };
   ({ stageEl, uiEl } = render(scene));
-  assert.ok(findByClass(uiEl, 'speech-play-page-controls'), 'Paged speech bubbles should show page controls');
+  assert.ok(findByClass(stageEl, 'speech-play-page-controls'), 'Paged speech bubbles should show page controls');
   const firstPageText = collectText(findByClass(stageEl, 'speech-play-bubble'));
-  findButtonByText(uiEl, translate('player.speechBubble.nextPage')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.nextPage')).dispatchEvent('click');
   assert.notEqual(collectText(findByClass(stageEl, 'speech-play-bubble')), firstPageText, 'Manual page next should change the visible page');
 
   resetSpies();
@@ -409,8 +409,8 @@ try {
     dialogue: [{ text: 'Choose a path.', bubble: { mode: BubbleMode.CENTER } }],
     choices: [{ label: 'Go next', nextSceneId: 'next-scene' }],
   };
-  ({ uiEl } = render(scene, (nextSceneId) => { chosenSceneId = nextSceneId; }));
-  findButtonByText(uiEl, 'Go next').dispatchEvent('click');
+  ({ stageEl, uiEl } = render(scene, (nextSceneId) => { chosenSceneId = nextSceneId; }));
+  findButtonByText(stageEl, 'Go next').dispatchEvent('click');
   assert.equal(chosenSceneId, 'next-scene', 'Bubble mode should keep scene choices available');
 
   resetSpies();
@@ -424,8 +424,8 @@ try {
     ],
     choices: [],
   };
-  ({ uiEl } = render(scene));
-  findButtonByText(uiEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
   assert.equal(FakeAudio.playCalls[0], 'slow-line.mp3', 'Play All should start first audio line');
   flushPendingTimeouts();
   assert.equal(
@@ -441,8 +441,8 @@ try {
   );
 
   resetSpies();
-  ({ uiEl } = render(scene));
-  findButtonByText(uiEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
   const originalConsoleWarn = console.warn;
   console.warn = () => {};
   try {

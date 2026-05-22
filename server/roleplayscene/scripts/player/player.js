@@ -195,6 +195,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
 
   function renderIntro() {
     stopActiveDialogue();
+    rightEl.classList?.remove?.('pane--stage-only');
     const state = store.get();
     const { project } = state;
     const startScene = findStartScene(project);
@@ -248,6 +249,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
 
   function renderCurrentScene() {
     stopActiveDialogue();
+    rightEl.classList?.add?.('pane--stage-only');
     const { project } = store.get();
     syncHistoryWithProject(project);
 
