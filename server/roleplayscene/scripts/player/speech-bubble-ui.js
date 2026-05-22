@@ -249,6 +249,8 @@ export function renderSpeechBubblePlayerUI({
   let speechAudioActive = false;
   let speechPlayAllActive = false;
   let speechRunToken = 0;
+  let renderedSpeechBubbleKey = null;
+  let renderedSpeechBubbleElement = null;
   const speechTimers = new Set();
 
   const nextSpeechRunToken = () => {
@@ -459,9 +461,19 @@ export function renderSpeechBubblePlayerUI({
     renderSpeechState();
   };
 
+  const clearRenderedSpeechBubble = () => {
+    if (speechBubbleOverlay) speechBubbleOverlay.innerHTML = '';
+    renderedSpeechBubbleKey = null;
+    renderedSpeechBubbleElement = null;
+  };
+
+  const updateRenderedSpeechBubbleState = () => {
+    if (!renderedSpeechBubbleElement?.classList?.toggle) return;
+    renderedSpeechBubbleElement.classList.toggle('is-playing', speechAudioActive);
+  };
+
   function renderSpeechState() {
     speechPanel.innerHTML = '';
-    if (speechBubbleOverlay) speechBubbleOverlay.innerHTML = '';
 
     const activeEntry = visibleEntries[activeVisibleIndex] || null;
     const activeMode = activeEntry?.line?.bubble?.mode || BubbleMode.CENTER;
@@ -470,15 +482,30 @@ export function renderSpeechBubblePlayerUI({
       : [];
     const page = pages[Math.max(0, Math.min(activePageIndex, pages.length - 1))] || '';
 
-    if (activeEntry && speechBubbleOverlay) {
+    if (!activeEntry || !speechBubbleOverlay) {
+      clearRenderedSpeechBubble();
+    } else {
       const speakerName = getSpeakerName(project, activeEntry.line);
       const anchor = getSpeechBubbleAnchor(scene, activeEntry.line);
       const fallbackAnchor = activeEntry.line.bubble?.x != null || activeEntry.line.bubble?.y != null
         ? { x: activeEntry.line.bubble?.x ?? 0.5, y: activeEntry.line.bubble?.y ?? 0.5 }
         : null;
       const anchorPoint = anchor || fallbackAnchor;
+      const bubbleKey = [
+        activeEntry.index,
+        activePageIndex,
+        activeMode,
+        speakerName,
+        page,
+        anchorPoint?.id || '',
+        anchorPoint?.x ?? '',
+        anchorPoint?.y ?? '',
+      ].join('|');
 
-      if (activeMode === BubbleMode.ANCHOR && anchorPoint) {
+      if (bubbleKey === renderedSpeechBubbleKey && renderedSpeechBubbleElement) {
+        updateRenderedSpeechBubbleState();
+      } else if (activeMode === BubbleMode.ANCHOR && anchorPoint) {
+        clearRenderedSpeechBubble();
         const bubble = document.createElement('div');
         bubble.className = 'speech-play-bubble-wrap speech-play-bubble-wrap--anchor';
         bubble.classList.toggle('is-playing', speechAudioActive);
@@ -508,7 +535,10 @@ export function renderSpeechBubblePlayerUI({
         bubble.appendChild(textLayer);
         speechBubbleOverlay.appendChild(bubble);
         positionAnchorSpeechBubble(speechBubbleOverlay, bubble, shape, anchorPoint);
+        renderedSpeechBubbleKey = bubbleKey;
+        renderedSpeechBubbleElement = bubble;
       } else {
+        clearRenderedSpeechBubble();
         const bubble = document.createElement('div');
         bubble.className = 'speech-play-bubble speech-play-bubble--center';
         bubble.classList.toggle('is-playing', speechAudioActive);
@@ -523,6 +553,8 @@ export function renderSpeechBubblePlayerUI({
           bubble.appendChild(pageStatus);
         }
         speechBubbleOverlay.appendChild(bubble);
+        renderedSpeechBubbleKey = bubbleKey;
+        renderedSpeechBubbleElement = bubble;
       }
     }
 

@@ -343,6 +343,32 @@ try {
   assert.ok(findByClass(uiEl, 'player-dialogue'), 'Non-bubble scenes should keep the existing dialogue list');
   assert.match(collectText(uiEl), /Sam:/, 'Normal dialogue should render assigned speaker name');
 
+  resetSpies();
+  scene = {
+    id: 'scene-center-audio',
+    type: SceneType.INTERMEDIATE,
+    speechBubble: { enabled: true, anchors: [] },
+    dialogue: [
+      { text: 'Center narration with audio.', audio: { objectUrl: 'center-line.mp3' }, bubble: { mode: BubbleMode.CENTER } },
+    ],
+    choices: [],
+  };
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(uiEl, translate('player.speechBubble.startDialogue')).dispatchEvent('click');
+  const centerBubble = findByClass(stageEl, 'speech-play-bubble--center');
+  findButtonByText(uiEl, translate('player.speechBubble.stop')).dispatchEvent('click');
+  assert.equal(
+    findByClass(stageEl, 'speech-play-bubble--center'),
+    centerBubble,
+    'Stopping center narration playback should not recreate the visible bubble',
+  );
+  findButtonByText(uiEl, translate('player.speechBubble.play')).dispatchEvent('click');
+  assert.equal(
+    findByClass(stageEl, 'speech-play-bubble--center'),
+    centerBubble,
+    'Restarting center narration playback should not recreate the visible bubble',
+  );
+
   const pages = splitSpeechBubbleText(
     'This is a longer line. It should split into multiple readable speech bubble pages for the player controls.',
     BubbleMode.ANCHOR,
