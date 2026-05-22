@@ -1,81 +1,15 @@
 import { BubbleMode } from '../model.js';
 import { translate } from '../i18n.js';
+import {
+  DIALOGUE_MIN_AUDIO_PAGE_SECONDS,
+  estimateReadingSeconds,
+  getDialoguePageText,
+  getLineAudioDurationSeconds,
+  hasDialogueLineContent,
+  splitDialogueText,
+} from './dialogue-progression.js';
 
-const SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS = 1;
-const SPEECH_BUBBLE_CHARACTER_PAGE_UNITS = 36;
-const SPEECH_BUBBLE_NARRATION_PAGE_UNITS = 80;
-const SPEECH_BUBBLE_NO_AUDIO_MIN_SECONDS = 2;
-const SPEECH_BUBBLE_NO_AUDIO_MAX_SECONDS = 8;
-
-function getWeightedTextLength(text) {
-  return Array.from(String(text || '')).reduce((total, char) => {
-    if (/\s/.test(char) || /[，、,.:;；。！？!?]/.test(char)) return total + 0.25;
-    if (/[\x00-\x7F]/.test(char)) return total + 0.55;
-    return total + 1;
-  }, 0);
-}
-
-function splitByLimit(text, limit) {
-  const source = String(text || '').trim();
-  if (!source) return [''];
-  if (getWeightedTextLength(source) <= limit) return [source];
-
-  const breakPatterns = [/\n+/, /(?<=[。！？!?；;])/, /(?<=[，、,:])/, /\s+/];
-  for (const pattern of breakPatterns) {
-    const chunks = source.split(pattern).map(chunk => chunk.trim()).filter(Boolean);
-    if (chunks.length <= 1) continue;
-    const pages = [];
-    let current = '';
-    for (const chunk of chunks) {
-      const candidate = current ? `${current}${pattern.source === '\\s+' ? ' ' : ''}${chunk}` : chunk;
-      if (current && getWeightedTextLength(candidate) > limit) {
-        pages.push(current);
-        current = chunk;
-      } else {
-        current = candidate;
-      }
-    }
-    if (current) pages.push(current);
-    if (pages.every(page => getWeightedTextLength(page) <= limit * 1.2)) {
-      return pages;
-    }
-  }
-
-  const pages = [];
-  let current = '';
-  for (const char of Array.from(source)) {
-    const candidate = current + char;
-    if (current && getWeightedTextLength(candidate) > limit) {
-      pages.push(current.trim());
-      current = char;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current.trim()) pages.push(current.trim());
-  return pages.length ? pages : [source];
-}
-
-export function splitSpeechBubbleText(text, mode = BubbleMode.ANCHOR) {
-  const limit = mode === BubbleMode.CENTER
-    ? SPEECH_BUBBLE_NARRATION_PAGE_UNITS
-    : SPEECH_BUBBLE_CHARACTER_PAGE_UNITS;
-  return splitByLimit(text, limit);
-}
-
-function estimateReadingSeconds(page) {
-  const units = getWeightedTextLength(page);
-  return Math.max(
-    SPEECH_BUBBLE_NO_AUDIO_MIN_SECONDS,
-    Math.min(SPEECH_BUBBLE_NO_AUDIO_MAX_SECONDS, 1.4 + units * 0.08),
-  );
-}
-
-function getLineAudioDurationSeconds(line, pages) {
-  const direct = Number(line?.audio?.durationSeconds ?? line?.audio?.duration);
-  if (Number.isFinite(direct) && direct > 0) return direct;
-  return Math.max(pages.length * SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS, pages.reduce((total, page) => total + estimateReadingSeconds(page), 0));
-}
+export const splitSpeechBubbleText = splitDialogueText;
 
 function getSpeechBubbleAnchor(scene, line) {
   if (line?.bubble?.mode !== BubbleMode.ANCHOR) return null;
@@ -202,10 +136,6 @@ function positionAnchorSpeechBubble(overlay, bubble, path, anchor) {
   }));
 }
 
-function hasSpeechLineContent(line) {
-  return Boolean(String(line?.text || '').trim() || line?.audio?.objectUrl);
-}
-
 function getSpeakerName(project, line) {
   if (!line?.speakerId) return '';
   const speakers = Array.isArray(project?.speakers) ? project.speakers : [];
@@ -242,9 +172,9 @@ export function renderSpeechBubblePlayerUI({
 }) {
   const visibleEntries = (scene.dialogue || [])
     .map((line, index) => ({ line, index }))
-    .filter(entry => hasSpeechLineContent(entry.line) && entry.line.bubble?.mode !== BubbleMode.HIDDEN);
+    .filter(entry => hasDialogueLineContent(entry.line) && entry.line.bubble?.mode !== BubbleMode.HIDDEN);
 
-  let activeVisibleIndex = -1;
+  let activeVisibleIndex = visibleEntries.length ? 0 : -1;
   let activePageIndex = 0;
   let speechAudioActive = false;
   let speechPlayAllActive = false;
@@ -306,17 +236,17 @@ export function renderSpeechBubblePlayerUI({
     if (pages.length <= 1) {
       return Math.max(audioSeconds, estimateReadingSeconds(pages[0] || ''));
     }
-    if (audioSeconds > 0 && audioSeconds / pages.length >= SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS) {
+    if (audioSeconds > 0 && audioSeconds / pages.length >= DIALOGUE_MIN_AUDIO_PAGE_SECONDS) {
       return audioSeconds;
     }
-    const lastPageStartsAt = (pages.length - 1) * SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS;
+    const lastPageStartsAt = (pages.length - 1) * DIALOGUE_MIN_AUDIO_PAGE_SECONDS;
     return Math.max(audioSeconds, lastPageStartsAt + estimateReadingSeconds(pages[pages.length - 1] || ''));
   };
 
   const schedulePaging = ({ pages, totalSeconds }) => {
     if (pages.length <= 1) return;
     const totalMs = Math.max(0, totalSeconds * 1000);
-    const canFitInAudio = totalSeconds / pages.length >= SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS;
+    const canFitInAudio = totalSeconds / pages.length >= DIALOGUE_MIN_AUDIO_PAGE_SECONDS;
     if (canFitInAudio) {
       pages.slice(1).forEach((_, pageOffset) => {
         const pageNumber = pageOffset + 1;
@@ -327,7 +257,7 @@ export function renderSpeechBubblePlayerUI({
 
     pages.slice(1).forEach((_, pageOffset) => {
       const pageNumber = pageOffset + 1;
-      const delay = SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS * 1000 * pageNumber;
+      const delay = DIALOGUE_MIN_AUDIO_PAGE_SECONDS * 1000 * pageNumber;
       scheduleSpeechTimer(() => advanceSpeechPage(pages, pageNumber), delay);
     });
   };
@@ -357,7 +287,7 @@ export function renderSpeechBubblePlayerUI({
     activePageIndex = 0;
     speechPlayAllActive = speechPlayAllActive || autoAdvance;
     const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
-    const pages = splitSpeechBubbleText(entry.line.text || translate('player.dialogue.lineFallback', { index: entry.index + 1 }), mode);
+    const pages = splitSpeechBubbleText(getDialoguePageText(entry.line, entry.index), mode);
 
     if (entry.line.audio?.objectUrl) {
       speechAudioActive = true;
@@ -456,7 +386,7 @@ export function renderSpeechBubblePlayerUI({
     nextSpeechRunToken();
     speechPlayAllActive = false;
     const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
-    const pages = splitSpeechBubbleText(entry.line.text || translate('player.dialogue.lineFallback', { index: entry.index + 1 }), mode);
+    const pages = splitSpeechBubbleText(getDialoguePageText(entry.line, entry.index), mode);
     activePageIndex = Math.max(0, Math.min(pages.length - 1, activePageIndex + delta));
     renderSpeechState();
   };
@@ -478,7 +408,7 @@ export function renderSpeechBubblePlayerUI({
     const activeEntry = visibleEntries[activeVisibleIndex] || null;
     const activeMode = activeEntry?.line?.bubble?.mode || BubbleMode.CENTER;
     const pages = activeEntry
-      ? splitSpeechBubbleText(activeEntry.line.text || translate('player.dialogue.lineFallback', { index: activeEntry.index + 1 }), activeMode)
+      ? splitSpeechBubbleText(getDialoguePageText(activeEntry.line, activeEntry.index), activeMode)
       : [];
     const page = pages[Math.max(0, Math.min(activePageIndex, pages.length - 1))] || '';
 
@@ -588,8 +518,14 @@ export function renderSpeechBubblePlayerUI({
       const prevButton = document.createElement('button');
       prevButton.type = 'button';
       prevButton.textContent = translate('player.speechBubble.previous');
-      prevButton.disabled = activeVisibleIndex <= 0;
-      prevButton.addEventListener('click', () => setActiveSpeechLine(activeVisibleIndex - 1, { autoplay: false }));
+      prevButton.disabled = activeVisibleIndex <= 0 && activePageIndex <= 0;
+      prevButton.addEventListener('click', () => {
+        if (activePageIndex > 0) {
+          changeSpeechPage(-1);
+          return;
+        }
+        setActiveSpeechLine(activeVisibleIndex - 1, { autoplay: false });
+      });
 
       const playButton = document.createElement('button');
       playButton.type = 'button';
@@ -609,8 +545,14 @@ export function renderSpeechBubblePlayerUI({
       const nextButton = document.createElement('button');
       nextButton.type = 'button';
       nextButton.textContent = translate('player.speechBubble.next');
-      nextButton.disabled = activeVisibleIndex >= visibleEntries.length - 1;
-      nextButton.addEventListener('click', () => setActiveSpeechLine(activeVisibleIndex + 1, { autoplay: true }));
+      nextButton.disabled = activeVisibleIndex >= visibleEntries.length - 1 && activePageIndex >= pages.length - 1;
+      nextButton.addEventListener('click', () => {
+        if (activePageIndex < pages.length - 1) {
+          changeSpeechPage(1);
+          return;
+        }
+        setActiveSpeechLine(activeVisibleIndex + 1, { autoplay: true });
+      });
 
       const playAllButton = document.createElement('button');
       playAllButton.type = 'button';

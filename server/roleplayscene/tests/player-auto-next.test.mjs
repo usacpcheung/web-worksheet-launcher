@@ -114,9 +114,10 @@ let scene = {
   autoNextSceneId: null,
 };
 
-let { uiEl } = renderScene(scene);
-let continueButton = findButtonByText(uiEl, 'Continue');
-const emptyMessage = findFirst(uiEl, el => el.className === 'empty');
+let { stageEl, uiEl } = renderScene(scene);
+findButtonByText(stageEl, 'Next')?.dispatchEvent('click');
+let continueButton = findButtonByText(stageEl, 'Continue');
+const emptyMessage = findFirst(stageEl, el => el.className === 'empty');
 logResult('No auto-advance shows placeholder', !continueButton && !!emptyMessage);
 
 // Test: autoNext renders enabled button and triggers callback
@@ -129,8 +130,9 @@ scene = {
 };
 
 let chosen = null;
-({ uiEl } = renderScene(scene, (nextId) => { chosen = nextId; }));
-continueButton = findButtonByText(uiEl, 'Continue');
+({ stageEl, uiEl } = renderScene(scene, (nextId) => { chosen = nextId; }));
+findButtonByText(stageEl, 'Next')?.dispatchEvent('click');
+continueButton = findButtonByText(stageEl, 'Continue');
 logResult('Continue button rendered when autoNext set', !!continueButton);
 if (continueButton) {
   continueButton.dispatchEvent('click');
@@ -146,8 +148,9 @@ scene = {
   autoNextSceneId: 'missing',
 };
 
-({ uiEl } = renderScene(scene));
-continueButton = findButtonByText(uiEl, 'Continue');
+({ stageEl, uiEl } = renderScene(scene));
+findButtonByText(stageEl, 'Next')?.dispatchEvent('click');
+continueButton = findButtonByText(stageEl, 'Continue');
 logResult('Continue button disabled when destination missing', !!continueButton && continueButton.disabled);
 
 // Test: hidden when choices exist
@@ -159,6 +162,7 @@ scene = {
   autoNextSceneId: 'other',
 };
 
-({ uiEl } = renderScene(scene));
-continueButton = findButtonByText(uiEl, 'Continue');
+({ stageEl, uiEl } = renderScene(scene));
+findButtonByText(stageEl, 'Next')?.dispatchEvent('click');
+continueButton = findButtonByText(stageEl, 'Continue');
 logResult('Auto-advance suppressed when choices exist', continueButton === null);

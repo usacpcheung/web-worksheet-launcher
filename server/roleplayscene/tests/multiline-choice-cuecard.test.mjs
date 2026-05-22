@@ -127,6 +127,7 @@ globalThis.document = new StubDocument();
 const { SceneType } = await import('../scripts/model.js');
 const { renderInspector } = await import('../scripts/editor/inspector.js');
 const { renderPlayerUI } = await import('../scripts/player/ui.js');
+const { translate } = await import('../scripts/i18n.js');
 
 const multilineLabel = 'Line one\nLine two <script>alert(1)</script>';
 const multilineCueCard = 'Step A\nStep B\nUse "quotes" safely';
@@ -166,11 +167,15 @@ const stageEl = new StubElement('div');
 const uiEl = new StubElement('div');
 renderPlayerUI({ stageEl, uiEl, project, scene: project.scenes[0], onChoice: () => {} });
 
-const choiceLabel = findElement(uiEl, el => el.className === 'player-choice-label');
+const choicesButton = findElement(stageEl, el => el.className === 'theater-toolbar__button' && el.textContent === translate('inspector.choices.title'));
+assert(choicesButton, 'theater choices button should render');
+choicesButton.dispatchEvent('click');
+
+const choiceLabel = findElement(stageEl, el => el.className === 'player-choice-label');
 assert(choiceLabel, 'player choice label should render');
 assert.equal(choiceLabel.textContent, multilineLabel, 'player choice label should preserve multiline and special characters');
 
-const cueTrigger = findElement(uiEl, el => el.className === 'player-choice-cue-trigger');
+const cueTrigger = findElement(stageEl, el => el.className === 'player-choice-cue-trigger');
 assert(cueTrigger, 'cue card trigger should render for cue text');
 cueTrigger.dispatchEvent('click');
 

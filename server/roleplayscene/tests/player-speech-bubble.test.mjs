@@ -314,7 +314,7 @@ try {
   assert.ok(findByClass(uiEl, 'speech-play-panel'), 'Bubble-enabled scenes should render the speech controller');
   assert.equal(findByClass(uiEl, 'player-dialogue'), null, 'Bubble-enabled scenes should not render the normal dialogue list');
 
-  findButtonByText(uiEl, translate('player.speechBubble.startDialogue')).dispatchEvent('click');
+  findButtonByText(uiEl, translate('player.speechBubble.play')).dispatchEvent('click');
   assert.equal(FakeAudio.playCalls[0], 'line-1.mp3', 'Start dialogue should autoplay the first line when audio exists');
 
   let bubble = findByClass(stageEl, 'speech-play-bubble-wrap--anchor');
@@ -339,9 +339,10 @@ try {
     dialogue: [{ text: 'Normal dialogue remains visible.', speakerId: 'speaker-sam' }],
     choices: [],
   };
-  ({ uiEl } = render(scene, () => {}, { speakers: [{ id: 'speaker-sam', name: 'Sam' }] }));
-  assert.ok(findByClass(uiEl, 'player-dialogue'), 'Non-bubble scenes should keep the existing dialogue list');
-  assert.match(collectText(uiEl), /Sam:/, 'Normal dialogue should render assigned speaker name');
+  ({ stageEl, uiEl } = render(scene, () => {}, { speakers: [{ id: 'speaker-sam', name: 'Sam' }] }));
+  assert.ok(findByClass(stageEl, 'theater-dialogue-card'), 'Non-bubble scenes should render the theater dialogue overlay');
+  assert.equal(findByClass(uiEl, 'player-dialogue'), null, 'Non-bubble scenes should no longer render the old dialogue list');
+  assert.match(collectText(stageEl), /Sam:/, 'Normal dialogue should render assigned speaker name');
 
   resetSpies();
   scene = {
@@ -354,7 +355,7 @@ try {
     choices: [],
   };
   ({ stageEl, uiEl } = render(scene));
-  findButtonByText(uiEl, translate('player.speechBubble.startDialogue')).dispatchEvent('click');
+  findButtonByText(uiEl, translate('player.speechBubble.play')).dispatchEvent('click');
   const centerBubble = findByClass(stageEl, 'speech-play-bubble--center');
   findButtonByText(uiEl, translate('player.speechBubble.stop')).dispatchEvent('click');
   assert.equal(
@@ -394,7 +395,6 @@ try {
     choices: [],
   };
   ({ stageEl, uiEl } = render(scene));
-  findButtonByText(uiEl, translate('player.speechBubble.startDialogue')).dispatchEvent('click');
   assert.ok(findByClass(uiEl, 'speech-play-page-controls'), 'Paged speech bubbles should show page controls');
   const firstPageText = collectText(findByClass(stageEl, 'speech-play-bubble'));
   findButtonByText(uiEl, translate('player.speechBubble.nextPage')).dispatchEvent('click');
