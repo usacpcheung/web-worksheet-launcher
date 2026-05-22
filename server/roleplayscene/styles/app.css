@@ -725,10 +725,11 @@ button:disabled {
 .graph-node-title { font-weight: 600; fill: var(--color-text); }
 .graph-node-subtitle { font-size: var(--font-size-xs); fill: var(--color-text-muted); }
 .graph-node-thumb { clip-path: inset(0 round var(--radius-md)); }
-.graph-connectors { fill: none; stroke: #a8b1bf; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.9; }
-.graph-arrowhead { fill: none; stroke: #a8b1bf; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.graph-connector--bundle { opacity: 0.72; }
-.graph-connectors path { transition: stroke 0.2s ease; }
+.graph-connectors { fill: none; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; opacity: 0.88; }
+.graph-arrowhead { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.graph-connector--related { stroke-width: 2; opacity: 1; }
+.graph-connector--dimmed { opacity: 0.22; }
+.graph-connectors path { transition: opacity 0.2s ease, stroke 0.2s ease, stroke-width 0.2s ease; }
 .inspector {
   display: grid;
   gap: var(--space-sm);

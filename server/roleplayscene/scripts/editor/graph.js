@@ -6,6 +6,7 @@ const NODE_WIDTH = 220;
 const NODE_HEIGHT = 80;
 const ROW_GAP = 40;
 const COLUMN_GAP = 60;
+const CONNECTOR_COLORS = ['#64748b', '#2563eb', '#059669', '#b45309', '#7c3aed', '#dc2626'];
 
 export function computeSceneGraphLayout(project) {
   const scenes = Array.isArray(project?.scenes) ? project.scenes : [];
@@ -171,21 +172,24 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   svg.setAttribute('role', 'list');
 
   const defs = document.createElementNS(SVG_NS, 'defs');
-  const marker = document.createElementNS(SVG_NS, 'marker');
-  marker.setAttribute('id', 'graph-arrowhead');
-  marker.setAttribute('markerWidth', '8');
-  marker.setAttribute('markerHeight', '8');
-  marker.setAttribute('refX', '7');
-  marker.setAttribute('refY', '4');
-  marker.setAttribute('orient', 'auto');
-  marker.setAttribute('markerUnits', 'strokeWidth');
+  CONNECTOR_COLORS.forEach((color, index) => {
+    const marker = document.createElementNS(SVG_NS, 'marker');
+    marker.setAttribute('id', `graph-arrowhead-${index}`);
+    marker.setAttribute('markerWidth', '8');
+    marker.setAttribute('markerHeight', '8');
+    marker.setAttribute('refX', '7');
+    marker.setAttribute('refY', '4');
+    marker.setAttribute('orient', 'auto');
+    marker.setAttribute('markerUnits', 'strokeWidth');
 
-  const markerPath = document.createElementNS(SVG_NS, 'path');
-  markerPath.setAttribute('d', 'M 1 1 L 7 4 L 1 7');
-  markerPath.setAttribute('class', 'graph-arrowhead');
+    const markerPath = document.createElementNS(SVG_NS, 'path');
+    markerPath.setAttribute('d', 'M 1 1 L 7 4 L 1 7');
+    markerPath.setAttribute('class', 'graph-arrowhead');
+    markerPath.setAttribute('stroke', color);
 
-  marker.appendChild(markerPath);
-  defs.appendChild(marker);
+    marker.appendChild(markerPath);
+    defs.appendChild(marker);
+  });
   svg.appendChild(defs);
 
   const connectorsGroup = document.createElementNS(SVG_NS, 'g');
@@ -222,8 +226,14 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
     incomingEdges.get(edge.targetId).push(edge);
   });
 
+  const sourceColorIndex = new Map();
+  layout.orderedIds.forEach((sceneId, index) => {
+    sourceColorIndex.set(sceneId, index % CONNECTOR_COLORS.length);
+  });
   const getNodeLeft = position => COLUMN_GAP + position.column * (NODE_WIDTH + COLUMN_GAP);
-  const getNodeCenterX = position => getNodeLeft(position) + NODE_WIDTH / 2;
+  const getPortX = (position, edgeIndex, edgeCount) => (
+    getNodeLeft(position) + (NODE_WIDTH * (edgeIndex + 1)) / (edgeCount + 1)
+  );
   const getPositionSortValue = id => {
     const position = layout.positions.get(id);
     return position ? (position.column * 1000) + position.row : 0;
@@ -234,102 +244,82 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   incomingEdges.forEach(edgeList => {
     edgeList.sort((a, b) => getPositionSortValue(a.sourceId) - getPositionSortValue(b.sourceId));
   });
-  const getBundleStrokeWidth = routeCount => (
-    Math.min(3.4, 1.4 + (Math.max(1, routeCount) - 1) * 0.9)
-  );
-  const createPath = (pathData, className, withArrow = false, strokeWidth = null) => {
+  const laneGroups = new Map();
+  edges.forEach(edge => {
+    const sourcePosition = layout.positions.get(edge.sourceId);
+    const targetPosition = layout.positions.get(edge.targetId);
+    if (!sourcePosition || !targetPosition) return;
+    const key = `${sourcePosition.row}:${targetPosition.row}`;
+    if (!laneGroups.has(key)) laneGroups.set(key, []);
+    laneGroups.get(key).push(edge);
+  });
+  laneGroups.forEach(edgeList => {
+    edgeList.sort((a, b) => {
+      const sourceDiff = getPositionSortValue(a.sourceId) - getPositionSortValue(b.sourceId);
+      return sourceDiff || getPositionSortValue(a.targetId) - getPositionSortValue(b.targetId);
+    });
+  });
+  const createPath = (edge, pathData, colorIndex) => {
     const path = document.createElementNS(SVG_NS, 'path');
     path.setAttribute('d', pathData);
     path.classList.add('graph-connector');
-    if (strokeWidth !== null) {
-      path.style.strokeWidth = String(strokeWidth);
+    path.setAttribute('stroke', CONNECTOR_COLORS[colorIndex]);
+    path.setAttribute('marker-end', `url(#graph-arrowhead-${colorIndex})`);
+    if (edge.className) {
+      path.classList.add(edge.className);
     }
-    if (withArrow) {
-      path.setAttribute('marker-end', 'url(#graph-arrowhead)');
-    }
-    if (className) {
-      path.classList.add(className);
+    if (selectedId) {
+      if (edge.sourceId === selectedId || edge.targetId === selectedId) {
+        path.classList.add('graph-connector--related');
+      } else {
+        path.classList.add('graph-connector--dimmed');
+      }
     }
     connectorsGroup.appendChild(path);
   };
-  const createBundlePathData = (sourceX, sourceY, laneY, minX, maxX) => {
-    const radius = Math.min(10, Math.max(0, laneY - sourceY) / 2);
-    const segments = [];
-    if (minX < sourceX) {
-      const leftRadius = Math.min(radius, (sourceX - minX) / 2);
-      segments.push([
-        `M ${sourceX} ${sourceY}`,
-        `L ${sourceX} ${laneY - leftRadius}`,
-        `Q ${sourceX} ${laneY} ${sourceX - leftRadius} ${laneY}`,
-        `L ${minX} ${laneY}`,
-      ].join(' '));
+  const getLaneY = (sourceY, targetY, edge, laneKey) => {
+    const laneList = laneGroups.get(laneKey) ?? [edge];
+    const laneIndex = Math.max(0, laneList.indexOf(edge));
+    const gap = targetY - sourceY;
+    if (gap <= 0) {
+      return sourceY + ROW_GAP / 2 + laneIndex * 8;
     }
-    if (maxX > sourceX) {
-      const rightRadius = Math.min(radius, (maxX - sourceX) / 2);
-      segments.push([
-        `M ${sourceX} ${sourceY}`,
-        `L ${sourceX} ${laneY - rightRadius}`,
-        `Q ${sourceX} ${laneY} ${sourceX + rightRadius} ${laneY}`,
-        `L ${maxX} ${laneY}`,
-      ].join(' '));
-    }
-    if (!segments.length) {
-      segments.push(`M ${sourceX} ${sourceY} L ${sourceX} ${laneY}`);
-    }
-    return segments.join(' ');
+    const padding = Math.min(10, gap / 4);
+    return sourceY + padding + ((gap - padding * 2) * (laneIndex + 1)) / (laneList.length + 1);
   };
-  const createBranchPathData = (sourceX, targetX, laneY, targetY) => {
+  const createOrthogonalPathData = (sourceX, sourceY, targetX, targetY, laneY) => {
     const horizontal = targetX - sourceX;
-    const radius = Math.min(8, Math.abs(horizontal) / 2, Math.max(0, targetY - laneY) / 2);
-    if (radius < 1) {
-      return `M ${targetX} ${laneY} L ${targetX} ${targetY}`;
+    if (Math.abs(horizontal) < 4) {
+      return `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
     }
-    const direction = Math.sign(horizontal) || 1;
+    const direction = Math.sign(horizontal);
+    const verticalDown = Math.max(0, laneY - sourceY);
+    const verticalIn = Math.max(0, targetY - laneY);
+    const radius = Math.min(8, Math.abs(horizontal) / 2, verticalDown / 2, verticalIn / 2);
     return [
-      `M ${targetX - direction * radius} ${laneY}`,
+      `M ${sourceX} ${sourceY}`,
+      `L ${sourceX} ${laneY - radius}`,
+      `Q ${sourceX} ${laneY} ${sourceX + direction * radius} ${laneY}`,
+      `L ${targetX - direction * radius} ${laneY}`,
       `Q ${targetX} ${laneY} ${targetX} ${laneY + radius}`,
       `L ${targetX} ${targetY}`,
     ].join(' ');
   };
 
-  outgoingEdges.forEach((sourceEdges, sourceId) => {
-    const sourcePosition = layout.positions.get(sourceId);
-    if (!sourcePosition) return;
-    const sourceX = getNodeCenterX(sourcePosition);
+  edges.forEach(edge => {
+    const sourcePosition = layout.positions.get(edge.sourceId);
+    const targetPosition = layout.positions.get(edge.targetId);
+    if (!sourcePosition || !targetPosition) return;
+    const sourceList = outgoingEdges.get(edge.sourceId) ?? [edge];
+    const targetList = incomingEdges.get(edge.targetId) ?? [edge];
+    const sourceX = getPortX(sourcePosition, sourceList.indexOf(edge), sourceList.length);
     const sourceY = ROW_GAP + sourcePosition.row * (NODE_HEIGHT + ROW_GAP) + NODE_HEIGHT;
-    const edgesByTargetRow = new Map();
-    sourceEdges.forEach(edge => {
-      const targetPosition = layout.positions.get(edge.targetId);
-      if (!targetPosition) return;
-      if (!edgesByTargetRow.has(targetPosition.row)) {
-        edgesByTargetRow.set(targetPosition.row, []);
-      }
-      edgesByTargetRow.get(targetPosition.row).push(edge);
-    });
-
-    edgesByTargetRow.forEach((rowEdges, targetRow) => {
-      const firstTargetPosition = layout.positions.get(rowEdges[0]?.targetId);
-      if (!firstTargetPosition) return;
-      const targetY = ROW_GAP + targetRow * (NODE_HEIGHT + ROW_GAP);
-      const gap = targetY - sourceY;
-      const laneY = gap > 0 ? sourceY + Math.max(12, gap * 0.45) : sourceY + ROW_GAP / 2;
-      const targetXs = rowEdges.map(edge => {
-        const targetPosition = layout.positions.get(edge.targetId);
-        return targetPosition ? getNodeCenterX(targetPosition) : sourceX;
-      });
-      const minX = Math.min(sourceX, ...targetXs);
-      const maxX = Math.max(sourceX, ...targetXs);
-      const bundleWidth = getBundleStrokeWidth(rowEdges.length);
-
-      createPath(createBundlePathData(sourceX, sourceY, laneY, minX, maxX), 'graph-connector--bundle', false, bundleWidth);
-
-      rowEdges.forEach((edge, index) => {
-        const targetPosition = layout.positions.get(edge.targetId);
-        if (!targetPosition) return;
-        const targetX = targetXs[index] ?? getNodeCenterX(targetPosition);
-        createPath(createBranchPathData(sourceX, targetX, laneY, targetY), edge.className, true);
-      });
-    });
+    const targetX = getPortX(targetPosition, targetList.indexOf(edge), targetList.length);
+    const targetY = ROW_GAP + targetPosition.row * (NODE_HEIGHT + ROW_GAP);
+    const laneKey = `${sourcePosition.row}:${targetPosition.row}`;
+    const laneY = getLaneY(sourceY, targetY, edge, laneKey);
+    const colorIndex = sourceColorIndex.get(edge.sourceId) ?? 0;
+    createPath(edge, createOrthogonalPathData(sourceX, sourceY, targetX, targetY, laneY), colorIndex);
   });
 
   svg.appendChild(connectorsGroup);
