@@ -38,6 +38,11 @@ Follow `/server/editor` layout patterns:
 - Use icon + heading section headers for major inspector groups.
 - Avoid nested decorative cards. Use framed rows for repeated items, media rows,
   modals, and focused tools only.
+- Prefer flatter inspector rows over stacked cards. Repeated dialogue and choice
+  items should feel like light rows within one section, with minimal separators
+  and no extra card chrome around every control group.
+- Avoid divider-heavy layouts. Use spacing, alignment, subtle row backgrounds,
+  and clear labels before adding horizontal rules.
 
 ## Buttons And Actions
 
@@ -58,6 +63,12 @@ Use consistent action categories.
 - **Danger actions:** use red text/border/pale red background only for destructive
   operations. Confirm destructive actions that remove meaningful content, media,
   or existing assignments.
+- Keep related buttons aligned as a single action group. Buttons for one control
+  row should not drift to different edges unless there is a clear primary/secondary
+  split already used in `/server/editor`.
+- Place descriptive badges before action buttons in the same row. For example,
+  a generated-audio preset badge belongs before Replace/Play/Remove because it
+  describes the attached media rather than acting on it.
 
 Do not invent one-off button styles when an existing editor action pattern fits.
 
@@ -95,6 +106,9 @@ Do not mix unrelated icon styles in editor mode.
 
 - Inputs, selects, and textareas should use `.control`-like styling.
 - Labels should be concise and close to their controls.
+- Inline add/edit controls should align with their associated input. Use a compact
+  grid such as input column plus action-group column, and verify selector
+  specificity does not let broader row grid rules push buttons to the far edge.
 - Hints use muted text.
 - Errors use compact red text near the field.
 - Selects are for finite option sets.
@@ -115,6 +129,8 @@ Use `/server/editor` media-row patterns for editor media fields:
 - Right side: action group.
 - Typical actions: Attach/Replace, View, Play, Generate/Regenerate, Remove.
 - Use small badges or muted text for empty/attached status.
+- Keep media rows visually flatter than cards: pale row background, compact
+  spacing, aligned actions, and no nested panels inside the row.
 - Avoid large image/audio previews in the inspector unless the task is visual
   placement. For placement, use Scene Preview.
 
@@ -138,6 +154,9 @@ Accessibility requirements:
 - User/imported text is written with `textContent`, not HTML interpolation.
 - Menus and modal dialogs expose appropriate roles/labels.
 - Do not remove keyboard access while compacting UI.
+- If player/viewer code must change to support an editor-authored option, avoid
+  cosmetic churn. Preserve stable DOM for animated player elements during simple
+  state changes so CSS animations do not replay as flicker.
 
 ## RolePlayScene Rules
 
