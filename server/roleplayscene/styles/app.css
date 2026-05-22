@@ -576,7 +576,7 @@ button:disabled {
   outline: 3px solid rgba(249, 115, 22, 0.25);
 }
 .placeholder { border: 2px dashed var(--color-border); border-radius: var(--radius-md); padding: var(--space-lg); text-align: center; color: var(--color-text-muted); background: var(--color-surface); box-shadow: var(--shadow-subtle); }
-.stage { display: flex; align-items: center; justify-content: center; background: var(--color-surface-alt); color: var(--color-text); border-radius: var(--radius-md); overflow: hidden; box-shadow: var(--shadow-soft); max-height: 100%; width: 100%; min-height: 0; }
+.stage { display: flex; align-items: center; justify-content: center; background: var(--color-surface-alt); color: var(--color-text); border-radius: var(--radius-md); overflow: hidden; box-shadow: var(--shadow-soft); max-height: 100%; width: 100%; min-height: 0; position: relative; }
 .layout--play .stage {
   background: #f8fafc;
   border-radius: 0;
@@ -628,10 +628,30 @@ button:disabled {
   padding: clamp(0.75rem, 2vw, 1.5rem);
   pointer-events: none;
 }
-.theater-toolbar {
+.theater-side-rail {
   position: absolute;
   top: clamp(0.75rem, 1.5vw, 1rem);
+  bottom: clamp(0.75rem, 1.5vw, 1rem);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  pointer-events: none;
+  z-index: 10;
+}
+.theater-side-rail > * {
+  pointer-events: auto;
+}
+.theater-side-rail--left {
+  left: clamp(0.75rem, 1.5vw, 1rem);
+  align-items: flex-start;
+}
+.theater-side-rail--right {
   right: clamp(0.75rem, 1.5vw, 1rem);
+  align-items: flex-end;
+  justify-content: flex-start;
+}
+.theater-toolbar {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2xs);
@@ -781,10 +801,6 @@ button:disabled {
   cursor: not-allowed;
 }
 .theater-music-popover {
-  position: absolute;
-  top: clamp(0.75rem, 1.5vw, 1rem);
-  left: clamp(0.75rem, 1.5vw, 1rem);
-  z-index: 9;
   display: grid;
   gap: var(--space-xs);
   justify-items: start;
@@ -822,10 +838,6 @@ button:disabled {
   font-size: var(--font-size-sm);
 }
 .theater-history-drawer {
-  position: absolute;
-  left: clamp(0.75rem, 1.5vw, 1rem);
-  bottom: clamp(0.75rem, 1.5vw, 1rem);
-  z-index: 9;
   display: grid;
   gap: var(--space-xs);
   justify-items: start;
@@ -1882,9 +1894,17 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     align-items: flex-end;
     padding: var(--space-sm);
   }
-  .theater-toolbar {
+  .theater-side-rail {
+    top: var(--space-sm);
+    bottom: var(--space-sm);
+  }
+  .theater-side-rail--right {
     left: var(--space-sm);
     right: var(--space-sm);
+    align-items: stretch;
+  }
+  .theater-toolbar {
+    width: 100%;
     justify-content: center;
     overflow-x: auto;
     border-radius: var(--radius-md);

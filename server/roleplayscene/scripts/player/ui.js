@@ -554,6 +554,10 @@ export function renderPlayerUI({
     : 'player-stage-frame player-stage-frame--empty player-stage-frame--theater';
   let theaterOverlay = null;
   let speechBubbleOverlay = null;
+  let theaterControlRail = null;
+
+  const theaterUtilityRail = document.createElement('div');
+  theaterUtilityRail.className = 'theater-side-rail theater-side-rail--left';
 
   if (scene.image?.objectUrl) {
     const img = document.createElement('img');
@@ -575,8 +579,15 @@ export function renderPlayerUI({
     theaterOverlay = document.createElement('div');
     theaterOverlay.className = 'theater-overlay';
     stageFrame.appendChild(theaterOverlay);
+
+    theaterControlRail = document.createElement('div');
+    theaterControlRail.className = 'theater-side-rail theater-side-rail--right';
   }
   stageEl.appendChild(stageFrame);
+  stageEl.appendChild(theaterUtilityRail);
+  if (theaterControlRail) {
+    stageEl.appendChild(theaterControlRail);
+  }
 
   const appendBackgroundAudioUtility = () => {
     if (!backgroundAudioControls) return;
@@ -665,7 +676,7 @@ export function renderPlayerUI({
 
     musicPanel.appendChild(muteButton);
     musicWrapper.append(musicButton, musicPanel);
-    stageFrame.appendChild(musicWrapper);
+    theaterUtilityRail.appendChild(musicWrapper);
   };
 
   const appendHistoryDrawer = () => {
@@ -775,7 +786,7 @@ export function renderPlayerUI({
 
     drawer.appendChild(historyList);
     historyWrapper.append(toggleButton, drawer);
-    stageFrame.appendChild(historyWrapper);
+    theaterUtilityRail.appendChild(historyWrapper);
   };
 
   appendBackgroundAudioUtility();
@@ -1065,6 +1076,9 @@ export function renderPlayerUI({
   function renderTheaterState() {
     if (!theaterOverlay) return;
     theaterOverlay.innerHTML = '';
+    if (theaterControlRail) {
+      theaterControlRail.innerHTML = '';
+    }
     clampActivePage();
     const activeEntry = getCurrentEntry();
     const pages = getEntryPages(activeEntry);
@@ -1144,7 +1158,11 @@ export function renderPlayerUI({
     toolbar.appendChild(nextButton);
     toolbar.appendChild(playAllButton);
     toolbar.appendChild(choicesButton);
-    theaterOverlay.appendChild(toolbar);
+    if (theaterControlRail) {
+      theaterControlRail.appendChild(toolbar);
+    } else {
+      theaterOverlay.appendChild(toolbar);
+    }
 
     if (!choicesOpen && !endOverlayOpen && activeEntry) {
       const dialogueCard = document.createElement('div');
