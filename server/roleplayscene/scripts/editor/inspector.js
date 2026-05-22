@@ -106,13 +106,19 @@ function createMediaRow({ label, status, input, inputLabel, actions = [] }) {
 
   const actionGroup = document.createElement('div');
   actionGroup.className = 'rps-media-row__actions';
+  const isLeadingAction = action => (
+    typeof action.classList?.contains === 'function' && action.classList.contains('audio-info__badge')
+  );
+  const leadingActions = actions.filter(isLeadingAction);
+  const trailingActions = actions.filter(action => !isLeadingAction(action));
+  leadingActions.forEach(action => actionGroup.appendChild(action));
   if (input) {
     input.classList.add('rps-media-row__file');
     const trigger = createActionButton(inputLabel || label);
     trigger.addEventListener('click', () => input.click());
     actionGroup.append(trigger, input);
   }
-  actions.forEach(action => actionGroup.appendChild(action));
+  trailingActions.forEach(action => actionGroup.appendChild(action));
 
   row.append(meta, actionGroup);
   return row;

@@ -1100,6 +1100,9 @@ button:disabled {
   max-width: 18rem;
 }
 .dialogue-speaker-add {
+  grid-template-columns: minmax(12rem, 18rem) auto;
+  justify-content: start;
+  align-items: end;
   padding: var(--space-sm);
   border-radius: var(--radius-md);
   background: #f8fafc;
@@ -1107,8 +1110,12 @@ button:disabled {
 .dialogue-speaker-add__actions {
   display: flex;
   justify-content: flex-end;
+  align-items: end;
   gap: var(--space-xs);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+.dialogue-speaker-add__actions .rps-editor-action {
+  min-height: 2.65rem;
 }
 .dialogue-line .rps-media-row__meta {
   gap: 0;
@@ -1526,6 +1533,13 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   .rps-media-row__actions,
   .rps-inspector-section--media .rps-media-row__actions,
   .speech-bubble-anchor-list__actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .dialogue-speaker-add {
+    grid-template-columns: 1fr;
+  }
+  .dialogue-speaker-add__actions {
     justify-content: flex-start;
     flex-wrap: wrap;
   }
