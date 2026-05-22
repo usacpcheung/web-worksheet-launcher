@@ -413,7 +413,7 @@ export function renderInspector(hostEl, project, scene, actions) {
   }
 
   scene.choices.forEach((choice, index) => {
-    const choiceParts = createLightRow(`${translate('inspector.choices.labelPlaceholder')} ${index + 1}`, 'choice-row');
+    const choiceParts = createLightRow(translate('inspector.choices.rowLabel', { index: index + 1 }), 'choice-row');
     const choiceRow = choiceParts.row;
 
     const labelInput = document.createElement('textarea');
@@ -424,7 +424,7 @@ export function renderInspector(hostEl, project, scene, actions) {
     attachComposedValueListener(labelInput, (value) => {
       actions.onUpdateChoice?.(scene.id, index, { label: value });
     });
-    choiceParts.body.appendChild(createField(translate('inspector.choices.labelPlaceholder'), labelInput));
+    choiceParts.body.appendChild(createField(translate('inspector.choices.textLabel'), labelInput));
 
     const cueCardInput = document.createElement('textarea');
     cueCardInput.placeholder = translate('inspector.choices.cueCardPlaceholder');

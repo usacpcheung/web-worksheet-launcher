@@ -221,17 +221,18 @@ export default {
       "empty": "未選擇圖片。",
       "attached": "已附加：{name}",
       "fallbackName": "未命名圖片",
-      "remove": "移除圖片"
+      "remove": "移除"
     },
     "background": {
       "label": "背景音樂",
       "attached": "已附加：{name}",
       "fallbackName": "未命名音軌",
       "empty": "未選擇背景音樂。",
-      "remove": "移除背景音樂"
+      "remove": "移除"
     },
     "speechBubble": {
       "title": "對話泡泡模式",
+      "enableLabel": "啟用",
       "scenePreviewHint": "請在場景預覽中放置與移動定位點。",
       "anchorLimit": "已達對話泡泡定位點上限（{max}）。",
       "anchorCount": "已使用 {count} / {max} 個定位點。",
@@ -256,7 +257,7 @@ export default {
       "textLabel": "台詞文字",
       "audioLabel": "音訊（可選 mp3）",
       "audioAttached": "已附加：{name}",
-      "removeAudio": "移除音訊",
+      "removeAudio": "移除",
       "playAudioPreview": "播放",
       "stopAudioPreview": "停止",
       "audioPreviewFailed": "無法播放此音訊預覽。",
@@ -281,12 +282,14 @@ export default {
         "cuteGirl": "可愛女聲",
         "gentleLady": "溫柔女聲"
       },
-      "deleteLine": "刪除台詞",
+      "deleteLine": "移除",
       "addLine": "新增台詞"
     },
     "choices": {
       "title": "選項（最多 3 個）",
       "empty": "尚無選項。",
+      "rowLabel": "選項 {index}",
+      "textLabel": "選項文字",
       "labelPlaceholder": "選項文字",
       "cueCardLabel": "提示卡文字",
       "cueCardPlaceholder": "可選的提示卡文字",

@@ -221,17 +221,18 @@ export default {
       "empty": "No image selected.",
       "attached": "Attached: {name}",
       "fallbackName": "Untitled image",
-      "remove": "Remove image"
+      "remove": "Remove"
     },
     "background": {
       "label": "Background music",
       "attached": "Attached: {name}",
       "fallbackName": "Untitled track",
       "empty": "No background track selected.",
-      "remove": "Remove background music"
+      "remove": "Remove"
     },
     "speechBubble": {
       "title": "Speech bubble mode",
+      "enableLabel": "Enable",
       "scenePreviewHint": "Place and move anchors in Scene Preview.",
       "anchorLimit": "Speech bubble anchor limit reached ({max}).",
       "anchorCount": "{count} of {max} anchors used.",
@@ -256,7 +257,7 @@ export default {
       "textLabel": "Dialogue text",
       "audioLabel": "Audio (optional mp3)",
       "audioAttached": "Attached: {name}",
-      "removeAudio": "Remove audio",
+      "removeAudio": "Remove",
       "playAudioPreview": "Play",
       "stopAudioPreview": "Stop",
       "audioPreviewFailed": "Unable to play this audio preview.",
@@ -281,13 +282,15 @@ export default {
         "cuteGirl": "Cute Girl",
         "gentleLady": "Gentle Lady"
       },
-      "deleteLine": "Delete line",
+      "deleteLine": "Remove",
       "addLine": "Add line"
     },
     "choices": {
       "title": "Choices (max 3)",
       "empty": "No choices yet.",
-      "labelPlaceholder": "Choice label",
+      "rowLabel": "Choice {index}",
+      "textLabel": "Choice text",
+      "labelPlaceholder": "Choice text",
       "cueCardLabel": "Cue card text",
       "cueCardPlaceholder": "Optional cue card text",
       "destinationPlaceholder": "Select destination",

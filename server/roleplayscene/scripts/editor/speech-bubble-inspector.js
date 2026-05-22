@@ -24,7 +24,7 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
   const speechToggle = document.createElement('label');
   speechToggle.className = 'field speech-bubble-editor__toggle';
   const speechToggleText = document.createElement('span');
-  speechToggleText.textContent = translate('inspector.speechBubble.title');
+  speechToggleText.textContent = translate('inspector.speechBubble.enableLabel');
   speechToggle.appendChild(speechToggleText);
   const speechCheckbox = document.createElement('input');
   speechCheckbox.type = 'checkbox';
