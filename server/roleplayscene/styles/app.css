@@ -1766,23 +1766,23 @@ button:disabled {
 .player-choices button {
   padding: var(--space-sm) var(--space-md);
   font-size: var(--font-size-base);
-  background: var(--color-accent-soft);
+  background: var(--color-surface);
   color: var(--color-text);
-  border-color: var(--color-accent-soft);
-  box-shadow: var(--shadow-soft);
+  border-color: var(--color-border);
+  box-shadow: var(--shadow-subtle);
 }
 .player-choices button:hover:not(:disabled) {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: #fff;
+  background: var(--color-surface-alt);
+  border-color: var(--color-border);
+  color: var(--color-text);
 }
 .player-choices button:active:not(:disabled) {
-  background: var(--color-accent-strong);
-  border-color: var(--color-accent-strong);
-  color: #fff;
+  background: var(--color-border-subtle);
+  border-color: var(--color-border);
+  color: var(--color-text);
 }
 .player-choices button:disabled {
-  background: var(--color-border-subtle);
+  background: var(--color-surface-alt);
   color: var(--color-text-muted);
   border-color: var(--color-border-subtle);
 }
@@ -1807,23 +1807,30 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.5rem;
-  padding: var(--space-xs);
+  width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   box-shadow: var(--shadow-subtle);
 }
 .player-choice-cue-trigger:hover:not(:disabled) {
   background: var(--color-surface-alt);
 }
+.player-choice-cue-trigger:active:not(:disabled) {
+  background: var(--color-border-subtle);
+  border-color: var(--color-border);
+}
 .player-choice-cue-trigger[aria-expanded="true"] {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.25), var(--shadow-subtle);
+  border-color: var(--color-accent-soft);
+  background: #eff6ff;
+  color: var(--color-accent-strong);
 }
 .player-choice-cue-icon {
-  font-size: 1rem;
-  line-height: 1;
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: 0 0 auto;
 }
 .player-cue-overlay {
   position: fixed;

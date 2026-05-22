@@ -601,7 +601,6 @@ export function renderSpeechBubblePlayerUI({
       onChoice,
       openCueCard,
       beforeChoice: stopDialoguePlayback,
-      cueIconText: '?',
     });
   }
 

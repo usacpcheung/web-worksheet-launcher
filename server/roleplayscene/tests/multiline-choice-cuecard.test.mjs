@@ -177,6 +177,8 @@ assert.equal(choiceLabel.textContent, multilineLabel, 'player choice label shoul
 
 const cueTrigger = findElement(stageEl, el => el.className === 'player-choice-cue-trigger');
 assert(cueTrigger, 'cue card trigger should render for cue text');
+const cueIcon = findElement(cueTrigger, el => String(el.className || '').includes('player-choice-cue-icon') && String(el.className || '').includes('theater-icon'));
+assert(cueIcon, 'cue trigger should use the standard SVG cue icon classes');
 cueTrigger.dispatchEvent('click');
 
 const cueBody = findElement(stageEl, el => el.className === 'player-cue-body');

@@ -1197,7 +1197,6 @@ export function renderPlayerUI({
       : 'theater-choice-panel';
     renderNavigationControls(choicesPanel, {
       beforeChoice: stopTheaterPlayback,
-      cueIconText: '?',
     });
     theaterOverlay.appendChild(choicesPanel);
   }
