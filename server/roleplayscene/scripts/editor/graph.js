@@ -235,6 +235,11 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   const getPortX = (position, edgeIndex, edgeCount) => (
     getNodeLeft(position) + (NODE_WIDTH * (edgeIndex + 1)) / (edgeCount + 1)
   );
+  const getSidePortX = (position, side, index = 0) => {
+    const centerX = getNodeCenterX(position);
+    const step = Math.min(48, NODE_WIDTH / 4);
+    return centerX + side * step * (index + 1);
+  };
   const getPositionSortValue = id => {
     const position = layout.positions.get(id);
     return position ? (position.column * 1000) + position.row : 0;
@@ -309,26 +314,65 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   const createDirectPathData = (sourcePosition, sourceY, targetPosition, targetY) => {
     const sourceCenterX = getNodeCenterX(sourcePosition);
     const targetCenterX = getNodeCenterX(targetPosition);
-    if (Math.abs(sourceCenterX - targetCenterX) <= 24) {
-      return `M ${sourceCenterX} ${sourceY} L ${targetCenterX} ${targetY}`;
-    }
-    return null;
+    return `M ${sourceCenterX} ${sourceY} L ${targetCenterX} ${targetY}`;
   };
+  const edgeRouting = new Map();
+  outgoingEdges.forEach((sourceEdges, sourceId) => {
+    const sourcePosition = layout.positions.get(sourceId);
+    if (!sourcePosition) return;
+    const sourceCenterX = getNodeCenterX(sourcePosition);
+    const directCandidates = sourceEdges
+      .map(edge => ({ edge, targetPosition: layout.positions.get(edge.targetId) }))
+      .filter(item => (
+        item.targetPosition
+        && item.targetPosition.row > sourcePosition.row
+        && Math.abs(getNodeCenterX(item.targetPosition) - sourceCenterX) <= 24
+      ))
+      .sort((a, b) => (
+        Math.abs(getNodeCenterX(a.targetPosition) - sourceCenterX)
+        - Math.abs(getNodeCenterX(b.targetPosition) - sourceCenterX)
+      ));
+    const directEdge = directCandidates[0]?.edge ?? null;
+    if (directEdge) {
+      edgeRouting.set(directEdge, { direct: true });
+    }
+    const remainingEdges = sourceEdges.filter(edge => edge !== directEdge);
+    const leftEdges = [];
+    const rightEdges = [];
+    remainingEdges.forEach(edge => {
+      const targetPosition = layout.positions.get(edge.targetId);
+      const targetCenterX = targetPosition ? getNodeCenterX(targetPosition) : sourceCenterX;
+      if (targetCenterX < sourceCenterX) {
+        leftEdges.push(edge);
+      } else {
+        rightEdges.push(edge);
+      }
+    });
+    leftEdges.sort((a, b) => getPositionSortValue(b.targetId) - getPositionSortValue(a.targetId));
+    rightEdges.sort((a, b) => getPositionSortValue(a.targetId) - getPositionSortValue(b.targetId));
+    leftEdges.forEach((edge, index) => {
+      edgeRouting.set(edge, { sourceX: getSidePortX(sourcePosition, -1, index) });
+    });
+    rightEdges.forEach((edge, index) => {
+      edgeRouting.set(edge, { sourceX: getSidePortX(sourcePosition, 1, index) });
+    });
+  });
 
   edges.forEach(edge => {
     const sourcePosition = layout.positions.get(edge.sourceId);
     const targetPosition = layout.positions.get(edge.targetId);
     if (!sourcePosition || !targetPosition) return;
-    const sourceList = outgoingEdges.get(edge.sourceId) ?? [edge];
     const targetList = incomingEdges.get(edge.targetId) ?? [edge];
-    const sourceX = getPortX(sourcePosition, sourceList.indexOf(edge), sourceList.length);
+    const route = edgeRouting.get(edge);
+    const sourceList = outgoingEdges.get(edge.sourceId) ?? [edge];
+    const sourceX = route?.sourceX ?? getPortX(sourcePosition, sourceList.indexOf(edge), sourceList.length);
     const sourceY = ROW_GAP + sourcePosition.row * (NODE_HEIGHT + ROW_GAP) + NODE_HEIGHT;
     const targetX = getPortX(targetPosition, targetList.indexOf(edge), targetList.length);
     const targetY = ROW_GAP + targetPosition.row * (NODE_HEIGHT + ROW_GAP);
     const laneKey = `${sourcePosition.row}:${targetPosition.row}`;
     const laneY = getLaneY(sourceY, targetY, edge, laneKey);
     const colorIndex = sourceColorIndex.get(edge.sourceId) ?? 0;
-    const directPath = createDirectPathData(sourcePosition, sourceY, targetPosition, targetY);
+    const directPath = route?.direct ? createDirectPathData(sourcePosition, sourceY, targetPosition, targetY) : null;
     createPath(edge, directPath || createOrthogonalPathData(sourceX, sourceY, targetX, targetY, laneY), colorIndex);
   });
 
