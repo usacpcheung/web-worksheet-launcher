@@ -169,6 +169,9 @@ button:disabled {
   box-shadow: none;
   white-space: nowrap;
 }
+.toolbar [hidden] {
+  display: none;
+}
 .toolbar__mode button {
   min-height: 2rem;
   border: 0;
