@@ -266,10 +266,11 @@ function collectText(root) {
   return `${own}${(root.children || []).map(collectText).join('')}`;
 }
 
-function render(scene, onChoice = () => {}) {
+function render(scene, onChoice = () => {}, projectOverrides = {}) {
   const stageEl = createRoot();
   const uiEl = createRoot();
   const project = {
+    ...projectOverrides,
     scenes: [
       scene,
       { id: 'next-scene', type: SceneType.END, dialogue: [{ text: 'The end' }], choices: [] },
@@ -292,6 +293,7 @@ try {
     dialogue: [
       {
         text: 'Hello from the anchor.',
+        speakerId: 'speaker-kelvin',
         audio: { objectUrl: 'line-1.mp3' },
         bubble: { mode: BubbleMode.ANCHOR, anchorId: 'anchor-a' },
       },
@@ -307,7 +309,7 @@ try {
     choices: [],
   };
 
-  let { stageEl, uiEl } = render(scene);
+  let { stageEl, uiEl } = render(scene, () => {}, { speakers: [{ id: 'speaker-kelvin', name: 'Kelvin' }] });
   assert.ok(findByClass(stageEl, 'speech-play-overlay'), 'Bubble-enabled scenes should render an image overlay');
   assert.ok(findByClass(uiEl, 'speech-play-panel'), 'Bubble-enabled scenes should render the speech controller');
   assert.equal(findByClass(uiEl, 'player-dialogue'), null, 'Bubble-enabled scenes should not render the normal dialogue list');
@@ -322,6 +324,7 @@ try {
   assert.match(bubble.style.left, /px$/, 'Anchor bubble should be positioned in stage pixels');
   assert.match(bubble.style.top, /px$/, 'Anchor bubble should be positioned in stage pixels');
   assert.match(collectText(bubble), /Hello from the anchor/);
+  assert.match(collectText(bubble), /Kelvin:/, 'Speech bubble should render assigned speaker name');
 
   findButtonByText(uiEl, translate('player.speechBubble.next')).dispatchEvent('click');
   bubble = findByClass(stageEl, 'speech-play-bubble--center');
@@ -333,11 +336,12 @@ try {
   scene = {
     id: 'scene-normal',
     type: SceneType.INTERMEDIATE,
-    dialogue: [{ text: 'Normal dialogue remains visible.' }],
+    dialogue: [{ text: 'Normal dialogue remains visible.', speakerId: 'speaker-sam' }],
     choices: [],
   };
-  ({ uiEl } = render(scene));
+  ({ uiEl } = render(scene, () => {}, { speakers: [{ id: 'speaker-sam', name: 'Sam' }] }));
   assert.ok(findByClass(uiEl, 'player-dialogue'), 'Non-bubble scenes should keep the existing dialogue list');
+  assert.match(collectText(uiEl), /Sam:/, 'Normal dialogue should render assigned speaker name');
 
   const pages = splitSpeechBubbleText(
     'This is a longer line. It should split into multiple readable speech bubble pages for the player controls.',

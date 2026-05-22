@@ -339,6 +339,13 @@ function createDialogueAudioController() {
   };
 }
 
+function getSpeakerName(project, line) {
+  if (!line?.speakerId) return '';
+  const speakers = Array.isArray(project?.speakers) ? project.speakers : [];
+  const speaker = speakers.find(candidate => candidate.id === line.speakerId);
+  return String(speaker?.name || '').trim();
+}
+
 export function renderPlayerUI({
   stageEl,
   uiEl,
@@ -830,9 +837,21 @@ export function renderPlayerUI({
     bubble.className = 'player-dialogue-bubble';
     lineContainer.appendChild(bubble);
 
+    const content = document.createElement('div');
+    content.className = 'player-dialogue-content';
+    bubble.appendChild(content);
+
+    const speakerName = getSpeakerName(project, line);
+    if (speakerName) {
+      const speaker = document.createElement('p');
+      speaker.className = 'player-dialogue-speaker';
+      speaker.textContent = `${speakerName}:`;
+      content.appendChild(speaker);
+    }
+
     const text = document.createElement('p');
     text.textContent = line.text || translate('player.dialogue.lineFallback', { index: index + 1 });
-    bubble.appendChild(text);
+    content.appendChild(text);
 
     if (line.audio?.objectUrl) {
       const playButton = document.createElement('button');

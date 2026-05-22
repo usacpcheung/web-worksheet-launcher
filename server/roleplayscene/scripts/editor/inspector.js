@@ -8,6 +8,8 @@ import {
   getRolePlaySceneT2ATextState,
 } from '../t2a-presets.js';
 
+const ADD_SPEAKER_VALUE = '__add-speaker__';
+
 function attachComposedValueListener(field, callback) {
   let composing = false;
   let lastValue = field.value;
@@ -273,10 +275,70 @@ export function renderInspector(hostEl, project, scene, actions) {
   hostEl.appendChild(renderSpeechBubbleEditorSection(scene, actions));
 
   const dialogue = createInspectorSection(translate('inspector.dialogue.title'), 'dialogue', 'dialogue-editor');
+  const speakers = Array.isArray(project.speakers) ? project.speakers : [];
 
   scene.dialogue.forEach((line, index) => {
     const lineParts = createLightRow(translate('inspector.dialogue.lineLabel', { index: index + 1 }), 'dialogue-line');
     const lineField = lineParts.row;
+
+    const speakerSelect = document.createElement('select');
+    speakerSelect.dataset.focusKey = `dialogue-speaker-${scene.id}-${index}`;
+    const noSpeakerOption = document.createElement('option');
+    noSpeakerOption.value = '';
+    noSpeakerOption.textContent = translate('inspector.dialogue.speakerNone');
+    speakerSelect.appendChild(noSpeakerOption);
+    speakers.forEach((speaker) => {
+      const option = document.createElement('option');
+      option.value = speaker.id;
+      option.textContent = speaker.name;
+      speakerSelect.appendChild(option);
+    });
+    if (line.speakerId && !speakers.some(speaker => speaker.id === line.speakerId)) {
+      const missingOption = document.createElement('option');
+      missingOption.value = line.speakerId;
+      missingOption.textContent = translate('inspector.dialogue.speakerMissing');
+      speakerSelect.appendChild(missingOption);
+    }
+    const addSpeakerOption = document.createElement('option');
+    addSpeakerOption.value = ADD_SPEAKER_VALUE;
+    addSpeakerOption.textContent = translate('inspector.dialogue.speakerAdd');
+    speakerSelect.appendChild(addSpeakerOption);
+    speakerSelect.value = line.speakerId || '';
+    speakerSelect.addEventListener('change', () => {
+      if (speakerSelect.value === ADD_SPEAKER_VALUE) {
+        actions.onStartCreateSpeakerForDialogue?.(scene.id, index);
+        return;
+      }
+      actions.onUpdateDialogueSpeaker?.(scene.id, index, speakerSelect.value || null);
+    });
+    lineParts.body.appendChild(createField(translate('inspector.dialogue.speakerLabel'), speakerSelect, 'dialogue-speaker-field'));
+
+    const speakerDraft = actions.getSpeakerDraftForDialogue?.(scene.id, index);
+    if (speakerDraft != null) {
+      const speakerAddRow = document.createElement('div');
+      speakerAddRow.className = 'dialogue-speaker-add';
+      const speakerNameInput = document.createElement('input');
+      speakerNameInput.type = 'text';
+      speakerNameInput.value = speakerDraft;
+      speakerNameInput.maxLength = 60;
+      speakerNameInput.placeholder = translate('inspector.dialogue.speakerNamePlaceholder');
+      speakerNameInput.dataset.focusKey = `dialogue-speaker-new-${scene.id}-${index}`;
+      attachComposedValueListener(speakerNameInput, (value) => {
+        actions.onUpdateSpeakerDraftForDialogue?.(scene.id, index, value);
+      });
+      speakerAddRow.appendChild(createField(translate('inspector.dialogue.speakerNameLabel'), speakerNameInput));
+
+      const speakerAddActions = document.createElement('div');
+      speakerAddActions.className = 'dialogue-speaker-add__actions';
+      const addSpeakerBtn = createActionButton(translate('inspector.dialogue.speakerAddConfirm'), 'neutral');
+      addSpeakerBtn.disabled = !String(speakerDraft || '').trim();
+      addSpeakerBtn.addEventListener('click', () => actions.onCommitSpeakerForDialogue?.(scene.id, index));
+      const cancelSpeakerBtn = createActionButton(translate('inspector.dialogue.speakerAddCancel'), 'neutral');
+      cancelSpeakerBtn.addEventListener('click', () => actions.onCancelCreateSpeakerForDialogue?.(scene.id, index));
+      speakerAddActions.append(addSpeakerBtn, cancelSpeakerBtn);
+      speakerAddRow.appendChild(speakerAddActions);
+      lineParts.body.appendChild(speakerAddRow);
+    }
 
     const textarea = document.createElement('textarea');
     textarea.value = line.text || '';

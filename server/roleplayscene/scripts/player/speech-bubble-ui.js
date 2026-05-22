@@ -206,6 +206,25 @@ function hasSpeechLineContent(line) {
   return Boolean(String(line?.text || '').trim() || line?.audio?.objectUrl);
 }
 
+function getSpeakerName(project, line) {
+  if (!line?.speakerId) return '';
+  const speakers = Array.isArray(project?.speakers) ? project.speakers : [];
+  const speaker = speakers.find(candidate => candidate.id === line.speakerId);
+  return String(speaker?.name || '').trim();
+}
+
+function appendSpeechBubbleText(host, page, speakerName = '') {
+  if (speakerName) {
+    const speaker = document.createElement('p');
+    speaker.className = 'speech-play-speaker';
+    speaker.textContent = `${speakerName}:`;
+    host.appendChild(speaker);
+  }
+  const text = document.createElement('p');
+  text.textContent = page;
+  host.appendChild(text);
+}
+
 export function renderSpeechBubblePlayerUI({
   speechBubbleOverlay,
   speechPanel,
@@ -453,6 +472,7 @@ export function renderSpeechBubblePlayerUI({
     const page = pages[Math.max(0, Math.min(activePageIndex, pages.length - 1))] || '';
 
     if (activeEntry && speechBubbleOverlay) {
+      const speakerName = getSpeakerName(project, activeEntry.line);
       const anchor = getSpeechBubbleAnchor(scene, activeEntry.line);
       const fallbackAnchor = activeEntry.line.bubble?.x != null || activeEntry.line.bubble?.y != null
         ? { x: activeEntry.line.bubble?.x ?? 0.5, y: activeEntry.line.bubble?.y ?? 0.5 }
@@ -476,9 +496,7 @@ export function renderSpeechBubblePlayerUI({
 
         const textLayer = document.createElement('div');
         textLayer.className = 'speech-play-bubble-text';
-        const text = document.createElement('p');
-        text.textContent = page;
-        textLayer.appendChild(text);
+        appendSpeechBubbleText(textLayer, page, speakerName);
         if (pages.length > 1) {
           const pageStatus = document.createElement('span');
           pageStatus.className = 'speech-play-page-status';
@@ -495,9 +513,7 @@ export function renderSpeechBubblePlayerUI({
         const bubble = document.createElement('div');
         bubble.className = 'speech-play-bubble speech-play-bubble--center';
         bubble.classList.toggle('is-playing', speechAudioActive);
-        const text = document.createElement('p');
-        text.textContent = page;
-        bubble.appendChild(text);
+        appendSpeechBubbleText(bubble, page, speakerName);
         if (pages.length > 1) {
           const pageStatus = document.createElement('span');
           pageStatus.className = 'speech-play-page-status';

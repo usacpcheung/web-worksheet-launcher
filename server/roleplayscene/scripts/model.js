@@ -56,9 +56,17 @@ function normaliseSpeechBubble(value = {}) {
   };
 }
 
+function normaliseSpeaker(speaker = {}) {
+  return {
+    id: String(speaker.id ?? newId('speaker')),
+    name: String(speaker.name ?? '').trim(),
+  };
+}
+
 function normaliseDialogueLine(line = {}) {
   return {
     text: line.text ?? '',
+    speakerId: line.speakerId == null || line.speakerId === '' ? null : String(line.speakerId),
     audio: line.audio
       ? {
         name: line.audio.name ?? '',
@@ -141,6 +149,7 @@ export function createProject(options = {}) {
 
   return {
     meta,
+    speakers: Array.isArray(options.speakers) ? options.speakers.map(normaliseSpeaker).filter(speaker => speaker.name) : [],
     scenes,
     assets: Array.isArray(options.assets) ? options.assets.slice() : [],
   };

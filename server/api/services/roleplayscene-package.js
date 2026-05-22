@@ -235,6 +235,9 @@ function validateRolePlaySceneProjectForPlay(project) {
 
   const scenes = project.scenes;
   const sceneIds = new Set(scenes.map(scene => scene?.id).filter(Boolean));
+  const speakerIds = new Set((Array.isArray(project.speakers) ? project.speakers : [])
+    .map(speaker => speaker?.id)
+    .filter(Boolean));
   const seenSceneIds = new Set();
   for (const [index, scene] of scenes.entries()) {
     const sceneId = typeof scene?.id === 'string' ? scene.id.trim() : '';
@@ -294,6 +297,12 @@ function validateRolePlaySceneProjectForPlay(project) {
     if (scene?.type === 'end' && sceneChoices.length > 0) {
       warnings.push(`End scene "${sceneId}" should not have outgoing choices.`);
     }
+
+    (Array.isArray(scene?.dialogue) ? scene.dialogue : []).forEach((line, idx) => {
+      if (line?.speakerId && !speakerIds.has(line.speakerId)) {
+        warnings.push(`Dialogue line ${idx + 1} in scene "${sceneId}" is assigned to a missing speaker.`);
+      }
+    });
   }
 
   if (startScenes.length === 1) {
