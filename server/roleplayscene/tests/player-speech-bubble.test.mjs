@@ -266,7 +266,7 @@ function collectText(root) {
   return `${own}${(root.children || []).map(collectText).join('')}`;
 }
 
-function render(scene, onChoice = () => {}, projectOverrides = {}) {
+function render(scene, onChoice = () => {}, projectOverrides = {}, playerOptions = {}) {
   const stageEl = createRoot();
   const uiEl = createRoot();
   const project = {
@@ -276,7 +276,7 @@ function render(scene, onChoice = () => {}, projectOverrides = {}) {
       { id: 'next-scene', type: SceneType.END, dialogue: [{ text: 'The end' }], choices: [] },
     ],
   };
-  const cleanup = renderPlayerUI({ stageEl, uiEl, project, scene, onChoice });
+  const cleanup = renderPlayerUI({ stageEl, uiEl, project, scene, onChoice, ...playerOptions });
   return { stageEl, uiEl, cleanup };
 }
 
@@ -311,7 +311,8 @@ try {
 
   let { stageEl, uiEl } = render(scene, () => {}, { speakers: [{ id: 'speaker-kelvin', name: 'Kelvin' }] });
   assert.ok(findByClass(stageEl, 'speech-play-overlay'), 'Bubble-enabled scenes should render an image overlay');
-  assert.ok(findByClass(stageEl, 'speech-play-panel'), 'Bubble-enabled scenes should render the speech controller');
+  assert.ok(findByClass(stageEl, 'theater-toolbar'), 'Bubble-enabled scenes should render the shared theater toolbar');
+  assert.equal(findByClass(stageEl, 'speech-play-panel'), null, 'Bubble-enabled scenes should not render the old speech controller panel');
   assert.equal(findByClass(uiEl, 'player-dialogue'), null, 'Bubble-enabled scenes should not render the normal dialogue list');
 
   findButtonByText(stageEl, translate('player.speechBubble.play')).dispatchEvent('click');
@@ -395,9 +396,9 @@ try {
     choices: [],
   };
   ({ stageEl, uiEl } = render(scene));
-  assert.ok(findByClass(stageEl, 'speech-play-page-controls'), 'Paged speech bubbles should show page controls');
+  assert.ok(findByClass(stageEl, 'theater-toolbar'), 'Paged speech bubbles should use the shared theater toolbar');
   const firstPageText = collectText(findByClass(stageEl, 'speech-play-bubble'));
-  findButtonByText(stageEl, translate('player.speechBubble.nextPage')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
   assert.notEqual(collectText(findByClass(stageEl, 'speech-play-bubble')), firstPageText, 'Manual page next should change the visible page');
 
   resetSpies();
@@ -410,8 +411,35 @@ try {
     choices: [{ label: 'Go next', nextSceneId: 'next-scene' }],
   };
   ({ stageEl, uiEl } = render(scene, (nextSceneId) => { chosenSceneId = nextSceneId; }));
+  findButtonByText(stageEl, translate('player.toolbar.choices')).dispatchEvent('click');
+  assert.ok(findByClass(stageEl, 'theater-choice-panel'), 'Bubble mode should render choices in the theater choice overlay');
   findButtonByText(stageEl, 'Go next').dispatchEvent('click');
   assert.equal(chosenSceneId, 'next-scene', 'Bubble mode should keep scene choices available');
+
+  resetSpies();
+  scene = {
+    id: 'scene-utilities',
+    type: SceneType.INTERMEDIATE,
+    speechBubble: { enabled: true, anchors: [] },
+    dialogue: [{ text: 'Utilities stay beside bubble playback.', bubble: { mode: BubbleMode.CENTER } }],
+    choices: [],
+  };
+  ({ stageEl, uiEl } = render(scene, () => {}, {}, {
+    backgroundAudioControls: {
+      volume: 0.4,
+      muted: false,
+      onVolumeChange: () => {},
+      onToggleMute: () => true,
+    },
+    historyControls: {
+      entries: [{ sceneId: 'scene-utilities', label: 'Utilities stay beside bubble playback.' }],
+      index: 0,
+      canGoBack: false,
+      canGoForward: false,
+    },
+  }));
+  assert.ok(findByClass(stageEl, 'theater-music-popover'), 'Bubble mode should render the shared background music utility');
+  assert.ok(findByClass(stageEl, 'theater-history-drawer'), 'Bubble mode should render the shared story history drawer');
 
   resetSpies();
   scene = {

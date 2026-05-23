@@ -552,9 +552,11 @@ export function renderPlayerUI({
   stageFrame.className = scene.image?.objectUrl
     ? 'player-stage-frame player-stage-frame--theater'
     : 'player-stage-frame player-stage-frame--empty player-stage-frame--theater';
-  let theaterOverlay = null;
+  const theaterOverlay = document.createElement('div');
+  theaterOverlay.className = 'theater-overlay';
   let speechBubbleOverlay = null;
-  let theaterControlRail = null;
+  const theaterControlRail = document.createElement('div');
+  theaterControlRail.className = 'theater-side-rail theater-side-rail--right';
 
   const theaterUtilityRail = document.createElement('div');
   theaterUtilityRail.className = 'theater-side-rail theater-side-rail--left';
@@ -575,19 +577,11 @@ export function renderPlayerUI({
     speechBubbleOverlay = document.createElement('div');
     speechBubbleOverlay.className = 'speech-play-overlay';
     stageFrame.appendChild(speechBubbleOverlay);
-  } else {
-    theaterOverlay = document.createElement('div');
-    theaterOverlay.className = 'theater-overlay';
-    stageFrame.appendChild(theaterOverlay);
-
-    theaterControlRail = document.createElement('div');
-    theaterControlRail.className = 'theater-side-rail theater-side-rail--right';
   }
+  stageFrame.appendChild(theaterOverlay);
   stageEl.appendChild(stageFrame);
   stageEl.appendChild(theaterUtilityRail);
-  if (theaterControlRail) {
-    stageEl.appendChild(theaterControlRail);
-  }
+  stageEl.appendChild(theaterControlRail);
 
   const appendBackgroundAudioUtility = () => {
     if (!backgroundAudioControls) return;
@@ -802,13 +796,10 @@ export function renderPlayerUI({
   });
 
   if (speechBubbleEnabled) {
-    const speechPanel = document.createElement('div');
-    speechPanel.className = 'speech-play-panel';
-    stageFrame.appendChild(speechPanel);
-
     return renderSpeechBubblePlayerUI({
       speechBubbleOverlay,
-      speechPanel,
+      theaterOverlay,
+      theaterControlRail,
       project,
       scene,
       onChoice,

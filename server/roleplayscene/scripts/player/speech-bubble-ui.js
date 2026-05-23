@@ -157,7 +157,8 @@ function appendSpeechBubbleText(host, page, speakerName = '') {
 
 export function renderSpeechBubblePlayerUI({
   speechBubbleOverlay,
-  speechPanel,
+  theaterOverlay,
+  theaterControlRail,
   project,
   scene,
   onChoice,
@@ -178,6 +179,8 @@ export function renderSpeechBubblePlayerUI({
   let activePageIndex = 0;
   let speechAudioActive = false;
   let speechPlayAllActive = false;
+  let choicesOpen = false;
+  let endOverlayOpen = !visibleEntries.length;
   let speechRunToken = 0;
   let renderedSpeechBubbleKey = null;
   let renderedSpeechBubbleElement = null;
@@ -220,7 +223,6 @@ export function renderSpeechBubblePlayerUI({
       activeVisibleIndex = -1;
       activePageIndex = 0;
     }
-    renderSpeechState();
   };
 
   const advanceSpeechPage = (pages, pageIndex, onDone) => {
@@ -229,6 +231,27 @@ export function renderSpeechBubblePlayerUI({
       return;
     }
     activePageIndex = pageIndex;
+    renderSpeechState();
+  };
+
+  const getActiveEntry = () => visibleEntries[activeVisibleIndex] || null;
+
+  const getActivePages = () => {
+    const entry = getActiveEntry();
+    if (!entry) return [];
+    const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
+    return splitSpeechBubbleText(getDialoguePageText(entry.line, entry.index), mode);
+  };
+
+  const clampActivePage = () => {
+    const pages = getActivePages();
+    activePageIndex = Math.max(0, Math.min(activePageIndex, Math.max(0, pages.length - 1)));
+  };
+
+  const openEndOverlay = ({ choicesMenu = false } = {}) => {
+    stopSpeechPlayback();
+    choicesOpen = choicesMenu;
+    endOverlayOpen = true;
     renderSpeechState();
   };
 
@@ -271,6 +294,8 @@ export function renderSpeechBubblePlayerUI({
     const nextIndex = activeVisibleIndex + 1;
     if (nextIndex >= visibleEntries.length) {
       speechPlayAllActive = false;
+      choicesOpen = false;
+      endOverlayOpen = true;
       renderSpeechState();
       return;
     }
@@ -285,6 +310,8 @@ export function renderSpeechBubblePlayerUI({
     clearSpeechTimers();
     const runToken = nextSpeechRunToken();
     activePageIndex = 0;
+    choicesOpen = false;
+    endOverlayOpen = false;
     speechPlayAllActive = speechPlayAllActive || autoAdvance;
     const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
     const pages = splitSpeechBubbleText(getDialoguePageText(entry.line, entry.index), mode);
@@ -363,32 +390,51 @@ export function renderSpeechBubblePlayerUI({
     renderSpeechState();
   };
 
-  const setActiveSpeechLine = (nextIndex, { autoplay = false } = {}) => {
-    clearSpeechTimers();
-    nextSpeechRunToken();
-    dialogueAudio.stop();
-    releaseDuck();
-    speechAudioActive = false;
-    speechPlayAllActive = false;
-    activeVisibleIndex = Math.max(0, Math.min(nextIndex, visibleEntries.length - 1));
-    activePageIndex = 0;
-    if (autoplay) {
-      playActiveSpeechLine();
-    } else {
-      renderSpeechState();
+  const advanceSpeech = ({ fromAuto = false } = {}) => {
+    if (!fromAuto) {
+      stopSpeechPlayback();
     }
+    const pages = getActivePages();
+    if (pages.length && activePageIndex < pages.length - 1) {
+      activePageIndex += 1;
+      choicesOpen = false;
+      endOverlayOpen = false;
+      renderSpeechState();
+      return;
+    }
+    if (activeVisibleIndex < visibleEntries.length - 1) {
+      activeVisibleIndex += 1;
+      activePageIndex = 0;
+      choicesOpen = false;
+      endOverlayOpen = false;
+      renderSpeechState();
+      return;
+    }
+    choicesOpen = false;
+    endOverlayOpen = true;
+    renderSpeechState();
   };
 
-  const changeSpeechPage = (delta) => {
-    const entry = visibleEntries[activeVisibleIndex];
-    if (!entry) return;
-    clearSpeechTimers();
-    nextSpeechRunToken();
-    speechPlayAllActive = false;
-    const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
-    const pages = splitSpeechBubbleText(getDialoguePageText(entry.line, entry.index), mode);
-    activePageIndex = Math.max(0, Math.min(pages.length - 1, activePageIndex + delta));
-    renderSpeechState();
+  const retreatSpeech = () => {
+    stopSpeechPlayback();
+    if (choicesOpen || endOverlayOpen) {
+      choicesOpen = false;
+      endOverlayOpen = false;
+      activeVisibleIndex = Math.max(0, activeVisibleIndex);
+      clampActivePage();
+      renderSpeechState();
+      return;
+    }
+    if (activePageIndex > 0) {
+      activePageIndex -= 1;
+      renderSpeechState();
+      return;
+    }
+    if (activeVisibleIndex > 0) {
+      activeVisibleIndex -= 1;
+      activePageIndex = Math.max(0, getActivePages().length - 1);
+      renderSpeechState();
+    }
   };
 
   const clearRenderedSpeechBubble = () => {
@@ -403,16 +449,90 @@ export function renderSpeechBubblePlayerUI({
   };
 
   function renderSpeechState() {
-    speechPanel.innerHTML = '';
+    theaterOverlay.innerHTML = '';
+    theaterControlRail.innerHTML = '';
+    clampActivePage();
 
-    const activeEntry = visibleEntries[activeVisibleIndex] || null;
+    const activeEntry = getActiveEntry();
     const activeMode = activeEntry?.line?.bubble?.mode || BubbleMode.CENTER;
     const pages = activeEntry
       ? splitSpeechBubbleText(getDialoguePageText(activeEntry.line, activeEntry.index), activeMode)
       : [];
     const page = pages[Math.max(0, Math.min(activePageIndex, pages.length - 1))] || '';
 
-    if (!activeEntry || !speechBubbleOverlay) {
+    const toolbar = document.createElement('div');
+    toolbar.className = 'theater-toolbar';
+
+    const prevButton = document.createElement('button');
+    prevButton.type = 'button';
+    prevButton.className = 'theater-toolbar__button';
+    prevButton.textContent = translate('player.speechBubble.previous');
+    prevButton.disabled = !visibleEntries.length || (!choicesOpen && !endOverlayOpen && activeVisibleIndex <= 0 && activePageIndex <= 0);
+    prevButton.addEventListener('click', retreatSpeech);
+
+    const playButton = document.createElement('button');
+    playButton.type = 'button';
+    playButton.className = 'theater-toolbar__button dialogue-bubble-play';
+    playButton.textContent = speechAudioActive
+      ? translate('player.speechBubble.stop')
+      : translate('player.speechBubble.play');
+    playButton.disabled = !activeEntry?.line?.audio?.objectUrl || choicesOpen || endOverlayOpen;
+    playButton.setAttribute('aria-pressed', speechAudioActive ? 'true' : 'false');
+    playButton.addEventListener('click', () => {
+      if (speechAudioActive) {
+        stopSpeechPlayback({ keepActive: true });
+        renderSpeechState();
+        return;
+      }
+      playActiveSpeechLine();
+    });
+
+    const nextButton = document.createElement('button');
+    nextButton.type = 'button';
+    nextButton.className = 'theater-toolbar__button';
+    nextButton.textContent = translate('player.speechBubble.next');
+    nextButton.disabled = !visibleEntries.length || choicesOpen || endOverlayOpen;
+    nextButton.addEventListener('click', () => advanceSpeech());
+
+    const playAllButton = document.createElement('button');
+    playAllButton.type = 'button';
+    playAllButton.className = 'theater-toolbar__button audio-play-all';
+    playAllButton.textContent = speechPlayAllActive
+      ? translate('player.speechBubble.stopAll')
+      : translate('player.speechBubble.playAll');
+    playAllButton.disabled = !visibleEntries.length || choicesOpen || endOverlayOpen;
+    playAllButton.setAttribute('aria-pressed', speechPlayAllActive ? 'true' : 'false');
+    playAllButton.addEventListener('click', () => {
+      if (speechPlayAllActive) {
+        stopSpeechPlayback({ keepActive: true });
+        renderSpeechState();
+        return;
+      }
+      stopSpeechPlayback({ keepActive: true });
+      speechPlayAllActive = true;
+      playActiveSpeechLine({ autoAdvance: true });
+    });
+
+    const choicesButton = document.createElement('button');
+    choicesButton.type = 'button';
+    choicesButton.className = 'theater-toolbar__button';
+    choicesButton.textContent = translate('player.toolbar.choices');
+    choicesButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
+    choicesButton.addEventListener('click', () => {
+      if (choicesOpen) {
+        stopSpeechPlayback({ keepActive: true });
+        choicesOpen = false;
+        endOverlayOpen = false;
+        renderSpeechState();
+      } else {
+        openEndOverlay({ choicesMenu: true });
+      }
+    });
+
+    toolbar.append(prevButton, playButton, nextButton, playAllButton, choicesButton);
+    theaterControlRail.appendChild(toolbar);
+
+    if (!activeEntry || !speechBubbleOverlay || choicesOpen || endOverlayOpen) {
       clearRenderedSpeechBubble();
     } else {
       const speakerName = getSpeakerName(project, activeEntry.line);
@@ -488,120 +608,20 @@ export function renderSpeechBubblePlayerUI({
       }
     }
 
-    const controls = document.createElement('div');
-    controls.className = 'speech-play-controls';
-
-    if (!visibleEntries.length) {
-      const empty = document.createElement('p');
-      empty.className = 'empty';
-      empty.textContent = translate('player.speechBubble.noDialogue');
-      controls.appendChild(empty);
-    } else if (!activeEntry) {
-      const startButton = document.createElement('button');
-      startButton.type = 'button';
-      startButton.className = 'confirm-actions__primary';
-      startButton.textContent = translate('player.speechBubble.startDialogue');
-      startButton.addEventListener('click', () => setActiveSpeechLine(0, { autoplay: true }));
-      controls.appendChild(startButton);
-
-      const playAllButton = document.createElement('button');
-      playAllButton.type = 'button';
-      playAllButton.textContent = translate('player.speechBubble.playAll');
-      playAllButton.addEventListener('click', () => {
-        activeVisibleIndex = 0;
-        activePageIndex = 0;
-        speechPlayAllActive = true;
-        playActiveSpeechLine({ autoAdvance: true });
+    if (choicesOpen || endOverlayOpen) {
+      const choicesPanel = document.createElement('div');
+      choicesPanel.className = choicesOpen
+        ? 'theater-choice-panel theater-choice-panel--menu'
+        : 'theater-choice-panel';
+      renderNavigationControls(choicesPanel, {
+        project,
+        scene,
+        onChoice,
+        openCueCard,
+        beforeChoice: () => stopSpeechPlayback({ keepActive: true }),
       });
-      controls.appendChild(playAllButton);
-    } else {
-      const prevButton = document.createElement('button');
-      prevButton.type = 'button';
-      prevButton.textContent = translate('player.speechBubble.previous');
-      prevButton.disabled = activeVisibleIndex <= 0 && activePageIndex <= 0;
-      prevButton.addEventListener('click', () => {
-        if (activePageIndex > 0) {
-          changeSpeechPage(-1);
-          return;
-        }
-        setActiveSpeechLine(activeVisibleIndex - 1, { autoplay: false });
-      });
-
-      const playButton = document.createElement('button');
-      playButton.type = 'button';
-      playButton.textContent = activeEntry.line.audio?.objectUrl
-        ? (speechAudioActive ? translate('player.speechBubble.stop') : translate('player.speechBubble.play'))
-        : translate('player.speechBubble.noAudio');
-      playButton.disabled = !activeEntry.line.audio?.objectUrl;
-      playButton.setAttribute('aria-pressed', speechAudioActive ? 'true' : 'false');
-      playButton.addEventListener('click', () => {
-        if (speechAudioActive) {
-          stopSpeechPlayback({ keepActive: true });
-        } else {
-          playActiveSpeechLine();
-        }
-      });
-
-      const nextButton = document.createElement('button');
-      nextButton.type = 'button';
-      nextButton.textContent = translate('player.speechBubble.next');
-      nextButton.disabled = activeVisibleIndex >= visibleEntries.length - 1 && activePageIndex >= pages.length - 1;
-      nextButton.addEventListener('click', () => {
-        if (activePageIndex < pages.length - 1) {
-          changeSpeechPage(1);
-          return;
-        }
-        setActiveSpeechLine(activeVisibleIndex + 1, { autoplay: true });
-      });
-
-      const playAllButton = document.createElement('button');
-      playAllButton.type = 'button';
-      playAllButton.textContent = speechPlayAllActive
-        ? translate('player.speechBubble.stopAll')
-        : translate('player.speechBubble.playAll');
-      playAllButton.setAttribute('aria-pressed', speechPlayAllActive ? 'true' : 'false');
-      playAllButton.addEventListener('click', () => {
-        if (speechPlayAllActive) {
-          stopSpeechPlayback({ keepActive: true });
-          return;
-        }
-        speechPlayAllActive = true;
-        playActiveSpeechLine({ autoAdvance: true });
-      });
-
-      controls.append(prevButton, playButton, nextButton, playAllButton);
-
-      if (pages.length > 1) {
-        const pageControls = document.createElement('div');
-        pageControls.className = 'speech-play-page-controls';
-        const pagePrev = document.createElement('button');
-        pagePrev.type = 'button';
-        pagePrev.textContent = translate('player.speechBubble.previousPage');
-        pagePrev.disabled = activePageIndex <= 0;
-        pagePrev.addEventListener('click', () => changeSpeechPage(-1));
-        const pageNext = document.createElement('button');
-        pageNext.type = 'button';
-        pageNext.textContent = translate('player.speechBubble.nextPage');
-        pageNext.disabled = activePageIndex >= pages.length - 1;
-        pageNext.addEventListener('click', () => changeSpeechPage(1));
-        const pageStatus = document.createElement('span');
-        pageStatus.textContent = translate('player.speechBubble.pageStatus', {
-          current: activePageIndex + 1,
-          total: pages.length,
-        });
-        pageControls.append(pagePrev, pageStatus, pageNext);
-        controls.appendChild(pageControls);
-      }
+      theaterOverlay.appendChild(choicesPanel);
     }
-
-    speechPanel.appendChild(controls);
-    renderNavigationControls(speechPanel, {
-      project,
-      scene,
-      onChoice,
-      openCueCard,
-      beforeChoice: stopDialoguePlayback,
-    });
   }
 
   renderSpeechState();
