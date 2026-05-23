@@ -142,10 +142,12 @@ button:disabled {
 }
 .toolbar__mode,
 .toolbar__files,
-.toolbar__server {
+.toolbar__server,
+.toolbar__locale {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
+  min-width: 0;
 }
 .toolbar__mode {
   gap: 2px;
@@ -1849,11 +1851,30 @@ button:disabled {
 .validation-ok { color: #166534; font-weight: 600; }
 button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible, .server-action-link:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
 @media (max-width: 900px) {
-  .topbar { align-items: flex-start; flex-direction: column; }
-  .toolbar { justify-content: flex-start; }
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .toolbar {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .toolbar__mode,
+  .toolbar__files,
+  .toolbar__server,
+  .toolbar__locale {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .toolbar__mode {
+    width: auto;
+  }
   .toolbar__server {
     border-left: none;
     padding-inline-start: 0;
+  }
+  .server-status {
+    white-space: normal;
   }
   .layout { grid-template-columns: 1fr; }
   .layout.layout--play { grid-template-columns: 1fr; }
@@ -1866,22 +1887,45 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     padding: var(--space-sm);
   }
   .theater-side-rail {
+    left: var(--space-sm);
+    right: var(--space-sm);
     top: var(--space-sm);
     bottom: var(--space-sm);
   }
+  .theater-side-rail--left {
+    top: var(--space-sm);
+    bottom: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    align-items: flex-start;
+    z-index: 12;
+  }
   .theater-side-rail--right {
+    top: auto;
+    bottom: var(--space-sm);
     left: var(--space-sm);
     right: var(--space-sm);
     align-items: stretch;
+    justify-content: flex-end;
+    z-index: 11;
+  }
+  .theater-music-popover,
+  .theater-history-drawer {
+    justify-items: stretch;
+  }
+  .theater-floating-button {
+    max-width: 100%;
   }
   .theater-toolbar {
     width: 100%;
-    justify-content: center;
-    overflow-x: auto;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    overflow-x: visible;
     border-radius: var(--radius-md);
   }
   .theater-toolbar__button {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
   }
   .theater-dialogue-card,
   .theater-choice-panel {
