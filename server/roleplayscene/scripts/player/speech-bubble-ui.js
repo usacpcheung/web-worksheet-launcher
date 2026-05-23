@@ -39,6 +39,11 @@ function getElementSize(element, fallbackWidth, fallbackHeight) {
   };
 }
 
+function getElementSizeSignature(element) {
+  const { width, height } = getElementSize(element, 0, 0);
+  return `${Math.round(width)}x${Math.round(height)}`;
+}
+
 function buildSpeechBubblePath(width, height, tail) {
   const radius = Math.min(26, Math.max(16, Math.min(width, height) * 0.18));
   const baseHalf = Math.min(14, Math.max(9, width * 0.035));
@@ -194,6 +199,14 @@ export function renderSpeechBubblePlayerUI({
   let speechRunToken = 0;
   let renderedSpeechBubbleKey = null;
   let renderedSpeechBubbleElement = null;
+  let renderedAnchorPathElement = null;
+  let renderedAnchorPoint = null;
+  let overlaySizeSignature = '';
+  let overlayResizeObserver = null;
+  let removeWindowResizeListener = null;
+  let pendingAnchorRepositionHandle = null;
+  let pendingAnchorRepositionUsesRaf = false;
+  let deferredAnchorLayoutKey = null;
   const speechTimers = new Set();
 
   const nextSpeechRunToken = () => {
@@ -442,10 +455,88 @@ export function renderSpeechBubblePlayerUI({
     }
   };
 
+  const clearPendingAnchorReposition = () => {
+    if (pendingAnchorRepositionHandle == null) return;
+    try {
+      if (pendingAnchorRepositionUsesRaf && typeof globalThis.cancelAnimationFrame === 'function') {
+        globalThis.cancelAnimationFrame(pendingAnchorRepositionHandle);
+      }
+    } catch {
+      // Ignore frame cancellation failures.
+    }
+    pendingAnchorRepositionHandle = null;
+    pendingAnchorRepositionUsesRaf = false;
+  };
+
+  const repositionRenderedAnchorBubble = () => {
+    if (!speechBubbleOverlay || !renderedSpeechBubbleElement || !renderedAnchorPathElement || !renderedAnchorPoint) {
+      return;
+    }
+    positionAnchorSpeechBubble(
+      speechBubbleOverlay,
+      renderedSpeechBubbleElement,
+      renderedAnchorPathElement,
+      renderedAnchorPoint,
+    );
+  };
+
+  const scheduleAnchorReposition = () => {
+    if (!speechBubbleOverlay || !renderedSpeechBubbleElement || !renderedAnchorPathElement || !renderedAnchorPoint) {
+      return;
+    }
+    if (choicesOpen || endOverlayOpen || pendingAnchorRepositionHandle != null) {
+      return;
+    }
+
+    const runReposition = () => {
+      pendingAnchorRepositionHandle = null;
+      pendingAnchorRepositionUsesRaf = false;
+      repositionRenderedAnchorBubble();
+    };
+
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      pendingAnchorRepositionUsesRaf = true;
+      pendingAnchorRepositionHandle = globalThis.requestAnimationFrame(runReposition);
+      return;
+    }
+  };
+
+  const handleOverlayLayoutChange = () => {
+    if (!speechBubbleOverlay) return;
+    const nextSizeSignature = getElementSizeSignature(speechBubbleOverlay);
+    if (nextSizeSignature === overlaySizeSignature) return;
+    overlaySizeSignature = nextSizeSignature;
+    scheduleAnchorReposition();
+  };
+
+  const observeOverlayLayout = () => {
+    if (!speechBubbleOverlay) return;
+    overlaySizeSignature = getElementSizeSignature(speechBubbleOverlay);
+
+    if (typeof globalThis.ResizeObserver === 'function') {
+      overlayResizeObserver = new globalThis.ResizeObserver(() => {
+        handleOverlayLayoutChange();
+      });
+      overlayResizeObserver.observe(speechBubbleOverlay);
+      return;
+    }
+
+    if (typeof globalThis.addEventListener !== 'function') return;
+    const onWindowResize = () => handleOverlayLayoutChange();
+    globalThis.addEventListener('resize', onWindowResize);
+    removeWindowResizeListener = () => {
+      globalThis.removeEventListener('resize', onWindowResize);
+    };
+  };
+
   const clearRenderedSpeechBubble = () => {
+    clearPendingAnchorReposition();
     if (speechBubbleOverlay) speechBubbleOverlay.innerHTML = '';
     renderedSpeechBubbleKey = null;
     renderedSpeechBubbleElement = null;
+    renderedAnchorPathElement = null;
+    renderedAnchorPoint = null;
+    deferredAnchorLayoutKey = null;
   };
 
   const updateRenderedSpeechBubbleState = () => {
@@ -573,6 +664,9 @@ export function renderSpeechBubblePlayerUI({
 
       if (bubbleKey === renderedSpeechBubbleKey && renderedSpeechBubbleElement) {
         updateRenderedSpeechBubbleState();
+        if (activeMode === BubbleMode.ANCHOR && renderedAnchorPathElement && renderedAnchorPoint) {
+          handleOverlayLayoutChange();
+        }
       } else if (activeMode === BubbleMode.ANCHOR && anchorPoint) {
         clearRenderedSpeechBubble();
         const bubble = document.createElement('div');
@@ -606,6 +700,12 @@ export function renderSpeechBubblePlayerUI({
         positionAnchorSpeechBubble(speechBubbleOverlay, bubble, shape, anchorPoint);
         renderedSpeechBubbleKey = bubbleKey;
         renderedSpeechBubbleElement = bubble;
+        renderedAnchorPathElement = shape;
+        renderedAnchorPoint = anchorPoint;
+        if (deferredAnchorLayoutKey !== bubbleKey) {
+          deferredAnchorLayoutKey = bubbleKey;
+          scheduleAnchorReposition();
+        }
       } else {
         clearRenderedSpeechBubble();
         const bubble = document.createElement('div');
@@ -643,9 +743,15 @@ export function renderSpeechBubblePlayerUI({
     }
   }
 
+  observeOverlayLayout();
   renderSpeechState();
 
   return () => {
+    clearPendingAnchorReposition();
+    overlayResizeObserver?.disconnect?.();
+    overlayResizeObserver = null;
+    removeWindowResizeListener?.();
+    removeWindowResizeListener = null;
     clearSpeechTimers();
     nextSpeechRunToken();
     cleanupCueCardListeners();
