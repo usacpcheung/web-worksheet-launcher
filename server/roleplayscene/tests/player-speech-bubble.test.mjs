@@ -402,6 +402,22 @@ try {
   assert.notEqual(collectText(findByClass(stageEl, 'speech-play-bubble')), firstPageText, 'Manual page next should change the visible page');
 
   resetSpies();
+  scene = {
+    id: 'scene-end-choices',
+    type: SceneType.INTERMEDIATE,
+    speechBubble: { enabled: true, anchors: [] },
+    dialogue: [{ text: 'Finish the line.', bubble: { mode: BubbleMode.CENTER } }],
+    choices: [{ label: 'Continue', nextSceneId: 'next-scene' }],
+  };
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
+  assert.equal(
+    findButtonByText(stageEl, translate('player.toolbar.choices'))?.getAttribute('aria-expanded'),
+    'true',
+    'Choice button should stay lit when the end-of-dialogue choice panel opens',
+  );
+
+  resetSpies();
   let chosenSceneId = null;
   scene = {
     id: 'scene-choice',

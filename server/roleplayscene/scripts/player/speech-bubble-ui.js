@@ -303,10 +303,7 @@ export function renderSpeechBubblePlayerUI({
     }
     const nextIndex = activeVisibleIndex + 1;
     if (nextIndex >= visibleEntries.length) {
-      speechPlayAllActive = false;
-      choicesOpen = false;
-      endOverlayOpen = true;
-      renderSpeechState();
+      openEndOverlay({ choicesMenu: true });
       return;
     }
     activeVisibleIndex = nextIndex;
@@ -420,9 +417,7 @@ export function renderSpeechBubblePlayerUI({
       renderSpeechState();
       return;
     }
-    choicesOpen = false;
-    endOverlayOpen = true;
-    renderSpeechState();
+    openEndOverlay({ choicesMenu: true });
   };
 
   const retreatSpeech = () => {

@@ -327,6 +327,10 @@ logResult('Second clip starts after scheduled delay', FakeAudio.playCalls[1] ===
 FakeAudio.instances[0].trigger('ended');
 flushPendingTimeouts();
 logResult('Button resets after final clip', collectText(playAllButton) === translate('player.speechBubble.playAll'));
+logResult(
+  'Choice button lights up after final clip',
+  findButtonByText(stageEl, translate('player.toolbar.choices'))?.getAttribute('aria-expanded') === 'true',
+);
 
 // Test: repeat click stops and restart works
 resetAudioSpies();

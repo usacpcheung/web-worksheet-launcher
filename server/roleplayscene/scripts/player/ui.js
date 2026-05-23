@@ -863,9 +863,7 @@ export function renderPlayerUI({
       renderTheaterState();
       return;
     }
-    endOverlayOpen = true;
-    choicesOpen = false;
-    renderTheaterState();
+    openEndOverlay({ choicesMenu: true });
   };
 
   const retreatTheater = () => {
@@ -925,10 +923,7 @@ export function renderPlayerUI({
       return;
     }
     if (activeVisibleIndex >= visibleEntries.length - 1) {
-      playAllActive = false;
-      endOverlayOpen = true;
-      choicesOpen = false;
-      renderTheaterState();
+      openEndOverlay({ choicesMenu: true });
       return;
     }
     activeVisibleIndex += 1;
