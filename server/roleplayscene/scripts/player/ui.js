@@ -439,8 +439,8 @@ export function renderPlayerUI({
 
   const cueClose = document.createElement('button');
   cueClose.type = 'button';
-  cueClose.className = 'player-cue-close';
-  cueClose.textContent = '×';
+  cueClose.className = 'player-cue-close theater-icon-button';
+  cueClose.appendChild(createPlayerIcon('close'));
   cueClose.setAttribute('aria-label', translate('player.choices.cueCardCloseLabel'));
 
   cueHeader.appendChild(cueTitle);

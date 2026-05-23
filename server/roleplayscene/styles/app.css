@@ -1867,13 +1867,7 @@ button:disabled {
   font-size: var(--font-size-lg);
 }
 .player-cue-close {
-  width: 2rem;
-  height: 2rem;
-  padding: 0;
-  border-radius: 999px;
-  background: var(--color-surface-alt);
-  border-color: var(--color-border);
-  box-shadow: none;
+  flex: 0 0 auto;
 }
 .player-cue-body {
   margin: 0;
