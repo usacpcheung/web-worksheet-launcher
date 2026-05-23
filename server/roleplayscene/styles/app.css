@@ -1851,6 +1851,9 @@ button:disabled {
 .validation-ok { color: #166534; font-weight: 600; }
 button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible, .server-action-link:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
 @media (max-width: 900px) {
+  :root {
+    --theater-mobile-dock-reserve: clamp(7.5rem, 23vh, 10.5rem);
+  }
   .topbar {
     align-items: flex-start;
     flex-direction: column;
@@ -1885,6 +1888,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   .theater-overlay {
     align-items: flex-end;
     padding: var(--space-sm);
+    padding-bottom: calc(var(--space-sm) + var(--theater-mobile-dock-reserve));
   }
   .theater-side-rail {
     left: var(--space-sm);
@@ -1926,6 +1930,11 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   }
   .theater-toolbar__button {
     flex: 0 1 auto;
+  }
+  .theater-dialogue-card,
+  .theater-choice-panel {
+    max-height: calc(100% - var(--theater-mobile-dock-reserve));
+    overflow: auto;
   }
   .theater-dialogue-card,
   .theater-choice-panel {
