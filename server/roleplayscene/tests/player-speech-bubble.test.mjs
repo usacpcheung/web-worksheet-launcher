@@ -315,7 +315,7 @@ try {
   assert.equal(findByClass(stageEl, 'speech-play-panel'), null, 'Bubble-enabled scenes should not render the old speech controller panel');
   assert.equal(findByClass(uiEl, 'player-dialogue'), null, 'Bubble-enabled scenes should not render the normal dialogue list');
 
-  findButtonByText(stageEl, translate('player.speechBubble.play')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.toolbar.playAudio')).dispatchEvent('click');
   assert.equal(FakeAudio.playCalls[0], 'line-1.mp3', 'Start dialogue should autoplay the first line when audio exists');
 
   let bubble = findByClass(stageEl, 'speech-play-bubble-wrap--anchor');
@@ -356,15 +356,15 @@ try {
     choices: [],
   };
   ({ stageEl, uiEl } = render(scene));
-  findButtonByText(stageEl, translate('player.speechBubble.play')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.toolbar.playAudio')).dispatchEvent('click');
   const centerBubble = findByClass(stageEl, 'speech-play-bubble--center');
-  findButtonByText(stageEl, translate('player.speechBubble.stop')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.toolbar.stopAudio')).dispatchEvent('click');
   assert.equal(
     findByClass(stageEl, 'speech-play-bubble--center'),
     centerBubble,
     'Stopping center narration playback should not recreate the visible bubble',
   );
-  findButtonByText(stageEl, translate('player.speechBubble.play')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.toolbar.playAudio')).dispatchEvent('click');
   assert.equal(
     findByClass(stageEl, 'speech-play-bubble--center'),
     centerBubble,
@@ -480,6 +480,12 @@ try {
   }
   flushPendingTimeouts();
   assert.equal(FakeAudio.playCalls.length, 1, 'Audio errors should cancel Play All timers instead of advancing later');
+
+  resetSpies();
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
+  assert.equal(FakeAudio.playCalls[0], 'slow-line.mp3', 'Speech bubble Play All should restart from the first line after manual navigation');
 
   resetSpies();
   const listenerDocument = globalThis.document;

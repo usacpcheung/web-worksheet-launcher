@@ -348,7 +348,9 @@ export default {
       "listLabel": "已造訪的場景"
     },
     "toolbar": {
-      "choices": "選項"
+      "choices": "選項",
+      "playAudio": "播放音訊",
+      "stopAudio": "停止音訊"
     },
     "dialogue": {
       "playAll": "▶️ 全部播放",

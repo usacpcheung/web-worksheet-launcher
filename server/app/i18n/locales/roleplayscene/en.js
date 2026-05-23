@@ -348,7 +348,9 @@ export default {
       "listLabel": "Visited scenes"
     },
     "toolbar": {
-      "choices": "Choices"
+      "choices": "Choices",
+      "playAudio": "Play Audio",
+      "stopAudio": "Stop Audio"
     },
     "dialogue": {
       "playAll": "▶️ Play all",

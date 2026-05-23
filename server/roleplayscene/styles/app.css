@@ -675,6 +675,10 @@ button:disabled {
   flex: 0 0 auto;
 }
 .theater-toolbar__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3xs);
   min-height: 2.25rem;
   padding: 0 var(--space-sm);
   border: 0;

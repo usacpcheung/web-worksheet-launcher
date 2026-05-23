@@ -88,8 +88,14 @@ function findFirst(root, predicate) {
   return null;
 }
 
+function collectText(root) {
+  if (!root) return '';
+  const own = root.textContent || '';
+  return `${own}${(root.children || []).map(collectText).join('')}`;
+}
+
 function findButtonByText(root, text) {
-  return findFirst(root, (el) => el.tagName === 'button' && el.textContent === text);
+  return findFirst(root, (el) => el.tagName === 'button' && collectText(el) === text);
 }
 
 function renderScene(scene, onChoice = () => {}) {

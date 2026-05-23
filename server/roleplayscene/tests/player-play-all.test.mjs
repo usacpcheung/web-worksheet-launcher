@@ -243,6 +243,23 @@ function findByClass(root, className) {
   return null;
 }
 
+function findButtonByText(root, text) {
+  if (root.tagName === 'button' && collectText(root) === text) {
+    return root;
+  }
+  for (const child of root.children || []) {
+    const match = findButtonByText(child, text);
+    if (match) return match;
+  }
+  return null;
+}
+
+function collectText(root) {
+  if (!root) return '';
+  const own = root.textContent || '';
+  return `${own}${(root.children || []).map(collectText).join('')}`;
+}
+
 function logResult(label, condition) {
   const status = condition ? 'OK' : 'FAIL';
   console.log(`${status}: ${label}`);
@@ -309,7 +326,7 @@ logResult('Second clip starts after scheduled delay', FakeAudio.playCalls[1] ===
 
 FakeAudio.instances[0].trigger('ended');
 flushPendingTimeouts();
-logResult('Button resets after final clip', playAllButton.textContent === translate('player.speechBubble.playAll'));
+logResult('Button resets after final clip', collectText(playAllButton) === translate('player.speechBubble.playAll'));
 
 // Test: repeat click stops and restart works
 resetAudioSpies();
@@ -320,7 +337,7 @@ playAllButton.dispatchEvent('click');
 logResult('Playback starts on demand', FakeAudio.playCalls[0] === 'audio-1.ogg');
 
 playAllButton.dispatchEvent('click');
-logResult('Playback stops on second click', playAllButton.textContent === translate('player.speechBubble.playAll'));
+logResult('Playback stops on second click', collectText(playAllButton) === translate('player.speechBubble.playAll'));
 
 playAllButton.dispatchEvent('click');
 logResult('Playback restarts after stop', FakeAudio.playCalls[1] === 'audio-1.ogg');
@@ -333,6 +350,13 @@ logResult('Queued timer cleared on manual stop', (() => {
   flushPendingTimeouts();
   return timersBeforeStop === 1 && timersAfterStop === 0 && FakeAudio.playCalls.length === 2;
 })());
+
+resetAudioSpies();
+({ stageEl, uiEl } = renderScene(scene));
+findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
+playAllButton = findByClass(stageEl, 'audio-play-all');
+playAllButton.dispatchEvent('click');
+logResult('Play All restarts from first line after manual navigation', FakeAudio.playCalls[0] === 'audio-1.ogg');
 
 globalThis.setTimeout = originalSetTimeout;
 globalThis.clearTimeout = originalClearTimeout;

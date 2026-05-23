@@ -1,5 +1,6 @@
 import { translate } from '../i18n.js';
 import { renderPlayerChoices } from './choice-controls.js';
+import { createPlayerIcon } from './icons.js';
 import { renderSpeechBubblePlayerUI, splitSpeechBubbleText } from './speech-bubble-ui.js';
 import {
   DIALOGUE_MIN_AUDIO_PAGE_SECONDS,
@@ -354,54 +355,13 @@ function getSpeakerName(project, line) {
   return String(speaker?.name || '').trim();
 }
 
-function createPlayerIcon(name) {
-  const svg = document.createElementNS
-    ? document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    : document.createElement('svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.setAttribute('focusable', 'false');
-  svg.classList?.add?.('theater-icon');
-
-  const appendPath = (d) => {
-    const path = document.createElementNS
-      ? document.createElementNS('http://www.w3.org/2000/svg', 'path')
-      : document.createElement('path');
-    path.setAttribute('d', d);
-    svg.appendChild(path);
-  };
-
-  const appendCircle = (cx, cy, r) => {
-    const circle = document.createElementNS
-      ? document.createElementNS('http://www.w3.org/2000/svg', 'circle')
-      : document.createElement('circle');
-    circle.setAttribute('cx', cx);
-    circle.setAttribute('cy', cy);
-    circle.setAttribute('r', r);
-    svg.appendChild(circle);
-  };
-
-  switch (name) {
-    case 'music':
-      appendPath('M9 18V5l12-2v13');
-      appendCircle('6', '18', '3');
-      appendCircle('18', '16', '3');
-      break;
-    case 'history':
-      appendPath('M3 12a9 9 0 1 0 3-6.7');
-      appendPath('M3 4v5h5');
-      appendPath('M12 7v5l3 2');
-      break;
-    case 'close':
-      appendPath('M18 6 6 18');
-      appendPath('m6 6 12 12');
-      break;
-    default:
-      appendCircle('12', '12', '8');
-      break;
-  }
-
-  return svg;
+function appendToolbarButtonContent(button, iconName, label) {
+  button.textContent = '';
+  button.appendChild(createPlayerIcon(iconName));
+  const labelEl = document.createElement('span');
+  labelEl.textContent = label;
+  button.appendChild(labelEl);
+  button.setAttribute('aria-label', label);
 }
 
 export function renderPlayerUI({
@@ -1081,16 +1041,27 @@ export function renderPlayerUI({
     const prevButton = document.createElement('button');
     prevButton.type = 'button';
     prevButton.className = 'theater-toolbar__button';
-    prevButton.textContent = translate('player.speechBubble.previous');
+    appendToolbarButtonContent(prevButton, 'previous', translate('player.speechBubble.previous'));
     prevButton.disabled = !visibleEntries.length || (!choicesOpen && !endOverlayOpen && activeVisibleIndex <= 0 && activePageIndex <= 0);
     prevButton.addEventListener('click', retreatTheater);
+
+    const nextButton = document.createElement('button');
+    nextButton.type = 'button';
+    nextButton.className = 'theater-toolbar__button';
+    appendToolbarButtonContent(nextButton, 'next', translate('player.speechBubble.next'));
+    nextButton.disabled = !visibleEntries.length || endOverlayOpen || choicesOpen;
+    nextButton.addEventListener('click', () => advanceTheater());
 
     const playButton = document.createElement('button');
     playButton.type = 'button';
     playButton.className = 'theater-toolbar__button dialogue-bubble-play';
-    playButton.textContent = currentAudioActive
-      ? translate('player.speechBubble.stop')
-      : translate('player.speechBubble.play');
+    appendToolbarButtonContent(
+      playButton,
+      currentAudioActive ? 'stop' : 'play',
+      currentAudioActive
+        ? translate('player.toolbar.stopAudio')
+        : translate('player.toolbar.playAudio'),
+    );
     playButton.disabled = !activeEntry?.line?.audio?.objectUrl || choicesOpen || endOverlayOpen;
     playButton.setAttribute('aria-pressed', currentAudioActive ? 'true' : 'false');
     playButton.addEventListener('click', () => {
@@ -1102,19 +1073,16 @@ export function renderPlayerUI({
       playCurrentTheaterLine();
     });
 
-    const nextButton = document.createElement('button');
-    nextButton.type = 'button';
-    nextButton.className = 'theater-toolbar__button';
-    nextButton.textContent = translate('player.speechBubble.next');
-    nextButton.disabled = !visibleEntries.length || endOverlayOpen || choicesOpen;
-    nextButton.addEventListener('click', () => advanceTheater());
-
     const playAllButton = document.createElement('button');
     playAllButton.type = 'button';
     playAllButton.className = 'theater-toolbar__button audio-play-all';
-    playAllButton.textContent = playAllActive
-      ? translate('player.speechBubble.stopAll')
-      : translate('player.speechBubble.playAll');
+    appendToolbarButtonContent(
+      playAllButton,
+      playAllActive ? 'stop' : 'play',
+      playAllActive
+        ? translate('player.speechBubble.stopAll')
+        : translate('player.speechBubble.playAll'),
+    );
     playAllButton.disabled = !visibleEntries.length || choicesOpen || endOverlayOpen;
     playAllButton.setAttribute('aria-pressed', playAllActive ? 'true' : 'false');
     playAllButton.addEventListener('click', () => {
@@ -1124,6 +1092,8 @@ export function renderPlayerUI({
         return;
       }
       stopTheaterPlayback();
+      activeVisibleIndex = 0;
+      activePageIndex = 0;
       playAllActive = true;
       playCurrentTheaterLine({ autoAdvance: true });
     });
@@ -1131,7 +1101,7 @@ export function renderPlayerUI({
     const choicesButton = document.createElement('button');
     choicesButton.type = 'button';
     choicesButton.className = 'theater-toolbar__button';
-    choicesButton.textContent = translate('player.toolbar.choices');
+    appendToolbarButtonContent(choicesButton, 'list', translate('player.toolbar.choices'));
     choicesButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
     choicesButton.addEventListener('click', () => {
       if (choicesOpen) {
@@ -1145,8 +1115,8 @@ export function renderPlayerUI({
     });
 
     toolbar.appendChild(prevButton);
-    toolbar.appendChild(playButton);
     toolbar.appendChild(nextButton);
+    toolbar.appendChild(playButton);
     toolbar.appendChild(playAllButton);
     toolbar.appendChild(choicesButton);
     if (theaterControlRail) {
