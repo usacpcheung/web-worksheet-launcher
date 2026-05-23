@@ -347,6 +347,9 @@ export default {
       "forwardLabel": "Go to next scene",
       "listLabel": "Visited scenes"
     },
+    "toolbar": {
+      "choices": "Choices"
+    },
     "dialogue": {
       "playAll": "▶️ Play all",
       "stopAll": "⏹ Stop playback",

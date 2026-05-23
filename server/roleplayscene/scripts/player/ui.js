@@ -1140,7 +1140,7 @@ export function renderPlayerUI({
     const choicesButton = document.createElement('button');
     choicesButton.type = 'button';
     choicesButton.className = 'theater-toolbar__button';
-    choicesButton.textContent = translate('inspector.choices.title');
+    choicesButton.textContent = translate('player.toolbar.choices');
     choicesButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
     choicesButton.addEventListener('click', () => {
       if (choicesOpen) {

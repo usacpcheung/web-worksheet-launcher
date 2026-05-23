@@ -347,6 +347,9 @@ export default {
       "forwardLabel": "前往下一個場景",
       "listLabel": "已造訪的場景"
     },
+    "toolbar": {
+      "choices": "選項"
+    },
     "dialogue": {
       "playAll": "▶️ 全部播放",
       "stopAll": "⏹ 停止播放",

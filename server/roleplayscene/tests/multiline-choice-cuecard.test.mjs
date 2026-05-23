@@ -167,7 +167,7 @@ const stageEl = new StubElement('div');
 const uiEl = new StubElement('div');
 renderPlayerUI({ stageEl, uiEl, project, scene: project.scenes[0], onChoice: () => {} });
 
-const choicesButton = findElement(stageEl, el => el.className === 'theater-toolbar__button' && el.textContent === translate('inspector.choices.title'));
+const choicesButton = findElement(stageEl, el => el.className === 'theater-toolbar__button' && el.textContent === translate('player.toolbar.choices'));
 assert(choicesButton, 'theater choices button should render');
 choicesButton.dispatchEvent('click');
 

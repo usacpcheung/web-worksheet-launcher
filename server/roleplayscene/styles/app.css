@@ -1810,21 +1810,23 @@ button:disabled {
   width: 2.25rem;
   min-height: 2.25rem;
   padding: 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: #eff6ff;
+  border: 1px solid var(--color-accent-soft);
+  color: var(--color-accent-strong);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-subtle);
 }
 .player-choice-cue-trigger:hover:not(:disabled) {
-  background: var(--color-surface-alt);
+  background: #dbeafe;
+  border-color: #93c5fd;
 }
 .player-choice-cue-trigger:active:not(:disabled) {
-  background: var(--color-border-subtle);
-  border-color: var(--color-border);
+  background: #dbeafe;
+  border-color: #93c5fd;
 }
 .player-choice-cue-trigger[aria-expanded="true"] {
-  border-color: var(--color-accent-soft);
-  background: #eff6ff;
+  border-color: #93c5fd;
+  background: #dbeafe;
   color: var(--color-accent-strong);
 }
 .player-choice-cue-icon {
