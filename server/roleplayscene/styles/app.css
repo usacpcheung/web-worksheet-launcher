@@ -1852,7 +1852,7 @@ button:disabled {
 button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible, .server-action-link:focus-visible { outline: 3px solid var(--color-accent); outline-offset: 2px; }
 @media (max-width: 900px) {
   :root {
-    --theater-mobile-dock-reserve: clamp(7.5rem, 23vh, 10.5rem);
+    --theater-mobile-dock-reserve: calc(clamp(4.25rem, 11vh, 5.75rem) + env(safe-area-inset-bottom, 0px));
   }
   .topbar {
     align-items: flex-start;
@@ -1924,17 +1924,36 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   .theater-toolbar {
     width: 100%;
     justify-content: flex-start;
-    flex-wrap: wrap;
-    overflow-x: visible;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
     border-radius: var(--radius-md);
   }
   .theater-toolbar__button {
-    flex: 0 1 auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
-  .theater-dialogue-card,
-  .theater-choice-panel {
+  .theater-dialogue-card {
     max-height: calc(100% - var(--theater-mobile-dock-reserve));
     overflow: auto;
+  }
+  .theater-choice-panel {
+    max-height: calc(100% - var(--theater-mobile-dock-reserve));
+  }
+  .theater-choice-panel--menu {
+    width: 100%;
+    margin: 0;
+    align-self: flex-end;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .theater-choice-panel--menu .player-choices {
+    min-height: 0;
+    overflow: auto;
+    padding-right: 2px;
   }
   .theater-dialogue-card,
   .theater-choice-panel {
