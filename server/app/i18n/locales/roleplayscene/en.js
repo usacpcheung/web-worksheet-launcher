@@ -347,6 +347,11 @@ export default {
       "forwardLabel": "Go to next scene",
       "listLabel": "Visited scenes"
     },
+    "utilities": {
+      "title": "Utilities",
+      "panelLabel": "Scene playback utilities",
+      "closeLabel": "Close utilities"
+    },
     "toolbar": {
       "choices": "Choices",
       "playAudio": "Play Audio",

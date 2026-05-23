@@ -543,208 +543,210 @@ export function renderPlayerUI({
   stageEl.appendChild(theaterUtilityRail);
   stageEl.appendChild(theaterControlRail);
 
-  const appendBackgroundAudioUtility = () => {
-    if (!backgroundAudioControls) return;
+  const appendUtilitiesPanel = () => {
+    const hasMusic = Boolean(backgroundAudioControls);
+    const hasHistory = Boolean(historyControls?.entries?.length);
+    if (!hasMusic && !hasHistory) return;
 
-    const musicWrapper = document.createElement('div');
-    musicWrapper.className = 'theater-music-popover';
-
-    const musicButton = document.createElement('button');
-    musicButton.type = 'button';
-    musicButton.className = 'theater-floating-button theater-floating-button--music';
-    musicButton.appendChild(createPlayerIcon('music'));
-    const musicLabel = document.createElement('span');
-    musicLabel.textContent = translate('player.background.title');
-    musicButton.appendChild(musicLabel);
-    musicButton.setAttribute('aria-expanded', 'false');
-    musicButton.setAttribute('aria-label', translate('player.background.title'));
-
-    const musicPanel = document.createElement('div');
-    musicPanel.className = 'theater-music-panel';
-    musicPanel.hidden = true;
-
-    const heading = document.createElement('h4');
-    heading.textContent = translate('player.background.title');
-    musicPanel.appendChild(heading);
-
-    const volumeWrapper = document.createElement('div');
-    volumeWrapper.className = 'theater-music-volume';
-
-    const volumeLabel = document.createElement('label');
-    volumeLabel.textContent = translate('player.background.volumeLabel');
-
-    const volumeSlider = document.createElement('input');
-    volumeSlider.type = 'range';
-    volumeSlider.min = '0';
-    volumeSlider.max = '1';
-    volumeSlider.step = '0.05';
-    volumeSlider.value = String(backgroundAudioControls.volume ?? 0);
-    volumeSlider.setAttribute('aria-label', translate('player.background.volumeLabel'));
-    volumeSlider.disabled = Boolean(backgroundAudioControls.muted);
-
-    const volumeValue = document.createElement('span');
-    volumeValue.className = 'background-volume-value';
-    const initialVolume = Number(backgroundAudioControls.volume ?? 0);
-    volumeValue.textContent = `${Math.round(initialVolume * 100)}%`;
-
-    volumeSlider.addEventListener('input', event => {
-      const value = Number(event.target.value);
-      backgroundAudioControls.volume = value;
-      volumeValue.textContent = `${Math.round(value * 100)}%`;
-      backgroundAudioControls.onVolumeChange?.(value);
-    });
-
-    volumeLabel.appendChild(volumeSlider);
-    volumeWrapper.append(volumeLabel, volumeValue);
-    musicPanel.appendChild(volumeWrapper);
-
-    const muteButton = document.createElement('button');
-    muteButton.type = 'button';
-    muteButton.className = 'theater-panel-action';
-
-    const updateMuteLabel = (muted) => {
-      muteButton.textContent = muted
-        ? translate('player.background.unmute')
-        : translate('player.background.mute');
-      muteButton.setAttribute('aria-pressed', muted ? 'true' : 'false');
-      muteButton.setAttribute('aria-label', muted
-        ? translate('player.background.unmute')
-        : translate('player.background.mute'));
-      volumeSlider.disabled = muted;
-    };
-
-    updateMuteLabel(Boolean(backgroundAudioControls.muted));
-
-    muteButton.addEventListener('click', () => {
-      const nextMuted = backgroundAudioControls.onToggleMute?.();
-      const resolved = typeof nextMuted === 'boolean' ? nextMuted : !backgroundAudioControls.muted;
-      backgroundAudioControls.muted = resolved;
-      updateMuteLabel(resolved);
-    });
-
-    musicButton.addEventListener('click', () => {
-      const nextOpen = musicPanel.hidden;
-      musicPanel.hidden = !nextOpen;
-      musicButton.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
-    });
-
-    musicPanel.appendChild(muteButton);
-    musicWrapper.append(musicButton, musicPanel);
-    theaterUtilityRail.appendChild(musicWrapper);
-  };
-
-  const appendHistoryDrawer = () => {
-    if (!historyControls?.entries?.length) return;
-
-    const historyWrapper = document.createElement('div');
-    historyWrapper.className = 'theater-history-drawer';
+    const utilitiesWrapper = document.createElement('div');
+    utilitiesWrapper.className = 'theater-utilities';
 
     const toggleButton = document.createElement('button');
     toggleButton.type = 'button';
-    toggleButton.className = 'theater-floating-button theater-history-toggle';
-    toggleButton.appendChild(createPlayerIcon('history'));
+    toggleButton.className = 'theater-floating-button theater-utilities-toggle';
+    toggleButton.appendChild(createPlayerIcon('list'));
     const toggleLabel = document.createElement('span');
-    toggleLabel.textContent = translate('player.history.title');
+    toggleLabel.textContent = translate('player.utilities.title');
     toggleButton.appendChild(toggleLabel);
     toggleButton.setAttribute('aria-expanded', 'false');
+    toggleButton.setAttribute('aria-label', translate('player.utilities.title'));
 
-    const drawer = document.createElement('div');
-    drawer.className = 'theater-history-panel';
-    drawer.hidden = true;
+    const panel = document.createElement('div');
+    panel.className = 'theater-utilities-panel';
+    panel.hidden = true;
+    const panelIdSafeSuffix = String(scene?.id || 'scene').replace(/[^a-zA-Z0-9_-]/g, '-');
+    const panelId = `theater-utilities-panel-${panelIdSafeSuffix}`;
+    panel.setAttribute('id', panelId);
+    panel.setAttribute('role', 'region');
+    panel.setAttribute('aria-label', translate('player.utilities.panelLabel'));
+    toggleButton.setAttribute('aria-controls', panelId);
 
-    const header = document.createElement('div');
-    header.className = 'theater-history-header';
+    const panelHeader = document.createElement('div');
+    panelHeader.className = 'theater-utilities-header';
 
-    const historyTitle = document.createElement('h4');
-    historyTitle.textContent = translate('player.history.title');
+    const utilitiesTitle = document.createElement('h4');
+    utilitiesTitle.textContent = translate('player.utilities.title');
 
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.className = 'theater-icon-button';
     closeButton.appendChild(createPlayerIcon('close'));
-    closeButton.setAttribute('aria-label', translate('player.choices.cueCardCloseLabel'));
+    closeButton.setAttribute('aria-label', translate('player.utilities.closeLabel'));
 
-    header.append(historyTitle, closeButton);
-    drawer.appendChild(header);
+    panelHeader.append(utilitiesTitle, closeButton);
+    panel.appendChild(panelHeader);
 
-    const navControls = document.createElement('div');
-    navControls.className = 'theater-history-nav';
+    const panelContent = document.createElement('div');
+    panelContent.className = 'theater-utilities-content';
 
-    const backButton = document.createElement('button');
-    backButton.type = 'button';
-    backButton.className = 'theater-panel-action';
-    backButton.textContent = translate('player.history.back');
-    backButton.disabled = !historyControls.canGoBack;
-    backButton.setAttribute('aria-label', translate('player.history.backLabel'));
-    if (historyControls.onBack) {
-      backButton.addEventListener('click', () => historyControls.onBack());
+    if (hasMusic) {
+      const musicSection = document.createElement('section');
+      musicSection.className = 'theater-utilities-section theater-utilities-section--music';
+
+      const heading = document.createElement('h4');
+      heading.textContent = translate('player.background.title');
+      musicSection.appendChild(heading);
+
+      const volumeWrapper = document.createElement('div');
+      volumeWrapper.className = 'theater-music-volume';
+
+      const volumeLabel = document.createElement('label');
+      volumeLabel.textContent = translate('player.background.volumeLabel');
+
+      const volumeSlider = document.createElement('input');
+      volumeSlider.type = 'range';
+      volumeSlider.min = '0';
+      volumeSlider.max = '1';
+      volumeSlider.step = '0.05';
+      volumeSlider.value = String(backgroundAudioControls.volume ?? 0);
+      volumeSlider.setAttribute('aria-label', translate('player.background.volumeLabel'));
+      volumeSlider.disabled = Boolean(backgroundAudioControls.muted);
+
+      const volumeValue = document.createElement('span');
+      volumeValue.className = 'background-volume-value';
+      const initialVolume = Number(backgroundAudioControls.volume ?? 0);
+      volumeValue.textContent = `${Math.round(initialVolume * 100)}%`;
+
+      volumeSlider.addEventListener('input', event => {
+        const value = Number(event.target.value);
+        backgroundAudioControls.volume = value;
+        volumeValue.textContent = `${Math.round(value * 100)}%`;
+        backgroundAudioControls.onVolumeChange?.(value);
+      });
+
+      volumeLabel.appendChild(volumeSlider);
+      volumeWrapper.append(volumeLabel, volumeValue);
+      musicSection.appendChild(volumeWrapper);
+
+      const muteButton = document.createElement('button');
+      muteButton.type = 'button';
+      muteButton.className = 'theater-panel-action';
+
+      const updateMuteLabel = (muted) => {
+        muteButton.textContent = muted
+          ? translate('player.background.unmute')
+          : translate('player.background.mute');
+        muteButton.setAttribute('aria-pressed', muted ? 'true' : 'false');
+        muteButton.setAttribute('aria-label', muted
+          ? translate('player.background.unmute')
+          : translate('player.background.mute'));
+        volumeSlider.disabled = muted;
+      };
+
+      updateMuteLabel(Boolean(backgroundAudioControls.muted));
+
+      muteButton.addEventListener('click', () => {
+        const nextMuted = backgroundAudioControls.onToggleMute?.();
+        const resolved = typeof nextMuted === 'boolean' ? nextMuted : !backgroundAudioControls.muted;
+        backgroundAudioControls.muted = resolved;
+        updateMuteLabel(resolved);
+      });
+
+      musicSection.appendChild(muteButton);
+      panelContent.appendChild(musicSection);
     }
 
-    const forwardButton = document.createElement('button');
-    forwardButton.type = 'button';
-    forwardButton.className = 'theater-panel-action';
-    forwardButton.textContent = translate('player.history.forward');
-    forwardButton.disabled = !historyControls.canGoForward;
-    forwardButton.setAttribute('aria-label', translate('player.history.forwardLabel'));
-    if (historyControls.onForward) {
-      forwardButton.addEventListener('click', () => historyControls.onForward());
+    if (hasHistory) {
+      const historySection = document.createElement('section');
+      historySection.className = 'theater-utilities-section theater-utilities-section--history';
+
+      const historyTitle = document.createElement('h4');
+      historyTitle.textContent = translate('player.history.title');
+      historySection.appendChild(historyTitle);
+
+      const navControls = document.createElement('div');
+      navControls.className = 'theater-history-nav';
+
+      const backButton = document.createElement('button');
+      backButton.type = 'button';
+      backButton.className = 'theater-panel-action';
+      backButton.textContent = translate('player.history.back');
+      backButton.disabled = !historyControls.canGoBack;
+      backButton.setAttribute('aria-label', translate('player.history.backLabel'));
+      if (historyControls.onBack) {
+        backButton.addEventListener('click', () => historyControls.onBack());
+      }
+
+      const forwardButton = document.createElement('button');
+      forwardButton.type = 'button';
+      forwardButton.className = 'theater-panel-action';
+      forwardButton.textContent = translate('player.history.forward');
+      forwardButton.disabled = !historyControls.canGoForward;
+      forwardButton.setAttribute('aria-label', translate('player.history.forwardLabel'));
+      if (historyControls.onForward) {
+        forwardButton.addEventListener('click', () => historyControls.onForward());
+      }
+
+      navControls.append(backButton, forwardButton);
+      historySection.appendChild(navControls);
+
+      const historyList = document.createElement('ol');
+      historyList.className = 'theater-history-list';
+      historyList.setAttribute('aria-label', translate('player.history.listLabel'));
+
+      historyControls.entries.forEach((entry, index) => {
+        const item = document.createElement('li');
+        item.className = 'theater-history-item';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'theater-history-entry';
+        const step = document.createElement('span');
+        step.className = 'theater-history-step';
+        step.textContent = String(index + 1);
+        const label = document.createElement('span');
+        label.className = 'theater-history-label';
+        const displayLabel = entry.label ?? entry.fullLabel ?? entry.sceneId;
+        const accessibleLabel = entry.fullLabel ?? entry.label ?? entry.sceneId;
+        label.textContent = displayLabel || '';
+        button.append(step, label);
+        if (accessibleLabel) {
+          button.setAttribute('title', accessibleLabel);
+          button.setAttribute('aria-label', accessibleLabel);
+        }
+        if (button.dataset) {
+          button.dataset.sceneId = entry.sceneId;
+        }
+
+        if (index === historyControls.index) {
+          button.disabled = true;
+          button.setAttribute('aria-current', 'step');
+        } else if (historyControls.onJump) {
+          button.addEventListener('click', () => historyControls.onJump(index));
+        }
+
+        item.appendChild(button);
+        historyList.appendChild(item);
+      });
+
+      historySection.appendChild(historyList);
+      panelContent.appendChild(historySection);
     }
 
-    navControls.append(backButton, forwardButton);
-    drawer.appendChild(navControls);
-
-    const historyList = document.createElement('ol');
-    historyList.className = 'theater-history-list';
-    historyList.setAttribute('aria-label', translate('player.history.listLabel'));
-
-    historyControls.entries.forEach((entry, index) => {
-      const item = document.createElement('li');
-      item.className = 'theater-history-item';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'theater-history-entry';
-      const step = document.createElement('span');
-      step.className = 'theater-history-step';
-      step.textContent = String(index + 1);
-      const label = document.createElement('span');
-      label.className = 'theater-history-label';
-      const displayLabel = entry.label ?? entry.fullLabel ?? entry.sceneId;
-      const accessibleLabel = entry.fullLabel ?? entry.label ?? entry.sceneId;
-      label.textContent = displayLabel || '';
-      button.append(step, label);
-      if (accessibleLabel) {
-        button.setAttribute('title', accessibleLabel);
-        button.setAttribute('aria-label', accessibleLabel);
-      }
-      if (button.dataset) {
-        button.dataset.sceneId = entry.sceneId;
-      }
-
-      if (index === historyControls.index) {
-        button.disabled = true;
-        button.setAttribute('aria-current', 'step');
-      } else if (historyControls.onJump) {
-        button.addEventListener('click', () => historyControls.onJump(index));
-      }
-
-      item.appendChild(button);
-      historyList.appendChild(item);
-    });
+    panel.appendChild(panelContent);
 
     const setOpen = (open) => {
-      drawer.hidden = !open;
+      panel.hidden = !open;
       toggleButton.setAttribute('aria-expanded', open ? 'true' : 'false');
     };
-    toggleButton.addEventListener('click', () => setOpen(drawer.hidden));
+
+    toggleButton.addEventListener('click', () => setOpen(panel.hidden));
     closeButton.addEventListener('click', () => setOpen(false));
 
-    drawer.appendChild(historyList);
-    historyWrapper.append(toggleButton, drawer);
-    theaterUtilityRail.appendChild(historyWrapper);
+    utilitiesWrapper.append(toggleButton, panel);
+    theaterUtilityRail.appendChild(utilitiesWrapper);
   };
 
-  appendBackgroundAudioUtility();
-  appendHistoryDrawer();
+  appendUtilitiesPanel();
 
   const renderNavigationControls = (host, options = {}) => renderPlayerChoices({
     host,

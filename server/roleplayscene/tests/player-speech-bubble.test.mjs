@@ -454,8 +454,13 @@ try {
       canGoForward: false,
     },
   }));
-  assert.ok(findByClass(stageEl, 'theater-music-popover'), 'Bubble mode should render the shared background music utility');
-  assert.ok(findByClass(stageEl, 'theater-history-drawer'), 'Bubble mode should render the shared story history drawer');
+  assert.ok(findByClass(stageEl, 'theater-utilities'), 'Bubble mode should render a shared utilities trigger');
+  const utilitiesButton = findButtonByText(stageEl, translate('player.utilities.title'));
+  assert.ok(utilitiesButton, 'Utilities trigger should expose a clear text label');
+  utilitiesButton.dispatchEvent('click');
+  assert.equal(findByClass(stageEl, 'theater-utilities-panel')?.hidden, false, 'Utilities panel should open from the shared trigger');
+  assert.ok(findByClass(stageEl, 'theater-utilities-section--music'), 'Utilities panel should include background music controls');
+  assert.ok(findByClass(stageEl, 'theater-utilities-section--history'), 'Utilities panel should include story history controls');
 
   resetSpies();
   scene = {
