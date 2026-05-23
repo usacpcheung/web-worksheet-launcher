@@ -1697,8 +1697,6 @@ button:disabled {
 }
 .dialogue-bubble-play {
   padding: var(--space-2xs) var(--space-sm);
-  background: var(--color-surface);
-  border-color: var(--color-border);
   box-shadow: none;
   flex: 0 0 auto;
   display: inline-flex;
