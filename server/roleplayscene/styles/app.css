@@ -1931,7 +1931,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 }
 @media (max-width: 900px) {
   :root {
-    --theater-mobile-dock-reserve-dialogue: calc(clamp(3rem, 8vh, 4rem) + env(safe-area-inset-bottom, 0px));
+    --theater-mobile-dock-reserve-dialogue: calc(clamp(1rem, 5vh, 2rem) + env(safe-area-inset-bottom, 0px));
     --theater-mobile-dock-reserve-sheet: calc(clamp(4.25rem, 11vh, 5.75rem) + env(safe-area-inset-bottom, 0px));
   }
   .topbar {
