@@ -1037,14 +1037,14 @@ export function renderPlayerUI({
 
     const prevButton = document.createElement('button');
     prevButton.type = 'button';
-    prevButton.className = 'theater-toolbar__button';
+    prevButton.className = 'theater-toolbar__button theater-toolbar__button--previous';
     appendToolbarButtonContent(prevButton, 'previous', translate('player.speechBubble.previous'));
     prevButton.disabled = !visibleEntries.length || (!choicesOpen && !endOverlayOpen && activeVisibleIndex <= 0 && activePageIndex <= 0);
     prevButton.addEventListener('click', retreatTheater);
 
     const nextButton = document.createElement('button');
     nextButton.type = 'button';
-    nextButton.className = 'theater-toolbar__button';
+    nextButton.className = 'theater-toolbar__button theater-toolbar__button--next';
     appendToolbarButtonContent(nextButton, 'next', translate('player.speechBubble.next'));
     nextButton.disabled = !visibleEntries.length || endOverlayOpen || choicesOpen;
     nextButton.addEventListener('click', () => advanceTheater());

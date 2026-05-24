@@ -2038,6 +2038,19 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     flex: 0 0 auto;
     white-space: nowrap;
   }
+  @media (max-width: 420px) {
+    .theater-toolbar__button--previous,
+    .theater-toolbar__button--next {
+      width: 2.35rem;
+      min-width: 2.35rem;
+      padding: 0;
+      gap: 0;
+    }
+    .theater-toolbar__button--previous span,
+    .theater-toolbar__button--next span {
+      display: none;
+    }
+  }
   .theater-dialogue-card {
     max-height: calc(100% - var(--theater-mobile-dock-reserve));
     overflow: auto;
