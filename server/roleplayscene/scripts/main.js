@@ -206,12 +206,20 @@ function updateToolbarWrapState() {
     return;
   }
 
+  // Measure wrap state against the base (unwrapped) layout so wrapped styles
+  // themselves do not influence detection.
+  toolbar.classList.remove('toolbar--wrapped');
+  topbar?.classList?.remove?.('topbar--wrapped');
+
   const tops = visibleItems.map((child) => Number(child?.offsetTop || 0));
+  const heights = visibleItems.map((child) => Number(child?.offsetHeight || 0));
   const minTop = Math.min(...tops);
   const maxTop = Math.max(...tops);
+  const maxHeight = Math.max(...heights, 0);
 
   // Same-row controls can differ by a few pixels in top offset due to control height.
-  const wrapped = (maxTop - minTop) > 10;
+  // Treat as wrapped only when vertical spread is large enough to indicate another row.
+  const wrapped = (maxTop - minTop) > Math.max(12, Math.floor(maxHeight * 0.55));
 
   toolbar.classList.toggle('toolbar--wrapped', wrapped);
   topbar?.classList?.toggle?.('topbar--wrapped', wrapped);
