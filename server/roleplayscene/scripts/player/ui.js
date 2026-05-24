@@ -1024,6 +1024,7 @@ export function renderPlayerUI({
   function renderTheaterState() {
     if (!theaterOverlay) return;
     theaterOverlay.innerHTML = '';
+    theaterOverlay.classList?.remove?.('theater-overlay--dialogue', 'theater-overlay--choices');
     if (theaterControlRail) {
       theaterControlRail.innerHTML = '';
     }
@@ -1123,6 +1124,7 @@ export function renderPlayerUI({
     }
 
     if (!choicesOpen && !endOverlayOpen && activeEntry) {
+      theaterOverlay.classList?.add?.('theater-overlay--dialogue');
       const dialogueCard = document.createElement('div');
       dialogueCard.className = 'theater-dialogue-card';
       const speakerName = getSpeakerName(project, activeEntry.line);
@@ -1150,6 +1152,7 @@ export function renderPlayerUI({
     }
 
     const choicesPanel = document.createElement('div');
+    theaterOverlay.classList?.add?.('theater-overlay--choices');
     choicesPanel.className = choicesOpen
       ? 'theater-choice-panel theater-choice-panel--menu'
       : 'theater-choice-panel';
