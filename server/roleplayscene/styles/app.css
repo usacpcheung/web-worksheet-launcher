@@ -1940,6 +1940,8 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   .toolbar {
     width: 100%;
     justify-content: flex-start;
+    align-items: center;
+    row-gap: var(--space-xs);
   }
   .toolbar > .toolbar__mode,
   .toolbar > .toolbar__files,
@@ -1950,13 +1952,30 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   }
   .toolbar > .toolbar__mode {
     width: auto;
+    order: 1;
+    flex-wrap: nowrap;
+  }
+  .toolbar > .toolbar__overflow {
+    order: 2;
+    width: auto;
+    flex-wrap: nowrap;
+    margin-inline-start: auto;
   }
   .toolbar > .toolbar__server {
+    order: 3;
     border-left: none;
     padding-inline-start: 0;
+    margin-top: var(--space-2xs);
+    align-items: flex-start;
+  }
+  .toolbar > .toolbar__server > button {
+    display: none;
   }
   .server-status {
-    white-space: normal;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .layout { grid-template-columns: 1fr; }
   .layout.layout--play { grid-template-columns: 1fr; }
