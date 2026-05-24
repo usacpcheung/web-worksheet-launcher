@@ -1938,7 +1938,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 @media (max-width: 1023px) {
   .toolbar {
     width: 100%;
-    justify-content: flex-start;
+    justify-content: flex-end;
   }
   .toolbar__overflow {
     margin-inline-start: auto;
