@@ -124,6 +124,9 @@ button:disabled {
   background: var(--color-surface);
   box-shadow: var(--shadow-subtle);
 }
+.topbar.topbar--wrapped {
+  align-items: flex-start;
+}
 .topbar h1 {
   margin: 0;
   color: var(--color-text);
@@ -139,6 +142,15 @@ button:disabled {
   flex: 1 1 auto;
   min-width: 0;
   flex-wrap: wrap;
+}
+.toolbar.toolbar--wrapped {
+  justify-content: flex-start;
+  align-content: flex-start;
+}
+.toolbar.toolbar--wrapped > .toolbar__files,
+.toolbar.toolbar--wrapped > .toolbar__server,
+.toolbar.toolbar--wrapped > .toolbar__locale {
+  display: contents;
 }
 .toolbar__mode,
 .toolbar__files,

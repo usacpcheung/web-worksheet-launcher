@@ -37,6 +37,7 @@ const serverManageButton = document.getElementById('server-manage-btn');
 const serverBrowsePublishedButton = document.getElementById('server-browse-published-btn');
 const publishedExitButton = document.getElementById('published-exit-btn');
 const fileInput = document.getElementById('file-input');
+const topbar = document.querySelector('.topbar');
 const topbarTitle = document.querySelector('.topbar h1');
 const localeSelect = document.getElementById('locale-select');
 const localeLabel = document.querySelector('.toolbar__locale-label');
@@ -183,6 +184,39 @@ function hostHasVisibleItems(host) {
   return Array.from(host.children || []).some((child) => child instanceof HTMLElement && !child.hidden);
 }
 
+function updateToolbarWrapState() {
+  if (!toolbar?.classList) return;
+
+  const clearWrappedState = () => {
+    toolbar.classList.remove('toolbar--wrapped');
+    topbar?.classList?.remove?.('topbar--wrapped');
+  };
+
+  if (getHeaderLayoutMode() !== 'desktop' || typeof HTMLElement !== 'function') {
+    clearWrappedState();
+    return;
+  }
+
+  const visibleItems = Array.from(toolbar.children || []).filter((child) => (
+    child instanceof HTMLElement && !child.hidden
+  ));
+
+  if (visibleItems.length <= 1) {
+    clearWrappedState();
+    return;
+  }
+
+  const tops = visibleItems.map((child) => Number(child?.offsetTop || 0));
+  const minTop = Math.min(...tops);
+  const maxTop = Math.max(...tops);
+
+  // Same-row controls can differ by a few pixels in top offset due to control height.
+  const wrapped = (maxTop - minTop) > 10;
+
+  toolbar.classList.toggle('toolbar--wrapped', wrapped);
+  topbar?.classList?.toggle?.('topbar--wrapped', wrapped);
+}
+
 function restoreDesktopToolbarLayout() {
   moveToolbarNode(btnImport, toolbarFiles);
   moveToolbarNode(btnExport, toolbarFiles);
@@ -220,6 +254,7 @@ function applyToolbarOverflowLayout() {
   const layoutMode = getHeaderLayoutMode();
   if (layoutMode === 'desktop') {
     restoreDesktopToolbarLayout();
+    updateToolbarWrapState();
     return;
   }
 
@@ -259,6 +294,8 @@ function applyToolbarOverflowLayout() {
   if (!hasOverflowItems) {
     setToolbarOverflowOpen(false);
   }
+
+  updateToolbarWrapState();
 }
 
 function createZipFileFromBytes(bytes, name) {
