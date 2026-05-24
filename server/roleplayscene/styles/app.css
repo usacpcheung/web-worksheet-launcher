@@ -2038,7 +2038,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     flex: 0 0 auto;
     white-space: nowrap;
   }
-  @media (max-width: 420px) {
+  @media (max-width: 767px) {
     .theater-toolbar__button--previous,
     .theater-toolbar__button--next {
       width: 2.35rem;
