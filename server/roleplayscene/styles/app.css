@@ -889,6 +889,9 @@ button:disabled {
   gap: var(--space-xs);
   justify-items: start;
 }
+.theater-choices-dock {
+  display: none;
+}
 .theater-utilities-panel {
   width: min(21rem, calc(100vw - 2rem));
   max-height: min(62vh, 34rem);
@@ -2043,6 +2046,12 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     white-space: nowrap;
   }
   @media (max-width: 767px) {
+    .theater-choices-dock {
+      display: grid;
+    }
+    .theater-toolbar__button--choices {
+      display: none;
+    }
     .theater-toolbar__button--previous,
     .theater-toolbar__button--next {
       width: 2.35rem;
