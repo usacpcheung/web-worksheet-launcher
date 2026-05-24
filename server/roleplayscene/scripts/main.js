@@ -184,6 +184,28 @@ function hostHasVisibleItems(host) {
   return Array.from(host.children || []).some((child) => child instanceof HTMLElement && !child.hidden);
 }
 
+function isDesktopToolbarWrapped() {
+  if (!toolbar || typeof HTMLElement !== 'function') return false;
+  if (getHeaderLayoutMode() !== 'desktop') return false;
+
+  const visibleItems = Array.from(toolbar.children || []).filter((child) => (
+    child instanceof HTMLElement && !child.hidden
+  ));
+
+  if (visibleItems.length <= 1) return false;
+
+  // Measure against the base layout so wrapped-state classes do not skew detection.
+  toolbar.classList.remove('toolbar--wrapped');
+  topbar?.classList?.remove?.('topbar--wrapped');
+
+  const tops = visibleItems.map((child) => Number(child?.offsetTop || 0));
+  const heights = visibleItems.map((child) => Number(child?.offsetHeight || 0));
+  const minTop = Math.min(...tops);
+  const maxTop = Math.max(...tops);
+  const maxHeight = Math.max(...heights, 0);
+  return (maxTop - minTop) > Math.max(12, Math.floor(maxHeight * 0.55));
+}
+
 function updateToolbarWrapState() {
   if (!toolbar?.classList) return;
 
@@ -197,32 +219,38 @@ function updateToolbarWrapState() {
     return;
   }
 
-  const visibleItems = Array.from(toolbar.children || []).filter((child) => (
-    child instanceof HTMLElement && !child.hidden
-  ));
-
-  if (visibleItems.length <= 1) {
-    clearWrappedState();
-    return;
-  }
-
-  // Measure wrap state against the base (unwrapped) layout so wrapped styles
-  // themselves do not influence detection.
-  toolbar.classList.remove('toolbar--wrapped');
-  topbar?.classList?.remove?.('topbar--wrapped');
-
-  const tops = visibleItems.map((child) => Number(child?.offsetTop || 0));
-  const heights = visibleItems.map((child) => Number(child?.offsetHeight || 0));
-  const minTop = Math.min(...tops);
-  const maxTop = Math.max(...tops);
-  const maxHeight = Math.max(...heights, 0);
-
-  // Same-row controls can differ by a few pixels in top offset due to control height.
-  // Treat as wrapped only when vertical spread is large enough to indicate another row.
-  const wrapped = (maxTop - minTop) > Math.max(12, Math.floor(maxHeight * 0.55));
+  const wrapped = isDesktopToolbarWrapped();
 
   toolbar.classList.toggle('toolbar--wrapped', wrapped);
   topbar?.classList?.toggle?.('topbar--wrapped', wrapped);
+}
+
+function applyDesktopWrapOverflowFallback() {
+  moveToolbarNode(serverSaveButton, toolbarMoreServerItems);
+  moveToolbarNode(serverManageButton, toolbarMoreServerItems);
+  moveToolbarNode(serverBrowsePublishedButton, toolbarMoreServerItems);
+  moveToolbarNode(publishedExitButton, toolbarMoreServerItems);
+  moveToolbarNode(toolbarLocale, toolbarMoreProjectItems);
+
+  if (toolbarLocale) {
+    toolbarLocale.hidden = false;
+  }
+
+  const showServerGroup = hostHasVisibleItems(toolbarMoreServerItems);
+  const showProjectGroup = hostHasVisibleItems(toolbarMoreProjectItems);
+  if (toolbarMoreServerGroup) toolbarMoreServerGroup.hidden = !showServerGroup;
+  if (toolbarMoreProjectGroup) toolbarMoreProjectGroup.hidden = !showProjectGroup;
+
+  const hasOverflowItems = showServerGroup || showProjectGroup;
+  if (toolbarOverflow) {
+    toolbarOverflow.hidden = !hasOverflowItems;
+  }
+  if (toolbarMoreButton) {
+    toolbarMoreButton.hidden = !hasOverflowItems;
+  }
+  if (!hasOverflowItems) {
+    setToolbarOverflowOpen(false);
+  }
 }
 
 function restoreDesktopToolbarLayout() {
@@ -262,6 +290,9 @@ function applyToolbarOverflowLayout() {
   const layoutMode = getHeaderLayoutMode();
   if (layoutMode === 'desktop') {
     restoreDesktopToolbarLayout();
+    if (isDesktopToolbarWrapped()) {
+      applyDesktopWrapOverflowFallback();
+    }
     updateToolbarWrapState();
     return;
   }
