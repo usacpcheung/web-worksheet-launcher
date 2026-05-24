@@ -225,6 +225,43 @@ function updateToolbarWrapState() {
   topbar?.classList?.toggle?.('topbar--wrapped', wrapped);
 }
 
+function updateMobileServerBadgeLayout() {
+  if (!toolbar?.classList || !toolbarServer) return;
+
+  toolbar.classList.remove('toolbar--server-stacked');
+
+  if (getHeaderLayoutMode() !== 'mobile' || typeof HTMLElement !== 'function') {
+    return;
+  }
+
+  const modeGroup = toolbar.querySelector('.toolbar__mode');
+  const overflowGroup = toolbar.querySelector('.toolbar__overflow');
+  if (!(modeGroup instanceof HTMLElement) || !(overflowGroup instanceof HTMLElement) || toolbarServer.hidden) {
+    return;
+  }
+
+  const toolbarWidth = Number(toolbar.clientWidth || 0);
+  if (!Number.isFinite(toolbarWidth) || toolbarWidth <= 0) {
+    return;
+  }
+
+  const computed = typeof globalThis.getComputedStyle === 'function'
+    ? globalThis.getComputedStyle(toolbar)
+    : null;
+  const rawGap = computed?.columnGap || computed?.gap || '0';
+  const gap = Number.parseFloat(rawGap) || 0;
+
+  const modeWidth = Number(modeGroup.offsetWidth || 0);
+  const serverWidth = Number(toolbarServer.offsetWidth || 0);
+  const overflowWidth = overflowGroup.hidden ? 0 : Number(overflowGroup.offsetWidth || 0);
+  const visibleGroups = [modeWidth > 0, serverWidth > 0, overflowWidth > 0].filter(Boolean).length;
+  const requiredWidth = modeWidth + serverWidth + overflowWidth + Math.max(0, visibleGroups - 1) * gap;
+
+  if (requiredWidth > toolbarWidth + 2) {
+    toolbar.classList.add('toolbar--server-stacked');
+  }
+}
+
 function applyDesktopWrapOverflowFallback() {
   moveToolbarNode(serverSaveButton, toolbarMoreServerItems);
   moveToolbarNode(serverManageButton, toolbarMoreServerItems);
@@ -294,6 +331,7 @@ function applyToolbarOverflowLayout() {
       applyDesktopWrapOverflowFallback();
     }
     updateToolbarWrapState();
+    updateMobileServerBadgeLayout();
     return;
   }
 
@@ -335,6 +373,7 @@ function applyToolbarOverflowLayout() {
   }
 
   updateToolbarWrapState();
+  updateMobileServerBadgeLayout();
 }
 
 function createZipFileFromBytes(bytes, name) {

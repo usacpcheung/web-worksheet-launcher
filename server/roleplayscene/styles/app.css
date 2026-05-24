@@ -1961,7 +1961,6 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   }
   .toolbar > .toolbar__mode,
   .toolbar > .toolbar__files,
-  .toolbar > .toolbar__server,
   .toolbar > .toolbar__locale {
     width: 100%;
     flex-wrap: wrap;
@@ -1972,15 +1971,26 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     flex-wrap: nowrap;
   }
   .toolbar > .toolbar__overflow {
-    order: 2;
+    order: 3;
     width: auto;
     flex-wrap: nowrap;
     margin-inline-start: auto;
   }
   .toolbar > .toolbar__server {
-    order: 3;
+    order: 2;
+    width: auto;
+    flex-wrap: nowrap;
     border-left: none;
     padding-inline-start: 0;
+    margin-top: 0;
+    align-items: center;
+  }
+  .toolbar.toolbar--server-stacked > .toolbar__overflow {
+    order: 2;
+  }
+  .toolbar.toolbar--server-stacked > .toolbar__server {
+    order: 3;
+    width: 100%;
     margin-top: var(--space-2xs);
     align-items: flex-start;
   }
