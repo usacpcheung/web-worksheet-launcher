@@ -666,12 +666,17 @@ function showMessage(msg) {
 }
 
 function clearMessage() {
+  lastMessagePayload = null;
   if (!messageHost || !messageText || !messageDetails) return;
   messageText.textContent = '';
   messageDetails.innerHTML = '';
   messageDetails.hidden = true;
   messageHost.hidden = true;
   messageHost.setAttribute('hidden', '');
+}
+
+function dismissMessage() {
+  clearMessage();
 }
 
 function updateServerSessionUi() {
@@ -1924,7 +1929,7 @@ if (serverModalOverlay) {
 
 if (dismissButton) {
   dismissButton.addEventListener('click', () => {
-    clearMessage();
+    dismissMessage();
   });
 }
 

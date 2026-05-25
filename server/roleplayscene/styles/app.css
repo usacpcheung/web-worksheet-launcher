@@ -339,8 +339,9 @@ button:disabled {
 .app-messages__content { display: grid; gap: var(--space-2xs); flex: 1; }
 .app-messages__text { flex: 1; font-weight: 600; }
 .app-messages__details { display: grid; gap: var(--space-2xs); }
-.app-messages__dismiss { border: none; background: transparent; font-size: 1.25rem; line-height: 1; cursor: pointer; color: inherit; padding: var(--space-2xs); border-radius: var(--radius-xs); transition: background-color 0.2s ease; }
-.app-messages__dismiss:hover { background: rgba(15, 23, 42, 0.08); }
+.app-messages__dismiss { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; border: 1px solid transparent; background: transparent; cursor: pointer; color: inherit; padding: 0; border-radius: var(--radius-xs); box-shadow: none; transition: background-color 0.2s ease, border-color 0.2s ease; }
+.app-messages__dismiss svg { width: 1.05rem; height: 1.05rem; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.app-messages__dismiss:hover { background: rgba(15, 23, 42, 0.08); border-color: rgba(15, 23, 42, 0.08); box-shadow: none; }
 .confirm-overlay {
   position: fixed;
   inset: 0;
@@ -1994,9 +1995,6 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     margin-top: var(--space-2xs);
     align-items: flex-start;
   }
-  .toolbar > .toolbar__server > button {
-    display: none;
-  }
   .server-status {
     max-width: 100%;
     white-space: nowrap;
@@ -2068,6 +2066,9 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     white-space: nowrap;
   }
   @media (max-width: 767px) {
+    .toolbar > .toolbar__server > button {
+      display: none;
+    }
     .theater-choices-dock {
       display: grid;
     }
