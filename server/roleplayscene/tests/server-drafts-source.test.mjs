@@ -327,6 +327,7 @@ assert.ok(
 assert.ok(
   indexSource.includes('class="app-messages__dismiss"')
     && indexSource.includes('<svg viewBox="0 0 24 24"')
+    && cssSource.includes('.app-messages[hidden] { display: none; }')
     && mainSource.includes('function dismissMessage()')
     && mainSource.includes('lastMessagePayload = null;\n  if (!messageHost')
     && mainSource.includes("dismissButton.addEventListener('click', () => {\n    dismissMessage();"),
