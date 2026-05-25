@@ -253,13 +253,16 @@ function updateMobileServerBadgeLayout() {
   const gap = Number.parseFloat(rawGap) || 0;
 
   const modeWidth = Number(modeGroup.offsetWidth || 0);
-  const serverWidth = Number(toolbarServer.offsetWidth || 0);
+  const serverBadge = toolbarServer.querySelector('.server-status');
+  const serverWidth = serverBadge instanceof HTMLElement
+    ? Number(serverBadge.offsetWidth || 0)
+    : Number(toolbarServer.offsetWidth || 0);
   const overflowWidth = overflowGroup.hidden ? 0 : Number(overflowGroup.offsetWidth || 0);
   const visibleGroups = [modeWidth > 0, serverWidth > 0, overflowWidth > 0].filter(Boolean).length;
   const requiredWidth = modeWidth + serverWidth + overflowWidth + Math.max(0, visibleGroups - 1) * gap;
   const rowWrapped = [modeGroup, toolbarServer, overflowGroup]
     .filter((element) => !element.hidden && Number(element.offsetWidth || 0) > 0)
-    .some((element) => Math.abs(Number(element.offsetTop || 0) - Number(modeGroup.offsetTop || 0)) > 2);
+    .some((element) => Math.abs(Number(element.offsetTop || 0) - Number(modeGroup.offsetTop || 0)) > 12);
 
   if (requiredWidth > toolbarWidth + 2 || rowWrapped) {
     toolbar.classList.add('toolbar--server-stacked');
