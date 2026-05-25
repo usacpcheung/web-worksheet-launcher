@@ -1004,6 +1004,9 @@ export function renderPlayerUI({
         onComplete: () => {
           releaseDuck();
           if (token !== runToken) return;
+          if (!playAllActive) {
+            clearTimers();
+          }
           currentAudioActive = false;
           audioDone = true;
           completeWhenReady();
@@ -1011,6 +1014,9 @@ export function renderPlayerUI({
         onCancel: () => {
           releaseDuck();
           if (token !== runToken) return;
+          if (!playAllActive) {
+            clearTimers();
+          }
           currentAudioActive = false;
           renderTheaterState();
         },

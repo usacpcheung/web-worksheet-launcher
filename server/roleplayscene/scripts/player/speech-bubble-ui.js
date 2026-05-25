@@ -386,6 +386,9 @@ export function renderSpeechBubblePlayerUI({
         onComplete: () => {
           releaseDuck();
           if (runToken !== speechRunToken) return;
+          if (!speechPlayAllActive) {
+            clearSpeechTimers();
+          }
           speechAudioActive = false;
           audioDone = true;
           completePlayAllWhenReady();
@@ -393,6 +396,9 @@ export function renderSpeechBubblePlayerUI({
         onCancel: () => {
           releaseDuck();
           if (runToken !== speechRunToken) return;
+          if (!speechPlayAllActive) {
+            clearSpeechTimers();
+          }
           speechAudioActive = false;
           renderSpeechState();
         },
