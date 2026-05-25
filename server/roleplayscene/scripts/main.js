@@ -229,6 +229,7 @@ function updateMobileServerBadgeLayout() {
   if (!toolbar?.classList || !toolbarServer) return;
 
   toolbar.classList.remove('toolbar--server-stacked');
+  topbar?.classList?.remove?.('topbar--server-stacked');
 
   if (getHeaderLayoutMode() !== 'mobile' || typeof HTMLElement !== 'function') {
     return;
@@ -256,9 +257,13 @@ function updateMobileServerBadgeLayout() {
   const overflowWidth = overflowGroup.hidden ? 0 : Number(overflowGroup.offsetWidth || 0);
   const visibleGroups = [modeWidth > 0, serverWidth > 0, overflowWidth > 0].filter(Boolean).length;
   const requiredWidth = modeWidth + serverWidth + overflowWidth + Math.max(0, visibleGroups - 1) * gap;
+  const rowWrapped = [modeGroup, toolbarServer, overflowGroup]
+    .filter((element) => !element.hidden && Number(element.offsetWidth || 0) > 0)
+    .some((element) => Math.abs(Number(element.offsetTop || 0) - Number(modeGroup.offsetTop || 0)) > 2);
 
-  if (requiredWidth > toolbarWidth + 2) {
+  if (requiredWidth > toolbarWidth + 2 || rowWrapped) {
     toolbar.classList.add('toolbar--server-stacked');
+    topbar?.classList?.add?.('topbar--server-stacked');
   }
 }
 

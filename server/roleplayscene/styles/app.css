@@ -1987,11 +1987,17 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   .toolbar.toolbar--server-stacked > .toolbar__overflow {
     order: 2;
   }
+  .topbar.topbar--server-stacked {
+    flex-wrap: wrap;
+  }
+  .topbar.topbar--server-stacked > .toolbar {
+    display: contents;
+  }
   .toolbar.toolbar--server-stacked > .toolbar__server {
     order: 3;
     width: 100%;
     margin-top: var(--space-2xs);
-    justify-content: flex-end;
+    justify-content: flex-start;
     align-items: center;
   }
   .server-status {

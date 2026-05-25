@@ -325,6 +325,14 @@ assert.ok(
 );
 
 assert.ok(
+  mainSource.includes("topbar?.classList?.add?.('topbar--server-stacked')")
+    && cssSource.includes('.topbar.topbar--server-stacked > .toolbar {\n    display: contents;')
+    && cssSource.includes('.toolbar.toolbar--server-stacked > .toolbar__server {\n    order: 3;\n    width: 100%;')
+    && cssSource.includes('justify-content: flex-start;'),
+  'mobile stacked header should keep title/mode/more on the first row and align the server badge left on the second row',
+);
+
+assert.ok(
   indexSource.includes('class="app-messages__dismiss"')
     && indexSource.includes('<svg viewBox="0 0 24 24"')
     && cssSource.includes('.app-messages[hidden] { display: none; }')
