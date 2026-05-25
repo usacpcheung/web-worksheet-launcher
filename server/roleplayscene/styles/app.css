@@ -766,6 +766,7 @@ button:disabled {
   align-items: center;
   justify-content: center;
   gap: var(--space-xs);
+  width: min(100%, 22rem);
   min-height: 3rem;
   padding: 0 var(--space-xl);
   border: 1px solid rgba(255, 255, 255, 0.72);
