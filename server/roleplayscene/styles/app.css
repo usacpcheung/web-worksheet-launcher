@@ -2140,6 +2140,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     white-space: nowrap;
   }
   @media (max-width: 767px) {
+    .player-intro-cta {
+      align-self: end;
+      padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
+    }
     .toolbar > .toolbar__server > button {
       display: none;
     }
@@ -2175,9 +2179,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     padding: var(--space-sm);
   }
   .player-intro-cta {
-    align-self: end;
     gap: var(--space-sm);
-    padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
   }
   .player-intro-begin {
     width: min(100%, 22rem);
