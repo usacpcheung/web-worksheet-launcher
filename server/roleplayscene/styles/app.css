@@ -676,6 +676,9 @@ button:disabled {
   border-radius: 0;
   box-shadow: none;
 }
+.layout--play .stage.stage--intro {
+  padding: var(--space-lg);
+}
 .stage img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; }
 .stage-empty { padding: var(--space-lg); color: var(--color-text-muted); }
 .player-stage-frame {
@@ -712,6 +715,71 @@ button:disabled {
 .player-stage-frame--theater.player-stage-frame--empty {
   min-height: min(540px, calc(100vh - 180px));
   background: var(--color-surface-alt);
+}
+.player-intro-frame {
+  width: min(100%, 1180px);
+  max-height: calc(100vh - 150px);
+}
+.player-intro-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.1), rgba(15, 23, 42, 0.38));
+  pointer-events: none;
+}
+.player-intro-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: clamp(0.75rem, 2vw, 1.5rem);
+  pointer-events: none;
+}
+.player-intro-overlay > * {
+  pointer-events: auto;
+}
+.player-intro-utilities {
+  justify-self: start;
+  align-self: start;
+  z-index: 3;
+}
+.player-intro-cta {
+  align-self: center;
+  justify-self: center;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-md);
+  width: min(100%, 32rem);
+  padding: var(--space-md);
+  color: #fff;
+  text-align: center;
+  text-shadow: 0 2px 18px rgba(15, 23, 42, 0.45);
+}
+.player-intro-cta h3 {
+  margin: 0;
+  font-size: clamp(1.5rem, 3vw, 2.5rem);
+  line-height: 1.1;
+}
+.player-intro-begin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  min-height: 3rem;
+  padding: 0 var(--space-xl);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--color-text);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.24);
+  backdrop-filter: blur(12px);
+  font-weight: 700;
+}
+.player-intro-begin:hover:not(:disabled) {
+  border-color: #fff;
+  background: #fff;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.28);
 }
 .theater-overlay {
   position: absolute;
@@ -2095,6 +2163,23 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   .theater-dialogue-card {
     max-height: calc(100% - var(--theater-mobile-dock-reserve-dialogue));
     overflow: auto;
+  }
+  .layout--play .stage.stage--intro {
+    padding: var(--space-sm);
+  }
+  .player-intro-frame {
+    width: 100%;
+  }
+  .player-intro-overlay {
+    padding: var(--space-sm);
+  }
+  .player-intro-cta {
+    align-self: end;
+    gap: var(--space-sm);
+    padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
+  }
+  .player-intro-begin {
+    width: min(100%, 22rem);
   }
   .theater-choice-panel {
     max-height: calc(100% - var(--theater-mobile-dock-reserve-sheet));

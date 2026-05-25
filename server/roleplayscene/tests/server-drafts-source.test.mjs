@@ -333,6 +333,17 @@ assert.ok(
 );
 
 assert.ok(
+  playerSource.includes("rightEl.classList?.add?.('pane--stage-only')")
+    && playerSource.includes("introOverlay.className = 'player-intro-overlay'")
+    && playerSource.includes("appendIntroUtilities(introOverlay")
+    && playerSource.includes("startBtn.className = 'player-intro-begin'")
+    && cssSource.includes('.player-intro-frame::after')
+    && cssSource.includes('.player-intro-utilities')
+    && cssSource.includes('.player-intro-cta'),
+  'RolePlayScene intro should render as a theater-style stage overlay with floating utilities and centered Begin Story action',
+);
+
+assert.ok(
   indexSource.includes('class="app-messages__dismiss"')
     && indexSource.includes('<svg viewBox="0 0 24 24"')
     && cssSource.includes('.app-messages[hidden] { display: none; }')

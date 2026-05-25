@@ -1,5 +1,6 @@
 import { ensureAudioGate, createBackgroundAudioController } from './audio.js';
 import { renderPlayerUI } from './ui.js';
+import { createPlayerIcon } from './icons.js';
 import { SceneType } from '../model.js';
 import { translate } from '../i18n.js';
 
@@ -193,9 +194,65 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     uiEl.appendChild(bgControls);
   }
 
+  function appendIntroUtilities(host, controls) {
+    if (!controls) return;
+
+    const utilitiesWrapper = document.createElement('div');
+    utilitiesWrapper.className = 'theater-utilities player-intro-utilities';
+
+    const toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.className = 'theater-floating-button theater-utilities-toggle';
+    toggleButton.appendChild(createPlayerIcon('list'));
+    const toggleLabel = document.createElement('span');
+    toggleLabel.textContent = translate('player.utilities.title');
+    toggleButton.appendChild(toggleLabel);
+    toggleButton.setAttribute('aria-expanded', 'false');
+    toggleButton.setAttribute('aria-label', translate('player.utilities.title'));
+
+    const panel = document.createElement('div');
+    panel.className = 'theater-utilities-panel';
+    panel.hidden = true;
+    panel.setAttribute('role', 'region');
+    panel.setAttribute('aria-label', translate('player.utilities.panelLabel'));
+
+    const panelHeader = document.createElement('div');
+    panelHeader.className = 'theater-utilities-header';
+
+    const title = document.createElement('h4');
+    title.textContent = translate('player.utilities.title');
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'theater-icon-button';
+    closeButton.appendChild(createPlayerIcon('close'));
+    closeButton.setAttribute('aria-label', translate('player.utilities.closeLabel'));
+    panelHeader.append(title, closeButton);
+
+    const panelContent = document.createElement('div');
+    panelContent.className = 'theater-utilities-content';
+
+    const musicSection = document.createElement('section');
+    musicSection.className = 'theater-utilities-section theater-utilities-section--music';
+    appendBackgroundAudioControls(musicSection, controls);
+    panelContent.appendChild(musicSection);
+
+    panel.append(panelHeader, panelContent);
+
+    const setOpen = (open) => {
+      panel.hidden = !open;
+      toggleButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    toggleButton.addEventListener('click', () => setOpen(panel.hidden));
+    closeButton.addEventListener('click', () => setOpen(false));
+
+    utilitiesWrapper.append(toggleButton, panel);
+    host.appendChild(utilitiesWrapper);
+  }
+
   function renderIntro() {
     stopActiveDialogue();
-    rightEl.classList?.remove?.('pane--stage-only');
+    rightEl.classList?.add?.('pane--stage-only');
     const state = store.get();
     const { project } = state;
     const startScene = findStartScene(project);
@@ -203,16 +260,22 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     maybeStopBeforeScene(null);
     resetHistory();
     stage.innerHTML = '';
+    stage.classList?.add?.('stage--intro');
+    const introFrame = document.createElement('div');
+    introFrame.className = startScene?.image?.objectUrl
+      ? 'player-stage-frame player-stage-frame--theater player-intro-frame'
+      : 'player-stage-frame player-stage-frame--empty player-stage-frame--theater player-intro-frame';
+
     if (startScene?.image?.objectUrl) {
       const introImage = document.createElement('img');
       introImage.src = startScene.image.objectUrl;
       introImage.alt = translate('player.stageImageAlt', { sceneId: startScene.id });
-      stage.appendChild(introImage);
+      introFrame.appendChild(introImage);
     } else {
       const introStage = document.createElement('div');
       introStage.className = 'stage-empty';
       introStage.textContent = translate('player.ready');
-      stage.appendChild(introStage);
+      introFrame.appendChild(introStage);
     }
 
     if (!state.audioGate && introBackgroundSource) {
@@ -226,11 +289,24 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       backgroundTrack.play(introBackgroundSource);
     }
 
-    uiPanel.innerHTML = '';
+    const introOverlay = document.createElement('div');
+    introOverlay.className = 'player-intro-overlay';
+
+    if (introBackgroundSource) {
+      appendIntroUtilities(introOverlay, createBackgroundAudioControls({ activationSource: introBackgroundSource }));
+    }
+
+    const introCta = document.createElement('div');
+    introCta.className = 'player-intro-cta';
     const title = document.createElement('h3');
     title.textContent = project.meta?.title || translate('player.untitled');
     const startBtn = document.createElement('button');
-    startBtn.textContent = translate('player.begin');
+    startBtn.className = 'player-intro-begin';
+    startBtn.appendChild(createPlayerIcon('play'));
+    const startLabel = document.createElement('span');
+    startLabel.textContent = translate('player.begin');
+    startBtn.appendChild(startLabel);
+    startBtn.setAttribute('aria-label', translate('player.begin'));
     startBtn.addEventListener('click', () => {
       ensureAudioGate(store);
       const activeStartScene = findStartScene(store.get().project);
@@ -240,15 +316,17 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       }
       beginRunAt(activeStartScene.id);
     });
-    uiPanel.append(title, startBtn);
+    introCta.append(title, startBtn);
+    introOverlay.appendChild(introCta);
+    introFrame.appendChild(introOverlay);
+    stage.appendChild(introFrame);
 
-    if (introBackgroundSource) {
-      appendBackgroundAudioControls(uiPanel, createBackgroundAudioControls({ activationSource: introBackgroundSource }));
-    }
+    uiPanel.innerHTML = '';
   }
 
   function renderCurrentScene() {
     stopActiveDialogue();
+    stage.classList?.remove?.('stage--intro');
     rightEl.classList?.add?.('pane--stage-only');
     const { project } = store.get();
     syncHistoryWithProject(project);
