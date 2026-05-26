@@ -33,6 +33,27 @@
         <span class="toolbar__locale-label">Language</span>
         <select id="locale-select"></select>
       </label>
+      <span id="toolbar-overflow" class="toolbar__overflow" hidden>
+        <button
+          id="toolbar-more-btn"
+          type="button"
+          class="toolbar__more-btn"
+          aria-expanded="false"
+          aria-controls="toolbar-more-menu"
+        >
+          More
+        </button>
+        <div id="toolbar-more-menu" class="toolbar__more-menu" hidden>
+          <section id="toolbar-more-server-group" class="toolbar__more-group" hidden>
+            <h2 id="toolbar-more-server-title" class="toolbar__more-title">Server</h2>
+            <div id="toolbar-more-server-items" class="toolbar__more-items"></div>
+          </section>
+          <section id="toolbar-more-project-group" class="toolbar__more-group" hidden>
+            <h2 id="toolbar-more-project-title" class="toolbar__more-title">Project</h2>
+            <div id="toolbar-more-project-items" class="toolbar__more-items"></div>
+          </section>
+        </div>
+      </span>
     </nav>
   </header>
 
@@ -41,7 +62,11 @@
       <span class="app-messages__text"></span>
       <div class="app-messages__details validation-results" hidden></div>
     </div>
-    <button type="button" class="app-messages__dismiss" aria-label="Dismiss message">&times;</button>
+    <button type="button" class="app-messages__dismiss" aria-label="Dismiss message">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M18 6 6 18M6 6l12 12"></path>
+      </svg>
+    </button>
   </div>
 
   <div id="import-confirm-overlay" class="confirm-overlay" hidden>

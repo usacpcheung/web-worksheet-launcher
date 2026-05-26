@@ -509,6 +509,40 @@ try {
   assert.equal(FakeAudio.playCalls[0], 'slow-line.mp3', 'Speech bubble Play All should restart from the first line after manual navigation');
 
   resetSpies();
+  scene = {
+    id: 'scene-speech-single-audio-pages',
+    type: SceneType.INTERMEDIATE,
+    speechBubble: { enabled: true, anchors: [] },
+    dialogue: [{
+      text: [
+        'This speech bubble line is intentionally long so paging kicks in during audio playback.',
+        'The added sentence keeps page timing queued long enough to catch stale post-end updates.',
+        'Regression coverage verifies completed audio no longer advances visible pages later.',
+      ].join(' '),
+      audio: { objectUrl: 'speech-single-line.mp3' },
+      bubble: { mode: BubbleMode.CENTER },
+    }],
+    choices: [],
+  };
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.toolbar.playAudio')).dispatchEvent('click');
+  const speechPageStatusBeforeEnd = findByClass(stageEl, 'speech-play-page-status')?.textContent;
+  assert.ok(speechPageStatusBeforeEnd, 'Speech bubble line should show a page status for multi-page dialogue');
+  assert.ok(pendingTimeouts.length > 0, 'Speech bubble audio should schedule page timers before ended event');
+  FakeAudio.instances[0].trigger('ended');
+  assert.equal(
+    pendingTimeouts.length,
+    0,
+    'Speech bubble ended callback should clear queued page timers when Play All is inactive',
+  );
+  flushPendingTimeouts();
+  assert.equal(
+    findByClass(stageEl, 'speech-play-page-status')?.textContent,
+    speechPageStatusBeforeEnd,
+    'Speech bubble page status should stay stable after audio completion',
+  );
+
+  resetSpies();
   const listenerDocument = globalThis.document;
   const beforeCleanupListeners = (listenerDocument.eventListeners.keydown || []).length;
   const rendered = render(scene);

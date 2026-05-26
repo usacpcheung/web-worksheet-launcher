@@ -362,5 +362,35 @@ playAllButton = findByClass(stageEl, 'audio-play-all');
 playAllButton.dispatchEvent('click');
 logResult('Play All restarts from first line after manual navigation', FakeAudio.playCalls[0] === 'audio-1.ogg');
 
+resetAudioSpies();
+scene = {
+  id: 'scene-single-audio-pages',
+  type: SceneType.INTERMEDIATE,
+  dialogue: [{
+    text: 'This line is intentionally long so the player splits it into multiple pages for theater playback. '
+      + 'A second sentence keeps the weighted length above the paging threshold and gives the timer queue '
+      + 'more than one scheduled flip for regression coverage.',
+    audio: { objectUrl: 'single-line.ogg' },
+  }],
+  choices: [],
+};
+
+({ stageEl, uiEl } = renderScene(scene));
+const singleLinePlayButton = findButtonByText(stageEl, translate('player.toolbar.playAudio'));
+singleLinePlayButton?.dispatchEvent('click');
+const pageStatusBeforeEnd = findByClass(stageEl, 'theater-page-status')?.textContent;
+const pendingBeforeAudioEnd = pendingTimeouts.length;
+FakeAudio.instances[0]?.trigger('ended');
+const pendingAfterAudioEnd = pendingTimeouts.length;
+flushPendingTimeouts();
+const pageStatusAfterFlush = findByClass(stageEl, 'theater-page-status')?.textContent;
+
+logResult('Single clip schedules pagination timers before audio end', pendingBeforeAudioEnd > 0);
+logResult('Single clip completion reduces queued pagination timers', pendingAfterAudioEnd < pendingBeforeAudioEnd);
+logResult(
+  'Single clip completion prevents delayed page-status jumps',
+  Boolean(pageStatusBeforeEnd) && pageStatusBeforeEnd === pageStatusAfterFlush,
+);
+
 globalThis.setTimeout = originalSetTimeout;
 globalThis.clearTimeout = originalClearTimeout;

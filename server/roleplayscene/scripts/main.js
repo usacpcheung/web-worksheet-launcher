@@ -37,9 +37,23 @@ const serverManageButton = document.getElementById('server-manage-btn');
 const serverBrowsePublishedButton = document.getElementById('server-browse-published-btn');
 const publishedExitButton = document.getElementById('published-exit-btn');
 const fileInput = document.getElementById('file-input');
+const topbar = document.querySelector('.topbar');
 const topbarTitle = document.querySelector('.topbar h1');
 const localeSelect = document.getElementById('locale-select');
 const localeLabel = document.querySelector('.toolbar__locale-label');
+const toolbar = document.querySelector('.toolbar');
+const toolbarFiles = document.querySelector('.toolbar__files');
+const toolbarServer = document.querySelector('.toolbar__server');
+const toolbarLocale = document.querySelector('.toolbar__locale');
+const toolbarOverflow = document.getElementById('toolbar-overflow');
+const toolbarMoreButton = document.getElementById('toolbar-more-btn');
+const toolbarMoreMenu = document.getElementById('toolbar-more-menu');
+const toolbarMoreServerGroup = document.getElementById('toolbar-more-server-group');
+const toolbarMoreServerTitle = document.getElementById('toolbar-more-server-title');
+const toolbarMoreServerItems = document.getElementById('toolbar-more-server-items');
+const toolbarMoreProjectGroup = document.getElementById('toolbar-more-project-group');
+const toolbarMoreProjectTitle = document.getElementById('toolbar-more-project-title');
+const toolbarMoreProjectItems = document.getElementById('toolbar-more-project-items');
 const importConfirmOverlay = document.getElementById('import-confirm-overlay');
 const importConfirmTitle = document.getElementById('import-confirm-title');
 const importConfirmBody = document.getElementById('import-confirm-body');
@@ -85,6 +99,8 @@ let publishedPlay = { active: false, store: null, preparedImport: null, scene: n
 let pendingDirectPublishedSceneId = '';
 
 const LEGACY_LOCALE_STORAGE_KEY = 'roleplayscene:locale';
+const HEADER_TABLET_MIN_WIDTH = 768;
+const HEADER_COMPACT_MAX_WIDTH = 1023;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -129,6 +145,243 @@ function formatTimestamp(value) {
   } catch (err) {
     return parsed.toLocaleString();
   }
+}
+
+function getViewportWidth() {
+  if (typeof globalThis.innerWidth === 'number' && Number.isFinite(globalThis.innerWidth)) {
+    return globalThis.innerWidth;
+  }
+  const docWidth = Number(document?.documentElement?.clientWidth || 0);
+  return Number.isFinite(docWidth) && docWidth > 0 ? docWidth : 1024;
+}
+
+function getHeaderLayoutMode() {
+  const width = getViewportWidth();
+  if (width > HEADER_COMPACT_MAX_WIDTH) return 'desktop';
+  if (width >= HEADER_TABLET_MIN_WIDTH) return 'tablet';
+  return 'mobile';
+}
+
+function setToolbarOverflowOpen(open) {
+  if (!toolbarMoreButton || !toolbarMoreMenu || !toolbarOverflow || toolbarOverflow.hidden) {
+    if (toolbarMoreMenu) toolbarMoreMenu.hidden = true;
+    if (toolbarMoreButton) toolbarMoreButton.setAttribute('aria-expanded', 'false');
+    if (toolbarOverflow?.classList?.remove) toolbarOverflow.classList.remove('is-open');
+    return;
+  }
+  toolbarMoreMenu.hidden = !open;
+  toolbarMoreButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+  toolbarOverflow.classList.toggle('is-open', open);
+}
+
+function moveToolbarNode(node, target) {
+  if (!node || !target || node.parentElement === target) return;
+  target.appendChild(node);
+}
+
+function hostHasVisibleItems(host) {
+  if (!host) return false;
+  return Array.from(host.children || []).some((child) => child instanceof HTMLElement && !child.hidden);
+}
+
+function isDesktopToolbarWrapped() {
+  if (!toolbar || typeof HTMLElement !== 'function') return false;
+  if (getHeaderLayoutMode() !== 'desktop') return false;
+
+  const visibleItems = Array.from(toolbar.children || []).filter((child) => (
+    child instanceof HTMLElement && !child.hidden
+  ));
+
+  if (visibleItems.length <= 1) return false;
+
+  // Measure against the base layout so wrapped-state classes do not skew detection.
+  toolbar.classList.remove('toolbar--wrapped');
+  topbar?.classList?.remove?.('topbar--wrapped');
+
+  const tops = visibleItems.map((child) => Number(child?.offsetTop || 0));
+  const heights = visibleItems.map((child) => Number(child?.offsetHeight || 0));
+  const minTop = Math.min(...tops);
+  const maxTop = Math.max(...tops);
+  const maxHeight = Math.max(...heights, 0);
+  return (maxTop - minTop) > Math.max(12, Math.floor(maxHeight * 0.55));
+}
+
+function updateToolbarWrapState() {
+  if (!toolbar?.classList) return;
+
+  const clearWrappedState = () => {
+    toolbar.classList.remove('toolbar--wrapped');
+    topbar?.classList?.remove?.('topbar--wrapped');
+  };
+
+  if (getHeaderLayoutMode() !== 'desktop' || typeof HTMLElement !== 'function') {
+    clearWrappedState();
+    return;
+  }
+
+  const wrapped = isDesktopToolbarWrapped();
+
+  toolbar.classList.toggle('toolbar--wrapped', wrapped);
+  topbar?.classList?.toggle?.('topbar--wrapped', wrapped);
+}
+
+function updateMobileServerBadgeLayout() {
+  if (!toolbar?.classList || !toolbarServer) return;
+
+  toolbar.classList.remove('toolbar--server-stacked');
+  topbar?.classList?.remove?.('topbar--server-stacked');
+
+  if (getHeaderLayoutMode() !== 'mobile' || typeof HTMLElement !== 'function') {
+    return;
+  }
+
+  const modeGroup = toolbar.querySelector('.toolbar__mode');
+  const overflowGroup = toolbar.querySelector('.toolbar__overflow');
+  if (!(modeGroup instanceof HTMLElement) || !(overflowGroup instanceof HTMLElement) || toolbarServer.hidden) {
+    return;
+  }
+
+  const toolbarWidth = Number(toolbar.clientWidth || 0);
+  if (!Number.isFinite(toolbarWidth) || toolbarWidth <= 0) {
+    return;
+  }
+
+  const computed = typeof globalThis.getComputedStyle === 'function'
+    ? globalThis.getComputedStyle(toolbar)
+    : null;
+  const rawGap = computed?.columnGap || computed?.gap || '0';
+  const gap = Number.parseFloat(rawGap) || 0;
+
+  const modeWidth = Number(modeGroup.offsetWidth || 0);
+  const serverBadge = toolbarServer.querySelector('.server-status');
+  const serverWidth = serverBadge instanceof HTMLElement
+    ? Number(serverBadge.offsetWidth || 0)
+    : Number(toolbarServer.offsetWidth || 0);
+  const overflowWidth = overflowGroup.hidden ? 0 : Number(overflowGroup.offsetWidth || 0);
+  const visibleGroups = [modeWidth > 0, serverWidth > 0, overflowWidth > 0].filter(Boolean).length;
+  const requiredWidth = modeWidth + serverWidth + overflowWidth + Math.max(0, visibleGroups - 1) * gap;
+  const rowWrapped = [modeGroup, toolbarServer, overflowGroup]
+    .filter((element) => !element.hidden && Number(element.offsetWidth || 0) > 0)
+    .some((element) => Math.abs(Number(element.offsetTop || 0) - Number(modeGroup.offsetTop || 0)) > 12);
+
+  if (requiredWidth > toolbarWidth + 2 || rowWrapped) {
+    toolbar.classList.add('toolbar--server-stacked');
+    topbar?.classList?.add?.('topbar--server-stacked');
+  }
+}
+
+function applyDesktopWrapOverflowFallback() {
+  moveToolbarNode(serverSaveButton, toolbarMoreServerItems);
+  moveToolbarNode(serverManageButton, toolbarMoreServerItems);
+  moveToolbarNode(serverBrowsePublishedButton, toolbarMoreServerItems);
+  moveToolbarNode(publishedExitButton, toolbarMoreServerItems);
+  moveToolbarNode(toolbarLocale, toolbarMoreProjectItems);
+
+  if (toolbarLocale) {
+    toolbarLocale.hidden = false;
+  }
+
+  const showServerGroup = hostHasVisibleItems(toolbarMoreServerItems);
+  const showProjectGroup = hostHasVisibleItems(toolbarMoreProjectItems);
+  if (toolbarMoreServerGroup) toolbarMoreServerGroup.hidden = !showServerGroup;
+  if (toolbarMoreProjectGroup) toolbarMoreProjectGroup.hidden = !showProjectGroup;
+
+  const hasOverflowItems = showServerGroup || showProjectGroup;
+  if (toolbarOverflow) {
+    toolbarOverflow.hidden = !hasOverflowItems;
+  }
+  if (toolbarMoreButton) {
+    toolbarMoreButton.hidden = !hasOverflowItems;
+  }
+  if (!hasOverflowItems) {
+    setToolbarOverflowOpen(false);
+  }
+}
+
+function restoreDesktopToolbarLayout() {
+  moveToolbarNode(btnImport, toolbarFiles);
+  moveToolbarNode(btnExport, toolbarFiles);
+  moveToolbarNode(serverSignInButton, toolbarServer);
+  moveToolbarNode(serverSaveButton, toolbarServer);
+  moveToolbarNode(serverManageButton, toolbarServer);
+  moveToolbarNode(serverBrowsePublishedButton, toolbarServer);
+  moveToolbarNode(publishedExitButton, toolbarServer);
+
+  if (toolbarLocale && toolbar) {
+    moveToolbarNode(toolbarLocale, toolbar);
+    if (toolbarOverflow) {
+      toolbar.insertBefore(toolbarLocale, toolbarOverflow);
+    }
+    toolbarLocale.hidden = false;
+  }
+
+  if (toolbarFiles) {
+    toolbarFiles.hidden = false;
+  }
+
+  if (toolbarOverflow) {
+    toolbarOverflow.hidden = true;
+  }
+  if (toolbarMoreServerGroup) toolbarMoreServerGroup.hidden = true;
+  if (toolbarMoreProjectGroup) toolbarMoreProjectGroup.hidden = true;
+  setToolbarOverflowOpen(false);
+}
+
+function applyToolbarOverflowLayout() {
+  if (!toolbar || !toolbarOverflow || !toolbarMoreServerItems || !toolbarMoreProjectItems) {
+    return;
+  }
+
+  const layoutMode = getHeaderLayoutMode();
+  if (layoutMode === 'desktop') {
+    restoreDesktopToolbarLayout();
+    if (isDesktopToolbarWrapped()) {
+      applyDesktopWrapOverflowFallback();
+    }
+    updateToolbarWrapState();
+    updateMobileServerBadgeLayout();
+    return;
+  }
+
+  moveToolbarNode(btnImport, toolbarMoreProjectItems);
+  moveToolbarNode(btnExport, toolbarMoreProjectItems);
+  moveToolbarNode(toolbarLocale, toolbarMoreProjectItems);
+
+  moveToolbarNode(serverSaveButton, toolbarMoreServerItems);
+  moveToolbarNode(serverManageButton, toolbarMoreServerItems);
+  moveToolbarNode(serverBrowsePublishedButton, toolbarMoreServerItems);
+  moveToolbarNode(publishedExitButton, toolbarMoreServerItems);
+
+  if (layoutMode === 'tablet') {
+    moveToolbarNode(serverSignInButton, toolbarServer);
+  } else {
+    moveToolbarNode(serverSignInButton, toolbarMoreServerItems);
+  }
+
+  if (toolbarFiles) {
+    toolbarFiles.hidden = true;
+  }
+
+  if (toolbarLocale) {
+    toolbarLocale.hidden = false;
+  }
+
+  const showServerGroup = hostHasVisibleItems(toolbarMoreServerItems);
+  const showProjectGroup = hostHasVisibleItems(toolbarMoreProjectItems);
+  if (toolbarMoreServerGroup) toolbarMoreServerGroup.hidden = !showServerGroup;
+  if (toolbarMoreProjectGroup) toolbarMoreProjectGroup.hidden = !showProjectGroup;
+
+  const hasOverflowItems = showServerGroup || showProjectGroup;
+  toolbarOverflow.hidden = !hasOverflowItems;
+  if (toolbarMoreButton) {
+    toolbarMoreButton.hidden = !hasOverflowItems;
+  }
+  if (!hasOverflowItems) {
+    setToolbarOverflowOpen(false);
+  }
+
+  updateToolbarWrapState();
+  updateMobileServerBadgeLayout();
 }
 
 function createZipFileFromBytes(bytes, name) {
@@ -189,6 +442,20 @@ function updateToolbarText() {
   }
   if (localeSelect) {
     localeSelect.setAttribute('aria-label', translate('toolbar.languageLabel'));
+  }
+  if (toolbarMoreButton) {
+    const moreLabel = translate('toolbar.more');
+    toolbarMoreButton.textContent = moreLabel;
+    toolbarMoreButton.setAttribute('aria-label', moreLabel);
+  }
+  if (toolbarMoreServerTitle) {
+    toolbarMoreServerTitle.textContent = translate('toolbar.moreServerGroup');
+  }
+  if (toolbarMoreProjectTitle) {
+    toolbarMoreProjectTitle.textContent = translate('toolbar.moreProjectGroup');
+  }
+  if (toolbarMoreMenu) {
+    toolbarMoreMenu.setAttribute('aria-label', translate('toolbar.moreMenuLabel'));
   }
   if (dismissButton) {
     dismissButton.setAttribute('aria-label', translate('toolbar.dismissMessage'));
@@ -407,12 +674,17 @@ function showMessage(msg) {
 }
 
 function clearMessage() {
+  lastMessagePayload = null;
   if (!messageHost || !messageText || !messageDetails) return;
   messageText.textContent = '';
   messageDetails.innerHTML = '';
   messageDetails.hidden = true;
   messageHost.hidden = true;
   messageHost.setAttribute('hidden', '');
+}
+
+function dismissMessage() {
+  clearMessage();
 }
 
 function updateServerSessionUi() {
@@ -467,6 +739,7 @@ function updatePublishedPlayUi() {
   if (publishedExitButton) {
     publishedExitButton.hidden = !inPublishedPlay;
   }
+  applyToolbarOverflowLayout();
 }
 
 function getDirectPublishedSceneIdFromLocation() {
@@ -1664,7 +1937,7 @@ if (serverModalOverlay) {
 
 if (dismissButton) {
   dismissButton.addEventListener('click', () => {
-    clearMessage();
+    dismissMessage();
   });
 }
 
@@ -1735,6 +2008,36 @@ serverBrowsePublishedButton?.addEventListener('click', () => {
   });
 });
 publishedExitButton?.addEventListener('click', () => exitPublishedPlay());
+
+toolbarMoreButton?.addEventListener('click', () => {
+  const nextOpen = toolbarMoreMenu?.hidden !== false;
+  setToolbarOverflowOpen(nextOpen);
+});
+
+toolbarMoreMenu?.addEventListener('click', (event) => {
+  const actionElement = event.target instanceof Element
+    ? event.target.closest('button, a')
+    : null;
+  if (!actionElement || actionElement === toolbarMoreButton) return;
+  setToolbarOverflowOpen(false);
+});
+
+document.addEventListener('click', (event) => {
+  if (!toolbarOverflow || toolbarOverflow.hidden || toolbarMoreMenu?.hidden !== false) return;
+  if (event.target instanceof Node && toolbarOverflow.contains(event.target)) return;
+  setToolbarOverflowOpen(false);
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  setToolbarOverflowOpen(false);
+});
+
+globalThis.addEventListener?.('resize', () => {
+  applyToolbarOverflowLayout();
+  setToolbarOverflowOpen(false);
+});
+
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
