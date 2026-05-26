@@ -43,6 +43,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   let activeDialoguePreview = null;
   let disposed = false;
   let selectedSpeechBubbleAnchorId = options.initialSelectedSpeechBubbleAnchorId ?? null;
+  let speakerDraftContext = null;
 
   const unsubscribe = store.subscribe(() => {
     syncSelection();
@@ -89,6 +90,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       backgroundAudio: scene.backgroundAudio ? { ...scene.backgroundAudio } : null,
       dialogue: scene.dialogue.map(line => ({
         text: line.text,
+        speakerId: line.speakerId ?? null,
         audio: line.audio ? { ...line.audio } : null,
         bubble: line.bubble ? { ...line.bubble } : undefined,
       })),
@@ -143,6 +145,12 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       onAddDialogue: addDialogue,
       onRemoveDialogue: removeDialogue,
       onUpdateDialogueText: updateDialogueText,
+      onUpdateDialogueSpeaker: updateDialogueSpeaker,
+      onStartCreateSpeakerForDialogue: startCreateSpeakerForDialogue,
+      onUpdateSpeakerDraftForDialogue: updateSpeakerDraftForDialogue,
+      onCommitSpeakerForDialogue: commitSpeakerForDialogue,
+      onCancelCreateSpeakerForDialogue: cancelCreateSpeakerForDialogue,
+      getSpeakerDraftForDialogue: getSpeakerDraftForDialogue,
       onSetDialogueAudio: setDialogueAudio,
       onGenerateDialogueAudio: generateDialogueAudio,
       isDialogueAudioGenerating: (sceneId, index) => dialogueT2AInFlightKeys.has(getDialogueT2AKey(sceneId, index)),
@@ -552,7 +560,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         if (scene.id !== sceneId) return scene;
         if (!canAddDialogueLine(scene.dialogue)) return scene;
         const draft = cloneScene(scene);
-        draft.dialogue = [...draft.dialogue, { text: '', audio: null, bubble: { mode: BubbleMode.CENTER, anchorId: null } }];
+        draft.dialogue = [...draft.dialogue, { text: '', speakerId: null, audio: null, bubble: { mode: BubbleMode.CENTER, anchorId: null } }];
         return draft;
       });
       return { ...prev, scenes };
@@ -585,6 +593,79 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         const draft = cloneScene(scene);
         if (!draft.dialogue[index]) return draft;
         draft.dialogue[index].text = text;
+        return draft;
+      });
+      return { ...prev, scenes };
+    });
+  }
+
+  function getSpeakerDraftKey(sceneId, index) {
+    return `${sceneId}:${index}`;
+  }
+
+  function getSpeakerDraftForDialogue(sceneId, index) {
+    return speakerDraftContext?.key === getSpeakerDraftKey(sceneId, index)
+      ? speakerDraftContext.value
+      : null;
+  }
+
+  function startCreateSpeakerForDialogue(sceneId, index) {
+    speakerDraftContext = { key: getSpeakerDraftKey(sceneId, index), sceneId, index, value: '' };
+    update();
+  }
+
+  function updateSpeakerDraftForDialogue(sceneId, index, value) {
+    if (speakerDraftContext?.key !== getSpeakerDraftKey(sceneId, index)) return;
+    speakerDraftContext = { ...speakerDraftContext, value };
+    update();
+  }
+
+  function cancelCreateSpeakerForDialogue(sceneId, index) {
+    if (speakerDraftContext?.key === getSpeakerDraftKey(sceneId, index)) {
+      speakerDraftContext = null;
+      update();
+    }
+  }
+
+  function commitSpeakerForDialogue(sceneId, index) {
+    if (speakerDraftContext?.key !== getSpeakerDraftKey(sceneId, index)) return;
+    const name = String(speakerDraftContext.value || '').trim();
+    if (!name) {
+      showMessage({ textId: 'inspector.dialogue.speakerNameRequired' });
+      return;
+    }
+    let assignedSpeakerId = null;
+    mutateProject(prev => {
+      const existingSpeaker = (prev.speakers || []).find(speaker => (
+        String(speaker.name || '').trim().toLocaleLowerCase() === name.toLocaleLowerCase()
+      ));
+      assignedSpeakerId = existingSpeaker?.id || newId('speaker');
+      const speakers = existingSpeaker
+        ? (prev.speakers || []).map(speaker => ({ ...speaker }))
+        : [...(prev.speakers || []).map(speaker => ({ ...speaker })), { id: assignedSpeakerId, name }];
+      const scenes = prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        if (!draft.dialogue[index]) return draft;
+        draft.dialogue[index].speakerId = assignedSpeakerId;
+        return draft;
+      });
+      return { ...prev, speakers, scenes };
+    });
+    speakerDraftContext = null;
+    update();
+  }
+
+  function updateDialogueSpeaker(sceneId, index, speakerId) {
+    speakerDraftContext = null;
+    const speakerIds = new Set((store.get().project.speakers || []).map(speaker => speaker.id));
+    const nextSpeakerId = speakerId && speakerIds.has(speakerId) ? speakerId : null;
+    mutateProject(prev => {
+      const scenes = prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        if (!draft.dialogue[index]) return draft;
+        draft.dialogue[index].speakerId = nextSpeakerId;
         return draft;
       });
       return { ...prev, scenes };
