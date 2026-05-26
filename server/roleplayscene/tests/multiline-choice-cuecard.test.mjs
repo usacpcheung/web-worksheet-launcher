@@ -127,6 +127,7 @@ globalThis.document = new StubDocument();
 const { SceneType } = await import('../scripts/model.js');
 const { renderInspector } = await import('../scripts/editor/inspector.js');
 const { renderPlayerUI } = await import('../scripts/player/ui.js');
+const { translate } = await import('../scripts/i18n.js');
 
 const multilineLabel = 'Line one\nLine two <script>alert(1)</script>';
 const multilineCueCard = 'Step A\nStep B\nUse "quotes" safely';
@@ -166,15 +167,25 @@ const stageEl = new StubElement('div');
 const uiEl = new StubElement('div');
 renderPlayerUI({ stageEl, uiEl, project, scene: project.scenes[0], onChoice: () => {} });
 
-const choiceLabel = findElement(uiEl, el => el.className === 'player-choice-label');
+const choicesButton = findElement(stageEl, (el) => (
+  String(el.className || '').split(/\s+/).includes('theater-toolbar__button')
+  && String(el.className || '').split(/\s+/).includes('theater-toolbar__button--choices')
+  && el.textContent === translate('player.toolbar.choices')
+));
+assert(choicesButton, 'theater choices button should render');
+choicesButton.dispatchEvent('click');
+
+const choiceLabel = findElement(stageEl, el => el.className === 'player-choice-label');
 assert(choiceLabel, 'player choice label should render');
 assert.equal(choiceLabel.textContent, multilineLabel, 'player choice label should preserve multiline and special characters');
 
-const cueTrigger = findElement(uiEl, el => el.className === 'player-choice-cue-trigger');
+const cueTrigger = findElement(stageEl, el => el.className === 'player-choice-cue-trigger');
 assert(cueTrigger, 'cue card trigger should render for cue text');
+const cueIcon = findElement(cueTrigger, el => String(el.className || '').includes('player-choice-cue-icon') && String(el.className || '').includes('theater-icon'));
+assert(cueIcon, 'cue trigger should use the standard SVG cue icon classes');
 cueTrigger.dispatchEvent('click');
 
-const cueBody = findElement(uiEl, el => el.className === 'player-cue-body');
+const cueBody = findElement(stageEl, el => el.className === 'player-cue-body');
 assert(cueBody, 'cue body should render');
 assert.equal(cueBody.textContent, multilineCueCard, 'cue body should preserve multiline text');
 assert.equal(cueBody.innerHTML, '', 'cue body should not inject HTML from cue card content');

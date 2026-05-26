@@ -1,13 +1,13 @@
 ---
 name: roleplayscene-editor-ui-design
-description: Use when changing RolePlayScene editor-mode UI, inspector controls, scene authoring workflow, editor buttons, icons, media rows, action groups, modals, or styling. Follow /server/editor design language for editor mode only; do not apply to RolePlayScene player/viewer mode.
+description: Use when changing RolePlayScene UI design for editor authoring surfaces or player/playback surfaces, including inspector controls, scene authoring workflow, playback theater UI, buttons, icons, media rows, action groups, choices, cue cards, modals, or styling. Follow /server/editor visual vocabulary for RolePlayScene controls while keeping editor layouts and player theater layouts distinct.
 ---
 
-# RolePlayScene Editor UI Design
+# RolePlayScene UI Design
 
-Use this skill for RolePlayScene editor-mode UI work only. Do not apply it to
-RolePlayScene player/viewer mode; that experience can use a separate visual
-style.
+Use this skill for RolePlayScene editor-mode and player/playback UI design.
+Editor and player should feel like the same app, but they should not use the
+same layout model.
 
 The main reference surface is `/server/editor`, especially its authoring shell,
 panels, section headers, buttons, icons, media rows, action groups, form
@@ -15,7 +15,7 @@ controls, and confirmation modals.
 
 ## Direction
 
-RolePlayScene editor mode should feel like a compact authoring tool:
+RolePlayScene UI should feel unified, light, and purposeful:
 
 - Light workspace with white panels on a pale gray background.
 - Thin neutral borders, subtle shadows, and 8-12px radius.
@@ -24,12 +24,35 @@ RolePlayScene editor mode should feel like a compact authoring tool:
 - Icons for compact repeated actions.
 - Text labels where meaning must be obvious.
 
+Editor mode should feel like a compact authoring tool. Player mode should feel
+like a theater/playback surface, not an authoring inspector.
+
 Avoid marketing-style UI, oversized hero sections, decorative gradients, visual
-noise, or player/viewer styling.
+noise, heavy card stacks, raw browser controls, or one-off button styles.
+
+## Shared Visual Vocabulary
+
+Reuse the same visual vocabulary across RolePlayScene editor and player:
+
+- Neutral/accent/danger action variants.
+- Thin borders, light surfaces, restrained shadows, and consistent 8-12px
+  radius.
+- Compact button heights and aligned action groups.
+- Icon + label buttons for clear workflow actions.
+- Icon-only buttons for compact utility actions with `aria-label`.
+- Editor-style icon set: inline SVG, no fill, `stroke="currentColor"`,
+  rounded caps/joins, and consistent stroke width.
+- Light rows/action rows for choices, media, history, and repeated controls.
+- Muted badges/status text before action buttons when status describes the row.
+
+Do not copy editor layout directly into player mode. Prefer playback-scoped
+classes that reuse the same tokens and styling language. Avoid coupling player
+CSS to editor-only implementation classes unless the shared class is already
+stable and intentionally generic.
 
 ## Layout
 
-Follow `/server/editor` layout patterns:
+For editor mode, follow `/server/editor` layout patterns:
 
 - Use a two-pane or grid-based authoring surface.
 - Put navigation, story map, or scene preview on the left.
@@ -43,6 +66,22 @@ Follow `/server/editor` layout patterns:
   and no extra card chrome around every control group.
 - Avoid divider-heavy layouts. Use spacing, alignment, subtle row backgrounds,
   and clear labels before adding horizontal rules.
+
+For player/playback mode:
+
+- Treat the stage image as the primary surface.
+- The image must be fully visible; use contain-style sizing, not crop/cover,
+  because speech-bubble anchors depend on the rendered image coordinate space.
+- Keep playback controls near the stage as a lightweight floating toolbar.
+- Keep normal dialogue as a readable overlay and speech-bubble dialogue as
+  positioned bubbles on the image.
+- Render choices as stage-centered overlays or player-surface rows, not as raw
+  browser buttons or oversized solid blocks.
+- Put secondary tools such as history and background music in compact drawers,
+  popovers, or utility controls instead of a heavy side inspector unless there
+  is enough meaningful content to justify a panel.
+- On narrow screens, prefer vertical drawers/sheets over horizontal scrolling
+  history rails.
 
 ## Buttons And Actions
 
@@ -71,6 +110,7 @@ Use consistent action categories.
   describes the attached media rather than acting on it.
 
 Do not invent one-off button styles when an existing editor action pattern fits.
+This also applies to player/playback controls and choice buttons.
 
 ## Icons
 
@@ -99,8 +139,12 @@ Common mapping:
 - `shield`: validation.
 - `moreHorizontal`: overflow menu.
 - `grip`: reorder/move.
+- `lightbulb`: cue card/help prompt.
+- `volume` / `music`: background music controls.
+- `history`: story history drawer.
 
-Do not mix unrelated icon styles in editor mode.
+Do not mix unrelated icon styles in RolePlayScene UI. Avoid emoji as functional
+icons when a matching editor-style icon exists.
 
 ## Forms And Sections
 
@@ -123,7 +167,8 @@ and validation. Section headings are wayfinding elements, not hero titles.
 
 ## Media Rows
 
-Use `/server/editor` media-row patterns for editor media fields:
+Use `/server/editor` media-row patterns for editor media fields and adapt their
+visual language for player media utilities:
 
 - Left side: media label and status.
 - Right side: action group.
@@ -133,6 +178,32 @@ Use `/server/editor` media-row patterns for editor media fields:
   spacing, aligned actions, and no nested panels inside the row.
 - Avoid large image/audio previews in the inspector unless the task is visual
   placement. For placement, use Scene Preview.
+- In player mode, background music should be a compact utility or popover rather
+  than a large panel unless the surrounding layout intentionally supports it.
+
+## Player Choices And Cue Cards
+
+Playback choices should match the editor's light action-row language:
+
+- Use light rows with thin borders and clear hover/focus states.
+- Keep the clickable area large enough for playback, but avoid giant solid
+  button blocks.
+- Preserve multiline choice labels with `textContent`.
+- Cue-card triggers should use the editor-style `lightbulb` icon, not emoji.
+- Place cue-card icon buttons consistently before the choice text.
+- Do not add new choice workflow actions unless requested; preserve existing
+  choice selection and cue-card behavior.
+
+## Player History
+
+Story history is playback navigation, not editor metadata:
+
+- Prefer a compact collapsible drawer or sheet over a permanent sparse side
+  panel.
+- Use a vertical connected stack for long dialogue-preview labels.
+- Highlight the current entry and keep Back/Forward controls grouped at the top.
+- Avoid horizontal scrolling history rails on mobile.
+- Keep history visually secondary to the stage image.
 
 ## Modals And Accessibility
 
@@ -157,15 +228,19 @@ Accessibility requirements:
 - If player/viewer code must change to support an editor-authored option, avoid
   cosmetic churn. Preserve stable DOM for animated player elements during simple
   state changes so CSS animations do not replay as flicker.
+- Preserve stable DOM for player overlays and speech bubbles during simple
+  playback state changes.
 
 ## RolePlayScene Rules
 
-- This skill applies only to editor mode.
-- Do not redesign player/viewer mode while applying this skill.
+- This skill applies to RolePlayScene editor and player/playback UI design.
 - Treat RolePlayScene editor as an authoring tool, not a presentation surface.
+- Treat RolePlayScene player as a theater/playback surface, not an inspector.
 - Keep story map and scene preview as editor surfaces.
 - Speech bubble anchor placement belongs in Scene Preview.
 - Dialogue, choices, and media controls should use compact editor action
   patterns.
 - Keep full-project Play and editor preview behavior visually and conceptually
   separate.
+- Do not change schema, launch hash, postMessage contracts, storage shape, or
+  player behavior when a task is only visual refresh.

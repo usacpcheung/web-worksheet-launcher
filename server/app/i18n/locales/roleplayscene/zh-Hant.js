@@ -6,6 +6,10 @@ export default {
     "play": "播放",
     "import": "匯入",
     "export": "匯出",
+    "more": "更多",
+    "moreMenuLabel": "工具列更多選單",
+    "moreServerGroup": "伺服器",
+    "moreProjectGroup": "專案",
     "importTitle": "匯入專案（.json 或 .zip）",
     "exportTitle": "匯出專案封存檔（.zip）",
     "languageLabel": "語言",
@@ -346,6 +350,16 @@ export default {
       "backLabel": "回到上一個場景",
       "forwardLabel": "前往下一個場景",
       "listLabel": "已造訪的場景"
+    },
+    "utilities": {
+      "title": "工具",
+      "panelLabel": "場景播放工具",
+      "closeLabel": "關閉工具"
+    },
+    "toolbar": {
+      "choices": "選項",
+      "playAudio": "播放音訊",
+      "stopAudio": "停止音訊"
     },
     "dialogue": {
       "playAll": "▶️ 全部播放",

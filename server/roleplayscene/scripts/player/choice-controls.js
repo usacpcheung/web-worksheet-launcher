@@ -1,6 +1,30 @@
 import { SceneType } from '../model.js';
 import { translate } from '../i18n.js';
 
+function createCueCardIcon() {
+  const svg = document.createElementNS
+    ? document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    : document.createElement('svg');
+  if (svg.classList?.add) {
+    svg.classList.add('player-choice-cue-icon', 'theater-icon');
+  } else if (typeof svg.className === 'string') {
+    svg.className = 'player-choice-cue-icon theater-icon';
+  } else {
+    svg.setAttribute('class', 'player-choice-cue-icon theater-icon');
+  }
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+
+  const path = document.createElementNS
+    ? document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    : document.createElement('path');
+  path.setAttribute('d', 'M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.8c.8.6 1.3 1.4 1.5 2.2h5c.2-.8.7-1.6 1.5-2.2A7 7 0 0 0 12 2Z');
+  svg.appendChild(path);
+
+  return svg;
+}
+
 export function renderPlayerChoices({
   host,
   project,
@@ -8,7 +32,6 @@ export function renderPlayerChoices({
   onChoice,
   openCueCard,
   beforeChoice = null,
-  cueIconText = '?',
 }) {
   const choiceBox = document.createElement('div');
   choiceBox.className = 'player-choices';
@@ -87,12 +110,7 @@ export function renderPlayerChoices({
     cueTrigger.className = 'player-choice-cue-trigger';
     cueTrigger.setAttribute('aria-expanded', 'false');
     cueTrigger.setAttribute('aria-label', translate('player.choices.cueCardTriggerLabel', { label: choiceLabel }));
-
-    const cueIcon = document.createElement('span');
-    cueIcon.className = 'player-choice-cue-icon';
-    cueIcon.textContent = cueIconText;
-    cueIcon.setAttribute('aria-hidden', 'true');
-    cueTrigger.appendChild(cueIcon);
+    cueTrigger.appendChild(createCueCardIcon());
 
     cueTrigger.addEventListener('click', () => openCueCard?.(cueTrigger, cueCardText));
 

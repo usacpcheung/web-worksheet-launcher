@@ -1,81 +1,16 @@
 import { BubbleMode } from '../model.js';
 import { translate } from '../i18n.js';
+import { createPlayerIcon } from './icons.js';
+import {
+  DIALOGUE_MIN_AUDIO_PAGE_SECONDS,
+  estimateReadingSeconds,
+  getDialoguePageText,
+  getLineAudioDurationSeconds,
+  hasDialogueLineContent,
+  splitDialogueText,
+} from './dialogue-progression.js';
 
-const SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS = 1;
-const SPEECH_BUBBLE_CHARACTER_PAGE_UNITS = 36;
-const SPEECH_BUBBLE_NARRATION_PAGE_UNITS = 80;
-const SPEECH_BUBBLE_NO_AUDIO_MIN_SECONDS = 2;
-const SPEECH_BUBBLE_NO_AUDIO_MAX_SECONDS = 8;
-
-function getWeightedTextLength(text) {
-  return Array.from(String(text || '')).reduce((total, char) => {
-    if (/\s/.test(char) || /[，、,.:;；。！？!?]/.test(char)) return total + 0.25;
-    if (/[\x00-\x7F]/.test(char)) return total + 0.55;
-    return total + 1;
-  }, 0);
-}
-
-function splitByLimit(text, limit) {
-  const source = String(text || '').trim();
-  if (!source) return [''];
-  if (getWeightedTextLength(source) <= limit) return [source];
-
-  const breakPatterns = [/\n+/, /(?<=[。！？!?；;])/, /(?<=[，、,:])/, /\s+/];
-  for (const pattern of breakPatterns) {
-    const chunks = source.split(pattern).map(chunk => chunk.trim()).filter(Boolean);
-    if (chunks.length <= 1) continue;
-    const pages = [];
-    let current = '';
-    for (const chunk of chunks) {
-      const candidate = current ? `${current}${pattern.source === '\\s+' ? ' ' : ''}${chunk}` : chunk;
-      if (current && getWeightedTextLength(candidate) > limit) {
-        pages.push(current);
-        current = chunk;
-      } else {
-        current = candidate;
-      }
-    }
-    if (current) pages.push(current);
-    if (pages.every(page => getWeightedTextLength(page) <= limit * 1.2)) {
-      return pages;
-    }
-  }
-
-  const pages = [];
-  let current = '';
-  for (const char of Array.from(source)) {
-    const candidate = current + char;
-    if (current && getWeightedTextLength(candidate) > limit) {
-      pages.push(current.trim());
-      current = char;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current.trim()) pages.push(current.trim());
-  return pages.length ? pages : [source];
-}
-
-export function splitSpeechBubbleText(text, mode = BubbleMode.ANCHOR) {
-  const limit = mode === BubbleMode.CENTER
-    ? SPEECH_BUBBLE_NARRATION_PAGE_UNITS
-    : SPEECH_BUBBLE_CHARACTER_PAGE_UNITS;
-  return splitByLimit(text, limit);
-}
-
-function estimateReadingSeconds(page) {
-  const units = getWeightedTextLength(page);
-  return Math.max(
-    SPEECH_BUBBLE_NO_AUDIO_MIN_SECONDS,
-    Math.min(SPEECH_BUBBLE_NO_AUDIO_MAX_SECONDS, 1.4 + units * 0.08),
-  );
-}
-
-function getLineAudioDurationSeconds(line, pages) {
-  const direct = Number(line?.audio?.durationSeconds ?? line?.audio?.duration);
-  if (Number.isFinite(direct) && direct > 0) return direct;
-  return Math.max(pages.length * SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS, pages.reduce((total, page) => total + estimateReadingSeconds(page), 0));
-}
+export const splitSpeechBubbleText = splitDialogueText;
 
 function getSpeechBubbleAnchor(scene, line) {
   if (line?.bubble?.mode !== BubbleMode.ANCHOR) return null;
@@ -102,6 +37,11 @@ function getElementSize(element, fallbackWidth, fallbackHeight) {
     width: Number.isFinite(width) && width > 0 ? width : fallbackWidth,
     height: Number.isFinite(height) && height > 0 ? height : fallbackHeight,
   };
+}
+
+function getElementSizeSignature(element) {
+  const { width, height } = getElementSize(element, 0, 0);
+  return `${Math.round(width)}x${Math.round(height)}`;
 }
 
 function buildSpeechBubblePath(width, height, tail) {
@@ -202,10 +142,6 @@ function positionAnchorSpeechBubble(overlay, bubble, path, anchor) {
   }));
 }
 
-function hasSpeechLineContent(line) {
-  return Boolean(String(line?.text || '').trim() || line?.audio?.objectUrl);
-}
-
 function getSpeakerName(project, line) {
   if (!line?.speakerId) return '';
   const speakers = Array.isArray(project?.speakers) ? project.speakers : [];
@@ -225,9 +161,20 @@ function appendSpeechBubbleText(host, page, speakerName = '') {
   host.appendChild(text);
 }
 
+function appendToolbarButtonContent(button, iconName, label) {
+  button.textContent = '';
+  button.appendChild(createPlayerIcon(iconName));
+  const labelEl = document.createElement('span');
+  labelEl.textContent = label;
+  button.appendChild(labelEl);
+  button.setAttribute('aria-label', label);
+}
+
 export function renderSpeechBubblePlayerUI({
   speechBubbleOverlay,
-  speechPanel,
+  theaterOverlay,
+  theaterControlRail,
+  theaterUtilityRail,
   project,
   scene,
   onChoice,
@@ -242,16 +189,42 @@ export function renderSpeechBubblePlayerUI({
 }) {
   const visibleEntries = (scene.dialogue || [])
     .map((line, index) => ({ line, index }))
-    .filter(entry => hasSpeechLineContent(entry.line) && entry.line.bubble?.mode !== BubbleMode.HIDDEN);
+    .filter(entry => hasDialogueLineContent(entry.line) && entry.line.bubble?.mode !== BubbleMode.HIDDEN);
 
-  let activeVisibleIndex = -1;
+  let activeVisibleIndex = visibleEntries.length ? 0 : -1;
   let activePageIndex = 0;
   let speechAudioActive = false;
   let speechPlayAllActive = false;
+  let choicesOpen = false;
+  let endOverlayOpen = !visibleEntries.length;
   let speechRunToken = 0;
   let renderedSpeechBubbleKey = null;
   let renderedSpeechBubbleElement = null;
+  let renderedAnchorPathElement = null;
+  let renderedAnchorPoint = null;
+  let overlaySizeSignature = '';
+  let overlayResizeObserver = null;
+  let removeWindowResizeListener = null;
+  let pendingAnchorRepositionHandle = null;
+  let pendingAnchorRepositionUsesRaf = false;
+  let deferredAnchorLayoutKey = null;
   const speechTimers = new Set();
+
+  const theaterChoicesDock = document.createElement('div');
+  theaterChoicesDock.className = 'theater-choices-dock';
+
+  const choicesDockButton = document.createElement('button');
+  choicesDockButton.type = 'button';
+  choicesDockButton.className = 'theater-floating-button theater-floating-button--choices';
+  choicesDockButton.appendChild(createPlayerIcon('list'));
+  const choicesDockLabel = document.createElement('span');
+  choicesDockLabel.textContent = translate('player.toolbar.choices');
+  choicesDockButton.appendChild(choicesDockLabel);
+  choicesDockButton.setAttribute('aria-label', translate('player.toolbar.choices'));
+  choicesDockButton.setAttribute('aria-expanded', 'false');
+
+  theaterChoicesDock.appendChild(choicesDockButton);
+  theaterUtilityRail?.appendChild?.(theaterChoicesDock);
 
   const nextSpeechRunToken = () => {
     speechRunToken += 1;
@@ -290,7 +263,6 @@ export function renderSpeechBubblePlayerUI({
       activeVisibleIndex = -1;
       activePageIndex = 0;
     }
-    renderSpeechState();
   };
 
   const advanceSpeechPage = (pages, pageIndex, onDone) => {
@@ -302,21 +274,42 @@ export function renderSpeechBubblePlayerUI({
     renderSpeechState();
   };
 
+  const getActiveEntry = () => visibleEntries[activeVisibleIndex] || null;
+
+  const getActivePages = () => {
+    const entry = getActiveEntry();
+    if (!entry) return [];
+    const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
+    return splitSpeechBubbleText(getDialoguePageText(entry.line, entry.index), mode);
+  };
+
+  const clampActivePage = () => {
+    const pages = getActivePages();
+    activePageIndex = Math.max(0, Math.min(activePageIndex, Math.max(0, pages.length - 1)));
+  };
+
+  const openEndOverlay = ({ choicesMenu = false } = {}) => {
+    stopSpeechPlayback();
+    choicesOpen = choicesMenu;
+    endOverlayOpen = true;
+    renderSpeechState();
+  };
+
   const getPresentationSeconds = (pages, audioSeconds = 0) => {
     if (pages.length <= 1) {
       return Math.max(audioSeconds, estimateReadingSeconds(pages[0] || ''));
     }
-    if (audioSeconds > 0 && audioSeconds / pages.length >= SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS) {
+    if (audioSeconds > 0 && audioSeconds / pages.length >= DIALOGUE_MIN_AUDIO_PAGE_SECONDS) {
       return audioSeconds;
     }
-    const lastPageStartsAt = (pages.length - 1) * SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS;
+    const lastPageStartsAt = (pages.length - 1) * DIALOGUE_MIN_AUDIO_PAGE_SECONDS;
     return Math.max(audioSeconds, lastPageStartsAt + estimateReadingSeconds(pages[pages.length - 1] || ''));
   };
 
   const schedulePaging = ({ pages, totalSeconds }) => {
     if (pages.length <= 1) return;
     const totalMs = Math.max(0, totalSeconds * 1000);
-    const canFitInAudio = totalSeconds / pages.length >= SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS;
+    const canFitInAudio = totalSeconds / pages.length >= DIALOGUE_MIN_AUDIO_PAGE_SECONDS;
     if (canFitInAudio) {
       pages.slice(1).forEach((_, pageOffset) => {
         const pageNumber = pageOffset + 1;
@@ -327,7 +320,7 @@ export function renderSpeechBubblePlayerUI({
 
     pages.slice(1).forEach((_, pageOffset) => {
       const pageNumber = pageOffset + 1;
-      const delay = SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS * 1000 * pageNumber;
+      const delay = DIALOGUE_MIN_AUDIO_PAGE_SECONDS * 1000 * pageNumber;
       scheduleSpeechTimer(() => advanceSpeechPage(pages, pageNumber), delay);
     });
   };
@@ -340,8 +333,7 @@ export function renderSpeechBubblePlayerUI({
     }
     const nextIndex = activeVisibleIndex + 1;
     if (nextIndex >= visibleEntries.length) {
-      speechPlayAllActive = false;
-      renderSpeechState();
+      openEndOverlay({ choicesMenu: true });
       return;
     }
     activeVisibleIndex = nextIndex;
@@ -355,9 +347,11 @@ export function renderSpeechBubblePlayerUI({
     clearSpeechTimers();
     const runToken = nextSpeechRunToken();
     activePageIndex = 0;
+    choicesOpen = false;
+    endOverlayOpen = false;
     speechPlayAllActive = speechPlayAllActive || autoAdvance;
     const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
-    const pages = splitSpeechBubbleText(entry.line.text || translate('player.dialogue.lineFallback', { index: entry.index + 1 }), mode);
+    const pages = splitSpeechBubbleText(getDialoguePageText(entry.line, entry.index), mode);
 
     if (entry.line.audio?.objectUrl) {
       speechAudioActive = true;
@@ -392,6 +386,9 @@ export function renderSpeechBubblePlayerUI({
         onComplete: () => {
           releaseDuck();
           if (runToken !== speechRunToken) return;
+          if (!speechPlayAllActive) {
+            clearSpeechTimers();
+          }
           speechAudioActive = false;
           audioDone = true;
           completePlayAllWhenReady();
@@ -399,6 +396,9 @@ export function renderSpeechBubblePlayerUI({
         onCancel: () => {
           releaseDuck();
           if (runToken !== speechRunToken) return;
+          if (!speechPlayAllActive) {
+            clearSpeechTimers();
+          }
           speechAudioActive = false;
           renderSpeechState();
         },
@@ -433,38 +433,146 @@ export function renderSpeechBubblePlayerUI({
     renderSpeechState();
   };
 
-  const setActiveSpeechLine = (nextIndex, { autoplay = false } = {}) => {
-    clearSpeechTimers();
-    nextSpeechRunToken();
-    dialogueAudio.stop();
-    releaseDuck();
-    speechAudioActive = false;
-    speechPlayAllActive = false;
-    activeVisibleIndex = Math.max(0, Math.min(nextIndex, visibleEntries.length - 1));
-    activePageIndex = 0;
-    if (autoplay) {
-      playActiveSpeechLine();
-    } else {
+  const advanceSpeech = ({ fromAuto = false } = {}) => {
+    if (!fromAuto) {
+      stopSpeechPlayback();
+    }
+    const pages = getActivePages();
+    if (pages.length && activePageIndex < pages.length - 1) {
+      activePageIndex += 1;
+      choicesOpen = false;
+      endOverlayOpen = false;
+      renderSpeechState();
+      return;
+    }
+    if (activeVisibleIndex < visibleEntries.length - 1) {
+      activeVisibleIndex += 1;
+      activePageIndex = 0;
+      choicesOpen = false;
+      endOverlayOpen = false;
+      renderSpeechState();
+      return;
+    }
+    openEndOverlay({ choicesMenu: true });
+  };
+
+  const retreatSpeech = () => {
+    stopSpeechPlayback();
+    if (choicesOpen || endOverlayOpen) {
+      choicesOpen = false;
+      endOverlayOpen = false;
+      activeVisibleIndex = Math.max(0, activeVisibleIndex);
+      clampActivePage();
+      renderSpeechState();
+      return;
+    }
+    if (activePageIndex > 0) {
+      activePageIndex -= 1;
+      renderSpeechState();
+      return;
+    }
+    if (activeVisibleIndex > 0) {
+      activeVisibleIndex -= 1;
+      activePageIndex = Math.max(0, getActivePages().length - 1);
       renderSpeechState();
     }
   };
 
-  const changeSpeechPage = (delta) => {
-    const entry = visibleEntries[activeVisibleIndex];
-    if (!entry) return;
-    clearSpeechTimers();
-    nextSpeechRunToken();
-    speechPlayAllActive = false;
-    const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
-    const pages = splitSpeechBubbleText(entry.line.text || translate('player.dialogue.lineFallback', { index: entry.index + 1 }), mode);
-    activePageIndex = Math.max(0, Math.min(pages.length - 1, activePageIndex + delta));
-    renderSpeechState();
+  const toggleChoicesMenu = () => {
+    if (choicesOpen) {
+      stopSpeechPlayback({ keepActive: true });
+      choicesOpen = false;
+      endOverlayOpen = false;
+      renderSpeechState();
+      return;
+    }
+    openEndOverlay({ choicesMenu: true });
+  };
+
+  choicesDockButton.addEventListener('click', toggleChoicesMenu);
+
+  const clearPendingAnchorReposition = () => {
+    if (pendingAnchorRepositionHandle == null) return;
+    try {
+      if (pendingAnchorRepositionUsesRaf && typeof globalThis.cancelAnimationFrame === 'function') {
+        globalThis.cancelAnimationFrame(pendingAnchorRepositionHandle);
+      }
+    } catch {
+      // Ignore frame cancellation failures.
+    }
+    pendingAnchorRepositionHandle = null;
+    pendingAnchorRepositionUsesRaf = false;
+  };
+
+  const repositionRenderedAnchorBubble = () => {
+    if (!speechBubbleOverlay || !renderedSpeechBubbleElement || !renderedAnchorPathElement || !renderedAnchorPoint) {
+      return;
+    }
+    positionAnchorSpeechBubble(
+      speechBubbleOverlay,
+      renderedSpeechBubbleElement,
+      renderedAnchorPathElement,
+      renderedAnchorPoint,
+    );
+  };
+
+  const scheduleAnchorReposition = () => {
+    if (!speechBubbleOverlay || !renderedSpeechBubbleElement || !renderedAnchorPathElement || !renderedAnchorPoint) {
+      return;
+    }
+    if (choicesOpen || endOverlayOpen || pendingAnchorRepositionHandle != null) {
+      return;
+    }
+
+    const runReposition = () => {
+      pendingAnchorRepositionHandle = null;
+      pendingAnchorRepositionUsesRaf = false;
+      repositionRenderedAnchorBubble();
+    };
+
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      pendingAnchorRepositionUsesRaf = true;
+      pendingAnchorRepositionHandle = globalThis.requestAnimationFrame(runReposition);
+      return;
+    }
+  };
+
+  const handleOverlayLayoutChange = () => {
+    if (!speechBubbleOverlay) return;
+    const nextSizeSignature = getElementSizeSignature(speechBubbleOverlay);
+    if (nextSizeSignature === overlaySizeSignature) return;
+    overlaySizeSignature = nextSizeSignature;
+    scheduleAnchorReposition();
+  };
+
+  const observeOverlayLayout = () => {
+    if (!speechBubbleOverlay) return;
+    overlaySizeSignature = getElementSizeSignature(speechBubbleOverlay);
+
+    if (typeof globalThis.ResizeObserver === 'function') {
+      overlayResizeObserver = new globalThis.ResizeObserver(() => {
+        handleOverlayLayoutChange();
+      });
+      overlayResizeObserver.observe(speechBubbleOverlay);
+      return;
+    }
+
+    if (typeof globalThis.addEventListener !== 'function') return;
+    const onWindowResize = () => handleOverlayLayoutChange();
+    globalThis.addEventListener('resize', onWindowResize);
+    removeWindowResizeListener = () => {
+      globalThis.removeEventListener('resize', onWindowResize);
+    };
   };
 
   const clearRenderedSpeechBubble = () => {
+    clearPendingAnchorReposition();
     if (speechBubbleOverlay) speechBubbleOverlay.innerHTML = '';
     renderedSpeechBubbleKey = null;
     renderedSpeechBubbleElement = null;
+    renderedAnchorPathElement = null;
+    renderedAnchorPoint = null;
+    deferredAnchorLayoutKey = null;
   };
 
   const updateRenderedSpeechBubbleState = () => {
@@ -473,16 +581,97 @@ export function renderSpeechBubblePlayerUI({
   };
 
   function renderSpeechState() {
-    speechPanel.innerHTML = '';
+    theaterOverlay.innerHTML = '';
+    theaterControlRail.innerHTML = '';
+    clampActivePage();
 
-    const activeEntry = visibleEntries[activeVisibleIndex] || null;
+    choicesDockButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
+
+    const activeEntry = getActiveEntry();
     const activeMode = activeEntry?.line?.bubble?.mode || BubbleMode.CENTER;
     const pages = activeEntry
-      ? splitSpeechBubbleText(activeEntry.line.text || translate('player.dialogue.lineFallback', { index: activeEntry.index + 1 }), activeMode)
+      ? splitSpeechBubbleText(getDialoguePageText(activeEntry.line, activeEntry.index), activeMode)
       : [];
     const page = pages[Math.max(0, Math.min(activePageIndex, pages.length - 1))] || '';
 
-    if (!activeEntry || !speechBubbleOverlay) {
+    const toolbar = document.createElement('div');
+    toolbar.className = 'theater-toolbar';
+
+    const prevButton = document.createElement('button');
+    prevButton.type = 'button';
+    prevButton.className = 'theater-toolbar__button theater-toolbar__button--previous';
+    appendToolbarButtonContent(prevButton, 'previous', translate('player.speechBubble.previous'));
+    prevButton.disabled = !visibleEntries.length || (!choicesOpen && !endOverlayOpen && activeVisibleIndex <= 0 && activePageIndex <= 0);
+    prevButton.addEventListener('click', retreatSpeech);
+
+    const nextButton = document.createElement('button');
+    nextButton.type = 'button';
+    nextButton.className = 'theater-toolbar__button theater-toolbar__button--next';
+    appendToolbarButtonContent(nextButton, 'next', translate('player.speechBubble.next'));
+    nextButton.disabled = !visibleEntries.length || choicesOpen || endOverlayOpen;
+    nextButton.addEventListener('click', () => advanceSpeech());
+
+    const playButton = document.createElement('button');
+    playButton.type = 'button';
+    playButton.className = 'theater-toolbar__button dialogue-bubble-play';
+    appendToolbarButtonContent(
+      playButton,
+      speechAudioActive ? 'stop' : 'play',
+      speechAudioActive
+        ? translate('player.toolbar.stopAudio')
+        : translate('player.toolbar.playAudio'),
+    );
+    playButton.disabled = !activeEntry?.line?.audio?.objectUrl || choicesOpen || endOverlayOpen;
+    playButton.setAttribute('aria-pressed', speechAudioActive ? 'true' : 'false');
+    playButton.addEventListener('click', () => {
+      if (speechAudioActive) {
+        stopSpeechPlayback({ keepActive: true });
+        renderSpeechState();
+        return;
+      }
+      playActiveSpeechLine();
+    });
+
+    const playAllButton = document.createElement('button');
+    playAllButton.type = 'button';
+    playAllButton.className = 'theater-toolbar__button audio-play-all';
+    appendToolbarButtonContent(
+      playAllButton,
+      speechPlayAllActive ? 'stop' : 'play',
+      speechPlayAllActive
+        ? translate('player.speechBubble.stopAll')
+        : translate('player.speechBubble.playAll'),
+    );
+    playAllButton.disabled = !visibleEntries.length || choicesOpen || endOverlayOpen;
+    playAllButton.setAttribute('aria-pressed', speechPlayAllActive ? 'true' : 'false');
+    playAllButton.addEventListener('click', () => {
+      if (speechPlayAllActive) {
+        stopSpeechPlayback({ keepActive: true });
+        renderSpeechState();
+        return;
+      }
+      stopSpeechPlayback({ keepActive: true });
+      activeVisibleIndex = visibleEntries.length ? 0 : -1;
+      activePageIndex = 0;
+      speechPlayAllActive = true;
+      playActiveSpeechLine({ autoAdvance: true });
+    });
+
+    const choicesButton = document.createElement('button');
+    choicesButton.type = 'button';
+    choicesButton.className = 'theater-toolbar__button theater-toolbar__button--choices';
+    appendToolbarButtonContent(choicesButton, 'list', translate('player.toolbar.choices'));
+    choicesButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
+    choicesButton.addEventListener('click', toggleChoicesMenu);
+
+    toolbar.appendChild(prevButton);
+    toolbar.appendChild(nextButton);
+    toolbar.appendChild(playButton);
+    toolbar.appendChild(playAllButton);
+    toolbar.appendChild(choicesButton);
+    theaterControlRail.appendChild(toolbar);
+
+    if (!activeEntry || !speechBubbleOverlay || choicesOpen || endOverlayOpen) {
       clearRenderedSpeechBubble();
     } else {
       const speakerName = getSpeakerName(project, activeEntry.line);
@@ -504,6 +693,9 @@ export function renderSpeechBubblePlayerUI({
 
       if (bubbleKey === renderedSpeechBubbleKey && renderedSpeechBubbleElement) {
         updateRenderedSpeechBubbleState();
+        if (activeMode === BubbleMode.ANCHOR && renderedAnchorPathElement && renderedAnchorPoint) {
+          handleOverlayLayoutChange();
+        }
       } else if (activeMode === BubbleMode.ANCHOR && anchorPoint) {
         clearRenderedSpeechBubble();
         const bubble = document.createElement('div');
@@ -537,6 +729,12 @@ export function renderSpeechBubblePlayerUI({
         positionAnchorSpeechBubble(speechBubbleOverlay, bubble, shape, anchorPoint);
         renderedSpeechBubbleKey = bubbleKey;
         renderedSpeechBubbleElement = bubble;
+        renderedAnchorPathElement = shape;
+        renderedAnchorPoint = anchorPoint;
+        if (deferredAnchorLayoutKey !== bubbleKey) {
+          deferredAnchorLayoutKey = bubbleKey;
+          scheduleAnchorReposition();
+        }
       } else {
         clearRenderedSpeechBubble();
         const bubble = document.createElement('div');
@@ -558,114 +756,31 @@ export function renderSpeechBubblePlayerUI({
       }
     }
 
-    const controls = document.createElement('div');
-    controls.className = 'speech-play-controls';
-
-    if (!visibleEntries.length) {
-      const empty = document.createElement('p');
-      empty.className = 'empty';
-      empty.textContent = translate('player.speechBubble.noDialogue');
-      controls.appendChild(empty);
-    } else if (!activeEntry) {
-      const startButton = document.createElement('button');
-      startButton.type = 'button';
-      startButton.className = 'confirm-actions__primary';
-      startButton.textContent = translate('player.speechBubble.startDialogue');
-      startButton.addEventListener('click', () => setActiveSpeechLine(0, { autoplay: true }));
-      controls.appendChild(startButton);
-
-      const playAllButton = document.createElement('button');
-      playAllButton.type = 'button';
-      playAllButton.textContent = translate('player.speechBubble.playAll');
-      playAllButton.addEventListener('click', () => {
-        activeVisibleIndex = 0;
-        activePageIndex = 0;
-        speechPlayAllActive = true;
-        playActiveSpeechLine({ autoAdvance: true });
+    if (choicesOpen || endOverlayOpen) {
+      const choicesPanel = document.createElement('div');
+      choicesPanel.className = choicesOpen
+        ? 'theater-choice-panel theater-choice-panel--menu'
+        : 'theater-choice-panel';
+      renderNavigationControls(choicesPanel, {
+        project,
+        scene,
+        onChoice,
+        openCueCard,
+        beforeChoice: () => stopSpeechPlayback({ keepActive: true }),
       });
-      controls.appendChild(playAllButton);
-    } else {
-      const prevButton = document.createElement('button');
-      prevButton.type = 'button';
-      prevButton.textContent = translate('player.speechBubble.previous');
-      prevButton.disabled = activeVisibleIndex <= 0;
-      prevButton.addEventListener('click', () => setActiveSpeechLine(activeVisibleIndex - 1, { autoplay: false }));
-
-      const playButton = document.createElement('button');
-      playButton.type = 'button';
-      playButton.textContent = activeEntry.line.audio?.objectUrl
-        ? (speechAudioActive ? translate('player.speechBubble.stop') : translate('player.speechBubble.play'))
-        : translate('player.speechBubble.noAudio');
-      playButton.disabled = !activeEntry.line.audio?.objectUrl;
-      playButton.setAttribute('aria-pressed', speechAudioActive ? 'true' : 'false');
-      playButton.addEventListener('click', () => {
-        if (speechAudioActive) {
-          stopSpeechPlayback({ keepActive: true });
-        } else {
-          playActiveSpeechLine();
-        }
-      });
-
-      const nextButton = document.createElement('button');
-      nextButton.type = 'button';
-      nextButton.textContent = translate('player.speechBubble.next');
-      nextButton.disabled = activeVisibleIndex >= visibleEntries.length - 1;
-      nextButton.addEventListener('click', () => setActiveSpeechLine(activeVisibleIndex + 1, { autoplay: true }));
-
-      const playAllButton = document.createElement('button');
-      playAllButton.type = 'button';
-      playAllButton.textContent = speechPlayAllActive
-        ? translate('player.speechBubble.stopAll')
-        : translate('player.speechBubble.playAll');
-      playAllButton.setAttribute('aria-pressed', speechPlayAllActive ? 'true' : 'false');
-      playAllButton.addEventListener('click', () => {
-        if (speechPlayAllActive) {
-          stopSpeechPlayback({ keepActive: true });
-          return;
-        }
-        speechPlayAllActive = true;
-        playActiveSpeechLine({ autoAdvance: true });
-      });
-
-      controls.append(prevButton, playButton, nextButton, playAllButton);
-
-      if (pages.length > 1) {
-        const pageControls = document.createElement('div');
-        pageControls.className = 'speech-play-page-controls';
-        const pagePrev = document.createElement('button');
-        pagePrev.type = 'button';
-        pagePrev.textContent = translate('player.speechBubble.previousPage');
-        pagePrev.disabled = activePageIndex <= 0;
-        pagePrev.addEventListener('click', () => changeSpeechPage(-1));
-        const pageNext = document.createElement('button');
-        pageNext.type = 'button';
-        pageNext.textContent = translate('player.speechBubble.nextPage');
-        pageNext.disabled = activePageIndex >= pages.length - 1;
-        pageNext.addEventListener('click', () => changeSpeechPage(1));
-        const pageStatus = document.createElement('span');
-        pageStatus.textContent = translate('player.speechBubble.pageStatus', {
-          current: activePageIndex + 1,
-          total: pages.length,
-        });
-        pageControls.append(pagePrev, pageStatus, pageNext);
-        controls.appendChild(pageControls);
-      }
+      theaterOverlay.appendChild(choicesPanel);
     }
-
-    speechPanel.appendChild(controls);
-    renderNavigationControls(speechPanel, {
-      project,
-      scene,
-      onChoice,
-      openCueCard,
-      beforeChoice: stopDialoguePlayback,
-      cueIconText: '?',
-    });
   }
 
+  observeOverlayLayout();
   renderSpeechState();
 
   return () => {
+    clearPendingAnchorReposition();
+    overlayResizeObserver?.disconnect?.();
+    overlayResizeObserver = null;
+    removeWindowResizeListener?.();
+    removeWindowResizeListener = null;
     clearSpeechTimers();
     nextSpeechRunToken();
     cleanupCueCardListeners();

@@ -6,6 +6,10 @@ export default {
     "play": "Play",
     "import": "Import",
     "export": "Export",
+    "more": "More",
+    "moreMenuLabel": "Toolbar overflow menu",
+    "moreServerGroup": "Server",
+    "moreProjectGroup": "Project",
     "importTitle": "Import project (.json or .zip)",
     "exportTitle": "Export project archive (.zip)",
     "languageLabel": "Language",
@@ -346,6 +350,16 @@ export default {
       "backLabel": "Go to previous scene",
       "forwardLabel": "Go to next scene",
       "listLabel": "Visited scenes"
+    },
+    "utilities": {
+      "title": "Utilities",
+      "panelLabel": "Scene playback utilities",
+      "closeLabel": "Close utilities"
+    },
+    "toolbar": {
+      "choices": "Choices",
+      "playAudio": "Play Audio",
+      "stopAudio": "Stop Audio"
     },
     "dialogue": {
       "playAll": "▶️ Play all",
