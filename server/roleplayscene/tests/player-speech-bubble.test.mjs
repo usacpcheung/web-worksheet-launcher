@@ -454,8 +454,13 @@ try {
       canGoForward: false,
     },
   }));
-  assert.ok(findByClass(stageEl, 'theater-music-popover'), 'Bubble mode should render the shared background music utility');
-  assert.ok(findByClass(stageEl, 'theater-history-drawer'), 'Bubble mode should render the shared story history drawer');
+  assert.ok(findByClass(stageEl, 'theater-utilities'), 'Bubble mode should render a shared utilities trigger');
+  const utilitiesButton = findButtonByText(stageEl, translate('player.utilities.title'));
+  assert.ok(utilitiesButton, 'Utilities trigger should expose a clear text label');
+  utilitiesButton.dispatchEvent('click');
+  assert.equal(findByClass(stageEl, 'theater-utilities-panel')?.hidden, false, 'Utilities panel should open from the shared trigger');
+  assert.ok(findByClass(stageEl, 'theater-utilities-section--music'), 'Utilities panel should include background music controls');
+  assert.ok(findByClass(stageEl, 'theater-utilities-section--history'), 'Utilities panel should include story history controls');
 
   resetSpies();
   scene = {
@@ -502,6 +507,40 @@ try {
   findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
   findButtonByText(stageEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
   assert.equal(FakeAudio.playCalls[0], 'slow-line.mp3', 'Speech bubble Play All should restart from the first line after manual navigation');
+
+  resetSpies();
+  scene = {
+    id: 'scene-speech-single-audio-pages',
+    type: SceneType.INTERMEDIATE,
+    speechBubble: { enabled: true, anchors: [] },
+    dialogue: [{
+      text: [
+        'This speech bubble line is intentionally long so paging kicks in during audio playback.',
+        'The added sentence keeps page timing queued long enough to catch stale post-end updates.',
+        'Regression coverage verifies completed audio no longer advances visible pages later.',
+      ].join(' '),
+      audio: { objectUrl: 'speech-single-line.mp3' },
+      bubble: { mode: BubbleMode.CENTER },
+    }],
+    choices: [],
+  };
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.toolbar.playAudio')).dispatchEvent('click');
+  const speechPageStatusBeforeEnd = findByClass(stageEl, 'speech-play-page-status')?.textContent;
+  assert.ok(speechPageStatusBeforeEnd, 'Speech bubble line should show a page status for multi-page dialogue');
+  assert.ok(pendingTimeouts.length > 0, 'Speech bubble audio should schedule page timers before ended event');
+  FakeAudio.instances[0].trigger('ended');
+  assert.equal(
+    pendingTimeouts.length,
+    0,
+    'Speech bubble ended callback should clear queued page timers when Play All is inactive',
+  );
+  flushPendingTimeouts();
+  assert.equal(
+    findByClass(stageEl, 'speech-play-page-status')?.textContent,
+    speechPageStatusBeforeEnd,
+    'Speech bubble page status should stay stable after audio completion',
+  );
 
   resetSpies();
   const listenerDocument = globalThis.document;
