@@ -84,6 +84,31 @@ try {
     '音訊生成已取消，因為這句台詞已被修改。',
     'Dialogue T2A stale-line warning should resolve from shared Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('inspector.speechBubble.anchorUsage', { label: 'A', count: 2 }),
+    '定位點 A：被 2 句台詞使用',
+    'Speech bubble anchor usage should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('editor.views.scenePreview'),
+    '場景預覽',
+    'Scene Preview view label should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('inspector.header.previewCurrentScene'),
+    '預覽目前場景',
+    'Preview Current Scene action should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('player.speechBubble.startDialogue'),
+    '開始對話',
+    'Speech bubble playback start action should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('player.speechBubble.pageStatus', { current: 2, total: 3 }),
+    '2 / 3',
+    'Speech bubble playback page status should resolve from shared Traditional Chinese locale',
+  );
 
   setActiveLocale('en');
   assert.strictEqual(
@@ -115,6 +140,36 @@ try {
     translate('inspector.dialogue.audioPreviewFailed'),
     'Unable to play this audio preview.',
     'Dialogue audio preview failure should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('inspector.speechBubble.lineModes.center'),
+    'Center narration',
+    'Speech bubble line mode should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('editor.views.storyMap'),
+    'Story Map',
+    'Story Map view label should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('editor.scenePreview.anchorHint'),
+    'Place anchors on the scene preview.',
+    'Scene Preview anchor hint should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('toolbar.backToEdit'),
+    'Back to Edit',
+    'Back to Edit toolbar action should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('player.speechBubble.stopAll'),
+    'Stop All',
+    'Speech bubble playback stop-all action should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('player.speechBubble.noDialogue'),
+    'No visible dialogue for this scene.',
+    'Speech bubble playback no-dialogue message should resolve from shared English locale',
   );
   assert.strictEqual(
     translate('missing.key', { default: 'Fallback {value}', value: 'text' }),
