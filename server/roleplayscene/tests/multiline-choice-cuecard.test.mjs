@@ -167,7 +167,11 @@ const stageEl = new StubElement('div');
 const uiEl = new StubElement('div');
 renderPlayerUI({ stageEl, uiEl, project, scene: project.scenes[0], onChoice: () => {} });
 
-const choicesButton = findElement(stageEl, el => el.className === 'theater-toolbar__button' && el.textContent === translate('player.toolbar.choices'));
+const choicesButton = findElement(stageEl, (el) => (
+  String(el.className || '').split(/\s+/).includes('theater-toolbar__button')
+  && String(el.className || '').split(/\s+/).includes('theater-toolbar__button--choices')
+  && el.textContent === translate('player.toolbar.choices')
+));
 assert(choicesButton, 'theater choices button should render');
 choicesButton.dispatchEvent('click');
 
