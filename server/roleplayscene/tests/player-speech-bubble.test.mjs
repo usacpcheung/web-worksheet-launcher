@@ -266,16 +266,17 @@ function collectText(root) {
   return `${own}${(root.children || []).map(collectText).join('')}`;
 }
 
-function render(scene, onChoice = () => {}) {
+function render(scene, onChoice = () => {}, projectOverrides = {}, playerOptions = {}) {
   const stageEl = createRoot();
   const uiEl = createRoot();
   const project = {
+    ...projectOverrides,
     scenes: [
       scene,
       { id: 'next-scene', type: SceneType.END, dialogue: [{ text: 'The end' }], choices: [] },
     ],
   };
-  const cleanup = renderPlayerUI({ stageEl, uiEl, project, scene, onChoice });
+  const cleanup = renderPlayerUI({ stageEl, uiEl, project, scene, onChoice, ...playerOptions });
   return { stageEl, uiEl, cleanup };
 }
 
@@ -292,6 +293,7 @@ try {
     dialogue: [
       {
         text: 'Hello from the anchor.',
+        speakerId: 'speaker-kelvin',
         audio: { objectUrl: 'line-1.mp3' },
         bubble: { mode: BubbleMode.ANCHOR, anchorId: 'anchor-a' },
       },
@@ -307,12 +309,13 @@ try {
     choices: [],
   };
 
-  let { stageEl, uiEl } = render(scene);
+  let { stageEl, uiEl } = render(scene, () => {}, { speakers: [{ id: 'speaker-kelvin', name: 'Kelvin' }] });
   assert.ok(findByClass(stageEl, 'speech-play-overlay'), 'Bubble-enabled scenes should render an image overlay');
-  assert.ok(findByClass(uiEl, 'speech-play-panel'), 'Bubble-enabled scenes should render the speech controller');
+  assert.ok(findByClass(stageEl, 'theater-toolbar'), 'Bubble-enabled scenes should render the shared theater toolbar');
+  assert.equal(findByClass(stageEl, 'speech-play-panel'), null, 'Bubble-enabled scenes should not render the old speech controller panel');
   assert.equal(findByClass(uiEl, 'player-dialogue'), null, 'Bubble-enabled scenes should not render the normal dialogue list');
 
-  findButtonByText(uiEl, translate('player.speechBubble.startDialogue')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.toolbar.playAudio')).dispatchEvent('click');
   assert.equal(FakeAudio.playCalls[0], 'line-1.mp3', 'Start dialogue should autoplay the first line when audio exists');
 
   let bubble = findByClass(stageEl, 'speech-play-bubble-wrap--anchor');
@@ -322,8 +325,9 @@ try {
   assert.match(bubble.style.left, /px$/, 'Anchor bubble should be positioned in stage pixels');
   assert.match(bubble.style.top, /px$/, 'Anchor bubble should be positioned in stage pixels');
   assert.match(collectText(bubble), /Hello from the anchor/);
+  assert.match(collectText(bubble), /Kelvin:/, 'Speech bubble should render assigned speaker name');
 
-  findButtonByText(uiEl, translate('player.speechBubble.next')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
   bubble = findByClass(stageEl, 'speech-play-bubble--center');
   assert.ok(bubble, 'Next should skip hidden lines and render center narration');
   assert.match(collectText(bubble), /Narration in the center/);
@@ -333,11 +337,39 @@ try {
   scene = {
     id: 'scene-normal',
     type: SceneType.INTERMEDIATE,
-    dialogue: [{ text: 'Normal dialogue remains visible.' }],
+    dialogue: [{ text: 'Normal dialogue remains visible.', speakerId: 'speaker-sam' }],
     choices: [],
   };
-  ({ uiEl } = render(scene));
-  assert.ok(findByClass(uiEl, 'player-dialogue'), 'Non-bubble scenes should keep the existing dialogue list');
+  ({ stageEl, uiEl } = render(scene, () => {}, { speakers: [{ id: 'speaker-sam', name: 'Sam' }] }));
+  assert.ok(findByClass(stageEl, 'theater-dialogue-card'), 'Non-bubble scenes should render the theater dialogue overlay');
+  assert.equal(findByClass(uiEl, 'player-dialogue'), null, 'Non-bubble scenes should no longer render the old dialogue list');
+  assert.match(collectText(stageEl), /Sam:/, 'Normal dialogue should render assigned speaker name');
+
+  resetSpies();
+  scene = {
+    id: 'scene-center-audio',
+    type: SceneType.INTERMEDIATE,
+    speechBubble: { enabled: true, anchors: [] },
+    dialogue: [
+      { text: 'Center narration with audio.', audio: { objectUrl: 'center-line.mp3' }, bubble: { mode: BubbleMode.CENTER } },
+    ],
+    choices: [],
+  };
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.toolbar.playAudio')).dispatchEvent('click');
+  const centerBubble = findByClass(stageEl, 'speech-play-bubble--center');
+  findButtonByText(stageEl, translate('player.toolbar.stopAudio')).dispatchEvent('click');
+  assert.equal(
+    findByClass(stageEl, 'speech-play-bubble--center'),
+    centerBubble,
+    'Stopping center narration playback should not recreate the visible bubble',
+  );
+  findButtonByText(stageEl, translate('player.toolbar.playAudio')).dispatchEvent('click');
+  assert.equal(
+    findByClass(stageEl, 'speech-play-bubble--center'),
+    centerBubble,
+    'Restarting center narration playback should not recreate the visible bubble',
+  );
 
   const pages = splitSpeechBubbleText(
     'This is a longer line. It should split into multiple readable speech bubble pages for the player controls.',
@@ -364,11 +396,26 @@ try {
     choices: [],
   };
   ({ stageEl, uiEl } = render(scene));
-  findButtonByText(uiEl, translate('player.speechBubble.startDialogue')).dispatchEvent('click');
-  assert.ok(findByClass(uiEl, 'speech-play-page-controls'), 'Paged speech bubbles should show page controls');
+  assert.ok(findByClass(stageEl, 'theater-toolbar'), 'Paged speech bubbles should use the shared theater toolbar');
   const firstPageText = collectText(findByClass(stageEl, 'speech-play-bubble'));
-  findButtonByText(uiEl, translate('player.speechBubble.nextPage')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
   assert.notEqual(collectText(findByClass(stageEl, 'speech-play-bubble')), firstPageText, 'Manual page next should change the visible page');
+
+  resetSpies();
+  scene = {
+    id: 'scene-end-choices',
+    type: SceneType.INTERMEDIATE,
+    speechBubble: { enabled: true, anchors: [] },
+    dialogue: [{ text: 'Finish the line.', bubble: { mode: BubbleMode.CENTER } }],
+    choices: [{ label: 'Continue', nextSceneId: 'next-scene' }],
+  };
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
+  assert.equal(
+    findButtonByText(stageEl, translate('player.toolbar.choices'))?.getAttribute('aria-expanded'),
+    'true',
+    'Choice button should stay lit when the end-of-dialogue choice panel opens',
+  );
 
   resetSpies();
   let chosenSceneId = null;
@@ -379,9 +426,41 @@ try {
     dialogue: [{ text: 'Choose a path.', bubble: { mode: BubbleMode.CENTER } }],
     choices: [{ label: 'Go next', nextSceneId: 'next-scene' }],
   };
-  ({ uiEl } = render(scene, (nextSceneId) => { chosenSceneId = nextSceneId; }));
-  findButtonByText(uiEl, 'Go next').dispatchEvent('click');
+  ({ stageEl, uiEl } = render(scene, (nextSceneId) => { chosenSceneId = nextSceneId; }));
+  findButtonByText(stageEl, translate('player.toolbar.choices')).dispatchEvent('click');
+  assert.ok(findByClass(stageEl, 'theater-choice-panel'), 'Bubble mode should render choices in the theater choice overlay');
+  findButtonByText(stageEl, 'Go next').dispatchEvent('click');
   assert.equal(chosenSceneId, 'next-scene', 'Bubble mode should keep scene choices available');
+
+  resetSpies();
+  scene = {
+    id: 'scene-utilities',
+    type: SceneType.INTERMEDIATE,
+    speechBubble: { enabled: true, anchors: [] },
+    dialogue: [{ text: 'Utilities stay beside bubble playback.', bubble: { mode: BubbleMode.CENTER } }],
+    choices: [],
+  };
+  ({ stageEl, uiEl } = render(scene, () => {}, {}, {
+    backgroundAudioControls: {
+      volume: 0.4,
+      muted: false,
+      onVolumeChange: () => {},
+      onToggleMute: () => true,
+    },
+    historyControls: {
+      entries: [{ sceneId: 'scene-utilities', label: 'Utilities stay beside bubble playback.' }],
+      index: 0,
+      canGoBack: false,
+      canGoForward: false,
+    },
+  }));
+  assert.ok(findByClass(stageEl, 'theater-utilities'), 'Bubble mode should render a shared utilities trigger');
+  const utilitiesButton = findButtonByText(stageEl, translate('player.utilities.title'));
+  assert.ok(utilitiesButton, 'Utilities trigger should expose a clear text label');
+  utilitiesButton.dispatchEvent('click');
+  assert.equal(findByClass(stageEl, 'theater-utilities-panel')?.hidden, false, 'Utilities panel should open from the shared trigger');
+  assert.ok(findByClass(stageEl, 'theater-utilities-section--music'), 'Utilities panel should include background music controls');
+  assert.ok(findByClass(stageEl, 'theater-utilities-section--history'), 'Utilities panel should include story history controls');
 
   resetSpies();
   scene = {
@@ -394,8 +473,8 @@ try {
     ],
     choices: [],
   };
-  ({ uiEl } = render(scene));
-  findButtonByText(uiEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
   assert.equal(FakeAudio.playCalls[0], 'slow-line.mp3', 'Play All should start first audio line');
   flushPendingTimeouts();
   assert.equal(
@@ -411,8 +490,8 @@ try {
   );
 
   resetSpies();
-  ({ uiEl } = render(scene));
-  findButtonByText(uiEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
   const originalConsoleWarn = console.warn;
   console.warn = () => {};
   try {
@@ -422,6 +501,46 @@ try {
   }
   flushPendingTimeouts();
   assert.equal(FakeAudio.playCalls.length, 1, 'Audio errors should cancel Play All timers instead of advancing later');
+
+  resetSpies();
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
+  findButtonByText(stageEl, translate('player.speechBubble.playAll')).dispatchEvent('click');
+  assert.equal(FakeAudio.playCalls[0], 'slow-line.mp3', 'Speech bubble Play All should restart from the first line after manual navigation');
+
+  resetSpies();
+  scene = {
+    id: 'scene-speech-single-audio-pages',
+    type: SceneType.INTERMEDIATE,
+    speechBubble: { enabled: true, anchors: [] },
+    dialogue: [{
+      text: [
+        'This speech bubble line is intentionally long so paging kicks in during audio playback.',
+        'The added sentence keeps page timing queued long enough to catch stale post-end updates.',
+        'Regression coverage verifies completed audio no longer advances visible pages later.',
+      ].join(' '),
+      audio: { objectUrl: 'speech-single-line.mp3' },
+      bubble: { mode: BubbleMode.CENTER },
+    }],
+    choices: [],
+  };
+  ({ stageEl, uiEl } = render(scene));
+  findButtonByText(stageEl, translate('player.toolbar.playAudio')).dispatchEvent('click');
+  const speechPageStatusBeforeEnd = findByClass(stageEl, 'speech-play-page-status')?.textContent;
+  assert.ok(speechPageStatusBeforeEnd, 'Speech bubble line should show a page status for multi-page dialogue');
+  assert.ok(pendingTimeouts.length > 0, 'Speech bubble audio should schedule page timers before ended event');
+  FakeAudio.instances[0].trigger('ended');
+  assert.equal(
+    pendingTimeouts.length,
+    0,
+    'Speech bubble ended callback should clear queued page timers when Play All is inactive',
+  );
+  flushPendingTimeouts();
+  assert.equal(
+    findByClass(stageEl, 'speech-play-page-status')?.textContent,
+    speechPageStatusBeforeEnd,
+    'Speech bubble page status should stay stable after audio completion',
+  );
 
   resetSpies();
   const listenerDocument = globalThis.document;

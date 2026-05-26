@@ -6,6 +6,10 @@ export default {
     "play": "Play",
     "import": "Import",
     "export": "Export",
+    "more": "More",
+    "moreMenuLabel": "Toolbar overflow menu",
+    "moreServerGroup": "Server",
+    "moreProjectGroup": "Project",
     "importTitle": "Import project (.json or .zip)",
     "exportTitle": "Export project archive (.zip)",
     "languageLabel": "Language",
@@ -196,6 +200,14 @@ export default {
     "projectTitleLabel": "Project title",
     "projectTitlePlaceholder": "Untitled Role Play",
     "emptyState": "No scenes yet. Use “Add Scene” to begin.",
+    "sections": {
+      "sceneBasics": "Scene basics",
+      "sceneMedia": "Scene media"
+    },
+    "mediaActions": {
+      "choose": "Choose file",
+      "replace": "Replace"
+    },
     "header": {
       "previewCurrentScene": "Preview Current Scene",
       "addScene": "Add Scene",
@@ -213,17 +225,18 @@ export default {
       "empty": "No image selected.",
       "attached": "Attached: {name}",
       "fallbackName": "Untitled image",
-      "remove": "Remove image"
+      "remove": "Remove"
     },
     "background": {
       "label": "Background music",
       "attached": "Attached: {name}",
       "fallbackName": "Untitled track",
       "empty": "No background track selected.",
-      "remove": "Remove background music"
+      "remove": "Remove"
     },
     "speechBubble": {
       "title": "Speech bubble mode",
+      "enableLabel": "Enable",
       "scenePreviewHint": "Place and move anchors in Scene Preview.",
       "anchorLimit": "Speech bubble anchor limit reached ({max}).",
       "anchorCount": "{count} of {max} anchors used.",
@@ -245,9 +258,19 @@ export default {
     "dialogue": {
       "title": "Dialogue (max 3 lines)",
       "lineLabel": "Line {index}",
+      "speakerLabel": "Speaker",
+      "speakerNone": "No speaker",
+      "speakerAdd": "Add speaker...",
+      "speakerMissing": "Missing speaker",
+      "speakerNameLabel": "Speaker name",
+      "speakerNamePlaceholder": "Enter speaker name",
+      "speakerAddConfirm": "Add",
+      "speakerAddCancel": "Cancel",
+      "speakerNameRequired": "Enter a speaker name.",
+      "textLabel": "Dialogue text",
       "audioLabel": "Audio (optional mp3)",
       "audioAttached": "Attached: {name}",
-      "removeAudio": "Remove audio",
+      "removeAudio": "Remove",
       "playAudioPreview": "Play",
       "stopAudioPreview": "Stop",
       "audioPreviewFailed": "Unable to play this audio preview.",
@@ -272,13 +295,15 @@ export default {
         "cuteGirl": "Cute Girl",
         "gentleLady": "Gentle Lady"
       },
-      "deleteLine": "Delete line",
+      "deleteLine": "Remove",
       "addLine": "Add line"
     },
     "choices": {
       "title": "Choices (max 3)",
       "empty": "No choices yet.",
-      "labelPlaceholder": "Choice label",
+      "rowLabel": "Choice {index}",
+      "textLabel": "Choice text",
+      "labelPlaceholder": "Choice text",
       "cueCardLabel": "Cue card text",
       "cueCardPlaceholder": "Optional cue card text",
       "destinationPlaceholder": "Select destination",
@@ -325,6 +350,16 @@ export default {
       "backLabel": "Go to previous scene",
       "forwardLabel": "Go to next scene",
       "listLabel": "Visited scenes"
+    },
+    "utilities": {
+      "title": "Utilities",
+      "panelLabel": "Scene playback utilities",
+      "closeLabel": "Close utilities"
+    },
+    "toolbar": {
+      "choices": "Choices",
+      "playAudio": "Play Audio",
+      "stopAudio": "Stop Audio"
     },
     "dialogue": {
       "playAll": "▶️ Play all",

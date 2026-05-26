@@ -14,6 +14,9 @@ export function validateProject(project) {
 
   const scenes = project.scenes;
   const sceneIds = new Set(scenes.map(scene => scene.id));
+  const speakerIds = new Set((Array.isArray(project.speakers) ? project.speakers : [])
+    .map(speaker => speaker?.id)
+    .filter(Boolean));
   const seenSceneIds = new Set();
   for (const [index, scene] of scenes.entries()) {
     const sceneId = typeof scene?.id === 'string' ? scene.id.trim() : '';
@@ -74,6 +77,12 @@ export function validateProject(project) {
     if (scene.type === SceneType.END && sceneChoices.length > 0) {
       warnings.push(`End scene "${scene.id}" should not have outgoing choices.`);
     }
+
+    (scene.dialogue || []).forEach((line, idx) => {
+      if (line?.speakerId && !speakerIds.has(line.speakerId)) {
+        warnings.push(`Dialogue line ${idx + 1} in scene "${scene.id}" is assigned to a missing speaker.`);
+      }
+    });
 
     const speechBubble = scene.speechBubble || {};
     if (speechBubble.enabled === true) {

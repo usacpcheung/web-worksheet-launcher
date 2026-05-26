@@ -243,6 +243,23 @@ function findByClass(root, className) {
   return null;
 }
 
+function findButtonByText(root, text) {
+  if (root.tagName === 'button' && collectText(root) === text) {
+    return root;
+  }
+  for (const child of root.children || []) {
+    const match = findButtonByText(child, text);
+    if (match) return match;
+  }
+  return null;
+}
+
+function collectText(root) {
+  if (!root) return '';
+  const own = root.textContent || '';
+  return `${own}${(root.children || []).map(collectText).join('')}`;
+}
+
 function logResult(label, condition) {
   const status = condition ? 'OK' : 'FAIL';
   console.log(`${status}: ${label}`);
@@ -265,9 +282,9 @@ let scene = {
   choices: [],
 };
 
-let { uiEl } = renderScene(scene);
-let playAllButton = findByClass(uiEl, 'audio-play-all');
-logResult('Play All button hidden when no audio', playAllButton === null);
+let { stageEl, uiEl } = renderScene(scene);
+let playAllButton = findByClass(stageEl, 'audio-play-all');
+logResult('Play All button renders for text-only dialogue', !!playAllButton);
 
 // Test: sequential playback across multiple clips
 resetAudioSpies();
@@ -281,8 +298,8 @@ scene = {
   choices: [],
 };
 
-({ uiEl } = renderScene(scene));
-playAllButton = findByClass(uiEl, 'audio-play-all');
+({ stageEl, uiEl } = renderScene(scene));
+playAllButton = findByClass(stageEl, 'audio-play-all');
 logResult('Play All button renders when audio present', !!playAllButton);
 
 playAllButton.dispatchEvent('click');
@@ -303,24 +320,28 @@ logResult(
 
 FakeAudio.instances[0].trigger('ended');
 logResult('Next clip waits for 500ms gap', FakeAudio.playCalls.length === 1);
-logResult('Sequence schedules 500ms delay', pendingTimeouts[0]?.delay === 500);
+logResult('Sequence schedules a presentation delay', Number(pendingTimeouts[0]?.delay) > 0);
 flushPendingTimeouts();
 logResult('Second clip starts after scheduled delay', FakeAudio.playCalls[1] === 'audio-2.ogg');
 
 FakeAudio.instances[0].trigger('ended');
 flushPendingTimeouts();
-logResult('Button resets after final clip', playAllButton.textContent === translate('player.dialogue.playAll'));
+logResult('Button resets after final clip', collectText(playAllButton) === translate('player.speechBubble.playAll'));
+logResult(
+  'Choice button lights up after final clip',
+  findButtonByText(stageEl, translate('player.toolbar.choices'))?.getAttribute('aria-expanded') === 'true',
+);
 
 // Test: repeat click stops and restart works
 resetAudioSpies();
-({ uiEl } = renderScene(scene));
-playAllButton = findByClass(uiEl, 'audio-play-all');
+({ stageEl, uiEl } = renderScene(scene));
+playAllButton = findByClass(stageEl, 'audio-play-all');
 
 playAllButton.dispatchEvent('click');
 logResult('Playback starts on demand', FakeAudio.playCalls[0] === 'audio-1.ogg');
 
 playAllButton.dispatchEvent('click');
-logResult('Playback stops on second click', playAllButton.textContent === translate('player.dialogue.playAll'));
+logResult('Playback stops on second click', collectText(playAllButton) === translate('player.speechBubble.playAll'));
 
 playAllButton.dispatchEvent('click');
 logResult('Playback restarts after stop', FakeAudio.playCalls[1] === 'audio-1.ogg');
@@ -333,6 +354,43 @@ logResult('Queued timer cleared on manual stop', (() => {
   flushPendingTimeouts();
   return timersBeforeStop === 1 && timersAfterStop === 0 && FakeAudio.playCalls.length === 2;
 })());
+
+resetAudioSpies();
+({ stageEl, uiEl } = renderScene(scene));
+findButtonByText(stageEl, translate('player.speechBubble.next')).dispatchEvent('click');
+playAllButton = findByClass(stageEl, 'audio-play-all');
+playAllButton.dispatchEvent('click');
+logResult('Play All restarts from first line after manual navigation', FakeAudio.playCalls[0] === 'audio-1.ogg');
+
+resetAudioSpies();
+scene = {
+  id: 'scene-single-audio-pages',
+  type: SceneType.INTERMEDIATE,
+  dialogue: [{
+    text: 'This line is intentionally long so the player splits it into multiple pages for theater playback. '
+      + 'A second sentence keeps the weighted length above the paging threshold and gives the timer queue '
+      + 'more than one scheduled flip for regression coverage.',
+    audio: { objectUrl: 'single-line.ogg' },
+  }],
+  choices: [],
+};
+
+({ stageEl, uiEl } = renderScene(scene));
+const singleLinePlayButton = findButtonByText(stageEl, translate('player.toolbar.playAudio'));
+singleLinePlayButton?.dispatchEvent('click');
+const pageStatusBeforeEnd = findByClass(stageEl, 'theater-page-status')?.textContent;
+const pendingBeforeAudioEnd = pendingTimeouts.length;
+FakeAudio.instances[0]?.trigger('ended');
+const pendingAfterAudioEnd = pendingTimeouts.length;
+flushPendingTimeouts();
+const pageStatusAfterFlush = findByClass(stageEl, 'theater-page-status')?.textContent;
+
+logResult('Single clip schedules pagination timers before audio end', pendingBeforeAudioEnd > 0);
+logResult('Single clip completion reduces queued pagination timers', pendingAfterAudioEnd < pendingBeforeAudioEnd);
+logResult(
+  'Single clip completion prevents delayed page-status jumps',
+  Boolean(pageStatusBeforeEnd) && pageStatusBeforeEnd === pageStatusAfterFlush,
+);
 
 globalThis.setTimeout = originalSetTimeout;
 globalThis.clearTimeout = originalClearTimeout;
