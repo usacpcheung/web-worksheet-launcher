@@ -1,210 +1,17 @@
-import { BubbleMode, SceneType } from '../model.js';
 import { translate } from '../i18n.js';
+import { renderPlayerChoices } from './choice-controls.js';
+import { createPlayerIcon } from './icons.js';
+import { renderSpeechBubblePlayerUI, splitSpeechBubbleText } from './speech-bubble-ui.js';
+import {
+  DIALOGUE_MIN_AUDIO_PAGE_SECONDS,
+  estimateReadingSeconds,
+  getDialoguePageText,
+  getLineAudioDurationSeconds,
+  hasDialogueLineContent,
+  splitDialogueText,
+} from './dialogue-progression.js';
 
-const SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS = 1;
-const SPEECH_BUBBLE_CHARACTER_PAGE_UNITS = 36;
-const SPEECH_BUBBLE_NARRATION_PAGE_UNITS = 80;
-const SPEECH_BUBBLE_NO_AUDIO_MIN_SECONDS = 2;
-const SPEECH_BUBBLE_NO_AUDIO_MAX_SECONDS = 8;
-
-function getWeightedTextLength(text) {
-  return Array.from(String(text || '')).reduce((total, char) => {
-    if (/\s/.test(char) || /[，、,.:;；。！？!?]/.test(char)) return total + 0.25;
-    if (/[\x00-\x7F]/.test(char)) return total + 0.55;
-    return total + 1;
-  }, 0);
-}
-
-function splitByLimit(text, limit) {
-  const source = String(text || '').trim();
-  if (!source) return [''];
-  if (getWeightedTextLength(source) <= limit) return [source];
-
-  const breakPatterns = [/\n+/, /(?<=[。！？!?；;])/, /(?<=[，、,:])/, /\s+/];
-  for (const pattern of breakPatterns) {
-    const chunks = source.split(pattern).map(chunk => chunk.trim()).filter(Boolean);
-    if (chunks.length <= 1) continue;
-    const pages = [];
-    let current = '';
-    for (const chunk of chunks) {
-      const candidate = current ? `${current}${pattern.source === '\\s+' ? ' ' : ''}${chunk}` : chunk;
-      if (current && getWeightedTextLength(candidate) > limit) {
-        pages.push(current);
-        current = chunk;
-      } else {
-        current = candidate;
-      }
-    }
-    if (current) pages.push(current);
-    if (pages.every(page => getWeightedTextLength(page) <= limit * 1.2)) {
-      return pages;
-    }
-  }
-
-  const pages = [];
-  let current = '';
-  for (const char of Array.from(source)) {
-    const candidate = current + char;
-    if (current && getWeightedTextLength(candidate) > limit) {
-      pages.push(current.trim());
-      current = char;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current.trim()) pages.push(current.trim());
-  return pages.length ? pages : [source];
-}
-
-export function splitSpeechBubbleText(text, mode = BubbleMode.ANCHOR) {
-  const limit = mode === BubbleMode.CENTER
-    ? SPEECH_BUBBLE_NARRATION_PAGE_UNITS
-    : SPEECH_BUBBLE_CHARACTER_PAGE_UNITS;
-  return splitByLimit(text, limit);
-}
-
-function estimateReadingSeconds(page) {
-  const units = getWeightedTextLength(page);
-  return Math.max(
-    SPEECH_BUBBLE_NO_AUDIO_MIN_SECONDS,
-    Math.min(SPEECH_BUBBLE_NO_AUDIO_MAX_SECONDS, 1.4 + units * 0.08),
-  );
-}
-
-function getLineAudioDurationSeconds(line, pages) {
-  const direct = Number(line?.audio?.durationSeconds ?? line?.audio?.duration);
-  if (Number.isFinite(direct) && direct > 0) return direct;
-  return Math.max(pages.length * SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS, pages.reduce((total, page) => total + estimateReadingSeconds(page), 0));
-}
-
-function getSpeechBubbleAnchor(scene, line) {
-  if (line?.bubble?.mode !== BubbleMode.ANCHOR) return null;
-  const anchors = Array.isArray(scene?.speechBubble?.anchors) ? scene.speechBubble.anchors : [];
-  return anchors.find(anchor => anchor.id === line?.bubble?.anchorId) || null;
-}
-
-function clampNumber(value, min, max) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return min;
-  return Math.max(min, Math.min(max, number));
-}
-
-function createSvgElement(tagName) {
-  return document.createElementNS
-    ? document.createElementNS('http://www.w3.org/2000/svg', tagName)
-    : document.createElement(tagName);
-}
-
-function getElementSize(element, fallbackWidth, fallbackHeight) {
-  const width = Number(element?.offsetWidth || element?.getBoundingClientRect?.().width);
-  const height = Number(element?.offsetHeight || element?.getBoundingClientRect?.().height);
-  return {
-    width: Number.isFinite(width) && width > 0 ? width : fallbackWidth,
-    height: Number.isFinite(height) && height > 0 ? height : fallbackHeight,
-  };
-}
-
-function buildSpeechBubblePath(width, height, tail) {
-  const radius = Math.min(26, Math.max(16, Math.min(width, height) * 0.18));
-  const baseHalf = Math.min(14, Math.max(9, width * 0.035));
-  const attachX = clampNumber(tail.attachX, radius + baseHalf, width - radius - baseHalf);
-  const attachY = tail.side === 'top' ? 0 : height;
-  const baseY = tail.side === 'top' ? attachY : attachY;
-  const dx = tail.tipX - attachX;
-  const dy = tail.tipY - attachY;
-  const distance = Math.hypot(dx, dy) || 1;
-  const maxTailLength = Math.min(54, Math.max(42, width * 0.14));
-  const scale = Math.min(1, maxTailLength / distance);
-  const tipX = attachX + dx * scale;
-  const tipY = attachY + dy * scale;
-  const curveX = (attachX + tipX) / 2;
-  const curveY = tail.side === 'top'
-    ? Math.min(attachY - 4, (attachY + tipY) / 2)
-    : Math.max(attachY + 4, (attachY + tipY) / 2);
-
-  if (tail.side === 'top') {
-    return [
-      `M ${radius} 0`,
-      `H ${attachX - baseHalf}`,
-      `Q ${curveX} ${curveY} ${tipX} ${tipY}`,
-      `Q ${curveX + baseHalf * 0.35} ${curveY} ${attachX + baseHalf} ${baseY}`,
-      `H ${width - radius}`,
-      `Q ${width} 0 ${width} ${radius}`,
-      `V ${height - radius}`,
-      `Q ${width} ${height} ${width - radius} ${height}`,
-      `H ${radius}`,
-      `Q 0 ${height} 0 ${height - radius}`,
-      `V ${radius}`,
-      `Q 0 0 ${radius} 0`,
-      'Z',
-    ].join(' ');
-  }
-
-  return [
-    `M ${radius} 0`,
-    `H ${width - radius}`,
-    `Q ${width} 0 ${width} ${radius}`,
-    `V ${height - radius}`,
-    `Q ${width} ${height} ${width - radius} ${height}`,
-    `H ${attachX + baseHalf}`,
-    `Q ${curveX + baseHalf * 0.35} ${curveY} ${tipX} ${tipY}`,
-    `Q ${curveX} ${curveY} ${attachX - baseHalf} ${baseY}`,
-    `H ${radius}`,
-    `Q 0 ${height} 0 ${height - radius}`,
-    `V ${radius}`,
-    `Q 0 0 ${radius} 0`,
-    'Z',
-  ].join(' ');
-}
-
-function positionAnchorSpeechBubble(overlay, bubble, path, anchor) {
-  const overlaySize = getElementSize(overlay, 640, 360);
-  const bubbleSize = getElementSize(bubble, 340, 120);
-  const anchorX = clampNumber(Number(anchor?.x), 0, 1) * overlaySize.width;
-  const anchorY = clampNumber(Number(anchor?.y), 0, 1) * overlaySize.height;
-  const gap = 30;
-  const margin = 12;
-  const candidates = [
-    { name: 'above-right', left: anchorX + gap, top: anchorY - bubbleSize.height - gap, side: 'bottom', attachRatio: 0.2, preference: 0 },
-    { name: 'above-left', left: anchorX - bubbleSize.width - gap, top: anchorY - bubbleSize.height - gap, side: 'bottom', attachRatio: 0.8, preference: 1 },
-    { name: 'below-right', left: anchorX + gap, top: anchorY + gap, side: 'top', attachRatio: 0.2, preference: 2 },
-    { name: 'below-left', left: anchorX - bubbleSize.width - gap, top: anchorY + gap, side: 'top', attachRatio: 0.8, preference: 3 },
-  ];
-
-  const scored = candidates.map(candidate => {
-    const overflowLeft = Math.max(0, margin - candidate.left);
-    const overflowTop = Math.max(0, margin - candidate.top);
-    const overflowRight = Math.max(0, candidate.left + bubbleSize.width + margin - overlaySize.width);
-    const overflowBottom = Math.max(0, candidate.top + bubbleSize.height + margin - overlaySize.height);
-    const overflow = overflowLeft + overflowTop + overflowRight + overflowBottom;
-    return {
-      ...candidate,
-      score: overflow * 100 + candidate.preference,
-    };
-  }).sort((a, b) => a.score - b.score)[0];
-
-  const left = clampNumber(scored.left, margin, Math.max(margin, overlaySize.width - bubbleSize.width - margin));
-  const top = clampNumber(scored.top, margin, Math.max(margin, overlaySize.height - bubbleSize.height - margin));
-  const tipX = anchorX - left;
-  const tipY = anchorY - top;
-  const attachX = bubbleSize.width * scored.attachRatio;
-
-  bubble.style.left = `${left}px`;
-  bubble.style.top = `${top}px`;
-  bubble.classList.add('speech-play-bubble-wrap--positioned');
-  bubble.setAttribute('data-tail-side', scored.side);
-  bubble.setAttribute('data-tail-anchor', scored.name);
-  path.setAttribute('d', buildSpeechBubblePath(bubbleSize.width, bubbleSize.height, {
-    side: scored.side,
-    attachX,
-    tipX,
-    tipY,
-  }));
-}
-
-function hasSpeechLineContent(line) {
-  return Boolean(String(line?.text || '').trim() || line?.audio?.objectUrl);
-}
+export { splitSpeechBubbleText };
 
 function createDialogueBoost(element) {
   const AudioContextCtor = globalThis?.AudioContext || globalThis?.webkitAudioContext;
@@ -541,6 +348,22 @@ function createDialogueAudioController() {
   };
 }
 
+function getSpeakerName(project, line) {
+  if (!line?.speakerId) return '';
+  const speakers = Array.isArray(project?.speakers) ? project.speakers : [];
+  const speaker = speakers.find(candidate => candidate.id === line.speakerId);
+  return String(speaker?.name || '').trim();
+}
+
+function appendToolbarButtonContent(button, iconName, label) {
+  button.textContent = '';
+  button.appendChild(createPlayerIcon(iconName));
+  const labelEl = document.createElement('span');
+  labelEl.textContent = label;
+  button.appendChild(labelEl);
+  button.setAttribute('aria-label', label);
+}
+
 export function renderPlayerUI({
   stageEl,
   uiEl,
@@ -576,8 +399,8 @@ export function renderPlayerUI({
 
   const cueClose = document.createElement('button');
   cueClose.type = 'button';
-  cueClose.className = 'player-cue-close';
-  cueClose.textContent = '×';
+  cueClose.className = 'player-cue-close theater-icon-button';
+  cueClose.appendChild(createPlayerIcon('close'));
   cueClose.setAttribute('aria-label', translate('player.choices.cueCardCloseLabel'));
 
   cueHeader.appendChild(cueTitle);
@@ -589,7 +412,7 @@ export function renderPlayerUI({
   cueDialog.appendChild(cueHeader);
   cueDialog.appendChild(cueBody);
   cueOverlay.appendChild(cueDialog);
-  uiEl.appendChild(cueOverlay);
+  stageEl.appendChild(cueOverlay);
 
   let activeCueTrigger = null;
 
@@ -674,62 +497,6 @@ export function renderPlayerUI({
     releaseDuck();
   };
 
-  const lineButtons = new Map();
-  let activeLineIndex = null;
-
-  const setBubblePlayingState = (bubble, active) => {
-    if (bubble.classList?.toggle) {
-      bubble.classList.toggle('is-playing', active);
-      return;
-    }
-
-    if (typeof bubble.className === 'string') {
-      const current = bubble.className.split(/\s+/).filter(Boolean);
-      const classes = new Set(current);
-      if (active) {
-        classes.add('is-playing');
-      } else {
-        classes.delete('is-playing');
-      }
-      bubble.className = Array.from(classes).join(' ');
-    }
-  };
-
-  const setLineButtonState = (index, active) => {
-    const entry = lineButtons.get(index);
-    if (!entry) {
-      return;
-    }
-
-    const { button, bubble } = entry;
-
-    if (active) {
-      if (activeLineIndex !== null && activeLineIndex !== index) {
-        setLineButtonState(activeLineIndex, false);
-      }
-      activeLineIndex = index;
-      button.textContent = translate('player.dialogue.stopLine');
-      button.setAttribute('aria-pressed', 'true');
-      setBubblePlayingState(bubble, true);
-    } else {
-      if (activeLineIndex === index) {
-        activeLineIndex = null;
-      }
-      button.textContent = translate('player.dialogue.playLine');
-      button.setAttribute('aria-pressed', 'false');
-      setBubblePlayingState(bubble, false);
-    }
-  };
-
-  const resetAllLines = () => {
-    activeLineIndex = null;
-    lineButtons.forEach(({ button, bubble }) => {
-      button.textContent = translate('player.dialogue.playLine');
-      button.setAttribute('aria-pressed', 'false');
-      setBubblePlayingState(bubble, false);
-    });
-  };
-
   if (!scene) {
     const placeholder = document.createElement('p');
     placeholder.textContent = translate('player.noSceneSelected');
@@ -741,907 +508,693 @@ export function renderPlayerUI({
   }
 
   const speechBubbleEnabled = scene.speechBubble?.enabled === true;
+  const stageFrame = document.createElement('div');
+  stageFrame.className = scene.image?.objectUrl
+    ? 'player-stage-frame player-stage-frame--theater'
+    : 'player-stage-frame player-stage-frame--empty player-stage-frame--theater';
+  const theaterOverlay = document.createElement('div');
+  theaterOverlay.className = 'theater-overlay';
   let speechBubbleOverlay = null;
+  const theaterControlRail = document.createElement('div');
+  theaterControlRail.className = 'theater-side-rail theater-side-rail--right';
 
-  if (speechBubbleEnabled) {
-    const stageFrame = document.createElement('div');
-    stageFrame.className = scene.image?.objectUrl
-      ? 'player-stage-frame'
-      : 'player-stage-frame player-stage-frame--empty';
+  const theaterUtilityRail = document.createElement('div');
+  theaterUtilityRail.className = 'theater-side-rail theater-side-rail--left';
 
-    if (scene.image?.objectUrl) {
-      const img = document.createElement('img');
-      img.src = scene.image.objectUrl;
-      img.alt = translate('player.stageImageAlt', { sceneId: scene.id });
-      stageFrame.appendChild(img);
-    } else {
-      const emptyStage = document.createElement('div');
-      emptyStage.className = 'stage-empty';
-      emptyStage.textContent = translate('player.stageImageEmpty');
-      stageFrame.appendChild(emptyStage);
-    }
-
-    speechBubbleOverlay = document.createElement('div');
-    speechBubbleOverlay.className = 'speech-play-overlay';
-    stageFrame.appendChild(speechBubbleOverlay);
-    stageEl.appendChild(stageFrame);
-  } else if (scene.image?.objectUrl) {
+  if (scene.image?.objectUrl) {
     const img = document.createElement('img');
     img.src = scene.image.objectUrl;
     img.alt = translate('player.stageImageAlt', { sceneId: scene.id });
-    stageEl.appendChild(img);
+    stageFrame.appendChild(img);
   } else {
     const emptyStage = document.createElement('div');
     emptyStage.className = 'stage-empty';
     emptyStage.textContent = translate('player.stageImageEmpty');
-    stageEl.appendChild(emptyStage);
+    stageFrame.appendChild(emptyStage);
   }
-
-  if (backgroundAudioControls) {
-    const bgControls = document.createElement('div');
-    bgControls.className = 'background-audio-controls';
-
-    const heading = document.createElement('h4');
-    heading.textContent = translate('player.background.title');
-    bgControls.appendChild(heading);
-
-    const volumeWrapper = document.createElement('div');
-    volumeWrapper.className = 'background-volume';
-
-    const volumeLabel = document.createElement('label');
-    volumeLabel.textContent = translate('player.background.volumeLabel');
-
-    const volumeSlider = document.createElement('input');
-    volumeSlider.type = 'range';
-    volumeSlider.min = '0';
-    volumeSlider.max = '1';
-    volumeSlider.step = '0.05';
-    volumeSlider.value = String(backgroundAudioControls.volume ?? 0);
-    volumeSlider.setAttribute('aria-label', translate('player.background.volumeLabel'));
-    volumeSlider.disabled = Boolean(backgroundAudioControls.muted);
-
-    const volumeValue = document.createElement('span');
-    volumeValue.className = 'background-volume-value';
-    const initialVolume = Number(backgroundAudioControls.volume ?? 0);
-    volumeValue.textContent = `${Math.round(initialVolume * 100)}%`;
-
-    volumeSlider.addEventListener('input', event => {
-      const value = Number(event.target.value);
-      backgroundAudioControls.volume = value;
-      volumeValue.textContent = `${Math.round(value * 100)}%`;
-      backgroundAudioControls.onVolumeChange?.(value);
-    });
-
-    volumeLabel.appendChild(volumeSlider);
-    volumeWrapper.append(volumeLabel, volumeValue);
-    bgControls.appendChild(volumeWrapper);
-
-    const muteButton = document.createElement('button');
-    muteButton.type = 'button';
-
-    const updateMuteLabel = (muted) => {
-      muteButton.textContent = muted
-        ? translate('player.background.unmute')
-        : translate('player.background.mute');
-      muteButton.setAttribute('aria-pressed', muted ? 'true' : 'false');
-      muteButton.setAttribute('aria-label', muted
-        ? translate('player.background.unmute')
-        : translate('player.background.mute'));
-      volumeSlider.disabled = muted;
-    };
-
-    updateMuteLabel(Boolean(backgroundAudioControls.muted));
-
-    muteButton.addEventListener('click', () => {
-      const nextMuted = backgroundAudioControls.onToggleMute?.();
-      const resolved = typeof nextMuted === 'boolean' ? nextMuted : !backgroundAudioControls.muted;
-      backgroundAudioControls.muted = resolved;
-      updateMuteLabel(resolved);
-    });
-
-    bgControls.appendChild(muteButton);
-    uiEl.appendChild(bgControls);
-  }
-
-  if (historyControls?.entries?.length) {
-    const historyWrapper = document.createElement('div');
-    historyWrapper.className = 'player-history';
-
-    const historyTitle = document.createElement('h4');
-    historyTitle.className = 'player-history-title';
-    historyTitle.textContent = translate('player.history.title');
-    historyWrapper.appendChild(historyTitle);
-
-    const navControls = document.createElement('div');
-    navControls.className = 'player-history-nav';
-
-    const backButton = document.createElement('button');
-    backButton.type = 'button';
-    backButton.className = 'player-history-back';
-    backButton.textContent = translate('player.history.back');
-    backButton.disabled = !historyControls.canGoBack;
-    backButton.setAttribute('aria-label', translate('player.history.backLabel'));
-    if (historyControls.onBack) {
-      backButton.addEventListener('click', () => historyControls.onBack());
-    }
-
-    const forwardButton = document.createElement('button');
-    forwardButton.type = 'button';
-    forwardButton.className = 'player-history-forward';
-    forwardButton.textContent = translate('player.history.forward');
-    forwardButton.disabled = !historyControls.canGoForward;
-    forwardButton.setAttribute('aria-label', translate('player.history.forwardLabel'));
-    if (historyControls.onForward) {
-      forwardButton.addEventListener('click', () => historyControls.onForward());
-    }
-
-    navControls.appendChild(backButton);
-    navControls.appendChild(forwardButton);
-    historyWrapper.appendChild(navControls);
-
-    const historyList = document.createElement('ol');
-    historyList.className = 'player-history-list';
-    historyList.setAttribute('aria-label', translate('player.history.listLabel'));
-
-    historyControls.entries.forEach((entry, index) => {
-      const item = document.createElement('li');
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'player-history-entry';
-      const displayLabel = entry.label ?? entry.fullLabel ?? entry.sceneId;
-      const accessibleLabel = entry.fullLabel ?? entry.label ?? entry.sceneId;
-      button.textContent = displayLabel || '';
-      if (accessibleLabel) {
-        button.setAttribute('title', accessibleLabel);
-        button.setAttribute('aria-label', accessibleLabel);
-      }
-      if (button.dataset) {
-        button.dataset.sceneId = entry.sceneId;
-      }
-
-      if (index === historyControls.index) {
-        button.disabled = true;
-        button.setAttribute('aria-current', 'step');
-      } else if (historyControls.onJump) {
-        button.addEventListener('click', () => historyControls.onJump(index));
-      }
-
-      item.appendChild(button);
-      historyList.appendChild(item);
-    });
-
-    historyWrapper.appendChild(historyList);
-    uiEl.appendChild(historyWrapper);
-  }
-
-  const renderNavigationControls = (host) => {
-    const choiceBox = document.createElement('div');
-    choiceBox.className = 'player-choices';
-
-    if (scene.type === SceneType.END) {
-      const endMessage = document.createElement('p');
-      endMessage.className = 'the-end';
-      endMessage.textContent = translate('player.choices.endMessage');
-      choiceBox.appendChild(endMessage);
-      host.appendChild(choiceBox);
-      return choiceBox;
-    }
-
-    const sceneChoices = scene.choices || [];
-    const autoNextId = scene.autoNextSceneId ?? null;
-    const autoNextValid = Boolean(autoNextId)
-      && project.scenes.some(s => s.id === autoNextId);
-
-    if (!sceneChoices.length) {
-      if (autoNextId) {
-        const continueButton = document.createElement('button');
-        continueButton.type = 'button';
-        continueButton.textContent = translate('player.choices.continue');
-        continueButton.disabled = !autoNextValid;
-        if (!autoNextValid) {
-          continueButton.title = translate('player.choices.autoNextMissing');
-        }
-        continueButton.addEventListener('click', () => {
-          stopDialoguePlayback();
-          if (autoNextValid && autoNextId) {
-            onChoice?.(autoNextId);
-          }
-        });
-        choiceBox.appendChild(continueButton);
-      } else {
-        const noChoices = document.createElement('p');
-        noChoices.className = 'empty';
-        noChoices.textContent = translate('player.choices.noneAvailable');
-        choiceBox.appendChild(noChoices);
-      }
-    }
-
-    sceneChoices.forEach(choice => {
-      const cueCardText = typeof choice.cueCardText === 'string'
-        ? choice.cueCardText.trim()
-        : '';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'player-choice-button';
-
-      const choiceLabel = choice.label || translate('player.choices.continue');
-      const labelText = document.createElement('span');
-      labelText.className = 'player-choice-label';
-      labelText.textContent = choiceLabel;
-
-      button.appendChild(labelText);
-
-      button.disabled = !choice.nextSceneId || !project.scenes.some(s => s.id === choice.nextSceneId);
-      button.addEventListener('click', () => {
-        stopDialoguePlayback();
-        if (choice.nextSceneId) {
-          onChoice?.(choice.nextSceneId);
-        }
-      });
-
-      if (!cueCardText) {
-        choiceBox.appendChild(button);
-        return;
-      }
-
-      const row = document.createElement('div');
-      row.className = 'player-choice-row';
-
-      const cueTrigger = document.createElement('button');
-      cueTrigger.type = 'button';
-      cueTrigger.className = 'player-choice-cue-trigger';
-      cueTrigger.setAttribute('aria-expanded', 'false');
-      cueTrigger.setAttribute('aria-label', translate('player.choices.cueCardTriggerLabel', { label: choiceLabel }));
-
-      const cueIcon = document.createElement('span');
-      cueIcon.className = 'player-choice-cue-icon';
-      cueIcon.textContent = '?';
-      cueIcon.setAttribute('aria-hidden', 'true');
-      cueTrigger.appendChild(cueIcon);
-
-      cueTrigger.addEventListener('click', () => openCueCard(cueTrigger, cueCardText));
-
-      row.appendChild(cueTrigger);
-      row.appendChild(button);
-      choiceBox.appendChild(row);
-    });
-
-    host.appendChild(choiceBox);
-    return choiceBox;
-  };
 
   if (speechBubbleEnabled) {
-    const visibleEntries = (scene.dialogue || [])
-      .map((line, index) => ({ line, index }))
-      .filter(entry => hasSpeechLineContent(entry.line) && entry.line.bubble?.mode !== BubbleMode.HIDDEN);
-
-    const speechPanel = document.createElement('div');
-    speechPanel.className = 'speech-play-panel';
-    uiEl.appendChild(speechPanel);
-
-    let activeVisibleIndex = -1;
-    let activePageIndex = 0;
-    let speechAudioActive = false;
-    let speechPlayAllActive = false;
-    let speechRunToken = 0;
-    const speechTimers = new Set();
-
-    const nextSpeechRunToken = () => {
-      speechRunToken += 1;
-      return speechRunToken;
-    };
-
-    const clearSpeechTimers = () => {
-      speechTimers.forEach(timer => {
-        try {
-          globalThis.clearTimeout?.(timer);
-        } catch {
-          // Ignore timer cleanup failures.
-        }
-      });
-      speechTimers.clear();
-    };
-
-    const scheduleSpeechTimer = (callback, delayMs) => {
-      if (typeof globalThis.setTimeout !== 'function') return null;
-      const timer = globalThis.setTimeout(() => {
-        speechTimers.delete(timer);
-        callback();
-      }, delayMs);
-      speechTimers.add(timer);
-      return timer;
-    };
-
-    const stopSpeechPlayback = ({ keepActive = true } = {}) => {
-      clearSpeechTimers();
-      nextSpeechRunToken();
-      speechPlayAllActive = false;
-      speechAudioActive = false;
-      dialogueAudio.stop();
-      releaseDuck();
-      if (!keepActive) {
-        activeVisibleIndex = -1;
-        activePageIndex = 0;
-      }
-      renderSpeechState();
-    };
-
-    const advanceSpeechPage = (pages, pageIndex, onDone) => {
-      if (pageIndex >= pages.length) {
-        onDone?.();
-        return;
-      }
-      activePageIndex = pageIndex;
-      renderSpeechState();
-    };
-
-    const getPresentationSeconds = (pages, audioSeconds = 0) => {
-      if (pages.length <= 1) {
-        return Math.max(audioSeconds, estimateReadingSeconds(pages[0] || ''));
-      }
-      if (audioSeconds > 0 && audioSeconds / pages.length >= SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS) {
-        return audioSeconds;
-      }
-      const lastPageStartsAt = (pages.length - 1) * SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS;
-      return Math.max(audioSeconds, lastPageStartsAt + estimateReadingSeconds(pages[pages.length - 1] || ''));
-    };
-
-    const schedulePaging = ({ pages, totalSeconds }) => {
-      if (pages.length <= 1) return;
-      const totalMs = Math.max(0, totalSeconds * 1000);
-      const canFitInAudio = totalSeconds / pages.length >= SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS;
-      if (canFitInAudio) {
-        pages.slice(1).forEach((_, pageOffset) => {
-          const pageNumber = pageOffset + 1;
-          scheduleSpeechTimer(() => advanceSpeechPage(pages, pageNumber), (totalMs / pages.length) * pageNumber);
-        });
-        return;
-      }
-
-      pages.slice(1).forEach((_, pageOffset) => {
-        const pageNumber = pageOffset + 1;
-        const delay = SPEECH_BUBBLE_MIN_AUDIO_PAGE_SECONDS * 1000 * pageNumber;
-        scheduleSpeechTimer(() => advanceSpeechPage(pages, pageNumber), delay);
-      });
-    };
-
-    const completeCurrentSpeechLine = () => {
-      speechAudioActive = false;
-      if (!speechPlayAllActive) {
-        renderSpeechState();
-        return;
-      }
-      const nextIndex = activeVisibleIndex + 1;
-      if (nextIndex >= visibleEntries.length) {
-        speechPlayAllActive = false;
-        renderSpeechState();
-        return;
-      }
-      activeVisibleIndex = nextIndex;
-      activePageIndex = 0;
-      playActiveSpeechLine({ autoAdvance: true });
-    };
-
-    const playActiveSpeechLine = ({ autoAdvance = false } = {}) => {
-      const entry = visibleEntries[activeVisibleIndex];
-      if (!entry) return;
-      clearSpeechTimers();
-      const runToken = nextSpeechRunToken();
-      activePageIndex = 0;
-      speechPlayAllActive = speechPlayAllActive || autoAdvance;
-      const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
-      const pages = splitSpeechBubbleText(entry.line.text || translate('player.dialogue.lineFallback', { index: entry.index + 1 }), mode);
-      renderSpeechState();
-
-      if (entry.line.audio?.objectUrl) {
-        speechAudioActive = true;
-        let audioDone = false;
-        let presentationDone = !speechPlayAllActive;
-        const completePlayAllWhenReady = () => {
-          if (runToken !== speechRunToken || !speechPlayAllActive) {
-            renderSpeechState();
-            return;
-          }
-          if (audioDone && presentationDone) {
-            completeCurrentSpeechLine();
-          } else {
-            renderSpeechState();
-          }
-        };
-        requestDuck();
-        const audioSeconds = getLineAudioDurationSeconds(entry.line, pages);
-        schedulePaging({
-          pages,
-          totalSeconds: audioSeconds,
-        });
-        if (speechPlayAllActive) {
-          scheduleSpeechTimer(() => {
-            if (runToken !== speechRunToken) return;
-            presentationDone = true;
-            completePlayAllWhenReady();
-          }, getPresentationSeconds(pages, audioSeconds) * 1000);
-        }
-        dialogueAudio.playClip({
-          src: entry.line.audio.objectUrl,
-          onComplete: () => {
-            releaseDuck();
-            if (runToken !== speechRunToken) return;
-            speechAudioActive = false;
-            audioDone = true;
-            completePlayAllWhenReady();
-          },
-          onCancel: () => {
-            releaseDuck();
-            if (runToken !== speechRunToken) return;
-            speechAudioActive = false;
-            renderSpeechState();
-          },
-          onError: (error) => {
-            console.warn(translate('player.speechBubble.playbackError'), error);
-            releaseDuck();
-            if (runToken !== speechRunToken) return;
-            clearSpeechTimers();
-            nextSpeechRunToken();
-            speechAudioActive = false;
-            speechPlayAllActive = false;
-            renderSpeechState();
-          },
-        });
-        renderSpeechState();
-        return;
-      }
-
-      speechAudioActive = false;
-      if (speechPlayAllActive && pages.length > 1) {
-        let cumulativeMs = 0;
-        pages.slice(1).forEach((page, pageOffset) => {
-          cumulativeMs += estimateReadingSeconds(pages[pageOffset]) * 1000;
-          const pageNumber = pageOffset + 1;
-          scheduleSpeechTimer(() => advanceSpeechPage(pages, pageNumber), cumulativeMs);
-        });
-        cumulativeMs += estimateReadingSeconds(pages[pages.length - 1]) * 1000;
-        scheduleSpeechTimer(() => completeCurrentSpeechLine(), cumulativeMs);
-      } else if (speechPlayAllActive) {
-        scheduleSpeechTimer(() => completeCurrentSpeechLine(), estimateReadingSeconds(pages[0]) * 1000);
-      }
-      renderSpeechState();
-    };
-
-    const setActiveSpeechLine = (nextIndex, { autoplay = false } = {}) => {
-      clearSpeechTimers();
-      nextSpeechRunToken();
-      dialogueAudio.stop();
-      releaseDuck();
-      speechAudioActive = false;
-      speechPlayAllActive = false;
-      activeVisibleIndex = Math.max(0, Math.min(nextIndex, visibleEntries.length - 1));
-      activePageIndex = 0;
-      if (autoplay) {
-        playActiveSpeechLine();
-      } else {
-        renderSpeechState();
-      }
-    };
-
-    const changeSpeechPage = (delta) => {
-      const entry = visibleEntries[activeVisibleIndex];
-      if (!entry) return;
-      clearSpeechTimers();
-      nextSpeechRunToken();
-      speechPlayAllActive = false;
-      const mode = entry.line.bubble?.mode || BubbleMode.CENTER;
-      const pages = splitSpeechBubbleText(entry.line.text || translate('player.dialogue.lineFallback', { index: entry.index + 1 }), mode);
-      activePageIndex = Math.max(0, Math.min(pages.length - 1, activePageIndex + delta));
-      renderSpeechState();
-    };
-
-    function renderSpeechState() {
-      speechPanel.innerHTML = '';
-      if (speechBubbleOverlay) speechBubbleOverlay.innerHTML = '';
-
-      const activeEntry = visibleEntries[activeVisibleIndex] || null;
-      const activeMode = activeEntry?.line?.bubble?.mode || BubbleMode.CENTER;
-      const pages = activeEntry
-        ? splitSpeechBubbleText(activeEntry.line.text || translate('player.dialogue.lineFallback', { index: activeEntry.index + 1 }), activeMode)
-        : [];
-      const page = pages[Math.max(0, Math.min(activePageIndex, pages.length - 1))] || '';
-
-      if (activeEntry && speechBubbleOverlay) {
-        const anchor = getSpeechBubbleAnchor(scene, activeEntry.line);
-        const fallbackAnchor = activeEntry.line.bubble?.x != null || activeEntry.line.bubble?.y != null
-          ? { x: activeEntry.line.bubble?.x ?? 0.5, y: activeEntry.line.bubble?.y ?? 0.5 }
-          : null;
-        const anchorPoint = anchor || fallbackAnchor;
-
-        if (activeMode === BubbleMode.ANCHOR && anchorPoint) {
-          const bubble = document.createElement('div');
-          bubble.className = 'speech-play-bubble-wrap speech-play-bubble-wrap--anchor';
-          bubble.classList.toggle('is-playing', speechAudioActive);
-
-          const svg = createSvgElement('svg');
-          svg.classList.add('speech-play-bubble-svg');
-          svg.setAttribute('aria-hidden', 'true');
-          svg.setAttribute('focusable', 'false');
-
-          const shape = createSvgElement('path');
-          shape.classList.add('speech-play-bubble-shape');
-          svg.appendChild(shape);
-          bubble.appendChild(svg);
-
-          const textLayer = document.createElement('div');
-          textLayer.className = 'speech-play-bubble-text';
-          const text = document.createElement('p');
-          text.textContent = page;
-          textLayer.appendChild(text);
-          if (pages.length > 1) {
-            const pageStatus = document.createElement('span');
-            pageStatus.className = 'speech-play-page-status';
-            pageStatus.textContent = translate('player.speechBubble.pageStatus', {
-              current: activePageIndex + 1,
-              total: pages.length,
-            });
-            textLayer.appendChild(pageStatus);
-          }
-          bubble.appendChild(textLayer);
-          speechBubbleOverlay.appendChild(bubble);
-          positionAnchorSpeechBubble(speechBubbleOverlay, bubble, shape, anchorPoint);
-        } else {
-          const bubble = document.createElement('div');
-          bubble.className = 'speech-play-bubble speech-play-bubble--center';
-          bubble.classList.toggle('is-playing', speechAudioActive);
-          const text = document.createElement('p');
-          text.textContent = page;
-          bubble.appendChild(text);
-          if (pages.length > 1) {
-            const pageStatus = document.createElement('span');
-            pageStatus.className = 'speech-play-page-status';
-            pageStatus.textContent = translate('player.speechBubble.pageStatus', {
-              current: activePageIndex + 1,
-              total: pages.length,
-            });
-            bubble.appendChild(pageStatus);
-          }
-          speechBubbleOverlay.appendChild(bubble);
-        }
-      }
-
-      const controls = document.createElement('div');
-      controls.className = 'speech-play-controls';
-
-      if (!visibleEntries.length) {
-        const empty = document.createElement('p');
-        empty.className = 'empty';
-        empty.textContent = translate('player.speechBubble.noDialogue');
-        controls.appendChild(empty);
-      } else if (!activeEntry) {
-        const startButton = document.createElement('button');
-        startButton.type = 'button';
-        startButton.className = 'confirm-actions__primary';
-        startButton.textContent = translate('player.speechBubble.startDialogue');
-        startButton.addEventListener('click', () => setActiveSpeechLine(0, { autoplay: true }));
-        controls.appendChild(startButton);
-
-        const playAllButton = document.createElement('button');
-        playAllButton.type = 'button';
-        playAllButton.textContent = translate('player.speechBubble.playAll');
-        playAllButton.addEventListener('click', () => {
-          activeVisibleIndex = 0;
-          activePageIndex = 0;
-          speechPlayAllActive = true;
-          playActiveSpeechLine({ autoAdvance: true });
-        });
-        controls.appendChild(playAllButton);
-      } else {
-        const prevButton = document.createElement('button');
-        prevButton.type = 'button';
-        prevButton.textContent = translate('player.speechBubble.previous');
-        prevButton.disabled = activeVisibleIndex <= 0;
-        prevButton.addEventListener('click', () => setActiveSpeechLine(activeVisibleIndex - 1, { autoplay: false }));
-
-        const playButton = document.createElement('button');
-        playButton.type = 'button';
-        playButton.textContent = activeEntry.line.audio?.objectUrl
-          ? (speechAudioActive ? translate('player.speechBubble.stop') : translate('player.speechBubble.play'))
-          : translate('player.speechBubble.noAudio');
-        playButton.disabled = !activeEntry.line.audio?.objectUrl;
-        playButton.setAttribute('aria-pressed', speechAudioActive ? 'true' : 'false');
-        playButton.addEventListener('click', () => {
-          if (speechAudioActive) {
-            stopSpeechPlayback({ keepActive: true });
-          } else {
-            playActiveSpeechLine();
-          }
-        });
-
-        const nextButton = document.createElement('button');
-        nextButton.type = 'button';
-        nextButton.textContent = translate('player.speechBubble.next');
-        nextButton.disabled = activeVisibleIndex >= visibleEntries.length - 1;
-        nextButton.addEventListener('click', () => setActiveSpeechLine(activeVisibleIndex + 1, { autoplay: true }));
-
-        const playAllButton = document.createElement('button');
-        playAllButton.type = 'button';
-        playAllButton.textContent = speechPlayAllActive
-          ? translate('player.speechBubble.stopAll')
-          : translate('player.speechBubble.playAll');
-        playAllButton.setAttribute('aria-pressed', speechPlayAllActive ? 'true' : 'false');
-        playAllButton.addEventListener('click', () => {
-          if (speechPlayAllActive) {
-            stopSpeechPlayback({ keepActive: true });
-            return;
-          }
-          speechPlayAllActive = true;
-          playActiveSpeechLine({ autoAdvance: true });
-        });
-
-        controls.append(prevButton, playButton, nextButton, playAllButton);
-
-        if (pages.length > 1) {
-          const pageControls = document.createElement('div');
-          pageControls.className = 'speech-play-page-controls';
-          const pagePrev = document.createElement('button');
-          pagePrev.type = 'button';
-          pagePrev.textContent = translate('player.speechBubble.previousPage');
-          pagePrev.disabled = activePageIndex <= 0;
-          pagePrev.addEventListener('click', () => changeSpeechPage(-1));
-          const pageNext = document.createElement('button');
-          pageNext.type = 'button';
-          pageNext.textContent = translate('player.speechBubble.nextPage');
-          pageNext.disabled = activePageIndex >= pages.length - 1;
-          pageNext.addEventListener('click', () => changeSpeechPage(1));
-          const pageStatus = document.createElement('span');
-          pageStatus.textContent = translate('player.speechBubble.pageStatus', {
-            current: activePageIndex + 1,
-            total: pages.length,
-          });
-          pageControls.append(pagePrev, pageStatus, pageNext);
-          controls.appendChild(pageControls);
-        }
-      }
-
-      speechPanel.appendChild(controls);
-      renderNavigationControls(speechPanel);
-    }
-
-    renderSpeechState();
-
-    return () => {
-      clearSpeechTimers();
-      nextSpeechRunToken();
-      cleanupCueCardListeners();
-      closeCueCard();
-      stopDialoguePlayback();
-    };
+    speechBubbleOverlay = document.createElement('div');
+    speechBubbleOverlay.className = 'speech-play-overlay';
+    stageFrame.appendChild(speechBubbleOverlay);
   }
+  stageFrame.appendChild(theaterOverlay);
+  stageEl.appendChild(stageFrame);
+  stageEl.appendChild(theaterUtilityRail);
+  stageEl.appendChild(theaterControlRail);
 
-  const dialogueBox = document.createElement('div');
-  dialogueBox.className = 'player-dialogue';
+  const appendUtilitiesPanel = () => {
+    const hasMusic = Boolean(backgroundAudioControls);
+    const hasHistory = Boolean(historyControls?.entries?.length);
+    if (!hasMusic && !hasHistory) return;
 
-  const audioEntries = scene.dialogue
-    .map((line, index) => ({ line, index }))
-    .filter(entry => entry.line.audio?.objectUrl);
+    const utilitiesWrapper = document.createElement('div');
+    utilitiesWrapper.className = 'theater-utilities';
 
-  let playAllActive = false;
+    const toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.className = 'theater-floating-button theater-utilities-toggle';
+    toggleButton.appendChild(createPlayerIcon('list'));
+    const toggleLabel = document.createElement('span');
+    toggleLabel.textContent = translate('player.utilities.title');
+    toggleButton.appendChild(toggleLabel);
+    toggleButton.setAttribute('aria-expanded', 'false');
+    toggleButton.setAttribute('aria-label', translate('player.utilities.title'));
 
-  const setPlayAllState = (active) => {
-    playAllActive = active;
-    if (!playAllButton) {
-      return;
+    const panel = document.createElement('div');
+    panel.className = 'theater-utilities-panel';
+    panel.hidden = true;
+    const panelIdSafeSuffix = String(scene?.id || 'scene').replace(/[^a-zA-Z0-9_-]/g, '-');
+    const panelId = `theater-utilities-panel-${panelIdSafeSuffix}`;
+    panel.setAttribute('id', panelId);
+    panel.setAttribute('role', 'region');
+    panel.setAttribute('aria-label', translate('player.utilities.panelLabel'));
+    toggleButton.setAttribute('aria-controls', panelId);
+
+    const panelHeader = document.createElement('div');
+    panelHeader.className = 'theater-utilities-header';
+
+    const utilitiesTitle = document.createElement('h4');
+    utilitiesTitle.textContent = translate('player.utilities.title');
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'theater-icon-button';
+    closeButton.appendChild(createPlayerIcon('close'));
+    closeButton.setAttribute('aria-label', translate('player.utilities.closeLabel'));
+
+    panelHeader.append(utilitiesTitle, closeButton);
+    panel.appendChild(panelHeader);
+
+    const panelContent = document.createElement('div');
+    panelContent.className = 'theater-utilities-content';
+
+    if (hasMusic) {
+      const musicSection = document.createElement('section');
+      musicSection.className = 'theater-utilities-section theater-utilities-section--music';
+
+      const heading = document.createElement('h4');
+      heading.textContent = translate('player.background.title');
+      musicSection.appendChild(heading);
+
+      const volumeWrapper = document.createElement('div');
+      volumeWrapper.className = 'theater-music-volume';
+
+      const volumeLabel = document.createElement('label');
+      volumeLabel.textContent = translate('player.background.volumeLabel');
+
+      const volumeSlider = document.createElement('input');
+      volumeSlider.type = 'range';
+      volumeSlider.min = '0';
+      volumeSlider.max = '1';
+      volumeSlider.step = '0.05';
+      volumeSlider.value = String(backgroundAudioControls.volume ?? 0);
+      volumeSlider.setAttribute('aria-label', translate('player.background.volumeLabel'));
+      volumeSlider.disabled = Boolean(backgroundAudioControls.muted);
+
+      const volumeValue = document.createElement('span');
+      volumeValue.className = 'background-volume-value';
+      const initialVolume = Number(backgroundAudioControls.volume ?? 0);
+      volumeValue.textContent = `${Math.round(initialVolume * 100)}%`;
+
+      volumeSlider.addEventListener('input', event => {
+        const value = Number(event.target.value);
+        backgroundAudioControls.volume = value;
+        volumeValue.textContent = `${Math.round(value * 100)}%`;
+        backgroundAudioControls.onVolumeChange?.(value);
+      });
+
+      volumeLabel.appendChild(volumeSlider);
+      volumeWrapper.append(volumeLabel, volumeValue);
+      musicSection.appendChild(volumeWrapper);
+
+      const muteButton = document.createElement('button');
+      muteButton.type = 'button';
+      muteButton.className = 'theater-panel-action';
+
+      const updateMuteLabel = (muted) => {
+        muteButton.textContent = muted
+          ? translate('player.background.unmute')
+          : translate('player.background.mute');
+        muteButton.setAttribute('aria-pressed', muted ? 'true' : 'false');
+        muteButton.setAttribute('aria-label', muted
+          ? translate('player.background.unmute')
+          : translate('player.background.mute'));
+        volumeSlider.disabled = muted;
+      };
+
+      updateMuteLabel(Boolean(backgroundAudioControls.muted));
+
+      muteButton.addEventListener('click', () => {
+        const nextMuted = backgroundAudioControls.onToggleMute?.();
+        const resolved = typeof nextMuted === 'boolean' ? nextMuted : !backgroundAudioControls.muted;
+        backgroundAudioControls.muted = resolved;
+        updateMuteLabel(resolved);
+      });
+
+      musicSection.appendChild(muteButton);
+      panelContent.appendChild(musicSection);
     }
-    playAllButton.textContent = active
-      ? translate('player.dialogue.stopAll')
-      : translate('player.dialogue.playAll');
-    playAllButton.setAttribute('aria-pressed', active ? 'true' : 'false');
-    playAllButton.disabled = false;
+
+    if (hasHistory) {
+      const historySection = document.createElement('section');
+      historySection.className = 'theater-utilities-section theater-utilities-section--history';
+
+      const historyTitle = document.createElement('h4');
+      historyTitle.textContent = translate('player.history.title');
+      historySection.appendChild(historyTitle);
+
+      const navControls = document.createElement('div');
+      navControls.className = 'theater-history-nav';
+
+      const backButton = document.createElement('button');
+      backButton.type = 'button';
+      backButton.className = 'theater-panel-action';
+      backButton.textContent = translate('player.history.back');
+      backButton.disabled = !historyControls.canGoBack;
+      backButton.setAttribute('aria-label', translate('player.history.backLabel'));
+      if (historyControls.onBack) {
+        backButton.addEventListener('click', () => historyControls.onBack());
+      }
+
+      const forwardButton = document.createElement('button');
+      forwardButton.type = 'button';
+      forwardButton.className = 'theater-panel-action';
+      forwardButton.textContent = translate('player.history.forward');
+      forwardButton.disabled = !historyControls.canGoForward;
+      forwardButton.setAttribute('aria-label', translate('player.history.forwardLabel'));
+      if (historyControls.onForward) {
+        forwardButton.addEventListener('click', () => historyControls.onForward());
+      }
+
+      navControls.append(backButton, forwardButton);
+      historySection.appendChild(navControls);
+
+      const historyList = document.createElement('ol');
+      historyList.className = 'theater-history-list';
+      historyList.setAttribute('aria-label', translate('player.history.listLabel'));
+
+      historyControls.entries.forEach((entry, index) => {
+        const item = document.createElement('li');
+        item.className = 'theater-history-item';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'theater-history-entry';
+        const step = document.createElement('span');
+        step.className = 'theater-history-step';
+        step.textContent = String(index + 1);
+        const label = document.createElement('span');
+        label.className = 'theater-history-label';
+        const displayLabel = entry.label ?? entry.fullLabel ?? entry.sceneId;
+        const accessibleLabel = entry.fullLabel ?? entry.label ?? entry.sceneId;
+        label.textContent = displayLabel || '';
+        button.append(step, label);
+        if (accessibleLabel) {
+          button.setAttribute('title', accessibleLabel);
+          button.setAttribute('aria-label', accessibleLabel);
+        }
+        if (button.dataset) {
+          button.dataset.sceneId = entry.sceneId;
+        }
+
+        if (index === historyControls.index) {
+          button.disabled = true;
+          button.setAttribute('aria-current', 'step');
+        } else if (historyControls.onJump) {
+          button.addEventListener('click', () => historyControls.onJump(index));
+        }
+
+        item.appendChild(button);
+        historyList.appendChild(item);
+      });
+
+      historySection.appendChild(historyList);
+      panelContent.appendChild(historySection);
+    }
+
+    panel.appendChild(panelContent);
+
+    const setOpen = (open) => {
+      panel.hidden = !open;
+      toggleButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+
+    toggleButton.addEventListener('click', () => setOpen(panel.hidden));
+    closeButton.addEventListener('click', () => setOpen(false));
+
+    utilitiesWrapper.append(toggleButton, panel);
+    theaterUtilityRail.appendChild(utilitiesWrapper);
   };
 
-  let playAllButton = null;
+  appendUtilitiesPanel();
 
-  if (audioEntries.length) {
-    playAllButton = document.createElement('button');
-    playAllButton.type = 'button';
-    playAllButton.className = 'audio-play-all';
-    playAllButton.textContent = translate('player.dialogue.playAll');
-    playAllButton.setAttribute('aria-label', translate('player.dialogue.playAllAria'));
-    playAllButton.setAttribute('aria-pressed', 'false');
-
-    const revertPlayAll = () => {
-      setPlayAllState(false);
-      resetAllLines();
-    };
-
-    playAllButton.addEventListener('click', () => {
-      const wasActive = playAllActive;
-      stopDialoguePlayback();
-      if (wasActive) {
-        return;
-      }
-
-      setPlayAllState(true);
-
-      requestDuck();
-
-      dialogueAudio.playSequence(
-        audioEntries.map(entry => ({
-          src: entry.line.audio.objectUrl,
-          index: entry.index,
-        })),
-        {
-          onLineStart: (entry) => {
-            setLineButtonState(entry.index, true);
-          },
-          onLineEnd: (entry) => {
-            setLineButtonState(entry.index, false);
-          },
-          onComplete: () => {
-            revertPlayAll();
-            releaseDuck();
-          },
-          onCancel: () => {
-            revertPlayAll();
-            releaseDuck();
-          },
-          onError: (error) => {
-            console.warn(translate('player.dialogue.playbackError'), error);
-            revertPlayAll();
-            releaseDuck();
-          },
-        },
-      );
-    });
-
-    dialogueBox.appendChild(playAllButton);
-  }
-
-  scene.dialogue.forEach((line, index) => {
-    const lineContainer = document.createElement('div');
-    lineContainer.className = 'player-dialogue-line';
-
-    const bubble = document.createElement('div');
-    bubble.className = 'player-dialogue-bubble';
-    lineContainer.appendChild(bubble);
-
-    const text = document.createElement('p');
-    text.textContent = line.text || translate('player.dialogue.lineFallback', { index: index + 1 });
-    bubble.appendChild(text);
-
-    if (line.audio?.objectUrl) {
-      const playButton = document.createElement('button');
-      playButton.type = 'button';
-      playButton.className = 'dialogue-bubble-play';
-      playButton.textContent = translate('player.dialogue.playLine');
-      playButton.setAttribute('aria-pressed', 'false');
-
-      lineButtons.set(index, { button: playButton, bubble });
-
-      playButton.addEventListener('click', () => {
-        const wasActive = activeLineIndex === index;
-        stopDialoguePlayback();
-        if (wasActive) {
-          return;
-        }
-
-        setLineButtonState(index, true);
-
-        requestDuck();
-
-        dialogueAudio.playClip({
-          src: line.audio.objectUrl,
-          onComplete: () => {
-            setLineButtonState(index, false);
-            releaseDuck();
-          },
-          onCancel: () => {
-            setLineButtonState(index, false);
-            releaseDuck();
-          },
-          onError: (error) => {
-            console.warn(translate('player.dialogue.playbackError'), error);
-            setLineButtonState(index, false);
-            releaseDuck();
-          },
-        });
-      });
-      bubble.appendChild(playButton);
-    }
-
-    dialogueBox.appendChild(lineContainer);
+  const renderNavigationControls = (host, options = {}) => renderPlayerChoices({
+    host,
+    project,
+    scene,
+    onChoice,
+    openCueCard,
+    ...options,
   });
 
-  uiEl.appendChild(dialogueBox);
-
-  const choiceBox = document.createElement('div');
-  choiceBox.className = 'player-choices';
-
-  if (scene.type === SceneType.END) {
-    const endMessage = document.createElement('p');
-    endMessage.className = 'the-end';
-    endMessage.textContent = translate('player.choices.endMessage');
-    choiceBox.appendChild(endMessage);
-  } else {
-    const sceneChoices = scene.choices || [];
-    const autoNextId = scene.autoNextSceneId ?? null;
-    const autoNextValid = Boolean(autoNextId)
-      && project.scenes.some(s => s.id === autoNextId);
-
-    if (!sceneChoices.length) {
-      if (autoNextId) {
-        const continueButton = document.createElement('button');
-        continueButton.type = 'button';
-        continueButton.textContent = translate('player.choices.continue');
-        continueButton.disabled = !autoNextValid;
-        if (!autoNextValid) {
-          continueButton.title = translate('player.choices.autoNextMissing');
-        }
-        continueButton.addEventListener('click', () => {
-          if (autoNextValid && autoNextId) {
-            onChoice?.(autoNextId);
-          }
-        });
-        choiceBox.appendChild(continueButton);
-      } else {
-        const noChoices = document.createElement('p');
-        noChoices.className = 'empty';
-        noChoices.textContent = translate('player.choices.noneAvailable');
-        choiceBox.appendChild(noChoices);
-      }
-    }
-
-    sceneChoices.forEach(choice => {
-      const cueCardText = typeof choice.cueCardText === 'string'
-        ? choice.cueCardText.trim()
-        : '';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'player-choice-button';
-
-      const choiceLabel = choice.label || translate('player.choices.continue');
-      const labelText = document.createElement('span');
-      labelText.className = 'player-choice-label';
-      labelText.textContent = choiceLabel;
-
-      button.appendChild(labelText);
-
-      button.disabled = !choice.nextSceneId || !project.scenes.some(s => s.id === choice.nextSceneId);
-      button.addEventListener('click', () => {
-        if (choice.nextSceneId) {
-          onChoice?.(choice.nextSceneId);
-        }
-      });
-
-      if (!cueCardText) {
-        choiceBox.appendChild(button);
-        return;
-      }
-
-      const row = document.createElement('div');
-      row.className = 'player-choice-row';
-
-      const cueTrigger = document.createElement('button');
-      cueTrigger.type = 'button';
-      cueTrigger.className = 'player-choice-cue-trigger';
-      cueTrigger.setAttribute('aria-expanded', 'false');
-      cueTrigger.setAttribute('aria-label', translate('player.choices.cueCardTriggerLabel', { label: choiceLabel }));
-
-      const cueIcon = document.createElement('span');
-      cueIcon.className = 'player-choice-cue-icon';
-      cueIcon.textContent = '💡';
-      cueIcon.setAttribute('aria-hidden', 'true');
-      cueTrigger.appendChild(cueIcon);
-
-      const showCue = () => openCueCard(cueTrigger, cueCardText);
-
-      cueTrigger.addEventListener('click', showCue);
-
-      row.appendChild(cueTrigger);
-      row.appendChild(button);
-      choiceBox.appendChild(row);
+  if (speechBubbleEnabled) {
+    return renderSpeechBubblePlayerUI({
+      speechBubbleOverlay,
+      theaterOverlay,
+      theaterControlRail,
+      theaterUtilityRail,
+      project,
+      scene,
+      onChoice,
+      openCueCard,
+      dialogueAudio,
+      requestDuck,
+      releaseDuck,
+      stopDialoguePlayback,
+      cleanupCueCardListeners,
+      closeCueCard,
+      renderNavigationControls,
     });
   }
 
-  uiEl.appendChild(choiceBox);
+  const visibleEntries = (scene.dialogue || [])
+    .map((line, index) => ({ line, index }))
+    .filter(entry => hasDialogueLineContent(entry.line));
+
+  const timers = new Set();
+  let activeVisibleIndex = visibleEntries.length ? 0 : -1;
+  let activePageIndex = 0;
+  let currentAudioActive = false;
+  let playAllActive = false;
+  let choicesOpen = false;
+  let endOverlayOpen = !visibleEntries.length;
+  let runToken = 0;
+
+  const nextRunToken = () => {
+    runToken += 1;
+    return runToken;
+  };
+
+  const clearTimers = () => {
+    timers.forEach(timer => {
+      try {
+        globalThis.clearTimeout?.(timer);
+      } catch {
+        // Ignore timer cleanup failures.
+      }
+    });
+    timers.clear();
+  };
+
+  const scheduleTimer = (callback, delayMs) => {
+    if (typeof globalThis.setTimeout !== 'function') return null;
+    const timer = globalThis.setTimeout(() => {
+      timers.delete(timer);
+      callback();
+    }, delayMs);
+    timers.add(timer);
+    return timer;
+  };
+
+  const stopTheaterPlayback = () => {
+    clearTimers();
+    nextRunToken();
+    playAllActive = false;
+    currentAudioActive = false;
+    dialogueAudio.stop();
+    releaseDuck();
+  };
+
+  const getEntryPages = (entry) => {
+    if (!entry) return [];
+    return splitDialogueText(getDialoguePageText(entry.line, entry.index));
+  };
+
+  const getCurrentEntry = () => visibleEntries[activeVisibleIndex] || null;
+
+  const getCurrentPages = () => getEntryPages(getCurrentEntry());
+
+  const clampActivePage = () => {
+    const pages = getCurrentPages();
+    activePageIndex = Math.max(0, Math.min(activePageIndex, Math.max(0, pages.length - 1)));
+  };
+
+  const openEndOverlay = ({ choicesMenu = false } = {}) => {
+    stopTheaterPlayback();
+    choicesOpen = choicesMenu;
+    endOverlayOpen = true;
+    renderTheaterState();
+  };
+
+  const advanceTheater = ({ fromAuto = false } = {}) => {
+    const pages = getCurrentPages();
+    if (!fromAuto) {
+      stopTheaterPlayback();
+    }
+    if (pages.length && activePageIndex < pages.length - 1) {
+      activePageIndex += 1;
+      choicesOpen = false;
+      endOverlayOpen = false;
+      renderTheaterState();
+      return;
+    }
+    if (activeVisibleIndex < visibleEntries.length - 1) {
+      activeVisibleIndex += 1;
+      activePageIndex = 0;
+      choicesOpen = false;
+      endOverlayOpen = false;
+      renderTheaterState();
+      return;
+    }
+    openEndOverlay({ choicesMenu: true });
+  };
+
+  const retreatTheater = () => {
+    stopTheaterPlayback();
+    if (choicesOpen || endOverlayOpen) {
+      choicesOpen = false;
+      endOverlayOpen = false;
+      activeVisibleIndex = Math.max(0, activeVisibleIndex);
+      clampActivePage();
+      renderTheaterState();
+      return;
+    }
+    if (activePageIndex > 0) {
+      activePageIndex -= 1;
+      renderTheaterState();
+      return;
+    }
+    if (activeVisibleIndex > 0) {
+      activeVisibleIndex -= 1;
+      activePageIndex = Math.max(0, getCurrentPages().length - 1);
+      renderTheaterState();
+    }
+  };
+
+  const toggleChoicesMenu = () => {
+    if (choicesOpen) {
+      stopTheaterPlayback();
+      choicesOpen = false;
+      endOverlayOpen = false;
+      renderTheaterState();
+      return;
+    }
+    openEndOverlay({ choicesMenu: true });
+  };
+
+  const theaterChoicesDock = document.createElement('div');
+  theaterChoicesDock.className = 'theater-choices-dock';
+
+  const choicesDockButton = document.createElement('button');
+  choicesDockButton.type = 'button';
+  choicesDockButton.className = 'theater-floating-button theater-floating-button--choices';
+  choicesDockButton.appendChild(createPlayerIcon('list'));
+  const choicesDockLabel = document.createElement('span');
+  choicesDockLabel.textContent = translate('player.toolbar.choices');
+  choicesDockButton.appendChild(choicesDockLabel);
+  choicesDockButton.setAttribute('aria-label', translate('player.toolbar.choices'));
+  choicesDockButton.setAttribute('aria-expanded', 'false');
+  choicesDockButton.addEventListener('click', toggleChoicesMenu);
+
+  theaterChoicesDock.appendChild(choicesDockButton);
+  theaterUtilityRail.appendChild(theaterChoicesDock);
+
+  const schedulePageSteps = ({ pages, totalSeconds, token }) => {
+    if (pages.length <= 1) return;
+    const totalMs = Math.max(0, totalSeconds * 1000);
+    const canFitInAudio = totalSeconds / pages.length >= DIALOGUE_MIN_AUDIO_PAGE_SECONDS;
+    pages.slice(1).forEach((_, pageOffset) => {
+      const pageNumber = pageOffset + 1;
+      const delay = canFitInAudio
+        ? (totalMs / pages.length) * pageNumber
+        : DIALOGUE_MIN_AUDIO_PAGE_SECONDS * 1000 * pageNumber;
+      scheduleTimer(() => {
+        if (token !== runToken) return;
+        activePageIndex = pageNumber;
+        renderTheaterState();
+      }, delay);
+    });
+  };
+
+  const getPresentationSeconds = (pages, audioSeconds = 0) => {
+    if (pages.length <= 1) {
+      return Math.max(audioSeconds, estimateReadingSeconds(pages[0] || ''));
+    }
+    if (audioSeconds > 0 && audioSeconds / pages.length >= DIALOGUE_MIN_AUDIO_PAGE_SECONDS) {
+      return audioSeconds;
+    }
+    const lastPageStartsAt = (pages.length - 1) * DIALOGUE_MIN_AUDIO_PAGE_SECONDS;
+    return Math.max(audioSeconds, lastPageStartsAt + estimateReadingSeconds(pages[pages.length - 1] || ''));
+  };
+
+  const completePlayAllLine = () => {
+    currentAudioActive = false;
+    if (!playAllActive) {
+      renderTheaterState();
+      return;
+    }
+    if (activeVisibleIndex >= visibleEntries.length - 1) {
+      openEndOverlay({ choicesMenu: true });
+      return;
+    }
+    activeVisibleIndex += 1;
+    activePageIndex = 0;
+    playCurrentTheaterLine({ autoAdvance: true });
+  };
+
+  function playCurrentTheaterLine({ autoAdvance = false } = {}) {
+    const entry = getCurrentEntry();
+    if (!entry) return;
+    clearTimers();
+    const token = nextRunToken();
+    activePageIndex = 0;
+    endOverlayOpen = false;
+    choicesOpen = false;
+    playAllActive = playAllActive || autoAdvance;
+    const pages = getEntryPages(entry);
+
+    if (entry.line.audio?.objectUrl) {
+      currentAudioActive = true;
+      let audioDone = false;
+      let presentationDone = !playAllActive;
+      const completeWhenReady = () => {
+        if (token !== runToken || !playAllActive) {
+          renderTheaterState();
+          return;
+        }
+        if (audioDone && presentationDone) {
+          completePlayAllLine();
+        } else {
+          renderTheaterState();
+        }
+      };
+
+      requestDuck();
+      const audioSeconds = getLineAudioDurationSeconds(entry.line, pages);
+      schedulePageSteps({ pages, totalSeconds: audioSeconds, token });
+      if (playAllActive) {
+        scheduleTimer(() => {
+          if (token !== runToken) return;
+          presentationDone = true;
+          completeWhenReady();
+        }, getPresentationSeconds(pages, audioSeconds) * 1000);
+      }
+      dialogueAudio.playClip({
+        src: entry.line.audio.objectUrl,
+        onComplete: () => {
+          releaseDuck();
+          if (token !== runToken) return;
+          if (!playAllActive) {
+            clearTimers();
+          }
+          currentAudioActive = false;
+          audioDone = true;
+          completeWhenReady();
+        },
+        onCancel: () => {
+          releaseDuck();
+          if (token !== runToken) return;
+          if (!playAllActive) {
+            clearTimers();
+          }
+          currentAudioActive = false;
+          renderTheaterState();
+        },
+        onError: (error) => {
+          console.warn(translate('player.dialogue.playbackError'), error);
+          releaseDuck();
+          if (token !== runToken) return;
+          clearTimers();
+          nextRunToken();
+          currentAudioActive = false;
+          playAllActive = false;
+          renderTheaterState();
+        },
+      });
+      renderTheaterState();
+      return;
+    }
+
+    currentAudioActive = false;
+    if (playAllActive) {
+      let cumulativeMs = 0;
+      pages.slice(1).forEach((_, pageOffset) => {
+        cumulativeMs += estimateReadingSeconds(pages[pageOffset]) * 1000;
+        const pageNumber = pageOffset + 1;
+        scheduleTimer(() => {
+          if (token !== runToken) return;
+          activePageIndex = pageNumber;
+          renderTheaterState();
+        }, cumulativeMs);
+      });
+      cumulativeMs += estimateReadingSeconds(pages[pages.length - 1] || '') * 1000;
+      scheduleTimer(() => {
+        if (token !== runToken) return;
+        completePlayAllLine();
+      }, cumulativeMs);
+    }
+    renderTheaterState();
+  }
+
+  function renderTheaterState() {
+    if (!theaterOverlay) return;
+    theaterOverlay.innerHTML = '';
+    theaterOverlay.classList?.remove?.('theater-overlay--dialogue', 'theater-overlay--choices');
+    if (theaterControlRail) {
+      theaterControlRail.innerHTML = '';
+    }
+    clampActivePage();
+    const activeEntry = getCurrentEntry();
+    const pages = getEntryPages(activeEntry);
+    const page = pages[activePageIndex] || '';
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'theater-toolbar';
+
+    choicesDockButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
+
+    const prevButton = document.createElement('button');
+    prevButton.type = 'button';
+    prevButton.className = 'theater-toolbar__button theater-toolbar__button--previous';
+    appendToolbarButtonContent(prevButton, 'previous', translate('player.speechBubble.previous'));
+    prevButton.disabled = !visibleEntries.length || (!choicesOpen && !endOverlayOpen && activeVisibleIndex <= 0 && activePageIndex <= 0);
+    prevButton.addEventListener('click', retreatTheater);
+
+    const nextButton = document.createElement('button');
+    nextButton.type = 'button';
+    nextButton.className = 'theater-toolbar__button theater-toolbar__button--next';
+    appendToolbarButtonContent(nextButton, 'next', translate('player.speechBubble.next'));
+    nextButton.disabled = !visibleEntries.length || endOverlayOpen || choicesOpen;
+    nextButton.addEventListener('click', () => advanceTheater());
+
+    const playButton = document.createElement('button');
+    playButton.type = 'button';
+    playButton.className = 'theater-toolbar__button dialogue-bubble-play';
+    appendToolbarButtonContent(
+      playButton,
+      currentAudioActive ? 'stop' : 'play',
+      currentAudioActive
+        ? translate('player.toolbar.stopAudio')
+        : translate('player.toolbar.playAudio'),
+    );
+    playButton.disabled = !activeEntry?.line?.audio?.objectUrl || choicesOpen || endOverlayOpen;
+    playButton.setAttribute('aria-pressed', currentAudioActive ? 'true' : 'false');
+    playButton.addEventListener('click', () => {
+      if (currentAudioActive) {
+        stopTheaterPlayback();
+        renderTheaterState();
+        return;
+      }
+      playCurrentTheaterLine();
+    });
+
+    const playAllButton = document.createElement('button');
+    playAllButton.type = 'button';
+    playAllButton.className = 'theater-toolbar__button audio-play-all';
+    appendToolbarButtonContent(
+      playAllButton,
+      playAllActive ? 'stop' : 'play',
+      playAllActive
+        ? translate('player.speechBubble.stopAll')
+        : translate('player.speechBubble.playAll'),
+    );
+    playAllButton.disabled = !visibleEntries.length || choicesOpen || endOverlayOpen;
+    playAllButton.setAttribute('aria-pressed', playAllActive ? 'true' : 'false');
+    playAllButton.addEventListener('click', () => {
+      if (playAllActive) {
+        stopTheaterPlayback();
+        renderTheaterState();
+        return;
+      }
+      stopTheaterPlayback();
+      activeVisibleIndex = 0;
+      activePageIndex = 0;
+      playAllActive = true;
+      playCurrentTheaterLine({ autoAdvance: true });
+    });
+
+    const choicesButton = document.createElement('button');
+    choicesButton.type = 'button';
+    choicesButton.className = 'theater-toolbar__button theater-toolbar__button--choices';
+    appendToolbarButtonContent(choicesButton, 'list', translate('player.toolbar.choices'));
+    choicesButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
+    choicesButton.addEventListener('click', toggleChoicesMenu);
+
+    toolbar.appendChild(prevButton);
+    toolbar.appendChild(nextButton);
+    toolbar.appendChild(playButton);
+    toolbar.appendChild(playAllButton);
+    toolbar.appendChild(choicesButton);
+    if (theaterControlRail) {
+      theaterControlRail.appendChild(toolbar);
+    } else {
+      theaterOverlay.appendChild(toolbar);
+    }
+
+    if (!choicesOpen && !endOverlayOpen && activeEntry) {
+      theaterOverlay.classList?.add?.('theater-overlay--dialogue');
+      const dialogueCard = document.createElement('div');
+      dialogueCard.className = 'theater-dialogue-card';
+      const speakerName = getSpeakerName(project, activeEntry.line);
+      if (speakerName) {
+        const speaker = document.createElement('p');
+        speaker.className = 'theater-dialogue-speaker';
+        speaker.textContent = `${speakerName}:`;
+        dialogueCard.appendChild(speaker);
+      }
+      const text = document.createElement('p');
+      text.className = 'theater-dialogue-text';
+      text.textContent = page;
+      dialogueCard.appendChild(text);
+      if (pages.length > 1) {
+        const pageStatus = document.createElement('span');
+        pageStatus.className = 'theater-page-status';
+        pageStatus.textContent = translate('player.speechBubble.pageStatus', {
+          current: activePageIndex + 1,
+          total: pages.length,
+        });
+        dialogueCard.appendChild(pageStatus);
+      }
+      theaterOverlay.appendChild(dialogueCard);
+      return;
+    }
+
+    const choicesPanel = document.createElement('div');
+    theaterOverlay.classList?.add?.('theater-overlay--choices');
+    choicesPanel.className = choicesOpen
+      ? 'theater-choice-panel theater-choice-panel--menu'
+      : 'theater-choice-panel';
+    renderNavigationControls(choicesPanel, {
+      beforeChoice: stopTheaterPlayback,
+    });
+    theaterOverlay.appendChild(choicesPanel);
+  }
+
+  renderTheaterState();
 
   return () => {
+    clearTimers();
+    nextRunToken();
     cleanupCueCardListeners();
     closeCueCard();
     stopDialoguePlayback();

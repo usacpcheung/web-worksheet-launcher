@@ -2,9 +2,14 @@ export default {
   "toolbar": {
     "appName": "RolePlayScene",
     "edit": "編輯",
+    "backToEdit": "返回編輯",
     "play": "播放",
     "import": "匯入",
     "export": "匯出",
+    "more": "更多",
+    "moreMenuLabel": "工具列更多選單",
+    "moreServerGroup": "伺服器",
+    "moreProjectGroup": "專案",
     "importTitle": "匯入專案（.json 或 .zip）",
     "exportTitle": "匯出專案封存檔（.zip）",
     "languageLabel": "語言",
@@ -13,6 +18,19 @@ export default {
       "zh-Hant": "繁體中文"
     },
     "dismissMessage": "關閉訊息"
+  },
+  "editor": {
+    "views": {
+      "storyMap": "故事地圖",
+      "scenePreview": "場景預覽"
+    },
+    "scenePreview": {
+      "title": "場景預覽：{sceneId}",
+      "stageLabel": "{sceneId} 的場景預覽",
+      "anchorHint": "在場景預覽上放置定位點。",
+      "noScene": "請選擇要預覽的場景。",
+      "noImage": "未選擇圖片。"
+    }
   },
   "server": {
     "signIn": "登入",
@@ -182,7 +200,16 @@ export default {
     "projectTitleLabel": "專案標題",
     "projectTitlePlaceholder": "未命名角色互動",
     "emptyState": "尚無場景。請使用「新增場景」開始。",
+    "sections": {
+      "sceneBasics": "場景基本資料",
+      "sceneMedia": "場景媒體"
+    },
+    "mediaActions": {
+      "choose": "選擇檔案",
+      "replace": "替換"
+    },
     "header": {
+      "previewCurrentScene": "預覽目前場景",
       "addScene": "新增場景",
       "deleteScene": "刪除場景"
     },
@@ -196,19 +223,21 @@ export default {
       "label": "舞台圖片",
       "previewAlt": "{sceneId} 預覽",
       "empty": "未選擇圖片。",
-      "remove": "移除圖片"
+      "attached": "已附加：{name}",
+      "fallbackName": "未命名圖片",
+      "remove": "移除"
     },
     "background": {
       "label": "背景音樂",
       "attached": "已附加：{name}",
       "fallbackName": "未命名音軌",
       "empty": "未選擇背景音樂。",
-      "remove": "移除背景音樂"
+      "remove": "移除"
     },
     "speechBubble": {
       "title": "對話泡泡模式",
-      "previewHint": "點擊預覽圖可新增定位點。選取定位點後，再點擊預覽圖可移動它。",
-      "stageLabel": "對話泡泡定位點編輯器",
+      "enableLabel": "啟用",
+      "scenePreviewHint": "請在場景預覽中放置與移動定位點。",
       "anchorLimit": "已達對話泡泡定位點上限（{max}）。",
       "anchorCount": "已使用 {count} / {max} 個定位點。",
       "anchorUsage": "定位點 {label}：被 {count} 句台詞使用",
@@ -229,9 +258,19 @@ export default {
     "dialogue": {
       "title": "對話（最多 3 行）",
       "lineLabel": "第 {index} 行",
+      "speakerLabel": "說話者",
+      "speakerNone": "不指定說話者",
+      "speakerAdd": "新增說話者...",
+      "speakerMissing": "找不到說話者",
+      "speakerNameLabel": "說話者名稱",
+      "speakerNamePlaceholder": "輸入說話者名稱",
+      "speakerAddConfirm": "新增",
+      "speakerAddCancel": "取消",
+      "speakerNameRequired": "請輸入說話者名稱。",
+      "textLabel": "台詞文字",
       "audioLabel": "音訊（可選 mp3）",
       "audioAttached": "已附加：{name}",
-      "removeAudio": "移除音訊",
+      "removeAudio": "移除",
       "playAudioPreview": "播放",
       "stopAudioPreview": "停止",
       "audioPreviewFailed": "無法播放此音訊預覽。",
@@ -256,12 +295,14 @@ export default {
         "cuteGirl": "可愛女聲",
         "gentleLady": "溫柔女聲"
       },
-      "deleteLine": "刪除台詞",
+      "deleteLine": "移除",
       "addLine": "新增台詞"
     },
     "choices": {
       "title": "選項（最多 3 個）",
       "empty": "尚無選項。",
+      "rowLabel": "選項 {index}",
+      "textLabel": "選項文字",
       "labelPlaceholder": "選項文字",
       "cueCardLabel": "提示卡文字",
       "cueCardPlaceholder": "可選的提示卡文字",
@@ -309,6 +350,16 @@ export default {
       "backLabel": "回到上一個場景",
       "forwardLabel": "前往下一個場景",
       "listLabel": "已造訪的場景"
+    },
+    "utilities": {
+      "title": "工具",
+      "panelLabel": "場景播放工具",
+      "closeLabel": "關閉工具"
+    },
+    "toolbar": {
+      "choices": "選項",
+      "playAudio": "播放音訊",
+      "stopAudio": "停止音訊"
     },
     "dialogue": {
       "playAll": "▶️ 全部播放",
