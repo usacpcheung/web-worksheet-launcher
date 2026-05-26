@@ -32,6 +32,9 @@ seedIdSequencesFromProject({
   scenes: [
     {
       id: 'scene-001',
+      speechBubble: {
+        anchors: [{ id: 'anchor-0003' }],
+      },
       choices: [
         { id: 'choice-0002' },
         { id: 'choice-0007' },
@@ -39,6 +42,9 @@ seedIdSequencesFromProject({
     },
     {
       id: 'scene-002',
+      speechBubble: {
+        anchors: [{ id: 'anchor-0005' }],
+      },
       choices: [
         { id: 'choice3' },
       ],
@@ -48,6 +54,7 @@ seedIdSequencesFromProject({
 
 assert.equal(newId('scene'), 'scene-003', 'hydrated scene IDs should reseed scene counter');
 assert.equal(newId('choice'), 'choice-0008', 'hydrated choice IDs should reseed choice counter');
+assert.equal(newId('anchor'), 'anchor-0006', 'hydrated speech bubble anchors should reseed anchor counter');
 
 resetIdSequences();
 seedIdSequencesFromProject({

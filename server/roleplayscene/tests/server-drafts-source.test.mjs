@@ -3,8 +3,11 @@ import { readFile } from 'node:fs/promises';
 
 const mainSource = await readFile(new URL('../scripts/main.js', import.meta.url), 'utf8');
 const indexSource = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+const cssSource = await readFile(new URL('../styles/app.css', import.meta.url), 'utf8');
 const editorSource = await readFile(new URL('../scripts/editor/editor.js', import.meta.url), 'utf8');
 const inspectorSource = await readFile(new URL('../scripts/editor/inspector.js', import.meta.url), 'utf8');
+const scenePreviewSource = await readFile(new URL('../scripts/editor/scene-preview.js', import.meta.url), 'utf8');
+const speechBubbleInspectorSource = await readFile(new URL('../scripts/editor/speech-bubble-inspector.js', import.meta.url), 'utf8');
 const playerSource = await readFile(new URL('../scripts/player/player.js', import.meta.url), 'utf8');
 const publishedOpenFunctionIndex = mainSource.indexOf('async function openPublishedRolePlaySceneById');
 const publishedOpenFunctionEndIndex = mainSource.indexOf('async function downloadPublishedRolePlayScene', publishedOpenFunctionIndex);
@@ -117,8 +120,23 @@ assert.ok(
 assert.ok(
   mainSource.includes('teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {')
     && mainSource.includes('apiClient,')
-    && mainSource.includes('ensureServerSessionReady,'),
+    && mainSource.includes('ensureServerSessionReady,')
+    && mainSource.includes('initialSelectedSceneId: editorSession.selectedSceneId')
+    && mainSource.includes('onPreviewCurrentScene: startEditorScenePreview'),
   'RolePlayScene editor should receive server API/session hooks for protected T2A generation',
+);
+assert.ok(
+  mainSource.includes('let editorSession = {')
+    && mainSource.includes('let editorPreview = null')
+    && mainSource.includes('function startEditorScenePreview')
+    && mainSource.includes('ensureAudioGate(store)')
+    && mainSource.includes("translate('toolbar.backToEdit')")
+    && mainSource.includes('function returnFromEditorScenePreview')
+    && mainSource.includes('editorPreview.returnSceneId')
+    && mainSource.includes('btnPlay.hidden = inEditorPreview ? true : false')
+    && playerSource.includes('options.initialSceneId')
+    && playerSource.includes('beginRunAt(initialScene.id)'),
+  'RolePlayScene should launch editor current-scene previews through the real player and return to saved editor context',
 );
 assert.ok(
   editorSource.includes('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {})')
@@ -176,6 +194,35 @@ assert.ok(
     && inspectorSource.includes("translate('inspector.dialogue.playAudioPreview')")
     && inspectorSource.includes("translate('inspector.dialogue.stopAudioPreview')"),
   'RolePlayScene inspector should render edit-mode audio preview controls and best-effort T2A preset badges',
+);
+
+assert.ok(
+  inspectorSource.includes('renderSpeechBubbleEditorSection(scene, actions)')
+    && inspectorSource.includes('renderDialogueBubbleControls({ scene, line, index, anchors, actions })')
+    && speechBubbleInspectorSource.includes('speech-bubble-editor')
+    && speechBubbleInspectorSource.includes("translate('inspector.speechBubble.title')")
+    && speechBubbleInspectorSource.includes("translate('inspector.speechBubble.scenePreviewHint')")
+    && speechBubbleInspectorSource.includes('onUpdateDialogueBubble'),
+  'RolePlayScene inspector should expose speech bubble authoring controls',
+);
+
+assert.ok(
+  editorSource.includes("leftView = 'scenePreview'")
+    && editorSource.includes("translate('editor.views.storyMap')")
+    && editorSource.includes("translate('editor.views.scenePreview')")
+    && editorSource.includes('renderScenePreview(leftContent, scene')
+    && scenePreviewSource.includes('scene-preview__anchor-marker')
+    && scenePreviewSource.includes('onAddOrMoveSpeechBubbleAnchor')
+    && scenePreviewSource.includes("translate('editor.scenePreview.anchorHint')"),
+  'RolePlayScene editor should place speech bubble anchors from the left Scene Preview view',
+);
+
+assert.ok(
+  editorSource.includes('MAX_SPEECH_BUBBLE_ANCHORS')
+    && editorSource.includes('deleteSpeechBubbleAnchor')
+    && editorSource.includes("globalThis.confirm?.(translate('inspector.speechBubble.confirmDeleteUsedAnchor'")
+    && editorSource.includes('bubble: { mode: BubbleMode.CENTER, anchorId: null }'),
+  'RolePlayScene editor should enforce anchor limits and clear used anchor assignments after confirmation',
 );
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
@@ -239,10 +286,12 @@ assert.ok(
   mainSource.includes('missing_media_count')
     && mainSource.includes('validation_warning_count')
     && mainSource.includes('publish_state')
+    && mainSource.includes('published_scene_id')
+    && mainSource.includes("translate(showPublishedLive ? 'server.publishedLiveBadge' : 'server.publishedDeletedBadge')")
     && mainSource.includes('artifact_size_bytes')
     && mainSource.includes("translate('server.meta.missingMedia')")
     && mainSource.includes("translate('server.meta.validationWarnings')"),
-  'uploaded draft manager should surface server metadata and warnings',
+  'uploaded draft manager should surface server metadata, warnings, and live/deleted published-copy status',
 );
 assert.ok(
   mainSource.includes("publishState !== 'current_version_published'")
@@ -267,6 +316,57 @@ assert.ok(
     && indexSource.includes('id="server-modal-overlay"')
     && indexSource.includes('tabindex="-1"'),
   'server status/actions and manager modal should be present in the static markup',
+);
+
+assert.ok(
+  cssSource.indexOf('@media (max-width: 767px)') < cssSource.indexOf('.toolbar > .toolbar__server > button')
+    && cssSource.includes('.toolbar > .toolbar__server > button {\n      display: none;'),
+  'tablet header layout should keep direct server actions visible and hide them only on true mobile widths',
+);
+
+assert.ok(
+  mainSource.includes("topbar?.classList?.add?.('topbar--server-stacked')")
+    && cssSource.includes('.topbar.topbar--server-stacked > .toolbar {\n    display: contents;')
+    && cssSource.includes('.toolbar.toolbar--server-stacked > .toolbar__server {\n    order: 3;\n    width: 100%;')
+    && cssSource.includes('justify-content: flex-start;'),
+  'mobile stacked header should keep title/mode/more on the first row and align the server badge left on the second row',
+);
+
+assert.ok(
+  playerSource.includes("rightEl.classList?.add?.('pane--stage-only')")
+    && playerSource.includes("introOverlay.className = 'player-intro-overlay'")
+    && playerSource.includes("appendIntroUtilities(introOverlay")
+    && playerSource.includes("startBtn.className = 'player-intro-begin'")
+    && cssSource.includes('.player-intro-frame::after')
+    && cssSource.includes('.player-intro-utilities')
+    && cssSource.includes('.player-intro-cta'),
+  'RolePlayScene intro should render as a theater-style stage overlay with floating utilities and centered Begin Story action',
+);
+
+assert.ok(
+  indexSource.includes('class="app-messages__dismiss"')
+    && indexSource.includes('<svg viewBox="0 0 24 24"')
+    && cssSource.includes('.app-messages[hidden] { display: none; }')
+    && mainSource.includes('function dismissMessage()')
+    && mainSource.includes('lastMessagePayload = null;\n  if (!messageHost')
+    && mainSource.includes("dismissButton.addEventListener('click', () => {\n    dismissMessage();"),
+  'RolePlayScene message bar should use an accessible icon dismiss button that clears remembered message state',
+);
+
+assert.ok(
+  inspectorSource.includes("const sceneHeading = document.createElement('h3')")
+    && inspectorSource.includes('sceneHeading.textContent = scene.id')
+    && inspectorSource.includes("translate('inspector.header.previewCurrentScene')")
+    && inspectorSource.includes('actions.onPreviewCurrentScene?.(scene.id)')
+    && !inspectorSource.includes('header.innerHTML = `<h3>${scene.id}</h3>`'),
+  'RolePlayScene inspector should render imported scene IDs as text, not HTML, and expose current-scene preview',
+);
+
+assert.ok(
+  editorSource.includes("inspectorHost.querySelectorAll('[data-focus-key]')")
+    && editorSource.includes('element.dataset?.focusKey === focusKey')
+    && !editorSource.includes('inspectorHost.querySelector(`[data-focus-key="${focusKey}"]`)'),
+  'RolePlayScene editor should restore focus without interpolating imported IDs into CSS selectors',
 );
 
 console.log('server draft source tests passed');

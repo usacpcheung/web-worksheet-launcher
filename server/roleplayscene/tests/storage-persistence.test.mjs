@@ -48,6 +48,7 @@ const audioBlob = new Blob(['audio-data'], { type: 'audio/mpeg' });
 
 const sourceProject = createProject({
   meta: { title: 'Persistent Adventure', version: 3 },
+  speakers: [{ id: 'speaker-0002', name: 'Kelvin' }],
   scenes: [
     createScene({
       id: 'scene-1',
@@ -55,7 +56,7 @@ const sourceProject = createProject({
       image: { name: 'cover.png', objectUrl: 'blob:legacy-img', blob: imageBlob },
       backgroundAudio: { name: 'bg.mp3', objectUrl: 'blob:legacy-bg', blob: audioBlob },
       dialogue: [
-        { text: 'Welcome!', audio: { name: 'line.mp3', objectUrl: 'blob:legacy-line', blob: audioBlob } },
+        { text: 'Welcome!', speakerId: 'speaker-0002', audio: { name: 'line.mp3', objectUrl: 'blob:legacy-line', blob: audioBlob } },
       ],
       choices: [{ id: 'choice-1', label: 'Continue', nextSceneId: 'scene-end', cueCardText: 'Keep eye contact.' }],
     }),
@@ -71,12 +72,16 @@ const sourceProject = createProject({
 const serialised = serializeProject(sourceProject);
 assert.ok(serialised);
 assert.strictEqual(serialised.meta.title, 'Persistent Adventure');
+assert.strictEqual(serialised.speakers[0].name, 'Kelvin', 'speakers should be serialised');
+assert.strictEqual(serialised.scenes[0].dialogue[0].speakerId, 'speaker-0002', 'dialogue speakerId should be serialised');
 assert.strictEqual(serialised.scenes[0].image.blob, imageBlob, 'image blob should survive serialisation');
 assert.strictEqual(serialised.scenes[0].image.objectUrl, undefined, 'objectUrl should be stripped from serialised data');
 assert.strictEqual(serialised.scenes[0].choices[0].cueCardText, 'Keep eye contact.', 'cue card text should be serialised');
 
 const hydrated = hydrateProject(serialised, { previousProject: sourceProject });
 assert.strictEqual(hydrated.meta.title, 'Persistent Adventure');
+assert.strictEqual(hydrated.speakers[0].name, 'Kelvin', 'speakers should survive hydration');
+assert.strictEqual(hydrated.scenes[0].dialogue[0].speakerId, 'speaker-0002', 'dialogue speakerId should survive hydration');
 assert.strictEqual(hydrated.scenes[0].image.blob, imageBlob, 'image blob should survive hydration');
 assert.ok(typeof hydrated.scenes[0].image.objectUrl === 'string', 'hydrated image should receive a fresh objectUrl');
 assert.notStrictEqual(hydrated.scenes[0].image.objectUrl, 'blob:legacy-img', 'hydrated objectUrl should differ from legacy value');
@@ -128,6 +133,8 @@ assert.ok(
   'manifest should include image asset metadata',
 );
 const projectJson = JSON.parse(new TextDecoder().decode(archiveEntries['content/project.json']));
+assert.strictEqual(projectJson.speakers[0].name, 'Kelvin', 'project content must include speakers');
+assert.strictEqual(projectJson.scenes[0].dialogue[0].speakerId, 'speaker-0002', 'project content must include dialogue speakerId');
 assert.strictEqual(projectJson.scenes[0].image.path, mediaPaths.find(path => path.includes('image')), 'project content must reference image path');
 
 const archiveBlob = new Blob([archiveData], { type: 'application/zip' });
@@ -136,6 +143,8 @@ const importStore = new Store();
 await importProject(importStore, archiveFile);
 const importedProject = importStore.get().project;
 assert.strictEqual(importedProject.meta.title, 'Persistent Adventure', 'imported project should hydrate meta data');
+assert.strictEqual(importedProject.speakers[0].name, 'Kelvin', 'imported project should hydrate speakers');
+assert.strictEqual(importedProject.scenes[0].dialogue[0].speakerId, 'speaker-0002', 'imported project should hydrate dialogue speakerId');
 assert.ok(importedProject.scenes[0].image.blob instanceof Blob, 'image blob should be recreated');
 assert.ok(importedProject.scenes[0].backgroundAudio.blob instanceof Blob, 'background audio blob should be recreated');
 assert.ok(importedProject.scenes[0].dialogue[0].audio.blob instanceof Blob, 'dialogue audio blob should be recreated');
@@ -175,6 +184,8 @@ const legacyStore = new Store();
 await importProject(legacyStore, legacyFile);
 const legacyProject = legacyStore.get().project;
 assert.strictEqual(legacyProject.meta.title, 'Legacy Project', 'legacy import should hydrate meta');
+assert.deepStrictEqual(legacyProject.speakers, [], 'legacy import should default speakers to empty array');
+assert.strictEqual(legacyProject.scenes[0].dialogue[0].speakerId, null, 'legacy import should default dialogue speakerId to null');
 assert.ok(!legacyProject.scenes[0].image.blob, 'legacy import should leave missing media blobs null');
 assert.ok(!legacyProject.scenes[0].dialogue[0].audio.blob, 'legacy dialogue audio should be null without binary');
 assert.strictEqual(legacyProject.scenes[0].choices[0].cueCardText, '', 'legacy choices without cueCardText should default to empty string');
@@ -266,6 +277,7 @@ assert.strictEqual(plainHydrated.scenes[0].choices[0].cueCardText, '', 'plain JS
 
 const seededSnapshot = {
   meta: { title: 'Seeded Import', version: 1 },
+  speakers: [{ id: 'speaker-0005', name: 'Seed Speaker' }],
   scenes: [
     {
       id: 'scene-001',
@@ -296,6 +308,7 @@ resetIdSequences();
 await importProject(seededStore, seededFile);
 assert.strictEqual(newId('scene'), 'scene-003', 'imported scene IDs should reseed scene sequence');
 assert.strictEqual(newId('choice'), 'choice-0008', 'imported choice IDs should reseed choice sequence');
+assert.strictEqual(newId('speaker'), 'speaker-0006', 'imported speaker IDs should reseed speaker sequence');
 
 
 const zipHydrateProject = hydrateProject(await extractProjectFromArchive(archiveFile));

@@ -149,7 +149,7 @@ export default {
       "loadOlder": "Load older activity"
     },
     "block": {
-      "attachedBadge": "Attached Badge",
+      "attachedBadge": "Attached",
       "kind": {
         "content": "Content",
         "question": "Question",
@@ -168,9 +168,9 @@ export default {
       "emptyState": "Empty State",
       "entityLabel": "Entity Label {index}",
       "promptAudioAssetId": "Prompt Audio Asset Id",
-      "promptAudioLabel": "Prompt Audio Label",
+      "promptAudioLabel": "Question audio",
       "promptImageAssetId": "Prompt Image Asset Id",
-      "promptImageLabel": "Prompt Image Label",
+      "promptImageLabel": "Question image",
       "promptLabel": "Prompt Label",
       "promptMediaTitle": "Prompt Media Title",
       "promptPlaceholder": "Prompt Placeholder",

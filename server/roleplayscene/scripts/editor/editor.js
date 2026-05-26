@@ -1,7 +1,8 @@
 import { renderGraph } from './graph.js';
 import { renderInspector } from './inspector.js';
+import { renderScenePreview } from './scene-preview.js';
 import { validateProject } from './validators.js';
-import { canAddDialogueLine, createScene, SceneType } from '../model.js';
+import { BubbleMode, MAX_SPEECH_BUBBLE_ANCHORS, canAddDialogueLine, createScene, SceneType } from '../model.js';
 import { translate } from '../i18n.js';
 import {
   ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH,
@@ -9,24 +10,40 @@ import {
   getRolePlaySceneT2APresetById,
   getRolePlaySceneT2ATextState,
 } from '../t2a-presets.js';
+import { newId } from '../utils/id.js';
 
 export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) {
   leftEl.innerHTML = '';
   rightEl.innerHTML = '';
 
-  const graphHost = document.createElement('div');
-  graphHost.className = 'graph-container';
-  leftEl.appendChild(graphHost);
+  const leftToolbar = document.createElement('div');
+  leftToolbar.className = 'editor-view-switch';
+  leftEl.appendChild(leftToolbar);
+
+  const leftContent = document.createElement('div');
+  leftContent.className = 'editor-left-content';
+  leftEl.appendChild(leftContent);
 
   const inspectorHost = document.createElement('div');
   rightEl.appendChild(inspectorHost);
 
-  let selectedId = store.get().project.scenes[0]?.id ?? null;
+  let selectedId = options.initialSelectedSceneId ?? store.get().project.scenes[0]?.id ?? null;
+  let leftView = ['storyMap', 'scenePreview'].includes(options.initialLeftView)
+    ? options.initialLeftView
+    : 'storyMap';
   const apiClient = options.apiClient || null;
   const ensureServerSessionReady = options.ensureServerSessionReady || null;
+  const onEditorContextChange = typeof options.onEditorContextChange === 'function'
+    ? options.onEditorContextChange
+    : null;
+  const onPreviewCurrentScene = typeof options.onPreviewCurrentScene === 'function'
+    ? options.onPreviewCurrentScene
+    : null;
   const dialogueT2AInFlightKeys = new Set();
   let activeDialoguePreview = null;
   let disposed = false;
+  let selectedSpeechBubbleAnchorId = options.initialSelectedSpeechBubbleAnchorId ?? null;
+  let speakerDraftContext = null;
 
   const unsubscribe = store.subscribe(() => {
     syncSelection();
@@ -45,6 +62,20 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       stopDialoguePreview({ refresh: false });
       selectedId = project.scenes[0]?.id ?? null;
     }
+    const scene = project.scenes.find(item => item.id === selectedId);
+    const selectedAnchorExists = Boolean(selectedSpeechBubbleAnchorId)
+      && scene?.speechBubble?.anchors?.some(anchor => anchor.id === selectedSpeechBubbleAnchorId);
+    if (!selectedAnchorExists) {
+      selectedSpeechBubbleAnchorId = null;
+    }
+  }
+
+  function notifyEditorContextChange() {
+    onEditorContextChange?.({
+      selectedSceneId: selectedId,
+      leftView,
+      selectedSpeechBubbleAnchorId,
+    });
   }
 
   function mutateProject(mutator) {
@@ -59,10 +90,20 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       backgroundAudio: scene.backgroundAudio ? { ...scene.backgroundAudio } : null,
       dialogue: scene.dialogue.map(line => ({
         text: line.text,
+        speakerId: line.speakerId ?? null,
         audio: line.audio ? { ...line.audio } : null,
+        bubble: line.bubble ? { ...line.bubble } : undefined,
       })),
       choices: scene.choices.map(choice => ({ ...choice })),
       autoNextSceneId: scene.autoNextSceneId ?? null,
+      speechBubble: scene.speechBubble
+        ? {
+          enabled: scene.speechBubble.enabled === true,
+          anchors: Array.isArray(scene.speechBubble.anchors)
+            ? scene.speechBubble.anchors.map(anchor => ({ ...anchor }))
+            : [],
+        }
+        : undefined,
     };
   }
 
@@ -90,13 +131,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       ? activeElement.selectionEnd
       : null;
 
-    renderGraph(graphHost, project, selectedId, (id) => {
-      if (id !== selectedId) {
-        stopDialoguePreview({ refresh: false });
-      }
-      selectedId = id;
-      update();
-    });
+    renderLeftPane(project, scene);
 
     const validationResults = validateProject(project);
 
@@ -110,21 +145,36 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       onAddDialogue: addDialogue,
       onRemoveDialogue: removeDialogue,
       onUpdateDialogueText: updateDialogueText,
+      onUpdateDialogueSpeaker: updateDialogueSpeaker,
+      onStartCreateSpeakerForDialogue: startCreateSpeakerForDialogue,
+      onUpdateSpeakerDraftForDialogue: updateSpeakerDraftForDialogue,
+      onCommitSpeakerForDialogue: commitSpeakerForDialogue,
+      onCancelCreateSpeakerForDialogue: cancelCreateSpeakerForDialogue,
+      getSpeakerDraftForDialogue: getSpeakerDraftForDialogue,
       onSetDialogueAudio: setDialogueAudio,
       onGenerateDialogueAudio: generateDialogueAudio,
       isDialogueAudioGenerating: (sceneId, index) => dialogueT2AInFlightKeys.has(getDialogueT2AKey(sceneId, index)),
       onPreviewDialogueAudio: previewDialogueAudio,
       isDialogueAudioPreviewing: (sceneId, index) => activeDialoguePreview?.key === getDialogueT2AKey(sceneId, index),
+      onToggleSpeechBubble: toggleSpeechBubble,
+      onAddOrMoveSpeechBubbleAnchor: addOrMoveSpeechBubbleAnchor,
+      onSelectSpeechBubbleAnchor: selectSpeechBubbleAnchor,
+      onDeleteSpeechBubbleAnchor: deleteSpeechBubbleAnchor,
+      isSpeechBubbleAnchorSelected: (anchorId) => selectedSpeechBubbleAnchorId === anchorId,
+      onUpdateDialogueBubble: updateDialogueBubble,
       onAddChoice: addChoice,
       onRemoveChoice: removeChoice,
       onUpdateChoice: updateChoice,
       onSetAutoNext: setAutoNext,
+      onPreviewCurrentScene: previewCurrentScene,
       canDeleteScene,
       validationResults,
     });
+    notifyEditorContextChange();
 
     if (focusKey) {
-      const nextFocus = inspectorHost.querySelector(`[data-focus-key="${focusKey}"]`);
+      const nextFocus = Array.from(inspectorHost.querySelectorAll('[data-focus-key]'))
+        .find(element => element.dataset?.focusKey === focusKey);
       if (nextFocus && typeof nextFocus.focus === 'function') {
         nextFocus.focus();
         if (
@@ -165,10 +215,12 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       scenes: [...prev.scenes, newScene],
     }));
     selectedId = newScene.id;
+    selectedSpeechBubbleAnchorId = null;
     showMessage({
       textId: 'inspector.notifications.sceneAdded',
       textArgs: { id: newScene.id },
     });
+    update();
   }
 
   function deleteScene(sceneId) {
@@ -207,10 +259,12 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     });
     const nextProject = store.get().project;
     selectedId = nextProject.scenes[0]?.id ?? null;
+    selectedSpeechBubbleAnchorId = null;
     showMessage({
       textId: 'inspector.notifications.sceneDeleted',
       textArgs: { id: sceneId },
     });
+    update();
   }
 
   function setSceneType(sceneId, type) {
@@ -307,13 +361,206 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     }
   }
 
+  function renderLeftPane(project, scene) {
+    leftToolbar.innerHTML = '';
+    const views = [
+      { id: 'storyMap', label: translate('editor.views.storyMap') },
+      { id: 'scenePreview', label: translate('editor.views.scenePreview') },
+    ];
+    views.forEach((view) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = view.label;
+      button.className = 'editor-view-switch__button';
+      if (leftView === view.id) {
+        button.classList.add('is-active');
+      }
+      button.setAttribute('aria-pressed', leftView === view.id ? 'true' : 'false');
+      button.addEventListener('click', () => {
+        if (leftView === view.id) return;
+        leftView = view.id;
+        update();
+      });
+      leftToolbar.appendChild(button);
+    });
+
+    leftContent.innerHTML = '';
+    leftContent.className = leftView === 'scenePreview'
+      ? 'editor-left-content editor-left-content--scene-preview'
+      : 'editor-left-content editor-left-content--story-map';
+    if (leftView === 'scenePreview') {
+      renderScenePreview(leftContent, scene, {
+        onAddOrMoveSpeechBubbleAnchor: addOrMoveSpeechBubbleAnchor,
+        onSelectSpeechBubbleAnchor: selectSpeechBubbleAnchor,
+        isSpeechBubbleAnchorSelected: (anchorId) => selectedSpeechBubbleAnchorId === anchorId,
+      });
+      return;
+    }
+
+    const graphHost = document.createElement('div');
+    graphHost.className = 'graph-container';
+    leftContent.appendChild(graphHost);
+    renderGraph(graphHost, project, selectedId, (id) => {
+      if (id !== selectedId) {
+        stopDialoguePreview({ refresh: false });
+      }
+      selectedId = id;
+      selectedSpeechBubbleAnchorId = null;
+      update();
+    });
+  }
+
+  function previewCurrentScene(sceneId) {
+    const scene = store.get().project.scenes.find(item => item.id === sceneId);
+    if (!scene) return;
+    notifyEditorContextChange();
+    onPreviewCurrentScene?.({
+      sceneId: scene.id,
+      leftView,
+      selectedSpeechBubbleAnchorId,
+    });
+  }
+
+  function getNextAnchorLabel(anchors = []) {
+    const used = new Set(anchors.map(anchor => anchor.label));
+    for (const label of ['A', 'B', 'C', 'D']) {
+      if (!used.has(label)) return label;
+    }
+    return String(anchors.length + 1);
+  }
+
+  function getAnchorUsage(scene, anchorId) {
+    return (scene?.dialogue || []).filter(line => (
+      line.bubble?.mode === BubbleMode.ANCHOR && line.bubble.anchorId === anchorId
+    )).length;
+  }
+
+  function toggleSpeechBubble(sceneId, enabled) {
+    if (enabled === true) {
+      leftView = 'scenePreview';
+    }
+    mutateProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        draft.speechBubble = {
+          enabled: enabled === true,
+          anchors: Array.isArray(draft.speechBubble?.anchors)
+            ? draft.speechBubble.anchors.map(anchor => ({ ...anchor }))
+            : [],
+        };
+        return draft;
+      }),
+    }));
+  }
+
+  function selectSpeechBubbleAnchor(sceneId, anchorId) {
+    const scene = store.get().project.scenes.find(item => item.id === sceneId);
+    const exists = scene?.speechBubble?.anchors?.some(anchor => anchor.id === anchorId);
+    selectedSpeechBubbleAnchorId = exists && selectedSpeechBubbleAnchorId !== anchorId ? anchorId : null;
+    if (exists) {
+      leftView = 'scenePreview';
+    }
+    update();
+  }
+
+  function addOrMoveSpeechBubbleAnchor(sceneId, point) {
+    const x = Math.max(0, Math.min(1, Number(point?.x)));
+    const y = Math.max(0, Math.min(1, Number(point?.y)));
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+    mutateProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        const anchors = Array.isArray(draft.speechBubble?.anchors)
+          ? draft.speechBubble.anchors.map(anchor => ({ ...anchor }))
+          : [];
+        const selectedIndex = selectedSpeechBubbleAnchorId
+          ? anchors.findIndex(anchor => anchor.id === selectedSpeechBubbleAnchorId)
+          : -1;
+        if (selectedIndex >= 0) {
+          anchors[selectedIndex] = { ...anchors[selectedIndex], x, y };
+          draft.dialogue = draft.dialogue.map(line => {
+            if (line.bubble?.mode !== BubbleMode.ANCHOR || line.bubble.anchorId !== selectedSpeechBubbleAnchorId) {
+              return line;
+            }
+            return {
+              ...line,
+              bubble: {
+                ...line.bubble,
+                x,
+                y,
+              },
+            };
+          });
+        } else if (anchors.length < MAX_SPEECH_BUBBLE_ANCHORS) {
+          const anchorId = newId('anchor');
+          anchors.push({
+            id: anchorId,
+            label: getNextAnchorLabel(anchors),
+            x,
+            y,
+          });
+          selectedSpeechBubbleAnchorId = anchorId;
+        } else {
+          showMessage({ textId: 'inspector.speechBubble.anchorLimit', textArgs: { max: MAX_SPEECH_BUBBLE_ANCHORS } });
+        }
+        draft.speechBubble = {
+          enabled: draft.speechBubble?.enabled === true,
+          anchors,
+        };
+        return draft;
+      }),
+    }));
+  }
+
+  function deleteSpeechBubbleAnchor(sceneId, anchorId) {
+    const scene = store.get().project.scenes.find(item => item.id === sceneId);
+    if (!scene) return;
+    const anchor = scene.speechBubble?.anchors?.find(item => item.id === anchorId);
+    if (!anchor) return;
+    const usage = getAnchorUsage(scene, anchorId);
+    if (usage > 0) {
+      const confirmed = globalThis.confirm?.(translate('inspector.speechBubble.confirmDeleteUsedAnchor', {
+        label: anchor.label || anchorId,
+        count: usage,
+      })) ?? false;
+      if (!confirmed) return;
+    }
+    mutateProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(item => {
+        if (item.id !== sceneId) return item;
+        const draft = cloneScene(item);
+        draft.speechBubble = {
+          enabled: draft.speechBubble?.enabled === true,
+          anchors: (draft.speechBubble?.anchors || []).filter(candidate => candidate.id !== anchorId),
+        };
+        draft.dialogue = draft.dialogue.map(line => {
+          if (line.bubble?.mode !== BubbleMode.ANCHOR || line.bubble.anchorId !== anchorId) return line;
+          return {
+            ...line,
+            bubble: { mode: BubbleMode.CENTER, anchorId: null },
+          };
+        });
+        return draft;
+      }),
+    }));
+    if (selectedSpeechBubbleAnchorId === anchorId) {
+      selectedSpeechBubbleAnchorId = null;
+    }
+  }
+
   function addDialogue(sceneId) {
     mutateProject(prev => {
       const scenes = prev.scenes.map(scene => {
         if (scene.id !== sceneId) return scene;
         if (!canAddDialogueLine(scene.dialogue)) return scene;
         const draft = cloneScene(scene);
-        draft.dialogue = [...draft.dialogue, { text: '', audio: null }];
+        draft.dialogue = [...draft.dialogue, { text: '', speakerId: null, audio: null, bubble: { mode: BubbleMode.CENTER, anchorId: null } }];
         return draft;
       });
       return { ...prev, scenes };
@@ -350,6 +597,112 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       });
       return { ...prev, scenes };
     });
+  }
+
+  function getSpeakerDraftKey(sceneId, index) {
+    return `${sceneId}:${index}`;
+  }
+
+  function getSpeakerDraftForDialogue(sceneId, index) {
+    return speakerDraftContext?.key === getSpeakerDraftKey(sceneId, index)
+      ? speakerDraftContext.value
+      : null;
+  }
+
+  function startCreateSpeakerForDialogue(sceneId, index) {
+    speakerDraftContext = { key: getSpeakerDraftKey(sceneId, index), sceneId, index, value: '' };
+    update();
+  }
+
+  function updateSpeakerDraftForDialogue(sceneId, index, value) {
+    if (speakerDraftContext?.key !== getSpeakerDraftKey(sceneId, index)) return;
+    speakerDraftContext = { ...speakerDraftContext, value };
+    update();
+  }
+
+  function cancelCreateSpeakerForDialogue(sceneId, index) {
+    if (speakerDraftContext?.key === getSpeakerDraftKey(sceneId, index)) {
+      speakerDraftContext = null;
+      update();
+    }
+  }
+
+  function commitSpeakerForDialogue(sceneId, index) {
+    if (speakerDraftContext?.key !== getSpeakerDraftKey(sceneId, index)) return;
+    const name = String(speakerDraftContext.value || '').trim();
+    if (!name) {
+      showMessage({ textId: 'inspector.dialogue.speakerNameRequired' });
+      return;
+    }
+    let assignedSpeakerId = null;
+    mutateProject(prev => {
+      const existingSpeaker = (prev.speakers || []).find(speaker => (
+        String(speaker.name || '').trim().toLocaleLowerCase() === name.toLocaleLowerCase()
+      ));
+      assignedSpeakerId = existingSpeaker?.id || newId('speaker');
+      const speakers = existingSpeaker
+        ? (prev.speakers || []).map(speaker => ({ ...speaker }))
+        : [...(prev.speakers || []).map(speaker => ({ ...speaker })), { id: assignedSpeakerId, name }];
+      const scenes = prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        if (!draft.dialogue[index]) return draft;
+        draft.dialogue[index].speakerId = assignedSpeakerId;
+        return draft;
+      });
+      return { ...prev, speakers, scenes };
+    });
+    speakerDraftContext = null;
+    update();
+  }
+
+  function updateDialogueSpeaker(sceneId, index, speakerId) {
+    speakerDraftContext = null;
+    const speakerIds = new Set((store.get().project.speakers || []).map(speaker => speaker.id));
+    const nextSpeakerId = speakerId && speakerIds.has(speakerId) ? speakerId : null;
+    mutateProject(prev => {
+      const scenes = prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        if (!draft.dialogue[index]) return draft;
+        draft.dialogue[index].speakerId = nextSpeakerId;
+        return draft;
+      });
+      return { ...prev, scenes };
+    });
+  }
+
+  function updateDialogueBubble(sceneId, index, updates = {}) {
+    mutateProject(prev => ({
+      ...prev,
+      scenes: prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        if (!draft.dialogue[index]) return draft;
+        const current = draft.dialogue[index].bubble || { mode: BubbleMode.CENTER, anchorId: null };
+        const mode = Object.values(BubbleMode).includes(updates.mode)
+          ? updates.mode
+          : current.mode;
+        const next = {
+          mode,
+          anchorId: mode === BubbleMode.ANCHOR
+            ? (updates.anchorId !== undefined ? updates.anchorId : current.anchorId)
+            : null,
+        };
+        const anchor = next.anchorId
+          ? (draft.speechBubble?.anchors || []).find(item => item.id === next.anchorId)
+          : null;
+        if (anchor) {
+          next.x = anchor.x;
+          next.y = anchor.y;
+        }
+        draft.dialogue[index] = {
+          ...draft.dialogue[index],
+          bubble: next,
+        };
+        return draft;
+      }),
+    }));
   }
 
   function setDialogueAudio(sceneId, index, file) {

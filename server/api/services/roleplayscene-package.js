@@ -82,6 +82,86 @@ function fail(code, message, details = {}) {
   };
 }
 
+const BUBBLE_MODES = new Set(['anchor', 'center', 'hidden']);
+const MAX_SPEECH_BUBBLE_ANCHORS = 4;
+
+function hasDialogueContent(line) {
+  return Boolean(String(line?.text || '').trim() || line?.audio);
+}
+
+function isValidCoordinate(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function validateRolePlaySceneBubbleConfig(project) {
+  const errors = [];
+  const warnings = [];
+  const scenes = Array.isArray(project?.scenes) ? project.scenes : [];
+  for (const scene of scenes) {
+    const sceneId = scene?.id || 'unknown';
+    const speechBubble = scene?.speechBubble || {};
+    if (speechBubble.enabled !== true) continue;
+    const anchors = Array.isArray(speechBubble.anchors) ? speechBubble.anchors : [];
+    if (anchors.length > MAX_SPEECH_BUBBLE_ANCHORS) {
+      errors.push(`Scene "${sceneId}" has ${anchors.length} speech bubble anchors; maximum is ${MAX_SPEECH_BUBBLE_ANCHORS}.`);
+    }
+    const anchorIds = new Set();
+    const duplicateAnchorIds = new Set();
+    for (const [index, anchor] of anchors.entries()) {
+      const anchorId = typeof anchor?.id === 'string' ? anchor.id.trim() : '';
+      if (!anchorId) {
+        errors.push(`Speech bubble anchor ${index + 1} in scene "${sceneId}" is missing an ID.`);
+      } else if (anchorIds.has(anchorId)) {
+        duplicateAnchorIds.add(anchorId);
+      } else {
+        anchorIds.add(anchorId);
+      }
+      if (!isValidCoordinate(anchor?.x) || !isValidCoordinate(anchor?.y)) {
+        errors.push(`Speech bubble anchor "${anchor?.label || anchorId || `#${index + 1}`}" in scene "${sceneId}" has invalid coordinates.`);
+      }
+    }
+    duplicateAnchorIds.forEach(anchorId => {
+      errors.push(`Speech bubble anchor ID "${anchorId}" in scene "${sceneId}" is duplicated.`);
+    });
+
+    const dialogue = Array.isArray(scene?.dialogue) ? scene.dialogue : [];
+    const visibleLines = dialogue.filter(line => (
+      hasDialogueContent(line) && line?.bubble?.mode !== 'hidden'
+    ));
+    if (visibleLines.length === 0) {
+      warnings.push(`Scene "${sceneId}" has speech bubble mode enabled but no visible dialogue lines.`);
+    }
+
+    for (const anchor of anchors) {
+      const used = dialogue.some(line => (
+        line?.bubble?.mode === 'anchor' && line?.bubble?.anchorId === anchor?.id
+      ));
+      if (!used) {
+        warnings.push(`Speech bubble anchor "${anchor?.label || anchor?.id || 'unknown'}" in scene "${sceneId}" is not used by any dialogue line.`);
+      }
+    }
+
+    dialogue.forEach((line, index) => {
+      if (!hasDialogueContent(line)) return;
+      const mode = line?.bubble?.mode ?? 'center';
+      if (!BUBBLE_MODES.has(mode)) {
+        errors.push(`Dialogue line ${index + 1} in scene "${sceneId}" has an invalid speech bubble mode.`);
+        return;
+      }
+      if (mode === 'hidden') {
+        warnings.push(`Dialogue line ${index + 1} in scene "${sceneId}" is hidden from speech bubble mode.`);
+      }
+      if (mode === 'anchor') {
+        const anchorId = typeof line?.bubble?.anchorId === 'string' ? line.bubble.anchorId.trim() : '';
+        if (!anchorId || !anchorIds.has(anchorId)) {
+          errors.push(`Dialogue line ${index + 1} in scene "${sceneId}" is assigned to a missing speech bubble anchor.`);
+        }
+      }
+    });
+  }
+  return { errors, warnings };
+}
+
 export function getRolePlaySceneDraftArtifactBucket() {
   return ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET;
 }
@@ -155,6 +235,21 @@ function validateRolePlaySceneProjectForPlay(project) {
 
   const scenes = project.scenes;
   const sceneIds = new Set(scenes.map(scene => scene?.id).filter(Boolean));
+  const speakerIds = new Set((Array.isArray(project.speakers) ? project.speakers : [])
+    .map(speaker => speaker?.id)
+    .filter(Boolean));
+  const seenSceneIds = new Set();
+  for (const [index, scene] of scenes.entries()) {
+    const sceneId = typeof scene?.id === 'string' ? scene.id.trim() : '';
+    if (!sceneId) {
+      errors.push(`Scene ${index + 1} is missing an ID.`);
+      continue;
+    }
+    if (seenSceneIds.has(sceneId)) {
+      errors.push(`Scene ID "${sceneId}" is duplicated.`);
+    }
+    seenSceneIds.add(sceneId);
+  }
   const startScenes = scenes.filter(scene => scene?.type === 'start');
   if (startScenes.length !== 1) {
     errors.push(`Project must have exactly 1 start scene (found ${startScenes.length}).`);
@@ -202,6 +297,12 @@ function validateRolePlaySceneProjectForPlay(project) {
     if (scene?.type === 'end' && sceneChoices.length > 0) {
       warnings.push(`End scene "${sceneId}" should not have outgoing choices.`);
     }
+
+    (Array.isArray(scene?.dialogue) ? scene.dialogue : []).forEach((line, idx) => {
+      if (line?.speakerId && !speakerIds.has(line.speakerId)) {
+        warnings.push(`Dialogue line ${idx + 1} in scene "${sceneId}" is assigned to a missing speaker.`);
+      }
+    });
   }
 
   if (startScenes.length === 1) {
@@ -238,22 +339,29 @@ export function validateRolePlayScenePackageForPublish(zipBytes) {
 
   const errors = [];
   if (validation.metadata.missingMediaCount > 0) {
-    errors.push(...validation.warnings.map(warning => warning.message || String(warning)));
+    errors.push(...validation.warnings
+      .filter(warning => warning?.code === 'ROLEPLAYSCENE_MEDIA_MISSING')
+      .map(warning => warning.message || String(warning)));
   }
   const playValidation = validateRolePlaySceneProjectForPlay(validation.project);
+  const bubbleValidation = validateRolePlaySceneBubbleConfig(validation.project);
   errors.push(...playValidation.errors);
+  errors.push(...bubbleValidation.errors);
 
   if (errors.length > 0) {
     return fail('INVALID_ROLEPLAYSCENE_PUBLISH_PACKAGE', 'RolePlayScene package is not valid for publishing.', {
       errors,
-      warnings: playValidation.warnings,
+      warnings: [...playValidation.warnings, ...bubbleValidation.warnings],
       missingMediaCount: validation.metadata.missingMediaCount,
     });
   }
 
   return {
     ...validation,
-    publishValidation: playValidation,
+    publishValidation: {
+      errors: [],
+      warnings: [...playValidation.warnings, ...bubbleValidation.warnings],
+    },
   };
 }
 
@@ -332,6 +440,15 @@ export function validateRolePlayScenePackage(zipBytes) {
     path,
     message: `Referenced media file is missing: ${path}`,
   }));
+  const bubbleValidation = validateRolePlaySceneBubbleConfig(project);
+  warnings.push(...bubbleValidation.errors.map(message => ({
+    code: 'ROLEPLAYSCENE_SPEECH_BUBBLE_INVALID',
+    message,
+  })));
+  warnings.push(...bubbleValidation.warnings.map(message => ({
+    code: 'ROLEPLAYSCENE_SPEECH_BUBBLE_WARNING',
+    message,
+  })));
 
   const description = normalizeText(
     project?.meta?.description ?? manifest?.project?.description,

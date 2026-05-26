@@ -280,6 +280,106 @@ test('validateRolePlayScenePackageForPublish rejects play-level graph errors', (
   assert.equal(result.error.details.errors.some(message => message.includes('missing scene')), true);
 });
 
+test('validateRolePlayScenePackageForPublish warns for missing dialogue speakers', () => {
+  const project = createProject({
+    speakers: [{ id: 'speaker-known', name: 'Known Speaker' }],
+    scenes: [
+      {
+        id: 'scene-start',
+        type: 'start',
+        image: null,
+        backgroundAudio: null,
+        dialogue: [{ text: 'Hello', speakerId: 'speaker-missing', audio: null }],
+        choices: [{ id: 'choice-1', label: 'Finish', nextSceneId: 'scene-end', cueCardText: '' }],
+        autoNextSceneId: null,
+        notes: '',
+      },
+      {
+        id: 'scene-end',
+        type: 'end',
+        image: null,
+        backgroundAudio: null,
+        dialogue: [{ text: 'Done', audio: null }],
+        choices: [],
+        autoNextSceneId: null,
+        notes: '',
+      },
+    ],
+  });
+  const result = validateRolePlayScenePackageForPublish(createPackageZip({
+    project,
+    manifest: createManifest({ assets: [] }),
+    mediaEntries: {},
+  }));
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    result.publishValidation.warnings.some(message => message.includes('missing speaker')),
+    true,
+  );
+});
+
+test('validateRolePlayScenePackageForPublish rejects duplicate and missing scene IDs', () => {
+  const result = validateRolePlayScenePackageForPublish(createPackageZip({
+    project: createProject({
+      scenes: [
+        {
+          id: 'scene-start',
+          type: 'start',
+          image: null,
+          backgroundAudio: null,
+          dialogue: [],
+          choices: [{ id: 'choice-1', label: 'To duplicate', nextSceneId: 'duplicate' }],
+          autoNextSceneId: null,
+        },
+        {
+          id: 'duplicate',
+          type: 'intermediate',
+          image: null,
+          backgroundAudio: null,
+          dialogue: [],
+          choices: [{ id: 'choice-2', label: 'To end', nextSceneId: 'end' }],
+          autoNextSceneId: null,
+        },
+        {
+          id: 'duplicate',
+          type: 'intermediate',
+          image: null,
+          backgroundAudio: null,
+          dialogue: [],
+          choices: [],
+          autoNextSceneId: 'end',
+        },
+        {
+          id: '',
+          type: 'end',
+          image: null,
+          backgroundAudio: null,
+          dialogue: [],
+          choices: [],
+          autoNextSceneId: null,
+        },
+        {
+          id: 'end',
+          type: 'end',
+          image: null,
+          backgroundAudio: null,
+          dialogue: [],
+          choices: [],
+          autoNextSceneId: null,
+        },
+      ],
+    }),
+    manifest: createManifest({ assets: [] }),
+    mediaEntries: {},
+  }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'INVALID_ROLEPLAYSCENE_PUBLISH_PACKAGE');
+  assert.equal(result.error.details.errors.some(message => message.includes('Scene ID "duplicate" is duplicated')), true);
+  assert.equal(result.error.details.errors.some(message => message.includes('is missing an ID')), true);
+});
+
 test('validateRolePlayScenePackage allows extra unreferenced media', () => {
   const result = validateRolePlayScenePackage(createPackageZip({
     mediaEntries: {
