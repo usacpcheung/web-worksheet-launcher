@@ -4626,6 +4626,15 @@ test('choice option audio handler matches icon-button lifecycle behavior', async
   assert.equal(source.includes("reportMediaFeedback(`Playing option audio (${optionAudioRef.assetId}).`);"), false);
 });
 
+test('viewer block navigation interrupts active audio before switching question', async () => {
+  const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
+  assert.equal(source.includes("const navigateToBlockIndex = (requestedIndex, options = {}) => {"), true);
+  assert.equal(source.includes("session.stopActiveAudio('interrupted');"), true);
+  assert.equal(source.includes("node.addEventListener('click', () => {\n        navigateToBlockIndex(index, { orderedBlocks });\n      });"), true);
+  assert.equal(source.includes("navigateToBlockIndex(currentBlockIndex - 1, { orderedBlocks });"), true);
+  assert.equal(source.includes("navigateToBlockIndex(currentBlockIndex + 1, { orderedBlocks });"), true);
+});
+
 test('viewer no-param bootstrap renders start panel with explicit resume controls', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("resumeBtn.textContent = t('viewer.start.resumeAttempt');"), true);

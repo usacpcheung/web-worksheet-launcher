@@ -280,6 +280,45 @@ test('validateRolePlayScenePackageForPublish rejects play-level graph errors', (
   assert.equal(result.error.details.errors.some(message => message.includes('missing scene')), true);
 });
 
+test('validateRolePlayScenePackageForPublish warns for missing dialogue speakers', () => {
+  const project = createProject({
+    speakers: [{ id: 'speaker-known', name: 'Known Speaker' }],
+    scenes: [
+      {
+        id: 'scene-start',
+        type: 'start',
+        image: null,
+        backgroundAudio: null,
+        dialogue: [{ text: 'Hello', speakerId: 'speaker-missing', audio: null }],
+        choices: [{ id: 'choice-1', label: 'Finish', nextSceneId: 'scene-end', cueCardText: '' }],
+        autoNextSceneId: null,
+        notes: '',
+      },
+      {
+        id: 'scene-end',
+        type: 'end',
+        image: null,
+        backgroundAudio: null,
+        dialogue: [{ text: 'Done', audio: null }],
+        choices: [],
+        autoNextSceneId: null,
+        notes: '',
+      },
+    ],
+  });
+  const result = validateRolePlayScenePackageForPublish(createPackageZip({
+    project,
+    manifest: createManifest({ assets: [] }),
+    mediaEntries: {},
+  }));
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    result.publishValidation.warnings.some(message => message.includes('missing speaker')),
+    true,
+  );
+});
+
 test('validateRolePlayScenePackageForPublish rejects duplicate and missing scene IDs', () => {
   const result = validateRolePlayScenePackageForPublish(createPackageZip({
     project: createProject({

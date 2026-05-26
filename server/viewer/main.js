@@ -5684,10 +5684,7 @@ function renderViewerShell(session) {
         node.setAttribute('aria-label', `Block ${index + 1} of ${orderedBlocks.length}`);
       }
       node.addEventListener('click', () => {
-        if (currentBlockIndex === index) return;
-        currentBlockIndex = index;
-        persistNavigationState(orderedBlocks);
-        renderUI();
+        navigateToBlockIndex(index, { orderedBlocks });
       });
 
       const label = document.createElement('p');
@@ -6376,18 +6373,36 @@ function renderViewerShell(session) {
     session.scheduleAutosave();
   };
 
-  const goPrev = () => {
-    currentBlockIndex = Math.max(0, currentBlockIndex - 1);
-    const orderedBlocks = getOrderedBlocks();
+  const navigateToBlockIndex = (requestedIndex, options = {}) => {
+    const providedBlocks = options.orderedBlocks;
+    const orderedBlocks = Array.isArray(providedBlocks) && providedBlocks.length > 0
+      ? providedBlocks
+      : getOrderedBlocks();
+    if (orderedBlocks.length === 0) return;
+
+    const requestedNumericIndex = Number(requestedIndex);
+    const safeRequestedIndex = Number.isFinite(requestedNumericIndex)
+      ? Math.trunc(requestedNumericIndex)
+      : currentBlockIndex;
+    const clampedIndex = Math.min(Math.max(safeRequestedIndex, 0), orderedBlocks.length - 1);
+    if (clampedIndex === currentBlockIndex) {
+      return;
+    }
+
+    session.stopActiveAudio('interrupted');
+    currentBlockIndex = clampedIndex;
     persistNavigationState(orderedBlocks);
     renderUI();
   };
 
+  const goPrev = () => {
+    const orderedBlocks = getOrderedBlocks();
+    navigateToBlockIndex(currentBlockIndex - 1, { orderedBlocks });
+  };
+
   const goNext = () => {
     const orderedBlocks = getOrderedBlocks();
-    currentBlockIndex = Math.min(Math.max(orderedBlocks.length - 1, 0), currentBlockIndex + 1);
-    persistNavigationState(orderedBlocks);
-    renderUI();
+    navigateToBlockIndex(currentBlockIndex + 1, { orderedBlocks });
   };
 
   const renderUI = () => {

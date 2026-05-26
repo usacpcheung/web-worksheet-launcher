@@ -2,9 +2,14 @@ export default {
   "toolbar": {
     "appName": "RolePlayScene",
     "edit": "Edit",
+    "backToEdit": "Back to Edit",
     "play": "Play",
     "import": "Import",
     "export": "Export",
+    "more": "More",
+    "moreMenuLabel": "Toolbar overflow menu",
+    "moreServerGroup": "Server",
+    "moreProjectGroup": "Project",
     "importTitle": "Import project (.json or .zip)",
     "exportTitle": "Export project archive (.zip)",
     "languageLabel": "Language",
@@ -13,6 +18,19 @@ export default {
       "zh-Hant": "繁體中文"
     },
     "dismissMessage": "Dismiss message"
+  },
+  "editor": {
+    "views": {
+      "storyMap": "Story Map",
+      "scenePreview": "Scene Preview"
+    },
+    "scenePreview": {
+      "title": "Scene Preview: {sceneId}",
+      "stageLabel": "Scene preview for {sceneId}",
+      "anchorHint": "Place anchors on the scene preview.",
+      "noScene": "Select a scene to preview.",
+      "noImage": "No image selected."
+    }
   },
   "server": {
     "signIn": "Sign in",
@@ -182,7 +200,16 @@ export default {
     "projectTitleLabel": "Project title",
     "projectTitlePlaceholder": "Untitled Role Play",
     "emptyState": "No scenes yet. Use “Add Scene” to begin.",
+    "sections": {
+      "sceneBasics": "Scene basics",
+      "sceneMedia": "Scene media"
+    },
+    "mediaActions": {
+      "choose": "Choose file",
+      "replace": "Replace"
+    },
     "header": {
+      "previewCurrentScene": "Preview Current Scene",
       "addScene": "Add Scene",
       "deleteScene": "Delete Scene"
     },
@@ -196,19 +223,21 @@ export default {
       "label": "Stage image",
       "previewAlt": "{sceneId} preview",
       "empty": "No image selected.",
-      "remove": "Remove image"
+      "attached": "Attached: {name}",
+      "fallbackName": "Untitled image",
+      "remove": "Remove"
     },
     "background": {
       "label": "Background music",
       "attached": "Attached: {name}",
       "fallbackName": "Untitled track",
       "empty": "No background track selected.",
-      "remove": "Remove background music"
+      "remove": "Remove"
     },
     "speechBubble": {
       "title": "Speech bubble mode",
-      "previewHint": "Click the preview to add an anchor. Select an anchor, then click the preview to move it.",
-      "stageLabel": "Speech bubble anchor editor",
+      "enableLabel": "Enable",
+      "scenePreviewHint": "Place and move anchors in Scene Preview.",
       "anchorLimit": "Speech bubble anchor limit reached ({max}).",
       "anchorCount": "{count} of {max} anchors used.",
       "anchorUsage": "Anchor {label}: used by {count} dialogue line(s)",
@@ -229,9 +258,19 @@ export default {
     "dialogue": {
       "title": "Dialogue (max 3 lines)",
       "lineLabel": "Line {index}",
+      "speakerLabel": "Speaker",
+      "speakerNone": "No speaker",
+      "speakerAdd": "Add speaker...",
+      "speakerMissing": "Missing speaker",
+      "speakerNameLabel": "Speaker name",
+      "speakerNamePlaceholder": "Enter speaker name",
+      "speakerAddConfirm": "Add",
+      "speakerAddCancel": "Cancel",
+      "speakerNameRequired": "Enter a speaker name.",
+      "textLabel": "Dialogue text",
       "audioLabel": "Audio (optional mp3)",
       "audioAttached": "Attached: {name}",
-      "removeAudio": "Remove audio",
+      "removeAudio": "Remove",
       "playAudioPreview": "Play",
       "stopAudioPreview": "Stop",
       "audioPreviewFailed": "Unable to play this audio preview.",
@@ -256,13 +295,15 @@ export default {
         "cuteGirl": "Cute Girl",
         "gentleLady": "Gentle Lady"
       },
-      "deleteLine": "Delete line",
+      "deleteLine": "Remove",
       "addLine": "Add line"
     },
     "choices": {
       "title": "Choices (max 3)",
       "empty": "No choices yet.",
-      "labelPlaceholder": "Choice label",
+      "rowLabel": "Choice {index}",
+      "textLabel": "Choice text",
+      "labelPlaceholder": "Choice text",
       "cueCardLabel": "Cue card text",
       "cueCardPlaceholder": "Optional cue card text",
       "destinationPlaceholder": "Select destination",
@@ -310,6 +351,16 @@ export default {
       "forwardLabel": "Go to next scene",
       "listLabel": "Visited scenes"
     },
+    "utilities": {
+      "title": "Utilities",
+      "panelLabel": "Scene playback utilities",
+      "closeLabel": "Close utilities"
+    },
+    "toolbar": {
+      "choices": "Choices",
+      "playAudio": "Play Audio",
+      "stopAudio": "Stop Audio"
+    },
     "dialogue": {
       "playAll": "▶️ Play all",
       "stopAll": "⏹ Stop playback",
@@ -318,6 +369,21 @@ export default {
       "stopLine": "⏹ Stop line",
       "lineFallback": "(Line {index})",
       "playbackError": "Audio playback failed"
+    },
+    "speechBubble": {
+      "startDialogue": "Start dialogue",
+      "play": "Play",
+      "stop": "Stop",
+      "previous": "Previous",
+      "next": "Next",
+      "playAll": "Play All",
+      "stopAll": "Stop All",
+      "previousPage": "‹",
+      "nextPage": "›",
+      "pageStatus": "{current} / {total}",
+      "noAudio": "No audio",
+      "noDialogue": "No visible dialogue for this scene.",
+      "playbackError": "Unable to play this speech bubble audio."
     },
     "choices": {
       "endMessage": "The End",
