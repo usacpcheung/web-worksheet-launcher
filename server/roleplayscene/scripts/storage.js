@@ -199,6 +199,9 @@ function buildManifest(snapshot) {
   const usedPaths = new Set();
   const manifest = {
     meta: { ...snapshot.meta },
+    speakers: Array.isArray(snapshot.speakers)
+      ? snapshot.speakers.map(speaker => ({ ...speaker }))
+      : [],
     scenes: snapshot.scenes.map((scene, sceneIndex) => {
       const sceneId = scene.id || `scene-${sceneIndex + 1}`;
       const dialogue = Array.isArray(scene.dialogue) ? scene.dialogue : [];
@@ -223,6 +226,7 @@ function buildManifest(snapshot) {
         }),
         dialogue: dialogue.map((line, lineIndex) => ({
           text: line.text ?? '',
+          speakerId: line.speakerId ?? null,
           audio: collectAsset({
             asset: line.audio,
             sceneId,
@@ -279,6 +283,9 @@ function manifestToSerialized(manifest, files, warnings = []) {
   const scenes = Array.isArray(manifest.scenes) ? manifest.scenes.slice(0, 20) : [];
   return {
     meta: { ...manifest.meta },
+    speakers: Array.isArray(manifest.speakers)
+      ? manifest.speakers.map(speaker => ({ ...speaker }))
+      : [],
     scenes: scenes.map(scene => {
       const dialogue = Array.isArray(scene.dialogue) ? scene.dialogue : [];
       return {
@@ -288,6 +295,7 @@ function manifestToSerialized(manifest, files, warnings = []) {
         backgroundAudio: restoreAsset(scene.backgroundAudio, files, warnings),
         dialogue: dialogue.map(line => ({
           text: line.text ?? '',
+          speakerId: line.speakerId ?? null,
           audio: restoreAsset(line.audio, files, warnings),
           bubble: line.bubble ? { ...line.bubble } : undefined,
         })),
@@ -381,6 +389,9 @@ export function serializeProject(project) {
   const scenes = Array.isArray(project.scenes) ? project.scenes.slice(0, 20) : [];
   return {
     meta: { ...project.meta },
+    speakers: Array.isArray(project.speakers)
+      ? project.speakers.map(speaker => ({ ...speaker }))
+      : [],
     scenes: scenes.map(scene => {
       const dialogue = Array.isArray(scene.dialogue) ? scene.dialogue : [];
       const choices = Array.isArray(scene.choices) ? scene.choices : [];
@@ -393,6 +404,7 @@ export function serializeProject(project) {
           : null,
         dialogue: dialogue.map(line => ({
           text: line.text ?? '',
+          speakerId: line.speakerId ?? null,
           audio: line.audio
             ? { name: line.audio.name ?? '', blob: line.audio.blob ?? null }
             : null,
@@ -430,6 +442,9 @@ export function hydrateProject(serialized, { previousProject = null } = {}) {
   }
 
   const scenes = Array.isArray(serialized.scenes) ? serialized.scenes : [];
+  const speakers = Array.isArray(serialized.speakers)
+    ? serialized.speakers.map(speaker => ({ ...speaker }))
+    : [];
   const preparedScenes = scenes.map(scene => {
     const imageBlob = scene.image?.blob ?? null;
     const bgBlob = scene.backgroundAudio?.blob ?? null;
@@ -455,6 +470,7 @@ export function hydrateProject(serialized, { previousProject = null } = {}) {
         const audioBlob = line.audio?.blob ?? null;
         return {
           text: line.text ?? '',
+          speakerId: line.speakerId ?? null,
           audio: line.audio
             ? {
               name: line.audio.name ?? '',
@@ -486,6 +502,7 @@ export function hydrateProject(serialized, { previousProject = null } = {}) {
 
   return createProject({
     meta: serialized.meta,
+    speakers,
     scenes: preparedScenes.map(scene => createScene(scene)),
     assets: Array.isArray(serialized.assets) ? serialized.assets.slice() : [],
   });
@@ -606,6 +623,7 @@ function serializePlainProjectJson(json) {
   const scenes = Array.isArray(json.scenes) ? json.scenes.slice(0, 20) : [];
   return {
     meta: { ...json.meta },
+    speakers: Array.isArray(json.speakers) ? json.speakers.map(speaker => ({ ...speaker })) : [],
     scenes,
     assets: Array.isArray(json.assets) ? json.assets.slice() : [],
   };

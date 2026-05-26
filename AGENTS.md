@@ -8,6 +8,15 @@ Scope: entire repository tree from the project root.
 - Parent prototype entry point: `parent_prototype/parent.html`
 - Popup renderer entry point: `server/worksheet_launcher/render.html`
 - Interface contract source of truth: `docs/message-contract.md`
+- RolePlayScene editor-mode UI guidance:
+  `.agents/skills/roleplayscene-editor-ui-design/SKILL.md`
+
+## RolePlayScene Editor UI Guidance
+
+- For RolePlayScene editor-mode UI changes, follow
+  `.agents/skills/roleplayscene-editor-ui-design/SKILL.md`.
+- This guidance applies only to editor mode, not RolePlayScene player/viewer
+  mode.
 
 ## Non-negotiable Compatibility Rules
 

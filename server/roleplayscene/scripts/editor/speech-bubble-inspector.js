@@ -1,20 +1,30 @@
 import { BubbleMode, MAX_SPEECH_BUBBLE_ANCHORS } from '../model.js';
 import { translate } from '../i18n.js';
 
-function getClampedPercent(value) {
-  return Math.max(0, Math.min(1, Number(value))) * 100;
-}
-
 export function renderSpeechBubbleEditorSection(scene, actions) {
   const speechBubble = scene.speechBubble || { enabled: false, anchors: [] };
   const anchors = Array.isArray(speechBubble.anchors) ? speechBubble.anchors : [];
   const speechSection = document.createElement('section');
-  speechSection.className = 'speech-bubble-editor';
+  speechSection.className = 'rps-inspector-section speech-bubble-editor';
+
+  const header = document.createElement('div');
+  header.className = 'rps-inspector-section__header';
+  const icon = document.createElement('span');
+  icon.className = 'rps-editor-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8 8 0 0 1-8 8H7l-4 3v-6.2A8 8 0 1 1 21 11.5Z"></path></svg>';
+  const heading = document.createElement('h4');
+  heading.textContent = translate('inspector.speechBubble.title');
+  header.append(icon, heading);
+  speechSection.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'rps-inspector-section__body speech-bubble-editor__body';
 
   const speechToggle = document.createElement('label');
   speechToggle.className = 'field speech-bubble-editor__toggle';
   const speechToggleText = document.createElement('span');
-  speechToggleText.textContent = translate('inspector.speechBubble.title');
+  speechToggleText.textContent = translate('inspector.speechBubble.enableLabel');
   speechToggle.appendChild(speechToggleText);
   const speechCheckbox = document.createElement('input');
   speechCheckbox.type = 'checkbox';
@@ -23,61 +33,13 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
     actions.onToggleSpeechBubble?.(scene.id, speechCheckbox.checked);
   });
   speechToggle.appendChild(speechCheckbox);
-  speechSection.appendChild(speechToggle);
+  body.appendChild(speechToggle);
 
   if (speechBubble.enabled) {
     const helper = document.createElement('p');
     helper.className = 'hint';
-    helper.textContent = translate('inspector.speechBubble.previewHint');
-    speechSection.appendChild(helper);
-
-    const anchorStage = document.createElement('div');
-    anchorStage.className = 'speech-bubble-stage';
-    anchorStage.setAttribute('role', 'group');
-    anchorStage.setAttribute('aria-label', translate('inspector.speechBubble.stageLabel'));
-    const anchorFrame = document.createElement('div');
-    anchorFrame.className = scene.image?.objectUrl
-      ? 'speech-bubble-stage__frame'
-      : 'speech-bubble-stage__frame speech-bubble-stage__frame--empty';
-    if (scene.image?.objectUrl) {
-      const anchorImage = document.createElement('img');
-      anchorImage.src = scene.image.objectUrl;
-      anchorImage.alt = translate('inspector.image.previewAlt', { sceneId: scene.id });
-      anchorFrame.appendChild(anchorImage);
-    } else {
-      const emptyStage = document.createElement('span');
-      emptyStage.textContent = translate('inspector.image.empty');
-      anchorFrame.appendChild(emptyStage);
-    }
-    anchorFrame.addEventListener('click', (event) => {
-      const rect = anchorFrame.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-      actions.onAddOrMoveSpeechBubbleAnchor?.(scene.id, {
-        x: (event.clientX - rect.left) / rect.width,
-        y: (event.clientY - rect.top) / rect.height,
-      });
-    });
-
-    anchors.forEach((anchor) => {
-      const marker = document.createElement('button');
-      marker.type = 'button';
-      marker.className = 'speech-bubble-anchor-marker';
-      if (actions.isSpeechBubbleAnchorSelected?.(anchor.id)) {
-        marker.classList.add('is-selected');
-      }
-      marker.textContent = anchor.label || '';
-      marker.style.left = `${getClampedPercent(anchor.x)}%`;
-      marker.style.top = `${getClampedPercent(anchor.y)}%`;
-      marker.setAttribute('aria-label', translate('inspector.speechBubble.selectAnchor', { label: anchor.label || anchor.id }));
-      marker.addEventListener('click', (event) => {
-        event.stopPropagation();
-        actions.onSelectSpeechBubbleAnchor?.(scene.id, anchor.id);
-      });
-      anchorFrame.appendChild(marker);
-    });
-
-    anchorStage.appendChild(anchorFrame);
-    speechSection.appendChild(anchorStage);
+    helper.textContent = translate('inspector.speechBubble.scenePreviewHint');
+    body.appendChild(helper);
 
     const count = document.createElement('p');
     count.className = 'hint';
@@ -85,7 +47,7 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
       count: anchors.length,
       max: MAX_SPEECH_BUBBLE_ANCHORS,
     });
-    speechSection.appendChild(count);
+    body.appendChild(count);
 
     if (anchors.length) {
       const anchorList = document.createElement('ul');
@@ -96,29 +58,36 @@ export function renderSpeechBubbleEditorSection(scene, actions) {
         )).length;
         const item = document.createElement('li');
         const label = document.createElement('span');
+        label.className = 'speech-bubble-anchor-list__label';
         label.textContent = translate('inspector.speechBubble.anchorUsage', {
           label: anchor.label || anchor.id,
           count: usage,
         });
         item.appendChild(label);
+        const itemActions = document.createElement('div');
+        itemActions.className = 'speech-bubble-anchor-list__actions';
         const selectButton = document.createElement('button');
         selectButton.type = 'button';
+        selectButton.className = 'rps-editor-action rps-editor-action--neutral';
         selectButton.textContent = actions.isSpeechBubbleAnchorSelected?.(anchor.id)
           ? translate('inspector.speechBubble.selectedAnchor')
           : translate('inspector.speechBubble.moveAnchor');
         selectButton.addEventListener('click', () => actions.onSelectSpeechBubbleAnchor?.(scene.id, anchor.id));
-        item.appendChild(selectButton);
+        itemActions.appendChild(selectButton);
         const deleteButton = document.createElement('button');
         deleteButton.type = 'button';
+        deleteButton.className = 'rps-editor-action rps-editor-action--danger';
         deleteButton.textContent = translate('inspector.speechBubble.deleteAnchor');
         deleteButton.addEventListener('click', () => actions.onDeleteSpeechBubbleAnchor?.(scene.id, anchor.id));
-        item.appendChild(deleteButton);
+        itemActions.appendChild(deleteButton);
+        item.appendChild(itemActions);
         anchorList.appendChild(item);
       });
-      speechSection.appendChild(anchorList);
+      body.appendChild(anchorList);
     }
   }
 
+  speechSection.appendChild(body);
   return speechSection;
 }
 
