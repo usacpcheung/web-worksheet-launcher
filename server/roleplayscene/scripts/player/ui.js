@@ -762,6 +762,7 @@ export function renderPlayerUI({
       speechBubbleOverlay,
       theaterOverlay,
       theaterControlRail,
+      theaterUtilityRail,
       project,
       scene,
       onChoice,
@@ -890,6 +891,34 @@ export function renderPlayerUI({
     }
   };
 
+  const toggleChoicesMenu = () => {
+    if (choicesOpen) {
+      stopTheaterPlayback();
+      choicesOpen = false;
+      endOverlayOpen = false;
+      renderTheaterState();
+      return;
+    }
+    openEndOverlay({ choicesMenu: true });
+  };
+
+  const theaterChoicesDock = document.createElement('div');
+  theaterChoicesDock.className = 'theater-choices-dock';
+
+  const choicesDockButton = document.createElement('button');
+  choicesDockButton.type = 'button';
+  choicesDockButton.className = 'theater-floating-button theater-floating-button--choices';
+  choicesDockButton.appendChild(createPlayerIcon('list'));
+  const choicesDockLabel = document.createElement('span');
+  choicesDockLabel.textContent = translate('player.toolbar.choices');
+  choicesDockButton.appendChild(choicesDockLabel);
+  choicesDockButton.setAttribute('aria-label', translate('player.toolbar.choices'));
+  choicesDockButton.setAttribute('aria-expanded', 'false');
+  choicesDockButton.addEventListener('click', toggleChoicesMenu);
+
+  theaterChoicesDock.appendChild(choicesDockButton);
+  theaterUtilityRail.appendChild(theaterChoicesDock);
+
   const schedulePageSteps = ({ pages, totalSeconds, token }) => {
     if (pages.length <= 1) return;
     const totalMs = Math.max(0, totalSeconds * 1000);
@@ -975,6 +1004,9 @@ export function renderPlayerUI({
         onComplete: () => {
           releaseDuck();
           if (token !== runToken) return;
+          if (!playAllActive) {
+            clearTimers();
+          }
           currentAudioActive = false;
           audioDone = true;
           completeWhenReady();
@@ -982,6 +1014,9 @@ export function renderPlayerUI({
         onCancel: () => {
           releaseDuck();
           if (token !== runToken) return;
+          if (!playAllActive) {
+            clearTimers();
+          }
           currentAudioActive = false;
           renderTheaterState();
         },
@@ -1035,6 +1070,8 @@ export function renderPlayerUI({
 
     const toolbar = document.createElement('div');
     toolbar.className = 'theater-toolbar';
+
+    choicesDockButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
 
     const prevButton = document.createElement('button');
     prevButton.type = 'button';
@@ -1098,19 +1135,10 @@ export function renderPlayerUI({
 
     const choicesButton = document.createElement('button');
     choicesButton.type = 'button';
-    choicesButton.className = 'theater-toolbar__button';
+    choicesButton.className = 'theater-toolbar__button theater-toolbar__button--choices';
     appendToolbarButtonContent(choicesButton, 'list', translate('player.toolbar.choices'));
     choicesButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
-    choicesButton.addEventListener('click', () => {
-      if (choicesOpen) {
-        stopTheaterPlayback();
-        choicesOpen = false;
-        endOverlayOpen = false;
-        renderTheaterState();
-      } else {
-        openEndOverlay({ choicesMenu: true });
-      }
-    });
+    choicesButton.addEventListener('click', toggleChoicesMenu);
 
     toolbar.appendChild(prevButton);
     toolbar.appendChild(nextButton);

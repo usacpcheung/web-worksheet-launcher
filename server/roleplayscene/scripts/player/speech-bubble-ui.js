@@ -174,6 +174,7 @@ export function renderSpeechBubblePlayerUI({
   speechBubbleOverlay,
   theaterOverlay,
   theaterControlRail,
+  theaterUtilityRail,
   project,
   scene,
   onChoice,
@@ -208,6 +209,22 @@ export function renderSpeechBubblePlayerUI({
   let pendingAnchorRepositionUsesRaf = false;
   let deferredAnchorLayoutKey = null;
   const speechTimers = new Set();
+
+  const theaterChoicesDock = document.createElement('div');
+  theaterChoicesDock.className = 'theater-choices-dock';
+
+  const choicesDockButton = document.createElement('button');
+  choicesDockButton.type = 'button';
+  choicesDockButton.className = 'theater-floating-button theater-floating-button--choices';
+  choicesDockButton.appendChild(createPlayerIcon('list'));
+  const choicesDockLabel = document.createElement('span');
+  choicesDockLabel.textContent = translate('player.toolbar.choices');
+  choicesDockButton.appendChild(choicesDockLabel);
+  choicesDockButton.setAttribute('aria-label', translate('player.toolbar.choices'));
+  choicesDockButton.setAttribute('aria-expanded', 'false');
+
+  theaterChoicesDock.appendChild(choicesDockButton);
+  theaterUtilityRail?.appendChild?.(theaterChoicesDock);
 
   const nextSpeechRunToken = () => {
     speechRunToken += 1;
@@ -369,6 +386,9 @@ export function renderSpeechBubblePlayerUI({
         onComplete: () => {
           releaseDuck();
           if (runToken !== speechRunToken) return;
+          if (!speechPlayAllActive) {
+            clearSpeechTimers();
+          }
           speechAudioActive = false;
           audioDone = true;
           completePlayAllWhenReady();
@@ -376,6 +396,9 @@ export function renderSpeechBubblePlayerUI({
         onCancel: () => {
           releaseDuck();
           if (runToken !== speechRunToken) return;
+          if (!speechPlayAllActive) {
+            clearSpeechTimers();
+          }
           speechAudioActive = false;
           renderSpeechState();
         },
@@ -454,6 +477,19 @@ export function renderSpeechBubblePlayerUI({
       renderSpeechState();
     }
   };
+
+  const toggleChoicesMenu = () => {
+    if (choicesOpen) {
+      stopSpeechPlayback({ keepActive: true });
+      choicesOpen = false;
+      endOverlayOpen = false;
+      renderSpeechState();
+      return;
+    }
+    openEndOverlay({ choicesMenu: true });
+  };
+
+  choicesDockButton.addEventListener('click', toggleChoicesMenu);
 
   const clearPendingAnchorReposition = () => {
     if (pendingAnchorRepositionHandle == null) return;
@@ -549,6 +585,8 @@ export function renderSpeechBubblePlayerUI({
     theaterControlRail.innerHTML = '';
     clampActivePage();
 
+    choicesDockButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
+
     const activeEntry = getActiveEntry();
     const activeMode = activeEntry?.line?.bubble?.mode || BubbleMode.CENTER;
     const pages = activeEntry
@@ -621,19 +659,10 @@ export function renderSpeechBubblePlayerUI({
 
     const choicesButton = document.createElement('button');
     choicesButton.type = 'button';
-    choicesButton.className = 'theater-toolbar__button';
+    choicesButton.className = 'theater-toolbar__button theater-toolbar__button--choices';
     appendToolbarButtonContent(choicesButton, 'list', translate('player.toolbar.choices'));
     choicesButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
-    choicesButton.addEventListener('click', () => {
-      if (choicesOpen) {
-        stopSpeechPlayback({ keepActive: true });
-        choicesOpen = false;
-        endOverlayOpen = false;
-        renderSpeechState();
-      } else {
-        openEndOverlay({ choicesMenu: true });
-      }
-    });
+    choicesButton.addEventListener('click', toggleChoicesMenu);
 
     toolbar.appendChild(prevButton);
     toolbar.appendChild(nextButton);

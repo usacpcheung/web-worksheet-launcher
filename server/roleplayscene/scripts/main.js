@@ -37,6 +37,7 @@ const serverManageButton = document.getElementById('server-manage-btn');
 const serverBrowsePublishedButton = document.getElementById('server-browse-published-btn');
 const publishedExitButton = document.getElementById('published-exit-btn');
 const fileInput = document.getElementById('file-input');
+const topbar = document.querySelector('.topbar');
 const topbarTitle = document.querySelector('.topbar h1');
 const localeSelect = document.getElementById('locale-select');
 const localeLabel = document.querySelector('.toolbar__locale-label');
@@ -183,6 +184,120 @@ function hostHasVisibleItems(host) {
   return Array.from(host.children || []).some((child) => child instanceof HTMLElement && !child.hidden);
 }
 
+function isDesktopToolbarWrapped() {
+  if (!toolbar || typeof HTMLElement !== 'function') return false;
+  if (getHeaderLayoutMode() !== 'desktop') return false;
+
+  const visibleItems = Array.from(toolbar.children || []).filter((child) => (
+    child instanceof HTMLElement && !child.hidden
+  ));
+
+  if (visibleItems.length <= 1) return false;
+
+  // Measure against the base layout so wrapped-state classes do not skew detection.
+  toolbar.classList.remove('toolbar--wrapped');
+  topbar?.classList?.remove?.('topbar--wrapped');
+
+  const tops = visibleItems.map((child) => Number(child?.offsetTop || 0));
+  const heights = visibleItems.map((child) => Number(child?.offsetHeight || 0));
+  const minTop = Math.min(...tops);
+  const maxTop = Math.max(...tops);
+  const maxHeight = Math.max(...heights, 0);
+  return (maxTop - minTop) > Math.max(12, Math.floor(maxHeight * 0.55));
+}
+
+function updateToolbarWrapState() {
+  if (!toolbar?.classList) return;
+
+  const clearWrappedState = () => {
+    toolbar.classList.remove('toolbar--wrapped');
+    topbar?.classList?.remove?.('topbar--wrapped');
+  };
+
+  if (getHeaderLayoutMode() !== 'desktop' || typeof HTMLElement !== 'function') {
+    clearWrappedState();
+    return;
+  }
+
+  const wrapped = isDesktopToolbarWrapped();
+
+  toolbar.classList.toggle('toolbar--wrapped', wrapped);
+  topbar?.classList?.toggle?.('topbar--wrapped', wrapped);
+}
+
+function updateMobileServerBadgeLayout() {
+  if (!toolbar?.classList || !toolbarServer) return;
+
+  toolbar.classList.remove('toolbar--server-stacked');
+  topbar?.classList?.remove?.('topbar--server-stacked');
+
+  if (getHeaderLayoutMode() !== 'mobile' || typeof HTMLElement !== 'function') {
+    return;
+  }
+
+  const modeGroup = toolbar.querySelector('.toolbar__mode');
+  const overflowGroup = toolbar.querySelector('.toolbar__overflow');
+  if (!(modeGroup instanceof HTMLElement) || !(overflowGroup instanceof HTMLElement) || toolbarServer.hidden) {
+    return;
+  }
+
+  const toolbarWidth = Number(toolbar.clientWidth || 0);
+  if (!Number.isFinite(toolbarWidth) || toolbarWidth <= 0) {
+    return;
+  }
+
+  const computed = typeof globalThis.getComputedStyle === 'function'
+    ? globalThis.getComputedStyle(toolbar)
+    : null;
+  const rawGap = computed?.columnGap || computed?.gap || '0';
+  const gap = Number.parseFloat(rawGap) || 0;
+
+  const modeWidth = Number(modeGroup.offsetWidth || 0);
+  const serverBadge = toolbarServer.querySelector('.server-status');
+  const serverWidth = serverBadge instanceof HTMLElement
+    ? Number(serverBadge.offsetWidth || 0)
+    : Number(toolbarServer.offsetWidth || 0);
+  const overflowWidth = overflowGroup.hidden ? 0 : Number(overflowGroup.offsetWidth || 0);
+  const visibleGroups = [modeWidth > 0, serverWidth > 0, overflowWidth > 0].filter(Boolean).length;
+  const requiredWidth = modeWidth + serverWidth + overflowWidth + Math.max(0, visibleGroups - 1) * gap;
+  const rowWrapped = [modeGroup, toolbarServer, overflowGroup]
+    .filter((element) => !element.hidden && Number(element.offsetWidth || 0) > 0)
+    .some((element) => Math.abs(Number(element.offsetTop || 0) - Number(modeGroup.offsetTop || 0)) > 12);
+
+  if (requiredWidth > toolbarWidth + 2 || rowWrapped) {
+    toolbar.classList.add('toolbar--server-stacked');
+    topbar?.classList?.add?.('topbar--server-stacked');
+  }
+}
+
+function applyDesktopWrapOverflowFallback() {
+  moveToolbarNode(serverSaveButton, toolbarMoreServerItems);
+  moveToolbarNode(serverManageButton, toolbarMoreServerItems);
+  moveToolbarNode(serverBrowsePublishedButton, toolbarMoreServerItems);
+  moveToolbarNode(publishedExitButton, toolbarMoreServerItems);
+  moveToolbarNode(toolbarLocale, toolbarMoreProjectItems);
+
+  if (toolbarLocale) {
+    toolbarLocale.hidden = false;
+  }
+
+  const showServerGroup = hostHasVisibleItems(toolbarMoreServerItems);
+  const showProjectGroup = hostHasVisibleItems(toolbarMoreProjectItems);
+  if (toolbarMoreServerGroup) toolbarMoreServerGroup.hidden = !showServerGroup;
+  if (toolbarMoreProjectGroup) toolbarMoreProjectGroup.hidden = !showProjectGroup;
+
+  const hasOverflowItems = showServerGroup || showProjectGroup;
+  if (toolbarOverflow) {
+    toolbarOverflow.hidden = !hasOverflowItems;
+  }
+  if (toolbarMoreButton) {
+    toolbarMoreButton.hidden = !hasOverflowItems;
+  }
+  if (!hasOverflowItems) {
+    setToolbarOverflowOpen(false);
+  }
+}
+
 function restoreDesktopToolbarLayout() {
   moveToolbarNode(btnImport, toolbarFiles);
   moveToolbarNode(btnExport, toolbarFiles);
@@ -220,6 +335,11 @@ function applyToolbarOverflowLayout() {
   const layoutMode = getHeaderLayoutMode();
   if (layoutMode === 'desktop') {
     restoreDesktopToolbarLayout();
+    if (isDesktopToolbarWrapped()) {
+      applyDesktopWrapOverflowFallback();
+    }
+    updateToolbarWrapState();
+    updateMobileServerBadgeLayout();
     return;
   }
 
@@ -259,6 +379,9 @@ function applyToolbarOverflowLayout() {
   if (!hasOverflowItems) {
     setToolbarOverflowOpen(false);
   }
+
+  updateToolbarWrapState();
+  updateMobileServerBadgeLayout();
 }
 
 function createZipFileFromBytes(bytes, name) {
@@ -551,12 +674,17 @@ function showMessage(msg) {
 }
 
 function clearMessage() {
+  lastMessagePayload = null;
   if (!messageHost || !messageText || !messageDetails) return;
   messageText.textContent = '';
   messageDetails.innerHTML = '';
   messageDetails.hidden = true;
   messageHost.hidden = true;
   messageHost.setAttribute('hidden', '');
+}
+
+function dismissMessage() {
+  clearMessage();
 }
 
 function updateServerSessionUi() {
@@ -1809,7 +1937,7 @@ if (serverModalOverlay) {
 
 if (dismissButton) {
   dismissButton.addEventListener('click', () => {
-    clearMessage();
+    dismissMessage();
   });
 }
 

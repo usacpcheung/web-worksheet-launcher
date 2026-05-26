@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 
 const mainSource = await readFile(new URL('../scripts/main.js', import.meta.url), 'utf8');
 const indexSource = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+const cssSource = await readFile(new URL('../styles/app.css', import.meta.url), 'utf8');
 const editorSource = await readFile(new URL('../scripts/editor/editor.js', import.meta.url), 'utf8');
 const inspectorSource = await readFile(new URL('../scripts/editor/inspector.js', import.meta.url), 'utf8');
 const scenePreviewSource = await readFile(new URL('../scripts/editor/scene-preview.js', import.meta.url), 'utf8');
@@ -315,6 +316,41 @@ assert.ok(
     && indexSource.includes('id="server-modal-overlay"')
     && indexSource.includes('tabindex="-1"'),
   'server status/actions and manager modal should be present in the static markup',
+);
+
+assert.ok(
+  cssSource.indexOf('@media (max-width: 767px)') < cssSource.indexOf('.toolbar > .toolbar__server > button')
+    && cssSource.includes('.toolbar > .toolbar__server > button {\n      display: none;'),
+  'tablet header layout should keep direct server actions visible and hide them only on true mobile widths',
+);
+
+assert.ok(
+  mainSource.includes("topbar?.classList?.add?.('topbar--server-stacked')")
+    && cssSource.includes('.topbar.topbar--server-stacked > .toolbar {\n    display: contents;')
+    && cssSource.includes('.toolbar.toolbar--server-stacked > .toolbar__server {\n    order: 3;\n    width: 100%;')
+    && cssSource.includes('justify-content: flex-start;'),
+  'mobile stacked header should keep title/mode/more on the first row and align the server badge left on the second row',
+);
+
+assert.ok(
+  playerSource.includes("rightEl.classList?.add?.('pane--stage-only')")
+    && playerSource.includes("introOverlay.className = 'player-intro-overlay'")
+    && playerSource.includes("appendIntroUtilities(introOverlay")
+    && playerSource.includes("startBtn.className = 'player-intro-begin'")
+    && cssSource.includes('.player-intro-frame::after')
+    && cssSource.includes('.player-intro-utilities')
+    && cssSource.includes('.player-intro-cta'),
+  'RolePlayScene intro should render as a theater-style stage overlay with floating utilities and centered Begin Story action',
+);
+
+assert.ok(
+  indexSource.includes('class="app-messages__dismiss"')
+    && indexSource.includes('<svg viewBox="0 0 24 24"')
+    && cssSource.includes('.app-messages[hidden] { display: none; }')
+    && mainSource.includes('function dismissMessage()')
+    && mainSource.includes('lastMessagePayload = null;\n  if (!messageHost')
+    && mainSource.includes("dismissButton.addEventListener('click', () => {\n    dismissMessage();"),
+  'RolePlayScene message bar should use an accessible icon dismiss button that clears remembered message state',
 );
 
 assert.ok(
