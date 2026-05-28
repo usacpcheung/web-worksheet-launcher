@@ -448,7 +448,7 @@ export default {
         "confirmLabel": "切換並移除"
       },
       "multilinePasteConfirm": {
-        "audioRemoval": "被覆寫選項中的已附加音訊。",
+        "audioRemoval": "被取代選項中的音訊附件。",
         "confirmLabel": "取代選項",
         "description": "這次貼上會取代 {count} 個已附加音訊的選項。取代文字會移除這些音訊附件。",
         "title": "用貼上的多行文字取代選項？"
@@ -637,7 +637,7 @@ export default {
       }
     },
     "inputHelper": {
-      "boolean": "請選擇 True / False。",
+      "boolean": "請選擇是 / 否。",
       "multipleChoiceMulti": "可選擇一個或以上選項。",
       "multipleChoiceSingle": "只可選擇一個選項。",
       "numberBase": "只接受整數或小數（不支援分數，例如 2/3）。",
@@ -738,7 +738,7 @@ export default {
       "saveAttemptTitle": "儲存作答記錄",
       "exportAttemptAriaLabel": "匯出作答套件（.zip）",
       "exportAttemptTitle": "匯出作答套件（.zip）",
-      "signInRequired": "上載作答前需要先登入。"
+      "signInRequired": "上載作答記錄前需要先登入。"
     }
   }
 }
