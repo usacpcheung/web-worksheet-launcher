@@ -385,6 +385,7 @@ function createEditorIcon(name) {
     grip: `<svg ${svgAttrs}><circle cx="9" cy="5" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>`,
     moreHorizontal: `<svg ${svgAttrs}><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>`,
     filePlus: `<svg ${svgAttrs}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M12 18v-6"></path><path d="M9 15h6"></path></svg>`,
+    worksheetPlus: `<svg ${svgAttrs}><rect x="3" y="4" width="13" height="16" rx="2"></rect><path d="M7 8h5"></path><path d="M7 12h5"></path><path d="M7 16h3"></path><path d="M19 14v6"></path><path d="M16 17h6"></path></svg>`,
     eye: `<svg ${svgAttrs}><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
     info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
     image: `<svg ${svgAttrs}><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"></path></svg>`,
@@ -4855,7 +4856,7 @@ function renderEditorShell(session) {
   const startNewWorksheetBtn = document.createElement('button');
   startNewWorksheetBtn.type = 'button';
   startNewWorksheetBtn.className = 'sidebar-action-btn';
-  setMediaActionButtonContent(startNewWorksheetBtn, 'filePlus', t('editor.actions.startNewWorksheet'));
+  setMediaActionButtonContent(startNewWorksheetBtn, 'worksheetPlus', t('editor.actions.startNewWorksheet'));
   const addContentBtn = document.createElement('button');
   addContentBtn.type = 'button';
   addContentBtn.className = 'sidebar-action-btn';
