@@ -445,17 +445,6 @@ function createLanguageSelector({ onChange } = {}) {
   return wrapper;
 }
 
-async function flushLocaleChangeBeforeReload(session, source = 'editor') {
-  if (!session || typeof session.flushLocalStateForAuthRedirect !== 'function') {
-    return;
-  }
-  try {
-    await session.flushLocalStateForAuthRedirect();
-  } catch (error) {
-    console.error(`Failed to flush local draft before locale change (${source})`, error);
-  }
-}
-
 function setOptionAudioMenuTriggerState(trigger, { hasAudio = false, isGenerating = false, isPersisted = true } = {}) {
   if (!(trigger instanceof HTMLElement)) return;
   const iconName = isGenerating ? 'loading' : hasAudio ? 'audioAttached' : 'audio';
@@ -7130,9 +7119,8 @@ function renderEditorShell(session) {
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
   const languageSelector = createLanguageSelector({
-    onChange: async () => {
-      await flushLocaleChangeBeforeReload(session, 'editor.shell');
-      window.location.reload?.();
+    onChange: () => {
+      renderEditorShell(session);
     },
   });
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl, languageSelector);

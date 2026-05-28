@@ -384,17 +384,6 @@ function createLanguageSelector({ onChange, variant = 'inline' } = {}) {
   return wrapper;
 }
 
-async function flushLocaleChangeBeforeReload(session, source = 'viewer') {
-  if (!session || typeof session.flushLocalStateForAuthRedirect !== 'function') {
-    return;
-  }
-  try {
-    await session.flushLocalStateForAuthRedirect();
-  } catch (error) {
-    console.error(`Failed to flush local attempt before locale change (${source})`, error);
-  }
-}
-
 function renderNotificationCard(notification, className = 'notification-toast') {
   const kind = String(notification?.kind || 'info').toLowerCase();
   const card = document.createElement('article');
@@ -1549,25 +1538,6 @@ function classifyPrintSectionBreakMode({
 }
 
 
-function buildLocaleChangeNavigationUrl(session) {
-  const nextUrl = new URL(window.location.href);
-  if (session?.state?.localAttemptId) {
-    nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
-  }
-  nextUrl.searchParams.delete('publishedPackageId');
-  nextUrl.searchParams.delete('localDraftId');
-  nextUrl.searchParams.delete('importedWorksheetId');
-  nextUrl.searchParams.delete('viewerPayload');
-  nextUrl.searchParams.delete('snapshot');
-  nextUrl.searchParams.delete('payload');
-  return nextUrl;
-}
-
-async function navigateForLocaleChange(session, source = 'viewer') {
-  await flushLocaleChangeBeforeReload(session, source);
-  const nextUrl = buildLocaleChangeNavigationUrl(session);
-  window.location.assign(nextUrl.toString());
-}
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -5356,8 +5326,8 @@ function renderViewerShell(session) {
   printReportBtn.innerHTML = createViewerIcon('print');
   const languageSelector = createLanguageSelector({
     variant: 'icon',
-    onChange: async () => {
-      await navigateForLocaleChange(session, 'viewer.shell');
+    onChange: () => {
+      renderViewerShell(session);
     },
   });
   headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, exportAttemptBtn, printReportBtn);
@@ -7034,8 +7004,8 @@ function renderViewerStartPanel(session, options = {}) {
   }
 
   const languageSelector = createLanguageSelector({
-    onChange: async () => {
-      await navigateForLocaleChange(session, 'viewer.start');
+    onChange: () => {
+      renderViewerStartPanel(session);
     },
   });
   panel.append(languageSelector, heading, description);

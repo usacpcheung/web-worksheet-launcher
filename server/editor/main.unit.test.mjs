@@ -1313,9 +1313,11 @@ test('flushLocalStateForAuthRedirect clears pending autosave timer before immedi
   assert.equal(timerFired, false);
 });
 
-test('editor language change reload path flushes local draft state first', async () => {
+test('editor language change rerenders without reloading or flushing draft state', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("await flushLocaleChangeBeforeReload(session, 'editor.shell');"), true);
+  assert.equal(source.includes('flushLocaleChangeBeforeReload'), false);
+  assert.equal(source.includes('window.location.reload'), false);
+  assert.match(source, /const languageSelector = createLanguageSelector\(\{\s+onChange: \(\) => \{\s+renderEditorShell\(session\);/);
 });
 
 test('autosave mirrors persistence and validation warnings into deduped notification sources', async () => {
