@@ -571,12 +571,16 @@ function createEmptyQuestionBlock(position) {
 const TEXT_INPUT_TYPES = new Set(['text']);
 const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice']);
 
-function mapOptionsTextToResponseOptions(rawText) {
+function mapOptionsTextToLines(rawText) {
   if (!rawText) return [];
   return String(rawText)
-    .split('\n')
+    .split(/\r\n|\r|\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
+    .filter(Boolean);
+}
+
+function mapOptionsTextToResponseOptions(rawText) {
+  return mapOptionsTextToLines(rawText)
     .map((line) => ({ id: createLocalId('opt'), value: line, label: line }));
 }
 
@@ -2178,6 +2182,87 @@ class EditorDraftSession {
       };
     });
     this.touchDraft();
+  }
+
+  applyQuestionOptionMultilinePaste(blockId, startIndex, rawText, options = {}) {
+    if (!this.state.draft || !blockId || !Number.isInteger(startIndex) || startIndex < 0) {
+      return { ok: false, reason: 'invalid-target' };
+    }
+    const labels = mapOptionsTextToLines(rawText);
+    if (labels.length <= 1) {
+      return { ok: false, reason: 'not-multiline' };
+    }
+
+    const targetBlock = this.findBlock(blockId);
+    if (!targetBlock || targetBlock.kind !== 'question') {
+      return { ok: false, reason: 'invalid-target' };
+    }
+    const targetConfig = normalizeQuestionResponseConfig(targetBlock.responseConfig);
+    if (targetConfig.inputType !== 'multiple_choice') {
+      return { ok: false, reason: 'not-multiple-choice' };
+    }
+
+    const existingOptions = Array.isArray(targetConfig.options)
+      ? targetConfig.options.map((option) => normalizeResponseOption(option))
+      : [];
+    const overwrittenOptions = labels
+      .map((_, offset) => existingOptions[startIndex + offset])
+      .filter(Boolean);
+    const audioBackedOptions = overwrittenOptions.filter((option) => {
+      return normalizeMediaRefs(option.mediaRefs, 'option_audio').length > 0;
+    });
+
+    if (audioBackedOptions.length > 0 && options.confirmRemoveAudio !== true) {
+      return {
+        ok: false,
+        reason: 'confirm-audio-removal-required',
+        audioOptionCount: audioBackedOptions.length,
+      };
+    }
+
+    const removedAssetIds = [];
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (responseConfig.inputType !== 'multiple_choice') return block;
+      const nextOptions = Array.isArray(responseConfig.options)
+        ? responseConfig.options.map((option) => normalizeResponseOption(option))
+        : [];
+
+      labels.forEach((label, offset) => {
+        const optionIndex = startIndex + offset;
+        const existing = nextOptions[optionIndex]
+          ? normalizeResponseOption(nextOptions[optionIndex])
+          : { id: createLocalId('opt'), value: '', label: '', mediaRefs: [] };
+        normalizeMediaRefs(existing.mediaRefs, 'option_audio').forEach((ref) => {
+          removedAssetIds.push(ref.assetId);
+        });
+        nextOptions[optionIndex] = {
+          ...existing,
+          value: label,
+          label,
+          mediaRefs: removeSingleMediaRef(existing.mediaRefs, 'option_audio'),
+        };
+      });
+
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...responseConfig,
+          options: nextOptions,
+        }),
+      };
+    });
+    if (removedAssetIds.length > 0) {
+      this.pruneAssetLinks(removedAssetIds);
+    }
+    this.touchDraft();
+    return {
+      ok: true,
+      addedOptionCount: Math.max(0, startIndex + labels.length - existingOptions.length),
+      updatedOptionCount: labels.length,
+      removedAudioCount: new Set(removedAssetIds).size,
+    };
   }
 
   addQuestionOption(blockId) {
@@ -6082,6 +6167,35 @@ function renderEditorShell(session) {
         optionInput.addEventListener('input', (event) => {
           if (isOptionInputComposing || event.isComposing) return;
           commitOptionInputValue();
+        });
+        optionInput.addEventListener('paste', async (event) => {
+          const pastedText = event.clipboardData?.getData('text') || '';
+          if (mapOptionsTextToLines(pastedText).length <= 1) return;
+          event.preventDefault();
+          const outcome = session.applyQuestionOptionMultilinePaste(
+            selectedBlock.blockId,
+            optionIndex,
+            pastedText
+          );
+          if (outcome?.reason === 'confirm-audio-removal-required') {
+            const audioOptionCount = Number.isInteger(outcome.audioOptionCount)
+              ? outcome.audioOptionCount
+              : 0;
+            const confirmed = await confirmDangerAction({
+              title: t('editor.question.multilinePasteConfirm.title'),
+              bodyText: t('editor.question.multilinePasteConfirm.description', { count: audioOptionCount }),
+              confirmLabel: t('editor.question.multilinePasteConfirm.confirmLabel'),
+              removalItems: [t('editor.question.multilinePasteConfirm.audioRemoval')],
+            });
+            if (!confirmed) return;
+            session.applyQuestionOptionMultilinePaste(
+              selectedBlock.blockId,
+              optionIndex,
+              pastedText,
+              { confirmRemoveAudio: true }
+            );
+          }
+          updateSummary({ preserveDetailEditor: true });
         });
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
         const optionActionsMenu = document.createElement('details');

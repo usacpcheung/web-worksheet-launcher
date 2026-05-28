@@ -446,6 +446,12 @@ export default {
         "optionTextRemoval": "將會移除使用者輸入的選項文字／值。",
         "title": "切換答案類型會移除資料",
         "confirmLabel": "切換並移除"
+      },
+      "multilinePasteConfirm": {
+        "audioRemoval": "被覆寫選項中的已附加音訊。",
+        "confirmLabel": "取代選項",
+        "description": "這次貼上會取代 {count} 個已附加音訊的選項。取代文字會移除這些音訊附件。",
+        "title": "用貼上的多行文字取代選項？"
       }
     },
     "reorder": {

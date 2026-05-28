@@ -1566,6 +1566,104 @@ test('mapOptionsTextToResponseOptions maps trimmed non-empty lines', async () =>
   assert.equal(mapped.every((option) => typeof option.id === 'string' && option.id.length > 0), true);
 });
 
+test('multiple-choice multiline paste fills downward and adds missing options', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_option_paste');
+  const block = session.createBlock('question');
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionOptionsFromText(block.blockId, 'A\nB\nC');
+
+  const beforeOptions = session.findBlock(block.blockId).responseConfig.options;
+  const firstOptionId = beforeOptions[0].id;
+  const secondOptionId = beforeOptions[1].id;
+  const thirdOptionId = beforeOptions[2].id;
+  const outcome = session.applyQuestionOptionMultilinePaste(block.blockId, 0, ' Red \r\nBlue\n\nGreen\nYellow ');
+
+  const updatedOptions = session.findBlock(block.blockId).responseConfig.options;
+  assert.deepEqual(stripOptionIds(updatedOptions), [
+    { value: 'Red', label: 'Red' },
+    { value: 'Blue', label: 'Blue' },
+    { value: 'Green', label: 'Green' },
+    { value: 'Yellow', label: 'Yellow' },
+  ]);
+  assert.equal(updatedOptions[0].id, firstOptionId);
+  assert.equal(updatedOptions[1].id, secondOptionId);
+  assert.equal(updatedOptions[2].id, thirdOptionId);
+  assert.equal(typeof updatedOptions[3].id, 'string');
+  assert.notEqual(updatedOptions[3].id, thirdOptionId);
+  assert.deepEqual(outcome, {
+    ok: true,
+    addedOptionCount: 1,
+    updatedOptionCount: 4,
+    removedAudioCount: 0,
+  });
+});
+
+test('multiple-choice multiline paste from last option appends new rows', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  await session.createOrOpenByLocalDraftId('draft_option_paste_last');
+  const block = session.createBlock('question');
+  session.updateQuestionInputType(block.blockId, 'multiple_choice');
+  session.updateQuestionOptionsFromText(block.blockId, 'A\nB\nC');
+
+  const firstOptionId = session.findBlock(block.blockId).responseConfig.options[0].id;
+  session.applyQuestionOptionMultilinePaste(block.blockId, 2, 'Red\nBlue\nGreen');
+
+  const updatedOptions = session.findBlock(block.blockId).responseConfig.options;
+  assert.deepEqual(stripOptionIds(updatedOptions), [
+    { value: 'A', label: 'A' },
+    { value: 'B', label: 'B' },
+    { value: 'Red', label: 'Red' },
+    { value: 'Blue', label: 'Blue' },
+    { value: 'Green', label: 'Green' },
+  ]);
+  assert.equal(updatedOptions[0].id, firstOptionId);
+});
+
+test('multiple-choice multiline paste requires confirmation before removing overwritten option audio', async () => {
+  const mod = await loadEditorModule();
+  const removedAssetIds = [];
+  const session = new mod.EditorDraftSession({
+    ...createSessionForTests(),
+    localAssets: { remove: async (assetId) => removedAssetIds.push(assetId) },
+  });
+  await session.createOrOpenByLocalDraftId('draft_option_paste_audio');
+  session.state.draft.assets = [
+    { assetId: 'asset_opt_audio', kind: 'audio', usage: 'option_audio', mimeType: 'audio/mpeg' },
+  ];
+  session.state.draft.blocks = [{
+    blockId: 'q1',
+    kind: 'question',
+    prompt: { text: 'Q' },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      options: [
+        { id: 'o1', value: 'Apple', label: 'Apple', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_opt_audio' }] },
+        { id: 'o2', value: 'Banana', label: 'Banana' },
+      ],
+    },
+  }];
+
+  const needsConfirm = session.applyQuestionOptionMultilinePaste('q1', 0, 'Red\nBlue');
+  assert.equal(needsConfirm.ok, false);
+  assert.equal(needsConfirm.reason, 'confirm-audio-removal-required');
+  assert.equal(session.findBlock('q1').responseConfig.options[0].label, 'Apple');
+  assert.equal(session.state.draft.assets.length, 1);
+
+  const applied = session.applyQuestionOptionMultilinePaste('q1', 0, 'Red\nBlue', { confirmRemoveAudio: true });
+  const updatedOptions = session.findBlock('q1').responseConfig.options;
+  assert.equal(applied.ok, true);
+  assert.deepEqual(stripOptionIds(updatedOptions), [
+    { value: 'Red', label: 'Red' },
+    { value: 'Blue', label: 'Blue' },
+  ]);
+  assert.deepEqual(updatedOptions[0].mediaRefs, []);
+  assert.deepEqual(session.state.draft.assets, []);
+  assert.deepEqual(removedAssetIds, ['asset_opt_audio']);
+});
+
 test('question field updates map inputType, maxLength, and options through draft blocks', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({

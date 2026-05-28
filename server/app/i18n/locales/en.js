@@ -446,6 +446,12 @@ export default {
         "optionTextRemoval": "User-entered option text/values will be removed.",
         "title": "Switching answer type will remove data",
         "confirmLabel": "Switch and remove"
+      },
+      "multilinePasteConfirm": {
+        "audioRemoval": "Attached audio from overwritten options.",
+        "confirmLabel": "Replace options",
+        "description": "This paste will replace {count} option(s) that have attached audio. Replacing the text will remove those audio attachments.",
+        "title": "Replace options with pasted lines?"
       }
     },
     "reorder": {
