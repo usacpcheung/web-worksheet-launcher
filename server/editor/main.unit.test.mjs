@@ -3260,6 +3260,61 @@ test('deleteBlock prunes linked question and option media assets', async () => {
   assert.deepEqual(removed.sort(), ['asset_opt_audio', 'asset_q_audio']);
 });
 
+test('startNewWorksheet removes only current draft and referenced local assets', async () => {
+  const mod = await loadEditorModule();
+  const removedDraftIds = [];
+  const removedAssetIds = [];
+  const restoreSnapshots = [];
+  const session = new mod.EditorDraftSession({
+    drafts: {
+      get: async () => null,
+      put: async (value) => value,
+      remove: async (id) => { removedDraftIds.push(id); },
+    },
+    importedWorksheets: { put: async () => {} },
+    localAssets: {
+      remove: async (id) => { removedAssetIds.push(id); },
+    },
+    resumeFlags: {
+      get: () => null,
+      set: (_key, value) => { restoreSnapshots.push(value); },
+    },
+  });
+  await session.createOrOpenByLocalDraftId('draft_reset_target');
+  clearTimeout(session.autosaveTimer);
+  session.state.draft.blocks = [
+    {
+      blockId: 'q1',
+      kind: 'question',
+      position: 0,
+      prompt: { text: 'Q', mediaRefs: [{ usage: 'question_image', assetId: 'asset_img' }] },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [
+          { id: 'o1', value: 'A', label: 'A', mediaRefs: [{ usage: 'option_audio', assetId: 'asset_option_audio' }] },
+        ],
+      },
+    },
+  ];
+  session.state.draft.assets = [
+    { assetId: 'asset_img' },
+    { assetId: 'asset_option_audio' },
+    { assetId: 'asset_unreferenced' },
+  ];
+
+  const nextDraft = await session.startNewWorksheet();
+  clearTimeout(session.autosaveTimer);
+
+  assert.deepEqual(removedDraftIds, ['draft_reset_target']);
+  assert.deepEqual(removedAssetIds.sort(), ['asset_img', 'asset_option_audio']);
+  assert.notEqual(nextDraft.localId, 'draft_reset_target');
+  assert.equal(session.state.draft.localId, nextDraft.localId);
+  assert.equal(session.state.selectedBlockId, nextDraft.blocks[0].blockId);
+  assert.equal(session.state.isPristineDraft, true);
+  assert.equal(session.state.lastSavedRevision, 0);
+  assert.equal(restoreSnapshots.at(-1).localId, nextDraft.localId);
+});
+
 test('deleteBlockWithPolicy directly deletes empty block', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({

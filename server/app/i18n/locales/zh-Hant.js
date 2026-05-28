@@ -83,12 +83,21 @@ export default {
   "editor": {
     "actions": {
       "saveLocalDraft": "儲存本機草稿",
+      "startNewWorksheet": "新工作紙",
       "addContent": "新增內容",
       "addQuestion": "新增題目",
       "openViewer": "在檢視器開啟（同一分頁）",
       "importPackage": "匯入套件（.zip）",
       "exportPackage": "匯出套件（.zip）",
       "more": "更多"
+    },
+    "newWorksheet": {
+      "confirmTitle": "開始新的工作紙？",
+      "confirmDescription": "這會刪除目前的本機工作紙草稿，並從空白狀態重新開始。",
+      "confirmLabel": "開始新工作紙",
+      "removeCurrentDraft": "目前的本機草稿記錄",
+      "removeBlocks": "此草稿內的所有區塊、題目、答案設定和工作紙資料",
+      "removeLocalMedia": "此草稿附加的本機媒體"
     },
     "server": {
       "uploadDraft": "上載草稿",

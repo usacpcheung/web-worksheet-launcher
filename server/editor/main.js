@@ -1249,6 +1249,47 @@ class EditorDraftSession {
     return this.state.draft;
   }
 
+  async startNewWorksheet() {
+    const previousDraft = this.state.draft;
+    const previousDraftId = previousDraft?.localId || null;
+    const referencedAssetIds = previousDraft ? Array.from(collectDraftQuestionAssetIds(previousDraft)) : [];
+
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = null;
+
+    if (previousDraftId) {
+      await this.storage.drafts.remove(previousDraftId);
+    }
+
+    await Promise.all(referencedAssetIds.map(async (assetId) => {
+      try {
+        await this.storage.localAssets.remove(assetId);
+      } catch (error) {
+        console.warn('Unable to remove local asset while starting a new worksheet.', error);
+      }
+    }));
+
+    const draft = createDraftRecord();
+    this.state.draft = draft;
+    this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
+    this.state.draftRevision = 1;
+    this.state.lastSavedRevision = 0;
+    this.state.lastSavedAt = null;
+    this.state.lastManualSaveAt = null;
+    this.state.lastExportedAt = null;
+    this.state.lastImportedAt = null;
+    this.state.lastPersistenceError = null;
+    this.state.lastValidationWarning = null;
+    this.state.lastContractValidationIssueCount = 0;
+    this.state.lastSavedLocalValidationIssueCount = 0;
+    this.state.isPristineDraft = true;
+    this.transientQuestionBlockIds.clear();
+    this.validateCurrentDraft();
+    this.scheduleAutosave();
+    this.persistRestoreMetadata();
+    return draft;
+  }
+
   updateTitle(nextTitle) {
     if (!this.state.draft) return;
     this.state.draft.title = String(nextTitle || '');
@@ -4809,6 +4850,12 @@ function renderEditorShell(session) {
   saveBtn.type = 'button';
   saveBtn.className = 'sidebar-action-btn';
   setMediaActionButtonContent(saveBtn, 'save', t('editor.actions.saveLocalDraft'));
+  const worksheetActionsRow = document.createElement('div');
+  worksheetActionsRow.className = 'sidebar-worksheet-actions';
+  const startNewWorksheetBtn = document.createElement('button');
+  startNewWorksheetBtn.type = 'button';
+  startNewWorksheetBtn.className = 'sidebar-action-btn';
+  setMediaActionButtonContent(startNewWorksheetBtn, 'filePlus', t('editor.actions.startNewWorksheet'));
   const addContentBtn = document.createElement('button');
   addContentBtn.type = 'button';
   addContentBtn.className = 'sidebar-action-btn';
@@ -6638,6 +6685,27 @@ function renderEditorShell(session) {
     await session.saveNow();
     updateSummary();
   });
+  startNewWorksheetBtn.addEventListener('click', async () => {
+    const confirmed = await showConfirmDialog({
+      title: t('editor.newWorksheet.confirmTitle'),
+      bodyText: t('editor.newWorksheet.confirmDescription'),
+      removalItems: [
+        t('editor.newWorksheet.removeCurrentDraft'),
+        t('editor.newWorksheet.removeBlocks'),
+        t('editor.newWorksheet.removeLocalMedia'),
+      ],
+      confirmLabel: t('editor.newWorksheet.confirmLabel'),
+    });
+    if (!confirmed) return;
+    const nextDraft = await session.startNewWorksheet();
+    if (nextDraft?.localId) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('localDraftId', nextDraft.localId);
+      nextUrl.searchParams.delete('draftUpdatedAt');
+      window.history.replaceState(null, '', nextUrl.toString());
+    }
+    updateSummary();
+  });
   addContentBtn.addEventListener('click', () => {
     session.createBlock('content');
     updateSummary();
@@ -6919,6 +6987,7 @@ function renderEditorShell(session) {
     updateSummary();
   });
 
+  worksheetActionsRow.appendChild(startNewWorksheetBtn);
   controlsRow.append(addContentBtn, addQuestionBtn);
   metaRow.append(saveBtn, exportBtn, importBtn, openViewerBtn);
   protectedActionsColumn.append(
@@ -6932,6 +7001,7 @@ function renderEditorShell(session) {
   leftPanel.append(
     leftHeading,
     metadataSection,
+    worksheetActionsRow,
     controlsRow,
     blockList,
     moreActions,

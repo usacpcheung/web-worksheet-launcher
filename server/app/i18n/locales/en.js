@@ -83,12 +83,21 @@ export default {
   "editor": {
     "actions": {
       "saveLocalDraft": "Save Local Draft",
+      "startNewWorksheet": "New worksheet",
       "addContent": "Add Content",
       "addQuestion": "Add Question",
       "openViewer": "Open in Viewer (same tab)",
       "importPackage": "Import package (.zip)",
       "exportPackage": "Export package (.zip)",
       "more": "More"
+    },
+    "newWorksheet": {
+      "confirmTitle": "Start a new worksheet?",
+      "confirmDescription": "This will delete the current local worksheet draft and start again from scratch.",
+      "confirmLabel": "Start new worksheet",
+      "removeCurrentDraft": "Current local draft record",
+      "removeBlocks": "All blocks, questions, answers, and worksheet metadata in this draft",
+      "removeLocalMedia": "Local media attached to this draft"
     },
     "server": {
       "uploadDraft": "Upload Draft",

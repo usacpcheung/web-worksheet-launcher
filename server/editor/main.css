@@ -485,6 +485,14 @@ textarea.control {
   gap: 10px;
 }
 
+.sidebar-worksheet-actions {
+  display: flex;
+}
+
+.sidebar-worksheet-actions .sidebar-action-btn {
+  width: 100%;
+}
+
 .sidebar-action-btn {
   display: inline-flex;
   align-items: center;
