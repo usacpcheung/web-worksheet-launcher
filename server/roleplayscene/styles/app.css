@@ -31,6 +31,7 @@
   --font-size-base: 1rem;
   --font-size-lg: 1.25rem;
   --font-size-xl: 1.5rem;
+  --roleplayscene-topbar-height: 4rem;
 }
 html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: var(--color-text); background: var(--color-bg); font-size: var(--font-size-base); }
 body { display: flex; flex-direction: column; min-height: 100vh; }
@@ -114,6 +115,8 @@ button:disabled {
   color: #fff;
 }
 .topbar {
+  position: relative;
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1962,18 +1965,24 @@ button:disabled {
 }
 .player-cue-overlay {
   position: fixed;
-  inset: 0;
+  top: var(--roleplayscene-topbar-height, 4rem);
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: grid;
   place-items: center;
   padding: var(--space-md);
   background: rgba(15, 23, 42, 0.45);
   z-index: 30;
+  overflow: auto;
 }
 .player-cue-overlay[hidden] {
   display: none;
 }
 .player-cue-dialog {
   width: min(720px, 100%);
+  max-height: max(14rem, calc(100vh - var(--roleplayscene-topbar-height, 4rem) - 2rem));
+  overflow: auto;
   background: var(--color-surface);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);

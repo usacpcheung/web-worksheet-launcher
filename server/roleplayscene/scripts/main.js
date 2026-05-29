@@ -109,6 +109,7 @@ let pendingDirectPublishedSceneId = '';
 const LEGACY_LOCALE_STORAGE_KEY = 'roleplayscene:locale';
 const HEADER_TABLET_MIN_WIDTH = 768;
 const HEADER_COMPACT_MAX_WIDTH = 1023;
+const DEFAULT_TOPBAR_HEIGHT_PX = 64;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -168,6 +169,18 @@ function getHeaderLayoutMode() {
   if (width > HEADER_COMPACT_MAX_WIDTH) return 'desktop';
   if (width >= HEADER_TABLET_MIN_WIDTH) return 'tablet';
   return 'mobile';
+}
+
+function syncTopbarHeightVariable() {
+  const measuredHeight = Number(
+    topbar?.getBoundingClientRect?.().height
+    || topbar?.offsetHeight
+    || DEFAULT_TOPBAR_HEIGHT_PX
+  );
+  const height = Number.isFinite(measuredHeight) && measuredHeight > 0
+    ? Math.ceil(measuredHeight)
+    : DEFAULT_TOPBAR_HEIGHT_PX;
+  document.documentElement?.style?.setProperty('--roleplayscene-topbar-height', `${height}px`);
 }
 
 function setToolbarOverflowOpen(open) {
@@ -337,6 +350,7 @@ function restoreDesktopToolbarLayout() {
 
 function applyToolbarOverflowLayout() {
   if (!toolbar || !toolbarOverflow || !toolbarMoreServerItems || !toolbarMoreProjectItems) {
+    syncTopbarHeightVariable();
     return;
   }
 
@@ -348,6 +362,7 @@ function applyToolbarOverflowLayout() {
     }
     updateToolbarWrapState();
     updateMobileServerBadgeLayout();
+    syncTopbarHeightVariable();
     return;
   }
 
@@ -390,6 +405,7 @@ function applyToolbarOverflowLayout() {
 
   updateToolbarWrapState();
   updateMobileServerBadgeLayout();
+  syncTopbarHeightVariable();
 }
 
 function createZipFileFromBytes(bytes, name) {
@@ -511,6 +527,7 @@ function refreshLocaleUI(nextLocale) {
   if (lastMessagePayload) {
     showMessage(lastMessagePayload);
   }
+  syncTopbarHeightVariable();
 }
 
 function migrateLegacyLocalePreference() {
@@ -2112,8 +2129,18 @@ document.addEventListener('keydown', (event) => {
 
 globalThis.addEventListener?.('resize', () => {
   applyToolbarOverflowLayout();
+  syncTopbarHeightVariable();
   setToolbarOverflowOpen(false);
 });
+
+if (typeof globalThis.ResizeObserver === 'function' && topbar) {
+  const topbarResizeObserver = new globalThis.ResizeObserver(() => {
+    syncTopbarHeightVariable();
+  });
+  topbarResizeObserver.observe(topbar);
+} else {
+  syncTopbarHeightVariable();
+}
 
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];

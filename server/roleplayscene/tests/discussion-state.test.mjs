@@ -174,6 +174,19 @@ test('main source protects discussion before story-changing actions', async () =
   assert.equal(source.includes("event.returnValue = '';"), true);
 });
 
+test('cue and discussion overlay leaves toolbar language controls reachable', async () => {
+  const mainSource = await readFile(path.resolve('server/roleplayscene/scripts/main.js'), 'utf8');
+  const cssSource = await readFile(path.resolve('server/roleplayscene/styles/app.css'), 'utf8');
+
+  assert.equal(mainSource.includes('function syncTopbarHeightVariable()'), true);
+  assert.equal(mainSource.includes("document.documentElement?.style?.setProperty('--roleplayscene-topbar-height'"), true);
+  assert.equal(mainSource.includes('new globalThis.ResizeObserver(() => {'), true);
+  assert.equal(cssSource.includes('--roleplayscene-topbar-height: 4rem;'), true);
+  assert.equal(cssSource.includes('.topbar {\n  position: relative;\n  z-index: 50;'), true);
+  assert.equal(cssSource.includes('top: var(--roleplayscene-topbar-height, 4rem);'), true);
+  assert.equal(cssSource.includes('max-height: max(14rem, calc(100vh - var(--roleplayscene-topbar-height, 4rem) - 2rem));'), true);
+});
+
 test('main source keeps active import confirmation copy tied to confirmation kind', async () => {
   const source = await readFile(path.resolve('server/roleplayscene/scripts/main.js'), 'utf8');
   assert.equal(source.includes('const ImportConfirmationKind = Object.freeze({'), true);
