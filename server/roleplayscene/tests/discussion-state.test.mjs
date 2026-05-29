@@ -220,6 +220,9 @@ test('main source opens print details before discussion print window', async () 
   assert.equal(source.includes("title: translate('player.discussion.printDetailsTitle')"), true);
   assert.equal(source.includes("translate('player.discussion.printSchoolName')"), true);
   assert.equal(source.includes("translate('player.discussion.printStudentName')"), true);
+  assert.equal(source.includes('schoolNameCustom: Boolean(rawSchoolName) && rawSchoolName !== getDefaultDiscussionPrintSchoolName()'), true);
+  assert.equal(source.includes('unsubscribeLocaleChange = onLocaleChange(() => {'), true);
+  assert.equal(source.includes('if (!schoolInput || schoolNameCustom) return;'), true);
   assert.equal(source.includes("studentName: details.studentName"), true);
   assert.equal(source.includes("printedAt: formatDiscussionPrintDate()"), true);
   assert.equal(detailsIndex > -1 && openIndex > detailsIndex, true);

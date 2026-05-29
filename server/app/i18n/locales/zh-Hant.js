@@ -652,6 +652,7 @@ export default {
       "answerPrefix": "答案：",
       "checkedResultHeading": "檢查結果",
       "checkedSummary": "已檢查正確 {correct}/{total}",
+      "defaultSchoolName": "香港紅十字會醫院學校",
       "meta": {
         "checkResult": "檢查結果",
         "student": "學生",

@@ -42,7 +42,11 @@ const VIEWER_NOTIFICATION_DEFAULT_TTL_MS = 5000;
 const VIEWER_NOTIFICATION_ERROR_TTL_MS = 8000;
 const VIEWER_NOTIFICATION_UPLOAD_SOURCE = 'attempt.upload';
 const VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY = 'worksheetLauncher.viewer.printSchoolName';
-const DEFAULT_VIEWER_PRINT_SCHOOL_NAME = 'Hong Kong Red Cross Hospital Schools';
+const VIEWER_PRINT_SCHOOL_NAME_CUSTOM_STORAGE_KEY = 'worksheetLauncher.viewer.printSchoolName.custom';
+const VIEWER_PRINT_DEFAULT_SCHOOL_NAMES = Object.freeze({
+  en: 'Hong Kong Red Cross Hospital Schools',
+  'zh-Hant': '香港紅十字會醫院學校',
+});
 let activeViewerShellAbortController = null;
 
 
@@ -176,26 +180,56 @@ function formatTimestampForReportHeader(timestamp) {
   });
 }
 
+function getDefaultViewerPrintSchoolName(locale = getLocale()) {
+  const fallback = VIEWER_PRINT_DEFAULT_SCHOOL_NAMES[locale] || VIEWER_PRINT_DEFAULT_SCHOOL_NAMES.en;
+  const translated = t('viewer.print.defaultSchoolName');
+  return translated === 'viewer.print.defaultSchoolName' ? fallback : translated;
+}
+
+function isViewerDefaultPrintSchoolName(value) {
+  const normalized = String(value || '').trim();
+  return Object.values(VIEWER_PRINT_DEFAULT_SCHOOL_NAMES).includes(normalized);
+}
+
 function normalizeViewerPrintSchoolName(value) {
-  return firstNonBlankString(value, DEFAULT_VIEWER_PRINT_SCHOOL_NAME);
+  return firstNonBlankString(value, getDefaultViewerPrintSchoolName());
+}
+
+function readViewerPrintSchoolNamePreferenceState(storage = globalThis.localStorage) {
+  const defaultSchoolName = getDefaultViewerPrintSchoolName();
+  try {
+    const raw = String(storage?.getItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY) || '').trim();
+    const isCustom = storage?.getItem?.(VIEWER_PRINT_SCHOOL_NAME_CUSTOM_STORAGE_KEY) === 'true';
+    if (raw && isCustom) {
+      return { schoolName: raw, custom: true };
+    }
+    if (!raw || isViewerDefaultPrintSchoolName(raw)) {
+      return { schoolName: defaultSchoolName, custom: false };
+    }
+    return { schoolName: raw, custom: true };
+  } catch {
+    return { schoolName: defaultSchoolName, custom: false };
+  }
 }
 
 function readViewerPrintSchoolNamePreference(storage = globalThis.localStorage) {
-  try {
-    return normalizeViewerPrintSchoolName(storage?.getItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY));
-  } catch {
-    return DEFAULT_VIEWER_PRINT_SCHOOL_NAME;
-  }
+  return readViewerPrintSchoolNamePreferenceState(storage).schoolName;
 }
 
-function writeViewerPrintSchoolNamePreference(value, storage = globalThis.localStorage) {
+function writeViewerPrintSchoolNamePreference(value, storage = globalThis.localStorage, { custom = true } = {}) {
   const schoolName = normalizeViewerPrintSchoolName(value);
   try {
-    storage?.setItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY, schoolName);
+    if (custom) {
+      storage?.setItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY, schoolName);
+      storage?.setItem?.(VIEWER_PRINT_SCHOOL_NAME_CUSTOM_STORAGE_KEY, 'true');
+    } else {
+      storage?.removeItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY);
+      storage?.removeItem?.(VIEWER_PRINT_SCHOOL_NAME_CUSTOM_STORAGE_KEY);
+    }
   } catch {
     // Printing should still work if localStorage is unavailable.
   }
-  return schoolName;
+  return custom ? schoolName : getDefaultViewerPrintSchoolName();
 }
 
 function createLocalId(prefix = 'local') {
@@ -1636,7 +1670,7 @@ async function buildWorksheetPrintReportModel({
   answers = {},
   studentName = '',
   submittedAt = '',
-  schoolName = DEFAULT_VIEWER_PRINT_SCHOOL_NAME,
+  schoolName = getDefaultViewerPrintSchoolName(),
   subject = '',
   checkResult = null,
   storage = null,
@@ -1785,7 +1819,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
 <body>
   <main class="print-report">
     <header class="print-header">
-      <p class="print-school">${escapeHtml(reportModel.schoolName || DEFAULT_VIEWER_PRINT_SCHOOL_NAME)}</p>
+      <p class="print-school">${escapeHtml(reportModel.schoolName || getDefaultViewerPrintSchoolName())}</p>
       <h1 class="print-title">${escapeHtml(reportModel.title)}</h1>
       <dl class="print-meta">
         ${studentMeta}
@@ -2105,7 +2139,7 @@ class ViewerAttemptSession {
       lastSavedAt: null,
       completedAt: null,
       submittedAt: null,
-      printSchoolName: DEFAULT_VIEWER_PRINT_SCHOOL_NAME,
+      printSchoolName: getDefaultViewerPrintSchoolName(),
       autosavePending: false,
       lastSaveError: null,
       payloadValidationErrors: [],
@@ -5241,7 +5275,9 @@ function renderViewerShell(session) {
   resumeWarning.className = 'answer-summary';
   const status = document.createElement('p');
   let studentName = session.state.studentName || '';
-  let printSchoolName = readViewerPrintSchoolNamePreference();
+  let printSchoolNameState = readViewerPrintSchoolNamePreferenceState();
+  let printSchoolName = printSchoolNameState.schoolName;
+  let printSchoolNameCustom = printSchoolNameState.custom;
   session.state.printSchoolName = printSchoolName;
 
   const blockSection = document.createElement('section');
@@ -5372,7 +5408,7 @@ function renderViewerShell(session) {
   printSchoolNameInput.className = 'viewer-details-form__input';
   printSchoolNameInput.type = 'text';
   printSchoolNameInput.maxLength = 180;
-  printSchoolNameInput.placeholder = DEFAULT_VIEWER_PRINT_SCHOOL_NAME;
+  printSchoolNameInput.placeholder = getDefaultViewerPrintSchoolName();
   const printSchoolNameSaveBtn = document.createElement('button');
   printSchoolNameSaveBtn.type = 'submit';
   printSchoolNameSaveBtn.className = 'viewer-details-form__save';
@@ -5445,6 +5481,11 @@ function renderViewerShell(session) {
   const renderTechnicalDetails = () => {
     const technicalRows = buildTechnicalDetailsRows(session.state);
     learnerNameInput.value = studentName;
+    if (!printSchoolNameCustom) {
+      printSchoolName = getDefaultViewerPrintSchoolName();
+      session.state.printSchoolName = printSchoolName;
+      printSchoolNameInput.placeholder = printSchoolName;
+    }
     printSchoolNameInput.value = printSchoolName;
     detailsList.innerHTML = '';
     technicalRows.forEach(([label, value]) => {
@@ -5515,7 +5556,13 @@ function renderViewerShell(session) {
 
   printSettingsForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    printSchoolName = writeViewerPrintSchoolNamePreference(printSchoolNameInput.value);
+    const submittedSchoolName = printSchoolNameInput.value.trim();
+    const shouldStoreCustom = Boolean(submittedSchoolName)
+      && submittedSchoolName !== getDefaultViewerPrintSchoolName();
+    printSchoolName = writeViewerPrintSchoolNamePreference(printSchoolNameInput.value, globalThis.localStorage, {
+      custom: shouldStoreCustom,
+    });
+    printSchoolNameCustom = shouldStoreCustom;
     session.state.printSchoolName = printSchoolName;
     printSchoolNameInput.value = printSchoolName;
     renderUI();
@@ -7497,6 +7544,8 @@ export {
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
+  getDefaultViewerPrintSchoolName,
+  readViewerPrintSchoolNamePreferenceState,
   readViewerPrintSchoolNamePreference,
   writeViewerPrintSchoolNamePreference,
   classifyPrintQuestionLayout,

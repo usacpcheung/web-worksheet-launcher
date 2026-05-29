@@ -652,6 +652,7 @@ export default {
       "answerPrefix": "Answer:",
       "checkedResultHeading": "Check result",
       "checkedSummary": "Checked {correct}/{total} correct",
+      "defaultSchoolName": "Hong Kong Red Cross Hospital Schools",
       "meta": {
         "checkResult": "Check result",
         "student": "Student",

@@ -105,12 +105,16 @@ let publishedScenesRequestId = 0;
 let openingPublishedSceneIds = new Set();
 let publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
 let pendingDirectPublishedSceneId = '';
-let discussionPrintDetails = { schoolName: '', studentName: '' };
+let discussionPrintDetails = { schoolName: '', schoolNameCustom: false, studentName: '' };
 
 const LEGACY_LOCALE_STORAGE_KEY = 'roleplayscene:locale';
 const HEADER_TABLET_MIN_WIDTH = 768;
 const HEADER_COMPACT_MAX_WIDTH = 1023;
 const DEFAULT_TOPBAR_HEIGHT_PX = 64;
+const DISCUSSION_PRINT_DEFAULT_SCHOOL_NAMES = Object.freeze([
+  'Hong Kong Red Cross Hospital Schools',
+  '香港紅十字會醫院學校',
+]);
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -1055,6 +1059,11 @@ function getDefaultDiscussionPrintSchoolName() {
   return translate('player.discussion.defaultSchoolName');
 }
 
+function isDefaultDiscussionPrintSchoolName(value) {
+  const normalized = String(value || '').trim();
+  return DISCUSSION_PRINT_DEFAULT_SCHOOL_NAMES.includes(normalized);
+}
+
 function formatDiscussionPrintDate(date = new Date()) {
   try {
     return new Intl.DateTimeFormat(getActiveLocale(), {
@@ -1068,8 +1077,13 @@ function formatDiscussionPrintDate(date = new Date()) {
 }
 
 function readDiscussionPrintDetailsDraft() {
+  const storedSchoolName = String(discussionPrintDetails.schoolName || '').trim();
+  const useCustomSchoolName = discussionPrintDetails.schoolNameCustom
+    && storedSchoolName
+    && !isDefaultDiscussionPrintSchoolName(storedSchoolName);
   return {
-    schoolName: String(discussionPrintDetails.schoolName || getDefaultDiscussionPrintSchoolName()).trim(),
+    schoolName: useCustomSchoolName ? storedSchoolName : getDefaultDiscussionPrintSchoolName(),
+    schoolNameCustom: useCustomSchoolName,
     studentName: String(discussionPrintDetails.studentName || '').trim(),
   };
 }
@@ -1083,15 +1097,26 @@ function promptDiscussionPrintDetails() {
     let resolved = false;
     let schoolInput = null;
     let studentInput = null;
+    let schoolNameCustom = draft.schoolNameCustom;
+    let unsubscribeLocaleChange = null;
     const settle = (value) => {
       if (resolved) return;
       resolved = true;
+      if (unsubscribeLocaleChange) {
+        unsubscribeLocaleChange();
+        unsubscribeLocaleChange = null;
+      }
       resolve(value);
     };
-    const collectDetails = () => ({
-      schoolName: String(schoolInput?.value || '').trim() || getDefaultDiscussionPrintSchoolName(),
-      studentName: String(studentInput?.value || '').trim(),
-    });
+    const collectDetails = () => {
+      const rawSchoolName = String(schoolInput?.value || '').trim();
+      const nextSchoolName = rawSchoolName || getDefaultDiscussionPrintSchoolName();
+      return {
+        schoolName: nextSchoolName,
+        schoolNameCustom: Boolean(rawSchoolName) && rawSchoolName !== getDefaultDiscussionPrintSchoolName(),
+        studentName: String(studentInput?.value || '').trim(),
+      };
+    };
 
     openServerModal({
       title: translate('player.discussion.printDetailsTitle'),
@@ -1108,6 +1133,10 @@ function promptDiscussionPrintDetails() {
         schoolInput.value = draft.schoolName;
         schoolInput.className = 'discussion-print-details-form__input';
         schoolInput.autocomplete = 'organization';
+        schoolInput.addEventListener('input', () => {
+          const rawSchoolName = schoolInput.value.trim();
+          schoolNameCustom = Boolean(rawSchoolName) && rawSchoolName !== getDefaultDiscussionPrintSchoolName();
+        });
         schoolLabel.appendChild(schoolInput);
 
         const studentLabel = document.createElement('label');
@@ -1131,6 +1160,10 @@ function promptDiscussionPrintDetails() {
         });
         form.append(schoolLabel, studentLabel);
         body.appendChild(form);
+        unsubscribeLocaleChange = onLocaleChange(() => {
+          if (!schoolInput || schoolNameCustom) return;
+          schoolInput.value = getDefaultDiscussionPrintSchoolName();
+        });
       },
       actions: [
         {

@@ -179,7 +179,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, readViewerPrintSchoolNamePreference, writeViewerPrintSchoolNamePreference, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, getDefaultViewerPrintSchoolName, readViewerPrintSchoolNamePreferenceState, readViewerPrintSchoolNamePreference, writeViewerPrintSchoolNamePreference, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -665,15 +665,32 @@ test('viewer print school preference defaults and persists through localStorage 
   const storage = {
     getItem: (key) => values.get(key) || null,
     setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
   };
 
+  assert.equal(mod.getDefaultViewerPrintSchoolName('zh-Hant'), '香港紅十字會醫院學校');
   assert.equal(
     mod.readViewerPrintSchoolNamePreference(storage),
     'Hong Kong Red Cross Hospital Schools'
   );
   assert.equal(mod.writeViewerPrintSchoolNamePreference('  St Anne School  ', storage), 'St Anne School');
   assert.equal(mod.readViewerPrintSchoolNamePreference(storage), 'St Anne School');
+  assert.deepEqual(
+    mod.readViewerPrintSchoolNamePreferenceState(storage),
+    { schoolName: 'St Anne School', custom: true }
+  );
   assert.equal(mod.writeViewerPrintSchoolNamePreference('   ', storage), 'Hong Kong Red Cross Hospital Schools');
+  values.delete('worksheetLauncher.viewer.printSchoolName.custom');
+  values.set('worksheetLauncher.viewer.printSchoolName', '香港紅十字會醫院學校');
+  assert.deepEqual(
+    mod.readViewerPrintSchoolNamePreferenceState(storage),
+    { schoolName: 'Hong Kong Red Cross Hospital Schools', custom: false }
+  );
+  values.set('worksheetLauncher.viewer.printSchoolName.custom', 'true');
+  assert.deepEqual(
+    mod.readViewerPrintSchoolNamePreferenceState(storage),
+    { schoolName: '香港紅十字會醫院學校', custom: true }
+  );
 });
 
 test('buildWorksheetPrintReportHtml records missing submitted timestamp without attempt id', async () => {
@@ -1796,6 +1813,9 @@ test('viewer details action stays available for print settings copy', async () =
   assert.match(source, /detailsTitle\.textContent = t\('viewer\.details\.title'\);/);
   assert.match(source, /learnerNameForm\.append\(learnerNameLabel, learnerNameInput, learnerNameSaveBtn\);/);
   assert.match(source, /printSettingsForm\.append\(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn\);/);
+  assert.match(source, /let printSchoolNameState = readViewerPrintSchoolNamePreferenceState\(\);/);
+  assert.match(source, /if \(!printSchoolNameCustom\) \{/);
+  assert.match(source, /printSchoolName = getDefaultViewerPrintSchoolName\(\);/);
 });
 
 
