@@ -1394,7 +1394,7 @@ test('saveNow and export failures emit error notifications', async () => {
   assert.equal(Boolean(exportError), true);
 });
 
-test('saveNow dedupes active save.manual notifications across repeated saves', async () => {
+test('saveNow replaces manual save toast with a fresh notification across repeated saves', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({
     drafts: { get: async () => null, put: async (value) => value },
@@ -1405,13 +1405,17 @@ test('saveNow dedupes active save.manual notifications across repeated saves', a
   clearTimeout(session.autosaveTimer);
 
   await session.saveNow();
+  const firstManualSaveNotification = session.state.notifications.find((item) => item?.source === 'save.manual');
   await session.saveNow();
+  const secondManualSaveNotification = session.state.notifications.find((item) => item?.source === 'save.manual');
   await session.saveNow();
 
   const activeManualSaveNotifications = session.state.notifications
     .filter((item) => item?.source === 'save.manual');
   assert.equal(activeManualSaveNotifications.length, 1);
   assert.equal(activeManualSaveNotifications[0].kind, 'success');
+  assert.notEqual(firstManualSaveNotification?.id, secondManualSaveNotification?.id);
+  assert.notEqual(secondManualSaveNotification?.id, activeManualSaveNotifications[0].id);
 });
 
 test('exportCurrentDraftToPackageFile revokes object URL when click throws', async () => {

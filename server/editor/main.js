@@ -1122,6 +1122,27 @@ class EditorDraftSession {
     });
   }
 
+  replaceNotificationForSource({
+    source = 'editor',
+    category = 'server',
+    kind = 'info',
+    text = '',
+    ttlMs = null,
+    actionLabel = null,
+  } = {}) {
+    const normalizedSource = String(source || '').trim();
+    if (!normalizedSource) return null;
+    this.clearNotificationsBySource(normalizedSource);
+    return this.pushNotification({
+      source: normalizedSource,
+      category,
+      kind,
+      text,
+      ttlMs,
+      actionLabel,
+    });
+  }
+
   normalizeDraftForContracts(draft) {
     return {
       draftWorksheetId: draft.localId,
@@ -2829,7 +2850,7 @@ class EditorDraftSession {
     try {
       const persisted = await this.autosave();
       this.state.lastManualSaveAt = nowIso();
-      this.setNotificationForSource({
+      this.replaceNotificationForSource({
         kind: 'success',
         category: 'editor',
         source: 'save.manual',
@@ -2841,7 +2862,7 @@ class EditorDraftSession {
       return persisted;
     } catch (error) {
       console.error('Manual save failed', error);
-      this.setNotificationForSource({
+      this.replaceNotificationForSource({
         kind: 'error',
         category: 'editor',
         source: 'save.manual',
