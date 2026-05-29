@@ -393,6 +393,33 @@ export default {
       "cueCardTitle": "Cue card",
       "cueCardCloseLabel": "Close cue card",
       "cueCardTriggerLabel": "Show cue card for {label}"
+    },
+    "discussion": {
+      "button": "Discussion",
+      "title": "Scene discussion",
+      "closeLabel": "Close scene discussion",
+      "cueHeading": "Cue card",
+      "choiceLabel": "Choice: {label}",
+      "inputLabel": "Your discussion",
+      "placeholder": "Write your discussion for this scene.",
+      "keptNote": "Kept while this story is open.",
+      "rewrite": "Rewrite",
+      "rewriting": "Rewriting...",
+      "undo": "Undo",
+      "hintEnterText": "Enter discussion text first.",
+      "hintTooLong": "Text is too long to rewrite. Maximum {max} characters.",
+      "utilityHeading": "Discussion",
+      "printButton": "Print discussion",
+      "printEmpty": "No discussion text yet.",
+      "printPopupBlocked": "Unable to open the print window.",
+      "printReportTitle": "Discussion Report",
+      "printDialogue": "Dialogue",
+      "printChoices": "Choices",
+      "printDiscussion": "Discussion",
+      "discardTitle": "Discard scene discussion?",
+      "discardBody": "You have discussion writing in this story. If you continue, it will be discarded.",
+      "discardConfirm": "Discard",
+      "discardCancel": "Cancel"
     }
   },
   "persistence": {

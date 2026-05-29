@@ -364,6 +364,10 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       duckBackgroundAudio,
       restoreBackgroundAudio,
       historyControls: createHistoryControls(project),
+      discussionSession: options.discussionSession ?? null,
+      apiClient: options.apiClient ?? null,
+      onDiscussionChange: options.onDiscussionChange ?? null,
+      onPrintDiscussion: options.onPrintDiscussion ?? null,
     });
 
     activeDialogueCleanup = typeof dialogueCleanup === 'function' ? dialogueCleanup : null;

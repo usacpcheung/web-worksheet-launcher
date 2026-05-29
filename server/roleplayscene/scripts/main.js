@@ -1,6 +1,8 @@
 import { Store } from './state.js';
 import { renderEditor } from './editor/editor.js';
 import { renderPlayer } from './player/player.js';
+import { RolePlaySceneDiscussionSession } from './player/discussion-state.js';
+import { buildDiscussionPrintHtml, buildDiscussionPrintModel } from './player/discussion-print.js';
 import { ensureAudioGate } from './player/audio.js';
 import {
   applyPreparedProjectImport,
@@ -68,6 +70,7 @@ const serverModalClose = document.getElementById('server-modal-close');
 
 const store = new Store();
 const apiClient = createServerApiClient();
+const discussionSession = new RolePlaySceneDiscussionSession({ apiClient });
 
 let mode = 'edit'; // 'edit' | 'play'
 let teardown = null;
@@ -562,8 +565,13 @@ function setMode(next, options = {}) {
       onPreviewCurrentScene: startEditorScenePreview,
     });
   } else {
+    discussionSession.bindProject(getActiveStore().get().project);
     teardown = renderPlayer(getActiveStore(), elLeft, elRight, showMessage, {
       initialSceneId: options.initialSceneId ?? null,
+      discussionSession,
+      apiClient,
+      onDiscussionChange: () => {},
+      onPrintDiscussion: printRolePlaySceneDiscussion,
     });
   }
   updateToolbarText();
@@ -1028,6 +1036,32 @@ function showImportError(err) {
   });
 }
 
+function printRolePlaySceneDiscussion() {
+  const activeProject = getActiveStore().get().project;
+  discussionSession.bindProject(activeProject);
+  if (!discussionSession.hasAnyText()) {
+    showMessage({ text: translate('player.discussion.printEmpty') });
+    return;
+  }
+  const printWindow = globalThis.open?.('', 'roleplayscene_discussion_print', 'width=960,height=720,resizable=yes,scrollbars=yes');
+  if (!printWindow || !printWindow.document) {
+    showMessage({ text: translate('player.discussion.printPopupBlocked') });
+    return;
+  }
+  const model = buildDiscussionPrintModel(activeProject, discussionSession.snapshot());
+  const html = buildDiscussionPrintHtml(model, {
+    reportTitle: translate('player.discussion.printReportTitle'),
+    dialogue: translate('player.discussion.printDialogue'),
+    choices: translate('player.discussion.printChoices'),
+    discussion: translate('player.discussion.printDiscussion'),
+    empty: translate('player.discussion.printEmpty'),
+  });
+  printWindow.opener = null;
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+}
+
 function closeImportConfirmation(result) {
   if (!activeImportConfirmation) return;
   const { resolve, previousFocus } = activeImportConfirmation;
@@ -1059,14 +1093,21 @@ function handleImportConfirmationKeydown(event) {
   }
 }
 
-function confirmProjectImport() {
+function confirmProjectImport(options = {}) {
+  const title = options.title || translate('messages.importConfirmTitle');
+  const body = options.body || translate('messages.importConfirmBody');
+  const accept = options.accept || translate('messages.importConfirmAccept');
+  const cancel = options.cancel || translate('messages.importConfirmCancel');
   if (!importConfirmOverlay || !importConfirmAccept || !importConfirmCancel) {
-    return Promise.resolve(globalThis.confirm?.(translate('messages.importConfirmBody')) ?? false);
+    return Promise.resolve(globalThis.confirm?.(body) ?? false);
   }
   if (activeImportConfirmation) {
     closeImportConfirmation(false);
   }
-  updateToolbarText();
+  if (importConfirmTitle) importConfirmTitle.textContent = title;
+  if (importConfirmBody) importConfirmBody.textContent = body;
+  importConfirmAccept.textContent = accept;
+  importConfirmCancel.textContent = cancel;
   importConfirmOverlay.hidden = false;
   importConfirmOverlay.removeAttribute('hidden');
   document.addEventListener('keydown', handleImportConfirmationKeydown);
@@ -1077,6 +1118,24 @@ function confirmProjectImport() {
   return new Promise((resolve) => {
     activeImportConfirmation = { resolve, previousFocus };
   });
+}
+
+function confirmDiscardDiscussion() {
+  return confirmProjectImport({
+    title: translate('player.discussion.discardTitle'),
+    body: translate('player.discussion.discardBody'),
+    accept: translate('player.discussion.discardConfirm'),
+    cancel: translate('player.discussion.discardCancel'),
+  });
+}
+
+async function ensureDiscussionCanBeDiscarded() {
+  if (!discussionSession.hasAnyText()) return true;
+  return await confirmDiscardDiscussion();
+}
+
+function discardDiscussion() {
+  discussionSession.clear();
 }
 
 async function showUploadConflictModal(existingDraft) {
@@ -1533,12 +1592,14 @@ async function loadPublishedRolePlaySceneScenes({
   }
 }
 
-function exitPublishedPlay() {
+async function exitPublishedPlay() {
+  if (!(await ensureDiscussionCanBeDiscarded())) return;
   if (publishedPlay.preparedImport?.project) {
     revokeProjectObjectUrls(publishedPlay.preparedImport.project);
   }
   editorPreview = null;
   publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
+  discardDiscussion();
   setMode('edit');
   showMessage({ textId: 'published.exited' });
 }
@@ -1550,6 +1611,7 @@ async function openPublishedRolePlayScene(scene) {
 }
 
 async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse' } = {}) {
+  if (!(await ensureDiscussionCanBeDiscarded())) return { ok: false, canceled: true };
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) {
     if (source === 'direct') {
@@ -1588,6 +1650,7 @@ async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, 
     playStore.setLocale(store.get().locale);
     playStore.set({ project: preparedImport.project });
     editorPreview = null;
+    discardDiscussion();
     publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata };
     closeServerModal('published-open');
     setMode('play');
@@ -1818,6 +1881,7 @@ async function publishUploadedRolePlaySceneDraft(draft) {
 async function openUploadedRolePlaySceneDraft(draft) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId) return;
+  if (!(await ensureDiscussionCanBeDiscarded())) return;
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) return;
   let preparedImport = null;
@@ -1839,6 +1903,7 @@ async function openUploadedRolePlaySceneDraft(draft) {
       showMessage({ textId: 'messages.importCanceled' });
       return;
     }
+    discardDiscussion();
     await applyPreparedProjectImport(store, preparedImport);
     const missingMediaWarnings = preparedImport.missingMediaPaths.map(path => (
       translate('messages.importMissingMediaWarning', { path })
@@ -1941,11 +2006,15 @@ if (dismissButton) {
   });
 }
 
-btnEdit.addEventListener('click', () => {
+btnEdit.addEventListener('click', async () => {
   if (editorPreview && !publishedPlay.active) {
+    if (!(await ensureDiscussionCanBeDiscarded())) return;
+    discardDiscussion();
     returnFromEditorScenePreview();
     return;
   }
+  if (!(await ensureDiscussionCanBeDiscarded())) return;
+  discardDiscussion();
   editorPreview = null;
   setMode('edit');
 });
@@ -2043,6 +2112,10 @@ fileInput.addEventListener('change', async (e) => {
   if (!file) return;
   let preparedImport = null;
   try {
+    if (!(await ensureDiscussionCanBeDiscarded())) {
+      showMessage({ textId: 'messages.importCanceled' });
+      return;
+    }
     showMessage({ textId: 'messages.importingProject' });
     preparedImport = await prepareProjectImport(file);
     const shouldImport = await confirmProjectImport();
@@ -2051,6 +2124,7 @@ fileInput.addEventListener('change', async (e) => {
       showMessage({ textId: 'messages.importCanceled' });
       return;
     }
+    discardDiscussion();
     await applyPreparedProjectImport(store, preparedImport);
     const missingMediaWarnings = preparedImport.missingMediaPaths.map(path => (
       translate('messages.importMissingMediaWarning', { path })
@@ -2123,7 +2197,12 @@ onLocaleChange((nextLocale) => {
   refreshLocaleUI(nextLocale);
 });
 
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', (event) => {
+  if (discussionSession.hasAnyText()) {
+    event.preventDefault();
+    event.returnValue = '';
+    return;
+  }
   if (typeof teardown === 'function') {
     teardown();
   }

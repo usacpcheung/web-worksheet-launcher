@@ -112,7 +112,7 @@ export function renderPlayerChoices({
     cueTrigger.setAttribute('aria-label', translate('player.choices.cueCardTriggerLabel', { label: choiceLabel }));
     cueTrigger.appendChild(createCueCardIcon());
 
-    cueTrigger.addEventListener('click', () => openCueCard?.(cueTrigger, cueCardText));
+    cueTrigger.addEventListener('click', () => openCueCard?.(cueTrigger, cueCardText, { choiceLabel }));
 
     row.appendChild(cueTrigger);
     row.appendChild(button);

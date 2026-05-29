@@ -393,6 +393,33 @@ export default {
       "cueCardTitle": "提示卡",
       "cueCardCloseLabel": "關閉提示卡",
       "cueCardTriggerLabel": "顯示「{label}」的提示卡"
+    },
+    "discussion": {
+      "button": "討論",
+      "title": "場景討論",
+      "closeLabel": "關閉場景討論",
+      "cueHeading": "提示卡",
+      "choiceLabel": "選項：{label}",
+      "inputLabel": "你的討論",
+      "placeholder": "寫下你對這個場景的討論。",
+      "keptNote": "此故事開啟期間會保留。",
+      "rewrite": "重寫",
+      "rewriting": "重寫中...",
+      "undo": "復原",
+      "hintEnterText": "請先輸入討論文字。",
+      "hintTooLong": "文字太長，未能重寫。最多 {max} 個字元。",
+      "utilityHeading": "討論",
+      "printButton": "列印討論",
+      "printEmpty": "尚未有討論文字。",
+      "printPopupBlocked": "無法開啟列印視窗。",
+      "printReportTitle": "討論報告",
+      "printDialogue": "對話",
+      "printChoices": "選項",
+      "printDiscussion": "討論",
+      "discardTitle": "捨棄場景討論？",
+      "discardBody": "此故事已有討論文字。繼續後，這些文字會被捨棄。",
+      "discardConfirm": "捨棄",
+      "discardCancel": "取消"
     }
   },
   "persistence": {
