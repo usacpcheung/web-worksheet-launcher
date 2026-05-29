@@ -30,6 +30,19 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   backgroundVolume = backgroundTrack.getPreferredVolume();
   backgroundTrack.setVolume(backgroundVolume);
 
+  function emitPlaybackState() {
+    if (typeof options.onPlaybackStateChange !== 'function') return;
+    options.onPlaybackStateChange({
+      currentSceneId,
+      sceneHistory: sceneHistory.slice(),
+      historyIndex,
+      currentViewStateSceneId,
+      currentViewState: currentViewState && typeof currentViewState === 'object'
+        ? { ...currentViewState }
+        : null,
+    });
+  }
+
   const duckBackgroundAudio = () => {
     backgroundDucked = true;
     backgroundTrack.enterDuckedState();
@@ -95,6 +108,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     if (!sceneId) return;
     currentViewStateSceneId = sceneId;
     currentViewState = viewState && typeof viewState === 'object' ? viewState : null;
+    emitPlaybackState();
   }
 
   function findStartScene(project) {
@@ -424,6 +438,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     historyIndex = 0;
     currentSceneId = sceneId;
     resetCurrentViewState(sceneId);
+    emitPlaybackState();
     renderCurrentScene();
   }
 
@@ -433,6 +448,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     currentSceneId = null;
     defaultBackgroundSource = null;
     resetCurrentViewState();
+    emitPlaybackState();
   }
 
   function pushSceneToHistory(sceneId) {
@@ -447,6 +463,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     }
     historyIndex = sceneHistory.length - 1;
     currentSceneId = sceneId;
+    emitPlaybackState();
   }
 
   function syncHistoryWithProject(project) {
@@ -471,6 +488,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     }
 
     currentSceneId = sceneHistory[historyIndex] ?? null;
+    emitPlaybackState();
   }
 
   function goToHistoryIndex(index) {
@@ -485,6 +503,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     historyIndex = index;
     currentSceneId = nextSceneId;
     resetCurrentViewState(nextSceneId);
+    emitPlaybackState();
     renderCurrentScene();
   }
 
@@ -533,6 +552,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     if (clampedIndex !== historyIndex) {
       historyIndex = clampedIndex;
       currentSceneId = sceneHistory[historyIndex];
+      emitPlaybackState();
     }
 
     return {
@@ -546,11 +566,39 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     };
   }
 
-  const initialScene = findSceneById(store.get().project, options.initialSceneId);
-  if (initialScene) {
-    beginRunAt(initialScene.id);
+  const initialPlaybackState = options.initialPlaybackState && typeof options.initialPlaybackState === 'object'
+    ? options.initialPlaybackState
+    : null;
+  const initialProject = store.get().project;
+  const availableSceneIds = new Set(initialProject.scenes.map(scene => scene.id));
+  const restoredHistory = Array.isArray(initialPlaybackState?.sceneHistory)
+    ? initialPlaybackState.sceneHistory.filter(sceneId => availableSceneIds.has(sceneId))
+    : [];
+  if (restoredHistory.length) {
+    sceneHistory = restoredHistory;
+    historyIndex = Number.isInteger(initialPlaybackState.historyIndex)
+      ? Math.max(0, Math.min(initialPlaybackState.historyIndex, sceneHistory.length - 1))
+      : sceneHistory.length - 1;
+    currentSceneId = sceneHistory[historyIndex] ?? null;
+    if (
+      initialPlaybackState.currentViewStateSceneId === currentSceneId
+      && initialPlaybackState.currentViewState
+      && typeof initialPlaybackState.currentViewState === 'object'
+    ) {
+      currentViewStateSceneId = currentSceneId;
+      currentViewState = { ...initialPlaybackState.currentViewState };
+    } else {
+      resetCurrentViewState(currentSceneId);
+    }
+    emitPlaybackState();
+    renderCurrentScene();
   } else {
-    renderIntro();
+    const initialScene = findSceneById(initialProject, options.initialSceneId);
+    if (initialScene) {
+      beginRunAt(initialScene.id);
+    } else {
+      renderIntro();
+    }
   }
   return cleanup;
 }

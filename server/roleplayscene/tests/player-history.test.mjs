@@ -344,6 +344,33 @@ logResult('Initial scene preview renders requested scene choices', Boolean(previ
 
 previewCleanup();
 
+const restoredStageHost = new StubElement('div');
+const restoredUiHost = new StubElement('div');
+let restoredPlaybackState = null;
+const restoredCleanup = renderPlayer(store, restoredStageHost, restoredUiHost, () => {}, {
+  initialPlaybackState: {
+    sceneHistory: ['start', 'middle'],
+    historyIndex: 1,
+    currentSceneId: 'middle',
+  },
+  onPlaybackStateChange: (state) => {
+    restoredPlaybackState = state;
+  },
+});
+
+const restoredBeginButton = findButtonByText(restoredStageHost, 'Begin Story') || findButtonByText(restoredUiHost, 'Begin Story');
+logResult('Playback restore skips intro', !restoredBeginButton);
+const restoredHistoryButtons = getHistoryButtons(restoredStageHost);
+logResult(
+  'Playback restore keeps scene history and current index',
+  restoredHistoryButtons.length === 2
+    && restoredHistoryButtons[1]?.dataset?.sceneId === 'middle'
+    && restoredHistoryButtons[1]?.disabled === true
+    && restoredPlaybackState?.currentSceneId === 'middle',
+);
+
+restoredCleanup();
+
 const localeStore = new Store();
 const localeProject = {
   meta: { title: 'Locale Position Demo' },

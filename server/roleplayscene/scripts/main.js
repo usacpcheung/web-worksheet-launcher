@@ -1,7 +1,7 @@
 import { Store } from './state.js';
 import { renderEditor } from './editor/editor.js';
 import { renderPlayer } from './player/player.js';
-import { RolePlaySceneDiscussionSession } from './player/discussion-state.js';
+import { RolePlaySceneDiscussionSession, computeDiscussionProjectFingerprint } from './player/discussion-state.js';
 import { buildDiscussionPrintHtml, buildDiscussionPrintModel } from './player/discussion-print.js';
 import { ensureAudioGate } from './player/audio.js';
 import {
@@ -106,8 +106,10 @@ let openingPublishedSceneIds = new Set();
 let publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
 let pendingDirectPublishedSceneId = '';
 let discussionPrintDetails = { schoolName: '', schoolNameCustom: false, studentName: '' };
+let activePlaybackState = null;
 
 const LEGACY_LOCALE_STORAGE_KEY = 'roleplayscene:locale';
+const PLAY_SESSION_STORAGE_KEY = 'roleplayscene:play-session:v1';
 const HEADER_TABLET_MIN_WIDTH = 768;
 const HEADER_COMPACT_MAX_WIDTH = 1023;
 const DEFAULT_TOPBAR_HEIGHT_PX = 64;
@@ -555,12 +557,80 @@ function getActiveStore() {
   return publishedPlay.active && publishedPlay.store ? publishedPlay.store : store;
 }
 
+function getSessionStorage() {
+  try {
+    const storage = globalThis.sessionStorage;
+    return storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function'
+      ? storage
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readPlaySessionRecovery() {
+  const storage = getSessionStorage();
+  if (!storage) return null;
+  try {
+    const parsed = JSON.parse(storage.getItem(PLAY_SESSION_STORAGE_KEY) || 'null');
+    if (!parsed || parsed.version !== 1 || !['edit', 'play'].includes(parsed.mode)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writePlaySessionRecovery(next = {}) {
+  const storage = getSessionStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(PLAY_SESSION_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      updatedAt: Date.now(),
+      ...next,
+    }));
+  } catch {
+    // Same-tab recovery is best effort only.
+  }
+}
+
+function getProjectFingerprint(project = getActiveStore().get().project) {
+  return computeDiscussionProjectFingerprint(project);
+}
+
+function getMatchingPlaybackRecovery(project, { publishedSceneId = '' } = {}) {
+  const recovery = readPlaySessionRecovery();
+  if (!recovery || recovery.mode !== 'play') return null;
+  if (publishedSceneId && recovery.publishedSceneId !== publishedSceneId) return null;
+  if (!publishedSceneId && recovery.publishedSceneId) return null;
+  if (recovery.projectFingerprint !== getProjectFingerprint(project)) return null;
+  return recovery.playbackState && typeof recovery.playbackState === 'object'
+    ? recovery.playbackState
+    : {};
+}
+
+function persistCurrentAppMode(extra = {}) {
+  if (Object.prototype.hasOwnProperty.call(extra, 'playbackState')) {
+    activePlaybackState = extra.playbackState ?? null;
+  }
+  const activeProject = getActiveStore().get().project;
+  writePlaySessionRecovery({
+    mode,
+    projectFingerprint: getProjectFingerprint(activeProject),
+    publishedSceneId: publishedPlay.active ? getRolePlayScenePublishedSceneId(publishedPlay.scene) : '',
+    playbackState: mode === 'play' ? activePlaybackState : null,
+  });
+}
+
 function setMode(next, options = {}) {
   if (teardown) {
     teardown();
     teardown = null;
   }
   mode = next;
+  if (mode === 'edit') {
+    activePlaybackState = null;
+  }
   btnEdit.classList.toggle('active', mode === 'edit');
   btnPlay.classList.toggle('active', mode === 'play');
   if (appRoot) {
@@ -583,12 +653,15 @@ function setMode(next, options = {}) {
     discussionSession.bindProject(getActiveStore().get().project);
     teardown = renderPlayer(getActiveStore(), elLeft, elRight, showMessage, {
       initialSceneId: options.initialSceneId ?? null,
+      initialPlaybackState: options.initialPlaybackState ?? null,
       discussionSession,
       apiClient,
-      onDiscussionChange: () => {},
+      onDiscussionChange: () => persistCurrentAppMode(),
+      onPlaybackStateChange: (playbackState) => persistCurrentAppMode({ playbackState }),
       onPrintDiscussion: printRolePlaySceneDiscussion,
     });
   }
+  persistCurrentAppMode();
   updateToolbarText();
   updatePublishedPlayUi();
 }
@@ -1825,7 +1898,7 @@ async function openPublishedRolePlayScene(scene) {
   return openPublishedRolePlaySceneById(sceneId, { scene });
 }
 
-async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse' } = {}) {
+async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse', initialPlaybackState = null } = {}) {
   if (!(await ensureDiscussionCanBeDiscarded())) return { ok: false, canceled: true };
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) {
@@ -1867,8 +1940,10 @@ async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, 
     editorPreview = null;
     discardDiscussion();
     publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata };
+    const playbackRecovery = initialPlaybackState
+      || getMatchingPlaybackRecovery(preparedImport.project, { publishedSceneId });
     closeServerModal('published-open');
-    setMode('play');
+    setMode('play', { initialPlaybackState: playbackRecovery });
     showMessage({ textId: 'published.opened' });
     return { ok: true };
   } catch (err) {
@@ -2388,8 +2463,11 @@ btnExport.addEventListener('click', async () => {
 async function bootstrap() {
   migrateLegacyLocalePreference();
   refreshLocaleUI(store.get().locale);
+  const directPublishedSceneId = getDirectPublishedSceneIdFromLocation();
   try {
-    persistenceCleanup = await setupPersistence(store, { showMessage });
+    persistenceCleanup = directPublishedSceneId
+      ? () => {}
+      : await setupPersistence(store, { showMessage });
   } catch (err) {
     console.error('Failed to initialise persistence', err);
     persistenceCleanup = () => {};
@@ -2399,13 +2477,21 @@ async function bootstrap() {
     serverSession = { status: 'error', user: null, error: err?.message || String(err) };
     updateServerSessionUi();
   });
-  setMode('edit');
-  const directPublishedSceneId = getDirectPublishedSceneIdFromLocation();
   if (directPublishedSceneId) {
     openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' }).catch((err) => {
       console.error(err);
       showMessage({ textId: 'published.openFailed' });
     });
+    updateToolbarText();
+    updatePublishedPlayUi();
+    return;
+  }
+  const recovery = readPlaySessionRecovery();
+  const playbackRecovery = getMatchingPlaybackRecovery(store.get().project);
+  if (recovery?.mode === 'play' && playbackRecovery) {
+    setMode('play', { initialPlaybackState: playbackRecovery });
+  } else {
+    setMode('edit');
   }
 }
 

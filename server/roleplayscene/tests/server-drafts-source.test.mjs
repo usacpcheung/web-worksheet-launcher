@@ -18,6 +18,9 @@ const dialogueT2ASource = editorSource.slice(dialogueT2AFunctionIndex, dialogueT
 const refreshLocaleFunctionIndex = mainSource.indexOf('function refreshLocaleUI');
 const refreshLocaleFunctionEndIndex = mainSource.indexOf('function getActiveStore', refreshLocaleFunctionIndex);
 const refreshLocaleSource = mainSource.slice(refreshLocaleFunctionIndex, refreshLocaleFunctionEndIndex);
+const bootstrapFunctionIndex = mainSource.indexOf('async function bootstrap');
+const bootstrapFunctionEndIndex = mainSource.indexOf('\nbootstrap();', bootstrapFunctionIndex);
+const bootstrapSource = mainSource.slice(bootstrapFunctionIndex, bootstrapFunctionEndIndex);
 
 assert.ok(
   mainSource.includes('apiClient.listRolePlaySceneDrafts()'),
@@ -79,6 +82,25 @@ assert.ok(
     && mainSource.includes("openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' })")
     && mainSource.includes('pendingDirectPublishedSceneId'),
   'direct publishedSceneId URLs should open published scenes and support sign-in recovery',
+);
+assert.ok(
+  mainSource.includes('const PLAY_SESSION_STORAGE_KEY')
+    && mainSource.includes('function readPlaySessionRecovery()')
+    && mainSource.includes('function getMatchingPlaybackRecovery(project')
+    && mainSource.includes('initialPlaybackState: options.initialPlaybackState ?? null')
+    && mainSource.includes('onPlaybackStateChange: (playbackState) => persistCurrentAppMode({ playbackState })')
+    && playerSource.includes('options.initialPlaybackState')
+    && playerSource.includes('options.onPlaybackStateChange'),
+  'RolePlayScene play mode should store and restore compact same-tab playback state',
+);
+assert.ok(
+  mainSource.includes('const directPublishedSceneId = getDirectPublishedSceneIdFromLocation();')
+    && mainSource.includes('persistenceCleanup = directPublishedSceneId')
+    && bootstrapSource.includes('if (directPublishedSceneId) {')
+    && /updatePublishedPlayUi\(\);\r?\n\s+return;/.test(bootstrapSource)
+    && bootstrapSource.indexOf("openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' })")
+      < bootstrapSource.indexOf("const recovery = readPlaySessionRecovery();"),
+  'direct published play links should bypass the editor-first startup path',
 );
 assert.ok(
   mainSource.includes('let publishedScenesRequestId = 0')
