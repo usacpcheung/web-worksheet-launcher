@@ -160,6 +160,10 @@ test('player source wires cue and utility discussion entry points', async () => 
   assert.equal(source.includes('const rewriteTask = discussionSession?.rewrite?.(scene.id, textAtClick, { apiClient });'), true);
   assert.equal(source.includes('await rewriteTask;'), true);
   assert.equal(source.includes("if (typeof latestText === 'string') {"), true);
+  assert.equal(source.includes('player-discussion-choice-label'), false);
+  assert.equal(source.includes("cueOverlay.addEventListener('click'"), false);
+  assert.equal(source.includes("document.addEventListener('pointerdown'"), false);
+  assert.equal(source.includes("event.key === 'Escape' && !cueOverlay.hidden"), true);
 });
 
 test('main source protects discussion before story-changing actions', async () => {

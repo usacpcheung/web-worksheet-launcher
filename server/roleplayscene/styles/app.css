@@ -2034,7 +2034,6 @@ button:disabled {
   margin: 0;
 }
 .player-discussion-cue-text,
-.player-discussion-choice-label,
 .player-discussion-note,
 .player-discussion-hint {
   margin: 0;
@@ -2043,7 +2042,6 @@ button:disabled {
   white-space: pre-wrap;
   line-height: 1.45;
 }
-.player-discussion-choice-label,
 .player-discussion-note,
 .player-discussion-hint {
   color: var(--color-muted);

@@ -452,7 +452,7 @@ export function renderPlayerUI({
     }
   };
 
-  const renderDiscussionForm = ({ cueText = '', choiceLabel = '' } = {}) => {
+  const renderDiscussionForm = ({ cueText = '' } = {}) => {
     cueBody.innerHTML = '';
     const hasCue = Boolean(String(cueText || '').trim());
     setClassEnabled(cueDialog, 'player-cue-dialog--discussion-with-cue', hasCue);
@@ -472,12 +472,6 @@ export function renderPlayerUI({
       cueTextNode.className = 'player-discussion-cue-text';
       cueTextNode.textContent = cueText;
       cuePanel.append(cueHeading, cueTextNode);
-      if (choiceLabel) {
-        const choice = document.createElement('p');
-        choice.className = 'player-discussion-choice-label';
-        choice.textContent = translate('player.discussion.choiceLabel', { label: choiceLabel });
-        cuePanel.appendChild(choice);
-      }
       layout.appendChild(cuePanel);
     }
 
@@ -591,7 +585,6 @@ export function renderPlayerUI({
       cueClose.setAttribute('aria-label', translate('player.discussion.closeLabel'));
       renderDiscussionForm({
         cueText: text,
-        choiceLabel: cueOptions.choiceLabel || '',
       });
     } else {
       cueTitle.textContent = translate('player.choices.cueCardTitle');
@@ -614,11 +607,6 @@ export function renderPlayerUI({
   };
 
   cueClose.addEventListener('click', () => closeCueCard({ returnFocus: true }));
-  cueOverlay.addEventListener('click', (event) => {
-    if (event.target === cueOverlay) {
-      closeCueCard();
-    }
-  });
 
   const handleDocumentKeydown = (event) => {
     if (event.key === 'Escape' && !cueOverlay.hidden) {
@@ -626,25 +614,13 @@ export function renderPlayerUI({
     }
   };
 
-  const handleDocumentPointerDown = (event) => {
-    if (cueOverlay.hidden) {
-      return;
-    }
-    if (cueDialog.contains(event.target) || activeCueTrigger?.contains?.(event.target)) {
-      return;
-    }
-    closeCueCard();
-  };
-
   if (typeof document?.addEventListener === 'function') {
     document.addEventListener('keydown', handleDocumentKeydown);
-    document.addEventListener('pointerdown', handleDocumentPointerDown);
   }
 
   const cleanupCueCardListeners = () => {
     if (typeof document?.removeEventListener === 'function') {
       document.removeEventListener('keydown', handleDocumentKeydown);
-      document.removeEventListener('pointerdown', handleDocumentPointerDown);
     }
   };
 
