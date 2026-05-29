@@ -376,7 +376,8 @@ export default {
       },
       "save": {
         "manualSaveFailed": "手動儲存失敗。",
-        "savedDraft": "已儲存草稿 {id}。"
+        "savedDraft": "已儲存草稿 {id}。",
+        "savedLocalDraft": "已儲存本機草稿。"
       },
       "uploadDraft": {
         "alreadyInProgress": "上載正在進行中。",

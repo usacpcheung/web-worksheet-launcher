@@ -1001,6 +1001,8 @@ class EditorDraftSession {
     category = 'server',
     actionLabel = null,
     logActivity = true,
+    activityText = null,
+    activityReplaceSource = null,
   } = {}) {
     this.pruneExpiredNotifications();
     const normalizedText = String(text || '').trim();
@@ -1015,6 +1017,7 @@ class EditorDraftSession {
       actionLabel: isNonEmptyString(actionLabel) ? actionLabel.trim() : null,
       ttlMs: Number.isFinite(Number(ttlMs)) && Number(ttlMs) > 0 ? Number(ttlMs) : null,
       logActivity: logActivity !== false,
+      activityReplaceSource: isNonEmptyString(activityReplaceSource) ? activityReplaceSource.trim() : null,
       createdAt: nowIso(),
     };
     this.state.notifications = [...this.state.notifications, notification]
@@ -1023,7 +1026,15 @@ class EditorDraftSession {
     // - transient progress events stay in active notifications/toasts only
     // - historical terminal events are recorded in activityLog
     if (notification.logActivity !== false) {
-      this.state.activityLog = [...this.state.activityLog, notification]
+      const activityNotification = {
+        ...notification,
+        text: isNonEmptyString(activityText) ? activityText.trim() : notification.text,
+      };
+      const previousActivity = Array.isArray(this.state.activityLog) ? this.state.activityLog : [];
+      const retainedActivity = activityNotification.activityReplaceSource
+        ? previousActivity.filter((item) => item?.source !== activityNotification.activityReplaceSource)
+        : previousActivity;
+      this.state.activityLog = [...retainedActivity, activityNotification]
         .slice(-ACTIVITY_MAX_STORED);
     }
     this.syncDeprecatedMessageFieldsFromNotifications();
@@ -1087,6 +1098,8 @@ class EditorDraftSession {
     text = '',
     ttlMs = null,
     actionLabel = null,
+    activityText = null,
+    activityReplaceSource = null,
   } = {}) {
     const normalizedSource = String(source || '').trim();
     if (!normalizedSource) return null;
@@ -1119,6 +1132,8 @@ class EditorDraftSession {
       text: normalizedText,
       ttlMs,
       actionLabel,
+      activityText,
+      activityReplaceSource,
     });
   }
 
@@ -1129,6 +1144,8 @@ class EditorDraftSession {
     text = '',
     ttlMs = null,
     actionLabel = null,
+    activityText = null,
+    activityReplaceSource = null,
   } = {}) {
     const normalizedSource = String(source || '').trim();
     if (!normalizedSource) return null;
@@ -1140,6 +1157,8 @@ class EditorDraftSession {
       text,
       ttlMs,
       actionLabel,
+      activityText,
+      activityReplaceSource,
     });
   }
 
@@ -2857,6 +2876,8 @@ class EditorDraftSession {
         text: editorNotification('save.savedDraft', {
           id: persisted?.localId || this.state.draft?.localId || t('common.values.unknown'),
         }),
+        activityText: editorNotification('save.savedLocalDraft'),
+        activityReplaceSource: 'save.manual',
       });
       this.notifyStateChange();
       return persisted;

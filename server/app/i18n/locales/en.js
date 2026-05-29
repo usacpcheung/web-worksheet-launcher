@@ -376,7 +376,8 @@ export default {
       },
       "save": {
         "manualSaveFailed": "Manual save failed.",
-        "savedDraft": "Saved draft {id}."
+        "savedDraft": "Saved draft {id}.",
+        "savedLocalDraft": "Saved local draft."
       },
       "uploadDraft": {
         "alreadyInProgress": "Upload already in progress.",

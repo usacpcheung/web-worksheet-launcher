@@ -1418,6 +1418,33 @@ test('saveNow replaces manual save toast with a fresh notification across repeat
   assert.notEqual(secondManualSaveNotification?.id, activeManualSaveNotifications[0].id);
 });
 
+test('saveNow coalesces manual save activity and moves it to latest position', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (value) => value },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_save_activity');
+  clearTimeout(session.autosaveTimer);
+
+  await session.saveNow();
+  const firstSaveActivity = session.state.activityLog.find((item) => item?.source === 'save.manual');
+  session.pushNotification({
+    kind: 'success',
+    category: 'editor',
+    source: 'import.package_zip',
+    text: 'Imported package.',
+  });
+  await session.saveNow();
+
+  const manualSaveActivities = session.state.activityLog.filter((item) => item?.source === 'save.manual');
+  assert.equal(manualSaveActivities.length, 1);
+  assert.equal(manualSaveActivities[0].text, 'editor.notifications.save.savedLocalDraft');
+  assert.notEqual(manualSaveActivities[0].id, firstSaveActivity?.id);
+  assert.equal(session.state.activityLog.at(-1)?.source, 'save.manual');
+});
+
 test('exportCurrentDraftToPackageFile revokes object URL when click throws', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({
