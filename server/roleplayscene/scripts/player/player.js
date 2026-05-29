@@ -24,6 +24,8 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   let backgroundDucked = false;
   let defaultBackgroundSource = null;
   let activeDialogueCleanup = null;
+  let currentViewState = null;
+  let currentViewStateSceneId = null;
   const backgroundTrack = createBackgroundAudioController({ defaultVolume: backgroundVolume });
   backgroundVolume = backgroundTrack.getPreferredVolume();
   backgroundTrack.setVolume(backgroundVolume);
@@ -78,6 +80,21 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     stopActiveDialogue();
     unsubscribe();
     backgroundTrack.teardown();
+  }
+
+  function resetCurrentViewState(sceneId = null) {
+    currentViewState = null;
+    currentViewStateSceneId = sceneId;
+  }
+
+  function getCurrentViewState(sceneId) {
+    return currentViewStateSceneId === sceneId ? currentViewState : null;
+  }
+
+  function setCurrentViewState(sceneId, viewState) {
+    if (!sceneId) return;
+    currentViewStateSceneId = sceneId;
+    currentViewState = viewState && typeof viewState === 'object' ? viewState : null;
   }
 
   function findStartScene(project) {
@@ -356,6 +373,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
         const nextScene = findSceneById(project, nextId);
         maybeStopBeforeScene(nextScene);
         pushSceneToHistory(nextId);
+        resetCurrentViewState(nextId);
         renderCurrentScene();
       },
       backgroundAudioControls: store.get().audioGate
@@ -368,6 +386,8 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       apiClient: options.apiClient ?? null,
       onDiscussionChange: options.onDiscussionChange ?? null,
       onPrintDiscussion: options.onPrintDiscussion ?? null,
+      initialViewState: getCurrentViewState(scene.id),
+      onViewStateChange: (viewState) => setCurrentViewState(scene.id, viewState),
     });
 
     activeDialogueCleanup = typeof dialogueCleanup === 'function' ? dialogueCleanup : null;
@@ -403,6 +423,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     sceneHistory = [sceneId];
     historyIndex = 0;
     currentSceneId = sceneId;
+    resetCurrentViewState(sceneId);
     renderCurrentScene();
   }
 
@@ -411,6 +432,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     historyIndex = -1;
     currentSceneId = null;
     defaultBackgroundSource = null;
+    resetCurrentViewState();
   }
 
   function pushSceneToHistory(sceneId) {
@@ -462,6 +484,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     maybeStopBeforeScene(nextScene);
     historyIndex = index;
     currentSceneId = nextSceneId;
+    resetCurrentViewState(nextSceneId);
     renderCurrentScene();
   }
 

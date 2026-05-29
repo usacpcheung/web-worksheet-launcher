@@ -74,7 +74,7 @@ export function renderPlayerChoices({
     }
   }
 
-  sceneChoices.forEach(choice => {
+  sceneChoices.forEach((choice, choiceIndex) => {
     const cueCardText = typeof choice.cueCardText === 'string'
       ? choice.cueCardText.trim()
       : '';
@@ -112,7 +112,11 @@ export function renderPlayerChoices({
     cueTrigger.setAttribute('aria-label', translate('player.choices.cueCardTriggerLabel', { label: choiceLabel }));
     cueTrigger.appendChild(createCueCardIcon());
 
-    cueTrigger.addEventListener('click', () => openCueCard?.(cueTrigger, cueCardText, { choiceLabel }));
+    cueTrigger.addEventListener('click', () => openCueCard?.(cueTrigger, cueCardText, {
+      choiceId: choice.id || '',
+      choiceIndex,
+      choiceLabel,
+    }));
 
     row.appendChild(cueTrigger);
     row.appendChild(button);

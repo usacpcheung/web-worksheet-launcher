@@ -388,6 +388,8 @@ export function renderPlayerUI({
   apiClient = null,
   onDiscussionChange = null,
   onPrintDiscussion = null,
+  initialViewState = null,
+  onViewStateChange = null,
 }) {
   stageEl.innerHTML = '';
   uiEl.innerHTML = '';
@@ -431,8 +433,22 @@ export function renderPlayerUI({
   stageEl.appendChild(cueOverlay);
 
   let activeCueTrigger = null;
+  let cueOverlayState = null;
+  let playbackViewState = null;
 
-  const closeCueCard = ({ returnFocus = false } = {}) => {
+  const emitViewState = () => {
+    if (typeof onViewStateChange !== 'function') return;
+    try {
+      onViewStateChange({
+        ...(playbackViewState || {}),
+        cueOverlay: cueOverlayState ? { ...cueOverlayState } : null,
+      });
+    } catch {
+      // View-state persistence is best-effort and should not interrupt playback.
+    }
+  };
+
+  const closeCueCard = ({ returnFocus = false, notify = true } = {}) => {
     cueOverlay.hidden = true;
     cueBody.innerHTML = '';
     if (activeCueTrigger) {
@@ -442,6 +458,10 @@ export function renderPlayerUI({
       }
     }
     activeCueTrigger = null;
+    cueOverlayState = null;
+    if (notify) {
+      emitViewState();
+    }
   };
 
   const notifyDiscussionChange = () => {
@@ -580,6 +600,11 @@ export function renderPlayerUI({
     }
     activeCueTrigger = trigger;
     activeCueTrigger?.setAttribute('aria-expanded', 'true');
+    cueOverlayState = {
+      mode: 'cue',
+      choiceId: cueOptions.choiceId || '',
+      choiceIndex: Number.isInteger(cueOptions.choiceIndex) ? cueOptions.choiceIndex : -1,
+    };
     if (discussionSession) {
       cueTitle.textContent = translate('player.discussion.title');
       cueClose.setAttribute('aria-label', translate('player.discussion.closeLabel'));
@@ -592,6 +617,7 @@ export function renderPlayerUI({
       cueBody.textContent = text;
     }
     cueOverlay.hidden = false;
+    emitViewState();
   };
 
   const openDiscussion = () => {
@@ -602,8 +628,10 @@ export function renderPlayerUI({
     activeCueTrigger = null;
     cueTitle.textContent = translate('player.discussion.title');
     cueClose.setAttribute('aria-label', translate('player.discussion.closeLabel'));
+    cueOverlayState = { mode: 'discussion' };
     renderDiscussionForm();
     cueOverlay.hidden = false;
+    emitViewState();
   };
 
   cueClose.addEventListener('click', () => closeCueCard({ returnFocus: true }));
@@ -945,8 +973,29 @@ export function renderPlayerUI({
     ...options,
   });
 
+  const restoreCueOverlayState = () => {
+    const overlayState = initialViewState?.cueOverlay;
+    if (!overlayState || typeof overlayState !== 'object') return;
+    if (overlayState.mode === 'discussion') {
+      openDiscussion();
+      return;
+    }
+    if (overlayState.mode !== 'cue') return;
+    const choices = Array.isArray(scene.choices) ? scene.choices : [];
+    const choice = choices.find(item => item.id && item.id === overlayState.choiceId)
+      || choices[overlayState.choiceIndex];
+    const cueText = typeof choice?.cueCardText === 'string'
+      ? choice.cueCardText.trim()
+      : '';
+    if (!cueText) return;
+    openCueCard(null, cueText, {
+      choiceId: choice?.id || '',
+      choiceIndex: choices.indexOf(choice),
+    });
+  };
+
   if (speechBubbleEnabled) {
-    return renderSpeechBubblePlayerUI({
+    const speechCleanup = renderSpeechBubblePlayerUI({
       speechBubbleOverlay,
       theaterOverlay,
       theaterControlRail,
@@ -962,7 +1011,14 @@ export function renderPlayerUI({
       cleanupCueCardListeners,
       closeCueCard,
       renderNavigationControls,
+      initialViewState,
+      onViewStateChange: (nextPlaybackState) => {
+        playbackViewState = nextPlaybackState;
+        emitViewState();
+      },
     });
+    restoreCueOverlayState();
+    return speechCleanup;
   }
 
   const visibleEntries = (scene.dialogue || [])
@@ -970,12 +1026,17 @@ export function renderPlayerUI({
     .filter(entry => hasDialogueLineContent(entry.line));
 
   const timers = new Set();
-  let activeVisibleIndex = visibleEntries.length ? 0 : -1;
-  let activePageIndex = 0;
+  const initialActiveIndex = Number.isInteger(initialViewState?.activeVisibleIndex)
+    ? Math.max(0, Math.min(initialViewState.activeVisibleIndex, Math.max(0, visibleEntries.length - 1)))
+    : (visibleEntries.length ? 0 : -1);
+  let activeVisibleIndex = visibleEntries.length ? initialActiveIndex : -1;
+  let activePageIndex = Number.isInteger(initialViewState?.activePageIndex)
+    ? Math.max(0, initialViewState.activePageIndex)
+    : 0;
   let currentAudioActive = false;
   let playAllActive = false;
-  let choicesOpen = false;
-  let endOverlayOpen = !visibleEntries.length;
+  let choicesOpen = Boolean(initialViewState?.choicesOpen);
+  let endOverlayOpen = choicesOpen || Boolean(initialViewState?.endOverlayOpen) || !visibleEntries.length;
   let runToken = 0;
 
   const nextRunToken = () => {
@@ -1255,6 +1316,13 @@ export function renderPlayerUI({
     const activeEntry = getCurrentEntry();
     const pages = getEntryPages(activeEntry);
     const page = pages[activePageIndex] || '';
+    playbackViewState = {
+      activeVisibleIndex,
+      activePageIndex,
+      choicesOpen,
+      endOverlayOpen,
+    };
+    emitViewState();
 
     const toolbar = document.createElement('div');
     toolbar.className = 'theater-toolbar';
@@ -1379,12 +1447,13 @@ export function renderPlayerUI({
   }
 
   renderTheaterState();
+  restoreCueOverlayState();
 
   return () => {
     clearTimers();
     nextRunToken();
     cleanupCueCardListeners();
-    closeCueCard();
+    closeCueCard({ notify: false });
     stopDialoguePlayback();
   };
 }

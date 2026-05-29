@@ -343,3 +343,99 @@ const previewNextChoice = findButtonByText(previewStageHost, 'To end') || findBu
 logResult('Initial scene preview renders requested scene choices', Boolean(previewNextChoice));
 
 previewCleanup();
+
+const localeStore = new Store();
+const localeProject = {
+  meta: { title: 'Locale Position Demo' },
+  scenes: [
+    {
+      id: 'locale-start',
+      type: SceneType.START,
+      image: null,
+      backgroundAudio: null,
+      dialogue: [
+        { text: 'First visible line', audio: null },
+        { text: 'Second visible line', audio: null },
+      ],
+      choices: [
+        {
+          id: 'locale-choice',
+          label: 'Go end',
+          nextSceneId: 'locale-end',
+          cueCardText: 'Remember the second line.',
+        },
+      ],
+      autoNextSceneId: null,
+      notes: '',
+    },
+    {
+      id: 'locale-end',
+      type: SceneType.END,
+      image: null,
+      backgroundAudio: null,
+      dialogue: [{ text: 'Locale end', audio: null }],
+      choices: [],
+      autoNextSceneId: null,
+      notes: '',
+    },
+  ],
+};
+localeStore.set({ project: localeProject });
+
+const localeStageHost = new StubElement('div');
+const localeUiHost = new StubElement('div');
+const discussionSession = {
+  snapshot: () => ({}),
+  getText: () => '',
+  setText: () => {},
+  hasUndo: () => false,
+  hasAnyText: () => false,
+  getMessage: () => '',
+};
+const localeCleanup = renderPlayer(localeStore, localeStageHost, localeUiHost, () => {}, { discussionSession });
+const findLocaleButtonByText = text => findButtonByText(localeStageHost, text) || findButtonByText(localeUiHost, text);
+const getDialogueText = () => findElement(
+  localeStageHost,
+  el => (el.className || '') === 'theater-dialogue-text',
+)?.textContent || '';
+
+findLocaleButtonByText('Begin Story')?.dispatchEvent('click');
+findLocaleButtonByText('Next')?.dispatchEvent('click');
+logResult('Second dialogue is active before locale change', getDialogueText() === 'Second visible line');
+
+localeStore.setLocale('zh-Hant');
+logResult('Locale change keeps active dialogue page', getDialogueText() === 'Second visible line');
+
+localeStore.setLocale('en');
+findLocaleButtonByText('Choices')?.dispatchEvent('click');
+logResult('Choice menu is open before locale change', Boolean(findLocaleButtonByText('Go end')));
+localeStore.setLocale('zh-Hant');
+logResult('Locale change keeps choice menu open', Boolean(findLocaleButtonByText('Go end')));
+
+const cueTrigger = findElement(
+  localeStageHost,
+  el => (el.className || '') === 'player-choice-cue-trigger',
+);
+cueTrigger?.dispatchEvent('click');
+const getCueText = () => findElement(
+  localeStageHost,
+  el => (el.className || '') === 'player-discussion-cue-text',
+)?.textContent || '';
+logResult('Cue discussion overlay is open before locale change', getCueText() === 'Remember the second line.');
+localeStore.setLocale('en');
+logResult('Locale change keeps cue discussion overlay open', getCueText() === 'Remember the second line.');
+
+localeStore.setLocale('en');
+findLocaleButtonByText('Utilities')?.dispatchEvent('click');
+findLocaleButtonByText('Discussion')?.dispatchEvent('click');
+logResult('Discussion overlay is open before locale change', Boolean(findElement(
+  localeStageHost,
+  el => el.tagName === 'textarea' && (el.className || '') === 'player-discussion-textarea',
+)));
+localeStore.setLocale('zh-Hant');
+logResult('Locale change keeps discussion overlay open', Boolean(findElement(
+  localeStageHost,
+  el => el.tagName === 'textarea' && (el.className || '') === 'player-discussion-textarea',
+)));
+
+localeCleanup();
