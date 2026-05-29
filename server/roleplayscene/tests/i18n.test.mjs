@@ -109,6 +109,16 @@ try {
     '2 / 3',
     'Speech bubble playback page status should resolve from shared Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('player.discussion.defaultSchoolName'),
+    '香港紅十字會醫院學校',
+    'Discussion print school default should follow Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('player.discussion.printDetailsTitle'),
+    '列印資料',
+    'Discussion print details modal title should resolve from Traditional Chinese locale',
+  );
 
   setActiveLocale('en');
   assert.strictEqual(
@@ -170,6 +180,16 @@ try {
     translate('player.speechBubble.noDialogue'),
     'No visible dialogue for this scene.',
     'Speech bubble playback no-dialogue message should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('player.discussion.defaultSchoolName'),
+    'Hong Kong Red Cross Hospital Schools',
+    'Discussion print school default should follow English locale',
+  );
+  assert.strictEqual(
+    translate('player.discussion.printDetailsTitle'),
+    'Print details',
+    'Discussion print details modal title should resolve from English locale',
   );
   assert.strictEqual(
     translate('missing.key', { default: 'Fallback {value}', value: 'text' }),

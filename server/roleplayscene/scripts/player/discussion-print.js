@@ -74,9 +74,15 @@ export function buildDiscussionPrintModel(project, discussionSnapshot = {}) {
   };
 }
 
-export function buildDiscussionPrintHtml(model, labels = {}) {
+export function buildDiscussionPrintHtml(model, labels = {}, details = {}) {
   const title = model?.title || 'RolePlayScene Discussion';
   const cards = Array.isArray(model?.cards) ? model.cards : [];
+  const schoolName = String(details?.schoolName || labels.defaultSchoolName || '').trim();
+  const studentName = String(details?.studentName || '').trim();
+  const printedAt = String(details?.printedAt || '').trim();
+  const reportTitle = `${title} - ${labels.reportTitle || 'Discussion Report'}`;
+  const studentLabel = labels.student || 'Name';
+  const dateLabel = labels.date || 'Date';
   const cardHtml = cards.map((card, index) => {
     const imageHtml = card.image
       ? `<div class="discussion-print-image"><img src="${escapeHtml(card.image.src)}" alt="${escapeHtml(card.image.alt || '')}"></div>`
@@ -110,43 +116,71 @@ export function buildDiscussionPrintHtml(model, labels = {}) {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>${escapeHtml(title)}</title>
+  <title>${escapeHtml(reportTitle)}</title>
   <style>
-    body { margin: 0; padding: 24px; font-family: system-ui, -apple-system, Segoe UI, sans-serif; color: #111827; background: #fff; }
-    .discussion-print-report { display: grid; gap: 16px; }
-    .discussion-print-title { margin: 0 0 8px; font-size: 22px; }
-    .discussion-print-card { break-inside: avoid; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px; display: grid; gap: 10px; }
-    .discussion-print-card header { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; }
-    .discussion-print-card header span { width: 24px; height: 24px; display: inline-grid; place-items: center; border-radius: 999px; background: #eff6ff; color: #1d4ed8; font-weight: 700; font-size: 12px; }
-    .discussion-print-card h2 { margin: 0; font-size: 16px; }
-    .discussion-print-card h3 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #4b5563; }
-    .discussion-print-grid { display: grid; grid-template-columns: 1.1in minmax(1.8in, .85fr) minmax(2.6in, 1.35fr); gap: 12px; align-items: start; }
-    .discussion-print-card--no-image .discussion-print-grid { grid-template-columns: minmax(2in, .9fr) minmax(2.8in, 1.4fr); }
-    .discussion-print-image img { width: 100%; max-height: 1.25in; object-fit: contain; border-radius: 6px; border: 1px solid #e5e7eb; background: #f9fafb; }
-    .discussion-print-context, .discussion-print-answer { display: grid; gap: 8px; }
-    .discussion-print-context p, .discussion-print-answer p { margin: 0; font-size: 12px; line-height: 1.45; white-space: normal; }
-    .discussion-print-context ul { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.45; }
-    .discussion-print-answer p { font-size: 13px; }
-    @media (max-width: 720px) {
-      .discussion-print-grid, .discussion-print-card--no-image .discussion-print-grid { grid-template-columns: 1fr; }
-      .discussion-print-image img { width: 140px; }
-    }
+    @page { size: A4 portrait; margin: 14mm 12mm 16mm; }
+    :root { color-scheme: light; font-family: "Georgia", "Times New Roman", serif; color: #111; background: #fff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #111; background: #fff; font-size: 10.5pt; line-height: 1.4; }
+    .discussion-print-report { display: grid; gap: 5mm; width: 100%; }
+    .discussion-print-header { border-bottom: 0.3mm solid #cfd5de; padding-bottom: 2.5mm; margin-bottom: 1mm; break-after: avoid; }
+    .discussion-print-school { margin: 0 0 1.2mm; text-align: center; font-size: 17pt; line-height: 1.2; font-weight: 700; }
+    .discussion-print-title { margin: 0 0 2.4mm; text-align: center; font-size: 15.5pt; line-height: 1.2; font-weight: 700; }
+    .discussion-print-meta { display: flex; justify-content: space-between; gap: 8mm; margin: 0; font-size: 10.5pt; }
+    .discussion-print-meta span { overflow-wrap: anywhere; }
+    .discussion-print-card { break-inside: avoid; page-break-inside: avoid; border: 0.25mm solid #d1d5db; border-radius: 2mm; padding: 3mm; display: grid; gap: 2.5mm; }
+    .discussion-print-card header { display: flex; align-items: center; gap: 2mm; border-bottom: 0.25mm solid #e5e7eb; padding-bottom: 2mm; break-after: avoid; }
+    .discussion-print-card header span { width: 6mm; height: 6mm; display: inline-grid; place-items: center; border-radius: 999px; background: #eff6ff; color: #1d4ed8; font-weight: 700; font-size: 8pt; }
+    .discussion-print-card h2 { margin: 0; font-size: 12pt; }
+    .discussion-print-card h3 { margin: 0 0 1mm; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.04em; color: #444; break-after: avoid; }
+    .discussion-print-grid { display: grid; grid-template-columns: 26mm 1fr 1.45fr; gap: 3mm; align-items: start; }
+    .discussion-print-card--no-image .discussion-print-grid { grid-template-columns: 1fr 1.55fr; }
+    .discussion-print-image img { width: 100%; max-height: 32mm; object-fit: contain; border-radius: 1.5mm; border: 0.25mm solid #e5e7eb; background: #f9fafb; }
+    .discussion-print-context, .discussion-print-answer { display: grid; gap: 2mm; min-width: 0; }
+    .discussion-print-context p, .discussion-print-answer p { margin: 0; font-size: 9.5pt; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; }
+    .discussion-print-context ul { margin: 0; padding-left: 4.5mm; font-size: 9.5pt; line-height: 1.4; }
+    .discussion-print-answer p { font-size: 10.2pt; white-space: pre-wrap; }
+    .discussion-print-empty { margin: 0; font-size: 11pt; }
     @media print {
-      body { padding: 12mm; }
-      .discussion-print-card { break-inside: avoid; page-break-inside: avoid; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>
 <body>
   <main class="discussion-print-report">
-    <h1 class="discussion-print-title">${escapeHtml(title)} - ${escapeHtml(labels.reportTitle || 'Discussion Report')}</h1>
-    ${cardHtml || `<p>${escapeHtml(labels.empty || 'No discussion text yet.')}</p>`}
+    <header class="discussion-print-header">
+      ${schoolName ? `<p class="discussion-print-school">${escapeHtml(schoolName)}</p>` : ''}
+      <h1 class="discussion-print-title">${escapeHtml(reportTitle)}</h1>
+      <p class="discussion-print-meta">
+        <span><strong>${escapeHtml(studentLabel)}:</strong> ${studentName ? escapeHtml(studentName) : '____________________'}</span>
+        <span><strong>${escapeHtml(dateLabel)}:</strong> ${escapeHtml(printedAt)}</span>
+      </p>
+    </header>
+    ${cardHtml || `<p class="discussion-print-empty">${escapeHtml(labels.empty || 'No discussion text yet.')}</p>`}
   </main>
   <script>
-    window.addEventListener('load', () => {
-      window.focus();
-      window.print();
-    });
+    (function () {
+      const images = Array.from(document.images || []);
+      const waitForImages = images.length === 0
+        ? Promise.resolve()
+        : Promise.all(images.map((img) => (
+          img.complete
+            ? Promise.resolve()
+            : new Promise((resolve) => {
+              img.addEventListener('load', resolve, { once: true });
+              img.addEventListener('error', resolve, { once: true });
+            })
+        )));
+
+      waitForImages.then(() => {
+        if (typeof window.focus === 'function') window.focus();
+        if (typeof window.print === 'function') window.print();
+      });
+
+      window.addEventListener('afterprint', () => {
+        if (typeof window.close === 'function') window.close();
+      });
+    }());
   </script>
 </body>
 </html>`;

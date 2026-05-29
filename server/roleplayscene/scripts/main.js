@@ -15,7 +15,7 @@ import {
 } from './storage.js';
 import { validateProject } from './editor/validators.js';
 import { renderValidation } from './editor/inspector.js';
-import { translate, onLocaleChange, getAvailableLocales, LOCALE_STORAGE_KEY } from './i18n.js';
+import { translate, onLocaleChange, getActiveLocale, getAvailableLocales, LOCALE_STORAGE_KEY } from './i18n.js';
 import { createServerApiClient } from '../../app/api/server-api-client.js';
 import { probeSession } from '../../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../../app/auth/auth-popup-flow.js';
@@ -105,6 +105,7 @@ let publishedScenesRequestId = 0;
 let openingPublishedSceneIds = new Set();
 let publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
 let pendingDirectPublishedSceneId = '';
+let discussionPrintDetails = { schoolName: '', studentName: '' };
 
 const LEGACY_LOCALE_STORAGE_KEY = 'roleplayscene:locale';
 const HEADER_TABLET_MIN_WIDTH = 768;
@@ -1050,13 +1051,122 @@ function showImportError(err) {
   });
 }
 
-function printRolePlaySceneDiscussion() {
+function getDefaultDiscussionPrintSchoolName() {
+  return translate('player.discussion.defaultSchoolName');
+}
+
+function formatDiscussionPrintDate(date = new Date()) {
+  try {
+    return new Intl.DateTimeFormat(getActiveLocale(), {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(date);
+  } catch {
+    return date.toLocaleDateString();
+  }
+}
+
+function readDiscussionPrintDetailsDraft() {
+  return {
+    schoolName: String(discussionPrintDetails.schoolName || getDefaultDiscussionPrintSchoolName()).trim(),
+    studentName: String(discussionPrintDetails.studentName || '').trim(),
+  };
+}
+
+function promptDiscussionPrintDetails() {
+  if (!serverModalOverlay || !serverModalTitle || !serverModalBody || !serverModalActions) {
+    return Promise.resolve(readDiscussionPrintDetailsDraft());
+  }
+  const draft = readDiscussionPrintDetailsDraft();
+  return new Promise((resolve) => {
+    let resolved = false;
+    let schoolInput = null;
+    let studentInput = null;
+    const settle = (value) => {
+      if (resolved) return;
+      resolved = true;
+      resolve(value);
+    };
+    const collectDetails = () => ({
+      schoolName: String(schoolInput?.value || '').trim() || getDefaultDiscussionPrintSchoolName(),
+      studentName: String(studentInput?.value || '').trim(),
+    });
+
+    openServerModal({
+      title: translate('player.discussion.printDetailsTitle'),
+      bodyRenderer: (body) => {
+        const form = document.createElement('form');
+        form.className = 'discussion-print-details-form';
+
+        const schoolLabel = document.createElement('label');
+        schoolLabel.className = 'discussion-print-details-form__label';
+        schoolLabel.textContent = translate('player.discussion.printSchoolName');
+        schoolInput = document.createElement('input');
+        schoolInput.type = 'text';
+        schoolInput.maxLength = 180;
+        schoolInput.value = draft.schoolName;
+        schoolInput.className = 'discussion-print-details-form__input';
+        schoolInput.autocomplete = 'organization';
+        schoolLabel.appendChild(schoolInput);
+
+        const studentLabel = document.createElement('label');
+        studentLabel.className = 'discussion-print-details-form__label';
+        studentLabel.textContent = translate('player.discussion.printStudentName');
+        studentInput = document.createElement('input');
+        studentInput.type = 'text';
+        studentInput.maxLength = 120;
+        studentInput.value = draft.studentName;
+        studentInput.placeholder = translate('player.discussion.printStudentNamePlaceholder');
+        studentInput.className = 'discussion-print-details-form__input';
+        studentInput.autocomplete = 'name';
+        studentLabel.appendChild(studentInput);
+
+        form.addEventListener('submit', (event) => {
+          event.preventDefault();
+          const details = collectDetails();
+          discussionPrintDetails = details;
+          settle(details);
+          closeServerModal('print');
+        });
+        form.append(schoolLabel, studentLabel);
+        body.appendChild(form);
+      },
+      actions: [
+        {
+          label: translate('player.discussion.printDetailsCancel'),
+          className: 'confirm-actions__secondary',
+          value: null,
+          onClick: () => {
+            settle(null);
+            closeServerModal('cancel');
+          },
+        },
+        {
+          label: translate('player.discussion.printDetailsPrint'),
+          className: 'confirm-actions__primary',
+          onClick: () => {
+            const details = collectDetails();
+            discussionPrintDetails = details;
+            settle(details);
+            closeServerModal('print');
+          },
+        },
+      ],
+      onClose: () => settle(null),
+    });
+  });
+}
+
+async function printRolePlaySceneDiscussion() {
   const activeProject = getActiveStore().get().project;
   discussionSession.bindProject(activeProject);
   if (!discussionSession.hasAnyText()) {
     showMessage({ text: translate('player.discussion.printEmpty') });
     return;
   }
+  const details = await promptDiscussionPrintDetails();
+  if (!details) return;
   const printWindow = globalThis.open?.('', 'roleplayscene_discussion_print', 'width=960,height=720,resizable=yes,scrollbars=yes');
   if (!printWindow || !printWindow.document) {
     showMessage({ text: translate('player.discussion.printPopupBlocked') });
@@ -1069,8 +1179,19 @@ function printRolePlaySceneDiscussion() {
     choices: translate('player.discussion.printChoices'),
     discussion: translate('player.discussion.printDiscussion'),
     empty: translate('player.discussion.printEmpty'),
+    student: translate('player.discussion.printStudentLabel'),
+    date: translate('player.discussion.printDateLabel'),
+    defaultSchoolName: getDefaultDiscussionPrintSchoolName(),
+  }, {
+    schoolName: details.schoolName,
+    studentName: details.studentName,
+    printedAt: formatDiscussionPrintDate(),
   });
-  printWindow.opener = null;
+  try {
+    printWindow.opener = null;
+  } catch {
+    // Printing should still work in browsers that prevent mutating opener.
+  }
   printWindow.document.open();
   printWindow.document.write(html);
   printWindow.document.close();

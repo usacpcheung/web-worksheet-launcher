@@ -442,6 +442,31 @@ button:disabled {
   gap: var(--space-md);
 }
 .server-modal__actions { justify-content: flex-end; }
+.discussion-print-details-form {
+  display: grid;
+  gap: var(--space-md);
+}
+.discussion-print-details-form__label {
+  display: grid;
+  gap: var(--space-2xs);
+  font-weight: 700;
+  color: var(--color-text);
+}
+.discussion-print-details-form__input {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 400;
+}
+.discussion-print-details-form__input:focus {
+  outline: 3px solid rgba(37, 99, 235, 0.18);
+  border-color: var(--color-accent);
+}
 .server-slot-usage,
 .server-empty {
   margin: 0;

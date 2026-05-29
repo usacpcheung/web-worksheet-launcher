@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { RolePlaySceneDiscussionSession, computeDiscussionProjectFingerprint } from '../scripts/player/discussion-state.js';
-import { buildDiscussionPrintModel } from '../scripts/player/discussion-print.js';
+import { buildDiscussionPrintHtml, buildDiscussionPrintModel } from '../scripts/player/discussion-print.js';
 import { SceneType } from '../scripts/model.js';
 
 function createMemoryStorage() {
@@ -150,6 +150,43 @@ test('discussion print model excludes blank and duplicate scene entries', () => 
   assert.deepEqual(model.cards.map(card => card.sceneId), ['middle']);
 });
 
+test('discussion print html uses fixed print report layout and metadata header', () => {
+  const model = buildDiscussionPrintModel(project, {
+    discussionBySceneId: {
+      start: { text: 'start thoughts' },
+      middle: { text: 'middle thoughts' },
+    },
+  });
+  const html = buildDiscussionPrintHtml(model, {
+    reportTitle: 'Discussion Report',
+    dialogue: 'Dialogue',
+    choices: 'Choices',
+    discussion: 'Discussion',
+    empty: 'No discussion text yet.',
+    student: 'Name',
+    date: 'Date',
+    defaultSchoolName: 'Hong Kong Red Cross Hospital Schools',
+  }, {
+    schoolName: 'Hong Kong Red Cross Hospital Schools',
+    studentName: 'Ada Student',
+    printedAt: '30 May 2026',
+  });
+
+  assert.equal(html.includes('@page { size: A4 portrait;'), true);
+  assert.equal(html.includes('.discussion-print-school'), true);
+  assert.equal(html.includes('text-align: center;'), true);
+  assert.equal(html.includes('Hong Kong Red Cross Hospital Schools'), true);
+  assert.equal(html.includes('Discussion Story - Discussion Report'), true);
+  assert.equal(html.includes('<strong>Name:</strong> Ada Student'), true);
+  assert.equal(html.includes('<strong>Date:</strong> 30 May 2026'), true);
+  assert.equal(html.includes('grid-template-columns: 26mm 1fr 1.45fr;'), true);
+  assert.equal(html.includes('grid-template-columns: 1fr 1.55fr;'), true);
+  assert.equal(html.includes('@media (max-width'), false);
+  assert.equal(html.includes("window.addEventListener('afterprint'"), true);
+  assert.equal(html.includes('window.close()'), true);
+  assert.equal(html.includes('Promise.all(images.map'), true);
+});
+
 test('player source wires cue and utility discussion entry points', async () => {
   const source = await readFile(path.resolve('server/roleplayscene/scripts/player/ui.js'), 'utf8');
   assert.equal(source.includes("renderDiscussionForm({"), true);
@@ -172,6 +209,20 @@ test('main source protects discussion before story-changing actions', async () =
   assert.equal(source.includes('if (!(await ensureDiscussionCanBeDiscarded())) return;'), true);
   assert.equal(source.includes("window.addEventListener('beforeunload', (event) => {"), true);
   assert.equal(source.includes("event.returnValue = '';"), true);
+});
+
+test('main source opens print details before discussion print window', async () => {
+  const source = await readFile(path.resolve('server/roleplayscene/scripts/main.js'), 'utf8');
+  const detailsIndex = source.indexOf('const details = await promptDiscussionPrintDetails();');
+  const openIndex = source.indexOf("const printWindow = globalThis.open?.('', 'roleplayscene_discussion_print'");
+
+  assert.equal(source.includes('function promptDiscussionPrintDetails()'), true);
+  assert.equal(source.includes("title: translate('player.discussion.printDetailsTitle')"), true);
+  assert.equal(source.includes("translate('player.discussion.printSchoolName')"), true);
+  assert.equal(source.includes("translate('player.discussion.printStudentName')"), true);
+  assert.equal(source.includes("studentName: details.studentName"), true);
+  assert.equal(source.includes("printedAt: formatDiscussionPrintDate()"), true);
+  assert.equal(detailsIndex > -1 && openIndex > detailsIndex, true);
 });
 
 test('cue and discussion overlay leaves toolbar language controls reachable', async () => {
