@@ -562,9 +562,13 @@ export function renderPlayerUI({
     rewriteButton.addEventListener('click', async () => {
       if (rewriteButton.disabled) return;
       const textAtClick = textarea.value || '';
+      const rewriteTask = discussionSession?.rewrite?.(scene.id, textAtClick, { apiClient });
       syncControls();
-      await discussionSession?.rewrite?.(scene.id, textAtClick, { apiClient });
-      textarea.value = discussionSession?.getText?.(scene.id) || textarea.value;
+      await rewriteTask;
+      const latestText = discussionSession?.getText?.(scene.id);
+      if (typeof latestText === 'string') {
+        textarea.value = latestText;
+      }
       notifyDiscussionChange();
       syncControls();
       textarea.focus();

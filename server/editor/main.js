@@ -7021,7 +7021,14 @@ function renderEditorShell(session) {
       updateSummary();
       return;
     }
-    await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
+    const importResult = await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
+    const importedLocalDraftId = importResult?.draftRecord?.localId || session.state.draft?.localId;
+    if (importedLocalDraftId) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('localDraftId', importedLocalDraftId);
+      nextUrl.searchParams.delete('draftUpdatedAt');
+      window.history.replaceState(null, '', nextUrl.toString());
+    }
     importFileInput.value = '';
     updateSummary();
   });

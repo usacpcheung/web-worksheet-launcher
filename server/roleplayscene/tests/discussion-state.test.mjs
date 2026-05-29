@@ -157,6 +157,9 @@ test('player source wires cue and utility discussion entry points', async () => 
   assert.equal(source.includes("const openDiscussion = () => {"), true);
   assert.equal(source.includes("discussionButton.addEventListener('click', () => {"), true);
   assert.equal(source.includes("printButton.addEventListener('click', () => {"), true);
+  assert.equal(source.includes('const rewriteTask = discussionSession?.rewrite?.(scene.id, textAtClick, { apiClient });'), true);
+  assert.equal(source.includes('await rewriteTask;'), true);
+  assert.equal(source.includes("if (typeof latestText === 'string') {"), true);
 });
 
 test('main source protects discussion before story-changing actions', async () => {
@@ -165,4 +168,15 @@ test('main source protects discussion before story-changing actions', async () =
   assert.equal(source.includes('if (!(await ensureDiscussionCanBeDiscarded())) return;'), true);
   assert.equal(source.includes("window.addEventListener('beforeunload', (event) => {"), true);
   assert.equal(source.includes("event.returnValue = '';"), true);
+});
+
+test('main source keeps active import confirmation copy tied to confirmation kind', async () => {
+  const source = await readFile(path.resolve('server/roleplayscene/scripts/main.js'), 'utf8');
+  assert.equal(source.includes('const ImportConfirmationKind = Object.freeze({'), true);
+  assert.equal(source.includes("DISCUSSION_DISCARD: 'discussion-discard'"), true);
+  assert.equal(source.includes('function getImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, options = {})'), true);
+  assert.equal(source.includes('function applyImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, options = {})'), true);
+  assert.equal(source.includes('activeImportConfirmation?.kind || ImportConfirmationKind.IMPORT'), true);
+  assert.equal(source.includes('activeImportConfirmation = { resolve, previousFocus, kind, options };'), true);
+  assert.equal(source.includes('kind: ImportConfirmationKind.DISCUSSION_DISCARD'), true);
 });

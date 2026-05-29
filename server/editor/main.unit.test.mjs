@@ -1538,6 +1538,15 @@ test('viewer navigation no longer uses hardcoded /viewer absolute assign path', 
   assert.equal(source.includes("new URL('../viewer/', currentHref)"), true);
 });
 
+test('package import updates editor URL to imported local draft id', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("const importResult = await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });"), true);
+  assert.equal(source.includes("const importedLocalDraftId = importResult?.draftRecord?.localId || session.state.draft?.localId;"), true);
+  assert.equal(source.includes("nextUrl.searchParams.set('localDraftId', importedLocalDraftId);"), true);
+  assert.equal(source.includes("nextUrl.searchParams.delete('draftUpdatedAt');"), true);
+  assert.equal(source.includes("window.history.replaceState(null, '', nextUrl.toString());"), true);
+});
+
 test('buildViewerUrlFromCurrentLocation resolves sibling viewer route from current page', async () => {
   const mod = await loadEditorModule();
   const rootResolved = mod.buildViewerUrlFromCurrentLocation(

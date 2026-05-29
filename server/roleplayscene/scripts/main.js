@@ -88,6 +88,11 @@ let activeAuthFlow = null;
 let serverSession = { status: 'checking', user: null, error: null };
 let uploadedDrafts = [];
 let uploadedDraftSlotLimit = 3;
+
+const ImportConfirmationKind = Object.freeze({
+  IMPORT: 'import',
+  DISCUSSION_DISCARD: 'discussion-discard',
+});
 let isLoadingUploadedDrafts = false;
 let isUploadingDraft = false;
 const publishingDraftIds = new Set();
@@ -463,18 +468,10 @@ function updateToolbarText() {
   if (dismissButton) {
     dismissButton.setAttribute('aria-label', translate('toolbar.dismissMessage'));
   }
-  if (importConfirmTitle) {
-    importConfirmTitle.textContent = translate('messages.importConfirmTitle');
-  }
-  if (importConfirmBody) {
-    importConfirmBody.textContent = translate('messages.importConfirmBody');
-  }
-  if (importConfirmAccept) {
-    importConfirmAccept.textContent = translate('messages.importConfirmAccept');
-  }
-  if (importConfirmCancel) {
-    importConfirmCancel.textContent = translate('messages.importConfirmCancel');
-  }
+  applyImportConfirmationCopy(
+    activeImportConfirmation?.kind || ImportConfirmationKind.IMPORT,
+    activeImportConfirmation?.options || {}
+  );
   if (serverModalClose) {
     serverModalClose.setAttribute('aria-label', translate('server.close'));
   }
@@ -1062,6 +1059,25 @@ function printRolePlaySceneDiscussion() {
   printWindow.document.close();
 }
 
+function getImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, options = {}) {
+  const isDiscussionDiscard = kind === ImportConfirmationKind.DISCUSSION_DISCARD;
+  return {
+    title: options.title || translate(isDiscussionDiscard ? 'player.discussion.discardTitle' : 'messages.importConfirmTitle'),
+    body: options.body || translate(isDiscussionDiscard ? 'player.discussion.discardBody' : 'messages.importConfirmBody'),
+    accept: options.accept || translate(isDiscussionDiscard ? 'player.discussion.discardConfirm' : 'messages.importConfirmAccept'),
+    cancel: options.cancel || translate(isDiscussionDiscard ? 'player.discussion.discardCancel' : 'messages.importConfirmCancel'),
+  };
+}
+
+function applyImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, options = {}) {
+  const copy = getImportConfirmationCopy(kind, options);
+  if (importConfirmTitle) importConfirmTitle.textContent = copy.title;
+  if (importConfirmBody) importConfirmBody.textContent = copy.body;
+  if (importConfirmAccept) importConfirmAccept.textContent = copy.accept;
+  if (importConfirmCancel) importConfirmCancel.textContent = copy.cancel;
+  return copy;
+}
+
 function closeImportConfirmation(result) {
   if (!activeImportConfirmation) return;
   const { resolve, previousFocus } = activeImportConfirmation;
@@ -1094,20 +1110,15 @@ function handleImportConfirmationKeydown(event) {
 }
 
 function confirmProjectImport(options = {}) {
-  const title = options.title || translate('messages.importConfirmTitle');
-  const body = options.body || translate('messages.importConfirmBody');
-  const accept = options.accept || translate('messages.importConfirmAccept');
-  const cancel = options.cancel || translate('messages.importConfirmCancel');
+  const kind = options.kind || ImportConfirmationKind.IMPORT;
+  const copy = getImportConfirmationCopy(kind, options);
   if (!importConfirmOverlay || !importConfirmAccept || !importConfirmCancel) {
-    return Promise.resolve(globalThis.confirm?.(body) ?? false);
+    return Promise.resolve(globalThis.confirm?.(copy.body) ?? false);
   }
   if (activeImportConfirmation) {
     closeImportConfirmation(false);
   }
-  if (importConfirmTitle) importConfirmTitle.textContent = title;
-  if (importConfirmBody) importConfirmBody.textContent = body;
-  importConfirmAccept.textContent = accept;
-  importConfirmCancel.textContent = cancel;
+  applyImportConfirmationCopy(kind, options);
   importConfirmOverlay.hidden = false;
   importConfirmOverlay.removeAttribute('hidden');
   document.addEventListener('keydown', handleImportConfirmationKeydown);
@@ -1116,16 +1127,13 @@ function confirmProjectImport(options = {}) {
     importConfirmAccept.focus();
   });
   return new Promise((resolve) => {
-    activeImportConfirmation = { resolve, previousFocus };
+    activeImportConfirmation = { resolve, previousFocus, kind, options };
   });
 }
 
 function confirmDiscardDiscussion() {
   return confirmProjectImport({
-    title: translate('player.discussion.discardTitle'),
-    body: translate('player.discussion.discardBody'),
-    accept: translate('player.discussion.discardConfirm'),
-    cancel: translate('player.discussion.discardCancel'),
+    kind: ImportConfirmationKind.DISCUSSION_DISCARD,
   });
 }
 

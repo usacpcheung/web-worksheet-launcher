@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict';
+
 class StubElement {
   constructor(tagName) {
     this.tagName = tagName;
@@ -120,7 +122,7 @@ function findButtonByText(root, text) {
 }
 
 function getHistoryButtons(root) {
-  const list = findElement(root, el => (el.className || '') === 'player-history-list');
+  const list = findElement(root, el => (el.className || '') === 'theater-history-list');
   if (!list) {
     return [];
   }
@@ -133,6 +135,10 @@ function getHistoryButtons(root) {
     }
   }
   return buttons;
+}
+
+function getHistoryButtonLabel(button) {
+  return findElement(button, el => (el.className || '') === 'theater-history-label')?.textContent || '';
 }
 
 const HISTORY_LABEL_MAX_LENGTH = 30;
@@ -150,8 +156,8 @@ function truncateHistoryLabel(text) {
 }
 
 function logResult(label, condition) {
-  const status = condition ? 'OK' : 'FAIL';
-  console.log(`${status}: ${label}`);
+  assert.ok(condition, label);
+  console.log(`OK: ${label}`);
 }
 
 const { renderPlayer } = await import('../scripts/player/player.js');
@@ -223,14 +229,21 @@ const stageHost = new StubElement('div');
 const uiHost = new StubElement('div');
 
 const cleanup = renderPlayer(store, stageHost, uiHost, () => {});
+const findPlayerButtonByText = text => findButtonByText(stageHost, text) || findButtonByText(uiHost, text);
+const openChoicesMenu = () => {
+  const choicesButton = findPlayerButtonByText('Choices');
+  if (choicesButton) {
+    choicesButton.dispatchEvent('click');
+  }
+};
 
-const beginButton = findButtonByText(uiHost, 'Begin Story');
+const beginButton = findPlayerButtonByText('Begin Story');
 logResult('Begin Story button renders', Boolean(beginButton));
 if (beginButton) {
   beginButton.dispatchEvent('click');
 }
 
-let historyButtons = getHistoryButtons(uiHost);
+let historyButtons = getHistoryButtons(stageHost);
 logResult('History starts with single entry', historyButtons.length === 1);
 logResult(
   'Initial entry marked current',
@@ -240,50 +253,53 @@ logResult(
 const initialHistoryButton = historyButtons[0];
 const longFirstLine = project.scenes[0].dialogue[0].text;
 const expectedTruncatedLabel = truncateHistoryLabel(longFirstLine);
-logResult('History entry label truncated', initialHistoryButton?.textContent === expectedTruncatedLabel);
+logResult('History entry label truncated', getHistoryButtonLabel(initialHistoryButton) === expectedTruncatedLabel);
 logResult('History entry title retains full text', initialHistoryButton?.getAttribute('title') === longFirstLine);
 logResult('History entry aria-label retains full text', initialHistoryButton?.getAttribute('aria-label') === longFirstLine);
 
-let backButton = findElement(uiHost, el => (el.className || '') === 'player-history-back');
+let backButton = findElement(stageHost, el => el.tagName === 'button' && el.textContent === '← Back');
 logResult('Back button disabled at start', Boolean(backButton?.disabled));
 
-const toMiddle = findButtonByText(uiHost, 'To middle');
+openChoicesMenu();
+const toMiddle = findPlayerButtonByText('To middle');
 if (toMiddle) {
   toMiddle.dispatchEvent('click');
 }
 
-historyButtons = getHistoryButtons(uiHost);
+historyButtons = getHistoryButtons(stageHost);
 logResult(
   'Second scene appended to history',
   historyButtons.length === 2 && historyButtons[1]?.dataset?.sceneId === 'middle',
 );
 
-backButton = findElement(uiHost, el => (el.className || '') === 'player-history-back');
+backButton = findElement(stageHost, el => el.tagName === 'button' && el.textContent === '← Back');
 logResult('Back button enabled after branching', Boolean(backButton) && backButton.disabled === false);
 if (backButton) {
   backButton.dispatchEvent('click');
 }
 
-let forwardButton = findElement(uiHost, el => (el.className || '') === 'player-history-forward');
+let forwardButton = findElement(stageHost, el => el.tagName === 'button' && el.textContent === 'Forward →');
 logResult('Forward available after going back', Boolean(forwardButton) && forwardButton.disabled === false);
 
-const altChoice = findButtonByText(uiHost, 'Alternate path');
+openChoicesMenu();
+const altChoice = findPlayerButtonByText('Alternate path');
 if (altChoice) {
   altChoice.dispatchEvent('click');
 }
 
-historyButtons = getHistoryButtons(uiHost);
+historyButtons = getHistoryButtons(stageHost);
 logResult(
   'Forward history trimmed on new branch',
   historyButtons.length === 2 && historyButtons[1]?.dataset?.sceneId === 'alt',
 );
 
-const toEnd = findButtonByText(uiHost, 'To end');
+openChoicesMenu();
+const toEnd = findPlayerButtonByText('To end');
 if (toEnd) {
   toEnd.dispatchEvent('click');
 }
 
-historyButtons = getHistoryButtons(uiHost);
+historyButtons = getHistoryButtons(stageHost);
 logResult('End scene added to history', historyButtons.length === 3 && historyButtons[2]?.dataset?.sceneId === 'end');
 
 const jumpToStart = historyButtons[0];
@@ -291,15 +307,16 @@ if (jumpToStart) {
   jumpToStart.dispatchEvent('click');
 }
 
-forwardButton = findElement(uiHost, el => (el.className || '') === 'player-history-forward');
+forwardButton = findElement(stageHost, el => el.tagName === 'button' && el.textContent === 'Forward →');
 logResult('Forward retained after jump', Boolean(forwardButton) && forwardButton.disabled === false);
 
-const toMiddleAgain = findButtonByText(uiHost, 'To middle');
+openChoicesMenu();
+const toMiddleAgain = findPlayerButtonByText('To middle');
 if (toMiddleAgain) {
   toMiddleAgain.dispatchEvent('click');
 }
 
-historyButtons = getHistoryButtons(uiHost);
+historyButtons = getHistoryButtons(stageHost);
 logResult(
   'Branching after jump clears future entries',
   historyButtons.length === 2 && historyButtons[1]?.dataset?.sceneId === 'middle',
@@ -311,14 +328,18 @@ const previewStageHost = new StubElement('div');
 const previewUiHost = new StubElement('div');
 const previewCleanup = renderPlayer(store, previewStageHost, previewUiHost, () => {}, { initialSceneId: 'middle' });
 
-const previewBeginButton = findButtonByText(previewUiHost, 'Begin Story');
+const previewBeginButton = findButtonByText(previewStageHost, 'Begin Story') || findButtonByText(previewUiHost, 'Begin Story');
 logResult('Initial scene preview skips intro', !previewBeginButton);
-const previewHistoryButtons = getHistoryButtons(previewUiHost);
+const previewHistoryButtons = getHistoryButtons(previewStageHost);
 logResult(
   'Initial scene preview starts history at requested scene',
   previewHistoryButtons.length === 1 && previewHistoryButtons[0]?.dataset?.sceneId === 'middle',
 );
-const previewNextChoice = findButtonByText(previewUiHost, 'To end');
+const previewChoicesButton = findButtonByText(previewStageHost, 'Choices') || findButtonByText(previewUiHost, 'Choices');
+if (previewChoicesButton) {
+  previewChoicesButton.dispatchEvent('click');
+}
+const previewNextChoice = findButtonByText(previewStageHost, 'To end') || findButtonByText(previewUiHost, 'To end');
 logResult('Initial scene preview renders requested scene choices', Boolean(previewNextChoice));
 
 previewCleanup();
