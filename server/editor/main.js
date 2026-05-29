@@ -919,6 +919,9 @@ class EditorDraftSession {
 
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
+    this.autosaveGeneration = 0;
+    this.deletedDraftIds = new Set();
+    this.inFlightSaveCountsByDraftId = new Map();
     this.onStateChange = null;
     this.transientQuestionBlockIds = new Set();
     this.previewAudio = null;
@@ -933,6 +936,31 @@ class EditorDraftSession {
     this._loadUploadedDraftsActiveCount = 0;
     this._promptT2AInFlightTargets = new Set();
     this._optionT2AInFlightTargets = new Set();
+  }
+
+  registerInFlightDraftSave(localDraftId) {
+    if (!localDraftId) return;
+    const currentCount = this.inFlightSaveCountsByDraftId.get(localDraftId) || 0;
+    this.inFlightSaveCountsByDraftId.set(localDraftId, currentCount + 1);
+  }
+
+  unregisterInFlightDraftSave(localDraftId) {
+    if (!localDraftId) return;
+    const currentCount = this.inFlightSaveCountsByDraftId.get(localDraftId) || 0;
+    if (currentCount <= 1) {
+      this.inFlightSaveCountsByDraftId.delete(localDraftId);
+      return;
+    }
+    this.inFlightSaveCountsByDraftId.set(localDraftId, currentCount - 1);
+  }
+
+  getInFlightDraftSaveCount(localDraftId) {
+    return localDraftId ? (this.inFlightSaveCountsByDraftId.get(localDraftId) || 0) : 0;
+  }
+
+  clearDeletedDraftTombstoneIfIdle(localDraftId) {
+    if (!localDraftId || this.getInFlightDraftSaveCount(localDraftId) > 0) return;
+    this.deletedDraftIds.delete(localDraftId);
   }
 
   setOnStateChange(handler) {
@@ -1252,7 +1280,10 @@ class EditorDraftSession {
     this.autosaveTimer = null;
 
     if (previousDraftId) {
+      this.autosaveGeneration += 1;
+      this.deletedDraftIds.add(previousDraftId);
       await this.storage.drafts.remove(previousDraftId);
+      this.clearDeletedDraftTombstoneIfIdle(previousDraftId);
     }
 
     await Promise.all(referencedAssetIds.map(async (assetId) => {
@@ -2539,32 +2570,56 @@ class EditorDraftSession {
     if (!this.state.draft) return null;
 
     const revisionAtSaveStart = this.state.draftRevision;
+    const draftIdAtSaveStart = this.state.draft.localId || null;
+    const generationAtSaveStart = this.autosaveGeneration;
     const updatedAt = nowIso();
-    const validation = this.validateCurrentDraft();
-    const normalizedDraft = validation.normalizedDraft;
-    const { validateDraftSchema } = await loadContracts();
-    const contractValidation = validateDraftSchema(normalizedDraft);
-
-    const snapshotToPersist = cloneDraftForPersistence({
-      ...this.state.draft,
-      metadata: {
-        ...this.state.draft.metadata,
-        localId: this.state.draft.localId,
-        origin: this.state.draft.metadata?.origin || 'local_created',
-        updatedAt,
-      },
-      contractDraft: normalizedDraft,
-      contractValidation: {
-        valid: contractValidation.valid,
-        errors: contractValidation.errors,
-      },
-    });
-
-    this.inFlightSaveCount += 1;
-    this.state.autosavePending = true;
+    let saveCountRegistered = false;
+    let snapshotToPersist = null;
+    let validation = null;
+    let normalizedDraft = null;
+    let contractValidation = null;
+    let staleCleanupSucceeded = false;
+    this.registerInFlightDraftSave(draftIdAtSaveStart);
 
     try {
+      validation = this.validateCurrentDraft();
+      normalizedDraft = validation.normalizedDraft;
+      const { validateDraftSchema } = await loadContracts();
+      contractValidation = validateDraftSchema(normalizedDraft);
+
+      snapshotToPersist = cloneDraftForPersistence({
+        ...this.state.draft,
+        metadata: {
+          ...this.state.draft.metadata,
+          localId: this.state.draft.localId,
+          origin: this.state.draft.metadata?.origin || 'local_created',
+          updatedAt,
+        },
+        contractDraft: normalizedDraft,
+        contractValidation: {
+          valid: contractValidation.valid,
+          errors: contractValidation.errors,
+        },
+      });
+
+      this.state.autosavePending = true;
+
+      if (
+        generationAtSaveStart !== this.autosaveGeneration ||
+        this.deletedDraftIds.has(draftIdAtSaveStart)
+      ) {
+        return null;
+      }
+
+      this.inFlightSaveCount += 1;
+      saveCountRegistered = true;
       const persisted = await this.storage.drafts.put(snapshotToPersist);
+      if (this.deletedDraftIds.has(persisted.localId)) {
+        await this.storage.drafts.remove(persisted.localId);
+        staleCleanupSucceeded = true;
+        return null;
+      }
+
       const shouldApplySaveStatus =
         this.state.draft?.localId === persisted.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
 
@@ -2608,6 +2663,7 @@ class EditorDraftSession {
       return persisted;
     } catch (error) {
       const shouldApplyErrorStatus =
+        snapshotToPersist &&
         this.state.draft?.localId === snapshotToPersist.metadata?.localId &&
         revisionAtSaveStart > this.state.lastSavedRevision;
       if (shouldApplyErrorStatus) {
@@ -2622,7 +2678,16 @@ class EditorDraftSession {
       }
       throw error;
     } finally {
-      this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
+      if (saveCountRegistered) {
+        this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
+      }
+      this.unregisterInFlightDraftSave(draftIdAtSaveStart);
+      if (
+        staleCleanupSucceeded ||
+        (!saveCountRegistered && this.deletedDraftIds.has(draftIdAtSaveStart))
+      ) {
+        this.clearDeletedDraftTombstoneIfIdle(draftIdAtSaveStart);
+      }
       this.state.autosavePending =
         this.inFlightSaveCount > 0 || this.state.lastSavedRevision < this.state.draftRevision;
       this.notifyStateChange();

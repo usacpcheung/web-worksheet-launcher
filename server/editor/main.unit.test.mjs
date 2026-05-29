@@ -3424,6 +3424,59 @@ test('startNewWorksheet removes only current draft and referenced local assets',
   assert.equal(restoreSnapshots.at(-1).localId, nextDraft.localId);
 });
 
+test('startNewWorksheet cleanup prevents in-flight autosave from restoring deleted draft', async () => {
+  const mod = await loadEditorModule();
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+  const records = new Map();
+  const putStarted = deferred();
+  const allowPutToFinish = deferred();
+  const removedDraftIds = [];
+  let putCalls = 0;
+  const session = new mod.EditorDraftSession({
+    drafts: {
+      get: async (id) => records.get(id) || null,
+      put: async (value) => {
+        putCalls += 1;
+        putStarted.resolve(value);
+        await allowPutToFinish.promise;
+        records.set(value.localId, value);
+        return value;
+      },
+      remove: async (id) => {
+        removedDraftIds.push(id);
+        records.delete(id);
+      },
+    },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_reset_race');
+  clearTimeout(session.autosaveTimer);
+  session.updateBlockContent(session.state.draft.blocks[0].blockId, 'old draft content');
+  clearTimeout(session.autosaveTimer);
+
+  const staleSave = session.autosave();
+  await putStarted.promise;
+  const nextDraft = await session.startNewWorksheet();
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(records.has('draft_reset_race'), false);
+  allowPutToFinish.resolve();
+  await staleSave;
+
+  assert.equal(putCalls, 1);
+  assert.equal(records.has('draft_reset_race'), false);
+  assert.equal(session.deletedDraftIds.has('draft_reset_race'), false);
+  assert.equal(session.state.draft.localId, nextDraft.localId);
+  assert.deepEqual(removedDraftIds, ['draft_reset_race', 'draft_reset_race']);
+});
+
 test('deleteBlockWithPolicy directly deletes empty block', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({
