@@ -448,6 +448,44 @@ button:disabled {
   display: grid;
   gap: var(--space-md);
 }
+.discussion-print-details-form__mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+.discussion-print-details-form__mode-label {
+  font-weight: 700;
+  color: var(--color-text);
+}
+.discussion-print-details-form__mode {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+.discussion-print-details-form__mode-button {
+  min-height: 2rem;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--color-muted);
+  padding: 0.25rem 0.75rem;
+  box-shadow: none;
+  font: inherit;
+  font-weight: 700;
+}
+.discussion-print-details-form__mode-button.is-active {
+  background: var(--color-accent);
+  color: #fff;
+}
+.discussion-print-details-form__mode-button:hover:not(.is-active) {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
 .discussion-print-details-form__label {
   display: grid;
   gap: var(--space-2xs);
@@ -464,6 +502,10 @@ button:disabled {
   color: var(--color-text);
   font: inherit;
   font-weight: 400;
+}
+.discussion-print-details-form__input--readonly {
+  background: var(--color-surface-muted);
+  color: var(--color-muted);
 }
 .discussion-print-details-form__input:focus {
   outline: 3px solid rgba(37, 99, 235, 0.18);

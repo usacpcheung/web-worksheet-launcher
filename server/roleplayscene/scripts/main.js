@@ -111,10 +111,6 @@ const LEGACY_LOCALE_STORAGE_KEY = 'roleplayscene:locale';
 const HEADER_TABLET_MIN_WIDTH = 768;
 const HEADER_COMPACT_MAX_WIDTH = 1023;
 const DEFAULT_TOPBAR_HEIGHT_PX = 64;
-const DISCUSSION_PRINT_DEFAULT_SCHOOL_NAMES = Object.freeze([
-  'Hong Kong Red Cross Hospital Schools',
-  '香港紅十字會醫院學校',
-]);
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -1059,11 +1055,6 @@ function getDefaultDiscussionPrintSchoolName() {
   return translate('player.discussion.defaultSchoolName');
 }
 
-function isDefaultDiscussionPrintSchoolName(value) {
-  const normalized = String(value || '').trim();
-  return DISCUSSION_PRINT_DEFAULT_SCHOOL_NAMES.includes(normalized);
-}
-
 function formatDiscussionPrintDate(date = new Date()) {
   try {
     return new Intl.DateTimeFormat(getActiveLocale(), {
@@ -1078,9 +1069,7 @@ function formatDiscussionPrintDate(date = new Date()) {
 
 function readDiscussionPrintDetailsDraft() {
   const storedSchoolName = String(discussionPrintDetails.schoolName || '').trim();
-  const useCustomSchoolName = discussionPrintDetails.schoolNameCustom
-    && storedSchoolName
-    && !isDefaultDiscussionPrintSchoolName(storedSchoolName);
+  const useCustomSchoolName = discussionPrintDetails.schoolNameCustom && storedSchoolName;
   return {
     schoolName: useCustomSchoolName ? storedSchoolName : getDefaultDiscussionPrintSchoolName(),
     schoolNameCustom: useCustomSchoolName,
@@ -1097,6 +1086,8 @@ function promptDiscussionPrintDetails() {
     let resolved = false;
     let schoolInput = null;
     let studentInput = null;
+    let defaultModeButton = null;
+    let customModeButton = null;
     let schoolNameCustom = draft.schoolNameCustom;
     let unsubscribeLocaleChange = null;
     const settle = (value) => {
@@ -1110,12 +1101,31 @@ function promptDiscussionPrintDetails() {
     };
     const collectDetails = () => {
       const rawSchoolName = String(schoolInput?.value || '').trim();
-      const nextSchoolName = rawSchoolName || getDefaultDiscussionPrintSchoolName();
+      const nextSchoolName = schoolNameCustom
+        ? rawSchoolName || getDefaultDiscussionPrintSchoolName()
+        : getDefaultDiscussionPrintSchoolName();
       return {
         schoolName: nextSchoolName,
-        schoolNameCustom: Boolean(rawSchoolName) && rawSchoolName !== getDefaultDiscussionPrintSchoolName(),
+        schoolNameCustom: schoolNameCustom && Boolean(rawSchoolName),
         studentName: String(studentInput?.value || '').trim(),
       };
+    };
+    const syncSchoolNameMode = () => {
+      if (schoolInput) {
+        schoolInput.readOnly = !schoolNameCustom;
+        schoolInput.classList.toggle('discussion-print-details-form__input--readonly', !schoolNameCustom);
+        if (!schoolNameCustom) {
+          schoolInput.value = getDefaultDiscussionPrintSchoolName();
+        }
+      }
+      if (defaultModeButton) {
+        defaultModeButton.setAttribute('aria-pressed', schoolNameCustom ? 'false' : 'true');
+        defaultModeButton.classList.toggle('is-active', !schoolNameCustom);
+      }
+      if (customModeButton) {
+        customModeButton.setAttribute('aria-pressed', schoolNameCustom ? 'true' : 'false');
+        customModeButton.classList.toggle('is-active', schoolNameCustom);
+      }
     };
 
     openServerModal({
@@ -1127,16 +1137,41 @@ function promptDiscussionPrintDetails() {
         const schoolLabel = document.createElement('label');
         schoolLabel.className = 'discussion-print-details-form__label';
         schoolLabel.textContent = translate('player.discussion.printSchoolName');
+        const schoolModeRow = document.createElement('div');
+        schoolModeRow.className = 'discussion-print-details-form__mode-row';
+        const schoolModeLabel = document.createElement('span');
+        schoolModeLabel.className = 'discussion-print-details-form__mode-label';
+        schoolModeLabel.textContent = translate('player.discussion.printSchoolNameMode');
+        const schoolModeGroup = document.createElement('div');
+        schoolModeGroup.className = 'discussion-print-details-form__mode';
+        schoolModeGroup.setAttribute('role', 'group');
+        schoolModeGroup.setAttribute('aria-label', translate('player.discussion.printSchoolNameMode'));
+        defaultModeButton = document.createElement('button');
+        defaultModeButton.type = 'button';
+        defaultModeButton.className = 'discussion-print-details-form__mode-button';
+        defaultModeButton.textContent = translate('player.discussion.printSchoolNameDefault');
+        defaultModeButton.addEventListener('click', () => {
+          schoolNameCustom = false;
+          syncSchoolNameMode();
+        });
+        customModeButton = document.createElement('button');
+        customModeButton.type = 'button';
+        customModeButton.className = 'discussion-print-details-form__mode-button';
+        customModeButton.textContent = translate('player.discussion.printSchoolNameCustom');
+        customModeButton.addEventListener('click', () => {
+          schoolNameCustom = true;
+          syncSchoolNameMode();
+          schoolInput?.focus();
+        });
+        schoolModeGroup.append(defaultModeButton, customModeButton);
+        schoolModeRow.append(schoolModeLabel, schoolModeGroup);
         schoolInput = document.createElement('input');
         schoolInput.type = 'text';
         schoolInput.maxLength = 180;
         schoolInput.value = draft.schoolName;
         schoolInput.className = 'discussion-print-details-form__input';
         schoolInput.autocomplete = 'organization';
-        schoolInput.addEventListener('input', () => {
-          const rawSchoolName = schoolInput.value.trim();
-          schoolNameCustom = Boolean(rawSchoolName) && rawSchoolName !== getDefaultDiscussionPrintSchoolName();
-        });
+        schoolInput.addEventListener('input', () => { schoolNameCustom = true; syncSchoolNameMode(); });
         schoolLabel.appendChild(schoolInput);
 
         const studentLabel = document.createElement('label');
@@ -1158,11 +1193,12 @@ function promptDiscussionPrintDetails() {
           settle(details);
           closeServerModal('print');
         });
-        form.append(schoolLabel, studentLabel);
+        form.append(schoolModeRow, schoolLabel, studentLabel);
         body.appendChild(form);
+        syncSchoolNameMode();
         unsubscribeLocaleChange = onLocaleChange(() => {
           if (!schoolInput || schoolNameCustom) return;
-          schoolInput.value = getDefaultDiscussionPrintSchoolName();
+          syncSchoolNameMode();
         });
       },
       actions: [
