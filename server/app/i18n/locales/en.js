@@ -567,6 +567,9 @@ export default {
       "openTechnicalDetailsAriaLabel": "Open details and print settings",
       "openTechnicalDetailsTitle": "Details and print settings",
       "printSchoolName": "Print school name",
+      "printSchoolNameMode": "School name mode",
+      "printSchoolNameDefault": "Default",
+      "printSchoolNameCustom": "Custom",
       "studentName": "Student name",
       "studentNamePlaceholder": "Enter student name",
       "title": "Details and print settings"

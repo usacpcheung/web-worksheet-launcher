@@ -5403,17 +5403,42 @@ function renderViewerShell(session) {
   printSchoolNameLabel.className = 'viewer-details-form__label';
   printSchoolNameLabel.setAttribute('for', 'viewer-print-school-name-input');
   printSchoolNameLabel.textContent = t('viewer.details.printSchoolName');
+  const printSchoolNameModeRow = document.createElement('div');
+  printSchoolNameModeRow.className = 'viewer-details-form__mode-row';
+  const printSchoolNameModeLabel = document.createElement('span');
+  printSchoolNameModeLabel.className = 'viewer-details-form__mode-label';
+  printSchoolNameModeLabel.textContent = t('viewer.details.printSchoolNameMode');
+  const printSchoolNameModeGroup = document.createElement('div');
+  printSchoolNameModeGroup.className = 'viewer-details-form__mode';
+  printSchoolNameModeGroup.setAttribute('role', 'group');
+  printSchoolNameModeGroup.setAttribute('aria-label', t('viewer.details.printSchoolNameMode'));
+  const printSchoolNameDefaultBtn = document.createElement('button');
+  printSchoolNameDefaultBtn.type = 'button';
+  printSchoolNameDefaultBtn.className = 'viewer-details-form__mode-button';
+  printSchoolNameDefaultBtn.textContent = t('viewer.details.printSchoolNameDefault');
+  const printSchoolNameCustomBtn = document.createElement('button');
+  printSchoolNameCustomBtn.type = 'button';
+  printSchoolNameCustomBtn.className = 'viewer-details-form__mode-button';
+  printSchoolNameCustomBtn.textContent = t('viewer.details.printSchoolNameCustom');
+  printSchoolNameModeGroup.append(printSchoolNameDefaultBtn, printSchoolNameCustomBtn);
+  printSchoolNameModeRow.append(printSchoolNameModeLabel, printSchoolNameModeGroup);
   const printSchoolNameInput = document.createElement('input');
   printSchoolNameInput.id = 'viewer-print-school-name-input';
   printSchoolNameInput.className = 'viewer-details-form__input';
   printSchoolNameInput.type = 'text';
   printSchoolNameInput.maxLength = 180;
   printSchoolNameInput.placeholder = getDefaultViewerPrintSchoolName();
+  printSchoolNameInput.addEventListener('input', () => {
+    printSchoolNameCustom = true;
+    printSchoolName = printSchoolNameInput.value;
+    session.state.printSchoolName = printSchoolName.trim() || getDefaultViewerPrintSchoolName();
+    syncPrintSchoolNameMode();
+  });
   const printSchoolNameSaveBtn = document.createElement('button');
   printSchoolNameSaveBtn.type = 'submit';
   printSchoolNameSaveBtn.className = 'viewer-details-form__save';
   printSchoolNameSaveBtn.textContent = t('common.actions.save');
-  printSettingsForm.append(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn);
+  printSettingsForm.append(printSchoolNameModeRow, printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn);
   const detailsList = document.createElement('dl');
   detailsList.className = 'viewer-details-list';
   const detailsCloseBtn = document.createElement('button');
@@ -5481,12 +5506,7 @@ function renderViewerShell(session) {
   const renderTechnicalDetails = () => {
     const technicalRows = buildTechnicalDetailsRows(session.state);
     learnerNameInput.value = studentName;
-    if (!printSchoolNameCustom) {
-      printSchoolName = getDefaultViewerPrintSchoolName();
-      session.state.printSchoolName = printSchoolName;
-      printSchoolNameInput.placeholder = printSchoolName;
-    }
-    printSchoolNameInput.value = printSchoolName;
+    syncPrintSchoolNameMode();
     detailsList.innerHTML = '';
     technicalRows.forEach(([label, value]) => {
       const row = document.createElement('div');
@@ -5554,11 +5574,43 @@ function renderViewerShell(session) {
     learnerNameInput.focus();
   });
 
+  function syncPrintSchoolNameMode() {
+    if (!printSchoolNameCustom) {
+      printSchoolName = getDefaultViewerPrintSchoolName();
+      session.state.printSchoolName = printSchoolName;
+      printSchoolNameInput.value = printSchoolName;
+    } else {
+      printSchoolNameInput.value = printSchoolName;
+    }
+    printSchoolNameInput.placeholder = getDefaultViewerPrintSchoolName();
+    printSchoolNameInput.readOnly = !printSchoolNameCustom;
+    printSchoolNameInput.classList.toggle('viewer-details-form__input--readonly', !printSchoolNameCustom);
+    printSchoolNameDefaultBtn.setAttribute('aria-pressed', printSchoolNameCustom ? 'false' : 'true');
+    printSchoolNameCustomBtn.setAttribute('aria-pressed', printSchoolNameCustom ? 'true' : 'false');
+    printSchoolNameDefaultBtn.classList.toggle('is-active', !printSchoolNameCustom);
+    printSchoolNameCustomBtn.classList.toggle('is-active', printSchoolNameCustom);
+  }
+
+  printSchoolNameDefaultBtn.addEventListener('click', () => {
+    printSchoolNameCustom = false;
+    printSchoolName = writeViewerPrintSchoolNamePreference('', globalThis.localStorage, { custom: false });
+    session.state.printSchoolName = printSchoolName;
+    syncPrintSchoolNameMode();
+  });
+
+  printSchoolNameCustomBtn.addEventListener('click', () => {
+    printSchoolNameCustom = true;
+    printSchoolName = printSchoolNameInput.value.trim() || printSchoolName || getDefaultViewerPrintSchoolName();
+    session.state.printSchoolName = printSchoolName;
+    syncPrintSchoolNameMode();
+    printSchoolNameInput.focus();
+    printSchoolNameInput.select?.();
+  });
+
   printSettingsForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const submittedSchoolName = printSchoolNameInput.value.trim();
-    const shouldStoreCustom = Boolean(submittedSchoolName)
-      && submittedSchoolName !== getDefaultViewerPrintSchoolName();
+    const shouldStoreCustom = printSchoolNameCustom && Boolean(submittedSchoolName);
     printSchoolName = writeViewerPrintSchoolNamePreference(printSchoolNameInput.value, globalThis.localStorage, {
       custom: shouldStoreCustom,
     });

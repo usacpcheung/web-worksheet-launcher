@@ -567,6 +567,9 @@ export default {
       "openTechnicalDetailsAriaLabel": "開啟詳細資料與列印設定",
       "openTechnicalDetailsTitle": "詳細資料與列印設定",
       "printSchoolName": "學校名稱",
+      "printSchoolNameMode": "學校名稱模式",
+      "printSchoolNameDefault": "預設",
+      "printSchoolNameCustom": "自訂",
       "studentName": "學生姓名",
       "studentNamePlaceholder": "輸入學生姓名",
       "title": "詳細資料與列印設定"

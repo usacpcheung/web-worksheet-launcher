@@ -1812,9 +1812,15 @@ test('viewer details action stays available for print settings copy', async () =
   assert.match(source, /infoBtn\.title = t\('viewer\.details\.openTechnicalDetailsTitle'\);/);
   assert.match(source, /detailsTitle\.textContent = t\('viewer\.details\.title'\);/);
   assert.match(source, /learnerNameForm\.append\(learnerNameLabel, learnerNameInput, learnerNameSaveBtn\);/);
-  assert.match(source, /printSettingsForm\.append\(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn\);/);
+  assert.match(source, /printSchoolNameModeGroup\.setAttribute\('role', 'group'\);/);
+  assert.match(source, /printSchoolNameDefaultBtn\.textContent = t\('viewer\.details\.printSchoolNameDefault'\);/);
+  assert.match(source, /printSchoolNameCustomBtn\.textContent = t\('viewer\.details\.printSchoolNameCustom'\);/);
+  assert.match(source, /printSettingsForm\.append\(printSchoolNameModeRow, printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn\);/);
   assert.match(source, /let printSchoolNameState = readViewerPrintSchoolNamePreferenceState\(\);/);
-  assert.match(source, /if \(!printSchoolNameCustom\) \{/);
+  assert.match(source, /function syncPrintSchoolNameMode\(\) \{/);
+  assert.match(source, /printSchoolNameInput\.readOnly = !printSchoolNameCustom;/);
+  assert.match(source, /printSchoolNameDefaultBtn\.addEventListener\('click'/);
+  assert.match(source, /printSchoolNameCustomBtn\.addEventListener\('click'/);
   assert.match(source, /printSchoolName = getDefaultViewerPrintSchoolName\(\);/);
 });
 
