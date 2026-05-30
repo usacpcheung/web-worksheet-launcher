@@ -1520,6 +1520,19 @@ button {
   border-radius: 12px;
 }
 
+.viewer-details-form__mode .viewer-details-form__mode-button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 14px;
+}
+
+.viewer-details-form__mode .viewer-details-form__mode-button.is-active {
+  background: #1d4ed8;
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.28);
+}
+
 .boolean-segmented-control {
   display: flex;
   border: 1px solid #cbd5e1;
