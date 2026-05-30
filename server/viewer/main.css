@@ -1100,6 +1100,10 @@ body {
   min-height: 52px;
   padding: 0 20px;
   border-radius: 18px;
+  background: #fff;
+  border-color: #b7c0cf;
+  color: #1f2937;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, color 140ms ease;
 }
 
 .viewer-details-form__save {
@@ -1140,6 +1144,24 @@ body {
 .viewer-details-list__copy,
 .viewer-details-modal__close {
   white-space: nowrap;
+}
+
+.viewer-details-form__save:hover:not(:disabled),
+.viewer-details-list__copy:hover:not(:disabled),
+.viewer-details-modal__close:hover:not(:disabled),
+.viewer-details-form__save:focus-visible:not(:disabled),
+.viewer-details-list__copy:focus-visible:not(:disabled),
+.viewer-details-modal__close:focus-visible:not(:disabled) {
+  background: #f8fafc;
+  border-color: #98a2b3;
+}
+
+.viewer-details-form__save:focus-visible,
+.viewer-details-list__copy:focus-visible,
+.viewer-details-modal__close:focus-visible,
+.viewer-details-form__mode-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 24%);
 }
 
 .answer-summary {
@@ -1527,10 +1549,22 @@ button {
   padding: 0 14px;
 }
 
+.viewer-details-form__mode .viewer-details-form__mode-button:hover:not(.is-active),
+.viewer-details-form__mode .viewer-details-form__mode-button:focus-visible:not(.is-active) {
+  background: #fff;
+  color: #1f2937;
+}
+
 .viewer-details-form__mode .viewer-details-form__mode-button.is-active {
   background: #dbeafe;
   color: #1e3a8a;
   box-shadow: inset 0 0 0 1px #93c5fd;
+}
+
+.viewer-details-form__mode .viewer-details-form__mode-button.is-active:hover,
+.viewer-details-form__mode .viewer-details-form__mode-button.is-active:focus-visible {
+  background: #dbeafe;
+  color: #1e3a8a;
 }
 
 .boolean-segmented-control {
