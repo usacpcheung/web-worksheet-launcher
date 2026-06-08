@@ -101,8 +101,12 @@ npm run artifacts:maintain -- restore <quarantineId>
 
 The command prompts for `RESTORE`. A publication restore keeps its original
 published ID and artifact path. It fails without changing active data if that
-ID, owner/title identity, or destination path is already in use. Restoring an
-orphan moves only its file because no publication row existed.
+ID, owner/title identity, or destination path is already in use. If the source
+draft was deleted while the publication was quarantined, the restored source
+reference is set to `NULL`, matching the published table's normal
+`ON DELETE SET NULL` behavior. Restore is rejected once the 30-day
+`purge_after` timestamp is reached, even if the purge job has not run yet.
+Restoring an orphan moves only its file because no publication row existed.
 
 ## Purge
 

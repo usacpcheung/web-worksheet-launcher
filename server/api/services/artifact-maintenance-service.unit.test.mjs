@@ -155,7 +155,7 @@ test('worksheet quarantine removes only the active publication row and moves its
   );
 });
 
-test('restore preserves the original worksheet ID and artifact path', async (t) => {
+test('restore preserves the original worksheet ID and nulls a deleted source draft', async (t) => {
   const storageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'maintenance-restore-'));
   t.after(() => fs.rm(storageRoot, { recursive: true, force: true }));
   const artifactStore = new PackageArtifactStore({ storageRoot });
@@ -188,6 +188,7 @@ test('restore preserves the original worksheet ID and artifact path', async (t) 
     quarantine_artifact_path: quarantinePath,
     publication_metadata: metadata,
     status: 'quarantined',
+    purge_after: '2026-07-09T12:00:00.000Z',
   };
   const state = { insertedValues: null, restoredBy: null };
   const db = {
@@ -204,6 +205,9 @@ test('restore preserves the original worksheet ID and artifact path', async (t) 
             return { rowCount: 1, rows: [] };
           }
           if (sql.includes('SELECT 1 FROM published_packages WHERE published_package_id')) {
+            return { rowCount: 0, rows: [] };
+          }
+          if (sql.includes('FROM uploaded_drafts')) {
             return { rowCount: 0, rows: [] };
           }
           if (sql.includes('FROM published_packages') && sql.includes('regexp_replace')) {
@@ -223,7 +227,11 @@ test('restore preserves the original worksheet ID and artifact path', async (t) 
     },
   };
 
-  const service = new ArtifactMaintenanceService({ db, artifactStore });
+  const service = new ArtifactMaintenanceService({
+    db,
+    artifactStore,
+    now: () => new Date('2026-06-09T12:00:00.000Z'),
+  });
   const result = await service.restore({
     quarantineId,
     requestedBy: 'admin',
@@ -232,7 +240,144 @@ test('restore preserves the original worksheet ID and artifact path', async (t) 
   assert.equal(result.ok, true);
   assert.equal(state.restoredBy, 'admin');
   assert.equal(state.insertedValues[0], PUBLISHED_ID);
+  assert.equal(state.insertedValues[4], null);
   assert.equal(state.insertedValues[7], originalPath);
   assert.equal((await artifactStore.statArtifact(originalPath)).isFile, true);
   assert.equal(await artifactStore.statArtifact(quarantinePath), null);
+});
+
+test('restore locks an existing source draft before retaining its foreign key', async () => {
+  const quarantineId = '66666666-6666-4666-8666-666666666666';
+  const sourceDraftId = '33333333-3333-4333-8333-333333333333';
+  const row = {
+    quarantine_id: quarantineId,
+    artifact_kind: 'worksheet',
+    original_published_id: PUBLISHED_ID,
+    original_artifact_path: 'published/owner/restored.zip',
+    quarantine_artifact_path: `quarantine/worksheet/${quarantineId}.zip`,
+    publication_metadata: {
+      published_package_id: PUBLISHED_ID,
+      owner_sub: 'owner',
+      owner_email: 'owner@example.test',
+      owner_name: 'Owner',
+      source_uploaded_draft_id: sourceDraftId,
+      title: 'Worksheet',
+      subject: 'English',
+      artifact_path: 'published/owner/restored.zip',
+      artifact_sha256: 'abc',
+      artifact_size_bytes: 17,
+      created_at: '2026-06-01T00:00:00.000Z',
+      published_at: '2026-06-01T00:00:00.000Z',
+    },
+    status: 'quarantined',
+    purge_after: '2026-07-09T12:00:00.000Z',
+  };
+  let sourceLookupSql = '';
+  let insertedValues = null;
+  const db = {
+    async connect() {
+      return {
+        async query(sql, values = []) {
+          if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql.trim())) return { rowCount: 0, rows: [] };
+          if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [{}] };
+          if (sql.includes('FROM published_artifact_quarantine') && sql.includes('FOR UPDATE')) {
+            return { rowCount: 1, rows: [row] };
+          }
+          if (sql.includes('FROM uploaded_drafts')) {
+            sourceLookupSql = sql;
+            return { rowCount: 1, rows: [{}] };
+          }
+          if (sql.includes('SELECT 1 FROM published_packages WHERE published_package_id')) {
+            return { rowCount: 0, rows: [] };
+          }
+          if (sql.includes('FROM published_packages') && sql.includes('regexp_replace')) {
+            return { rowCount: 0, rows: [] };
+          }
+          if (sql.includes("SET status = 'pending_restore'")) return { rowCount: 1, rows: [] };
+          if (sql.includes('INSERT INTO published_packages')) {
+            insertedValues = values;
+            return { rowCount: 1, rows: [] };
+          }
+          if (sql.includes("SET status = 'restored'")) {
+            return { rowCount: 1, rows: [{ ...row, status: 'restored' }] };
+          }
+          throw new Error(`Unexpected source-lock restore query: ${sql}`);
+        },
+        release() {},
+      };
+    },
+  };
+  const artifactStore = {
+    async moveArtifact() {
+      return { moved: true };
+    },
+  };
+  const service = new ArtifactMaintenanceService({
+    db,
+    artifactStore,
+    now: () => new Date('2026-06-09T12:00:00.000Z'),
+  });
+
+  const result = await service.restore({ quarantineId, requestedBy: 'admin' });
+
+  assert.equal(result.ok, true);
+  assert.match(sourceLookupSql, /FOR KEY SHARE/);
+  assert.equal(insertedValues[4], sourceDraftId);
+});
+
+test('restore rejects an expired quarantine before state or filesystem mutation', async () => {
+  const quarantineId = '55555555-5555-4555-8555-555555555555';
+  const row = {
+    quarantine_id: quarantineId,
+    artifact_kind: 'worksheet',
+    original_published_id: PUBLISHED_ID,
+    original_artifact_path: 'published/owner/expired.zip',
+    quarantine_artifact_path: `quarantine/worksheet/${quarantineId}.zip`,
+    publication_metadata: {},
+    status: 'quarantined',
+    purge_after: '2026-06-09T12:00:00.000Z',
+  };
+  let mutationQueries = 0;
+  let moveCalls = 0;
+  const db = {
+    async connect() {
+      return {
+        async query(sql) {
+          if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql.trim())) return { rowCount: 0, rows: [] };
+          if (sql.includes('pg_advisory_xact_lock')) return { rowCount: 1, rows: [{}] };
+          if (sql.includes('FROM published_artifact_quarantine') && sql.includes('FOR UPDATE')) {
+            return { rowCount: 1, rows: [row] };
+          }
+          if (sql.includes('UPDATE') || sql.includes('INSERT') || sql.includes('DELETE')) {
+            mutationQueries += 1;
+          }
+          throw new Error(`Unexpected expired restore query: ${sql}`);
+        },
+        release() {},
+      };
+    },
+  };
+  const artifactStore = {
+    async moveArtifact() {
+      moveCalls += 1;
+    },
+  };
+  const service = new ArtifactMaintenanceService({
+    db,
+    artifactStore,
+    now: () => new Date('2026-06-09T12:00:00.000Z'),
+  });
+
+  const result = await service.restore({
+    quarantineId,
+    requestedBy: 'admin',
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    code: 'QUARANTINE_EXPIRED',
+    purgeAfter: row.purge_after,
+  });
+  assert.equal(mutationQueries, 0);
+  assert.equal(moveCalls, 0);
 });

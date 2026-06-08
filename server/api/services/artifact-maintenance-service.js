@@ -18,6 +18,8 @@ function publicationDefinition(kind) {
       table: 'published_packages',
       idColumn: 'published_package_id',
       sourceColumn: 'source_uploaded_draft_id',
+      sourceTable: 'uploaded_drafts',
+      sourceIdColumn: 'uploaded_draft_id',
       fields: [
         'published_package_id',
         'owner_sub',
@@ -39,6 +41,8 @@ function publicationDefinition(kind) {
       table: 'roleplayscene_published_scenes',
       idColumn: 'roleplayscene_published_scene_id',
       sourceColumn: 'source_roleplayscene_uploaded_draft_id',
+      sourceTable: 'roleplayscene_uploaded_drafts',
+      sourceIdColumn: 'roleplayscene_uploaded_draft_id',
       fields: [
         'roleplayscene_published_scene_id',
         'owner_sub',
@@ -414,6 +418,21 @@ export class ArtifactMaintenanceService {
         await client.query('ROLLBACK');
         return { ok: false, code: 'QUARANTINE_NOT_RESTORABLE', status: row.status };
       }
+      const purgeAfter = new Date(row.purge_after);
+      if (!Number.isFinite(purgeAfter.getTime()) || purgeAfter.getTime() <= this.now().getTime()) {
+        await client.query('ROLLBACK');
+        return {
+          ok: false,
+          code: 'QUARANTINE_EXPIRED',
+          purgeAfter: row.purge_after,
+        };
+      }
+
+      let restoreMetadata = null;
+      if (row.artifact_kind !== 'orphan') {
+        restoreMetadata = await this.#resolveRestoredPublicationMetadata(client, row);
+        await this.#assertPublicationCanRestore(client, row, restoreMetadata);
+      }
 
       await client.query(
         `UPDATE published_artifact_quarantine
@@ -426,10 +445,6 @@ export class ArtifactMaintenanceService {
          WHERE quarantine_id = $1`,
         [quarantineId, automatedConfirmation, requestedBy]
       );
-
-      if (row.artifact_kind !== 'orphan') {
-        await this.#assertPublicationCanRestore(client, row);
-      }
 
       try {
         await this.artifactStore.moveArtifact({
@@ -448,7 +463,7 @@ export class ArtifactMaintenanceService {
       }
 
       if (row.artifact_kind !== 'orphan') {
-        await this.#insertRestoredPublication(client, row);
+        await this.#insertRestoredPublication(client, row, restoreMetadata);
       }
       const restored = await client.query(
         `UPDATE published_artifact_quarantine
@@ -607,9 +622,27 @@ export class ArtifactMaintenanceService {
     }
   }
 
-  async #assertPublicationCanRestore(client, quarantineRow) {
+  async #resolveRestoredPublicationMetadata(client, quarantineRow) {
     const definition = publicationDefinition(quarantineRow.artifact_kind);
-    const metadata = normalizeMetadata(quarantineRow.publication_metadata);
+    const metadata = { ...normalizeMetadata(quarantineRow.publication_metadata) };
+    const sourceId = metadata[definition.sourceColumn];
+    if (!sourceId) return metadata;
+
+    const source = await client.query(
+      `SELECT 1
+       FROM ${definition.sourceTable}
+       WHERE ${definition.sourceIdColumn} = $1
+       FOR KEY SHARE`,
+      [sourceId]
+    );
+    if (source.rowCount === 0) {
+      metadata[definition.sourceColumn] = null;
+    }
+    return metadata;
+  }
+
+  async #assertPublicationCanRestore(client, quarantineRow, metadata) {
+    const definition = publicationDefinition(quarantineRow.artifact_kind);
     const idConflict = await client.query(
       `SELECT 1 FROM ${definition.table} WHERE ${definition.idColumn} = $1`,
       [quarantineRow.original_published_id]
@@ -655,9 +688,8 @@ export class ArtifactMaintenanceService {
     }
   }
 
-  async #insertRestoredPublication(client, quarantineRow) {
+  async #insertRestoredPublication(client, quarantineRow, metadata) {
     const definition = publicationDefinition(quarantineRow.artifact_kind);
-    const metadata = normalizeMetadata(quarantineRow.publication_metadata);
     const values = definition.fields.map((field) => {
       if (field === 'artifact_path') return portablePath(quarantineRow.original_artifact_path);
       return metadata[field] ?? null;
