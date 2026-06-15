@@ -652,6 +652,7 @@ function setMode(next, options = {}) {
     teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {
       apiClient,
       ensureServerSessionReady,
+      onServerApiResult: syncServerSessionFromApiResult,
       initialSelectedSceneId: editorSession.selectedSceneId,
       initialLeftView: editorSession.leftView,
       initialSelectedSpeechBubbleAnchorId: editorSession.selectedSpeechBubbleAnchorId,
@@ -1017,7 +1018,30 @@ function chooseFromServerModal({ title, message, actions }) {
   });
 }
 
+function isServerAuthRequired(result) {
+  const status = Number(result?.error?.status ?? result?.status);
+  const code = String(result?.error?.code || '').toUpperCase();
+  return Boolean(
+    result?.error?.requiresSignIn
+    || status === 401
+    || status === 403
+    || code === 'AUTH_REQUIRED'
+  );
+}
+
+function syncServerSessionFromApiResult(result) {
+  if (result?.ok !== false || !isServerAuthRequired(result)) return false;
+  serverSession = {
+    status: 'not_ready',
+    user: null,
+    error: result.error?.message || translate('server.signInRequired'),
+  };
+  updateServerSessionUi();
+  return true;
+}
+
 function getServerErrorMessage(result, fallbackId = 'server.actionFailed') {
+  syncServerSessionFromApiResult(result);
   return result?.error?.message || translate(fallbackId);
 }
 

@@ -294,3 +294,42 @@ test('T2A result is ignored after editor teardown', async () => {
   assert.equal(store.get().project.scenes[0].dialogue[0].audio, null);
   assert.equal(messages.some((message) => message.textId === 'inspector.dialogue.t2aGenerated'), false);
 });
+
+test('T2A late auth failure is reported to the server session owner', async () => {
+  installDomGlobals();
+  const messages = [];
+  const serverResults = [];
+  const store = new TestStore(makeProject({ text: 'Hello' }));
+  const left = document.createElement('div');
+  const right = document.createElement('div');
+  const authFailure = {
+    ok: false,
+    error: {
+      code: 'AUTH_REQUIRED',
+      message: 'Session expired.',
+      status: 401,
+      requiresSignIn: true,
+    },
+  };
+
+  renderEditor(store, left, right, (message) => messages.push(message), {
+    apiClient: {
+      generateAudioFromText: async () => authFailure,
+    },
+    ensureServerSessionReady: async () => ({ ok: true }),
+    onServerApiResult: (result) => serverResults.push(result),
+  });
+
+  findButtonByText(right, 'Generate audio').dispatchEvent('click');
+  await waitFor(() => serverResults.length === 1);
+
+  assert.equal(serverResults[0], authFailure);
+  assert.equal(store.get().project.scenes[0].dialogue[0].audio, null);
+  assert.equal(
+    messages.some((message) => (
+      message.textId === 'inspector.dialogue.t2aFailedWithDetail'
+      && message.textArgs?.detail === 'Session expired.'
+    )),
+    true,
+  );
+});
