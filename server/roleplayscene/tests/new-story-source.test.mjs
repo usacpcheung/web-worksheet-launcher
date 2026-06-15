@@ -10,6 +10,10 @@ assert.ok(newStoryMarkupIndex > -1, 'New Story toolbar action should exist');
 assert.ok(newStoryMarkupIndex < importMarkupIndex, 'New Story should appear before Import');
 
 const handlerIndex = mainSource.indexOf("btnNewStory?.addEventListener('click'");
+const discussionConfirmIndex = mainSource.indexOf(
+  'if (!(await ensureDiscussionCanBeDiscarded())) return',
+  handlerIndex,
+);
 const confirmIndex = mainSource.indexOf('const shouldStart = await confirmNewStory()', handlerIndex);
 const replaceIndex = mainSource.indexOf(
   'applyPreparedProjectImport(store, { project: createProject() })',
@@ -18,6 +22,10 @@ const replaceIndex = mainSource.indexOf(
 const editModeIndex = mainSource.indexOf("setMode('edit')", handlerIndex);
 
 assert.ok(handlerIndex > -1, 'New Story click handler should exist');
+assert.ok(
+  discussionConfirmIndex > handlerIndex && discussionConfirmIndex < confirmIndex,
+  'New Story should protect unsaved discussion text before replacement confirmation',
+);
 assert.ok(confirmIndex > handlerIndex, 'New Story should request confirmation');
 assert.ok(replaceIndex > confirmIndex, 'New Story should replace the project only after confirmation');
 assert.ok(editModeIndex > replaceIndex, 'New Story should return to Edit mode after replacement');

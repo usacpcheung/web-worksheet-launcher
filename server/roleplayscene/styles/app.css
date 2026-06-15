@@ -114,16 +114,6 @@ button:disabled {
   border-color: var(--color-accent-strong);
   color: #fff;
 }
-.confirm-actions__danger {
-  border-color: var(--color-danger-border);
-  background: var(--color-danger-bg);
-  color: var(--color-danger-text);
-}
-.confirm-actions__danger:hover:not(:disabled) {
-  border-color: var(--color-danger-text);
-  background: var(--color-danger-bg);
-  color: var(--color-danger-text);
-}
 .topbar {
   position: relative;
   z-index: 50;
@@ -402,6 +392,16 @@ button:disabled {
   background: var(--color-accent-strong);
   border-color: var(--color-accent-strong);
   color: #fff;
+}
+.confirm-actions__primary.confirm-actions__danger {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+}
+.confirm-actions__primary.confirm-actions__danger:hover:not(:disabled) {
+  border-color: var(--color-danger-text);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
 }
 .server-modal-overlay {
   position: fixed;

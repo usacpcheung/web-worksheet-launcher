@@ -2390,6 +2390,7 @@ btnPlay.addEventListener('click', () => {
 
 btnImport.addEventListener('click', () => fileInput.click());
 btnNewStory?.addEventListener('click', async () => {
+  if (!(await ensureDiscussionCanBeDiscarded())) return;
   const shouldStart = await confirmNewStory();
   if (!shouldStart) return;
 
