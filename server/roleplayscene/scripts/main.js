@@ -15,6 +15,7 @@ import {
 } from './storage.js';
 import { validateProject } from './editor/validators.js';
 import { renderValidation } from './editor/inspector.js';
+import { createProject } from './model.js';
 import { translate, onLocaleChange, getActiveLocale, getAvailableLocales, LOCALE_STORAGE_KEY } from './i18n.js';
 import { createServerApiClient } from '../../app/api/server-api-client.js';
 import { probeSession } from '../../app/auth/session-readiness.js';
@@ -30,6 +31,7 @@ const dismissButton = messageHost?.querySelector('.app-messages__dismiss');
 
 const btnEdit = document.getElementById('mode-edit');
 const btnPlay = document.getElementById('mode-play');
+const btnNewStory = document.getElementById('new-story-btn');
 const btnImport = document.getElementById('import-btn');
 const btnExport = document.getElementById('export-btn');
 const serverStatus = document.getElementById('server-status');
@@ -91,6 +93,7 @@ let uploadedDraftSlotLimit = 3;
 
 const ImportConfirmationKind = Object.freeze({
   IMPORT: 'import',
+  NEW_STORY: 'new-story',
   DISCUSSION_DISCARD: 'discussion-discard',
 });
 let isLoadingUploadedDrafts = false;
@@ -323,6 +326,7 @@ function applyDesktopWrapOverflowFallback() {
 }
 
 function restoreDesktopToolbarLayout() {
+  moveToolbarNode(btnNewStory, toolbarFiles);
   moveToolbarNode(btnImport, toolbarFiles);
   moveToolbarNode(btnExport, toolbarFiles);
   moveToolbarNode(serverSignInButton, toolbarServer);
@@ -369,6 +373,7 @@ function applyToolbarOverflowLayout() {
     return;
   }
 
+  moveToolbarNode(btnNewStory, toolbarMoreProjectItems);
   moveToolbarNode(btnImport, toolbarMoreProjectItems);
   moveToolbarNode(btnExport, toolbarMoreProjectItems);
   moveToolbarNode(toolbarLocale, toolbarMoreProjectItems);
@@ -434,6 +439,10 @@ function updateToolbarText() {
   }
   if (btnPlay) {
     btnPlay.textContent = translate('toolbar.play');
+  }
+  if (btnNewStory) {
+    btnNewStory.textContent = translate('toolbar.newStory');
+    btnNewStory.title = translate('toolbar.newStoryTitle');
   }
   if (btnImport) {
     btnImport.textContent = translate('toolbar.import');
@@ -819,7 +828,7 @@ function updateServerSessionUi() {
 function updatePublishedPlayUi() {
   const inPublishedPlay = Boolean(publishedPlay.active);
   const inEditorPreview = Boolean(editorPreview) && !inPublishedPlay;
-  [btnEdit, btnImport, btnExport, serverSaveButton, serverManageButton].forEach((control) => {
+  [btnEdit, btnNewStory, btnImport, btnExport, serverSaveButton, serverManageButton].forEach((control) => {
     if (control) control.hidden = inPublishedPlay;
   });
   if (btnEdit && !inPublishedPlay) {
@@ -1341,11 +1350,34 @@ async function printRolePlaySceneDiscussion() {
 
 function getImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, options = {}) {
   const isDiscussionDiscard = kind === ImportConfirmationKind.DISCUSSION_DISCARD;
+  const isNewStory = kind === ImportConfirmationKind.NEW_STORY;
   return {
-    title: options.title || translate(isDiscussionDiscard ? 'player.discussion.discardTitle' : 'messages.importConfirmTitle'),
-    body: options.body || translate(isDiscussionDiscard ? 'player.discussion.discardBody' : 'messages.importConfirmBody'),
-    accept: options.accept || translate(isDiscussionDiscard ? 'player.discussion.discardConfirm' : 'messages.importConfirmAccept'),
-    cancel: options.cancel || translate(isDiscussionDiscard ? 'player.discussion.discardCancel' : 'messages.importConfirmCancel'),
+    title: options.title || translate(
+      isDiscussionDiscard
+        ? 'player.discussion.discardTitle'
+        : isNewStory
+          ? 'messages.newStoryConfirmTitle'
+          : 'messages.importConfirmTitle'
+    ),
+    body: options.body || translate(
+      isDiscussionDiscard
+        ? 'player.discussion.discardBody'
+        : isNewStory
+          ? 'messages.newStoryConfirmBody'
+          : 'messages.importConfirmBody'
+    ),
+    accept: options.accept || translate(
+      isDiscussionDiscard
+        ? 'player.discussion.discardConfirm'
+        : isNewStory
+          ? 'messages.newStoryConfirmAccept'
+          : 'messages.importConfirmAccept'
+    ),
+    cancel: options.cancel || translate(
+      isDiscussionDiscard
+        ? 'player.discussion.discardCancel'
+        : 'messages.importConfirmCancel'
+    ),
   };
 }
 
@@ -1355,6 +1387,10 @@ function applyImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, optio
   if (importConfirmBody) importConfirmBody.textContent = copy.body;
   if (importConfirmAccept) importConfirmAccept.textContent = copy.accept;
   if (importConfirmCancel) importConfirmCancel.textContent = copy.cancel;
+  importConfirmAccept?.classList.toggle(
+    'confirm-actions__danger',
+    kind === ImportConfirmationKind.NEW_STORY
+  );
   return copy;
 }
 
@@ -1414,6 +1450,12 @@ function confirmProjectImport(options = {}) {
 function confirmDiscardDiscussion() {
   return confirmProjectImport({
     kind: ImportConfirmationKind.DISCUSSION_DISCARD,
+  });
+}
+
+function confirmNewStory() {
+  return confirmProjectImport({
+    kind: ImportConfirmationKind.NEW_STORY,
   });
 }
 
@@ -2347,6 +2389,21 @@ btnPlay.addEventListener('click', () => {
 });
 
 btnImport.addEventListener('click', () => fileInput.click());
+btnNewStory?.addEventListener('click', async () => {
+  const shouldStart = await confirmNewStory();
+  if (!shouldStart) return;
+
+  discardDiscussion();
+  editorPreview = null;
+  editorSession = {
+    selectedSceneId: null,
+    leftView: 'storyMap',
+    selectedSpeechBubbleAnchorId: null,
+  };
+  await applyPreparedProjectImport(store, { project: createProject() });
+  setMode('edit');
+  showMessage({ textId: 'messages.newStoryStarted' });
+});
 serverSignInButton?.addEventListener('click', () => startServerSignIn());
 serverSaveButton?.addEventListener('click', () => {
   uploadCurrentProjectToServer().catch((err) => {
