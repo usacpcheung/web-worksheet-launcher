@@ -55,5 +55,27 @@ export function loadConfig(env = process.env) {
     browsePageLimitDefault: 20,
     browsePageLimitMax: 100,
     packageUploadMaxBytes: parsePositiveInt(env.PACKAGE_UPLOAD_MAX_BYTES, '31457280', 'PACKAGE_UPLOAD_MAX_BYTES'),
+    rolePlayScenePackageLimits: {
+      maxUncompressedBytes: parsePositiveInt(
+        env.ROLEPLAYSCENE_PACKAGE_MAX_UNCOMPRESSED_BYTES,
+        '67108864',
+        'ROLEPLAYSCENE_PACKAGE_MAX_UNCOMPRESSED_BYTES'
+      ),
+      maxEntryBytes: parsePositiveInt(
+        env.ROLEPLAYSCENE_PACKAGE_MAX_ENTRY_BYTES,
+        '33554432',
+        'ROLEPLAYSCENE_PACKAGE_MAX_ENTRY_BYTES'
+      ),
+      maxEntries: parsePositiveInt(
+        env.ROLEPLAYSCENE_PACKAGE_MAX_ENTRIES,
+        '200',
+        'ROLEPLAYSCENE_PACKAGE_MAX_ENTRIES'
+      ),
+      maxEntryNameLength: parsePositiveInt(
+        env.ROLEPLAYSCENE_PACKAGE_MAX_ENTRY_NAME_LENGTH,
+        '512',
+        'ROLEPLAYSCENE_PACKAGE_MAX_ENTRY_NAME_LENGTH'
+      ),
+    },
   };
 }
