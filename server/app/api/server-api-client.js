@@ -4,15 +4,6 @@ const DEFAULT_PUBLIC_API_BASE = '/api/worksheet-launcher/v1';
 const BRIDGE_API_BASE = '/api/rewrite-bridge';
 const DEFAULT_SIGN_IN_POPUP_PATH = '/worksheet_launcher/app/login/popup.html';
 
-function buildPublicApiBase(options = {}) {
-  const fromOverride = options.apiBase || null;
-  if (fromOverride) return String(fromOverride).replace(/\/+$/, '');
-  const params = new URLSearchParams(window.location.search);
-  const fromQuery = params.get('apiBase');
-  if (fromQuery) return String(fromQuery).replace(/\/+$/, '');
-  return DEFAULT_PUBLIC_API_BASE;
-}
-
 function createAuthMessage() {
   return 'Sign in for server features, then retry this action.';
 }
@@ -150,8 +141,8 @@ async function parseJsonResponseFromText({ status, contentType = '', text = '' }
   });
 }
 
-function createServerApiClient(options = {}) {
-  const publicApiBase = buildPublicApiBase(options);
+function createServerApiClient() {
+  const publicApiBase = DEFAULT_PUBLIC_API_BASE;
 
   function buildUrl(path, query = null) {
     const normalizedPath = String(path || '').startsWith('/') ? String(path) : `/${path}`;
