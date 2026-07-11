@@ -435,6 +435,12 @@ export function renderPlayerUI({
   let activeCueTrigger = null;
   let cueOverlayState = null;
   let playbackViewState = null;
+  let printDiscussionButton = null;
+
+  const syncDiscussionPrintButton = () => {
+    if (!printDiscussionButton) return;
+    printDiscussionButton.disabled = !discussionSession?.hasAnyText?.();
+  };
 
   const emitViewState = () => {
     if (typeof onViewStateChange !== 'function') return;
@@ -465,6 +471,7 @@ export function renderPlayerUI({
   };
 
   const notifyDiscussionChange = () => {
+    syncDiscussionPrintButton();
     try {
       onDiscussionChange?.(discussionSession?.snapshot?.() ?? null);
     } catch {
@@ -795,7 +802,8 @@ export function renderPlayerUI({
       printLabel.textContent = translate('player.discussion.printButton');
       printButton.appendChild(printLabel);
       printButton.setAttribute('aria-label', translate('player.discussion.printButton'));
-      printButton.disabled = !discussionSession.hasAnyText?.();
+      printDiscussionButton = printButton;
+      syncDiscussionPrintButton();
       printButton.addEventListener('click', () => {
         setOpen(false);
         onPrintDiscussion?.();
