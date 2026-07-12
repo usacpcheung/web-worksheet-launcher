@@ -660,7 +660,7 @@ function createServerApiClient() {
         format: 'mp3',
         response_mode: 'binary',
       };
-      ['voice_id', 'speed', 'volume', 'pitch'].forEach((key) => {
+      ['voice_id', 'language_boost', 'speed', 'volume', 'pitch'].forEach((key) => {
         if (options?.[key] !== undefined && options?.[key] !== null && options?.[key] !== '') {
           payload[key] = options[key];
         }
