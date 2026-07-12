@@ -848,7 +848,7 @@ function createDraftRecord(overrides = {}) {
       createdAt: overrides.metadata?.createdAt || updatedAt,
       serverLink: overrides.metadata?.serverLink || null,
       importedFrom: overrides.metadata?.importedFrom || null,
-      modelVersion: overrides.metadata?.modelVersion || 'package-compatible-v1',
+      modelVersion: overrides.metadata?.modelVersion || 'package-compatible-v2',
       subject: String(overrides.metadata?.subject || ''),
     },
   };
@@ -2858,7 +2858,7 @@ class EditorDraftSession {
         createdAt: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.createdAt) || now,
         serverLink: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.serverLink) || null,
         importedFrom: 'package_zip',
-        modelVersion: 'package-compatible-v1',
+        modelVersion: 'package-compatible-v2',
         subject: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.subject) || '',
       },
     });
@@ -2979,7 +2979,7 @@ class EditorDraftSession {
       assets: draftAssets,
       metadata: {
         ...this.state.draft.metadata,
-        modelVersion: 'package-compatible-v1',
+        modelVersion: 'package-compatible-v2',
       },
     };
     return createWorksheetPackageFromDraft(packagedDraft, assets).bytes;
