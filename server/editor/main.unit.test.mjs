@@ -1885,6 +1885,41 @@ test('non-destructive type switch does not require confirmation', async () => {
   assert.equal(updated.responseConfig.options, undefined);
 });
 
+test('type switch treats a track-only option as attachment loss and prunes its unshared asset', async () => {
+  const mod = await loadEditorModule();
+  const removed = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async (id) => { removed.push(id); } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_type_switch_track_only',
+    blocks: [{
+      blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{
+          id: 'o1', value: '', label: '',
+          audioTracks: [{ language: 'english', assetId: 'track_remove', voicePresetId: null, sourceTextHash: 'track-hash' }],
+        }],
+      },
+    }],
+    assets: [{ assetId: 'track_remove' }],
+  };
+
+  const blocked = session.switchQuestionInputTypeWithImpactPolicy('q1', 'text');
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, 'confirm-switch-required');
+  assert.equal(blocked.impact.optionAttachmentCountToRemove, 1);
+
+  const confirmed = session.switchQuestionInputTypeWithImpactPolicy('q1', 'text', { confirmSwitch: true });
+  assert.equal(confirmed.ok, true);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'track_remove'), false);
+  assert.deepEqual(removed, ['track_remove']);
+});
+
 test('destructive type switch requires confirm and cancel path preserves data', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());
@@ -3750,6 +3785,41 @@ test('removeQuestionOption prunes option audio asset link', async () => {
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_opt_audio'), false);
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep'), true);
   assert.deepEqual(removed, ['asset_opt_audio']);
+});
+
+test('removeQuestionOption prunes unshared track assets and preserves shared tracks', async () => {
+  const mod = await loadEditorModule();
+  const removed = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async (id) => { removed.push(id); } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_track_option_cleanup',
+    blocks: [{
+      blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [
+          { id: 'o1', value: 'A', label: 'A', audioTracks: [
+            { language: 'cantonese', assetId: 'track_remove', voicePresetId: 'cantonese', sourceTextHash: 'remove-hash' },
+            { language: 'english', assetId: 'track_shared', voicePresetId: null, sourceTextHash: 'shared-a' },
+          ] },
+          { id: 'o2', value: 'B', label: 'B', audioTracks: [
+            { language: 'english', assetId: 'track_shared', voicePresetId: null, sourceTextHash: 'shared-b' },
+          ] },
+        ],
+      },
+    }],
+    assets: [{ assetId: 'track_remove' }, { assetId: 'track_shared' }],
+  };
+
+  session.removeQuestionOption('q1', 0);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'track_remove'), false);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'track_shared'), true);
+  assert.deepEqual(removed, ['track_remove']);
 });
 
 test('removeQuestionOption preserves shared option audio used by another option', async () => {

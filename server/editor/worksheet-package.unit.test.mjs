@@ -113,8 +113,15 @@ test('parseWorksheetPackage retains v1 legacy single-audio references without cr
         title: 'Legacy',
         blocks: [{
           blockId: 'q1', kind: 'question', position: 0,
-          prompt: { text: 'Question', mediaRefs: [{ assetId: 'legacy_audio', usage: 'question_audio' }] },
-          responseConfig: { inputType: 'text' },
+          prompt: {
+            text: 'Question',
+            mediaRefs: [{ assetId: 'legacy_audio', usage: 'question_audio' }],
+            audioTracks: [{ language: 'english', assetId: 'missing_track', voicePresetId: null, sourceTextHash: 'legacy-track' }],
+          },
+          responseConfig: {
+            inputType: 'multiple_choice',
+            options: [{ id: 'o1', value: 'A', label: 'A', audioTracks: [{ language: 'mandarin', assetId: 'legacy_audio', voicePresetId: 'mandarin', sourceTextHash: 'option-track' }] }],
+          },
         }],
       }),
     },
@@ -125,6 +132,7 @@ test('parseWorksheetPackage retains v1 legacy single-audio references without cr
   assert.equal(parsed.manifest.packageVersion, 1);
   assert.deepEqual(parsed.worksheet.blocks[0].prompt.mediaRefs, [{ assetId: 'legacy_audio', usage: 'question_audio' }]);
   assert.deepEqual(parsed.worksheet.blocks[0].prompt.audioTracks, []);
+  assert.deepEqual(parsed.worksheet.blocks[0].responseConfig.options[0].audioTracks, []);
 });
 
 test('rewriteWorksheetPackageTitle updates manifest and worksheet title while preserving assets', () => {

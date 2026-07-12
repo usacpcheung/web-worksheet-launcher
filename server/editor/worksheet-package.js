@@ -37,7 +37,7 @@ function normalizeMediaRefs(mediaRefs) {
     .filter(Boolean);
 }
 
-function normalizeWorksheetBlocks(blocks) {
+function normalizeWorksheetBlocks(blocks, { includeAudioTracks = true } = {}) {
   return (Array.isArray(blocks) ? blocks : []).map((block, index) => {
     const safe = isRecord(block) ? block : {};
     const position = Number.isInteger(safe.position) ? safe.position : index;
@@ -50,7 +50,7 @@ function normalizeWorksheetBlocks(blocks) {
           return {
             ...option,
             mediaRefs: normalizeMediaRefs(option.mediaRefs),
-            audioTracks: normalizeAudioTracks(option.audioTracks),
+            audioTracks: includeAudioTracks ? normalizeAudioTracks(option.audioTracks) : [],
           };
         });
       }
@@ -63,7 +63,7 @@ function normalizeWorksheetBlocks(blocks) {
           text: String(prompt.text || ''),
           format: prompt.format || 'plain_text',
           mediaRefs: normalizeMediaRefs(prompt.mediaRefs),
-          audioTracks: normalizeAudioTracks(prompt.audioTracks),
+          audioTracks: includeAudioTracks ? normalizeAudioTracks(prompt.audioTracks) : [],
         },
         responseConfig,
       };
@@ -266,7 +266,9 @@ function parseWorksheetPackage(arrayBuffer) {
     manifest,
     worksheet: {
       ...worksheet,
-      blocks: normalizeWorksheetBlocks(worksheet.blocks),
+      blocks: normalizeWorksheetBlocks(worksheet.blocks, {
+        includeAudioTracks: manifest.packageVersion === PACKAGE_VERSION,
+      }),
     },
     assets: assets.map((asset) => ({
       ...asset,

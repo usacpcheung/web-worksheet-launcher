@@ -248,7 +248,12 @@ function getSwitchImpact(fromType, toType, questionState) {
   const shouldRemoveOptions = normalizedFromType === 'multiple_choice' && normalizedToType !== 'multiple_choice';
   const optionCountToRemove = shouldRemoveOptions ? normalizedOptions.length : 0;
   const optionAttachmentCountToRemove = shouldRemoveOptions
-    ? normalizedOptions.reduce((count, option) => count + normalizeMediaRefs(option.mediaRefs, 'option_audio').length, 0)
+    ? normalizedOptions.reduce(
+      (count, option) => count
+        + normalizeMediaRefs(option.mediaRefs, 'option_audio').length
+        + collectAudioTrackAssetIds(option.audioTracks).length,
+      0
+    )
     : 0;
   const hasOptionTextLoss = shouldRemoveOptions
     ? normalizedOptions.some((option) => hasTypedText(option.label) || hasTypedText(option.value))
@@ -1921,7 +1926,10 @@ class EditorDraftSession {
     const removedAssetIds = impact.fromType === 'multiple_choice' && impact.toType !== 'multiple_choice'
       ? (Array.isArray(normalizeQuestionResponseConfig(block.responseConfig).options)
         ? normalizeQuestionResponseConfig(block.responseConfig).options
-          .flatMap((option) => normalizeMediaRefs(option?.mediaRefs, 'option_audio').map((ref) => ref.assetId))
+          .flatMap((option) => [
+            ...normalizeMediaRefs(option?.mediaRefs, 'option_audio').map((ref) => ref.assetId),
+            ...collectAudioTrackAssetIds(option?.audioTracks),
+          ])
         : [])
       : [];
     this.updateQuestionInputType(blockId, nextInputType);
@@ -2370,6 +2378,7 @@ class EditorDraftSession {
         : [];
       if (options[index]) {
         normalizeMediaRefs(options[index]?.mediaRefs, 'option_audio').forEach((ref) => removedAssetIds.push(ref.assetId));
+        collectAudioTrackAssetIds(options[index]?.audioTracks).forEach((assetId) => removedAssetIds.push(assetId));
       }
       options.splice(index, 1);
       return {
