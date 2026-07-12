@@ -1,8 +1,10 @@
 import { createStoredZip, decodeUtf8, parseStoredZip, toUint8Array, crc32 } from './zip-utils.js';
+import { assertValidAudioTracks, normalizeAudioTracks } from './audio-tracks.js';
 
 const PACKAGE_FORMAT = 'worksheet-package';
-const PACKAGE_VERSION = 1;
-const CONTENT_SCHEMA_VERSION = 1;
+const PACKAGE_VERSION = 2;
+const CONTENT_SCHEMA_VERSION = 2;
+const LEGACY_PACKAGE_VERSION = 1;
 
 function nowIso() {
   return new Date().toISOString();
@@ -48,6 +50,7 @@ function normalizeWorksheetBlocks(blocks) {
           return {
             ...option,
             mediaRefs: normalizeMediaRefs(option.mediaRefs),
+            audioTracks: normalizeAudioTracks(option.audioTracks),
           };
         });
       }
@@ -60,6 +63,7 @@ function normalizeWorksheetBlocks(blocks) {
           text: String(prompt.text || ''),
           format: prompt.format || 'plain_text',
           mediaRefs: normalizeMediaRefs(prompt.mediaRefs),
+          audioTracks: normalizeAudioTracks(prompt.audioTracks),
         },
         responseConfig,
       };
@@ -132,7 +136,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
     metadata: {
       ...draft.metadata,
       localId: draft.localId,
-      modelVersion: 'package-compatible-v1',
+      modelVersion: 'package-compatible-v2',
     },
   };
 
@@ -200,8 +204,14 @@ function parseWorksheetPackage(arrayBuffer) {
     throw new Error(`Invalid package worksheet.json: ${error?.message || String(error)}`);
   }
 
-  if (manifest?.format !== PACKAGE_FORMAT || manifest?.packageVersion !== PACKAGE_VERSION) {
+  if (
+    manifest?.format !== PACKAGE_FORMAT
+    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION].includes(manifest?.packageVersion)
+  ) {
     throw new Error('Unsupported worksheet package format or packageVersion.');
+  }
+  if (manifest.packageVersion === PACKAGE_VERSION && manifest.schemaVersion !== CONTENT_SCHEMA_VERSION) {
+    throw new Error('Unsupported worksheet package schemaVersion.');
   }
 
   const assets = normalizeAssetManifestList(manifest.assets);
@@ -234,6 +244,23 @@ function parseWorksheetPackage(arrayBuffer) {
       }
     }
   });
+
+  if (manifest.packageVersion === PACKAGE_VERSION) {
+    const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
+    (Array.isArray(worksheet.blocks) ? worksheet.blocks : []).forEach((block, blockIndex) => {
+      if (!isRecord(block) || (block.kind !== 'question' && !isRecord(block.prompt))) return;
+      assertValidAudioTracks(block.prompt?.audioTracks, assetById, `worksheet.blocks[${blockIndex}].prompt`);
+      const options = Array.isArray(block.responseConfig?.options) ? block.responseConfig.options : [];
+      options.forEach((option, optionIndex) => {
+        if (!isRecord(option)) return;
+        assertValidAudioTracks(
+          option.audioTracks,
+          assetById,
+          `worksheet.blocks[${blockIndex}].responseConfig.options[${optionIndex}]`
+        );
+      });
+    });
+  }
 
   return {
     manifest,
@@ -289,7 +316,7 @@ function mapLegacyJsonToPackageModel(parsedLegacy) {
         ...metadata,
         origin: metadata.origin || 'legacy_json_import',
         importedFrom: 'legacy_json',
-        modelVersion: 'package-compatible-v1',
+        modelVersion: 'package-compatible-v2',
       },
     },
     manifest: {

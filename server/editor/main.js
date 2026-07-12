@@ -5,6 +5,7 @@ import {
   createWorksheetPackageFromDraft,
   parseWorksheetPackage,
 } from './worksheet-package.js';
+import { collectAudioTrackAssetIds, normalizeAudioTracks } from './audio-tracks.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
 import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
@@ -171,9 +172,11 @@ function collectQuestionAssetIds(block) {
   if (!isRecord(block) || block.kind !== 'question') return [];
   const ids = new Set();
   normalizeMediaRefs(block?.prompt?.mediaRefs).forEach((ref) => ids.add(ref.assetId));
+  collectAudioTrackAssetIds(block?.prompt?.audioTracks).forEach((assetId) => ids.add(assetId));
   const options = Array.isArray(block?.responseConfig?.options) ? block.responseConfig.options : [];
   options.forEach((option) => {
     normalizeMediaRefs(option?.mediaRefs, 'option_audio').forEach((ref) => ids.add(ref.assetId));
+    collectAudioTrackAssetIds(option?.audioTracks).forEach((assetId) => ids.add(assetId));
   });
   return Array.from(ids);
 }
@@ -226,7 +229,8 @@ function getBlockDeletePolicy(block) {
 function getOptionDeletePolicy(option) {
   const normalized = normalizeResponseOption(option);
   const hasTypedContent = hasTypedText(normalized.label) || hasTypedText(normalized.value);
-  const hasAssets = normalizeMediaRefs(normalized.mediaRefs, 'option_audio').length > 0;
+  const hasAssets = normalizeMediaRefs(normalized.mediaRefs, 'option_audio').length > 0
+    || collectAudioTrackAssetIds(normalized.audioTracks).length > 0;
   return {
     mode: hasTypedContent || hasAssets ? 'confirm_delete' : 'safe_direct_delete',
     hasTypedContent,
@@ -578,10 +582,16 @@ function normalizeResponseOption(option, fallback = '') {
     const id = isNonEmptyString(option.id) ? String(option.id) : createLocalId('opt');
     const value = String(option.value ?? option.label ?? fallback);
     const label = String(option.label ?? option.value ?? fallback);
-    return { id, value, label, mediaRefs: normalizeMediaRefs(option.mediaRefs, 'option_audio') };
+    return {
+      id,
+      value,
+      label,
+      mediaRefs: normalizeMediaRefs(option.mediaRefs, 'option_audio'),
+      audioTracks: normalizeAudioTracks(option.audioTracks),
+    };
   }
   const normalized = String(option ?? fallback);
-  return { id: createLocalId('opt'), value: normalized, label: normalized, mediaRefs: [] };
+  return { id: createLocalId('opt'), value: normalized, label: normalized, mediaRefs: [], audioTracks: [] };
 }
 
 function getOptionValueForAnswerKey(option) {
@@ -806,6 +816,7 @@ function normalizeBlocks(blocks) {
         text: String(promptSource.text || ''),
         format: promptSource.format || 'plain_text',
         mediaRefs: normalizeMediaRefs(promptSource.mediaRefs),
+        audioTracks: normalizeAudioTracks(promptSource.audioTracks),
       };
       normalized.responseConfig = normalizeQuestionResponseConfig(source.responseConfig);
       return normalized;
@@ -1180,6 +1191,7 @@ class EditorDraftSession {
               text: String(block?.prompt?.text || ''),
               format: block?.prompt?.format || 'plain_text',
               mediaRefs: normalizeMediaRefs(block?.prompt?.mediaRefs),
+              audioTracks: normalizeAudioTracks(block?.prompt?.audioTracks),
             },
             responseConfig: isRecord(block.responseConfig)
               ? normalizeQuestionResponseConfig(block.responseConfig, { forContract: true })
@@ -2790,19 +2802,28 @@ class EditorDraftSession {
       ...ref,
       assetId: assetIdRemap.get(ref.assetId) || ref.assetId,
     }));
+      const remapAudioTracks = (audioTracks) => normalizeAudioTracks(audioTracks).map((track) => ({
+        ...track,
+        assetId: assetIdRemap.get(track.assetId) || track.assetId,
+      }));
 
       const remappedBlocks = normalizeBlocks(parsedPackage.worksheet.blocks).map((block) => {
       if (block.kind !== 'question') return block;
       const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
       const options = (responseConfig.options || []).map((option) => {
         const normalized = normalizeResponseOption(option);
-        return { ...normalized, mediaRefs: remapMediaRefs(normalized.mediaRefs) };
+        return {
+          ...normalized,
+          mediaRefs: remapMediaRefs(normalized.mediaRefs),
+          audioTracks: remapAudioTracks(normalized.audioTracks),
+        };
       });
       return {
         ...block,
         prompt: {
           ...(isRecord(block.prompt) ? block.prompt : {}),
           mediaRefs: remapMediaRefs(block?.prompt?.mediaRefs),
+          audioTracks: remapAudioTracks(block?.prompt?.audioTracks),
         },
         responseConfig: normalizeQuestionResponseConfig({ ...responseConfig, options }),
       };
