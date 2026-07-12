@@ -124,6 +124,12 @@ export default {
     },
     "uploadedDraft": {
       "manage": "Manage Uploaded Drafts",
+      "openDialog": {
+        "confirm": "Open draft",
+        "description": "This will replace the worksheet currently shown in the editor with a local copy of \"{title}\".",
+        "title": "Open uploaded draft?",
+        "warning": "Save or export the current worksheet first if you need to return to it."
+      },
       "deleteDialog": {
         "confirm": "Confirm",
         "draftDescription": "This will delete the uploaded draft.",
