@@ -1419,7 +1419,7 @@ test('stage3: option row triggers replace confirmation before option bridge gene
   const trackHandlerStart = source.indexOf("generateTrackBtn.addEventListener('click', async () => {");
   const trackHandlerEnd = source.indexOf("const playTrackBtn = document.createElement('button');", trackHandlerStart);
   const handlerSource = source.slice(trackHandlerStart, trackHandlerEnd);
-  const hasAudioConfirmIdx = handlerSource.indexOf('confirmAudioLanguageMismatch(optionDisplayText, language, { replacing: Boolean(track) })');
+  const hasAudioConfirmIdx = handlerSource.indexOf('confirmAudioLanguageMismatch(latestOptionText, language, { replacing: Boolean(latestTrack) })');
   const optionSessionReadyIdx = handlerSource.indexOf('await session.ensureServerSessionReady()');
   const optionBridgeCallIdx = handlerSource.indexOf("await session.triggerProtectedAction('editorOptionT2A', {");
   assert.equal(trackHandlerStart >= 0 && trackHandlerEnd > trackHandlerStart, true);
@@ -1452,6 +1452,28 @@ test('multiple-choice option action state rerenders while typing when option ids
   assert.equal(source.includes("optionInput.dataset.optionIndex = String(optionIndex);"), true);
   assert.equal(source.includes('queueMicrotask(() => {'), true);
   assert.equal(source.includes('replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);'), true);
+  assert.equal(source.includes('{ optionId }'), true);
+  assert.equal(source.includes("if (persistedOptionId === optionId) row.dataset.persistedOption = '1';"), true);
+});
+
+test('multilingual audio generation locks each prompt or option target and keeps the MC menu open', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const css = await fs.readFile(path.resolve('server/editor/main.css'), 'utf8');
+  assert.equal(source.includes('promptT2AInFlightBlockIds.add(blockId);'), true);
+  assert.equal(source.includes('promptTrackGenerationLanguageByBlockId.set(blockId, language);'), true);
+  assert.equal(source.includes('optionT2AInFlightKeys.add(optionT2AKey);'), true);
+  assert.equal(source.includes('optionTrackGenerationLanguageByKey.set(optionT2AKey, language);'), true);
+  assert.equal(source.includes('refreshPromptT2AControlsForSelectedBlock();'), true);
+  assert.equal(source.includes('refreshOptionRowT2AControls(selectedBlock.blockId, optionId, row);'), true);
+  assert.equal(source.includes('optionActionsMenu.dataset.optionAudioMenuKey = optionT2AKey;'), true);
+  assert.equal(source.includes('if (openOptionAudioMenuKey === optionT2AKey)'), true);
+  assert.equal(source.includes("optionAudioMenuTrigger.addEventListener('click', (event) => {"), true);
+  assert.equal(source.includes('event.preventDefault();'), true);
+  assert.equal(source.includes("setIconButtonContent(optionMenuCloseBtn, 'close');"), true);
+  assert.equal(source.includes("if (event.key !== 'Escape' || !optionActionsMenu.open) return;"), true);
+  assert.equal(source.includes('replacementAudioAction.focus()'), true);
+  assert.equal(css.includes('.option-audio-menu__header'), true);
+  assert.equal(css.includes('.editor-shell--option-audio-menu-open .notification-toast-container'), true);
 });
 
 test('multiple-choice option input defers state updates while IME composition is active', async () => {
@@ -2875,9 +2897,17 @@ test('typing first visible option persists when options array starts empty', asy
   const block = session.createBlock('question');
 
   session.updateQuestionInputType(block.blockId, 'multiple_choice');
-  session.updateQuestionOptionAtIndex(block.blockId, 0, 'First typed option');
+  const provisionalOptionId = 'opt_provisional_first';
+  const persistedOptionId = session.updateQuestionOptionAtIndex(
+    block.blockId,
+    0,
+    'First typed option',
+    { optionId: provisionalOptionId }
+  );
 
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(persistedOptionId, provisionalOptionId);
+  assert.equal(updated.responseConfig.options[0].id, provisionalOptionId);
   assert.deepEqual(stripOptionIds(updated.responseConfig.options), [{ value: 'First typed option', label: 'First typed option' }]);
 
   session.addQuestionOption(block.blockId);

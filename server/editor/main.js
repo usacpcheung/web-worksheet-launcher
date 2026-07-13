@@ -594,6 +594,7 @@ function createEditorIcon(name) {
     upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
     generate: `<svg ${svgAttrs}><path d="M15 4V2"></path><path d="M15 16v-2"></path><path d="M8 9h2"></path><path d="M20 9h2"></path><path d="m17.8 11.8 1.4 1.4"></path><path d="m17.8 6.2 1.4-1.4"></path><path d="m3 21 9-9"></path><path d="M12.2 6.2 13.6 4.8"></path><path d="m4.8 19.2 1.4-1.4"></path></svg>`,
     refresh: `<svg ${svgAttrs}><path d="M3 12a9 9 0 0 1 15.2-6.5L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-15.2 6.5L3 16"></path><path d="M3 21v-5h5"></path></svg>`,
+    close: `<svg ${svgAttrs}><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>`,
     trash: `<svg ${svgAttrs}><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>`,
   };
   return icons[name] || icons.audio;
@@ -2561,9 +2562,11 @@ class EditorDraftSession {
     this.touchDraft();
   }
 
-  updateQuestionOptionAtIndex(blockId, index, nextLabel) {
-    if (!this.state.draft || !blockId || !Number.isInteger(index) || index < 0) return;
+  updateQuestionOptionAtIndex(blockId, index, nextLabel, settings = {}) {
+    if (!this.state.draft || !blockId || !Number.isInteger(index) || index < 0) return null;
     const normalizedLabel = String(nextLabel ?? '');
+    const preferredOptionId = isNonEmptyString(settings.optionId) ? settings.optionId : null;
+    let persistedOptionId = null;
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
       const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
@@ -2572,9 +2575,15 @@ class EditorDraftSession {
         ? responseConfig.options.map((option) => normalizeResponseOption(option))
         : [];
       while (options.length <= index) {
-        options.push({ id: createLocalId('opt'), value: '', label: '' });
+        const nextIndex = options.length;
+        options.push({
+          id: nextIndex === index && preferredOptionId ? preferredOptionId : createLocalId('opt'),
+          value: '',
+          label: '',
+        });
       }
       options[index] = { ...options[index], value: normalizedLabel, label: normalizedLabel };
+      persistedOptionId = String(options[index].id || '');
       return {
         ...block,
         responseConfig: normalizeQuestionResponseConfig({
@@ -2584,6 +2593,7 @@ class EditorDraftSession {
       };
     });
     this.touchDraft();
+    return persistedOptionId || null;
   }
 
   applyQuestionOptionMultilinePaste(blockId, startIndex, rawText, options = {}) {
@@ -4531,6 +4541,9 @@ function renderEditorShell(session) {
   let optionT2AInFlightKey = null;
   const promptT2AInFlightBlockIds = new Set();
   const optionT2AInFlightKeys = new Set();
+  const promptTrackGenerationLanguageByBlockId = new Map();
+  const optionTrackGenerationLanguageByKey = new Map();
+  let openOptionAudioMenuKey = null;
   let promptT2AUiRefs = null;
   let activeConfirmDialog = null;
   let mediaActionInFlight = false;
@@ -4542,6 +4555,24 @@ function renderEditorShell(session) {
   const restoreLegacyOptionInFlightMarker = () => {
     optionT2AInFlightKey = optionT2AInFlightKeys.values().next().value || null;
   };
+
+  const closeOpenOptionAudioMenu = ({ restoreFocus = false } = {}) => {
+    const openMenu = Array.from(rightPanel.querySelectorAll('details.option-audio-menu[open]'))
+      .find((menu) => menu.dataset.optionAudioMenuKey === openOptionAudioMenuKey)
+      || rightPanel.querySelector('details.option-audio-menu[open]');
+    const trigger = openMenu?.querySelector('[data-option-audio-menu-trigger="1"]');
+    if (openMenu) openMenu.open = false;
+    openOptionAudioMenuKey = null;
+    shell.classList.remove('editor-shell--option-audio-menu-open');
+    if (restoreFocus && trigger instanceof HTMLElement) trigger.focus();
+  };
+
+  document.addEventListener('pointerdown', (event) => {
+    if (!openOptionAudioMenuKey || activeConfirmDialog) return;
+    const openMenu = Array.from(rightPanel.querySelectorAll('details.option-audio-menu[open]'))
+      .find((menu) => menu.dataset.optionAudioMenuKey === openOptionAudioMenuKey);
+    if (openMenu && !openMenu.contains(event.target)) closeOpenOptionAudioMenu();
+  });
 
   function closeActiveConfirmDialog(confirmed = false) {
     const dialog = activeConfirmDialog;
@@ -6060,10 +6091,40 @@ function renderEditorShell(session) {
     promptT2AUiRefs.removeBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
     const currentTextHash = getAudioSourceTextHash(selectedBlock?.prompt?.text || '');
     document.querySelectorAll(`[data-prompt-audio-track-block-id="${selectedBlock.blockId}"]`).forEach((trackRow) => {
+      const language = trackRow.dataset.promptAudioTrackLanguage;
+      const track = getAudioTrack(selectedBlock.prompt?.audioTracks, language);
+      const status = trackRow.querySelector('[data-audio-track-status="1"]');
       const stale = trackRow.querySelector('[data-audio-track-stale="1"]');
-      if (!(stale instanceof HTMLElement)) return;
-      stale.hidden = !trackRow.dataset.audioTrackSourceHash
-        || trackRow.dataset.audioTrackSourceHash === currentTextHash;
+      const attachBtn = trackRow.querySelector('[data-audio-track-action="attach"]');
+      const generateBtn = trackRow.querySelector('[data-audio-track-action="generate"]');
+      const playBtn = trackRow.querySelector('[data-audio-track-action="play"]');
+      const removeBtn = trackRow.querySelector('[data-audio-track-action="remove"]');
+      trackRow.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
+      if (status instanceof HTMLElement) {
+        status.className = track ? 'asset-status-badge' : 'asset-status-badge asset-status-badge--empty';
+        status.textContent = track ? t('editor.block.attachedBadge') : t('common.values.none');
+      }
+      if (stale instanceof HTMLElement) {
+        stale.hidden = !track || track.sourceTextHash === currentTextHash;
+      }
+      if (attachBtn instanceof HTMLButtonElement) {
+        attachBtn.disabled = isPromptT2AInFlight;
+        setMediaActionButtonContent(attachBtn, 'upload', track ? t('editor.media.actions.replace') : t('editor.media.actions.attach'));
+      }
+      if (generateBtn instanceof HTMLButtonElement) {
+        const isThisLanguageGenerating = isPromptT2AInFlight
+          && promptTrackGenerationLanguageByBlockId.get(selectedBlock.blockId) === language;
+        setMediaActionButtonContent(
+          generateBtn,
+          isThisLanguageGenerating ? 'loading' : track ? 'refresh' : 'generate',
+          isThisLanguageGenerating
+            ? t('editor.media.actions.generating')
+            : track ? t('editor.media.actions.regenerate') : t('editor.media.actions.generateAudio')
+        );
+        generateBtn.disabled = !promptTextState.eligible || isPromptT2AInFlight;
+      }
+      if (playBtn instanceof HTMLButtonElement) playBtn.disabled = !track || isPromptT2AInFlight;
+      if (removeBtn instanceof HTMLButtonElement) removeBtn.disabled = !track || isPromptT2AInFlight;
     });
   };
 
@@ -6132,15 +6193,66 @@ function renderEditorShell(session) {
     }
     const currentTextHash = getAudioSourceTextHash(option?.label ?? option?.value ?? '');
     row.querySelectorAll('[data-option-audio-track-language]').forEach((trackSection) => {
+      const language = trackSection.dataset.optionAudioTrackLanguage;
+      const track = getAudioTrack(option.audioTracks, language);
+      const status = trackSection.querySelector('[data-audio-track-status="1"]');
       const stale = trackSection.querySelector('[data-audio-track-stale="1"]');
-      if (!(stale instanceof HTMLElement)) return;
-      stale.hidden = !trackSection.dataset.audioTrackSourceHash
-        || trackSection.dataset.audioTrackSourceHash === currentTextHash;
+      const attachBtn = trackSection.querySelector('[data-audio-track-action="attach"]');
+      const generateBtn = trackSection.querySelector('[data-audio-track-action="generate"]');
+      const playBtn = trackSection.querySelector('[data-audio-track-action="play"]');
+      const removeBtn = trackSection.querySelector('[data-audio-track-action="remove"]');
+      trackSection.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
+      if (status instanceof HTMLElement) {
+        status.className = track ? 'asset-status-badge' : 'asset-status-badge asset-status-badge--empty';
+        status.textContent = track ? t('editor.block.attachedBadge') : t('common.values.none');
+      }
+      if (stale instanceof HTMLElement) stale.hidden = !track || track.sourceTextHash === currentTextHash;
+      if (attachBtn instanceof HTMLButtonElement) {
+        attachBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
+        setMediaActionButtonContent(attachBtn, 'upload', track ? t('editor.media.actions.replace') : t('editor.media.actions.attach'));
+      }
+      if (generateBtn instanceof HTMLButtonElement) {
+        const isThisLanguageGenerating = isOptionT2AInFlight
+          && optionTrackGenerationLanguageByKey.get(optionT2AKey) === language;
+        setMediaActionButtonContent(
+          generateBtn,
+          isThisLanguageGenerating ? 'loading' : track ? 'refresh' : 'generate',
+          isThisLanguageGenerating
+            ? t('editor.media.actions.generating')
+            : track ? t('editor.media.actions.regenerate') : t('editor.media.actions.generate')
+        );
+        generateBtn.disabled = !isPersistedOption || !optionTextState.eligible || isOptionT2AInFlight;
+      }
+      if (playBtn instanceof HTMLButtonElement) playBtn.disabled = !isPersistedOption || !track || isOptionT2AInFlight;
+      if (removeBtn instanceof HTMLButtonElement) removeBtn.disabled = !isPersistedOption || !track || isOptionT2AInFlight;
     });
   };
 
   const renderDetailEditor = ({ force = false } = {}) => {
     const selectedBlock = session.state.draft?.blocks?.find((block) => block.blockId === session.state.selectedBlockId);
+    if (openOptionAudioMenuKey) {
+      const responseConfig = selectedBlock?.kind === 'question'
+        ? normalizeQuestionResponseConfig(selectedBlock.responseConfig)
+        : null;
+      const selectedMenuKeys = new Set((responseConfig?.options || []).map((option, index) => {
+        const normalized = normalizeResponseOption(option, `option_${index}`);
+        return `${selectedBlock.blockId}:${String(normalized.id || '')}`;
+      }));
+      if (responseConfig?.inputType !== 'multiple_choice' || !selectedMenuKeys.has(openOptionAudioMenuKey)) {
+        openOptionAudioMenuKey = null;
+        shell.classList.remove('editor-shell--option-audio-menu-open');
+      }
+    }
+    const activeOptionAudioAction = (
+      typeof HTMLButtonElement !== 'undefined' &&
+      document.activeElement instanceof HTMLButtonElement &&
+      document.activeElement.dataset.optionAudioAction &&
+      questionOptionsList.contains(document.activeElement)
+    ) ? {
+        menuKey: document.activeElement.dataset.optionAudioMenuKey || '',
+        language: document.activeElement.dataset.optionAudioLanguage || '',
+        action: document.activeElement.dataset.optionAudioAction || '',
+      } : null;
     const activeOptionInput = (
       typeof HTMLInputElement !== 'undefined' &&
       document.activeElement instanceof HTMLInputElement &&
@@ -6487,9 +6599,12 @@ function renderEditorShell(session) {
     languageTrackRows.className = 'media-row-list audio-track-row-list';
     AUDIO_TRACK_LANGUAGE_IDS.forEach((language) => {
       const track = getAudioTrack(selectedBlock.prompt?.audioTracks, language);
+      const isTrackGenerating = isPromptT2AInFlight
+        && promptTrackGenerationLanguageByBlockId.get(selectedBlock.blockId) === language;
       const trackRow = document.createElement('div');
       trackRow.className = 'media-row audio-track-row';
       trackRow.dataset.promptAudioTrackBlockId = selectedBlock.blockId;
+      trackRow.dataset.promptAudioTrackLanguage = language;
       trackRow.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
       const trackMeta = document.createElement('div');
       trackMeta.className = 'media-row__meta';
@@ -6497,6 +6612,7 @@ function renderEditorShell(session) {
       trackTitle.className = 'media-row__title';
       trackTitle.textContent = getAudioTrackLanguageLabel(language);
       const trackStatus = document.createElement('span');
+      trackStatus.dataset.audioTrackStatus = '1';
       trackStatus.className = track ? 'asset-status-badge' : 'asset-status-badge asset-status-badge--empty';
       trackStatus.textContent = track ? t('editor.block.attachedBadge') : t('common.values.none');
       trackMeta.append(trackTitle, trackStatus);
@@ -6510,7 +6626,9 @@ function renderEditorShell(session) {
       actions.className = 'media-row__actions';
       const attachBtn = document.createElement('button');
       attachBtn.type = 'button'; attachBtn.className = 'media-action-btn';
+      attachBtn.dataset.audioTrackAction = 'attach';
       setMediaActionButtonContent(attachBtn, 'upload', track ? t('editor.media.actions.replace') : t('editor.media.actions.attach'));
+      attachBtn.disabled = isPromptT2AInFlight;
       attachBtn.addEventListener('click', () => {
         questionAudioInput.dataset.blockId = selectedBlock.blockId;
         questionAudioInput.dataset.language = language;
@@ -6519,35 +6637,59 @@ function renderEditorShell(session) {
       });
       const generateBtn = document.createElement('button');
       generateBtn.type = 'button'; generateBtn.className = 'media-action-btn';
-      setMediaActionButtonContent(generateBtn, track ? 'refresh' : 'generate', track ? t('editor.media.actions.regenerate') : t('editor.media.actions.generateAudio'));
-      generateBtn.disabled = !promptT2AEligible;
+      generateBtn.dataset.audioTrackAction = 'generate';
+      setMediaActionButtonContent(
+        generateBtn,
+        isTrackGenerating ? 'loading' : track ? 'refresh' : 'generate',
+        isTrackGenerating
+          ? t('editor.media.actions.generating')
+          : track ? t('editor.media.actions.regenerate') : t('editor.media.actions.generateAudio')
+      );
+      generateBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;
       generateBtn.addEventListener('click', async () => {
-        if (!promptT2AEligible) return;
-        const warning = await confirmAudioLanguageMismatch(selectedBlock.prompt?.text || '', language, { replacing: Boolean(track) });
-        if (!warning.confirmed) return;
-        const sessionReady = await session.ensureServerSessionReady();
-        if (!sessionReady.ok) return;
-        if (track && !warning.replacementConfirmed) {
-          const confirmed = await confirmDangerAction({
-            title: t('editor.media.audioTracks.confirm.regenerateTitle', { language: getAudioTrackLanguageLabel(language) }),
-            bodyText: t('editor.media.audioTracks.confirm.regeneratePromptBody', { language: getAudioTrackLanguageLabel(language) }),
-            confirmLabel: t('editor.media.actions.regenerateAudio'),
-            removalItems: [getAudioTrackLanguageLabel(language)],
+        const blockId = selectedBlock.blockId;
+        const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === blockId);
+        const latestPromptText = latestBlock?.prompt?.text || '';
+        if (!getT2ATextEligibility(latestPromptText).eligible || promptT2AInFlightBlockIds.has(blockId)) return;
+        promptT2AInFlightBlockIds.add(blockId);
+        promptTrackGenerationLanguageByBlockId.set(blockId, language);
+        restoreLegacyPromptInFlightMarker();
+        refreshPromptT2AControlsForSelectedBlock();
+        try {
+          const latestTrack = getAudioTrack(latestBlock?.prompt?.audioTracks, language);
+          const warning = await confirmAudioLanguageMismatch(latestPromptText, language, { replacing: Boolean(latestTrack) });
+          if (!warning.confirmed) return;
+          const sessionReady = await session.ensureServerSessionReady();
+          if (!sessionReady.ok) return;
+          if (latestTrack && !warning.replacementConfirmed) {
+            const confirmed = await confirmDangerAction({
+              title: t('editor.media.audioTracks.confirm.regenerateTitle', { language: getAudioTrackLanguageLabel(language) }),
+              bodyText: t('editor.media.audioTracks.confirm.regeneratePromptBody', { language: getAudioTrackLanguageLabel(language) }),
+              confirmLabel: t('editor.media.actions.regenerateAudio'),
+              removalItems: [getAudioTrackLanguageLabel(language)],
+            });
+            if (!confirmed) return;
+          }
+          const result = await session.triggerProtectedAction('editorPromptT2A', {
+            blockId,
+            target: 'question_prompt',
+            language,
           });
-          if (!confirmed) return;
+          if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
+            session.setMediaFeedback(editorNotification('audioGeneration.failed'));
+          }
+        } finally {
+          promptT2AInFlightBlockIds.delete(blockId);
+          promptTrackGenerationLanguageByBlockId.delete(blockId);
+          restoreLegacyPromptInFlightMarker();
+          updateSummary();
         }
-        const result = await session.triggerProtectedAction('editorPromptT2A', {
-          blockId: selectedBlock.blockId,
-          target: 'question_prompt',
-          language,
-        });
-        if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') session.setMediaFeedback(editorNotification('audioGeneration.failed'));
-        updateSummary();
       });
       const playBtn = document.createElement('button');
       playBtn.type = 'button'; playBtn.className = 'media-action-btn';
+      playBtn.dataset.audioTrackAction = 'play';
       setMediaActionButtonContent(playBtn, 'play', t('editor.media.actions.play'));
-      playBtn.disabled = !track;
+      playBtn.disabled = !track || isPromptT2AInFlight;
       playBtn.addEventListener('click', async () => {
         if (!track) return;
         playBtn.disabled = true;
@@ -6556,8 +6698,9 @@ function renderEditorShell(session) {
       });
       const removeBtn = document.createElement('button');
       removeBtn.type = 'button'; removeBtn.className = 'media-action-btn media-action-btn--remove';
+      removeBtn.dataset.audioTrackAction = 'remove';
       setMediaActionButtonContent(removeBtn, 'trash', t('editor.media.actions.remove'));
-      removeBtn.disabled = !track;
+      removeBtn.disabled = !track || isPromptT2AInFlight;
       removeBtn.addEventListener('click', async () => {
         if (!track) return;
         const confirmed = await confirmDangerAction({
@@ -6792,7 +6935,13 @@ function renderEditorShell(session) {
         optionInput.value = String(option?.label ?? option?.value ?? '');
         let isOptionInputComposing = false;
         const commitOptionInputValue = () => {
-          session.updateQuestionOptionAtIndex(selectedBlock.blockId, optionIndex, optionInput.value);
+          const persistedOptionId = session.updateQuestionOptionAtIndex(
+            selectedBlock.blockId,
+            optionIndex,
+            optionInput.value,
+            { optionId }
+          );
+          if (persistedOptionId === optionId) row.dataset.persistedOption = '1';
           refreshOptionRowT2AControls(selectedBlock.blockId, optionId, row);
           updateSummary({ preserveDetailEditor: true });
         };
@@ -6839,6 +6988,11 @@ function renderEditorShell(session) {
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
         const optionActionsMenu = document.createElement('details');
         optionActionsMenu.className = 'option-actions-menu option-audio-menu';
+        optionActionsMenu.dataset.optionAudioMenuKey = optionT2AKey;
+        if (openOptionAudioMenuKey === optionT2AKey) {
+          optionActionsMenu.open = true;
+          shell.classList.add('editor-shell--option-audio-menu-open');
+        }
         const optionAudioMenuTrigger = document.createElement('summary');
         optionAudioMenuTrigger.className = 'icon-btn option-actions-menu__toggle option-audio-menu__toggle';
         optionAudioMenuTrigger.dataset.optionAudioMenuTrigger = '1';
@@ -6848,12 +7002,50 @@ function renderEditorShell(session) {
           isGenerating: isOptionT2AInFlight,
           isPersisted: isPersistedOption,
         });
+        optionAudioMenuTrigger.addEventListener('click', (event) => {
+          event.preventDefault();
+          if (optionActionsMenu.open) {
+            closeOpenOptionAudioMenu();
+            return;
+          }
+          rightPanel.querySelectorAll('details.option-audio-menu[open]').forEach((otherMenu) => {
+            if (otherMenu !== optionActionsMenu) otherMenu.open = false;
+          });
+          openOptionAudioMenuKey = optionT2AKey;
+          optionActionsMenu.open = true;
+          shell.classList.add('editor-shell--option-audio-menu-open');
+        });
+        optionActionsMenu.addEventListener('pointerdown', (event) => {
+          if (event.target === optionAudioMenuTrigger || !optionActionsMenu.open) return;
+          openOptionAudioMenuKey = optionT2AKey;
+          shell.classList.add('editor-shell--option-audio-menu-open');
+        });
+        optionActionsMenu.addEventListener('keydown', (event) => {
+          if (event.key !== 'Escape' || !optionActionsMenu.open) return;
+          event.preventDefault();
+          closeOpenOptionAudioMenu({ restoreFocus: true });
+        });
         const optionActionsRow = document.createElement('div');
         optionActionsRow.className = 'option-actions-menu__list option-audio-menu__list';
+        const optionMenuHeader = document.createElement('div');
+        optionMenuHeader.className = 'option-audio-menu__header';
+        const optionMenuTitle = document.createElement('strong');
+        optionMenuTitle.textContent = t('editor.media.optionAudioMenu');
+        const optionMenuCloseBtn = document.createElement('button');
+        optionMenuCloseBtn.type = 'button';
+        optionMenuCloseBtn.className = 'icon-btn option-audio-menu__close';
+        optionMenuCloseBtn.title = t('common.actions.close');
+        optionMenuCloseBtn.setAttribute('aria-label', t('common.actions.close'));
+        setIconButtonContent(optionMenuCloseBtn, 'close');
+        optionMenuCloseBtn.addEventListener('click', () => closeOpenOptionAudioMenu({ restoreFocus: true }));
+        optionMenuHeader.append(optionMenuTitle, optionMenuCloseBtn);
+        optionActionsRow.appendChild(optionMenuHeader);
         const optionTrackList = document.createElement('div');
         optionTrackList.className = 'option-audio-track-list';
         AUDIO_TRACK_LANGUAGE_IDS.forEach((language) => {
           const track = getAudioTrack(option.audioTracks, language);
+          const isTrackGenerating = isOptionT2AInFlight
+            && optionTrackGenerationLanguageByKey.get(optionT2AKey) === language;
           const languageLabel = getAudioTrackLanguageLabel(language);
           const trackSection = document.createElement('section');
           trackSection.className = 'option-audio-track';
@@ -6864,6 +7056,7 @@ function renderEditorShell(session) {
           const trackName = document.createElement('strong');
           trackName.textContent = languageLabel;
           const trackStatus = document.createElement('span');
+          trackStatus.dataset.audioTrackStatus = '1';
           trackStatus.className = track ? 'asset-status-badge' : 'asset-status-badge asset-status-badge--empty';
           trackStatus.textContent = track ? t('editor.block.attachedBadge') : t('common.values.none');
           trackHeading.append(trackName, trackStatus);
@@ -6878,8 +7071,11 @@ function renderEditorShell(session) {
           const attachTrackBtn = document.createElement('button');
           attachTrackBtn.type = 'button';
           attachTrackBtn.className = 'media-action-btn';
+          attachTrackBtn.dataset.optionAudioAction = 'attach';
+          attachTrackBtn.dataset.optionAudioLanguage = language;
+          attachTrackBtn.dataset.optionAudioMenuKey = optionT2AKey;
           setMediaActionButtonContent(attachTrackBtn, 'upload', track ? t('editor.media.actions.replace') : t('editor.media.actions.attach'));
-          attachTrackBtn.disabled = !isPersistedOption;
+          attachTrackBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
           attachTrackBtn.addEventListener('click', () => {
             pendingOptionAudioTarget = { blockId: selectedBlock.blockId, optionId, language };
             optionAudioInput.value = '';
@@ -6888,36 +7084,68 @@ function renderEditorShell(session) {
           const generateTrackBtn = document.createElement('button');
           generateTrackBtn.type = 'button';
           generateTrackBtn.className = 'media-action-btn';
-          setMediaActionButtonContent(generateTrackBtn, track ? 'refresh' : 'generate', track ? t('editor.media.actions.regenerate') : t('editor.media.actions.generate'));
-          generateTrackBtn.disabled = !isPersistedOption || !optionTextEligibleForT2A;
+          generateTrackBtn.dataset.optionAudioAction = 'generate';
+          generateTrackBtn.dataset.optionAudioLanguage = language;
+          generateTrackBtn.dataset.optionAudioMenuKey = optionT2AKey;
+          setMediaActionButtonContent(
+            generateTrackBtn,
+            isTrackGenerating ? 'loading' : track ? 'refresh' : 'generate',
+            isTrackGenerating
+              ? t('editor.media.actions.generating')
+              : track ? t('editor.media.actions.regenerate') : t('editor.media.actions.generate')
+          );
+          generateTrackBtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;
           generateTrackBtn.addEventListener('click', async () => {
-            const warning = await confirmAudioLanguageMismatch(optionDisplayText, language, { replacing: Boolean(track) });
-            if (!warning.confirmed) return;
-            const ready = await session.ensureServerSessionReady();
-            if (!ready.ok) return;
-            if (track && !warning.replacementConfirmed) {
-              const confirmed = await confirmDangerAction({
-                title: t('editor.media.audioTracks.confirm.regenerateTitle', { language: languageLabel }),
-                bodyText: t('editor.media.audioTracks.confirm.regenerateOptionBody', { language: languageLabel, index: optionIndex + 1 }),
-                confirmLabel: t('editor.media.actions.regenerateAudio'),
-                removalItems: [languageLabel],
+            const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlock.blockId);
+            const latestResponseConfig = normalizeQuestionResponseConfig(latestBlock?.responseConfig);
+            const latestOptions = (latestResponseConfig.options || []).map((item, index) =>
+              normalizeResponseOption(item, `option_${index}`));
+            const latestOption = latestOptions.find((item) => String(item?.id || '') === optionId) || null;
+            const latestOptionText = latestOption?.label ?? latestOption?.value ?? '';
+            if (!getT2ATextEligibility(latestOptionText).eligible || optionT2AInFlightKeys.has(optionT2AKey)) return;
+            optionT2AInFlightKeys.add(optionT2AKey);
+            optionTrackGenerationLanguageByKey.set(optionT2AKey, language);
+            restoreLegacyOptionInFlightMarker();
+            refreshOptionRowT2AControls(selectedBlock.blockId, optionId, row);
+            try {
+              const latestTrack = getAudioTrack(latestOption?.audioTracks, language);
+              const warning = await confirmAudioLanguageMismatch(latestOptionText, language, { replacing: Boolean(latestTrack) });
+              if (!warning.confirmed) return;
+              const ready = await session.ensureServerSessionReady();
+              if (!ready.ok) return;
+              if (latestTrack && !warning.replacementConfirmed) {
+                const confirmed = await confirmDangerAction({
+                  title: t('editor.media.audioTracks.confirm.regenerateTitle', { language: languageLabel }),
+                  bodyText: t('editor.media.audioTracks.confirm.regenerateOptionBody', { language: languageLabel, index: optionIndex + 1 }),
+                  confirmLabel: t('editor.media.actions.regenerateAudio'),
+                  removalItems: [languageLabel],
+                });
+                if (!confirmed) return;
+              }
+              const result = await session.triggerProtectedAction('editorOptionT2A', {
+                blockId: selectedBlock.blockId,
+                optionId,
+                target: 'option',
+                language,
               });
-              if (!confirmed) return;
+              if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
+                session.setMediaFeedback(editorNotification('audioGeneration.failed'));
+              }
+            } finally {
+              optionT2AInFlightKeys.delete(optionT2AKey);
+              optionTrackGenerationLanguageByKey.delete(optionT2AKey);
+              restoreLegacyOptionInFlightMarker();
+              updateSummary();
             }
-            const result = await session.triggerProtectedAction('editorOptionT2A', {
-              blockId: selectedBlock.blockId,
-              optionId,
-              target: 'option',
-              language,
-            });
-            if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') session.setMediaFeedback(editorNotification('audioGeneration.failed'));
-            updateSummary();
           });
           const playTrackBtn = document.createElement('button');
           playTrackBtn.type = 'button';
           playTrackBtn.className = 'media-action-btn';
+          playTrackBtn.dataset.optionAudioAction = 'play';
+          playTrackBtn.dataset.optionAudioLanguage = language;
+          playTrackBtn.dataset.optionAudioMenuKey = optionT2AKey;
           setMediaActionButtonContent(playTrackBtn, 'play', t('editor.media.actions.play'));
-          playTrackBtn.disabled = !track;
+          playTrackBtn.disabled = !track || isOptionT2AInFlight;
           playTrackBtn.addEventListener('click', async () => {
             if (!track) return;
             playTrackBtn.disabled = true;
@@ -6927,8 +7155,11 @@ function renderEditorShell(session) {
           const removeTrackBtn = document.createElement('button');
           removeTrackBtn.type = 'button';
           removeTrackBtn.className = 'media-action-btn media-action-btn--remove';
+          removeTrackBtn.dataset.optionAudioAction = 'remove';
+          removeTrackBtn.dataset.optionAudioLanguage = language;
+          removeTrackBtn.dataset.optionAudioMenuKey = optionT2AKey;
           setMediaActionButtonContent(removeTrackBtn, 'trash', t('editor.media.actions.remove'));
-          removeTrackBtn.disabled = !track;
+          removeTrackBtn.disabled = !track || isOptionT2AInFlight;
           removeTrackBtn.addEventListener('click', async () => {
             if (!track) return;
             const confirmed = await confirmDangerAction({
@@ -7158,6 +7389,14 @@ function renderEditorShell(session) {
               replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);
             }
           });
+        }
+      } else if (activeOptionAudioAction) {
+        const replacementAudioAction = Array.from(questionOptionsList.querySelectorAll('[data-option-audio-action]'))
+          .find((button) => button.dataset.optionAudioMenuKey === activeOptionAudioAction.menuKey
+            && button.dataset.optionAudioLanguage === activeOptionAudioAction.language
+            && button.dataset.optionAudioAction === activeOptionAudioAction.action);
+        if (replacementAudioAction instanceof HTMLButtonElement) {
+          queueMicrotask(() => replacementAudioAction.focus());
         }
       }
     }

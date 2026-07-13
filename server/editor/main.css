@@ -1258,6 +1258,21 @@ textarea.control {
   min-width: min(360px, calc(100vw - 32px));
 }
 
+.option-audio-menu__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.option-audio-menu__close {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+}
+
 .option-audio-track-list,
 .option-audio-track {
   display: flex;
@@ -1750,6 +1765,11 @@ textarea.control {
     max-height: calc(100vh - 32px);
     overflow-y: auto;
     z-index: 1000;
+  }
+
+  .editor-shell--option-audio-menu-open .notification-toast-container {
+    top: 16px;
+    bottom: auto;
   }
 
   .media-action-btn {
