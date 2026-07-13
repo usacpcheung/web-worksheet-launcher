@@ -196,7 +196,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, getDefaultViewerPrintSchoolName, readViewerPrintSchoolNamePreferenceState, readViewerPrintSchoolNamePreference, writeViewerPrintSchoolNamePreference, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, resolveViewerAudioSources, createViewerAudioControl, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, getDefaultViewerPrintSchoolName, readViewerPrintSchoolNamePreferenceState, readViewerPrintSchoolNamePreference, writeViewerPrintSchoolNamePreference, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -1339,18 +1339,52 @@ test('normalizeViewerBlock preserves option_audio media refs for multiple-choice
 });
 
 function createMockDocument() {
+  const documentListeners = new Map();
+  const document = {
+    activeElement: null,
+    getElementById: () => null,
+    addEventListener(type, handler) {
+      const handlers = documentListeners.get(type) || [];
+      handlers.push(handler);
+      documentListeners.set(type, handlers);
+    },
+    dispatch(type, event = {}) {
+      (documentListeners.get(type) || []).forEach((handler) => handler(event));
+    },
+  };
   class MockElement {
     constructor(tagName) {
       this.tagName = String(tagName || '').toUpperCase();
       this.children = [];
       this.attributes = {};
       this.dataset = {};
+      this.listeners = new Map();
       this.className = '';
       this.textContent = '';
+      this.innerHTML = '';
       this.id = '';
       this.disabled = false;
+      this.hidden = false;
       this.tabIndex = 0;
-      this.classList = { toggle: () => {} };
+      this.classList = {
+        add: (...names) => {
+          const values = new Set(String(this.className || '').split(/\s+/).filter(Boolean));
+          names.forEach((name) => values.add(name));
+          this.className = Array.from(values).join(' ');
+        },
+        remove: (...names) => {
+          const removed = new Set(names);
+          this.className = String(this.className || '').split(/\s+/).filter((name) => name && !removed.has(name)).join(' ');
+        },
+        toggle: (name, force) => {
+          const values = new Set(String(this.className || '').split(/\s+/).filter(Boolean));
+          const shouldAdd = force === undefined ? !values.has(name) : Boolean(force);
+          if (shouldAdd) values.add(name); else values.delete(name);
+          this.className = Array.from(values).join(' ');
+          return shouldAdd;
+        },
+        contains: (name) => String(this.className || '').split(/\s+/).includes(name),
+      };
     }
     append(...nodes) {
       nodes.forEach((node) => this.appendChild(node));
@@ -1360,21 +1394,51 @@ function createMockDocument() {
       return node;
     }
     setAttribute(name, value) {
-      this.attributes[name] = value;
+      this.attributes[name] = String(value);
     }
-    addEventListener() {}
+    removeAttribute(name) {
+      delete this.attributes[name];
+    }
+    addEventListener(type, handler) {
+      const handlers = this.listeners.get(type) || [];
+      handlers.push(handler);
+      this.listeners.set(type, handlers);
+    }
+    dispatch(type, event = {}) {
+      const normalizedEvent = {
+        preventDefault: () => {},
+        stopPropagation: () => {},
+        target: this,
+        key: '',
+        ...event,
+      };
+      (this.listeners.get(type) || []).forEach((handler) => handler(normalizedEvent));
+    }
+    focus() {
+      document.activeElement = this;
+    }
+    contains(node) {
+      if (node === this) return true;
+      return this.children.some((child) => child?.contains?.(node));
+    }
   }
-  return {
-    getElementById: () => null,
-    createElement: (tag) => new MockElement(tag),
-  };
+  document.createElement = (tag) => new MockElement(tag);
+  return document;
 }
 
 test('createChoiceButtonGroup renders option-audio play buttons only when option_audio mediaRef exists', async () => {
   const mod = await loadViewerModule({
     document: createMockDocument(),
   });
-  const session = { state: { answers: {} }, setAnswer: () => {} };
+  const session = {
+    state: { answers: {} },
+    setAnswer: () => {},
+    playAssetAudio: async (_assetId, hooks) => {
+      hooks?.onStart?.();
+      return { ok: true };
+    },
+    stopActiveAudio: () => {},
+  };
   const group = mod.createChoiceButtonGroup({
     block: {
       blockId: 'q1',
@@ -1392,13 +1456,145 @@ test('createChoiceButtonGroup renders option-audio play buttons only when option
 
   const firstRow = group.children[0];
   const secondRow = group.children[1];
-  const firstAudioButton = firstRow.children.find((node) => String(node.className || '').includes('choice-audio-btn'));
-  const secondAudioButton = secondRow.children.find((node) => String(node.className || '').includes('choice-audio-btn'));
+  const firstAudioControl = firstRow.children.find((node) => String(node.className || '').includes('viewer-audio-control'));
+  const secondAudioControl = secondRow.children.find((node) => String(node.className || '').includes('viewer-audio-control'));
+  const firstAudioButton = firstAudioControl?.children?.[0];
 
   assert.equal(String(firstAudioButton?.innerHTML || '').includes('viewer-icon'), true);
   assert.equal(String(firstAudioButton?.className || '').includes('viewer-header-icon-btn'), true);
   assert.equal(String(firstAudioButton?.className || '').includes('question-card__prompt-audio-btn'), true);
-  assert.equal(secondAudioButton, undefined);
+  assert.equal(String(firstAudioButton?.className || '').includes('choice-audio-btn'), true);
+  assert.equal(secondAudioControl, undefined);
+});
+
+test('resolveViewerAudioSources prefers canonical multilingual tracks and falls back to legacy audio', async () => {
+  const mod = await loadViewerModule();
+  const legacy = { usage: 'question_audio', assetId: 'legacy_audio' };
+
+  assert.deepEqual(mod.resolveViewerAudioSources([], null), []);
+  assert.deepEqual(mod.resolveViewerAudioSources([], legacy), [
+    { assetId: 'legacy_audio', language: null, legacy: true },
+  ]);
+  assert.deepEqual(mod.resolveViewerAudioSources([
+    { language: 'english', assetId: 'audio_en', voicePresetId: 'english', sourceTextHash: 'h_en' },
+    { language: 'cantonese', assetId: 'audio_yue', voicePresetId: null, sourceTextHash: 'h_yue' },
+  ], legacy), [
+    { assetId: 'audio_yue', language: 'cantonese', legacy: false },
+    { assetId: 'audio_en', language: 'english', legacy: false },
+  ]);
+});
+
+test('single-track viewer audio control plays directly and exposes a neutral Stop state', async () => {
+  const document = createMockDocument();
+  const mod = await loadViewerModule({ document });
+  let activeHooks = null;
+  const calls = [];
+  const session = {
+    playAssetAudio: async (assetId, hooks) => {
+      calls.push(assetId);
+      activeHooks = hooks;
+      hooks.onStart?.();
+      return { ok: true };
+    },
+    stopActiveAudio: () => activeHooks?.onInterrupted?.(),
+  };
+  const control = mod.createViewerAudioControl({
+    audioTracks: [{ language: 'english', assetId: 'audio_en', voicePresetId: 'english', sourceTextHash: 'h_en' }],
+    kind: 'question',
+    session,
+  });
+  const trigger = control.children[0];
+
+  assert.equal(trigger.attributes['aria-haspopup'], undefined);
+  trigger.dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ['audio_en']);
+  assert.equal(control.classList.contains('is-playing'), true);
+  assert.equal(String(trigger.innerHTML).includes('<rect'), true);
+  assert.equal(trigger.attributes['aria-label'], 'viewer.audio.stopLanguageQuestionAudioAriaLabel');
+
+  trigger.dispatch('click');
+  assert.equal(control.classList.contains('is-playing'), false);
+  assert.equal(String(trigger.innerHTML).includes('<path'), true);
+
+  trigger.dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(control.classList.contains('is-playing'), true);
+  activeHooks.onEnded?.();
+  assert.equal(control.classList.contains('is-playing'), false);
+});
+
+test('multi-track viewer audio menus order languages, close predictably, and play the selected track', async () => {
+  const document = createMockDocument();
+  const mod = await loadViewerModule({ document });
+  const played = [];
+  const session = {
+    playAssetAudio: async (assetId, hooks) => {
+      played.push(assetId);
+      hooks.onStart?.();
+      return { ok: true };
+    },
+    stopActiveAudio: () => {},
+  };
+  const tracks = [
+    { language: 'english', assetId: 'audio_en', voicePresetId: 'english', sourceTextHash: 'h_en' },
+    { language: 'mandarin', assetId: 'audio_zh', voicePresetId: 'mandarin', sourceTextHash: 'h_zh' },
+    { language: 'cantonese', assetId: 'audio_yue', voicePresetId: 'cantonese', sourceTextHash: 'h_yue' },
+  ];
+  const first = mod.createViewerAudioControl({ audioTracks: tracks, kind: 'option', session });
+  const second = mod.createViewerAudioControl({ audioTracks: tracks.slice(0, 2), kind: 'question', session });
+  const firstTrigger = first.children[0];
+  const firstMenu = first.children[1];
+  const secondTrigger = second.children[0];
+  const secondMenu = second.children[1];
+
+  firstTrigger.dispatch('click');
+  assert.equal(firstMenu.hidden, false);
+  assert.deepEqual(firstMenu.children.map((button) => button.dataset.audioLanguage), ['cantonese', 'mandarin', 'english']);
+  assert.equal(document.activeElement, firstMenu.children[0]);
+
+  first.dispatch('keydown', { key: 'Escape' });
+  assert.equal(firstMenu.hidden, true);
+  assert.equal(document.activeElement, firstTrigger);
+
+  firstTrigger.dispatch('click');
+  secondTrigger.dispatch('click');
+  assert.equal(firstMenu.hidden, true);
+  assert.equal(secondMenu.hidden, false);
+
+  document.dispatch('pointerdown', { target: document.createElement('div') });
+  assert.equal(secondMenu.hidden, true);
+
+  firstTrigger.dispatch('click');
+  firstMenu.children[1].dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(firstMenu.hidden, true);
+  assert.deepEqual(played, ['audio_zh']);
+  assert.equal(first.classList.contains('is-playing'), true);
+  assert.equal(firstTrigger.attributes['aria-label'], 'viewer.audio.stopLanguageOptionAudioAriaLabel');
+});
+
+test('viewer audio control restores idle state and reports playback failures', async () => {
+  const document = createMockDocument();
+  const mod = await loadViewerModule({ document });
+  const feedback = [];
+  const control = mod.createViewerAudioControl({
+    legacyAudioRef: { usage: 'question_audio', assetId: 'missing_audio' },
+    kind: 'question',
+    session: {
+      playAssetAudio: async () => ({ ok: false, reason: 'missing-asset', message: 'Audio asset is missing.' }),
+      stopActiveAudio: () => {},
+    },
+    reportMediaFeedback: (message) => feedback.push(message),
+  });
+  const trigger = control.children[0];
+
+  trigger.dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(trigger.disabled, false);
+  assert.equal(control.classList.contains('is-starting'), false);
+  assert.equal(trigger.attributes['aria-label'], 'viewer.audio.playQuestionAudioAriaLabel');
+  assert.deepEqual(feedback, ['', 'viewer.audio.unableToPlayQuestionAudio']);
 });
 
 test('normalizeViewerBlock preserves non-canonical plain_text/short_text inputType values', async () => {
@@ -4693,26 +4889,53 @@ test('viewer playback race condition: last request wins when fetches resolve out
   assert.equal(instances.length, 1);
 });
 
-test('question prompt audio handler toggles disable state and does not persist success text', async () => {
-  const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
-  assert.equal(source.includes("questionAudioBtn.className = 'viewer-header-icon-btn question-card__prompt-audio-btn';"), true);
-  assert.equal(source.includes("questionAudioBtn.innerHTML = createViewerIcon('audio');"), true);
-  assert.equal(source.includes("if (questionAudioBtn.disabled) return;"), true);
-  assert.equal(source.includes("questionAudioBtn.disabled = true;"), true);
-  assert.equal(source.includes("onEnded: () => {\n            questionAudioBtn.disabled = false;"), true);
-  assert.equal(source.includes("onError: () => {\n            questionAudioBtn.disabled = false;"), true);
-  assert.equal(source.includes("setMediaFeedback(`Playing question audio (${questionAudioRef.assetId}).`);"), false);
+test('stopActiveAudio cancels an audio request that is still loading', async () => {
+  const mod = await loadViewerModule();
+  let resolveAsset;
+  const session = new mod.ViewerAttemptSession({
+    localAssets: {
+      get: async () => new Promise((resolve) => {
+        resolveAsset = resolve;
+      }),
+    },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  let audioInstances = 0;
+  globalThis.URL = { createObjectURL: () => 'blob:test', revokeObjectURL: () => {} };
+  globalThis.Audio = class {
+    constructor() { audioInstances += 1; }
+    addEventListener() {}
+    async play() {}
+    pause() {}
+    set src(_value) {}
+  };
+
+  const pending = session.playAssetAudio('slow_audio');
+  await new Promise((resolve) => setImmediate(resolve));
+  session.stopActiveAudio('interrupted');
+  resolveAsset({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } });
+  const result = await pending;
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'superseded');
+  assert.equal(audioInstances, 0);
 });
 
-test('choice option audio handler matches icon-button lifecycle behavior', async () => {
+test('question prompt rendering delegates multilingual and legacy audio to the shared control', async () => {
   const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
-  assert.equal(source.includes("optionAudioBtn.className = 'viewer-header-icon-btn choice-audio-btn question-card__prompt-audio-btn';"), true);
-  assert.equal(source.includes("optionAudioBtn.innerHTML = createViewerIcon('audio');"), true);
-  assert.equal(source.includes("if (optionAudioBtn.disabled) return;"), true);
-  assert.equal(source.includes("optionAudioBtn.disabled = true;"), true);
-  assert.equal(source.includes("onStart: () => {\n            optionAudioBtn.disabled = true;"), false);
-  assert.equal(source.includes("onEnded: () => {\n            optionAudioBtn.disabled = false;"), true);
-  assert.equal(source.includes("reportMediaFeedback(`Playing option audio (${optionAudioRef.assetId}).`);"), false);
+  assert.equal(source.includes("audioTracks: block.prompt?.audioTracks,"), true);
+  assert.equal(source.includes("legacyAudioRef: questionAudioRef,"), true);
+  assert.equal(source.includes("kind: 'question',"), true);
+  assert.equal(source.includes('if (questionAudioControl) promptRow.append(questionAudioControl);'), true);
+});
+
+test('choice option audio rendering uses a sibling shared control without changing answer selection', async () => {
+  const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
+  assert.equal(source.includes("audioTracks: opt?.audioTracks,"), true);
+  assert.equal(source.includes("legacyAudioRef: normalizeOptionMediaRefs(opt?.mediaRefs)[0] || null,"), true);
+  assert.equal(source.includes("kind: 'option',"), true);
+  assert.equal(source.includes('if (optionAudioControl) row.appendChild(optionAudioControl);'), true);
+  assert.equal(source.indexOf('row.appendChild(button);') < source.indexOf('if (optionAudioControl) row.appendChild(optionAudioControl);'), true);
 });
 
 test('viewer block navigation interrupts active audio before switching question', async () => {

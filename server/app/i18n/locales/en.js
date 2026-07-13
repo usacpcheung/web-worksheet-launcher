@@ -574,11 +574,24 @@ export default {
       "title": "Attempt slots"
     },
     "audio": {
+      "chooseOptionAudioLanguageAriaLabel": "Choose option audio language",
+      "chooseQuestionAudioLanguageAriaLabel": "Choose question audio language",
+      "languages": {
+        "cantonese": "Cantonese",
+        "mandarin": "Putonghua",
+        "english": "English"
+      },
+      "playLanguageOptionAudioAriaLabel": "Play {language} option audio",
+      "playLanguageQuestionAudioAriaLabel": "Play {language} question audio",
       "playOptionAudioAriaLabel": "Play option audio",
       "playOptionAudioFailed": "Unable to play option audio.",
       "playOptionAudioTitle": "Play option audio",
       "playQuestionAudioAriaLabel": "Play question audio",
       "playQuestionAudioTitle": "Play question audio",
+      "stopLanguageOptionAudioAriaLabel": "Stop {language} option audio",
+      "stopLanguageQuestionAudioAriaLabel": "Stop {language} question audio",
+      "stopOptionAudioAriaLabel": "Stop option audio",
+      "stopQuestionAudioAriaLabel": "Stop question audio",
       "unableToPlayQuestionAudio": "Unable to play question audio"
     },
     "boot": {

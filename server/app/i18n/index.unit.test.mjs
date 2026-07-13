@@ -123,6 +123,20 @@ test('viewer print school default follows active locale', async () => {
   assert.equal(mod.t('viewer.print.defaultSchoolName'), '香港紅十字會醫院學校');
 });
 
+test('viewer multilingual audio labels use Putonghua terminology in both locales', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+
+  mod.setLocale('en', { persist: false });
+  assert.equal(mod.t('viewer.audio.languages.cantonese'), 'Cantonese');
+  assert.equal(mod.t('viewer.audio.languages.mandarin'), 'Putonghua');
+  assert.equal(mod.t('viewer.audio.stopLanguageQuestionAudioAriaLabel', { language: 'Putonghua' }), 'Stop Putonghua question audio');
+
+  mod.setLocale('zh-Hant', { persist: false });
+  assert.equal(mod.t('viewer.audio.languages.cantonese'), '粵語');
+  assert.equal(mod.t('viewer.audio.languages.mandarin'), '普通話');
+  assert.equal(mod.t('viewer.audio.stopLanguageQuestionAudioAriaLabel', { language: '普通話' }), '停止播放普通話題目音訊');
+});
+
 test('zh-Hant attempt slot limit strings are translated', async () => {
   const mod = await import(`./index.js?case=${Math.random()}`);
   mod.setLocale('zh-Hant', { persist: false });
