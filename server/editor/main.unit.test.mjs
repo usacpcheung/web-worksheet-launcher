@@ -71,7 +71,7 @@ const collectAudioTrackAssetIds = (tracks) => normalizeAudioTracks(tracks).map((
       replacement: `const getWorksheetT2ALanguagePresetById = (id) => ({
   cantonese: { id: 'cantonese', options: { voice_id: 'Cantonese_ProfessionalHost（F)', language_boost: 'Chinese,Yue' } },
   mandarin: { id: 'mandarin', options: { voice_id: 'Chinese (Mandarin)_News_Anchor', language_boost: 'Chinese' } },
-  english: { id: 'english', options: { voice_id: 'English_compelling_lady1', language_boost: 'English' } },
+  english: { id: 'english', options: { voice_id: 'English_compelling_lady1', language_boost: 'English', speed: 0.85 } },
 }[id] || null);`,
     },
     {
@@ -274,7 +274,7 @@ test('track attachment replaces only its selected language and generated audio f
   assert.equal(removed.includes(first.assetId), true);
   const generated = await session.generateAudioTrack('q1', 'prompt', 'english');
   assert.equal(generated.ok, true);
-  assert.deepEqual(calls[0].options, { voice_id: 'English_compelling_lady1', language_boost: 'English' });
+  assert.deepEqual(calls[0].options, { voice_id: 'English_compelling_lady1', language_boost: 'English', speed: 0.85 });
   const tracks = session.state.draft.blocks[0].prompt.audioTracks;
   assert.deepEqual(tracks.map((track) => track.language), ['cantonese', 'english']);
   assert.equal(tracks.find((track) => track.language === 'english').voicePresetId, 'english');

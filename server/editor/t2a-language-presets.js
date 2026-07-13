@@ -18,6 +18,7 @@ export const WORKSHEET_T2A_LANGUAGE_PRESETS = Object.freeze([
     options: Object.freeze({
       voice_id: 'English_compelling_lady1',
       language_boost: 'English',
+      speed: 0.85,
     }),
   }),
 ]);
