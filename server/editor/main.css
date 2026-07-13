@@ -1122,6 +1122,47 @@ textarea.control {
   cursor: not-allowed;
 }
 
+.audio-track-row-list {
+  width: 100%;
+}
+
+.audio-track-row .media-row__meta {
+  gap: 8px;
+}
+
+.asset-status-badge--warn {
+  color: #854d0e;
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.asset-status-badge[hidden],
+.option-audio-track__warning[hidden] {
+  display: none;
+}
+
+.legacy-audio-migration-modal__choices {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.legacy-audio-migration-modal__choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.legacy-audio-migration-modal__choice:focus-within {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
 .media-action-btn__icon {
   display: inline-flex;
   align-items: center;
@@ -1210,6 +1251,44 @@ textarea.control {
 
 .option-actions-menu__item {
   width: 100%;
+  justify-content: flex-start;
+}
+
+.option-audio-menu__list {
+  min-width: min(360px, calc(100vw - 32px));
+}
+
+.option-audio-track-list,
+.option-audio-track {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.option-audio-track + .option-audio-track {
+  padding-top: 8px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.option-audio-track__heading,
+.option-audio-track__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.option-audio-track__heading {
+  justify-content: space-between;
+}
+
+.option-audio-track__warning {
+  color: #854d0e;
+  font-size: 0.78rem;
+}
+
+.option-audio-track__actions .media-action-btn {
+  flex: 1 1 calc(50% - 6px);
   justify-content: flex-start;
 }
 
@@ -1652,6 +1731,25 @@ textarea.control {
 
   .media-row__actions {
     flex-wrap: wrap;
+  }
+
+  .audio-track-row .media-row__meta {
+    flex-wrap: wrap;
+  }
+
+  .audio-track-row .media-row__title {
+    flex: 0 0 auto;
+    min-width: 82px;
+  }
+
+  .option-audio-menu__list {
+    position: fixed;
+    inset: auto 16px 16px;
+    width: auto;
+    min-width: 0;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    z-index: 1000;
   }
 
   .media-action-btn {

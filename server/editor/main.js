@@ -6,6 +6,7 @@ import {
   parseWorksheetPackage,
 } from './worksheet-package.js';
 import { collectAudioTrackAssetIds, normalizeAudioTracks } from './audio-tracks.js';
+import { getWorksheetT2ALanguagePresetById } from './t2a-language-presets.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
 import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
@@ -21,6 +22,7 @@ const ACTIVE_NOTIFICATIONS_MAX_STORED = 200;
 const T2A_TEXT_MAX_LENGTH = 200;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
+const AUDIO_TRACK_LANGUAGE_IDS = Object.freeze(['cantonese', 'mandarin', 'english']);
 let contractsPromise;
 
 function nowIso() {
@@ -204,6 +206,190 @@ function getT2ATextEligibility(text, maxLength = T2A_TEXT_MAX_LENGTH) {
     exceedsLimit,
     eligible: hasText && !exceedsLimit,
   };
+}
+
+function isAudioTrackLanguage(language) {
+  return AUDIO_TRACK_LANGUAGE_IDS.includes(language);
+}
+
+function getAudioTrackLanguageLabel(language) {
+  const key = isAudioTrackLanguage(language) ? language : 'cantonese';
+  return t(`editor.media.audioTracks.languages.${key}`);
+}
+
+// This is a change detector, not a security primitive. Keeping it synchronous
+// lets stale-state rendering remain deterministic while authors type.
+function getAudioSourceTextHash(text) {
+  const value = String(text ?? '').trim();
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `fnv1a32:${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+function getAudioTrack(audioTracks, language) {
+  return normalizeAudioTracks(audioTracks).find((track) => track.language === language) || null;
+}
+
+function setAudioTrack(audioTracks, nextTrack) {
+  return normalizeAudioTracks([
+    ...normalizeAudioTracks(audioTracks).filter((track) => track.language !== nextTrack.language),
+    nextTrack,
+  ]);
+}
+
+function removeAudioTrack(audioTracks, language) {
+  return normalizeAudioTracks(audioTracks).filter((track) => track.language !== language);
+}
+
+function getTextLanguageMismatch(text, language) {
+  const value = String(text ?? '');
+  const han = (value.match(/\p{Script=Han}/gu) || []).length;
+  const latin = (value.match(/[A-Za-z]/g) || []).length;
+  const total = han + latin;
+  if (total < 8) return null;
+  if (language === 'english' && han / total >= 0.7) return 'chinese_text_for_english';
+  if ((language === 'cantonese' || language === 'mandarin') && latin / total >= 0.7) return 'english_text_for_chinese';
+  return null;
+}
+
+function collectLegacyAudioTargets(blocks) {
+  const targets = [];
+  normalizeBlocks(blocks).forEach((block) => {
+    if (block.kind !== 'question') return;
+    const promptRef = getSingleMediaRef(block.prompt?.mediaRefs, 'question_audio');
+    if (promptRef) targets.push({ blockId: block.blockId, target: 'prompt', optionId: null, assetId: promptRef.assetId, text: block.prompt?.text || '' });
+    const config = normalizeQuestionResponseConfig(block.responseConfig);
+    (config.options || []).map((option) => normalizeResponseOption(option)).forEach((option) => {
+      const optionRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
+      if (optionRef) targets.push({ blockId: block.blockId, target: 'option', optionId: option.id, assetId: optionRef.assetId, text: option.label ?? option.value ?? '' });
+    });
+  });
+  return targets;
+}
+
+function migrateLegacyAudioBlocks(blocks, choice) {
+  const normalizedChoice = choice === 'discard' ? 'discard' : choice;
+  if (normalizedChoice !== 'discard' && !isAudioTrackLanguage(normalizedChoice)) {
+    throw new Error('A legacy audio migration choice is required.');
+  }
+  const legacyTargets = collectLegacyAudioTargets(blocks);
+  if (normalizedChoice !== 'discard') {
+    for (const item of legacyTargets) {
+      const block = normalizeBlocks(blocks).find((candidate) => candidate.blockId === item.blockId);
+      const blockOptions = normalizeQuestionResponseConfig(block?.responseConfig).options || [];
+      const tracks = item.target === 'prompt'
+        ? block?.prompt?.audioTracks
+        : blockOptions.find((option) => option.id === item.optionId)?.audioTracks;
+      if (getAudioTrack(tracks, normalizedChoice)) {
+        throw new Error(`Legacy audio conflicts with an existing ${normalizedChoice} track.`);
+      }
+    }
+  }
+  const migrated = normalizeBlocks(blocks).map((block) => {
+    if (block.kind !== 'question') return block;
+    const promptRef = getSingleMediaRef(block.prompt?.mediaRefs, 'question_audio');
+    const prompt = {
+      ...block.prompt,
+      mediaRefs: removeSingleMediaRef(block.prompt?.mediaRefs, 'question_audio'),
+      audioTracks: promptRef && normalizedChoice !== 'discard'
+        ? setAudioTrack(block.prompt?.audioTracks, { language: normalizedChoice, assetId: promptRef.assetId, voicePresetId: null, sourceTextHash: getAudioSourceTextHash(block.prompt?.text) })
+        : normalizeAudioTracks(block.prompt?.audioTracks),
+    };
+    const config = normalizeQuestionResponseConfig(block.responseConfig);
+    const options = (config.options || []).map((option) => {
+      const normalized = normalizeResponseOption(option);
+      const audioRef = getSingleMediaRef(normalized.mediaRefs, 'option_audio');
+      return {
+        ...normalized,
+        mediaRefs: removeSingleMediaRef(normalized.mediaRefs, 'option_audio'),
+        audioTracks: audioRef && normalizedChoice !== 'discard'
+          ? setAudioTrack(normalized.audioTracks, { language: normalizedChoice, assetId: audioRef.assetId, voicePresetId: null, sourceTextHash: getAudioSourceTextHash(normalized.label ?? normalized.value) })
+          : normalizeAudioTracks(normalized.audioTracks),
+      };
+    });
+    return { ...block, prompt, responseConfig: normalizeQuestionResponseConfig({ ...config, options }) };
+  });
+  return { blocks: migrated, legacyCount: legacyTargets.length };
+}
+
+function showLegacyAudioMigrationDialog({ count, required = false } = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-modal-overlay';
+    const dialog = document.createElement('section');
+    dialog.className = 'confirm-modal legacy-audio-migration-modal';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const title = document.createElement('h3');
+    title.textContent = t('editor.media.audioTracks.migration.title');
+    const description = document.createElement('p');
+    description.className = 'confirm-modal__description';
+    description.textContent = t('editor.media.audioTracks.migration.description', { count });
+    const choices = document.createElement('div');
+    choices.className = 'legacy-audio-migration-modal__choices';
+    const choiceDefinitions = [
+      ['cantonese', t('editor.media.audioTracks.languages.cantonese')],
+      ['mandarin', t('editor.media.audioTracks.languages.mandarin')],
+      ['english', t('editor.media.audioTracks.languages.english')],
+      ['discard', t('editor.media.audioTracks.migration.discard')],
+    ];
+    choiceDefinitions.forEach(([value, label], index) => {
+      const row = document.createElement('label');
+      row.className = 'legacy-audio-migration-modal__choice';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'legacy-audio-migration-choice';
+      input.value = value;
+      input.checked = index === 0;
+      const text = document.createElement('span');
+      text.textContent = label;
+      row.append(input, text);
+      choices.appendChild(row);
+    });
+    const actions = document.createElement('div');
+    actions.className = 'confirm-modal__actions';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'confirm-modal__btn';
+    cancel.textContent = t('common.actions.cancel');
+    cancel.hidden = required;
+    const confirm = document.createElement('button');
+    confirm.type = 'button';
+    confirm.className = 'confirm-modal__btn confirm-modal__btn--warning';
+    confirm.textContent = t('editor.media.audioTracks.migration.convertAndOpen');
+    actions.append(cancel, confirm);
+    dialog.append(title, description, choices, actions);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    const close = (value) => { overlay.remove(); resolve(value); };
+    cancel.addEventListener('click', () => close(null));
+    confirm.addEventListener('click', () => {
+      const selected = choices.querySelector('input:checked')?.value || 'cantonese';
+      if (selected === 'discard') {
+        if (confirm.dataset.discardConfirmed !== '1') {
+          confirm.dataset.discardConfirmed = '1';
+          confirm.className = 'confirm-modal__btn confirm-modal__btn--destructive';
+          confirm.textContent = t('editor.media.audioTracks.migration.confirmDiscard');
+          description.textContent = t('editor.media.audioTracks.migration.discardConfirm');
+          return;
+        }
+      }
+      close(selected);
+    });
+    choices.addEventListener('change', () => {
+      delete confirm.dataset.discardConfirmed;
+      confirm.className = 'confirm-modal__btn confirm-modal__btn--warning';
+      confirm.textContent = t('editor.media.audioTracks.migration.convertAndOpen');
+      description.textContent = t('editor.media.audioTracks.migration.description', { count });
+    });
+    dialog.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !required) close(null);
+    });
+    choices.querySelector('input:checked')?.focus();
+  });
 }
 
 function getBlockDeletePolicy(block) {
@@ -888,6 +1074,7 @@ class EditorDraftSession {
   constructor(storage, options = {}) {
     this.storage = storage;
     this.apiClient = options.apiClient || createServerApiClient();
+    this.resolveLegacyAudioMigration = options.resolveLegacyAudioMigration || showLegacyAudioMigrationDialog;
     this.state = {
       draft: null,
       selectedBlockId: null,
@@ -1289,6 +1476,27 @@ class EditorDraftSession {
     }
 
     if (existing) {
+      const legacyTargets = collectLegacyAudioTargets(existing.blocks);
+      if (legacyTargets.length > 0) {
+        const choice = await this.resolveLegacyAudioMigration({ count: legacyTargets.length, required: true, source: 'local' });
+        if (!choice) return null;
+        const migrated = migrateLegacyAudioBlocks(existing.blocks, choice);
+        existing = { ...existing, blocks: migrated.blocks };
+        const referencedIds = collectDraftQuestionAssetIds(existing);
+        const removedIds = normalizeDraftAssets(existing.assets)
+          .map((asset) => asset.assetId)
+          .filter((assetId) => !referencedIds.has(assetId));
+        existing.assets = normalizeDraftAssets(existing.assets).filter((asset) => referencedIds.has(asset.assetId));
+        await this.storage.drafts.put(existing);
+        await Promise.all(removedIds.map(async (assetId) => {
+          try {
+            await this.storage.localAssets?.remove?.(assetId);
+          } catch (_error) {
+            // The migrated draft no longer references this asset. A failed cache
+            // cleanup must not make the otherwise atomic migration unusable.
+          }
+        }));
+      }
       this.state.draft = {
         ...existing,
         blocks: normalizeBlocks(existing.blocks),
@@ -1855,6 +2063,120 @@ class EditorDraftSession {
     this.clearMediaFeedback();
     this.touchDraft();
     return { ok: true, removedAssetId };
+  }
+
+  getAudioTrackTarget(blockId, target, optionId = null) {
+    const block = this.findBlock(blockId);
+    if (!block || block.kind !== 'question') return null;
+    if (target === 'prompt') {
+      return { block, text: String(block.prompt?.text || ''), audioTracks: normalizeAudioTracks(block.prompt?.audioTracks) };
+    }
+    const config = normalizeQuestionResponseConfig(block.responseConfig);
+    const option = (config.options || []).map((item) => normalizeResponseOption(item)).find((item) => item.id === optionId);
+    if (!option) return null;
+    return { block, option, text: String(option.label ?? option.value ?? ''), audioTracks: normalizeAudioTracks(option.audioTracks) };
+  }
+
+  async attachAudioTrack(blockId, target, language, file, options = {}) {
+    if (!isAudioTrackLanguage(language) || !this.state.draft) return { ok: false, reason: 'invalid-language' };
+    const validation = validateMediaFile(file, 'audio');
+    if (!validation.ok) return { ok: false, reason: 'validation', message: validation.message };
+    const optionId = options.optionId || null;
+    const current = this.getAudioTrackTarget(blockId, target, optionId);
+    if (!current) return { ok: false, reason: 'missing-target' };
+    const existingTrack = getAudioTrack(current.audioTracks, language);
+    if (existingTrack && options.confirmReplace !== true) {
+      return { ok: false, reason: 'confirm-replace-required', existingAssetId: existingTrack.assetId };
+    }
+    const newAsset = await this.createLocalAssetRecord(file, target === 'prompt' ? 'question_audio' : 'option_audio', 'audio');
+    const nextTrack = {
+      language,
+      assetId: newAsset.assetId,
+      voicePresetId: options.voicePresetId === language ? language : null,
+      sourceTextHash: getAudioSourceTextHash(current.text),
+    };
+    this.state.draft.blocks = this.state.draft.blocks.map((candidate) => {
+      if (candidate.blockId !== blockId || candidate.kind !== 'question') return candidate;
+      if (target === 'prompt') {
+        return { ...candidate, prompt: { ...candidate.prompt, audioTracks: setAudioTrack(candidate.prompt?.audioTracks, nextTrack) } };
+      }
+      const config = normalizeQuestionResponseConfig(candidate.responseConfig);
+      return {
+        ...candidate,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...config,
+          options: (config.options || []).map((item) => {
+            const normalized = normalizeResponseOption(item);
+            return normalized.id === optionId ? { ...normalized, audioTracks: setAudioTrack(normalized.audioTracks, nextTrack) } : normalized;
+          }),
+        }),
+      };
+    });
+    this.state.draft.assets = [...normalizeDraftAssets(this.state.draft.assets), newAsset];
+    if (existingTrack) this.pruneAssetLinks([existingTrack.assetId]);
+    this.clearMediaFeedback();
+    this.touchDraft();
+    return { ok: true, assetId: newAsset.assetId, replacedAssetId: existingTrack?.assetId || null };
+  }
+
+  removeAudioTrack(blockId, target, language, options = {}) {
+    if (!isAudioTrackLanguage(language) || !this.state.draft) return { ok: false, reason: 'invalid-language' };
+    const optionId = options.optionId || null;
+    const current = this.getAudioTrackTarget(blockId, target, optionId);
+    const existingTrack = current && getAudioTrack(current.audioTracks, language);
+    if (!existingTrack) return { ok: false, reason: 'missing-track' };
+    if (options.confirmRemove !== true) return { ok: false, reason: 'confirm-remove-required', existingAssetId: existingTrack.assetId };
+    this.state.draft.blocks = this.state.draft.blocks.map((candidate) => {
+      if (candidate.blockId !== blockId || candidate.kind !== 'question') return candidate;
+      if (target === 'prompt') return { ...candidate, prompt: { ...candidate.prompt, audioTracks: removeAudioTrack(candidate.prompt?.audioTracks, language) } };
+      const config = normalizeQuestionResponseConfig(candidate.responseConfig);
+      return {
+        ...candidate,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...config,
+          options: (config.options || []).map((item) => {
+            const normalized = normalizeResponseOption(item);
+            return normalized.id === optionId ? { ...normalized, audioTracks: removeAudioTrack(normalized.audioTracks, language) } : normalized;
+          }),
+        }),
+      };
+    });
+    this.pruneAssetLinks([existingTrack.assetId]);
+    this.touchDraft();
+    return { ok: true, removedAssetId: existingTrack.assetId };
+  }
+
+  async generateAudioTrack(blockId, target, language, options = {}) {
+    if (!isAudioTrackLanguage(language)) return { ok: false, reason: 'invalid-language' };
+    const optionId = options.optionId || null;
+    const current = this.getAudioTrackTarget(blockId, target, optionId);
+    if (!current) return { ok: false, reason: 'missing-target' };
+    const textState = getT2ATextEligibility(current.text);
+    if (!textState.eligible) return { ok: false, reason: textState.hasText ? 'text-too-long' : 'missing-text' };
+    const preset = getWorksheetT2ALanguagePresetById(language);
+    if (!preset) return { ok: false, reason: 'missing-preset' };
+    const existingTrack = getAudioTrack(current.audioTracks, language);
+    if (existingTrack && options.confirmReplace !== true) return { ok: false, reason: 'confirm-replace-required', existingAssetId: existingTrack.assetId };
+    const audioResult = await this.apiClient.generateAudioFromText(textState.trimmedText, preset.options);
+    if (!audioResult?.ok) return { ok: false, reason: 'generation-failed', error: audioResult?.error || null };
+    const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
+    if (!audioBytes) return { ok: false, reason: 'invalid-audio-data' };
+    const fileName = target === 'prompt' ? `${blockId}_${language}.mp3` : `${blockId}_${optionId}_${language}.mp3`;
+    return this.attachAudioTrack(blockId, target, language, createAudioFileFromBytes(audioBytes, fileName), {
+      optionId,
+      confirmReplace: true,
+      voicePresetId: language,
+    });
+  }
+
+  migrateLegacyAudioInDraft(choice) {
+    if (!this.state.draft) return { ok: false, reason: 'missing-draft' };
+    const migrated = migrateLegacyAudioBlocks(this.state.draft.blocks, choice);
+    const priorAssetIds = collectDraftQuestionAssetIds(this.state.draft);
+    this.state.draft.blocks = migrated.blocks;
+    this.pruneAssetLinks(Array.from(priorAssetIds));
+    this.touchDraft();
+    return { ok: true, ...migrated };
   }
 
   updateQuestionInputType(blockId, inputType) {
@@ -2762,6 +3084,21 @@ class EditorDraftSession {
       }
 
       const parsedPackage = parseWorksheetPackage(await file.arrayBuffer());
+      const legacyTargets = collectLegacyAudioTargets(parsedPackage.worksheet.blocks);
+      if (legacyTargets.length > 0) {
+        const choice = await this.resolveLegacyAudioMigration({
+          count: legacyTargets.length,
+          required: false,
+          source: options.migrationSource || 'package',
+        });
+        if (!choice) {
+          return { canceled: true, importedRecord: null, draftRecord: null };
+        }
+        const migrated = migrateLegacyAudioBlocks(parsedPackage.worksheet.blocks, choice);
+        parsedPackage.worksheet = { ...parsedPackage.worksheet, blocks: migrated.blocks };
+        const referencedIds = collectDraftQuestionAssetIds({ blocks: migrated.blocks });
+        parsedPackage.assets = parsedPackage.assets.filter((asset) => referencedIds.has(asset.assetId));
+      }
       const importedLocalId = createLocalId('imported');
       const now = nowIso();
       const importedRecord = {
@@ -2973,6 +3310,9 @@ class EditorDraftSession {
   async buildCurrentDraftPackageZipBytes() {
     if (!this.state.draft) {
       throw new Error(editorNotification('export.noActiveDraft'));
+    }
+    if (collectLegacyAudioTargets(this.state.draft.blocks).length > 0) {
+      throw new Error('Legacy audio must be migrated before preview, export, or upload.');
     }
     const assets = new Map();
     const draftAssets = normalizeDraftAssets(this.state.draft.assets);
@@ -3393,8 +3733,9 @@ class EditorDraftSession {
     }
     const imported = await this.importWorksheetPackageFile(
       createZipFileFromBytes(artifact.data, `uploaded-draft-${uploadedDraftId}.zip`),
-      { convertToEditableDraft: true }
+      { convertToEditableDraft: true, migrationSource: 'uploaded-draft' }
     );
+    if (imported?.canceled) return { ok: false, canceled: true, error: { message: 'Opening canceled. No worksheet was imported or changed.' } };
     this.pushNotification({
       kind: 'success',
       category: 'server',
@@ -3431,8 +3772,9 @@ class EditorDraftSession {
       }
       const imported = await this.importWorksheetPackageFile(
         createZipFileFromBytes(artifact.data, `published-package-${normalizedPublishedPackageId}.zip`),
-        { convertToEditableDraft: true }
+        { convertToEditableDraft: true, migrationSource: 'published-package' }
       );
+      if (imported?.canceled) return { ok: false, canceled: true, error: { message: 'Opening canceled. No worksheet was imported or changed.' } };
       this.pushNotification({
         kind: 'success',
         category: 'server',
@@ -3604,6 +3946,9 @@ class EditorDraftSession {
         message: editorNotification('recovery.audioPromptTargetBlockUnavailable'),
       };
     }
+    if (payload.language !== undefined && !isAudioTrackLanguage(payload.language)) {
+      return { ok: false, message: 'Unsupported worksheet audio language.' };
+    }
     return { ok: true };
   }
 
@@ -3655,6 +4000,18 @@ class EditorDraftSession {
     }
     this._promptT2AInFlightTargets.add(inFlightKey);
     try {
+      if (isAudioTrackLanguage(payload.language)) {
+        const result = await this.generateAudioTrack(blockId, 'prompt', payload.language, { confirmReplace: true });
+        if (!result.ok) {
+          const message = result.error?.message || editorNotification('audioGeneration.failed');
+          this.setRecoveryMessage(message);
+          return { ok: false, status: 'generation_failed', error: { message } };
+        }
+        this.setRecoveryMessage(editorNotification('audioGeneration.promptGenerated'));
+        this.pushNotification({ kind: 'success', category: 'editor', source: 'prompt.t2a', text: editorNotification('audioGeneration.promptGenerated') });
+        this.notifyStateChange();
+        return { ok: true, status: 'generated_editor_prompt_t2a_track', data: { blockId, language: payload.language } };
+      }
       const audioResult = await this.apiClient.generateAudioFromText(promptText);
       if (!audioResult?.ok) {
         const detail = String(audioResult?.error?.message || '').trim();
@@ -3753,6 +4110,9 @@ class EditorDraftSession {
         message: editorNotification('recovery.audioOptionTargetUnavailable'),
       };
     }
+    if (payload.language !== undefined && !isAudioTrackLanguage(payload.language)) {
+      return { ok: false, message: 'Unsupported worksheet audio language.' };
+    }
     return { ok: true };
   }
 
@@ -3809,6 +4169,18 @@ class EditorDraftSession {
     }
     this._optionT2AInFlightTargets.add(inFlightKey);
     try {
+      if (isAudioTrackLanguage(payload.language)) {
+        const result = await this.generateAudioTrack(blockId, 'option', payload.language, { optionId, confirmReplace: true });
+        if (!result.ok) {
+          const message = result.error?.message || editorNotification('audioGeneration.failed');
+          this.setRecoveryMessage(message);
+          return { ok: false, status: 'generation_failed', error: { message } };
+        }
+        this.setRecoveryMessage(editorNotification('audioGeneration.optionGenerated'));
+        this.pushNotification({ kind: 'success', category: 'editor', source: 'option.t2a', text: editorNotification('audioGeneration.optionGenerated') });
+        this.notifyStateChange();
+        return { ok: true, status: 'generated_editor_option_t2a_track', data: { blockId, optionId, language: payload.language } };
+      }
       const audioResult = await this.apiClient.generateAudioFromText(optionText);
       if (!audioResult?.ok) {
         const detail = String(audioResult?.error?.message || '').trim();
@@ -4326,6 +4698,26 @@ function renderEditorShell(session) {
       variant: 'danger',
       entityLabel: '',
     });
+  }
+
+  async function confirmAudioLanguageMismatch(text, language, { replacing = false } = {}) {
+    const mismatch = getTextLanguageMismatch(text, language);
+    if (!mismatch) return { confirmed: true, replacementConfirmed: false };
+    const languageLabel = getAudioTrackLanguageLabel(language);
+    let bodyText = mismatch === 'chinese_text_for_english'
+      ? t('editor.media.audioTracks.confirm.chineseForEnglish', { language: languageLabel })
+      : t('editor.media.audioTracks.confirm.englishForChinese', { language: languageLabel });
+    if (replacing) bodyText += t('editor.media.audioTracks.confirm.replaceAlso', { language: languageLabel });
+    const confirmed = await showConfirmDialog({
+      title: t('editor.media.audioTracks.confirm.mismatchTitle', { language: languageLabel }),
+      bodyText,
+      removalItems: replacing ? [languageLabel] : [],
+      confirmLabel: replacing ? t('editor.media.actions.replaceAudio') : t('editor.media.audioTracks.continueAnyway'),
+      cancelLabel: t('common.actions.cancel'),
+      variant: replacing ? 'danger' : 'warning',
+      warningText: t('editor.media.audioTracks.confirm.mismatchWarning'),
+    });
+    return { confirmed, replacementConfirmed: replacing && confirmed };
   }
 
   async function runMediaAction(action) {
@@ -5547,7 +5939,9 @@ function renderEditorShell(session) {
       ? JSON.stringify(normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs).map((ref) => [
         String(ref?.usage ?? ''),
         String(ref?.assetId ?? ''),
-      ]))
+      ]).concat(normalizeAudioTracks(selectedBlock?.prompt?.audioTracks).map((track) => [
+        track.language, track.assetId, track.sourceTextHash,
+      ])))
       : '[]';
     const normalizedOptionMediaRefs = selectedBlock.kind === 'question'
       ? JSON.stringify((normalizedResponseConfig?.options || []).map((opt) => {
@@ -5555,6 +5949,7 @@ function renderEditorShell(session) {
         return [
           String(normalized.id ?? ''),
           ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
+          ...normalizeAudioTracks(normalized.audioTracks).map((track) => `${track.language}:${track.assetId}:${track.sourceTextHash}`),
         ];
       }))
       : '[]';
@@ -5629,6 +6024,7 @@ function renderEditorShell(session) {
       return [
         String(normalized.id ?? ''),
         ...normalizeMediaRefs(normalized.mediaRefs, 'option_audio').map((ref) => String(ref?.assetId ?? '')),
+        ...normalizeAudioTracks(normalized.audioTracks).map((track) => `${track.language}:${track.assetId}:${track.sourceTextHash}`),
         optionTextState.eligible ? '1' : '0',
         optionTextState.exceedsLimit ? '1' : '0',
         isOptionT2AInFlight ? '1' : '0',
@@ -5662,6 +6058,13 @@ function renderEditorShell(session) {
     promptT2AUiRefs.attachBtn.disabled = isPromptT2AInFlight;
     promptT2AUiRefs.playBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
     promptT2AUiRefs.removeBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
+    const currentTextHash = getAudioSourceTextHash(selectedBlock?.prompt?.text || '');
+    document.querySelectorAll(`[data-prompt-audio-track-block-id="${selectedBlock.blockId}"]`).forEach((trackRow) => {
+      const stale = trackRow.querySelector('[data-audio-track-stale="1"]');
+      if (!(stale instanceof HTMLElement)) return;
+      stale.hidden = !trackRow.dataset.audioTrackSourceHash
+        || trackRow.dataset.audioTrackSourceHash === currentTextHash;
+    });
   };
 
   const refreshOptionRowT2AControls = (selectedBlockId, optionId, row) => {
@@ -5689,7 +6092,7 @@ function renderEditorShell(session) {
     const isPersistedOption = row.dataset.persistedOption === '1';
 
     setOptionAudioMenuTriggerState(optionAudioMenuTrigger, {
-      hasAudio: Boolean(optionAudioRef),
+      hasAudio: normalizeAudioTracks(option.audioTracks).length > 0,
       isGenerating: isOptionT2AInFlight,
       isPersisted: isPersistedOption,
     });
@@ -5727,6 +6130,13 @@ function renderEditorShell(session) {
       optionAudioAttached.hidden = true;
       optionAudioAttached.textContent = '';
     }
+    const currentTextHash = getAudioSourceTextHash(option?.label ?? option?.value ?? '');
+    row.querySelectorAll('[data-option-audio-track-language]').forEach((trackSection) => {
+      const stale = trackSection.querySelector('[data-audio-track-stale="1"]');
+      if (!(stale instanceof HTMLElement)) return;
+      stale.hidden = !trackSection.dataset.audioTrackSourceHash
+        || trackSection.dataset.audioTrackSourceHash === currentTextHash;
+    });
   };
 
   const renderDetailEditor = ({ force = false } = {}) => {
@@ -6073,7 +6483,98 @@ function renderEditorShell(session) {
     });
     questionAudioActions.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
     questionAudioRow.append(questionAudioMeta, questionAudioActions);
-    mediaRows.append(questionImageRow, questionAudioRow);
+    const languageTrackRows = document.createElement('div');
+    languageTrackRows.className = 'media-row-list audio-track-row-list';
+    AUDIO_TRACK_LANGUAGE_IDS.forEach((language) => {
+      const track = getAudioTrack(selectedBlock.prompt?.audioTracks, language);
+      const trackRow = document.createElement('div');
+      trackRow.className = 'media-row audio-track-row';
+      trackRow.dataset.promptAudioTrackBlockId = selectedBlock.blockId;
+      trackRow.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
+      const trackMeta = document.createElement('div');
+      trackMeta.className = 'media-row__meta';
+      const trackTitle = document.createElement('span');
+      trackTitle.className = 'media-row__title';
+      trackTitle.textContent = getAudioTrackLanguageLabel(language);
+      const trackStatus = document.createElement('span');
+      trackStatus.className = track ? 'asset-status-badge' : 'asset-status-badge asset-status-badge--empty';
+      trackStatus.textContent = track ? t('editor.block.attachedBadge') : t('common.values.none');
+      trackMeta.append(trackTitle, trackStatus);
+      const stale = document.createElement('span');
+      stale.className = 'asset-status-badge asset-status-badge--warn';
+      stale.dataset.audioTrackStale = '1';
+      stale.textContent = t('editor.media.audioTracks.textChanged');
+      stale.hidden = !track || track.sourceTextHash === getAudioSourceTextHash(selectedBlock.prompt?.text || '');
+      trackMeta.appendChild(stale);
+      const actions = document.createElement('div');
+      actions.className = 'media-row__actions';
+      const attachBtn = document.createElement('button');
+      attachBtn.type = 'button'; attachBtn.className = 'media-action-btn';
+      setMediaActionButtonContent(attachBtn, 'upload', track ? t('editor.media.actions.replace') : t('editor.media.actions.attach'));
+      attachBtn.addEventListener('click', () => {
+        questionAudioInput.dataset.blockId = selectedBlock.blockId;
+        questionAudioInput.dataset.language = language;
+        questionAudioInput.value = '';
+        questionAudioInput.click();
+      });
+      const generateBtn = document.createElement('button');
+      generateBtn.type = 'button'; generateBtn.className = 'media-action-btn';
+      setMediaActionButtonContent(generateBtn, track ? 'refresh' : 'generate', track ? t('editor.media.actions.regenerate') : t('editor.media.actions.generateAudio'));
+      generateBtn.disabled = !promptT2AEligible;
+      generateBtn.addEventListener('click', async () => {
+        if (!promptT2AEligible) return;
+        const warning = await confirmAudioLanguageMismatch(selectedBlock.prompt?.text || '', language, { replacing: Boolean(track) });
+        if (!warning.confirmed) return;
+        const sessionReady = await session.ensureServerSessionReady();
+        if (!sessionReady.ok) return;
+        if (track && !warning.replacementConfirmed) {
+          const confirmed = await confirmDangerAction({
+            title: t('editor.media.audioTracks.confirm.regenerateTitle', { language: getAudioTrackLanguageLabel(language) }),
+            bodyText: t('editor.media.audioTracks.confirm.regeneratePromptBody', { language: getAudioTrackLanguageLabel(language) }),
+            confirmLabel: t('editor.media.actions.regenerateAudio'),
+            removalItems: [getAudioTrackLanguageLabel(language)],
+          });
+          if (!confirmed) return;
+        }
+        const result = await session.triggerProtectedAction('editorPromptT2A', {
+          blockId: selectedBlock.blockId,
+          target: 'question_prompt',
+          language,
+        });
+        if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') session.setMediaFeedback(editorNotification('audioGeneration.failed'));
+        updateSummary();
+      });
+      const playBtn = document.createElement('button');
+      playBtn.type = 'button'; playBtn.className = 'media-action-btn';
+      setMediaActionButtonContent(playBtn, 'play', t('editor.media.actions.play'));
+      playBtn.disabled = !track;
+      playBtn.addEventListener('click', async () => {
+        if (!track) return;
+        playBtn.disabled = true;
+        const result = await session.playAssetAudio(track.assetId, { onEnded: () => { playBtn.disabled = false; }, onError: () => { playBtn.disabled = false; }, onInterrupted: () => { playBtn.disabled = false; } });
+        if (!result.ok) playBtn.disabled = false;
+      });
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button'; removeBtn.className = 'media-action-btn media-action-btn--remove';
+      setMediaActionButtonContent(removeBtn, 'trash', t('editor.media.actions.remove'));
+      removeBtn.disabled = !track;
+      removeBtn.addEventListener('click', async () => {
+        if (!track) return;
+        const confirmed = await confirmDangerAction({
+          title: t('editor.media.audioTracks.confirm.removeTitle', { language: getAudioTrackLanguageLabel(language) }),
+          bodyText: t('editor.media.audioTracks.confirm.removePromptBody', { language: getAudioTrackLanguageLabel(language) }),
+          confirmLabel: t('editor.media.actions.removeAudio'),
+          removalItems: [getAudioTrackLanguageLabel(language)],
+        });
+        if (!confirmed) return;
+        session.removeAudioTrack(selectedBlock.blockId, 'prompt', language, { confirmRemove: true });
+        updateSummary();
+      });
+      actions.append(attachBtn, generateBtn, playBtn, removeBtn);
+      trackRow.append(trackMeta, actions);
+      languageTrackRows.appendChild(trackRow);
+    });
+    mediaRows.append(questionImageRow, languageTrackRows);
     mediaSection.append(mediaRows, questionAudioHint, mediaFeedback);
     rightPanel.appendChild(mediaSection);
 
@@ -6343,12 +6844,108 @@ function renderEditorShell(session) {
         optionAudioMenuTrigger.dataset.optionAudioMenuTrigger = '1';
         optionAudioMenuTrigger.setAttribute('role', 'button');
         setOptionAudioMenuTriggerState(optionAudioMenuTrigger, {
-          hasAudio: Boolean(optionAudioRef),
+          hasAudio: normalizeAudioTracks(option.audioTracks).length > 0,
           isGenerating: isOptionT2AInFlight,
           isPersisted: isPersistedOption,
         });
         const optionActionsRow = document.createElement('div');
         optionActionsRow.className = 'option-actions-menu__list option-audio-menu__list';
+        const optionTrackList = document.createElement('div');
+        optionTrackList.className = 'option-audio-track-list';
+        AUDIO_TRACK_LANGUAGE_IDS.forEach((language) => {
+          const track = getAudioTrack(option.audioTracks, language);
+          const languageLabel = getAudioTrackLanguageLabel(language);
+          const trackSection = document.createElement('section');
+          trackSection.className = 'option-audio-track';
+          trackSection.dataset.optionAudioTrackLanguage = language;
+          trackSection.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
+          const trackHeading = document.createElement('div');
+          trackHeading.className = 'option-audio-track__heading';
+          const trackName = document.createElement('strong');
+          trackName.textContent = languageLabel;
+          const trackStatus = document.createElement('span');
+          trackStatus.className = track ? 'asset-status-badge' : 'asset-status-badge asset-status-badge--empty';
+          trackStatus.textContent = track ? t('editor.block.attachedBadge') : t('common.values.none');
+          trackHeading.append(trackName, trackStatus);
+          const stale = document.createElement('span');
+          stale.className = 'option-audio-track__warning';
+          stale.dataset.audioTrackStale = '1';
+          stale.textContent = t('editor.media.audioTracks.textChanged');
+          stale.hidden = !track || track.sourceTextHash === getAudioSourceTextHash(optionDisplayText);
+          trackSection.append(trackHeading, stale);
+          const trackActions = document.createElement('div');
+          trackActions.className = 'option-audio-track__actions';
+          const attachTrackBtn = document.createElement('button');
+          attachTrackBtn.type = 'button';
+          attachTrackBtn.className = 'media-action-btn';
+          setMediaActionButtonContent(attachTrackBtn, 'upload', track ? t('editor.media.actions.replace') : t('editor.media.actions.attach'));
+          attachTrackBtn.disabled = !isPersistedOption;
+          attachTrackBtn.addEventListener('click', () => {
+            pendingOptionAudioTarget = { blockId: selectedBlock.blockId, optionId, language };
+            optionAudioInput.value = '';
+            optionAudioInput.click();
+          });
+          const generateTrackBtn = document.createElement('button');
+          generateTrackBtn.type = 'button';
+          generateTrackBtn.className = 'media-action-btn';
+          setMediaActionButtonContent(generateTrackBtn, track ? 'refresh' : 'generate', track ? t('editor.media.actions.regenerate') : t('editor.media.actions.generate'));
+          generateTrackBtn.disabled = !isPersistedOption || !optionTextEligibleForT2A;
+          generateTrackBtn.addEventListener('click', async () => {
+            const warning = await confirmAudioLanguageMismatch(optionDisplayText, language, { replacing: Boolean(track) });
+            if (!warning.confirmed) return;
+            const ready = await session.ensureServerSessionReady();
+            if (!ready.ok) return;
+            if (track && !warning.replacementConfirmed) {
+              const confirmed = await confirmDangerAction({
+                title: t('editor.media.audioTracks.confirm.regenerateTitle', { language: languageLabel }),
+                bodyText: t('editor.media.audioTracks.confirm.regenerateOptionBody', { language: languageLabel, index: optionIndex + 1 }),
+                confirmLabel: t('editor.media.actions.regenerateAudio'),
+                removalItems: [languageLabel],
+              });
+              if (!confirmed) return;
+            }
+            const result = await session.triggerProtectedAction('editorOptionT2A', {
+              blockId: selectedBlock.blockId,
+              optionId,
+              target: 'option',
+              language,
+            });
+            if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') session.setMediaFeedback(editorNotification('audioGeneration.failed'));
+            updateSummary();
+          });
+          const playTrackBtn = document.createElement('button');
+          playTrackBtn.type = 'button';
+          playTrackBtn.className = 'media-action-btn';
+          setMediaActionButtonContent(playTrackBtn, 'play', t('editor.media.actions.play'));
+          playTrackBtn.disabled = !track;
+          playTrackBtn.addEventListener('click', async () => {
+            if (!track) return;
+            playTrackBtn.disabled = true;
+            const result = await session.playAssetAudio(track.assetId, { onEnded: () => { playTrackBtn.disabled = false; }, onError: () => { playTrackBtn.disabled = false; }, onInterrupted: () => { playTrackBtn.disabled = false; } });
+            if (!result.ok) playTrackBtn.disabled = false;
+          });
+          const removeTrackBtn = document.createElement('button');
+          removeTrackBtn.type = 'button';
+          removeTrackBtn.className = 'media-action-btn media-action-btn--remove';
+          setMediaActionButtonContent(removeTrackBtn, 'trash', t('editor.media.actions.remove'));
+          removeTrackBtn.disabled = !track;
+          removeTrackBtn.addEventListener('click', async () => {
+            if (!track) return;
+            const confirmed = await confirmDangerAction({
+              title: t('editor.media.audioTracks.confirm.removeTitle', { language: languageLabel }),
+              bodyText: t('editor.media.audioTracks.confirm.removeOptionBody', { language: languageLabel, index: optionIndex + 1 }),
+              confirmLabel: t('editor.media.actions.removeAudio'),
+              removalItems: [languageLabel],
+            });
+            if (!confirmed) return;
+            session.removeAudioTrack(selectedBlock.blockId, 'option', language, { optionId, confirmRemove: true });
+            updateSummary();
+          });
+          trackActions.append(attachTrackBtn, generateTrackBtn, playTrackBtn, removeTrackBtn);
+          trackSection.appendChild(trackActions);
+          optionTrackList.appendChild(trackSection);
+        });
+        optionActionsRow.appendChild(optionTrackList);
 
         const optionAudioBtn = document.createElement('button');
         optionAudioBtn.type = 'button';
@@ -6504,7 +7101,9 @@ function renderEditorShell(session) {
             updateSummary();
           }
         });
-        optionActionsRow.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);
+        const legacyOptionActions = document.createElement('div');
+        legacyOptionActions.hidden = true;
+        legacyOptionActions.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);
         optionActionsMenu.append(optionAudioMenuTrigger, optionActionsRow);
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
@@ -6998,6 +7597,11 @@ function renderEditorShell(session) {
   openViewerBtn.addEventListener('click', async () => {
     const localDraftId = session.state.draft?.localId;
     if (!localDraftId) return;
+    if (collectLegacyAudioTargets(session.state.draft?.blocks).length > 0) {
+      session.setMediaFeedback('Legacy audio must be migrated before preview.');
+      updateSummary();
+      return;
+    }
     await session.saveNow();
     updateSummary();
     const draftUpdatedAt = session.state.draft?.metadata?.updatedAt || null;
@@ -7128,6 +7732,27 @@ function renderEditorShell(session) {
       const [file] = questionAudioInput.files || [];
       const blockId = questionAudioInput.dataset.blockId;
       if (!file || !blockId) return;
+      const language = questionAudioInput.dataset.language;
+      if (isAudioTrackLanguage(language)) {
+        const current = session.getAudioTrackTarget(blockId, 'prompt');
+        const existingTrack = getAudioTrack(current?.audioTracks, language);
+        const warning = await confirmAudioLanguageMismatch(current?.text || '', language, { replacing: Boolean(existingTrack) });
+        if (!warning.confirmed) return;
+        if (existingTrack && !warning.replacementConfirmed) {
+          const confirmed = await confirmDangerAction({
+            title: t('editor.media.audioTracks.confirm.replaceTitle', { language: getAudioTrackLanguageLabel(language) }),
+            bodyText: t('editor.media.audioTracks.confirm.replacePromptBody', { language: getAudioTrackLanguageLabel(language) }),
+            confirmLabel: t('editor.media.actions.replaceAudio'),
+            removalItems: [getAudioTrackLanguageLabel(language)],
+          });
+          if (!confirmed) return;
+        }
+        await session.attachAudioTrack(blockId, 'prompt', language, file, { confirmReplace: true });
+        delete questionAudioInput.dataset.language;
+        questionAudioInput.value = '';
+        updateSummary();
+        return;
+      }
       const currentBlock = session.findBlock(blockId);
       const hasExisting = Boolean(getSingleMediaRef(currentBlock?.prompt?.mediaRefs, 'question_audio'));
       if (hasExisting) {
@@ -7153,11 +7778,30 @@ function renderEditorShell(session) {
     await runMediaAction(async () => {
       const [file] = optionAudioInput.files || [];
       if (!file || !pendingOptionAudioTarget) return;
-      const { blockId, optionId } = pendingOptionAudioTarget;
+      const { blockId, optionId, language } = pendingOptionAudioTarget;
       pendingOptionAudioTarget = null;
       const block = session.findBlock(blockId);
       const config = normalizeQuestionResponseConfig(block?.responseConfig);
       const option = (config.options || []).map((item) => normalizeResponseOption(item)).find((item) => item.id === optionId);
+      if (isAudioTrackLanguage(language)) {
+        const existingTrack = getAudioTrack(option?.audioTracks, language);
+        const warning = await confirmAudioLanguageMismatch(option?.label ?? option?.value ?? '', language, { replacing: Boolean(existingTrack) });
+        if (!warning.confirmed) return;
+        if (existingTrack && !warning.replacementConfirmed) {
+          const languageLabel = getAudioTrackLanguageLabel(language);
+          const confirmed = await confirmDangerAction({
+            title: t('editor.media.audioTracks.confirm.replaceTitle', { language: languageLabel }),
+            bodyText: t('editor.media.audioTracks.confirm.replaceOptionBody', { language: languageLabel }),
+            confirmLabel: t('editor.media.actions.replaceAudio'),
+            removalItems: [languageLabel],
+          });
+          if (!confirmed) return;
+        }
+        await session.attachAudioTrack(blockId, 'option', language, file, { optionId, confirmReplace: true });
+        optionAudioInput.value = '';
+        updateSummary();
+        return;
+      }
       const hasExisting = Boolean(getSingleMediaRef(option?.mediaRefs, 'option_audio'));
       if (hasExisting) {
         const confirmed = await confirmDangerAction({
@@ -7199,6 +7843,11 @@ function renderEditorShell(session) {
       return;
     }
     const importResult = await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
+    if (importResult?.canceled) {
+      importFileInput.value = '';
+      updateSummary();
+      return;
+    }
     const importedLocalDraftId = importResult?.draftRecord?.localId || session.state.draft?.localId;
     if (importedLocalDraftId) {
       const nextUrl = new URL(window.location.href);
@@ -7340,7 +7989,7 @@ async function bootstrapEditor() {
     const payload = intent?.payload;
 
     if (actionId === 'editorPromptT2A' || actionId === 'resumeT2AAfterLogin') {
-      const allowed = new Set(['localDraftId', 'blockId', 'target']);
+      const allowed = new Set(['localDraftId', 'blockId', 'target', 'language']);
       if (!hasOnlyAllowedKeys(payload, allowed)) return false;
       if (typeof payload.localDraftId !== 'string' || typeof payload.blockId !== 'string') return false;
       if (payload.target !== 'question_prompt') return false;
@@ -7348,7 +7997,7 @@ async function bootstrapEditor() {
     }
 
     if (actionId === 'editorOptionT2A') {
-      const allowed = new Set(['localDraftId', 'blockId', 'target', 'optionId']);
+      const allowed = new Set(['localDraftId', 'blockId', 'target', 'optionId', 'language']);
       if (!hasOnlyAllowedKeys(payload, allowed)) return false;
       if (
         typeof payload.localDraftId !== 'string'
@@ -7423,6 +8072,9 @@ export {
   getNumberQuestionValidationErrors,
   formatUploadedDraftTimestamp,
   toUploadedDraftDisplay,
+  getAudioSourceTextHash,
+  getTextLanguageMismatch,
+  migrateLegacyAudioBlocks,
 };
 function normalizeQuestionResponseConfig(responseConfig, options = {}) {
   const forContract = options.forContract === true;

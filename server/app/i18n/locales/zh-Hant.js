@@ -192,6 +192,39 @@ export default {
       "questionSectionTitle": "題目"
     },
     "media": {
+      "audioTracks": {
+        "languages": {
+          "cantonese": "粵語",
+          "mandarin": "普通話",
+          "english": "英語"
+        },
+        "textChanged": "文字已變更，請檢查音訊",
+        "continueAnyway": "繼續",
+        "confirm": {
+          "mismatchTitle": "生成或附加{language}音訊？",
+          "chineseForEnglish": "文字似乎主要為中文，但目前選擇了{language}音訊。",
+          "englishForChinese": "文字似乎主要為英文，但目前選擇了{language}音訊。",
+          "mismatchWarning": "請確認所選音訊語言與文字相符。",
+          "replaceAlso": " 繼續亦會取代目前的{language}音訊。",
+          "regenerateTitle": "重新生成{language}音訊？",
+          "regeneratePromptBody": "重新生成會取代目前的{language}音訊。",
+          "regenerateOptionBody": "重新生成會取代選項 {index} 目前的{language}音訊。",
+          "replaceTitle": "取代{language}音訊？",
+          "replacePromptBody": "取代會捨棄目前的{language}音訊。",
+          "replaceOptionBody": "取代會捨棄此選項目前的{language}音訊。",
+          "removeTitle": "移除{language}音訊？",
+          "removePromptBody": "這會移除{language}音軌。",
+          "removeOptionBody": "這會移除選項 {index} 的{language}音訊。"
+        },
+        "migration": {
+          "title": "將舊版音訊移至語言音軌",
+          "description": "此工作紙包含 {count} 個舊版音訊附件。編輯前請選擇如何處理全部音訊。",
+          "discard": "捨棄全部舊版音訊",
+          "convertAndOpen": "轉換並開啟",
+          "confirmDiscard": "捨棄全部音訊",
+          "discardConfirm": "這會從新的可編輯副本移除全部舊版音訊。原本的 ZIP 或伺服器檔案不會改變。"
+        }
+      },
       "actions": {
         "attach": "附加",
         "attachAudio": "附加音訊",
