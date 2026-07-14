@@ -156,7 +156,7 @@ function createEmptyQuestionBlock`,
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapEditor\(\)\.catch\([\s\S]*?\);\s*export\s*\{[^}]+\};/,
-      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay, normalizeDraftPublishState, getUploadedDraftPublishBadge, getAudioSourceTextHash, getTextLanguageMismatch, migrateLegacyAudioBlocks };',
+      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay, normalizeDraftPublishState, getUploadedDraftPublishBadge, getNotificationToastRemainingMs, getAudioSourceTextHash, getTextLanguageMismatch, migrateLegacyAudioBlocks };',
     },
   ]);
 
@@ -1591,6 +1591,20 @@ test('editor language change rerenders without reloading or flushing draft state
   assert.equal(source.includes('flushLocaleChangeBeforeReload'), false);
   assert.equal(source.includes('window.location.reload'), false);
   assert.match(source, /const languageSelector = createLanguageSelector\(\{\s+onChange: \(\) => \{\s+renderEditorShell\(session\);/);
+});
+
+test('toast lifetime stays anchored to notification creation across language rerenders', async () => {
+  const mod = await loadEditorModule();
+  const createdAt = '2026-07-14T00:00:00.000Z';
+  const createdAtMs = new Date(createdAt).getTime();
+  const notification = { id: 'notif_audio', createdAt, ttlMs: null, showToast: true };
+
+  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs), 5000);
+  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs + 3000), 2000);
+  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs + 5000), 0);
+  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs + 9000), 0);
+  assert.equal(mod.getNotificationToastRemainingMs({ ...notification, ttlMs: 1200 }, createdAtMs + 200), 1000);
+  assert.equal(mod.getNotificationToastRemainingMs({ ...notification, showToast: false }, createdAtMs), 0);
 });
 
 test('autosave mirrors persistence and validation warnings into deduped notification sources', async () => {
