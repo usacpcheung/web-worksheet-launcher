@@ -1476,6 +1476,22 @@ test('multilingual audio generation locks each prompt or option target and keeps
   assert.equal(css.includes('.editor-shell--option-audio-menu-open .notification-toast-container'), true);
 });
 
+test('multilingual audio editor uses flat prompt rows and compact state-driven option actions', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const css = await fs.readFile(path.resolve('server/editor/main.css'), 'utf8');
+
+  assert.equal(source.includes("mediaRows.className = 'media-row-list media-row-list--flat';"), true);
+  assert.equal(source.includes("track ? 'audio-track-row--attached' : 'audio-track-row--empty'"), true);
+  assert.equal(source.includes("className: 'audio-track-more-menu--prompt'"), true);
+  assert.equal(source.includes("optionMenuTitle.textContent = t('editor.media.optionAudioMenuTitle');"), true);
+  assert.equal(source.includes("track ? 'option-audio-track--attached' : 'option-audio-track--empty'"), true);
+  assert.equal(source.includes('trackActions.append(playTrackBtn, moreMenu);'), true);
+  assert.equal(source.includes('trackActions.append(attachTrackBtn, generateTrackBtn);'), true);
+  assert.equal(css.includes('container: prompt-audio-row / inline-size;'), true);
+  assert.equal(css.includes('@container prompt-audio-row (max-width: 760px)'), true);
+  assert.equal(css.includes('.option-audio-track--empty .option-audio-track__actions .media-action-btn'), true);
+});
+
 test('multiple-choice option input defers state updates while IME composition is active', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('let isOptionInputComposing = false;'), true);

@@ -199,6 +199,7 @@ export default {
           "english": "英語"
         },
         "textChanged": "文字已變更，請檢查音訊",
+        "moreActions": "更多{language}音訊操作",
         "continueAnyway": "繼續",
         "confirm": {
           "mismatchTitle": "生成或附加{language}音訊？",
@@ -282,6 +283,7 @@ export default {
         "optionAudioReplacementCanceled": "已取消取代選項音訊。"
       },
       "optionAudioMenu": "選項音訊操作",
+      "optionAudioMenuTitle": "選項音訊",
       "optionAudioMenuAttached": "選項音訊操作，已附加音訊",
       "optionAudioMenuGenerating": "選項音訊操作，生成中",
       "preview": {

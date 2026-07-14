@@ -615,6 +615,57 @@ function setMediaActionButtonContent(button, iconName, label) {
   button.replaceChildren(icon, text);
 }
 
+function createAudioTrackMoreMenu({ languageLabel, actionButtons = [], className = '' } = {}) {
+  const menu = document.createElement('details');
+  menu.className = `audio-track-more-menu${className ? ` ${className}` : ''}`;
+  const trigger = document.createElement('summary');
+  trigger.className = 'icon-btn audio-track-more-menu__toggle';
+  trigger.setAttribute('role', 'button');
+  trigger.setAttribute('aria-haspopup', 'menu');
+  const triggerLabel = t('editor.media.audioTracks.moreActions', { language: languageLabel });
+  trigger.title = triggerLabel;
+  trigger.setAttribute('aria-label', triggerLabel);
+  setIconButtonContent(trigger, 'moreHorizontal');
+  trigger.addEventListener('click', (event) => {
+    if (trigger.getAttribute('aria-disabled') !== 'true') return;
+    event.preventDefault();
+  });
+
+  const list = document.createElement('div');
+  list.className = 'audio-track-more-menu__list';
+  list.setAttribute('role', 'menu');
+  actionButtons.forEach((button) => {
+    button.setAttribute('role', 'menuitem');
+    button.addEventListener('click', () => {
+      menu.open = false;
+    });
+    list.appendChild(button);
+  });
+  menu.append(trigger, list);
+  menu.addEventListener('toggle', () => {
+    if (!menu.open) return;
+    const scope = menu.closest('.media-section, .option-audio-menu__list');
+    scope?.querySelectorAll('details.audio-track-more-menu[open]').forEach((otherMenu) => {
+      if (otherMenu !== menu) otherMenu.open = false;
+    });
+  });
+  menu.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !menu.open) return;
+    event.preventDefault();
+    menu.open = false;
+    trigger.focus();
+  });
+  return menu;
+}
+
+function setAudioTrackMoreMenuDisabled(menu, disabled) {
+  const trigger = menu?.querySelector('.audio-track-more-menu__toggle');
+  if (!(trigger instanceof HTMLElement)) return;
+  trigger.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  menu.classList.toggle('is-disabled', Boolean(disabled));
+  if (disabled) menu.open = false;
+}
+
 function createLanguageSelector({ onChange } = {}) {
   const wrapper = document.createElement('label');
   wrapper.className = 'editor-topbar-item language-selector';
@@ -4568,7 +4619,11 @@ function renderEditorShell(session) {
   };
 
   document.addEventListener('pointerdown', (event) => {
-    if (!openOptionAudioMenuKey || activeConfirmDialog) return;
+    if (activeConfirmDialog) return;
+    rightPanel.querySelectorAll('details.audio-track-more-menu[open]').forEach((menu) => {
+      if (!menu.contains(event.target)) menu.open = false;
+    });
+    if (!openOptionAudioMenuKey) return;
     const openMenu = Array.from(rightPanel.querySelectorAll('details.option-audio-menu[open]'))
       .find((menu) => menu.dataset.optionAudioMenuKey === openOptionAudioMenuKey);
     if (openMenu && !openMenu.contains(event.target)) closeOpenOptionAudioMenu();
@@ -6099,7 +6154,11 @@ function renderEditorShell(session) {
       const generateBtn = trackRow.querySelector('[data-audio-track-action="generate"]');
       const playBtn = trackRow.querySelector('[data-audio-track-action="play"]');
       const removeBtn = trackRow.querySelector('[data-audio-track-action="remove"]');
+      const moreMenu = trackRow.querySelector('.audio-track-more-menu');
+      const overflowGenerateBtn = trackRow.querySelector('[data-audio-track-overflow-action="generate"]');
       trackRow.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
+      trackRow.classList.toggle('audio-track-row--attached', Boolean(track));
+      trackRow.classList.toggle('audio-track-row--empty', !track);
       if (status instanceof HTMLElement) {
         status.className = track ? 'asset-status-badge' : 'asset-status-badge asset-status-badge--empty';
         status.textContent = track ? t('editor.block.attachedBadge') : t('common.values.none');
@@ -6123,8 +6182,12 @@ function renderEditorShell(session) {
         );
         generateBtn.disabled = !promptTextState.eligible || isPromptT2AInFlight;
       }
+      if (overflowGenerateBtn instanceof HTMLButtonElement) {
+        overflowGenerateBtn.disabled = !promptTextState.eligible || isPromptT2AInFlight;
+      }
       if (playBtn instanceof HTMLButtonElement) playBtn.disabled = !track || isPromptT2AInFlight;
       if (removeBtn instanceof HTMLButtonElement) removeBtn.disabled = !track || isPromptT2AInFlight;
+      setAudioTrackMoreMenuDisabled(moreMenu, isPromptT2AInFlight);
     });
   };
 
@@ -6201,9 +6264,14 @@ function renderEditorShell(session) {
       const generateBtn = trackSection.querySelector('[data-audio-track-action="generate"]');
       const playBtn = trackSection.querySelector('[data-audio-track-action="play"]');
       const removeBtn = trackSection.querySelector('[data-audio-track-action="remove"]');
+      const moreMenu = trackSection.querySelector('.audio-track-more-menu');
       trackSection.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
+      trackSection.classList.toggle('option-audio-track--attached', Boolean(track));
+      trackSection.classList.toggle('option-audio-track--empty', !track);
       if (status instanceof HTMLElement) {
-        status.className = track ? 'asset-status-badge' : 'asset-status-badge asset-status-badge--empty';
+        status.className = track
+          ? 'asset-status-badge option-audio-track__status'
+          : 'option-audio-track__status option-audio-track__status--empty';
         status.textContent = track ? t('editor.block.attachedBadge') : t('common.values.none');
       }
       if (stale instanceof HTMLElement) stale.hidden = !track || track.sourceTextHash === currentTextHash;
@@ -6225,6 +6293,7 @@ function renderEditorShell(session) {
       }
       if (playBtn instanceof HTMLButtonElement) playBtn.disabled = !isPersistedOption || !track || isOptionT2AInFlight;
       if (removeBtn instanceof HTMLButtonElement) removeBtn.disabled = !isPersistedOption || !track || isOptionT2AInFlight;
+      setAudioTrackMoreMenuDisabled(moreMenu, !isPersistedOption || isOptionT2AInFlight);
     });
   };
 
@@ -6252,6 +6321,7 @@ function renderEditorShell(session) {
         menuKey: document.activeElement.dataset.optionAudioMenuKey || '',
         language: document.activeElement.dataset.optionAudioLanguage || '',
         action: document.activeElement.dataset.optionAudioAction || '',
+        surface: document.activeElement.dataset.optionAudioActionSurface || '',
       } : null;
     const activeOptionInput = (
       typeof HTMLInputElement !== 'undefined' &&
@@ -6349,7 +6419,7 @@ function renderEditorShell(session) {
     mediaSection.className = 'editor-detail-section media-section';
     mediaSection.appendChild(createEditorSectionHeader({ icon: 'image', title: t('editor.block.promptMediaTitle') }));
     const mediaRows = document.createElement('div');
-    mediaRows.className = 'media-row-list';
+    mediaRows.className = 'media-row-list media-row-list--flat';
     const questionImageRow = document.createElement('div');
     questionImageRow.className = 'media-row';
     const questionImageMeta = document.createElement('div');
@@ -6596,13 +6666,13 @@ function renderEditorShell(session) {
     questionAudioActions.append(attachQuestionAudioBtn, generateQuestionAudioBtn, playQuestionAudioBtn, removeQuestionAudioBtn);
     questionAudioRow.append(questionAudioMeta, questionAudioActions);
     const languageTrackRows = document.createElement('div');
-    languageTrackRows.className = 'media-row-list audio-track-row-list';
+    languageTrackRows.className = 'media-row-list media-row-list--flat audio-track-row-list audio-track-row-list--flat';
     AUDIO_TRACK_LANGUAGE_IDS.forEach((language) => {
       const track = getAudioTrack(selectedBlock.prompt?.audioTracks, language);
       const isTrackGenerating = isPromptT2AInFlight
         && promptTrackGenerationLanguageByBlockId.get(selectedBlock.blockId) === language;
       const trackRow = document.createElement('div');
-      trackRow.className = 'media-row audio-track-row';
+      trackRow.className = `media-row audio-track-row ${track ? 'audio-track-row--attached' : 'audio-track-row--empty'}`;
       trackRow.dataset.promptAudioTrackBlockId = selectedBlock.blockId;
       trackRow.dataset.promptAudioTrackLanguage = language;
       trackRow.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
@@ -6629,12 +6699,13 @@ function renderEditorShell(session) {
       attachBtn.dataset.audioTrackAction = 'attach';
       setMediaActionButtonContent(attachBtn, 'upload', track ? t('editor.media.actions.replace') : t('editor.media.actions.attach'));
       attachBtn.disabled = isPromptT2AInFlight;
-      attachBtn.addEventListener('click', () => {
+      const attachPromptTrack = () => {
         questionAudioInput.dataset.blockId = selectedBlock.blockId;
         questionAudioInput.dataset.language = language;
         questionAudioInput.value = '';
         questionAudioInput.click();
-      });
+      };
+      attachBtn.addEventListener('click', attachPromptTrack);
       const generateBtn = document.createElement('button');
       generateBtn.type = 'button'; generateBtn.className = 'media-action-btn';
       generateBtn.dataset.audioTrackAction = 'generate';
@@ -6646,7 +6717,7 @@ function renderEditorShell(session) {
           : track ? t('editor.media.actions.regenerate') : t('editor.media.actions.generateAudio')
       );
       generateBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;
-      generateBtn.addEventListener('click', async () => {
+      const generatePromptTrack = async () => {
         const blockId = selectedBlock.blockId;
         const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === blockId);
         const latestPromptText = latestBlock?.prompt?.text || '';
@@ -6684,7 +6755,8 @@ function renderEditorShell(session) {
           restoreLegacyPromptInFlightMarker();
           updateSummary();
         }
-      });
+      };
+      generateBtn.addEventListener('click', generatePromptTrack);
       const playBtn = document.createElement('button');
       playBtn.type = 'button'; playBtn.className = 'media-action-btn';
       playBtn.dataset.audioTrackAction = 'play';
@@ -6701,7 +6773,7 @@ function renderEditorShell(session) {
       removeBtn.dataset.audioTrackAction = 'remove';
       setMediaActionButtonContent(removeBtn, 'trash', t('editor.media.actions.remove'));
       removeBtn.disabled = !track || isPromptT2AInFlight;
-      removeBtn.addEventListener('click', async () => {
+      const removePromptTrack = async () => {
         if (!track) return;
         const confirmed = await confirmDangerAction({
           title: t('editor.media.audioTracks.confirm.removeTitle', { language: getAudioTrackLanguageLabel(language) }),
@@ -6712,8 +6784,40 @@ function renderEditorShell(session) {
         if (!confirmed) return;
         session.removeAudioTrack(selectedBlock.blockId, 'prompt', language, { confirmRemove: true });
         updateSummary();
-      });
+      };
+      removeBtn.addEventListener('click', removePromptTrack);
+      let moreMenu = null;
+      if (track) {
+        const overflowReplaceBtn = document.createElement('button');
+        overflowReplaceBtn.type = 'button';
+        overflowReplaceBtn.className = 'media-action-btn';
+        overflowReplaceBtn.dataset.audioTrackOverflowAction = 'replace';
+        setMediaActionButtonContent(overflowReplaceBtn, 'upload', t('editor.media.actions.replace'));
+        overflowReplaceBtn.disabled = isPromptT2AInFlight;
+        overflowReplaceBtn.addEventListener('click', attachPromptTrack);
+        const overflowGenerateBtn = document.createElement('button');
+        overflowGenerateBtn.type = 'button';
+        overflowGenerateBtn.className = 'media-action-btn';
+        overflowGenerateBtn.dataset.audioTrackOverflowAction = 'generate';
+        setMediaActionButtonContent(overflowGenerateBtn, 'refresh', t('editor.media.actions.regenerate'));
+        overflowGenerateBtn.disabled = !promptT2AEligible || isPromptT2AInFlight;
+        overflowGenerateBtn.addEventListener('click', generatePromptTrack);
+        const overflowRemoveBtn = document.createElement('button');
+        overflowRemoveBtn.type = 'button';
+        overflowRemoveBtn.className = 'media-action-btn media-action-btn--remove';
+        overflowRemoveBtn.dataset.audioTrackOverflowAction = 'remove';
+        setMediaActionButtonContent(overflowRemoveBtn, 'trash', t('editor.media.actions.remove'));
+        overflowRemoveBtn.disabled = isPromptT2AInFlight;
+        overflowRemoveBtn.addEventListener('click', removePromptTrack);
+        moreMenu = createAudioTrackMoreMenu({
+          languageLabel: getAudioTrackLanguageLabel(language),
+          actionButtons: [overflowReplaceBtn, overflowGenerateBtn, overflowRemoveBtn],
+          className: 'audio-track-more-menu--prompt',
+        });
+        setAudioTrackMoreMenuDisabled(moreMenu, isPromptT2AInFlight);
+      }
       actions.append(attachBtn, generateBtn, playBtn, removeBtn);
+      if (moreMenu) actions.appendChild(moreMenu);
       trackRow.append(trackMeta, actions);
       languageTrackRows.appendChild(trackRow);
     });
@@ -7030,7 +7134,7 @@ function renderEditorShell(session) {
         const optionMenuHeader = document.createElement('div');
         optionMenuHeader.className = 'option-audio-menu__header';
         const optionMenuTitle = document.createElement('strong');
-        optionMenuTitle.textContent = t('editor.media.optionAudioMenu');
+        optionMenuTitle.textContent = t('editor.media.optionAudioMenuTitle');
         const optionMenuCloseBtn = document.createElement('button');
         optionMenuCloseBtn.type = 'button';
         optionMenuCloseBtn.className = 'icon-btn option-audio-menu__close';
@@ -7048,7 +7152,7 @@ function renderEditorShell(session) {
             && optionTrackGenerationLanguageByKey.get(optionT2AKey) === language;
           const languageLabel = getAudioTrackLanguageLabel(language);
           const trackSection = document.createElement('section');
-          trackSection.className = 'option-audio-track';
+          trackSection.className = `option-audio-track ${track ? 'option-audio-track--attached' : 'option-audio-track--empty'}`;
           trackSection.dataset.optionAudioTrackLanguage = language;
           trackSection.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
           const trackHeading = document.createElement('div');
@@ -7057,7 +7161,9 @@ function renderEditorShell(session) {
           trackName.textContent = languageLabel;
           const trackStatus = document.createElement('span');
           trackStatus.dataset.audioTrackStatus = '1';
-          trackStatus.className = track ? 'asset-status-badge' : 'asset-status-badge asset-status-badge--empty';
+          trackStatus.className = track
+            ? 'asset-status-badge option-audio-track__status'
+            : 'option-audio-track__status option-audio-track__status--empty';
           trackStatus.textContent = track ? t('editor.block.attachedBadge') : t('common.values.none');
           trackHeading.append(trackName, trackStatus);
           const stale = document.createElement('span');
@@ -7074,6 +7180,7 @@ function renderEditorShell(session) {
           attachTrackBtn.dataset.optionAudioAction = 'attach';
           attachTrackBtn.dataset.optionAudioLanguage = language;
           attachTrackBtn.dataset.optionAudioMenuKey = optionT2AKey;
+          attachTrackBtn.dataset.optionAudioActionSurface = track ? 'overflow' : 'direct';
           setMediaActionButtonContent(attachTrackBtn, 'upload', track ? t('editor.media.actions.replace') : t('editor.media.actions.attach'));
           attachTrackBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
           attachTrackBtn.addEventListener('click', () => {
@@ -7087,6 +7194,7 @@ function renderEditorShell(session) {
           generateTrackBtn.dataset.optionAudioAction = 'generate';
           generateTrackBtn.dataset.optionAudioLanguage = language;
           generateTrackBtn.dataset.optionAudioMenuKey = optionT2AKey;
+          generateTrackBtn.dataset.optionAudioActionSurface = track ? 'overflow' : 'direct';
           setMediaActionButtonContent(
             generateTrackBtn,
             isTrackGenerating ? 'loading' : track ? 'refresh' : 'generate',
@@ -7144,6 +7252,7 @@ function renderEditorShell(session) {
           playTrackBtn.dataset.optionAudioAction = 'play';
           playTrackBtn.dataset.optionAudioLanguage = language;
           playTrackBtn.dataset.optionAudioMenuKey = optionT2AKey;
+          playTrackBtn.dataset.optionAudioActionSurface = 'direct';
           setMediaActionButtonContent(playTrackBtn, 'play', t('editor.media.actions.play'));
           playTrackBtn.disabled = !track || isOptionT2AInFlight;
           playTrackBtn.addEventListener('click', async () => {
@@ -7158,6 +7267,7 @@ function renderEditorShell(session) {
           removeTrackBtn.dataset.optionAudioAction = 'remove';
           removeTrackBtn.dataset.optionAudioLanguage = language;
           removeTrackBtn.dataset.optionAudioMenuKey = optionT2AKey;
+          removeTrackBtn.dataset.optionAudioActionSurface = 'overflow';
           setMediaActionButtonContent(removeTrackBtn, 'trash', t('editor.media.actions.remove'));
           removeTrackBtn.disabled = !track || isOptionT2AInFlight;
           removeTrackBtn.addEventListener('click', async () => {
@@ -7172,7 +7282,17 @@ function renderEditorShell(session) {
             session.removeAudioTrack(selectedBlock.blockId, 'option', language, { optionId, confirmRemove: true });
             updateSummary();
           });
-          trackActions.append(attachTrackBtn, generateTrackBtn, playTrackBtn, removeTrackBtn);
+          if (track) {
+            const moreMenu = createAudioTrackMoreMenu({
+              languageLabel,
+              actionButtons: [attachTrackBtn, generateTrackBtn, removeTrackBtn],
+              className: 'audio-track-more-menu--option',
+            });
+            setAudioTrackMoreMenuDisabled(moreMenu, !isPersistedOption || isOptionT2AInFlight);
+            trackActions.append(playTrackBtn, moreMenu);
+          } else {
+            trackActions.append(attachTrackBtn, generateTrackBtn);
+          }
           trackSection.appendChild(trackActions);
           optionTrackList.appendChild(trackSection);
         });
@@ -7394,7 +7514,8 @@ function renderEditorShell(session) {
         const replacementAudioAction = Array.from(questionOptionsList.querySelectorAll('[data-option-audio-action]'))
           .find((button) => button.dataset.optionAudioMenuKey === activeOptionAudioAction.menuKey
             && button.dataset.optionAudioLanguage === activeOptionAudioAction.language
-            && button.dataset.optionAudioAction === activeOptionAudioAction.action);
+            && button.dataset.optionAudioAction === activeOptionAudioAction.action
+            && (button.dataset.optionAudioActionSurface || '') === activeOptionAudioAction.surface);
         if (replacementAudioAction instanceof HTMLButtonElement) {
           queueMicrotask(() => replacementAudioAction.focus());
         }

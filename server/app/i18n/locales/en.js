@@ -199,6 +199,7 @@ export default {
           "english": "English"
         },
         "textChanged": "Text changed — review audio",
+        "moreActions": "More {language} audio actions",
         "continueAnyway": "Continue",
         "confirm": {
           "mismatchTitle": "Generate or attach {language} audio?",
@@ -282,6 +283,7 @@ export default {
         "optionAudioReplacementCanceled": "Option audio replacement canceled."
       },
       "optionAudioMenu": "Option audio actions",
+      "optionAudioMenuTitle": "Option audio",
       "optionAudioMenuAttached": "Option audio actions, audio attached",
       "optionAudioMenuGenerating": "Option audio actions, generating",
       "preview": {
