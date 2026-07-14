@@ -1047,6 +1047,23 @@ test('pushNotification appends activity log entries and caps at 200 records', as
   assert.equal(session.state.notifications[199].text, 'event 209');
 });
 
+test('pushNotification can retain activity while suppressing a floating toast', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  const notification = session.pushNotification({
+    kind: 'success',
+    category: 'editor',
+    source: 'option.t2a',
+    text: 'Option audio generated.',
+    showToast: false,
+  });
+
+  assert.equal(notification.showToast, false);
+  assert.equal(session.state.notifications.at(-1).showToast, false);
+  assert.equal(session.state.activityLog.at(-1).text, 'Option audio generated.');
+  assert.equal(session.state.activityLog.at(-1).showToast, false);
+});
+
 test('pushNotification prunes expired ttl notifications before appending', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());
@@ -4885,6 +4902,10 @@ test('editor replayEditorOptionT2AIntent generates audio and attaches via canoni
   assert.equal(attachCalls[0][1], 'opt_1');
   assert.equal(typeof attachCalls[0][2]?.arrayBuffer, 'function');
   assert.equal(attachCalls[0][3]?.confirmReplace, false);
+  const successNotification = session.state.notifications
+    .find((item) => item.source === 'option.t2a' && item.kind === 'success');
+  assert.equal(successNotification?.showToast, false);
+  assert.equal(session.state.activityLog.some((item) => item.id === successNotification?.id), true);
 });
 
 test('editor replayEditorOptionT2AIntent returns plain-language errors for invalid option generation states', async () => {

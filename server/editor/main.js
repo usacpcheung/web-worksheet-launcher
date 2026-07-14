@@ -1258,6 +1258,7 @@ class EditorDraftSession {
     logActivity = true,
     activityText = null,
     activityReplaceSource = null,
+    showToast = true,
   } = {}) {
     this.pruneExpiredNotifications();
     const normalizedText = String(text || '').trim();
@@ -1273,6 +1274,7 @@ class EditorDraftSession {
       ttlMs: Number.isFinite(Number(ttlMs)) && Number(ttlMs) > 0 ? Number(ttlMs) : null,
       logActivity: logActivity !== false,
       activityReplaceSource: isNonEmptyString(activityReplaceSource) ? activityReplaceSource.trim() : null,
+      showToast: showToast !== false,
       createdAt: nowIso(),
     };
     this.state.notifications = [...this.state.notifications, notification]
@@ -4238,7 +4240,13 @@ class EditorDraftSession {
           return { ok: false, status: 'generation_failed', error: { message } };
         }
         this.setRecoveryMessage(editorNotification('audioGeneration.optionGenerated'));
-        this.pushNotification({ kind: 'success', category: 'editor', source: 'option.t2a', text: editorNotification('audioGeneration.optionGenerated') });
+        this.pushNotification({
+          kind: 'success',
+          category: 'editor',
+          source: 'option.t2a',
+          text: editorNotification('audioGeneration.optionGenerated'),
+          showToast: false,
+        });
         this.notifyStateChange();
         return { ok: true, status: 'generated_editor_option_t2a_track', data: { blockId, optionId, language: payload.language } };
       }
@@ -4294,6 +4302,7 @@ class EditorDraftSession {
         category: 'editor',
         source: 'option.t2a',
         text: editorNotification('audioGeneration.optionGenerated'),
+        showToast: false,
       });
       this.notifyStateChange();
       return { ok: true, status: 'generated_editor_option_t2a', data: { blockId, optionId } };
@@ -7845,7 +7854,9 @@ function renderEditorShell(session) {
       }
     });
     const toastNotifications = session.state.notifications
-      .filter((notification) => notification?.id && !dismissedToastIds.has(notification.id))
+      .filter((notification) => notification?.id
+        && notification.showToast !== false
+        && !dismissedToastIds.has(notification.id))
       .slice(-4);
     toastContainer.innerHTML = '';
     toastNotifications.forEach((notification) => {
