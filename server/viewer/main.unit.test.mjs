@@ -4889,6 +4889,91 @@ test('viewer playback race condition: last request wins when fetches resolve out
   assert.equal(instances.length, 1);
 });
 
+test('viewer playback ignores a stale play resolution after a newer clip starts', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    localAssets: { get: async () => ({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } }) },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  const instances = [];
+  globalThis.URL = { createObjectURL: () => `blob:test:${instances.length}`, revokeObjectURL: () => {} };
+  globalThis.Audio = class {
+    constructor() {
+      this.paused = false;
+      this.playPromise = new Promise((resolve, reject) => {
+        this.resolvePlay = resolve;
+        this.rejectPlay = reject;
+      });
+      instances.push(this);
+    }
+    addEventListener() {}
+    play() { return this.playPromise; }
+    pause() { this.paused = true; }
+    set src(_value) {}
+  };
+  const starts = [];
+
+  const firstPending = session.playAssetAudio('a1', { onStart: () => starts.push('a1') });
+  await new Promise((resolve) => setImmediate(resolve));
+  const secondPending = session.playAssetAudio('a2', { onStart: () => starts.push('a2') });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  instances[1].resolvePlay();
+  const second = await secondPending;
+  instances[0].resolvePlay();
+  const first = await firstPending;
+
+  assert.equal(second.ok, true);
+  assert.equal(first.ok, false);
+  assert.equal(first.reason, 'superseded');
+  assert.deepEqual(starts, ['a2']);
+  assert.equal(session.activeAudio, instances[1]);
+});
+
+test('viewer playback ignores a stale play rejection without stopping the newer clip', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({
+    localAssets: { get: async () => ({ binary: new Uint8Array([1, 2, 3]), metadata: { mimeType: 'audio/mpeg' } }) },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  const instances = [];
+  globalThis.URL = { createObjectURL: () => `blob:test:${instances.length}`, revokeObjectURL: () => {} };
+  globalThis.Audio = class {
+    constructor() {
+      this.paused = false;
+      this.playPromise = new Promise((resolve, reject) => {
+        this.resolvePlay = resolve;
+        this.rejectPlay = reject;
+      });
+      instances.push(this);
+    }
+    addEventListener() {}
+    play() { return this.playPromise; }
+    pause() { this.paused = true; }
+    set src(_value) {}
+  };
+  let staleErrors = 0;
+  let currentInterruptions = 0;
+
+  const firstPending = session.playAssetAudio('a1', { onError: () => { staleErrors += 1; } });
+  await new Promise((resolve) => setImmediate(resolve));
+  const secondPending = session.playAssetAudio('a2', { onInterrupted: () => { currentInterruptions += 1; } });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  instances[1].resolvePlay();
+  const second = await secondPending;
+  instances[0].rejectPlay(new Error('stale playback rejection'));
+  const first = await firstPending;
+
+  assert.equal(second.ok, true);
+  assert.equal(first.ok, false);
+  assert.equal(first.reason, 'superseded');
+  assert.equal(staleErrors, 0);
+  assert.equal(currentInterruptions, 0);
+  assert.equal(instances[1].paused, false);
+  assert.equal(session.activeAudio, instances[1]);
+});
+
 test('stopActiveAudio cancels an audio request that is still loading', async () => {
   const mod = await loadViewerModule();
   let resolveAsset;

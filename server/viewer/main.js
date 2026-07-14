@@ -2596,7 +2596,8 @@ class ViewerAttemptSession {
     const mimeType = asset?.metadata?.mimeType || 'audio/mpeg';
     const objectUrl = URL.createObjectURL(new Blob([asset.binary], { type: mimeType }));
     const audio = new Audio(objectUrl);
-    this.activeAudioPlayback = { audio, objectUrl, hooks, finalized: false };
+    const playback = { audio, objectUrl, hooks, finalized: false };
+    this.activeAudioPlayback = playback;
     this.activeAudio = audio;
     this.activeAudioObjectUrl = objectUrl;
     audio.addEventListener('ended', () => {
@@ -2611,9 +2612,15 @@ class ViewerAttemptSession {
     });
     try {
       await audio.play();
+      if (requestId !== this._playRequestId || this.activeAudioPlayback !== playback) {
+        return { ok: false, reason: 'superseded', message: 'Audio request superseded.' };
+      }
       hooks?.onStart?.();
       return { ok: true };
     } catch {
+      if (requestId !== this._playRequestId || this.activeAudioPlayback !== playback) {
+        return { ok: false, reason: 'superseded', message: 'Audio request superseded.' };
+      }
       this.stopActiveAudio('error');
       return { ok: false, reason: 'playback-failed', message: 'Audio playback failed. File may be blocked or corrupt.' };
     }
