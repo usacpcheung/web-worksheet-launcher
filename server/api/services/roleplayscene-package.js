@@ -5,6 +5,13 @@ export const ROLEPLAYSCENE_PACKAGE_FORMAT = 'roleplayscene-package';
 export const ROLEPLAYSCENE_PACKAGE_VERSION = 1;
 export const ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET = 'roleplayscene/drafts';
 export const ROLEPLAYSCENE_PUBLISHED_ARTIFACT_BUCKET = 'roleplayscene/published';
+export const DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS = Object.freeze({
+  maxUncompressedBytes: 64 * 1024 * 1024,
+  maxEntryBytes: 32 * 1024 * 1024,
+  maxEntries: 200,
+  maxEntryNameLength: 512,
+});
+export const ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED = 'ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED';
 
 const MANIFEST_PATH = 'manifest.json';
 const PROJECT_PATH = 'content/project.json';
@@ -16,8 +23,75 @@ function normalizeText(value, fallback = '') {
   return normalized || fallback;
 }
 
-function parseZipEntries(zipBytes) {
-  const entries = unzipSync(zipBytes);
+function normalizePackageLimits(limits = {}) {
+  return {
+    ...DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
+    ...(limits && typeof limits === 'object' ? limits : {}),
+  };
+}
+
+function createResourceLimitError(limit, details) {
+  return Object.assign(
+    new Error(`RolePlayScene package exceeds ${limit}.`),
+    {
+      code: ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED,
+      details: {
+        limit,
+        ...details,
+      },
+    }
+  );
+}
+
+function parseZipEntries(zipBytes, options = {}) {
+  const limits = normalizePackageLimits(options.limits);
+  let entryCount = 0;
+  let totalUncompressedBytes = 0;
+  const entries = unzipSync(zipBytes, {
+    filter(entry) {
+      entryCount += 1;
+      if (entryCount > limits.maxEntries) {
+        throw createResourceLimitError('maxEntries', {
+          maxEntries: limits.maxEntries,
+          actualEntries: entryCount,
+        });
+      }
+
+      const entryNameLength = String(entry.name || '').length;
+      if (entryNameLength > limits.maxEntryNameLength) {
+        throw createResourceLimitError('maxEntryNameLength', {
+          path: entry.name,
+          maxEntryNameLength: limits.maxEntryNameLength,
+          actualEntryNameLength: entryNameLength,
+        });
+      }
+
+      const originalSize = Number(entry.originalSize);
+      if (!Number.isSafeInteger(originalSize) || originalSize < 0) {
+        throw createResourceLimitError('entryOriginalSize', {
+          path: entry.name,
+          actualEntryBytes: entry.originalSize,
+        });
+      }
+      if (originalSize > limits.maxEntryBytes) {
+        throw createResourceLimitError('maxEntryBytes', {
+          path: entry.name,
+          maxEntryBytes: limits.maxEntryBytes,
+          actualEntryBytes: originalSize,
+        });
+      }
+
+      totalUncompressedBytes += originalSize;
+      if (totalUncompressedBytes > limits.maxUncompressedBytes) {
+        throw createResourceLimitError('maxUncompressedBytes', {
+          maxUncompressedBytes: limits.maxUncompressedBytes,
+          actualUncompressedBytes: totalUncompressedBytes,
+        });
+      }
+
+      return true;
+    },
+  });
   return new Map(Object.entries(entries));
 }
 
@@ -179,8 +253,8 @@ export function createRolePlaySceneDraftArtifactStoreInput({ identity, uploadedD
   };
 }
 
-export function rewriteRolePlayScenePackageTitle(zipBytes, title) {
-  const files = parseZipEntries(zipBytes);
+export function rewriteRolePlayScenePackageTitle(zipBytes, title, options = {}) {
+  const files = parseZipEntries(zipBytes, options);
   const manifest = parseJsonEntry(files, MANIFEST_PATH, {
     missingCode: 'ROLEPLAYSCENE_PACKAGE_MISSING_MANIFEST',
     missingMessage: 'RolePlayScene package is missing manifest.json.',
@@ -333,8 +407,8 @@ function validateRolePlaySceneProjectForPlay(project) {
   return { errors, warnings };
 }
 
-export function validateRolePlayScenePackageForPublish(zipBytes) {
-  const validation = validateRolePlayScenePackage(zipBytes);
+export function validateRolePlayScenePackageForPublish(zipBytes, options = {}) {
+  const validation = validateRolePlayScenePackage(zipBytes, options);
   if (!validation.ok) return validation;
 
   const errors = [];
@@ -365,11 +439,18 @@ export function validateRolePlayScenePackageForPublish(zipBytes) {
   };
 }
 
-export function validateRolePlayScenePackage(zipBytes) {
+export function validateRolePlayScenePackage(zipBytes, options = {}) {
   let files;
   try {
-    files = parseZipEntries(zipBytes);
+    files = parseZipEntries(zipBytes, options);
   } catch (error) {
+    if (error?.code === ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED) {
+      return fail(
+        ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED,
+        'Uploaded RolePlayScene package exceeds safe ZIP resource limits.',
+        error.details || {}
+      );
+    }
     return fail('INVALID_ROLEPLAYSCENE_PACKAGE_ZIP', 'Uploaded RolePlayScene package is not a readable ZIP file.', {
       reason: error?.message || 'ZIP parsing failed.',
     });

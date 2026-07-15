@@ -105,6 +105,18 @@ async function loadViewerModule(overrides = {}) {
       return { worksheet: value };
     }),
     parseWorksheetPackage: overrides.parseWorksheetPackage || (() => ({ worksheet: { title: 'Imported package', blocks: [] } })),
+    normalizeAudioTracks: overrides.normalizeAudioTracks || ((tracks) => {
+      const order = { cantonese: 0, mandarin: 1, english: 2 };
+      const seen = new Set();
+      return (Array.isArray(tracks) ? tracks : []).filter((track) => {
+        if (!track || !Object.hasOwn(order, track.language) || seen.has(track.language) || !String(track.assetId || '').trim() || !String(track.sourceTextHash || '').trim()) return false;
+        if (track.voicePresetId != null && track.voicePresetId !== track.language) return false;
+        seen.add(track.language);
+        return true;
+      }).map((track) => ({ language: track.language, assetId: String(track.assetId).trim(), voicePresetId: track.voicePresetId ?? null, sourceTextHash: String(track.sourceTextHash).trim() }))
+        .sort((left, right) => order[left.language] - order[right.language]);
+    }),
+    collectAudioTrackAssetIds: overrides.collectAudioTrackAssetIds || ((tracks) => globalThis[bagName].normalizeAudioTracks(tracks).map((track) => track.assetId)),
     createStoredZip: overrides.createStoredZip || createStoredZip,
     crc32: overrides.crc32 || crc32,
     parseStoredZip: overrides.parseStoredZip || parseStoredZip,
@@ -145,6 +157,11 @@ async function loadViewerModule(overrides = {}) {
       name: 'replace worksheet package imports with test bag bindings',
       pattern: /import\s*\{\s*mapLegacyJsonToPackageModel\s*,\s*parseWorksheetPackage\s*\}\s*from\s*['"]\.\.\/editor\/worksheet-package\.js['"];/,
       replacement: 'const mapLegacyJsonToPackageModel = __testBag.mapLegacyJsonToPackageModel;\nconst parseWorksheetPackage = __testBag.parseWorksheetPackage;',
+    },
+    {
+      name: 'replace audio tracks import with test bag bindings',
+      pattern: /import\s*\{\s*collectAudioTrackAssetIds\s*,\s*normalizeAudioTracks\s*\}\s*from\s*['"]\.\.\/editor\/audio-tracks\.js['"];/,
+      replacement: 'const collectAudioTrackAssetIds = __testBag.collectAudioTrackAssetIds;\nconst normalizeAudioTracks = __testBag.normalizeAudioTracks;',
     },
     {
       name: 'replace zip utils imports with test bag bindings',
@@ -1173,6 +1190,56 @@ test('normalizeViewerPayload preserves worksheet subject and owner metadata', as
   assert.equal(payload.subject, 'ICT');
   assert.equal(payload.owner, 'owner@example.test');
   assert.equal(payload.owner_email, 'owner@example.test');
+});
+
+test('normalizeViewerPayload retains multilingual prompt and option audio tracks', async () => {
+  const mod = await loadViewerModule();
+  const payload = mod.normalizeViewerPayload({
+    blocks: [{
+      blockId: 'q1', kind: 'question', position: 0,
+      prompt: {
+        text: 'Question',
+        audioTracks: [
+          { language: 'english', assetId: 'prompt-en', voicePresetId: null, sourceTextHash: 'prompt-en-hash' },
+          { language: 'cantonese', assetId: 'prompt-yue', voicePresetId: 'cantonese', sourceTextHash: 'prompt-yue-hash' },
+        ],
+      },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{
+          id: 'a', value: 'A', label: 'A',
+          audioTracks: [{ language: 'mandarin', assetId: 'option-zh', voicePresetId: 'mandarin', sourceTextHash: 'option-zh-hash' }],
+        }],
+      },
+    }],
+  });
+
+  assert.deepEqual(payload.blocks[0].prompt.audioTracks.map((track) => track.language), ['cantonese', 'english']);
+  assert.deepEqual(payload.blocks[0].responseConfig.options[0].audioTracks, [
+    { language: 'mandarin', assetId: 'option-zh', voicePresetId: 'mandarin', sourceTextHash: 'option-zh-hash' },
+  ]);
+});
+
+test('attempt package asset collection includes multilingual track binaries', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({});
+  const assetIds = session.collectAttemptPackageAssetIds({
+    blocks: [{
+      kind: 'question',
+      prompt: {
+        mediaRefs: [{ assetId: 'legacy-prompt', usage: 'question_audio' }],
+        audioTracks: [{ language: 'cantonese', assetId: 'track-yue', voicePresetId: 'cantonese', sourceTextHash: 'h-yue' }],
+      },
+      responseConfig: {
+        options: [{
+          mediaRefs: [{ assetId: 'legacy-option', usage: 'option_audio' }],
+          audioTracks: [{ language: 'english', assetId: 'track-en', voicePresetId: null, sourceTextHash: 'h-en' }],
+        }],
+      },
+    }],
+  });
+
+  assert.deepEqual(assetIds.sort(), ['legacy-option', 'legacy-prompt', 'track-en', 'track-yue']);
 });
 
 test('normalizeViewerBlock preserves non-canonical single_choice inputType without coercion', async () => {

@@ -37,6 +37,28 @@ test('getSession builds canonical public API URL', async () => {
   assert.equal(requestedUrl, '/api/worksheet-launcher/v1/session');
 });
 
+test('public API requests ignore query-controlled or option-controlled API bases', async () => {
+  const hostileInputs = [
+    '?apiBase=https%3A%2F%2Fattacker.example%2Fapi',
+    '?apiBase=%2F%2Fattacker.example%2Fapi',
+  ];
+
+  for (const search of hostileInputs) {
+    setTestWindow(search);
+    let requestedUrl = null;
+    globalThis.fetch = async (url) => {
+      requestedUrl = url;
+      return mockJsonResponse(200, { ok: true, data: { ready: true } });
+    };
+
+    const client = createServerApiClient({ apiBase: 'https://attacker.example/api' });
+    await client.getSession();
+
+    assert.equal(client.publicApiBase, '/api/worksheet-launcher/v1');
+    assert.equal(requestedUrl, '/api/worksheet-launcher/v1/session');
+  }
+});
+
 test('getSessionSignInUrl builds popup login path under app/login', async () => {
   setTestWindow();
 
@@ -581,7 +603,7 @@ test('rewriteText returns NETWORK_ERROR on fetch failure', async () => {
   assert.equal(result.error.code, 'NETWORK_ERROR');
 });
 
-test('generateAudioFromText returns Uint8Array for audio/mpeg non-empty bytes', async () => {
+test('generateAudioFromText omits optional voice and language controls when absent', async () => {
   setTestWindow();
   globalThis.fetch = async (url, request = {}) => {
     assert.equal(url, '/api/rewrite-bridge/t2a');
@@ -606,7 +628,7 @@ test('generateAudioFromText returns Uint8Array for audio/mpeg non-empty bytes', 
   assert.deepEqual(Array.from(result.data), [1, 2, 3]);
 });
 
-test('generateAudioFromText includes optional voice controls only when provided', async () => {
+test('generateAudioFromText includes optional voice and language controls only when provided', async () => {
   setTestWindow();
   globalThis.fetch = async (url, request = {}) => {
     assert.equal(url, '/api/rewrite-bridge/t2a');
@@ -615,6 +637,7 @@ test('generateAudioFromText includes optional voice controls only when provided'
       format: 'mp3',
       response_mode: 'binary',
       voice_id: 'Cantonese_PlayfulMan',
+      language_boost: 'Chinese,Yue',
       speed: 1,
       volume: 1,
       pitch: 2,
@@ -628,6 +651,7 @@ test('generateAudioFromText includes optional voice controls only when provided'
   const client = createServerApiClient();
   const result = await client.generateAudioFromText('hello', {
     voice_id: 'Cantonese_PlayfulMan',
+    language_boost: 'Chinese,Yue',
     speed: 1,
     volume: 1,
     pitch: 2,
@@ -692,7 +716,7 @@ test('generateAudioFromText returns NETWORK_ERROR on fetch failure', async () =>
   assert.equal(result.error.code, 'NETWORK_ERROR');
 });
 
-test('bridge methods always use /api/rewrite-bridge urls regardless of apiBase override or query param', async () => {
+test('bridge methods always use /api/rewrite-bridge urls regardless of API base query params', async () => {
   setTestWindow('?apiBase=%2Fapi%2Foverride-from-query');
   const requestedUrls = [];
   globalThis.fetch = async (url) => {
@@ -706,7 +730,7 @@ test('bridge methods always use /api/rewrite-bridge urls regardless of apiBase o
     });
   };
 
-  const client = createServerApiClient({ apiBase: '/api/override-from-options' });
+  const client = createServerApiClient();
   await client.rewriteText('hello');
   await client.generateAudioFromText('hello');
 
@@ -714,5 +738,5 @@ test('bridge methods always use /api/rewrite-bridge urls regardless of apiBase o
     '/api/rewrite-bridge/rewrite',
     '/api/rewrite-bridge/t2a',
   ]);
-  assert.equal(client.publicApiBase, '/api/override-from-options');
+  assert.equal(client.publicApiBase, '/api/worksheet-launcher/v1');
 });
