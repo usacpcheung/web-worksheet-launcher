@@ -1794,6 +1794,26 @@ test('confirm modal uses configurable description copy and defaults initial focu
   assert.equal(source.includes('cancelBtn.focus();'), true);
 });
 
+test('opening an uploaded draft confirms, saves pending edits, and closes its modal only on success', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.match(source, /title:\s*t\('editor\.uploadedDraft\.openDialog\.title'\)/);
+  assert.match(source, /bodyText:\s*t\('editor\.uploadedDraft\.openDialog\.description',\s*\{ title: display\.title \}\)/);
+  assert.match(source, /warningText:\s*t\('editor\.uploadedDraft\.openDialog\.warning'\)/);
+  assert.match(source, /confirmLabel:\s*t\('editor\.uploadedDraft\.openDialog\.confirm'\)/);
+  assert.match(source, /variant:\s*'warning'/);
+  assert.match(source, /if \(!confirmed\) return;/);
+  assert.match(source, /await session\.flushLocalStateForAuthRedirect\(\);/);
+  assert.match(source, /if \(result\?\.ok\)\s*\{\s*manageUploadedDraftsDialogOpen = false;/m);
+});
+
+test('confirm modal supports warning copy without destructive styling', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.match(source, /warningText = t\('editor\.modal\.confirm\.irreversibleWarning'\)/);
+  assert.match(source, /confirm-modal__warning--caution/);
+  assert.match(source, /confirm-modal__btn--warning/);
+  assert.match(source, /if \(isNonEmptyString\(warningText\)\)/);
+});
+
 test('replace/delete image flows use shared confirm modal and avoid native confirm', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.match(source, /title:\s*t\('editor\.media\.confirm\.replaceQuestionImageTitle'\)/);

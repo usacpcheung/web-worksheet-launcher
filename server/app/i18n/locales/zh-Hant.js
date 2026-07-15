@@ -124,6 +124,12 @@ export default {
     },
     "uploadedDraft": {
       "manage": "管理已上載草稿",
+      "openDialog": {
+        "confirm": "開啟草稿",
+        "description": "這會以「{title}」的本機副本取代目前在編輯器顯示的工作紙。",
+        "title": "要開啟已上載的草稿嗎？",
+        "warning": "如需稍後返回目前的工作紙，請先儲存或匯出它。"
+      },
       "deleteDialog": {
         "confirm": "確認",
         "draftDescription": "這會刪除已上載草稿。",

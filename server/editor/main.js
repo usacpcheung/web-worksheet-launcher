@@ -4179,6 +4179,7 @@ function renderEditorShell(session) {
     confirmLabel = t('common.actions.delete'),
     cancelLabel = t('common.actions.cancel'),
     variant = 'danger',
+    warningText = t('editor.modal.confirm.irreversibleWarning'),
   }) {
     if (activeConfirmDialog) {
       closeActiveConfirmDialog(false);
@@ -4216,8 +4217,10 @@ function renderEditorShell(session) {
       detailsList.appendChild(line);
     });
     const warning = document.createElement('p');
-    warning.className = 'confirm-modal__warning';
-    warning.textContent = t('editor.modal.confirm.irreversibleWarning');
+    warning.className = variant === 'warning'
+      ? 'confirm-modal__warning confirm-modal__warning--caution'
+      : 'confirm-modal__warning';
+    warning.textContent = warningText;
     const actionRow = document.createElement('div');
     actionRow.className = 'confirm-modal__actions';
     const cancelBtn = document.createElement('button');
@@ -4228,10 +4231,19 @@ function renderEditorShell(session) {
     deleteBtn.type = 'button';
     deleteBtn.className = variant === 'danger'
       ? 'confirm-modal__btn confirm-modal__btn--destructive'
-      : 'confirm-modal__btn';
+      : variant === 'warning'
+        ? 'confirm-modal__btn confirm-modal__btn--warning'
+        : 'confirm-modal__btn';
     deleteBtn.textContent = confirmLabel;
     actionRow.append(cancelBtn, deleteBtn);
-    dialog.append(heading, description, detailsHeading, detailsList, warning, actionRow);
+    dialog.append(heading, description);
+    if (removalItems.length > 0) {
+      dialog.append(detailsHeading, detailsList);
+    }
+    if (isNonEmptyString(warningText)) {
+      dialog.append(warning);
+    }
+    dialog.append(actionRow);
     overlay.appendChild(dialog);
     shell.appendChild(overlay);
 
@@ -6605,7 +6617,35 @@ function renderEditorShell(session) {
       openBtn.textContent = t('common.actions.open');
       openBtn.disabled = !serverReady;
       openBtn.addEventListener('click', async () => {
-        await guardServerMenuAction(openBtn, () => session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id));
+        const confirmed = await showConfirmDialog({
+          title: t('editor.uploadedDraft.openDialog.title'),
+          bodyText: t('editor.uploadedDraft.openDialog.description', { title: display.title }),
+          warningText: t('editor.uploadedDraft.openDialog.warning'),
+          confirmLabel: t('editor.uploadedDraft.openDialog.confirm'),
+          variant: 'warning',
+        });
+        if (!confirmed) return;
+        let result;
+        try {
+          result = await guardServerMenuAction(openBtn, async () => {
+            await session.flushLocalStateForAuthRedirect();
+            return session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
+          });
+        } catch (error) {
+          session.pushNotification({
+            kind: 'error',
+            category: 'server',
+            source: 'uploadedDraft.open',
+            text: error?.message || editorNotification('save.manualSaveFailed'),
+          });
+          session.notifyStateChange();
+          updateSummary();
+          return;
+        }
+        if (result?.ok) {
+          manageUploadedDraftsDialogOpen = false;
+          renderManageUploadedDraftsModal();
+        }
         updateSummary();
       });
       actions.appendChild(openBtn);
