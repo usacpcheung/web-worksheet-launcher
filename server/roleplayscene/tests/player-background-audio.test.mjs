@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict';
+
 class StubElement {
   constructor(tagName) {
     this.tagName = tagName;
@@ -133,8 +135,8 @@ function resetAudioSpies() {
 }
 
 function logResult(label, condition) {
-  const status = condition ? 'OK' : 'FAIL';
-  console.log(`${status}: ${label}`);
+  assert.ok(condition, label);
+  console.log(`OK: ${label}`);
 }
 
 function findByText(root, text) {
@@ -232,11 +234,11 @@ resetAudioSpies();
 
 {
   const introProject = createIntroOnlyProject({ name: 'Loop', objectUrl: 'bg-loop.ogg' });
-  const { uiHost, cleanup } = renderWithProject(introProject, { audioGate: true });
+  const { stageHost, uiHost, cleanup } = renderWithProject(introProject, { audioGate: true });
 
   const introInstance = getLatestInstanceForSrc('bg-loop.ogg');
-  const introSlider = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
-  const introMute = findByText(uiHost, 'Mute background music');
+  const introSlider = findElement(stageHost, el => el.tagName === 'input' && el.type === 'range');
+  const introMute = findByText(stageHost, 'Mute background music');
 
   logResult('Intro plays start background when gate already open', FakeAudio.playCalls[0] === 'bg-loop.ogg');
   logResult('Intro renders controls for start background audio', Boolean(introSlider) && Boolean(introMute));
@@ -254,7 +256,7 @@ resetAudioSpies();
 
   logResult('Intro mute control pauses active background', introInstance?.paused === true);
 
-  const introUnmute = findByText(uiHost, 'Unmute background music');
+  const introUnmute = findByText(stageHost, 'Unmute background music');
   if (introUnmute) {
     introUnmute.dispatchEvent('click');
   }
@@ -264,7 +266,7 @@ resetAudioSpies();
   logResult('Intro unmute keeps selected volume', Math.abs((resumedInstance?.volume ?? 0) - 0.65) < 0.001);
 
   const introInstancesBeforeBegin = FakeAudio.instances.length;
-  const beginBtn = findByText(uiHost, 'Begin Story');
+  const beginBtn = findByText(stageHost, 'Begin Story') || findByText(uiHost, 'Begin Story');
   if (beginBtn) {
     beginBtn.dispatchEvent('click');
   }
@@ -281,8 +283,8 @@ resetAudioSpies();
 
 {
   const introProjectWithoutAudio = createIntroOnlyProject(null);
-  const { uiHost, cleanup } = renderWithProject(introProjectWithoutAudio, { audioGate: true });
-  const introSlider = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
+  const { stageHost, uiHost, cleanup } = renderWithProject(introProjectWithoutAudio, { audioGate: true });
+  const introSlider = findElement(stageHost, el => el.tagName === 'input' && el.type === 'range');
 
   logResult('Intro does not play background when start has no background audio', FakeAudio.playCalls.length === 0);
   logResult('Intro does not render controls when start has no background audio', !introSlider);
@@ -294,10 +296,10 @@ resetAudioSpies();
 
 {
   const introProject = createIntroOnlyProject({ name: 'Loop', objectUrl: 'bg-loop.ogg' });
-  const { uiHost, cleanup } = renderWithProject(introProject);
+  const { stageHost, uiHost, cleanup } = renderWithProject(introProject);
 
-  const introSlider = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
-  const introUnmute = findByText(uiHost, 'Unmute background music');
+  const introSlider = findElement(stageHost, el => el.tagName === 'input' && el.type === 'range');
+  const introUnmute = findByText(stageHost, 'Unmute background music');
   logResult('Intro renders disabled background controls before audio gate opens', Boolean(introSlider?.disabled) && Boolean(introUnmute));
   logResult('Intro does not autoplay before Begin Story', FakeAudio.playCalls.length === 0);
 
@@ -306,7 +308,7 @@ resetAudioSpies();
   }
 
   logResult('Intro unmute starts background playback', FakeAudio.playCalls[0] === 'bg-loop.ogg');
-  const introMute = findByText(uiHost, 'Mute background music');
+  const introMute = findByText(stageHost, 'Mute background music');
   logResult('Intro unmute enables volume controls', Boolean(introSlider) && !introSlider.disabled && Boolean(introMute));
 
   cleanup();
@@ -316,9 +318,9 @@ resetAudioSpies();
 
 {
   const introProject = createIntroOnlyProject({ name: 'Loop', objectUrl: 'bg-loop.ogg' });
-  const { uiHost, cleanup } = renderWithProject(introProject);
+  const { stageHost, uiHost, cleanup } = renderWithProject(introProject);
 
-  const startButton = findByText(uiHost, 'Begin Story');
+  const startButton = findByText(stageHost, 'Begin Story') || findByText(uiHost, 'Begin Story');
   if (startButton) {
     startButton.dispatchEvent('click');
   }
@@ -401,16 +403,18 @@ const stageHost = new StubElement('div');
 const uiHost = new StubElement('div');
 
 const cleanup = renderPlayer(store, stageHost, uiHost, () => {});
+const findPlayerText = text => findByText(stageHost, text) || findByText(uiHost, text);
+const findPlayerElement = predicate => findElement(stageHost, predicate) || findElement(uiHost, predicate);
 
 logResult('Background idle before Begin Story', FakeAudio.playCalls.length === 0);
 
-const introUnmuteButton = findByText(uiHost, 'Unmute background music');
+const introUnmuteButton = findByText(stageHost, 'Unmute background music');
 logResult('Background controls render before Begin Story', Boolean(introUnmuteButton));
 if (introUnmuteButton) {
   introUnmuteButton.dispatchEvent('click');
 }
 
-const introVolumeSlider = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
+const introVolumeSlider = findElement(stageHost, el => el.tagName === 'input' && el.type === 'range');
 logResult('Background controls enable after intro unmute', Boolean(introVolumeSlider) && !introVolumeSlider.disabled);
 if (introVolumeSlider) {
   introVolumeSlider.value = '0.6';
@@ -418,7 +422,7 @@ if (introVolumeSlider) {
 }
 
 const introPlayCountAfterUnmute = FakeAudio.playCalls.length;
-const startButton = findByText(uiHost, 'Begin Story');
+const startButton = findByText(stageHost, 'Begin Story') || findByText(uiHost, 'Begin Story');
 logResult('Begin Story button renders', Boolean(startButton));
 if (startButton) {
   startButton.dispatchEvent('click');
@@ -431,7 +435,7 @@ logResult('Background track loops enabled', backgroundInstance?.loop === true);
 logResult('Background track playing', backgroundInstance?.paused === false);
 logResult('Background track uses intro volume preference after Begin Story', Math.abs((backgroundInstance?.volume ?? 0) - 0.6) < 0.001);
 
-const volumeSliderInitial = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
+const volumeSliderInitial = findPlayerElement(el => el.tagName === 'input' && el.type === 'range');
 logResult('Background volume slider renders', Boolean(volumeSliderInitial));
 logResult(
   'Background slider keeps intro volume preference',
@@ -453,7 +457,7 @@ const initialPlayCount = FakeAudio.playCalls.length;
 const clonedProject = cloneProject(store.get().project);
 store.set({ project: clonedProject });
 
-const volumeSliderAfterRerender = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
+const volumeSliderAfterRerender = findPlayerElement(el => el.tagName === 'input' && el.type === 'range');
 logResult('Background slider persists across re-render', Boolean(volumeSliderAfterRerender));
 logResult(
   'Background slider retains value after re-render',
@@ -464,7 +468,7 @@ logResult(
   FakeAudio.playCalls.length === initialPlayCount && FakeAudio.instances[0] === backgroundInstance && backgroundInstance?.paused === false,
 );
 
-let muteButton = findByText(uiHost, 'Mute background music');
+let muteButton = findPlayerText('Mute background music');
 logResult('Mute button renders', Boolean(muteButton));
 if (muteButton) {
   muteButton.dispatchEvent('click');
@@ -473,10 +477,10 @@ if (muteButton) {
 logResult('Background track stops when muted', FakeAudio.pauseCalls.includes('bg-loop.ogg'));
 logResult('Background track paused state after mute', backgroundInstance?.paused === true);
 
-const sliderWhileMuted = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
+const sliderWhileMuted = findPlayerElement(el => el.tagName === 'input' && el.type === 'range');
 logResult('Volume slider disabled while muted', Boolean(sliderWhileMuted?.disabled));
 
-const unmuteButton = findByText(uiHost, 'Unmute background music');
+const unmuteButton = findPlayerText('Unmute background music');
 logResult('Unmute button renders after toggle', Boolean(unmuteButton));
 if (unmuteButton) {
   unmuteButton.dispatchEvent('click');
@@ -490,13 +494,13 @@ logResult(
   Math.abs((resumedInstance?.volume ?? 0) - 0.7) < 0.001,
 );
 
-muteButton = findByText(uiHost, 'Mute background music');
+muteButton = findPlayerText('Mute background music');
 logResult('Mute button label resets after unmute', Boolean(muteButton));
 
-const sliderAfterUnmute = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
+const sliderAfterUnmute = findPlayerElement(el => el.tagName === 'input' && el.type === 'range');
 logResult('Volume slider enabled after unmute', Boolean(sliderAfterUnmute) && !sliderAfterUnmute.disabled);
 
-const linePlayButton = findByText(uiHost, '▶️ Play line');
+const linePlayButton = findPlayerText('Play Audio');
 logResult('Dialogue line play button renders', Boolean(linePlayButton));
 
 if (linePlayButton) {
@@ -511,14 +515,14 @@ logResult(
   Math.abs((resumedInstance?.volume ?? 0) - 0.05) < 0.001,
 );
 
-muteButton = findByText(uiHost, 'Mute background music');
+muteButton = findPlayerText('Mute background music');
 if (muteButton) {
   muteButton.dispatchEvent('click');
 }
 
 logResult('Background pauses when muted during duck', resumedInstance?.paused === true);
 
-const unmuteDuringDuck = findByText(uiHost, 'Unmute background music');
+const unmuteDuringDuck = findPlayerText('Unmute background music');
 if (unmuteDuringDuck) {
   unmuteDuringDuck.dispatchEvent('click');
 }
@@ -538,7 +542,7 @@ logResult(
   Math.abs((resumedInstance?.volume ?? 0) - 0.7) < 0.001,
 );
 
-const sliderAfterDialogue = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
+const sliderAfterDialogue = findPlayerElement(el => el.tagName === 'input' && el.type === 'range');
 if (sliderAfterDialogue) {
   sliderAfterDialogue.value = '0';
   sliderAfterDialogue.dispatchEvent('input', { target: sliderAfterDialogue });
@@ -550,7 +554,7 @@ logResult(
   Math.abs(resumedInstance?.volume ?? 1) < 0.001,
 );
 
-const replayLineButton = findByText(uiHost, '▶️ Play line');
+const replayLineButton = findPlayerText('Play Audio');
 logResult('Dialogue line play button available for replay', Boolean(replayLineButton));
 
 if (replayLineButton) {
@@ -586,7 +590,11 @@ logResult(
 
 const pauseCountBeforeQuiet = FakeAudio.pauseCalls.length;
 const instanceCountBeforeQuiet = FakeAudio.instances.length;
-const quietChoice = findByText(uiHost, 'To Quiet');
+const choicesMenuButton = findPlayerText('Choices');
+if (choicesMenuButton) {
+  choicesMenuButton.dispatchEvent('click');
+}
+const quietChoice = findPlayerText('To Quiet');
 logResult('To Quiet choice renders', Boolean(quietChoice));
 if (quietChoice) {
   quietChoice.dispatchEvent('click');
@@ -601,7 +609,11 @@ logResult('Background loop still playing during silent scene', resumedInstance?.
 
 const playCountBeforeOverride = FakeAudio.playCalls.length;
 const pauseCountBeforeOverride = FakeAudio.pauseCalls.length;
-const overrideChoice = findByText(uiHost, 'To Override');
+const quietChoicesMenuButton = findPlayerText('Choices');
+if (quietChoicesMenuButton) {
+  quietChoicesMenuButton.dispatchEvent('click');
+}
+const overrideChoice = findPlayerText('To Override');
 logResult('To Override choice renders', Boolean(overrideChoice));
 if (overrideChoice) {
   overrideChoice.dispatchEvent('click');
@@ -620,7 +632,7 @@ logResult(
 );
 logResult('Override track active', overrideInstance?.src === 'dramatic.ogg' && overrideInstance?.paused === false);
 
-const overridePlayButton = findByText(uiHost, '▶️ Play line');
+const overridePlayButton = findPlayerText('Play Audio');
 logResult('Override dialogue line button renders', Boolean(overridePlayButton));
 
 if (overridePlayButton) {
@@ -646,7 +658,11 @@ logResult(
 
 const playCountBeforeReturn = FakeAudio.playCalls.length;
 const pauseCountBeforeReturn = FakeAudio.pauseCalls.length;
-const returnChoice = findByText(uiHost, 'Back to Quiet');
+const overrideChoicesMenuButton = findPlayerText('Choices');
+if (overrideChoicesMenuButton) {
+  overrideChoicesMenuButton.dispatchEvent('click');
+}
+const returnChoice = findPlayerText('Back to Quiet');
 logResult('Back to Quiet choice renders', Boolean(returnChoice));
 if (returnChoice) {
   returnChoice.dispatchEvent('click');
@@ -667,7 +683,11 @@ logResult('Fallback playing after override', fallbackResumeInstance?.src === 'bg
 
 const pauseCountBeforeEnd = FakeAudio.pauseCalls.length;
 const instanceCountBeforeEnd = FakeAudio.instances.length;
-const endChoice = findByText(uiHost, 'To End');
+const finalChoicesMenuButton = findPlayerText('Choices');
+if (finalChoicesMenuButton) {
+  finalChoicesMenuButton.dispatchEvent('click');
+}
+const endChoice = findPlayerText('To End');
 logResult('To End choice renders', Boolean(endChoice));
 if (endChoice) {
   endChoice.dispatchEvent('click');

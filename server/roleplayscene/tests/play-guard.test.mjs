@@ -1,9 +1,10 @@
+import assert from 'node:assert/strict';
 import { validateProject } from '../scripts/editor/validators.js';
 import { createProject, createScene, createChoice, SceneType } from '../scripts/model.js';
 
 function logResult(label, condition) {
-  const status = condition ? 'OK' : 'FAIL';
-  console.log(`${status}: ${label}`);
+  assert.ok(condition, label);
+  console.log(`OK: ${label}`);
 }
 
 const endScene = createScene({ type: SceneType.END, id: 'end-scene' });

@@ -186,17 +186,24 @@ export function renderSpeechBubblePlayerUI({
   cleanupCueCardListeners,
   closeCueCard,
   renderNavigationControls,
+  initialViewState = null,
+  onViewStateChange = null,
 }) {
   const visibleEntries = (scene.dialogue || [])
     .map((line, index) => ({ line, index }))
     .filter(entry => hasDialogueLineContent(entry.line) && entry.line.bubble?.mode !== BubbleMode.HIDDEN);
 
-  let activeVisibleIndex = visibleEntries.length ? 0 : -1;
-  let activePageIndex = 0;
+  const initialActiveIndex = Number.isInteger(initialViewState?.activeVisibleIndex)
+    ? Math.max(0, Math.min(initialViewState.activeVisibleIndex, Math.max(0, visibleEntries.length - 1)))
+    : (visibleEntries.length ? 0 : -1);
+  let activeVisibleIndex = visibleEntries.length ? initialActiveIndex : -1;
+  let activePageIndex = Number.isInteger(initialViewState?.activePageIndex)
+    ? Math.max(0, initialViewState.activePageIndex)
+    : 0;
   let speechAudioActive = false;
   let speechPlayAllActive = false;
-  let choicesOpen = false;
-  let endOverlayOpen = !visibleEntries.length;
+  let choicesOpen = Boolean(initialViewState?.choicesOpen);
+  let endOverlayOpen = choicesOpen || Boolean(initialViewState?.endOverlayOpen) || !visibleEntries.length;
   let speechRunToken = 0;
   let renderedSpeechBubbleKey = null;
   let renderedSpeechBubbleElement = null;
@@ -584,6 +591,18 @@ export function renderSpeechBubblePlayerUI({
     theaterOverlay.innerHTML = '';
     theaterControlRail.innerHTML = '';
     clampActivePage();
+    if (typeof onViewStateChange === 'function') {
+      try {
+        onViewStateChange({
+          activeVisibleIndex,
+          activePageIndex,
+          choicesOpen,
+          endOverlayOpen,
+        });
+      } catch {
+        // View-state persistence is best-effort and should not interrupt playback.
+      }
+    }
 
     choicesDockButton.setAttribute('aria-expanded', choicesOpen ? 'true' : 'false');
 
@@ -784,7 +803,7 @@ export function renderSpeechBubblePlayerUI({
     clearSpeechTimers();
     nextSpeechRunToken();
     cleanupCueCardListeners();
-    closeCueCard();
+    closeCueCard({ notify: false });
     stopDialoguePlayback();
   };
 }

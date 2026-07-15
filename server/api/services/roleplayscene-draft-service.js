@@ -82,6 +82,9 @@ export class RolePlaySceneDraftService {
     this.db = db;
     this.artifactStore = artifactStore;
     this.config = config;
+    this.packageValidationOptions = {
+      limits: config?.rolePlayScenePackageLimits,
+    };
   }
 
   async listOwnRolePlaySceneDrafts(identity, clientOverride = null) {
@@ -265,7 +268,7 @@ export class RolePlaySceneDraftService {
     zipBytes,
     conflictAction = 'fail_on_conflict',
   }) {
-    const validation = validateRolePlayScenePackage(zipBytes);
+    const validation = validateRolePlayScenePackage(zipBytes, this.packageValidationOptions);
     if (!validation.ok) {
       return {
         ok: false,
@@ -461,11 +464,11 @@ export class RolePlaySceneDraftService {
         : normalizedTitle;
       const uploadedDraftId = crypto.randomUUID();
       const storedZipBytes = finalTitle !== normalizedTitle
-        ? Buffer.from(rewriteRolePlayScenePackageTitle(zipBytes, finalTitle))
+        ? Buffer.from(rewriteRolePlayScenePackageTitle(zipBytes, finalTitle, this.packageValidationOptions))
         : zipBytes;
       const storedValidation = storedZipBytes === zipBytes
         ? validation
-        : validateRolePlayScenePackage(storedZipBytes);
+        : validateRolePlayScenePackage(storedZipBytes, this.packageValidationOptions);
       if (!storedValidation.ok) {
         await client.query('ROLLBACK');
         return {
@@ -602,7 +605,7 @@ export class RolePlaySceneDraftService {
       }
 
       const zipBytes = await this.artifactStore.readArtifact(draft.artifact_path);
-      const validation = validateRolePlayScenePackageForPublish(zipBytes);
+      const validation = validateRolePlayScenePackageForPublish(zipBytes, this.packageValidationOptions);
       if (!validation.ok) {
         await client.query('ROLLBACK');
         return {

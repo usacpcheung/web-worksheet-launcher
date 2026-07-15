@@ -25,13 +25,24 @@ function setSafeText(element, value) {
   element.textContent = safeText(value);
 }
 
-function buildHostId(index) {
+function hashHostIdPart(value) {
+  let hash = 2166136261;
+  const text = safeText(value);
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36).slice(0, 8) || "0";
+}
+
+function buildHostId(index, launchRid) {
   if (!Number.isInteger(index) || index < 0 || index > 999) {
     throw new Error("Invalid question index for widget host id.");
   }
 
-  const hostId = `rw_host_${index}`;
-  if (!/^rw_host_\d{1,3}$/.test(hostId)) {
+  const ridHash = hashHostIdPart(launchRid);
+  const hostId = `rw_host_${index}_${ridHash}`;
+  if (!/^rw_host_\d{1,3}_[a-z0-9]{1,8}$/.test(hostId)) {
     throw new Error("Unsafe widget host id.");
   }
 
@@ -167,7 +178,7 @@ async function renderQuestions() {
     hint.className = "small question-hint";
     setSafeText(hint, "Write your response here (up to 200 chars for Rewrite). Rewrite is optional.");
 
-    const hostId = buildHostId(idx);
+    const hostId = buildHostId(idx, rid);
     const host = document.createElement("div");
     host.id = hostId;
     host.className = "rw-host";

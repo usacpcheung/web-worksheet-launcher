@@ -95,6 +95,11 @@ npm run start:api
 
 `server/api/config.js` now auto-loads a repo-root `.env` file for local development via `dotenv` (without overriding variables that are already present in the process environment).
 
+Published Worksheet and RolePlayScene artifact audit, administrative
+quarantine, restore, and delayed purge are available through
+`npm run artifacts:maintain`. See
+`docs/published-artifact-maintenance.md` for VPS operation and safety rules.
+
 ## Runtime layer map (current state)
 
 - `server/editor/`: local-first editor with top-level Upload Draft, labeled draft metadata (Worksheet Title + Subject), row-based publish from uploaded drafts, and a dedicated published-package browser modal.
