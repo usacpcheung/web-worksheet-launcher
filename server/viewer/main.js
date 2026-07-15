@@ -6,6 +6,7 @@ import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
 import { mapLegacyJsonToPackageModel, parseWorksheetPackage } from '../editor/worksheet-package.js';
+import { collectAudioTrackAssetIds, normalizeAudioTracks } from '../editor/audio-tracks.js';
 import { createStoredZip, crc32, parseStoredZip, decodeUtf8 } from '../editor/zip-utils.js';
 import { createServerApiClient } from '../app/api/server-api-client.js';
 import {
@@ -597,6 +598,10 @@ function normalizePromptMediaRefs(mediaRefs) {
     .filter(Boolean);
 }
 
+function normalizeAudioTrackList(audioTracks) {
+  return normalizeAudioTracks(audioTracks);
+}
+
 function computeStableHash(input) {
   const text = typeof input === 'string' ? input : JSON.stringify(input);
   let hash = 2166136261;
@@ -638,6 +643,7 @@ function computeViewerPayloadFingerprint(payload) {
           text: block.prompt.text || '',
           format: block.prompt.format || 'plain_text',
           mediaRefs: normalizePromptMediaRefs(block.prompt.mediaRefs),
+          audioTracks: normalizeAudioTrackList(block.prompt.audioTracks),
         }
         : null,
       content: block.content
@@ -656,6 +662,7 @@ function computeViewerPayloadFingerprint(payload) {
               value: String(option?.value ?? option?.label ?? ''),
               label: String(option?.label ?? option?.value ?? ''),
               mediaRefs: normalizeOptionMediaRefs(option?.mediaRefs),
+              audioTracks: normalizeAudioTrackList(option?.audioTracks),
             }))
             : [],
         }
@@ -750,6 +757,7 @@ function normalizeViewerBlock(block, index) {
                 value: String(value),
                 label: String(label),
                 mediaRefs: normalizeOptionMediaRefs(option.mediaRefs),
+                audioTracks: normalizeAudioTrackList(option.audioTracks),
               };
             }
 
@@ -759,6 +767,7 @@ function normalizeViewerBlock(block, index) {
               value: normalizedOption,
               label: normalizedOption,
               mediaRefs: [],
+              audioTracks: [],
             };
           })
         : [];
@@ -793,6 +802,7 @@ function normalizeViewerBlock(block, index) {
         text: String(safeBlock?.prompt?.text || ''),
         format: safeBlock?.prompt?.format || 'plain_text',
         mediaRefs: normalizePromptMediaRefs(safeBlock?.prompt?.mediaRefs),
+        audioTracks: normalizeAudioTrackList(safeBlock?.prompt?.audioTracks),
       },
       responseConfig: normalizedResponseConfig,
     };
@@ -3188,11 +3198,13 @@ class ViewerAttemptSession {
       normalizePromptMediaRefs(block.prompt?.mediaRefs).forEach((ref) => {
         if (ref?.assetId) ids.add(ref.assetId);
       });
+      collectAudioTrackAssetIds(block.prompt?.audioTracks).forEach((assetId) => ids.add(assetId));
       const options = Array.isArray(block.responseConfig?.options) ? block.responseConfig.options : [];
       options.forEach((option) => {
         normalizeOptionMediaRefs(option?.mediaRefs).forEach((ref) => {
           if (ref?.assetId) ids.add(ref.assetId);
         });
+        collectAudioTrackAssetIds(option?.audioTracks).forEach((assetId) => ids.add(assetId));
       });
     });
     return [...ids];

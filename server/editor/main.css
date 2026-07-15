@@ -1302,6 +1302,10 @@ textarea.control {
   font-weight: 600;
 }
 
+.confirm-modal__warning--caution {
+  color: #92400e;
+}
+
 .confirm-modal__actions {
   display: flex;
   justify-content: flex-end;
@@ -1354,6 +1358,19 @@ textarea.control {
   color: #1e40af;
   border-color: #7ea4f2;
   background: #dbeafe;
+}
+
+.confirm-modal__btn--warning {
+  color: #92400e;
+  border-color: #f3c67a;
+  background: #fffaeb;
+}
+
+.confirm-modal__btn--warning:hover:not(:disabled),
+.confirm-modal__btn--warning:focus-visible:not(:disabled) {
+  color: #78350f;
+  border-color: #eab85d;
+  background: #fef0c7;
 }
 
 .browse-modal {

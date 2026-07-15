@@ -5,6 +5,7 @@ import {
   createWorksheetPackageFromDraft,
   parseWorksheetPackage,
 } from './worksheet-package.js';
+import { collectAudioTrackAssetIds, normalizeAudioTracks } from './audio-tracks.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
 import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
@@ -171,9 +172,11 @@ function collectQuestionAssetIds(block) {
   if (!isRecord(block) || block.kind !== 'question') return [];
   const ids = new Set();
   normalizeMediaRefs(block?.prompt?.mediaRefs).forEach((ref) => ids.add(ref.assetId));
+  collectAudioTrackAssetIds(block?.prompt?.audioTracks).forEach((assetId) => ids.add(assetId));
   const options = Array.isArray(block?.responseConfig?.options) ? block.responseConfig.options : [];
   options.forEach((option) => {
     normalizeMediaRefs(option?.mediaRefs, 'option_audio').forEach((ref) => ids.add(ref.assetId));
+    collectAudioTrackAssetIds(option?.audioTracks).forEach((assetId) => ids.add(assetId));
   });
   return Array.from(ids);
 }
@@ -226,7 +229,8 @@ function getBlockDeletePolicy(block) {
 function getOptionDeletePolicy(option) {
   const normalized = normalizeResponseOption(option);
   const hasTypedContent = hasTypedText(normalized.label) || hasTypedText(normalized.value);
-  const hasAssets = normalizeMediaRefs(normalized.mediaRefs, 'option_audio').length > 0;
+  const hasAssets = normalizeMediaRefs(normalized.mediaRefs, 'option_audio').length > 0
+    || collectAudioTrackAssetIds(normalized.audioTracks).length > 0;
   return {
     mode: hasTypedContent || hasAssets ? 'confirm_delete' : 'safe_direct_delete',
     hasTypedContent,
@@ -578,10 +582,16 @@ function normalizeResponseOption(option, fallback = '') {
     const id = isNonEmptyString(option.id) ? String(option.id) : createLocalId('opt');
     const value = String(option.value ?? option.label ?? fallback);
     const label = String(option.label ?? option.value ?? fallback);
-    return { id, value, label, mediaRefs: normalizeMediaRefs(option.mediaRefs, 'option_audio') };
+    return {
+      id,
+      value,
+      label,
+      mediaRefs: normalizeMediaRefs(option.mediaRefs, 'option_audio'),
+      audioTracks: normalizeAudioTracks(option.audioTracks),
+    };
   }
   const normalized = String(option ?? fallback);
-  return { id: createLocalId('opt'), value: normalized, label: normalized, mediaRefs: [] };
+  return { id: createLocalId('opt'), value: normalized, label: normalized, mediaRefs: [], audioTracks: [] };
 }
 
 function getOptionValueForAnswerKey(option) {
@@ -806,6 +816,7 @@ function normalizeBlocks(blocks) {
         text: String(promptSource.text || ''),
         format: promptSource.format || 'plain_text',
         mediaRefs: normalizeMediaRefs(promptSource.mediaRefs),
+        audioTracks: normalizeAudioTracks(promptSource.audioTracks),
       };
       normalized.responseConfig = normalizeQuestionResponseConfig(source.responseConfig);
       return normalized;
@@ -837,7 +848,7 @@ function createDraftRecord(overrides = {}) {
       createdAt: overrides.metadata?.createdAt || updatedAt,
       serverLink: overrides.metadata?.serverLink || null,
       importedFrom: overrides.metadata?.importedFrom || null,
-      modelVersion: overrides.metadata?.modelVersion || 'package-compatible-v1',
+      modelVersion: overrides.metadata?.modelVersion || 'package-compatible-v2',
       subject: String(overrides.metadata?.subject || ''),
     },
   };
@@ -1180,6 +1191,7 @@ class EditorDraftSession {
               text: String(block?.prompt?.text || ''),
               format: block?.prompt?.format || 'plain_text',
               mediaRefs: normalizeMediaRefs(block?.prompt?.mediaRefs),
+              audioTracks: normalizeAudioTracks(block?.prompt?.audioTracks),
             },
             responseConfig: isRecord(block.responseConfig)
               ? normalizeQuestionResponseConfig(block.responseConfig, { forContract: true })
@@ -2790,19 +2802,28 @@ class EditorDraftSession {
       ...ref,
       assetId: assetIdRemap.get(ref.assetId) || ref.assetId,
     }));
+      const remapAudioTracks = (audioTracks) => normalizeAudioTracks(audioTracks).map((track) => ({
+        ...track,
+        assetId: assetIdRemap.get(track.assetId) || track.assetId,
+      }));
 
       const remappedBlocks = normalizeBlocks(parsedPackage.worksheet.blocks).map((block) => {
       if (block.kind !== 'question') return block;
       const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
       const options = (responseConfig.options || []).map((option) => {
         const normalized = normalizeResponseOption(option);
-        return { ...normalized, mediaRefs: remapMediaRefs(normalized.mediaRefs) };
+        return {
+          ...normalized,
+          mediaRefs: remapMediaRefs(normalized.mediaRefs),
+          audioTracks: remapAudioTracks(normalized.audioTracks),
+        };
       });
       return {
         ...block,
         prompt: {
           ...(isRecord(block.prompt) ? block.prompt : {}),
           mediaRefs: remapMediaRefs(block?.prompt?.mediaRefs),
+          audioTracks: remapAudioTracks(block?.prompt?.audioTracks),
         },
         responseConfig: normalizeQuestionResponseConfig({ ...responseConfig, options }),
       };
@@ -2837,7 +2858,7 @@ class EditorDraftSession {
         createdAt: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.createdAt) || now,
         serverLink: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.serverLink) || null,
         importedFrom: 'package_zip',
-        modelVersion: 'package-compatible-v1',
+        modelVersion: 'package-compatible-v2',
         subject: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.subject) || '',
       },
     });
@@ -2958,7 +2979,7 @@ class EditorDraftSession {
       assets: draftAssets,
       metadata: {
         ...this.state.draft.metadata,
-        modelVersion: 'package-compatible-v1',
+        modelVersion: 'package-compatible-v2',
       },
     };
     return createWorksheetPackageFromDraft(packagedDraft, assets).bytes;
@@ -4158,6 +4179,7 @@ function renderEditorShell(session) {
     confirmLabel = t('common.actions.delete'),
     cancelLabel = t('common.actions.cancel'),
     variant = 'danger',
+    warningText = t('editor.modal.confirm.irreversibleWarning'),
   }) {
     if (activeConfirmDialog) {
       closeActiveConfirmDialog(false);
@@ -4195,8 +4217,10 @@ function renderEditorShell(session) {
       detailsList.appendChild(line);
     });
     const warning = document.createElement('p');
-    warning.className = 'confirm-modal__warning';
-    warning.textContent = t('editor.modal.confirm.irreversibleWarning');
+    warning.className = variant === 'warning'
+      ? 'confirm-modal__warning confirm-modal__warning--caution'
+      : 'confirm-modal__warning';
+    warning.textContent = warningText;
     const actionRow = document.createElement('div');
     actionRow.className = 'confirm-modal__actions';
     const cancelBtn = document.createElement('button');
@@ -4207,10 +4231,19 @@ function renderEditorShell(session) {
     deleteBtn.type = 'button';
     deleteBtn.className = variant === 'danger'
       ? 'confirm-modal__btn confirm-modal__btn--destructive'
-      : 'confirm-modal__btn';
+      : variant === 'warning'
+        ? 'confirm-modal__btn confirm-modal__btn--warning'
+        : 'confirm-modal__btn';
     deleteBtn.textContent = confirmLabel;
     actionRow.append(cancelBtn, deleteBtn);
-    dialog.append(heading, description, detailsHeading, detailsList, warning, actionRow);
+    dialog.append(heading, description);
+    if (removalItems.length > 0) {
+      dialog.append(detailsHeading, detailsList);
+    }
+    if (isNonEmptyString(warningText)) {
+      dialog.append(warning);
+    }
+    dialog.append(actionRow);
     overlay.appendChild(dialog);
     shell.appendChild(overlay);
 
@@ -6584,7 +6617,35 @@ function renderEditorShell(session) {
       openBtn.textContent = t('common.actions.open');
       openBtn.disabled = !serverReady;
       openBtn.addEventListener('click', async () => {
-        await guardServerMenuAction(openBtn, () => session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id));
+        const confirmed = await showConfirmDialog({
+          title: t('editor.uploadedDraft.openDialog.title'),
+          bodyText: t('editor.uploadedDraft.openDialog.description', { title: display.title }),
+          warningText: t('editor.uploadedDraft.openDialog.warning'),
+          confirmLabel: t('editor.uploadedDraft.openDialog.confirm'),
+          variant: 'warning',
+        });
+        if (!confirmed) return;
+        let result;
+        try {
+          result = await guardServerMenuAction(openBtn, async () => {
+            await session.flushLocalStateForAuthRedirect();
+            return session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
+          });
+        } catch (error) {
+          session.pushNotification({
+            kind: 'error',
+            category: 'server',
+            source: 'uploadedDraft.open',
+            text: error?.message || editorNotification('save.manualSaveFailed'),
+          });
+          session.notifyStateChange();
+          updateSummary();
+          return;
+        }
+        if (result?.ok) {
+          manageUploadedDraftsDialogOpen = false;
+          renderManageUploadedDraftsModal();
+        }
         updateSummary();
       });
       actions.appendChild(openBtn);

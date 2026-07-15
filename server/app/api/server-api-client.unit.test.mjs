@@ -603,7 +603,7 @@ test('rewriteText returns NETWORK_ERROR on fetch failure', async () => {
   assert.equal(result.error.code, 'NETWORK_ERROR');
 });
 
-test('generateAudioFromText returns Uint8Array for audio/mpeg non-empty bytes', async () => {
+test('generateAudioFromText omits optional voice and language controls when absent', async () => {
   setTestWindow();
   globalThis.fetch = async (url, request = {}) => {
     assert.equal(url, '/api/rewrite-bridge/t2a');
@@ -628,7 +628,7 @@ test('generateAudioFromText returns Uint8Array for audio/mpeg non-empty bytes', 
   assert.deepEqual(Array.from(result.data), [1, 2, 3]);
 });
 
-test('generateAudioFromText includes optional voice controls only when provided', async () => {
+test('generateAudioFromText includes optional voice and language controls only when provided', async () => {
   setTestWindow();
   globalThis.fetch = async (url, request = {}) => {
     assert.equal(url, '/api/rewrite-bridge/t2a');
@@ -637,6 +637,7 @@ test('generateAudioFromText includes optional voice controls only when provided'
       format: 'mp3',
       response_mode: 'binary',
       voice_id: 'Cantonese_PlayfulMan',
+      language_boost: 'Chinese,Yue',
       speed: 1,
       volume: 1,
       pitch: 2,
@@ -650,6 +651,7 @@ test('generateAudioFromText includes optional voice controls only when provided'
   const client = createServerApiClient();
   const result = await client.generateAudioFromText('hello', {
     voice_id: 'Cantonese_PlayfulMan',
+    language_boost: 'Chinese,Yue',
     speed: 1,
     volume: 1,
     pitch: 2,
