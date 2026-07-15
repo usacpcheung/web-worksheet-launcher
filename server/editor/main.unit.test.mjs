@@ -156,7 +156,7 @@ function createEmptyQuestionBlock`,
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapEditor\(\)\.catch\([\s\S]*?\);\s*export\s*\{[^}]+\};/,
-      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay, normalizeDraftPublishState, getUploadedDraftPublishBadge, getNotificationToastRemainingMs, getAudioSourceTextHash, getTextLanguageMismatch, migrateLegacyAudioBlocks };',
+      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay, normalizeDraftPublishState, getUploadedDraftPublishBadge, getNotificationToastRemainingMs, getAudioSourceTextHash, getTextLanguageMismatch, migrateLegacyAudioBlocks, getLegacyAudioMigrationAction };',
     },
   ]);
 
@@ -371,6 +371,21 @@ test('legacy migration discard prunes unreferenced audio and collisions fail wit
   };
   assert.throws(() => session.migrateLegacyAudioInDraft('cantonese'), /conflicts with an existing cantonese track/);
   assert.equal(session.state.draft.blocks[0].prompt.mediaRefs[0].assetId, 'legacy');
+});
+
+test('legacy migration discard is a single explicit discard-and-open action', async () => {
+  const mod = await loadEditorModule();
+
+  assert.deepEqual(mod.getLegacyAudioMigrationAction('discard'), {
+    buttonClassName: 'confirm-modal__btn confirm-modal__btn--destructive',
+    buttonLabelKey: 'editor.media.audioTracks.migration.discardAndOpen',
+    descriptionKey: 'editor.media.audioTracks.migration.discardConfirm',
+  });
+  assert.deepEqual(mod.getLegacyAudioMigrationAction('english'), {
+    buttonClassName: 'confirm-modal__btn confirm-modal__btn--warning',
+    buttonLabelKey: 'editor.media.audioTracks.migration.convertAndOpen',
+    descriptionKey: 'editor.media.audioTracks.migration.description',
+  });
 });
 
 test('resuming a local legacy draft requires migration before assigning or saving editor state', async () => {

@@ -222,7 +222,7 @@ export default {
           "description": "This worksheet contains {count} legacy audio attachment(s). Choose how all of them should be handled before editing.",
           "discard": "Discard all legacy audio",
           "convertAndOpen": "Convert and open",
-          "confirmDiscard": "Discard all audio",
+          "discardAndOpen": "Discard and open",
           "discardConfirm": "This removes all legacy audio from the new editable copy. The original ZIP or server artifact is unchanged."
         }
       },

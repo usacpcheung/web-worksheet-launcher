@@ -327,6 +327,21 @@ function migrateLegacyAudioBlocks(blocks, choice) {
   return { blocks: migrated, legacyCount: legacyTargets.length };
 }
 
+function getLegacyAudioMigrationAction(choice) {
+  const isDiscard = choice === 'discard';
+  return {
+    buttonClassName: isDiscard
+      ? 'confirm-modal__btn confirm-modal__btn--destructive'
+      : 'confirm-modal__btn confirm-modal__btn--warning',
+    buttonLabelKey: isDiscard
+      ? 'editor.media.audioTracks.migration.discardAndOpen'
+      : 'editor.media.audioTracks.migration.convertAndOpen',
+    descriptionKey: isDiscard
+      ? 'editor.media.audioTracks.migration.discardConfirm'
+      : 'editor.media.audioTracks.migration.description',
+  };
+}
+
 function showLegacyAudioMigrationDialog({ count, required = false } = {}) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -380,23 +395,17 @@ function showLegacyAudioMigrationDialog({ count, required = false } = {}) {
     cancel.addEventListener('click', () => close(null));
     confirm.addEventListener('click', () => {
       const selected = choices.querySelector('input:checked')?.value || 'cantonese';
-      if (selected === 'discard') {
-        if (confirm.dataset.discardConfirmed !== '1') {
-          confirm.dataset.discardConfirmed = '1';
-          confirm.className = 'confirm-modal__btn confirm-modal__btn--destructive';
-          confirm.textContent = t('editor.media.audioTracks.migration.confirmDiscard');
-          description.textContent = t('editor.media.audioTracks.migration.discardConfirm');
-          return;
-        }
-      }
       close(selected);
     });
-    choices.addEventListener('change', () => {
-      delete confirm.dataset.discardConfirmed;
-      confirm.className = 'confirm-modal__btn confirm-modal__btn--warning';
-      confirm.textContent = t('editor.media.audioTracks.migration.convertAndOpen');
-      description.textContent = t('editor.media.audioTracks.migration.description', { count });
-    });
+    const updateConfirmAction = () => {
+      const selected = choices.querySelector('input:checked')?.value || 'cantonese';
+      const action = getLegacyAudioMigrationAction(selected);
+      confirm.className = action.buttonClassName;
+      confirm.textContent = t(action.buttonLabelKey);
+      description.textContent = t(action.descriptionKey, { count });
+    };
+    choices.addEventListener('change', updateConfirmAction);
+    updateConfirmAction();
     dialog.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && !required) close(null);
     });

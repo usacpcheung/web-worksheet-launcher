@@ -222,7 +222,7 @@ export default {
           "description": "此工作紙包含 {count} 個舊版音訊附件。編輯前請選擇如何處理全部音訊。",
           "discard": "捨棄全部舊版音訊",
           "convertAndOpen": "轉換並開啟",
-          "confirmDiscard": "捨棄全部音訊",
+          "discardAndOpen": "捨棄並開啟",
           "discardConfirm": "這會從新的可編輯副本移除全部舊版音訊。原本的 ZIP 或伺服器檔案不會改變。"
         }
       },
