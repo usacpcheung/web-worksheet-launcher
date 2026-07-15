@@ -49,6 +49,22 @@ const AUDIO_EXTENSIONS = ['mp3'];
 `,
     },
     {
+      name: 'replace audio tracks import with deterministic helpers',
+      pattern: /import\s*\{\s*collectAudioTrackAssetIds\s*,\s*normalizeAudioTracks\s*\}\s*from\s*['"]\.\/audio-tracks\.js['"];\s*/,
+      replacement: `const __audioTrackOrder = { cantonese: 0, mandarin: 1, english: 2 };
+const normalizeAudioTracks = (tracks) => {
+  const seen = new Set();
+  return (Array.isArray(tracks) ? tracks : []).filter((track) => {
+    if (!track || !Object.hasOwn(__audioTrackOrder, track.language) || seen.has(track.language) || !String(track.assetId || '').trim() || !String(track.sourceTextHash || '').trim()) return false;
+    if (track.voicePresetId != null && track.voicePresetId !== track.language) return false;
+    seen.add(track.language);
+    return true;
+  }).map((track) => ({ language: track.language, assetId: String(track.assetId).trim(), voicePresetId: track.voicePresetId ?? null, sourceTextHash: String(track.sourceTextHash).trim() }))
+    .sort((left, right) => __audioTrackOrder[left.language] - __audioTrackOrder[right.language]);
+};
+const collectAudioTrackAssetIds = (tracks) => normalizeAudioTracks(tracks).map((track) => track.assetId);`,
+    },
+    {
       name: 'replace shared auth utility imports with local test doubles',
       pattern: /import\s*\{\s*probeSession\s*\}\s*from\s*['"]\.\.\/app\/auth\/session-readiness\.js['"];\s*import\s*\{\s*startAuthPopupFlow,\s*AUTH_POPUP_FLOW_DEFAULTS\s*\}\s*from\s*['"]\.\.\/app\/auth\/auth-popup-flow\.js['"];\s*/,
       replacement: `const AUTH_POPUP_FLOW_DEFAULTS = { pollIntervalMs: 20, pollTimeoutMs: 80 };
@@ -187,6 +203,33 @@ function toBlockFieldsWithoutPosition(block) {
     responseConfig: snapshot.responseConfig ? JSON.parse(JSON.stringify(snapshot.responseConfig)) : snapshot.responseConfig,
   };
 }
+
+test('normalizeBlocks retains multilingual prompt and option audio tracks', async () => {
+  const mod = await loadEditorModule();
+  const [block] = mod.normalizeBlocks([{
+    blockId: 'q1',
+    kind: 'question',
+    prompt: {
+      text: 'Question',
+      audioTracks: [
+        { language: 'english', assetId: 'prompt-en', voicePresetId: null, sourceTextHash: 'prompt-en-hash' },
+        { language: 'cantonese', assetId: 'prompt-yue', voicePresetId: 'cantonese', sourceTextHash: 'prompt-yue-hash' },
+      ],
+    },
+    responseConfig: {
+      inputType: 'multiple_choice',
+      options: [{
+        id: 'a', value: 'A', label: 'A',
+        audioTracks: [{ language: 'mandarin', assetId: 'option-zh', voicePresetId: 'mandarin', sourceTextHash: 'option-zh-hash' }],
+      }],
+    },
+  }]);
+
+  assert.deepEqual(block.prompt.audioTracks.map((track) => track.language), ['cantonese', 'english']);
+  assert.deepEqual(block.responseConfig.options[0].audioTracks, [
+    { language: 'mandarin', assetId: 'option-zh', voicePresetId: 'mandarin', sourceTextHash: 'option-zh-hash' },
+  ]);
+});
 
 
 test('bootstrapEditor completes without requiring a registerAuthPopupMessageListener method', async () => {
@@ -1394,7 +1437,7 @@ test('saveNow and export failures emit error notifications', async () => {
   assert.equal(Boolean(exportError), true);
 });
 
-test('saveNow dedupes active save.manual notifications across repeated saves', async () => {
+test('saveNow replaces manual save toast with a fresh notification across repeated saves', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({
     drafts: { get: async () => null, put: async (value) => value },
@@ -1405,13 +1448,44 @@ test('saveNow dedupes active save.manual notifications across repeated saves', a
   clearTimeout(session.autosaveTimer);
 
   await session.saveNow();
+  const firstManualSaveNotification = session.state.notifications.find((item) => item?.source === 'save.manual');
   await session.saveNow();
+  const secondManualSaveNotification = session.state.notifications.find((item) => item?.source === 'save.manual');
   await session.saveNow();
 
   const activeManualSaveNotifications = session.state.notifications
     .filter((item) => item?.source === 'save.manual');
   assert.equal(activeManualSaveNotifications.length, 1);
   assert.equal(activeManualSaveNotifications[0].kind, 'success');
+  assert.notEqual(firstManualSaveNotification?.id, secondManualSaveNotification?.id);
+  assert.notEqual(secondManualSaveNotification?.id, activeManualSaveNotifications[0].id);
+});
+
+test('saveNow coalesces manual save activity and moves it to latest position', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (value) => value },
+    importedWorksheets: { put: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  await session.createOrOpenByLocalDraftId('draft_save_activity');
+  clearTimeout(session.autosaveTimer);
+
+  await session.saveNow();
+  const firstSaveActivity = session.state.activityLog.find((item) => item?.source === 'save.manual');
+  session.pushNotification({
+    kind: 'success',
+    category: 'editor',
+    source: 'import.package_zip',
+    text: 'Imported package.',
+  });
+  await session.saveNow();
+
+  const manualSaveActivities = session.state.activityLog.filter((item) => item?.source === 'save.manual');
+  assert.equal(manualSaveActivities.length, 1);
+  assert.equal(manualSaveActivities[0].text, 'editor.notifications.save.savedLocalDraft');
+  assert.notEqual(manualSaveActivities[0].id, firstSaveActivity?.id);
+  assert.equal(session.state.activityLog.at(-1)?.source, 'save.manual');
 });
 
 test('exportCurrentDraftToPackageFile revokes object URL when click throws', async () => {
@@ -1536,6 +1610,15 @@ test('viewer navigation no longer uses hardcoded /viewer absolute assign path', 
   assert.equal(source.includes("window.location.assign(`/viewer/?localDraftId=${encodeURIComponent(localDraftId)}`);"), false);
   assert.equal(source.includes('buildViewerUrlFromCurrentLocation(window.location.href, localDraftId, draftUpdatedAt)'), true);
   assert.equal(source.includes("new URL('../viewer/', currentHref)"), true);
+});
+
+test('package import updates editor URL to imported local draft id', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.equal(source.includes("const importResult = await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });"), true);
+  assert.equal(source.includes("const importedLocalDraftId = importResult?.draftRecord?.localId || session.state.draft?.localId;"), true);
+  assert.equal(source.includes("nextUrl.searchParams.set('localDraftId', importedLocalDraftId);"), true);
+  assert.equal(source.includes("nextUrl.searchParams.delete('draftUpdatedAt');"), true);
+  assert.equal(source.includes("window.history.replaceState(null, '', nextUrl.toString());"), true);
 });
 
 test('buildViewerUrlFromCurrentLocation resolves sibling viewer route from current page', async () => {
@@ -1709,6 +1792,26 @@ test('confirm modal uses configurable description copy and defaults initial focu
   assert.match(source, /fallbackDescription\s*=\s*isNonEmptyString\(entityLabel\)/);
   assert.match(source, /t\('editor\.modal\.confirm\.defaultDescription'\)/);
   assert.equal(source.includes('cancelBtn.focus();'), true);
+});
+
+test('opening an uploaded draft confirms, saves pending edits, and closes its modal only on success', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.match(source, /title:\s*t\('editor\.uploadedDraft\.openDialog\.title'\)/);
+  assert.match(source, /bodyText:\s*t\('editor\.uploadedDraft\.openDialog\.description',\s*\{ title: display\.title \}\)/);
+  assert.match(source, /warningText:\s*t\('editor\.uploadedDraft\.openDialog\.warning'\)/);
+  assert.match(source, /confirmLabel:\s*t\('editor\.uploadedDraft\.openDialog\.confirm'\)/);
+  assert.match(source, /variant:\s*'warning'/);
+  assert.match(source, /if \(!confirmed\) return;/);
+  assert.match(source, /await session\.flushLocalStateForAuthRedirect\(\);/);
+  assert.match(source, /if \(result\?\.ok\)\s*\{\s*manageUploadedDraftsDialogOpen = false;/m);
+});
+
+test('confirm modal supports warning copy without destructive styling', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  assert.match(source, /warningText = t\('editor\.modal\.confirm\.irreversibleWarning'\)/);
+  assert.match(source, /confirm-modal__warning--caution/);
+  assert.match(source, /confirm-modal__btn--warning/);
+  assert.match(source, /if \(isNonEmptyString\(warningText\)\)/);
 });
 
 test('replace/delete image flows use shared confirm modal and avoid native confirm', async () => {
@@ -3415,6 +3518,59 @@ test('startNewWorksheet removes only current draft and referenced local assets',
   assert.equal(restoreSnapshots.at(-1).localId, nextDraft.localId);
 });
 
+test('startNewWorksheet cleanup prevents in-flight autosave from restoring deleted draft', async () => {
+  const mod = await loadEditorModule();
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+  const records = new Map();
+  const putStarted = deferred();
+  const allowPutToFinish = deferred();
+  const removedDraftIds = [];
+  let putCalls = 0;
+  const session = new mod.EditorDraftSession({
+    drafts: {
+      get: async (id) => records.get(id) || null,
+      put: async (value) => {
+        putCalls += 1;
+        putStarted.resolve(value);
+        await allowPutToFinish.promise;
+        records.set(value.localId, value);
+        return value;
+      },
+      remove: async (id) => {
+        removedDraftIds.push(id);
+        records.delete(id);
+      },
+    },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_reset_race');
+  clearTimeout(session.autosaveTimer);
+  session.updateBlockContent(session.state.draft.blocks[0].blockId, 'old draft content');
+  clearTimeout(session.autosaveTimer);
+
+  const staleSave = session.autosave();
+  await putStarted.promise;
+  const nextDraft = await session.startNewWorksheet();
+  clearTimeout(session.autosaveTimer);
+
+  assert.equal(records.has('draft_reset_race'), false);
+  allowPutToFinish.resolve();
+  await staleSave;
+
+  assert.equal(putCalls, 1);
+  assert.equal(records.has('draft_reset_race'), false);
+  assert.equal(session.deletedDraftIds.has('draft_reset_race'), false);
+  assert.equal(session.state.draft.localId, nextDraft.localId);
+  assert.deepEqual(removedDraftIds, ['draft_reset_race', 'draft_reset_race']);
+});
+
 test('deleteBlockWithPolicy directly deletes empty block', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession({
@@ -3525,6 +3681,43 @@ test('deleteBlock preserves assets still referenced by remaining questions', asy
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_shared_audio'), true);
   assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'asset_keep'), true);
   assert.deepEqual(removed, []);
+});
+
+test('deleteBlock cleans unshared track assets but preserves shared track assets', async () => {
+  const mod = await loadEditorModule();
+  const removed = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async (id) => { removed.push(id); } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_track_cleanup',
+    blocks: [
+      {
+        blockId: 'q1', kind: 'question', position: 0,
+        prompt: {
+          text: 'Q1',
+          audioTracks: [
+            { language: 'cantonese', assetId: 'track_remove', voicePresetId: 'cantonese', sourceTextHash: 'q1-yue' },
+            { language: 'english', assetId: 'track_shared', voicePresetId: null, sourceTextHash: 'q1-en' },
+          ],
+        },
+        responseConfig: { inputType: 'text' },
+      },
+      {
+        blockId: 'q2', kind: 'question', position: 1,
+        prompt: { text: 'Q2', audioTracks: [{ language: 'english', assetId: 'track_shared', voicePresetId: null, sourceTextHash: 'q2-en' }] },
+        responseConfig: { inputType: 'text' },
+      },
+    ],
+    assets: [{ assetId: 'track_remove' }, { assetId: 'track_shared' }],
+  };
+
+  session.deleteBlock('q1');
+  assert.deepEqual(removed, ['track_remove']);
+  assert.equal(session.state.draft.assets.some((asset) => asset.assetId === 'track_shared'), true);
 });
 
 test('removeQuestionOption prunes option audio asset link', async () => {

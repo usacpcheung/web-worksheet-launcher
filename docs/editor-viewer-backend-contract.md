@@ -18,7 +18,7 @@ Primary shared API client and editor call paths:
 
 ## Backend endpoints currently used by editor
 
-Base path defaults to `'/api/worksheet-launcher/v1'` (overrideable via `?apiBase=...`):
+Base path is fixed to the same-origin `'/api/worksheet-launcher/v1'`:
 
 1. **Session readiness preflight**
    - `GET /api/worksheet-launcher/v1/session`

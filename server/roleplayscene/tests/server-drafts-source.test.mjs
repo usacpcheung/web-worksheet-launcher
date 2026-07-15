@@ -18,6 +18,9 @@ const dialogueT2ASource = editorSource.slice(dialogueT2AFunctionIndex, dialogueT
 const refreshLocaleFunctionIndex = mainSource.indexOf('function refreshLocaleUI');
 const refreshLocaleFunctionEndIndex = mainSource.indexOf('function getActiveStore', refreshLocaleFunctionIndex);
 const refreshLocaleSource = mainSource.slice(refreshLocaleFunctionIndex, refreshLocaleFunctionEndIndex);
+const bootstrapFunctionIndex = mainSource.indexOf('async function bootstrap');
+const bootstrapFunctionEndIndex = mainSource.indexOf('\nbootstrap();', bootstrapFunctionIndex);
+const bootstrapSource = mainSource.slice(bootstrapFunctionIndex, bootstrapFunctionEndIndex);
 
 assert.ok(
   mainSource.includes('apiClient.listRolePlaySceneDrafts()'),
@@ -81,6 +84,25 @@ assert.ok(
   'direct publishedSceneId URLs should open published scenes and support sign-in recovery',
 );
 assert.ok(
+  mainSource.includes('const PLAY_SESSION_STORAGE_KEY')
+    && mainSource.includes('function readPlaySessionRecovery()')
+    && mainSource.includes('function getMatchingPlaybackRecovery(project')
+    && mainSource.includes('initialPlaybackState: options.initialPlaybackState ?? null')
+    && mainSource.includes('onPlaybackStateChange: (playbackState) => persistCurrentAppMode({ playbackState })')
+    && playerSource.includes('options.initialPlaybackState')
+    && playerSource.includes('options.onPlaybackStateChange'),
+  'RolePlayScene play mode should store and restore compact same-tab playback state',
+);
+assert.ok(
+  mainSource.includes('const directPublishedSceneId = getDirectPublishedSceneIdFromLocation();')
+    && mainSource.includes('persistenceCleanup = directPublishedSceneId')
+    && bootstrapSource.includes('if (directPublishedSceneId) {')
+    && /updatePublishedPlayUi\(\);\r?\n\s+return;/.test(bootstrapSource)
+    && bootstrapSource.indexOf("openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' })")
+      < bootstrapSource.indexOf("const recovery = readPlaySessionRecovery();"),
+  'direct published play links should bypass the editor-first startup path',
+);
+assert.ok(
   mainSource.includes('let publishedScenesRequestId = 0')
     && mainSource.includes("return { ok: false, skipped: true, status: 'already_loading' }")
     && mainSource.includes('const requestId = ++publishedScenesRequestId')
@@ -121,9 +143,19 @@ assert.ok(
   mainSource.includes('teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {')
     && mainSource.includes('apiClient,')
     && mainSource.includes('ensureServerSessionReady,')
+    && mainSource.includes('onServerApiResult: syncServerSessionFromApiResult')
     && mainSource.includes('initialSelectedSceneId: editorSession.selectedSceneId')
     && mainSource.includes('onPreviewCurrentScene: startEditorScenePreview'),
   'RolePlayScene editor should receive server API/session hooks for protected T2A generation',
+);
+assert.ok(
+  mainSource.includes('function isServerAuthRequired(result)')
+    && mainSource.includes('function syncServerSessionFromApiResult(result)')
+    && mainSource.includes("status: 'not_ready'")
+    && mainSource.includes('syncServerSessionFromApiResult(result);')
+    && editorSource.includes("const onServerApiResult = typeof options.onServerApiResult === 'function'")
+    && editorSource.includes('onServerApiResult?.(result);'),
+  'late API auth failures should downgrade RolePlayScene session UI for server actions and T2A generation',
 );
 assert.ok(
   mainSource.includes('let editorSession = {')

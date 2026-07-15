@@ -113,6 +113,16 @@ test('viewer upload notification interpolation preserves percent symbol', async 
   assert.equal(mod.t('viewer.notifications.uploadAttempt.progressPercent', { percent: 42 }), 'Uploading attempt... 42%');
 });
 
+test('viewer print school default follows active locale', async () => {
+  const mod = await import(`./index.js?case=${Math.random()}`);
+
+  mod.setLocale('en', { persist: false });
+  assert.equal(mod.t('viewer.print.defaultSchoolName'), 'Hong Kong Red Cross Hospital Schools');
+
+  mod.setLocale('zh-Hant', { persist: false });
+  assert.equal(mod.t('viewer.print.defaultSchoolName'), '香港紅十字會醫院學校');
+});
+
 test('zh-Hant attempt slot limit strings are translated', async () => {
   const mod = await import(`./index.js?case=${Math.random()}`);
   mod.setLocale('zh-Hant', { persist: false });

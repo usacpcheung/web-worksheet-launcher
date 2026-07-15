@@ -36,13 +36,55 @@ function parsePositiveInt(value, fallback, name) {
   return parsed;
 }
 
+function parseHost(value) {
+  const host = (value ?? '127.0.0.1').trim();
+  if (!host) {
+    throw new Error('Invalid HOST value: empty');
+  }
+  return host;
+}
+
+function isLoopbackHost(host) {
+  const normalized = String(host || '').trim().toLowerCase();
+  return normalized === '127.0.0.1'
+    || normalized === 'localhost'
+    || normalized === '::1'
+    || normalized === '[::1]'
+    || normalized === '0:0:0:0:0:0:0:1';
+}
+
+function parseOptionalSecret(value) {
+  if (typeof value !== 'string') return null;
+  const secret = value.trim();
+  return secret ? secret : null;
+}
+
+function parseHeaderName(value, fallback, name) {
+  const headerName = (value || fallback).trim().toLowerCase();
+  if (!headerName) {
+    throw new Error(`Invalid ${name} value: empty`);
+  }
+  return headerName;
+}
+
 export function loadConfig(env = process.env) {
   const databaseUrl = requireNonEmpty('DATABASE_URL', env.DATABASE_URL);
   const storageRoot = path.resolve(requireNonEmpty('STORAGE_ROOT', env.STORAGE_ROOT));
+  const host = parseHost(env.HOST);
+  const trustedProxySecret = parseOptionalSecret(env.TRUSTED_PROXY_SECRET);
+  const trustedProxySecretHeader = parseHeaderName(
+    env.TRUSTED_PROXY_SECRET_HEADER,
+    'x-worksheet-proxy-secret',
+    'TRUSTED_PROXY_SECRET_HEADER'
+  );
+  if (!isLoopbackHost(host) && !trustedProxySecret) {
+    throw new Error('TRUSTED_PROXY_SECRET is required when HOST is not loopback.');
+  }
 
   return {
     nodeEnv: env.NODE_ENV || 'development',
     port: parsePort(env.PORT, '8787'),
+    host,
     databaseUrl,
     storageRoot,
     authHeaders: {
@@ -50,10 +92,36 @@ export function loadConfig(env = process.env) {
       email: (env.AUTH_HEADER_EMAIL || 'x-oidc-email').toLowerCase(),
       name: (env.AUTH_HEADER_NAME || 'x-oidc-name').toLowerCase(),
     },
+    trustedProxy: {
+      secret: trustedProxySecret,
+      secretHeader: trustedProxySecretHeader,
+    },
     draftSlotLimit: 3,
     attemptSlotLimit: 3,
     browsePageLimitDefault: 20,
     browsePageLimitMax: 100,
     packageUploadMaxBytes: parsePositiveInt(env.PACKAGE_UPLOAD_MAX_BYTES, '31457280', 'PACKAGE_UPLOAD_MAX_BYTES'),
+    rolePlayScenePackageLimits: {
+      maxUncompressedBytes: parsePositiveInt(
+        env.ROLEPLAYSCENE_PACKAGE_MAX_UNCOMPRESSED_BYTES,
+        '67108864',
+        'ROLEPLAYSCENE_PACKAGE_MAX_UNCOMPRESSED_BYTES'
+      ),
+      maxEntryBytes: parsePositiveInt(
+        env.ROLEPLAYSCENE_PACKAGE_MAX_ENTRY_BYTES,
+        '33554432',
+        'ROLEPLAYSCENE_PACKAGE_MAX_ENTRY_BYTES'
+      ),
+      maxEntries: parsePositiveInt(
+        env.ROLEPLAYSCENE_PACKAGE_MAX_ENTRIES,
+        '200',
+        'ROLEPLAYSCENE_PACKAGE_MAX_ENTRIES'
+      ),
+      maxEntryNameLength: parsePositiveInt(
+        env.ROLEPLAYSCENE_PACKAGE_MAX_ENTRY_NAME_LENGTH,
+        '512',
+        'ROLEPLAYSCENE_PACKAGE_MAX_ENTRY_NAME_LENGTH'
+      ),
+    },
   };
 }

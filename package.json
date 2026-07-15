@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test server",
+    "test": "node --test \"server/**/*.test.mjs\"",
     "migrate": "node server/api/db/migrate.js",
+    "artifacts:maintain": "node server/api/maintenance/artifacts.js",
     "start:api": "node server/api/server.js",
     "pw:install": "playwright install chromium",
     "serve:static": "node scripts/static-server.mjs",

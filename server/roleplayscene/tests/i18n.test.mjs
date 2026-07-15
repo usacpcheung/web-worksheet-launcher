@@ -45,6 +45,16 @@ try {
     'Import confirmation title should resolve from shared Traditional Chinese locale',
   );
   assert.strictEqual(
+    translate('toolbar.newStory'),
+    '開始新故事',
+    'New Story toolbar action should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('messages.newStoryConfirmAccept'),
+    '開始新故事',
+    'New Story confirmation action should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
     translate('messages.importMissingMediaWarning', { path: 'media/missing.mp3' }),
     '缺少媒體檔案：media/missing.mp3',
     'Import missing-media warning should resolve from shared Traditional Chinese locale',
@@ -109,12 +119,32 @@ try {
     '2 / 3',
     'Speech bubble playback page status should resolve from shared Traditional Chinese locale',
   );
+  assert.strictEqual(
+    translate('player.discussion.defaultSchoolName'),
+    '香港紅十字會醫院學校',
+    'Discussion print school default should follow Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('player.discussion.printDetailsTitle'),
+    '列印資料',
+    'Discussion print details modal title should resolve from Traditional Chinese locale',
+  );
 
   setActiveLocale('en');
   assert.strictEqual(
     translate('messages.importConfirmAccept'),
     'Replace and import',
     'Import confirmation action should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('toolbar.newStory'),
+    'New Story',
+    'New Story toolbar action should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('messages.newStoryConfirmTitle'),
+    'Start a new story?',
+    'New Story confirmation title should resolve from shared English locale',
   );
   assert.strictEqual(
     translate('server.conflictCopy'),
@@ -170,6 +200,16 @@ try {
     translate('player.speechBubble.noDialogue'),
     'No visible dialogue for this scene.',
     'Speech bubble playback no-dialogue message should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('player.discussion.defaultSchoolName'),
+    'Hong Kong Red Cross Hospital Schools',
+    'Discussion print school default should follow English locale',
+  );
+  assert.strictEqual(
+    translate('player.discussion.printDetailsTitle'),
+    'Print details',
+    'Discussion print details modal title should resolve from English locale',
   );
   assert.strictEqual(
     translate('missing.key', { default: 'Fallback {value}', value: 'text' }),

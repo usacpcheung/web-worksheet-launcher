@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict';
+
 class StubElement {
   constructor(tagName) {
     this.tagName = tagName;
@@ -261,8 +263,8 @@ function collectText(root) {
 }
 
 function logResult(label, condition) {
-  const status = condition ? 'OK' : 'FAIL';
-  console.log(`${status}: ${label}`);
+  assert.ok(condition, label);
+  console.log(`OK: ${label}`);
 }
 
 function renderScene(scene) {

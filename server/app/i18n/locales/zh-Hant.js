@@ -124,6 +124,12 @@ export default {
     },
     "uploadedDraft": {
       "manage": "管理已上載草稿",
+      "openDialog": {
+        "confirm": "開啟草稿",
+        "description": "這會以「{title}」的本機副本取代目前在編輯器顯示的工作紙。",
+        "title": "要開啟已上載的草稿嗎？",
+        "warning": "如需稍後返回目前的工作紙，請先儲存或匯出它。"
+      },
       "deleteDialog": {
         "confirm": "確認",
         "draftDescription": "這會刪除已上載草稿。",
@@ -376,7 +382,8 @@ export default {
       },
       "save": {
         "manualSaveFailed": "手動儲存失敗。",
-        "savedDraft": "已儲存草稿 {id}。"
+        "savedDraft": "已儲存草稿 {id}。",
+        "savedLocalDraft": "已儲存本機草稿。"
       },
       "uploadDraft": {
         "alreadyInProgress": "上載正在進行中。",
@@ -566,6 +573,9 @@ export default {
       "openTechnicalDetailsAriaLabel": "開啟詳細資料與列印設定",
       "openTechnicalDetailsTitle": "詳細資料與列印設定",
       "printSchoolName": "學校名稱",
+      "printSchoolNameMode": "學校名稱模式",
+      "printSchoolNameDefault": "預設",
+      "printSchoolNameCustom": "自訂",
       "studentName": "學生姓名",
       "studentNamePlaceholder": "輸入學生姓名",
       "title": "詳細資料與列印設定"
@@ -651,6 +661,7 @@ export default {
       "answerPrefix": "答案：",
       "checkedResultHeading": "檢查結果",
       "checkedSummary": "已檢查正確 {correct}/{total}",
+      "defaultSchoolName": "香港紅十字會醫院學校",
       "meta": {
         "checkResult": "檢查結果",
         "student": "學生",

@@ -124,6 +124,12 @@ export default {
     },
     "uploadedDraft": {
       "manage": "Manage Uploaded Drafts",
+      "openDialog": {
+        "confirm": "Open draft",
+        "description": "This will replace the worksheet currently shown in the editor with a local copy of \"{title}\".",
+        "title": "Open uploaded draft?",
+        "warning": "Save or export the current worksheet first if you need to return to it."
+      },
       "deleteDialog": {
         "confirm": "Confirm",
         "draftDescription": "This will delete the uploaded draft.",
@@ -376,7 +382,8 @@ export default {
       },
       "save": {
         "manualSaveFailed": "Manual save failed.",
-        "savedDraft": "Saved draft {id}."
+        "savedDraft": "Saved draft {id}.",
+        "savedLocalDraft": "Saved local draft."
       },
       "uploadDraft": {
         "alreadyInProgress": "Upload already in progress.",
@@ -566,6 +573,9 @@ export default {
       "openTechnicalDetailsAriaLabel": "Open details and print settings",
       "openTechnicalDetailsTitle": "Details and print settings",
       "printSchoolName": "Print school name",
+      "printSchoolNameMode": "School name mode",
+      "printSchoolNameDefault": "Default",
+      "printSchoolNameCustom": "Custom",
       "studentName": "Student name",
       "studentNamePlaceholder": "Enter student name",
       "title": "Details and print settings"
@@ -651,6 +661,7 @@ export default {
       "answerPrefix": "Answer:",
       "checkedResultHeading": "Check result",
       "checkedSummary": "Checked {correct}/{total} correct",
+      "defaultSchoolName": "Hong Kong Red Cross Hospital Schools",
       "meta": {
         "checkResult": "Check result",
         "student": "Student",
