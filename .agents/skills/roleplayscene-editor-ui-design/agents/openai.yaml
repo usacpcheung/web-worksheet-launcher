@@ -1,0 +1,4 @@
+interface:
+  display_name: "RolePlayScene UI Design"
+  short_description: "Guide RolePlayScene editor and playback UI work."
+  default_prompt: "Use this skill when changing RolePlayScene editor or player/playback UI so the work follows the repo design language."

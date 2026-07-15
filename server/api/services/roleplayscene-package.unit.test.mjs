@@ -2,11 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createRolePlaySceneDraftArtifactStoreInput,
+  DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
   getRolePlaySceneDraftArtifactBucket,
   getRolePlayScenePublishedArtifactBucket,
   ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET,
   ROLEPLAYSCENE_PUBLISHED_ARTIFACT_BUCKET,
   ROLEPLAYSCENE_PACKAGE_FORMAT,
+  ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED,
   ROLEPLAYSCENE_PACKAGE_VERSION,
   rewriteRolePlayScenePackageTitle,
   validateRolePlayScenePackage,
@@ -133,6 +135,77 @@ test('validateRolePlayScenePackage accepts fflate-compressed RolePlayScene expor
   assert.equal(result.metadata.mediaCount, 2);
 });
 
+test('validateRolePlayScenePackage rejects entries above the per-entry uncompressed limit', () => {
+  const result = validateRolePlayScenePackage(createCompressedPackageZip({
+    mediaEntries: {
+      'media/scene-start/image.png': 'x'.repeat(1024),
+      'media/scene-start/dialogue-1.mp3': 'audio',
+    },
+  }), {
+    limits: {
+      ...DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
+      maxEntryBytes: 512,
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED);
+  assert.equal(result.error.details.limit, 'maxEntryBytes');
+  assert.equal(result.error.details.path, 'media/scene-start/image.png');
+});
+
+test('validateRolePlayScenePackage rejects total uncompressed bytes above the configured limit', () => {
+  const zipBytes = createCompressedPackageZip({
+    mediaEntries: {
+      'media/scene-start/image.png': 'x'.repeat(256),
+      'media/scene-start/dialogue-1.mp3': 'y'.repeat(256),
+    },
+  });
+
+  const rejected = validateRolePlayScenePackage(zipBytes, {
+    limits: {
+      ...DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
+      maxUncompressedBytes: 256,
+    },
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.error.code, ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED);
+  assert.equal(rejected.error.details.limit, 'maxUncompressedBytes');
+
+  const accepted = validateRolePlayScenePackage(zipBytes, {
+    limits: {
+      ...DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
+      maxUncompressedBytes: 4096,
+    },
+  });
+  assert.equal(accepted.ok, true);
+});
+
+test('validateRolePlayScenePackage rejects packages with too many entries', () => {
+  const result = validateRolePlayScenePackage(createPackageZip({
+    extraEntries: {
+      'content/extra-1.json': '{}',
+      'content/extra-2.json': '{}',
+    },
+  }), {
+    limits: {
+      ...DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
+      maxEntries: 3,
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED);
+  assert.equal(result.error.details.limit, 'maxEntries');
+});
+
+test('validateRolePlayScenePackage keeps malformed ZIP errors distinct from resource limit errors', () => {
+  const result = validateRolePlayScenePackage(new Uint8Array([0x50, 0x4b, 0x03, 0x04]));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'INVALID_ROLEPLAYSCENE_PACKAGE_ZIP');
+});
+
 test('rewriteRolePlayScenePackageTitle updates manifest and project title while preserving media', () => {
   const rewritten = rewriteRolePlayScenePackageTitle(createCompressedPackageZip(), 'Clinic Practice (2)');
   const result = validateRolePlayScenePackage(rewritten);
@@ -143,6 +216,18 @@ test('rewriteRolePlayScenePackageTitle updates manifest and project title while 
   assert.equal(result.project.meta.title, 'Clinic Practice (2)');
   assert.equal(result.metadata.mediaCount, 2);
   assert.deepEqual(result.warnings, []);
+});
+
+test('rewriteRolePlayScenePackageTitle rejects oversized packages before rewriting', () => {
+  assert.throws(
+    () => rewriteRolePlayScenePackageTitle(createPackageZip(), 'Clinic Practice (2)', {
+      limits: {
+        ...DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
+        maxEntries: 1,
+      },
+    }),
+    error => error?.code === ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED
+  );
 });
 
 test('validateRolePlayScenePackage rejects legacy RolePlayScene ZIPs', () => {

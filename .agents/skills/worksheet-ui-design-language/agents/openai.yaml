@@ -1,0 +1,4 @@
+interface:
+  display_name: "Worksheet UI Design Language"
+  short_description: "Guide editor and viewer UI work in this repo."
+  default_prompt: "Use this skill when changing /server/editor or /server/viewer UI so the work follows the repo design language."

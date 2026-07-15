@@ -1,3 +1,5 @@
+import assert from 'node:assert/strict';
+
 class StubElement {
   constructor(tagName) {
     this.tagName = tagName;
@@ -107,8 +109,8 @@ function renderScene(scene, onChoice = () => {}) {
 }
 
 function logResult(label, condition) {
-  const status = condition ? 'OK' : 'FAIL';
-  console.log(`${status}: ${label}`);
+  assert.ok(condition, label);
+  console.log(`OK: ${label}`);
 }
 
 // Test: no autoNext renders placeholder text

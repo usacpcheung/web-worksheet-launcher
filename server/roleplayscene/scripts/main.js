@@ -1,6 +1,8 @@
 import { Store } from './state.js';
 import { renderEditor } from './editor/editor.js';
 import { renderPlayer } from './player/player.js';
+import { RolePlaySceneDiscussionSession, computeDiscussionProjectFingerprint } from './player/discussion-state.js';
+import { buildDiscussionPrintHtml, buildDiscussionPrintModel } from './player/discussion-print.js';
 import { ensureAudioGate } from './player/audio.js';
 import {
   applyPreparedProjectImport,
@@ -13,7 +15,8 @@ import {
 } from './storage.js';
 import { validateProject } from './editor/validators.js';
 import { renderValidation } from './editor/inspector.js';
-import { translate, onLocaleChange, getAvailableLocales, LOCALE_STORAGE_KEY } from './i18n.js';
+import { createProject } from './model.js';
+import { translate, onLocaleChange, getActiveLocale, getAvailableLocales, LOCALE_STORAGE_KEY } from './i18n.js';
 import { createServerApiClient } from '../../app/api/server-api-client.js';
 import { probeSession } from '../../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../../app/auth/auth-popup-flow.js';
@@ -28,6 +31,7 @@ const dismissButton = messageHost?.querySelector('.app-messages__dismiss');
 
 const btnEdit = document.getElementById('mode-edit');
 const btnPlay = document.getElementById('mode-play');
+const btnNewStory = document.getElementById('new-story-btn');
 const btnImport = document.getElementById('import-btn');
 const btnExport = document.getElementById('export-btn');
 const serverStatus = document.getElementById('server-status');
@@ -68,6 +72,7 @@ const serverModalClose = document.getElementById('server-modal-close');
 
 const store = new Store();
 const apiClient = createServerApiClient();
+const discussionSession = new RolePlaySceneDiscussionSession({ apiClient });
 
 let mode = 'edit'; // 'edit' | 'play'
 let teardown = null;
@@ -85,6 +90,12 @@ let activeAuthFlow = null;
 let serverSession = { status: 'checking', user: null, error: null };
 let uploadedDrafts = [];
 let uploadedDraftSlotLimit = 3;
+
+const ImportConfirmationKind = Object.freeze({
+  IMPORT: 'import',
+  NEW_STORY: 'new-story',
+  DISCUSSION_DISCARD: 'discussion-discard',
+});
 let isLoadingUploadedDrafts = false;
 let isUploadingDraft = false;
 const publishingDraftIds = new Set();
@@ -97,10 +108,14 @@ let publishedScenesRequestId = 0;
 let openingPublishedSceneIds = new Set();
 let publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
 let pendingDirectPublishedSceneId = '';
+let discussionPrintDetails = { schoolName: '', schoolNameCustom: false, studentName: '' };
+let activePlaybackState = null;
 
 const LEGACY_LOCALE_STORAGE_KEY = 'roleplayscene:locale';
+const PLAY_SESSION_STORAGE_KEY = 'roleplayscene:play-session:v1';
 const HEADER_TABLET_MIN_WIDTH = 768;
 const HEADER_COMPACT_MAX_WIDTH = 1023;
+const DEFAULT_TOPBAR_HEIGHT_PX = 64;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -160,6 +175,18 @@ function getHeaderLayoutMode() {
   if (width > HEADER_COMPACT_MAX_WIDTH) return 'desktop';
   if (width >= HEADER_TABLET_MIN_WIDTH) return 'tablet';
   return 'mobile';
+}
+
+function syncTopbarHeightVariable() {
+  const measuredHeight = Number(
+    topbar?.getBoundingClientRect?.().height
+    || topbar?.offsetHeight
+    || DEFAULT_TOPBAR_HEIGHT_PX
+  );
+  const height = Number.isFinite(measuredHeight) && measuredHeight > 0
+    ? Math.ceil(measuredHeight)
+    : DEFAULT_TOPBAR_HEIGHT_PX;
+  document.documentElement?.style?.setProperty('--roleplayscene-topbar-height', `${height}px`);
 }
 
 function setToolbarOverflowOpen(open) {
@@ -299,6 +326,7 @@ function applyDesktopWrapOverflowFallback() {
 }
 
 function restoreDesktopToolbarLayout() {
+  moveToolbarNode(btnNewStory, toolbarFiles);
   moveToolbarNode(btnImport, toolbarFiles);
   moveToolbarNode(btnExport, toolbarFiles);
   moveToolbarNode(serverSignInButton, toolbarServer);
@@ -329,6 +357,7 @@ function restoreDesktopToolbarLayout() {
 
 function applyToolbarOverflowLayout() {
   if (!toolbar || !toolbarOverflow || !toolbarMoreServerItems || !toolbarMoreProjectItems) {
+    syncTopbarHeightVariable();
     return;
   }
 
@@ -340,9 +369,11 @@ function applyToolbarOverflowLayout() {
     }
     updateToolbarWrapState();
     updateMobileServerBadgeLayout();
+    syncTopbarHeightVariable();
     return;
   }
 
+  moveToolbarNode(btnNewStory, toolbarMoreProjectItems);
   moveToolbarNode(btnImport, toolbarMoreProjectItems);
   moveToolbarNode(btnExport, toolbarMoreProjectItems);
   moveToolbarNode(toolbarLocale, toolbarMoreProjectItems);
@@ -382,6 +413,7 @@ function applyToolbarOverflowLayout() {
 
   updateToolbarWrapState();
   updateMobileServerBadgeLayout();
+  syncTopbarHeightVariable();
 }
 
 function createZipFileFromBytes(bytes, name) {
@@ -407,6 +439,10 @@ function updateToolbarText() {
   }
   if (btnPlay) {
     btnPlay.textContent = translate('toolbar.play');
+  }
+  if (btnNewStory) {
+    btnNewStory.textContent = translate('toolbar.newStory');
+    btnNewStory.title = translate('toolbar.newStoryTitle');
   }
   if (btnImport) {
     btnImport.textContent = translate('toolbar.import');
@@ -460,18 +496,10 @@ function updateToolbarText() {
   if (dismissButton) {
     dismissButton.setAttribute('aria-label', translate('toolbar.dismissMessage'));
   }
-  if (importConfirmTitle) {
-    importConfirmTitle.textContent = translate('messages.importConfirmTitle');
-  }
-  if (importConfirmBody) {
-    importConfirmBody.textContent = translate('messages.importConfirmBody');
-  }
-  if (importConfirmAccept) {
-    importConfirmAccept.textContent = translate('messages.importConfirmAccept');
-  }
-  if (importConfirmCancel) {
-    importConfirmCancel.textContent = translate('messages.importConfirmCancel');
-  }
+  applyImportConfirmationCopy(
+    activeImportConfirmation?.kind || ImportConfirmationKind.IMPORT,
+    activeImportConfirmation?.options || {}
+  );
   if (serverModalClose) {
     serverModalClose.setAttribute('aria-label', translate('server.close'));
   }
@@ -511,6 +539,7 @@ function refreshLocaleUI(nextLocale) {
   if (lastMessagePayload) {
     showMessage(lastMessagePayload);
   }
+  syncTopbarHeightVariable();
 }
 
 function migrateLegacyLocalePreference() {
@@ -537,12 +566,80 @@ function getActiveStore() {
   return publishedPlay.active && publishedPlay.store ? publishedPlay.store : store;
 }
 
+function getSessionStorage() {
+  try {
+    const storage = globalThis.sessionStorage;
+    return storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function'
+      ? storage
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function readPlaySessionRecovery() {
+  const storage = getSessionStorage();
+  if (!storage) return null;
+  try {
+    const parsed = JSON.parse(storage.getItem(PLAY_SESSION_STORAGE_KEY) || 'null');
+    if (!parsed || parsed.version !== 1 || !['edit', 'play'].includes(parsed.mode)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writePlaySessionRecovery(next = {}) {
+  const storage = getSessionStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(PLAY_SESSION_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      updatedAt: Date.now(),
+      ...next,
+    }));
+  } catch {
+    // Same-tab recovery is best effort only.
+  }
+}
+
+function getProjectFingerprint(project = getActiveStore().get().project) {
+  return computeDiscussionProjectFingerprint(project);
+}
+
+function getMatchingPlaybackRecovery(project, { publishedSceneId = '' } = {}) {
+  const recovery = readPlaySessionRecovery();
+  if (!recovery || recovery.mode !== 'play') return null;
+  if (publishedSceneId && recovery.publishedSceneId !== publishedSceneId) return null;
+  if (!publishedSceneId && recovery.publishedSceneId) return null;
+  if (recovery.projectFingerprint !== getProjectFingerprint(project)) return null;
+  return recovery.playbackState && typeof recovery.playbackState === 'object'
+    ? recovery.playbackState
+    : {};
+}
+
+function persistCurrentAppMode(extra = {}) {
+  if (Object.prototype.hasOwnProperty.call(extra, 'playbackState')) {
+    activePlaybackState = extra.playbackState ?? null;
+  }
+  const activeProject = getActiveStore().get().project;
+  writePlaySessionRecovery({
+    mode,
+    projectFingerprint: getProjectFingerprint(activeProject),
+    publishedSceneId: publishedPlay.active ? getRolePlayScenePublishedSceneId(publishedPlay.scene) : '',
+    playbackState: mode === 'play' ? activePlaybackState : null,
+  });
+}
+
 function setMode(next, options = {}) {
   if (teardown) {
     teardown();
     teardown = null;
   }
   mode = next;
+  if (mode === 'edit') {
+    activePlaybackState = null;
+  }
   btnEdit.classList.toggle('active', mode === 'edit');
   btnPlay.classList.toggle('active', mode === 'play');
   if (appRoot) {
@@ -555,6 +652,7 @@ function setMode(next, options = {}) {
     teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {
       apiClient,
       ensureServerSessionReady,
+      onServerApiResult: syncServerSessionFromApiResult,
       initialSelectedSceneId: editorSession.selectedSceneId,
       initialLeftView: editorSession.leftView,
       initialSelectedSpeechBubbleAnchorId: editorSession.selectedSpeechBubbleAnchorId,
@@ -562,10 +660,18 @@ function setMode(next, options = {}) {
       onPreviewCurrentScene: startEditorScenePreview,
     });
   } else {
+    discussionSession.bindProject(getActiveStore().get().project);
     teardown = renderPlayer(getActiveStore(), elLeft, elRight, showMessage, {
       initialSceneId: options.initialSceneId ?? null,
+      initialPlaybackState: options.initialPlaybackState ?? null,
+      discussionSession,
+      apiClient,
+      onDiscussionChange: () => persistCurrentAppMode(),
+      onPlaybackStateChange: (playbackState) => persistCurrentAppMode({ playbackState }),
+      onPrintDiscussion: printRolePlaySceneDiscussion,
     });
   }
+  persistCurrentAppMode();
   updateToolbarText();
   updatePublishedPlayUi();
 }
@@ -723,7 +829,7 @@ function updateServerSessionUi() {
 function updatePublishedPlayUi() {
   const inPublishedPlay = Boolean(publishedPlay.active);
   const inEditorPreview = Boolean(editorPreview) && !inPublishedPlay;
-  [btnEdit, btnImport, btnExport, serverSaveButton, serverManageButton].forEach((control) => {
+  [btnEdit, btnNewStory, btnImport, btnExport, serverSaveButton, serverManageButton].forEach((control) => {
     if (control) control.hidden = inPublishedPlay;
   });
   if (btnEdit && !inPublishedPlay) {
@@ -912,7 +1018,30 @@ function chooseFromServerModal({ title, message, actions }) {
   });
 }
 
+function isServerAuthRequired(result) {
+  const status = Number(result?.error?.status ?? result?.status);
+  const code = String(result?.error?.code || '').toUpperCase();
+  return Boolean(
+    result?.error?.requiresSignIn
+    || status === 401
+    || status === 403
+    || code === 'AUTH_REQUIRED'
+  );
+}
+
+function syncServerSessionFromApiResult(result) {
+  if (result?.ok !== false || !isServerAuthRequired(result)) return false;
+  serverSession = {
+    status: 'not_ready',
+    user: null,
+    error: result.error?.message || translate('server.signInRequired'),
+  };
+  updateServerSessionUi();
+  return true;
+}
+
 function getServerErrorMessage(result, fallbackId = 'server.actionFailed') {
+  syncServerSessionFromApiResult(result);
   return result?.error?.message || translate(fallbackId);
 }
 
@@ -1028,6 +1157,267 @@ function showImportError(err) {
   });
 }
 
+function getDefaultDiscussionPrintSchoolName() {
+  return translate('player.discussion.defaultSchoolName');
+}
+
+function formatDiscussionPrintDate(date = new Date()) {
+  try {
+    return new Intl.DateTimeFormat(getActiveLocale(), {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(date);
+  } catch {
+    return date.toLocaleDateString();
+  }
+}
+
+function readDiscussionPrintDetailsDraft() {
+  const storedSchoolName = String(discussionPrintDetails.schoolName || '').trim();
+  const useCustomSchoolName = discussionPrintDetails.schoolNameCustom && storedSchoolName;
+  return {
+    schoolName: useCustomSchoolName ? storedSchoolName : getDefaultDiscussionPrintSchoolName(),
+    schoolNameCustom: useCustomSchoolName,
+    studentName: String(discussionPrintDetails.studentName || '').trim(),
+  };
+}
+
+function promptDiscussionPrintDetails() {
+  if (!serverModalOverlay || !serverModalTitle || !serverModalBody || !serverModalActions) {
+    return Promise.resolve(readDiscussionPrintDetailsDraft());
+  }
+  const draft = readDiscussionPrintDetailsDraft();
+  return new Promise((resolve) => {
+    let resolved = false;
+    let schoolInput = null;
+    let studentInput = null;
+    let defaultModeButton = null;
+    let customModeButton = null;
+    let schoolNameCustom = draft.schoolNameCustom;
+    let unsubscribeLocaleChange = null;
+    const settle = (value) => {
+      if (resolved) return;
+      resolved = true;
+      if (unsubscribeLocaleChange) {
+        unsubscribeLocaleChange();
+        unsubscribeLocaleChange = null;
+      }
+      resolve(value);
+    };
+    const collectDetails = () => {
+      const rawSchoolName = String(schoolInput?.value || '').trim();
+      const nextSchoolName = schoolNameCustom
+        ? rawSchoolName || getDefaultDiscussionPrintSchoolName()
+        : getDefaultDiscussionPrintSchoolName();
+      return {
+        schoolName: nextSchoolName,
+        schoolNameCustom: schoolNameCustom && Boolean(rawSchoolName),
+        studentName: String(studentInput?.value || '').trim(),
+      };
+    };
+    const syncSchoolNameMode = () => {
+      if (schoolInput) {
+        schoolInput.readOnly = !schoolNameCustom;
+        schoolInput.classList.toggle('discussion-print-details-form__input--readonly', !schoolNameCustom);
+        if (!schoolNameCustom) {
+          schoolInput.value = getDefaultDiscussionPrintSchoolName();
+        }
+      }
+      if (defaultModeButton) {
+        defaultModeButton.setAttribute('aria-pressed', schoolNameCustom ? 'false' : 'true');
+        defaultModeButton.classList.toggle('is-active', !schoolNameCustom);
+      }
+      if (customModeButton) {
+        customModeButton.setAttribute('aria-pressed', schoolNameCustom ? 'true' : 'false');
+        customModeButton.classList.toggle('is-active', schoolNameCustom);
+      }
+    };
+
+    openServerModal({
+      title: translate('player.discussion.printDetailsTitle'),
+      bodyRenderer: (body) => {
+        const form = document.createElement('form');
+        form.className = 'discussion-print-details-form';
+
+        const schoolLabel = document.createElement('label');
+        schoolLabel.className = 'discussion-print-details-form__label';
+        schoolLabel.textContent = translate('player.discussion.printSchoolName');
+        const schoolModeRow = document.createElement('div');
+        schoolModeRow.className = 'discussion-print-details-form__mode-row';
+        const schoolModeLabel = document.createElement('span');
+        schoolModeLabel.className = 'discussion-print-details-form__mode-label';
+        schoolModeLabel.textContent = translate('player.discussion.printSchoolNameMode');
+        const schoolModeGroup = document.createElement('div');
+        schoolModeGroup.className = 'discussion-print-details-form__mode';
+        schoolModeGroup.setAttribute('role', 'group');
+        schoolModeGroup.setAttribute('aria-label', translate('player.discussion.printSchoolNameMode'));
+        defaultModeButton = document.createElement('button');
+        defaultModeButton.type = 'button';
+        defaultModeButton.className = 'discussion-print-details-form__mode-button';
+        defaultModeButton.textContent = translate('player.discussion.printSchoolNameDefault');
+        defaultModeButton.addEventListener('click', () => {
+          schoolNameCustom = false;
+          syncSchoolNameMode();
+        });
+        customModeButton = document.createElement('button');
+        customModeButton.type = 'button';
+        customModeButton.className = 'discussion-print-details-form__mode-button';
+        customModeButton.textContent = translate('player.discussion.printSchoolNameCustom');
+        customModeButton.addEventListener('click', () => {
+          schoolNameCustom = true;
+          syncSchoolNameMode();
+          schoolInput?.focus();
+        });
+        schoolModeGroup.append(defaultModeButton, customModeButton);
+        schoolModeRow.append(schoolModeLabel, schoolModeGroup);
+        schoolInput = document.createElement('input');
+        schoolInput.type = 'text';
+        schoolInput.maxLength = 180;
+        schoolInput.value = draft.schoolName;
+        schoolInput.className = 'discussion-print-details-form__input';
+        schoolInput.autocomplete = 'organization';
+        schoolInput.addEventListener('input', () => { schoolNameCustom = true; syncSchoolNameMode(); });
+        schoolLabel.appendChild(schoolInput);
+
+        const studentLabel = document.createElement('label');
+        studentLabel.className = 'discussion-print-details-form__label';
+        studentLabel.textContent = translate('player.discussion.printStudentName');
+        studentInput = document.createElement('input');
+        studentInput.type = 'text';
+        studentInput.maxLength = 120;
+        studentInput.value = draft.studentName;
+        studentInput.placeholder = translate('player.discussion.printStudentNamePlaceholder');
+        studentInput.className = 'discussion-print-details-form__input';
+        studentInput.autocomplete = 'name';
+        studentLabel.appendChild(studentInput);
+
+        form.addEventListener('submit', (event) => {
+          event.preventDefault();
+          const details = collectDetails();
+          discussionPrintDetails = details;
+          settle(details);
+          closeServerModal('print');
+        });
+        form.append(schoolModeRow, schoolLabel, studentLabel);
+        body.appendChild(form);
+        syncSchoolNameMode();
+        unsubscribeLocaleChange = onLocaleChange(() => {
+          if (!schoolInput || schoolNameCustom) return;
+          syncSchoolNameMode();
+        });
+      },
+      actions: [
+        {
+          label: translate('player.discussion.printDetailsCancel'),
+          className: 'confirm-actions__secondary',
+          value: null,
+          onClick: () => {
+            settle(null);
+            closeServerModal('cancel');
+          },
+        },
+        {
+          label: translate('player.discussion.printDetailsPrint'),
+          className: 'confirm-actions__primary',
+          onClick: () => {
+            const details = collectDetails();
+            discussionPrintDetails = details;
+            settle(details);
+            closeServerModal('print');
+          },
+        },
+      ],
+      onClose: () => settle(null),
+    });
+  });
+}
+
+async function printRolePlaySceneDiscussion() {
+  const activeProject = getActiveStore().get().project;
+  discussionSession.bindProject(activeProject);
+  if (!discussionSession.hasAnyText()) {
+    showMessage({ text: translate('player.discussion.printEmpty') });
+    return;
+  }
+  const details = await promptDiscussionPrintDetails();
+  if (!details) return;
+  const printWindow = globalThis.open?.('', 'roleplayscene_discussion_print', 'width=960,height=720,resizable=yes,scrollbars=yes');
+  if (!printWindow || !printWindow.document) {
+    showMessage({ text: translate('player.discussion.printPopupBlocked') });
+    return;
+  }
+  const model = buildDiscussionPrintModel(activeProject, discussionSession.snapshot());
+  const html = buildDiscussionPrintHtml(model, {
+    reportTitle: translate('player.discussion.printReportTitle'),
+    dialogue: translate('player.discussion.printDialogue'),
+    choices: translate('player.discussion.printChoices'),
+    discussion: translate('player.discussion.printDiscussion'),
+    empty: translate('player.discussion.printEmpty'),
+    student: translate('player.discussion.printStudentLabel'),
+    date: translate('player.discussion.printDateLabel'),
+    defaultSchoolName: getDefaultDiscussionPrintSchoolName(),
+  }, {
+    schoolName: details.schoolName,
+    studentName: details.studentName,
+    printedAt: formatDiscussionPrintDate(),
+  });
+  try {
+    printWindow.opener = null;
+  } catch {
+    // Printing should still work in browsers that prevent mutating opener.
+  }
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+}
+
+function getImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, options = {}) {
+  const isDiscussionDiscard = kind === ImportConfirmationKind.DISCUSSION_DISCARD;
+  const isNewStory = kind === ImportConfirmationKind.NEW_STORY;
+  return {
+    title: options.title || translate(
+      isDiscussionDiscard
+        ? 'player.discussion.discardTitle'
+        : isNewStory
+          ? 'messages.newStoryConfirmTitle'
+          : 'messages.importConfirmTitle'
+    ),
+    body: options.body || translate(
+      isDiscussionDiscard
+        ? 'player.discussion.discardBody'
+        : isNewStory
+          ? 'messages.newStoryConfirmBody'
+          : 'messages.importConfirmBody'
+    ),
+    accept: options.accept || translate(
+      isDiscussionDiscard
+        ? 'player.discussion.discardConfirm'
+        : isNewStory
+          ? 'messages.newStoryConfirmAccept'
+          : 'messages.importConfirmAccept'
+    ),
+    cancel: options.cancel || translate(
+      isDiscussionDiscard
+        ? 'player.discussion.discardCancel'
+        : 'messages.importConfirmCancel'
+    ),
+  };
+}
+
+function applyImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, options = {}) {
+  const copy = getImportConfirmationCopy(kind, options);
+  if (importConfirmTitle) importConfirmTitle.textContent = copy.title;
+  if (importConfirmBody) importConfirmBody.textContent = copy.body;
+  if (importConfirmAccept) importConfirmAccept.textContent = copy.accept;
+  if (importConfirmCancel) importConfirmCancel.textContent = copy.cancel;
+  importConfirmAccept?.classList.toggle(
+    'confirm-actions__danger',
+    kind === ImportConfirmationKind.NEW_STORY
+  );
+  return copy;
+}
+
 function closeImportConfirmation(result) {
   if (!activeImportConfirmation) return;
   const { resolve, previousFocus } = activeImportConfirmation;
@@ -1059,14 +1449,16 @@ function handleImportConfirmationKeydown(event) {
   }
 }
 
-function confirmProjectImport() {
+function confirmProjectImport(options = {}) {
+  const kind = options.kind || ImportConfirmationKind.IMPORT;
+  const copy = getImportConfirmationCopy(kind, options);
   if (!importConfirmOverlay || !importConfirmAccept || !importConfirmCancel) {
-    return Promise.resolve(globalThis.confirm?.(translate('messages.importConfirmBody')) ?? false);
+    return Promise.resolve(globalThis.confirm?.(copy.body) ?? false);
   }
   if (activeImportConfirmation) {
     closeImportConfirmation(false);
   }
-  updateToolbarText();
+  applyImportConfirmationCopy(kind, options);
   importConfirmOverlay.hidden = false;
   importConfirmOverlay.removeAttribute('hidden');
   document.addEventListener('keydown', handleImportConfirmationKeydown);
@@ -1075,8 +1467,29 @@ function confirmProjectImport() {
     importConfirmAccept.focus();
   });
   return new Promise((resolve) => {
-    activeImportConfirmation = { resolve, previousFocus };
+    activeImportConfirmation = { resolve, previousFocus, kind, options };
   });
+}
+
+function confirmDiscardDiscussion() {
+  return confirmProjectImport({
+    kind: ImportConfirmationKind.DISCUSSION_DISCARD,
+  });
+}
+
+function confirmNewStory() {
+  return confirmProjectImport({
+    kind: ImportConfirmationKind.NEW_STORY,
+  });
+}
+
+async function ensureDiscussionCanBeDiscarded() {
+  if (!discussionSession.hasAnyText()) return true;
+  return await confirmDiscardDiscussion();
+}
+
+function discardDiscussion() {
+  discussionSession.clear();
 }
 
 async function showUploadConflictModal(existingDraft) {
@@ -1533,12 +1946,14 @@ async function loadPublishedRolePlaySceneScenes({
   }
 }
 
-function exitPublishedPlay() {
+async function exitPublishedPlay() {
+  if (!(await ensureDiscussionCanBeDiscarded())) return;
   if (publishedPlay.preparedImport?.project) {
     revokeProjectObjectUrls(publishedPlay.preparedImport.project);
   }
   editorPreview = null;
   publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
+  discardDiscussion();
   setMode('edit');
   showMessage({ textId: 'published.exited' });
 }
@@ -1549,7 +1964,8 @@ async function openPublishedRolePlayScene(scene) {
   return openPublishedRolePlaySceneById(sceneId, { scene });
 }
 
-async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse' } = {}) {
+async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse', initialPlaybackState = null } = {}) {
+  if (!(await ensureDiscussionCanBeDiscarded())) return { ok: false, canceled: true };
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) {
     if (source === 'direct') {
@@ -1588,9 +2004,12 @@ async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, 
     playStore.setLocale(store.get().locale);
     playStore.set({ project: preparedImport.project });
     editorPreview = null;
+    discardDiscussion();
     publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata };
+    const playbackRecovery = initialPlaybackState
+      || getMatchingPlaybackRecovery(preparedImport.project, { publishedSceneId });
     closeServerModal('published-open');
-    setMode('play');
+    setMode('play', { initialPlaybackState: playbackRecovery });
     showMessage({ textId: 'published.opened' });
     return { ok: true };
   } catch (err) {
@@ -1818,6 +2237,7 @@ async function publishUploadedRolePlaySceneDraft(draft) {
 async function openUploadedRolePlaySceneDraft(draft) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId) return;
+  if (!(await ensureDiscussionCanBeDiscarded())) return;
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) return;
   let preparedImport = null;
@@ -1839,6 +2259,7 @@ async function openUploadedRolePlaySceneDraft(draft) {
       showMessage({ textId: 'messages.importCanceled' });
       return;
     }
+    discardDiscussion();
     await applyPreparedProjectImport(store, preparedImport);
     const missingMediaWarnings = preparedImport.missingMediaPaths.map(path => (
       translate('messages.importMissingMediaWarning', { path })
@@ -1941,11 +2362,15 @@ if (dismissButton) {
   });
 }
 
-btnEdit.addEventListener('click', () => {
+btnEdit.addEventListener('click', async () => {
   if (editorPreview && !publishedPlay.active) {
+    if (!(await ensureDiscussionCanBeDiscarded())) return;
+    discardDiscussion();
     returnFromEditorScenePreview();
     return;
   }
+  if (!(await ensureDiscussionCanBeDiscarded())) return;
+  discardDiscussion();
   editorPreview = null;
   setMode('edit');
 });
@@ -1988,6 +2413,22 @@ btnPlay.addEventListener('click', () => {
 });
 
 btnImport.addEventListener('click', () => fileInput.click());
+btnNewStory?.addEventListener('click', async () => {
+  if (!(await ensureDiscussionCanBeDiscarded())) return;
+  const shouldStart = await confirmNewStory();
+  if (!shouldStart) return;
+
+  discardDiscussion();
+  editorPreview = null;
+  editorSession = {
+    selectedSceneId: null,
+    leftView: 'storyMap',
+    selectedSpeechBubbleAnchorId: null,
+  };
+  await applyPreparedProjectImport(store, { project: createProject() });
+  setMode('edit');
+  showMessage({ textId: 'messages.newStoryStarted' });
+});
 serverSignInButton?.addEventListener('click', () => startServerSignIn());
 serverSaveButton?.addEventListener('click', () => {
   uploadCurrentProjectToServer().catch((err) => {
@@ -2035,14 +2476,28 @@ document.addEventListener('keydown', (event) => {
 
 globalThis.addEventListener?.('resize', () => {
   applyToolbarOverflowLayout();
+  syncTopbarHeightVariable();
   setToolbarOverflowOpen(false);
 });
+
+if (typeof globalThis.ResizeObserver === 'function' && topbar) {
+  const topbarResizeObserver = new globalThis.ResizeObserver(() => {
+    syncTopbarHeightVariable();
+  });
+  topbarResizeObserver.observe(topbar);
+} else {
+  syncTopbarHeightVariable();
+}
 
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
   let preparedImport = null;
   try {
+    if (!(await ensureDiscussionCanBeDiscarded())) {
+      showMessage({ textId: 'messages.importCanceled' });
+      return;
+    }
     showMessage({ textId: 'messages.importingProject' });
     preparedImport = await prepareProjectImport(file);
     const shouldImport = await confirmProjectImport();
@@ -2051,6 +2506,7 @@ fileInput.addEventListener('change', async (e) => {
       showMessage({ textId: 'messages.importCanceled' });
       return;
     }
+    discardDiscussion();
     await applyPreparedProjectImport(store, preparedImport);
     const missingMediaWarnings = preparedImport.missingMediaPaths.map(path => (
       translate('messages.importMissingMediaWarning', { path })
@@ -2089,8 +2545,11 @@ btnExport.addEventListener('click', async () => {
 async function bootstrap() {
   migrateLegacyLocalePreference();
   refreshLocaleUI(store.get().locale);
+  const directPublishedSceneId = getDirectPublishedSceneIdFromLocation();
   try {
-    persistenceCleanup = await setupPersistence(store, { showMessage });
+    persistenceCleanup = directPublishedSceneId
+      ? () => {}
+      : await setupPersistence(store, { showMessage });
   } catch (err) {
     console.error('Failed to initialise persistence', err);
     persistenceCleanup = () => {};
@@ -2100,13 +2559,21 @@ async function bootstrap() {
     serverSession = { status: 'error', user: null, error: err?.message || String(err) };
     updateServerSessionUi();
   });
-  setMode('edit');
-  const directPublishedSceneId = getDirectPublishedSceneIdFromLocation();
   if (directPublishedSceneId) {
     openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' }).catch((err) => {
       console.error(err);
       showMessage({ textId: 'published.openFailed' });
     });
+    updateToolbarText();
+    updatePublishedPlayUi();
+    return;
+  }
+  const recovery = readPlaySessionRecovery();
+  const playbackRecovery = getMatchingPlaybackRecovery(store.get().project);
+  if (recovery?.mode === 'play' && playbackRecovery) {
+    setMode('play', { initialPlaybackState: playbackRecovery });
+  } else {
+    setMode('edit');
   }
 }
 
@@ -2123,7 +2590,12 @@ onLocaleChange((nextLocale) => {
   refreshLocaleUI(nextLocale);
 });
 
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', (event) => {
+  if (discussionSession.hasAnyText()) {
+    event.preventDefault();
+    event.returnValue = '';
+    return;
+  }
   if (typeof teardown === 'function') {
     teardown();
   }

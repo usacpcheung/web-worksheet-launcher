@@ -6,6 +6,7 @@ import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
 import { mapLegacyJsonToPackageModel, parseWorksheetPackage } from '../editor/worksheet-package.js';
+import { collectAudioTrackAssetIds, normalizeAudioTracks } from '../editor/audio-tracks.js';
 import { createStoredZip, crc32, parseStoredZip, decodeUtf8 } from '../editor/zip-utils.js';
 import { createServerApiClient } from '../app/api/server-api-client.js';
 import {
@@ -42,7 +43,11 @@ const VIEWER_NOTIFICATION_DEFAULT_TTL_MS = 5000;
 const VIEWER_NOTIFICATION_ERROR_TTL_MS = 8000;
 const VIEWER_NOTIFICATION_UPLOAD_SOURCE = 'attempt.upload';
 const VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY = 'worksheetLauncher.viewer.printSchoolName';
-const DEFAULT_VIEWER_PRINT_SCHOOL_NAME = 'Hong Kong Red Cross Hospital Schools';
+const VIEWER_PRINT_SCHOOL_NAME_CUSTOM_STORAGE_KEY = 'worksheetLauncher.viewer.printSchoolName.custom';
+const VIEWER_PRINT_DEFAULT_SCHOOL_NAMES = Object.freeze({
+  en: 'Hong Kong Red Cross Hospital Schools',
+  'zh-Hant': '香港紅十字會醫院學校',
+});
 let activeViewerShellAbortController = null;
 
 
@@ -176,26 +181,56 @@ function formatTimestampForReportHeader(timestamp) {
   });
 }
 
+function getDefaultViewerPrintSchoolName(locale = getLocale()) {
+  const fallback = VIEWER_PRINT_DEFAULT_SCHOOL_NAMES[locale] || VIEWER_PRINT_DEFAULT_SCHOOL_NAMES.en;
+  const translated = t('viewer.print.defaultSchoolName');
+  return translated === 'viewer.print.defaultSchoolName' ? fallback : translated;
+}
+
+function isViewerDefaultPrintSchoolName(value) {
+  const normalized = String(value || '').trim();
+  return Object.values(VIEWER_PRINT_DEFAULT_SCHOOL_NAMES).includes(normalized);
+}
+
 function normalizeViewerPrintSchoolName(value) {
-  return firstNonBlankString(value, DEFAULT_VIEWER_PRINT_SCHOOL_NAME);
+  return firstNonBlankString(value, getDefaultViewerPrintSchoolName());
+}
+
+function readViewerPrintSchoolNamePreferenceState(storage = globalThis.localStorage) {
+  const defaultSchoolName = getDefaultViewerPrintSchoolName();
+  try {
+    const raw = String(storage?.getItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY) || '').trim();
+    const isCustom = storage?.getItem?.(VIEWER_PRINT_SCHOOL_NAME_CUSTOM_STORAGE_KEY) === 'true';
+    if (raw && isCustom) {
+      return { schoolName: raw, custom: true };
+    }
+    if (!raw || isViewerDefaultPrintSchoolName(raw)) {
+      return { schoolName: defaultSchoolName, custom: false };
+    }
+    return { schoolName: raw, custom: true };
+  } catch {
+    return { schoolName: defaultSchoolName, custom: false };
+  }
 }
 
 function readViewerPrintSchoolNamePreference(storage = globalThis.localStorage) {
-  try {
-    return normalizeViewerPrintSchoolName(storage?.getItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY));
-  } catch {
-    return DEFAULT_VIEWER_PRINT_SCHOOL_NAME;
-  }
+  return readViewerPrintSchoolNamePreferenceState(storage).schoolName;
 }
 
-function writeViewerPrintSchoolNamePreference(value, storage = globalThis.localStorage) {
+function writeViewerPrintSchoolNamePreference(value, storage = globalThis.localStorage, { custom = true } = {}) {
   const schoolName = normalizeViewerPrintSchoolName(value);
   try {
-    storage?.setItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY, schoolName);
+    if (custom) {
+      storage?.setItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY, schoolName);
+      storage?.setItem?.(VIEWER_PRINT_SCHOOL_NAME_CUSTOM_STORAGE_KEY, 'true');
+    } else {
+      storage?.removeItem?.(VIEWER_PRINT_SCHOOL_NAME_STORAGE_KEY);
+      storage?.removeItem?.(VIEWER_PRINT_SCHOOL_NAME_CUSTOM_STORAGE_KEY);
+    }
   } catch {
     // Printing should still work if localStorage is unavailable.
   }
-  return schoolName;
+  return custom ? schoolName : getDefaultViewerPrintSchoolName();
 }
 
 function createLocalId(prefix = 'local') {
@@ -384,17 +419,6 @@ function createLanguageSelector({ onChange, variant = 'inline' } = {}) {
   return wrapper;
 }
 
-async function flushLocaleChangeBeforeReload(session, source = 'viewer') {
-  if (!session || typeof session.flushLocalStateForAuthRedirect !== 'function') {
-    return;
-  }
-  try {
-    await session.flushLocalStateForAuthRedirect();
-  } catch (error) {
-    console.error(`Failed to flush local attempt before locale change (${source})`, error);
-  }
-}
-
 function renderNotificationCard(notification, className = 'notification-toast') {
   const kind = String(notification?.kind || 'info').toLowerCase();
   const card = document.createElement('article');
@@ -574,6 +598,10 @@ function normalizePromptMediaRefs(mediaRefs) {
     .filter(Boolean);
 }
 
+function normalizeAudioTrackList(audioTracks) {
+  return normalizeAudioTracks(audioTracks);
+}
+
 function computeStableHash(input) {
   const text = typeof input === 'string' ? input : JSON.stringify(input);
   let hash = 2166136261;
@@ -615,6 +643,7 @@ function computeViewerPayloadFingerprint(payload) {
           text: block.prompt.text || '',
           format: block.prompt.format || 'plain_text',
           mediaRefs: normalizePromptMediaRefs(block.prompt.mediaRefs),
+          audioTracks: normalizeAudioTrackList(block.prompt.audioTracks),
         }
         : null,
       content: block.content
@@ -633,6 +662,7 @@ function computeViewerPayloadFingerprint(payload) {
               value: String(option?.value ?? option?.label ?? ''),
               label: String(option?.label ?? option?.value ?? ''),
               mediaRefs: normalizeOptionMediaRefs(option?.mediaRefs),
+              audioTracks: normalizeAudioTrackList(option?.audioTracks),
             }))
             : [],
         }
@@ -727,6 +757,7 @@ function normalizeViewerBlock(block, index) {
                 value: String(value),
                 label: String(label),
                 mediaRefs: normalizeOptionMediaRefs(option.mediaRefs),
+                audioTracks: normalizeAudioTrackList(option.audioTracks),
               };
             }
 
@@ -736,6 +767,7 @@ function normalizeViewerBlock(block, index) {
               value: normalizedOption,
               label: normalizedOption,
               mediaRefs: [],
+              audioTracks: [],
             };
           })
         : [];
@@ -770,6 +802,7 @@ function normalizeViewerBlock(block, index) {
         text: String(safeBlock?.prompt?.text || ''),
         format: safeBlock?.prompt?.format || 'plain_text',
         mediaRefs: normalizePromptMediaRefs(safeBlock?.prompt?.mediaRefs),
+        audioTracks: normalizeAudioTrackList(safeBlock?.prompt?.audioTracks),
       },
       responseConfig: normalizedResponseConfig,
     };
@@ -1549,25 +1582,6 @@ function classifyPrintSectionBreakMode({
 }
 
 
-function buildLocaleChangeNavigationUrl(session) {
-  const nextUrl = new URL(window.location.href);
-  if (session?.state?.localAttemptId) {
-    nextUrl.searchParams.set('localAttemptId', session.state.localAttemptId);
-  }
-  nextUrl.searchParams.delete('publishedPackageId');
-  nextUrl.searchParams.delete('localDraftId');
-  nextUrl.searchParams.delete('importedWorksheetId');
-  nextUrl.searchParams.delete('viewerPayload');
-  nextUrl.searchParams.delete('snapshot');
-  nextUrl.searchParams.delete('payload');
-  return nextUrl;
-}
-
-async function navigateForLocaleChange(session, source = 'viewer') {
-  await flushLocaleChangeBeforeReload(session, source);
-  const nextUrl = buildLocaleChangeNavigationUrl(session);
-  window.location.assign(nextUrl.toString());
-}
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -1666,7 +1680,7 @@ async function buildWorksheetPrintReportModel({
   answers = {},
   studentName = '',
   submittedAt = '',
-  schoolName = DEFAULT_VIEWER_PRINT_SCHOOL_NAME,
+  schoolName = getDefaultViewerPrintSchoolName(),
   subject = '',
   checkResult = null,
   storage = null,
@@ -1815,7 +1829,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
 <body>
   <main class="print-report">
     <header class="print-header">
-      <p class="print-school">${escapeHtml(reportModel.schoolName || DEFAULT_VIEWER_PRINT_SCHOOL_NAME)}</p>
+      <p class="print-school">${escapeHtml(reportModel.schoolName || getDefaultViewerPrintSchoolName())}</p>
       <h1 class="print-title">${escapeHtml(reportModel.title)}</h1>
       <dl class="print-meta">
         ${studentMeta}
@@ -2135,7 +2149,7 @@ class ViewerAttemptSession {
       lastSavedAt: null,
       completedAt: null,
       submittedAt: null,
-      printSchoolName: DEFAULT_VIEWER_PRINT_SCHOOL_NAME,
+      printSchoolName: getDefaultViewerPrintSchoolName(),
       autosavePending: false,
       lastSaveError: null,
       payloadValidationErrors: [],
@@ -3184,11 +3198,13 @@ class ViewerAttemptSession {
       normalizePromptMediaRefs(block.prompt?.mediaRefs).forEach((ref) => {
         if (ref?.assetId) ids.add(ref.assetId);
       });
+      collectAudioTrackAssetIds(block.prompt?.audioTracks).forEach((assetId) => ids.add(assetId));
       const options = Array.isArray(block.responseConfig?.options) ? block.responseConfig.options : [];
       options.forEach((option) => {
         normalizeOptionMediaRefs(option?.mediaRefs).forEach((ref) => {
           if (ref?.assetId) ids.add(ref.assetId);
         });
+        collectAudioTrackAssetIds(option?.audioTracks).forEach((assetId) => ids.add(assetId));
       });
     });
     return [...ids];
@@ -5271,7 +5287,9 @@ function renderViewerShell(session) {
   resumeWarning.className = 'answer-summary';
   const status = document.createElement('p');
   let studentName = session.state.studentName || '';
-  let printSchoolName = readViewerPrintSchoolNamePreference();
+  let printSchoolNameState = readViewerPrintSchoolNamePreferenceState();
+  let printSchoolName = printSchoolNameState.schoolName;
+  let printSchoolNameCustom = printSchoolNameState.custom;
   session.state.printSchoolName = printSchoolName;
 
   const blockSection = document.createElement('section');
@@ -5356,8 +5374,8 @@ function renderViewerShell(session) {
   printReportBtn.innerHTML = createViewerIcon('print');
   const languageSelector = createLanguageSelector({
     variant: 'icon',
-    onChange: async () => {
-      await navigateForLocaleChange(session, 'viewer.shell');
+    onChange: () => {
+      renderViewerShell(session);
     },
   });
   headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, exportAttemptBtn, printReportBtn);
@@ -5397,17 +5415,42 @@ function renderViewerShell(session) {
   printSchoolNameLabel.className = 'viewer-details-form__label';
   printSchoolNameLabel.setAttribute('for', 'viewer-print-school-name-input');
   printSchoolNameLabel.textContent = t('viewer.details.printSchoolName');
+  const printSchoolNameModeRow = document.createElement('div');
+  printSchoolNameModeRow.className = 'viewer-details-form__mode-row';
+  const printSchoolNameModeLabel = document.createElement('span');
+  printSchoolNameModeLabel.className = 'viewer-details-form__mode-label';
+  printSchoolNameModeLabel.textContent = t('viewer.details.printSchoolNameMode');
+  const printSchoolNameModeGroup = document.createElement('div');
+  printSchoolNameModeGroup.className = 'viewer-details-form__mode';
+  printSchoolNameModeGroup.setAttribute('role', 'group');
+  printSchoolNameModeGroup.setAttribute('aria-label', t('viewer.details.printSchoolNameMode'));
+  const printSchoolNameDefaultBtn = document.createElement('button');
+  printSchoolNameDefaultBtn.type = 'button';
+  printSchoolNameDefaultBtn.className = 'viewer-details-form__mode-button';
+  printSchoolNameDefaultBtn.textContent = t('viewer.details.printSchoolNameDefault');
+  const printSchoolNameCustomBtn = document.createElement('button');
+  printSchoolNameCustomBtn.type = 'button';
+  printSchoolNameCustomBtn.className = 'viewer-details-form__mode-button';
+  printSchoolNameCustomBtn.textContent = t('viewer.details.printSchoolNameCustom');
+  printSchoolNameModeGroup.append(printSchoolNameDefaultBtn, printSchoolNameCustomBtn);
+  printSchoolNameModeRow.append(printSchoolNameModeLabel, printSchoolNameModeGroup);
   const printSchoolNameInput = document.createElement('input');
   printSchoolNameInput.id = 'viewer-print-school-name-input';
   printSchoolNameInput.className = 'viewer-details-form__input';
   printSchoolNameInput.type = 'text';
   printSchoolNameInput.maxLength = 180;
-  printSchoolNameInput.placeholder = DEFAULT_VIEWER_PRINT_SCHOOL_NAME;
+  printSchoolNameInput.placeholder = getDefaultViewerPrintSchoolName();
+  printSchoolNameInput.addEventListener('input', () => {
+    printSchoolNameCustom = true;
+    printSchoolName = printSchoolNameInput.value;
+    session.state.printSchoolName = printSchoolName.trim() || getDefaultViewerPrintSchoolName();
+    syncPrintSchoolNameMode();
+  });
   const printSchoolNameSaveBtn = document.createElement('button');
   printSchoolNameSaveBtn.type = 'submit';
   printSchoolNameSaveBtn.className = 'viewer-details-form__save';
   printSchoolNameSaveBtn.textContent = t('common.actions.save');
-  printSettingsForm.append(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn);
+  printSettingsForm.append(printSchoolNameModeRow, printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn);
   const detailsList = document.createElement('dl');
   detailsList.className = 'viewer-details-list';
   const detailsCloseBtn = document.createElement('button');
@@ -5475,7 +5518,7 @@ function renderViewerShell(session) {
   const renderTechnicalDetails = () => {
     const technicalRows = buildTechnicalDetailsRows(session.state);
     learnerNameInput.value = studentName;
-    printSchoolNameInput.value = printSchoolName;
+    syncPrintSchoolNameMode();
     detailsList.innerHTML = '';
     technicalRows.forEach(([label, value]) => {
       const row = document.createElement('div');
@@ -5543,9 +5586,47 @@ function renderViewerShell(session) {
     learnerNameInput.focus();
   });
 
+  function syncPrintSchoolNameMode() {
+    if (!printSchoolNameCustom) {
+      printSchoolName = getDefaultViewerPrintSchoolName();
+      session.state.printSchoolName = printSchoolName;
+      printSchoolNameInput.value = printSchoolName;
+    } else {
+      printSchoolNameInput.value = printSchoolName;
+    }
+    printSchoolNameInput.placeholder = getDefaultViewerPrintSchoolName();
+    printSchoolNameInput.readOnly = !printSchoolNameCustom;
+    printSchoolNameInput.classList.toggle('viewer-details-form__input--readonly', !printSchoolNameCustom);
+    printSchoolNameDefaultBtn.setAttribute('aria-pressed', printSchoolNameCustom ? 'false' : 'true');
+    printSchoolNameCustomBtn.setAttribute('aria-pressed', printSchoolNameCustom ? 'true' : 'false');
+    printSchoolNameDefaultBtn.classList.toggle('is-active', !printSchoolNameCustom);
+    printSchoolNameCustomBtn.classList.toggle('is-active', printSchoolNameCustom);
+  }
+
+  printSchoolNameDefaultBtn.addEventListener('click', () => {
+    printSchoolNameCustom = false;
+    printSchoolName = writeViewerPrintSchoolNamePreference('', globalThis.localStorage, { custom: false });
+    session.state.printSchoolName = printSchoolName;
+    syncPrintSchoolNameMode();
+  });
+
+  printSchoolNameCustomBtn.addEventListener('click', () => {
+    printSchoolNameCustom = true;
+    printSchoolName = printSchoolNameInput.value.trim() || printSchoolName || getDefaultViewerPrintSchoolName();
+    session.state.printSchoolName = printSchoolName;
+    syncPrintSchoolNameMode();
+    printSchoolNameInput.focus();
+    printSchoolNameInput.select?.();
+  });
+
   printSettingsForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    printSchoolName = writeViewerPrintSchoolNamePreference(printSchoolNameInput.value);
+    const submittedSchoolName = printSchoolNameInput.value.trim();
+    const shouldStoreCustom = printSchoolNameCustom && Boolean(submittedSchoolName);
+    printSchoolName = writeViewerPrintSchoolNamePreference(printSchoolNameInput.value, globalThis.localStorage, {
+      custom: shouldStoreCustom,
+    });
+    printSchoolNameCustom = shouldStoreCustom;
     session.state.printSchoolName = printSchoolName;
     printSchoolNameInput.value = printSchoolName;
     renderUI();
@@ -7034,8 +7115,8 @@ function renderViewerStartPanel(session, options = {}) {
   }
 
   const languageSelector = createLanguageSelector({
-    onChange: async () => {
-      await navigateForLocaleChange(session, 'viewer.start');
+    onChange: () => {
+      renderViewerStartPanel(session);
     },
   });
   panel.append(languageSelector, heading, description);
@@ -7527,6 +7608,8 @@ export {
   deterministicShuffle,
   ensureControlDescribedBy,
   createInputErrorNode,
+  getDefaultViewerPrintSchoolName,
+  readViewerPrintSchoolNamePreferenceState,
   readViewerPrintSchoolNamePreference,
   writeViewerPrintSchoolNamePreference,
   classifyPrintQuestionLayout,

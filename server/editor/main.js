@@ -5,6 +5,7 @@ import {
   createWorksheetPackageFromDraft,
   parseWorksheetPackage,
 } from './worksheet-package.js';
+import { collectAudioTrackAssetIds, normalizeAudioTracks } from './audio-tracks.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
 import { probeSession } from '../app/auth/session-readiness.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-popup-flow.js';
@@ -171,9 +172,11 @@ function collectQuestionAssetIds(block) {
   if (!isRecord(block) || block.kind !== 'question') return [];
   const ids = new Set();
   normalizeMediaRefs(block?.prompt?.mediaRefs).forEach((ref) => ids.add(ref.assetId));
+  collectAudioTrackAssetIds(block?.prompt?.audioTracks).forEach((assetId) => ids.add(assetId));
   const options = Array.isArray(block?.responseConfig?.options) ? block.responseConfig.options : [];
   options.forEach((option) => {
     normalizeMediaRefs(option?.mediaRefs, 'option_audio').forEach((ref) => ids.add(ref.assetId));
+    collectAudioTrackAssetIds(option?.audioTracks).forEach((assetId) => ids.add(assetId));
   });
   return Array.from(ids);
 }
@@ -226,7 +229,8 @@ function getBlockDeletePolicy(block) {
 function getOptionDeletePolicy(option) {
   const normalized = normalizeResponseOption(option);
   const hasTypedContent = hasTypedText(normalized.label) || hasTypedText(normalized.value);
-  const hasAssets = normalizeMediaRefs(normalized.mediaRefs, 'option_audio').length > 0;
+  const hasAssets = normalizeMediaRefs(normalized.mediaRefs, 'option_audio').length > 0
+    || collectAudioTrackAssetIds(normalized.audioTracks).length > 0;
   return {
     mode: hasTypedContent || hasAssets ? 'confirm_delete' : 'safe_direct_delete',
     hasTypedContent,
@@ -385,6 +389,7 @@ function createEditorIcon(name) {
     grip: `<svg ${svgAttrs}><circle cx="9" cy="5" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="9" cy="12" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>`,
     moreHorizontal: `<svg ${svgAttrs}><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>`,
     filePlus: `<svg ${svgAttrs}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M12 18v-6"></path><path d="M9 15h6"></path></svg>`,
+    worksheetPlus: `<svg ${svgAttrs}><rect x="3" y="4" width="13" height="16" rx="2"></rect><path d="M7 8h5"></path><path d="M7 12h5"></path><path d="M7 16h3"></path><path d="M19 14v6"></path><path d="M16 17h6"></path></svg>`,
     eye: `<svg ${svgAttrs}><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
     info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
     image: `<svg ${svgAttrs}><rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"></path></svg>`,
@@ -442,17 +447,6 @@ function createLanguageSelector({ onChange } = {}) {
   });
   wrapper.append(label, select);
   return wrapper;
-}
-
-async function flushLocaleChangeBeforeReload(session, source = 'editor') {
-  if (!session || typeof session.flushLocalStateForAuthRedirect !== 'function') {
-    return;
-  }
-  try {
-    await session.flushLocalStateForAuthRedirect();
-  } catch (error) {
-    console.error(`Failed to flush local draft before locale change (${source})`, error);
-  }
 }
 
 function setOptionAudioMenuTriggerState(trigger, { hasAudio = false, isGenerating = false, isPersisted = true } = {}) {
@@ -570,12 +564,16 @@ function createEmptyQuestionBlock(position) {
 const TEXT_INPUT_TYPES = new Set(['text']);
 const CANONICAL_RESPONSE_INPUT_TYPES = new Set(['text', 'number', 'boolean', 'multiple_choice']);
 
-function mapOptionsTextToResponseOptions(rawText) {
+function mapOptionsTextToLines(rawText) {
   if (!rawText) return [];
   return String(rawText)
-    .split('\n')
+    .split(/\r\n|\r|\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
+    .filter(Boolean);
+}
+
+function mapOptionsTextToResponseOptions(rawText) {
+  return mapOptionsTextToLines(rawText)
     .map((line) => ({ id: createLocalId('opt'), value: line, label: line }));
 }
 
@@ -584,10 +582,16 @@ function normalizeResponseOption(option, fallback = '') {
     const id = isNonEmptyString(option.id) ? String(option.id) : createLocalId('opt');
     const value = String(option.value ?? option.label ?? fallback);
     const label = String(option.label ?? option.value ?? fallback);
-    return { id, value, label, mediaRefs: normalizeMediaRefs(option.mediaRefs, 'option_audio') };
+    return {
+      id,
+      value,
+      label,
+      mediaRefs: normalizeMediaRefs(option.mediaRefs, 'option_audio'),
+      audioTracks: normalizeAudioTracks(option.audioTracks),
+    };
   }
   const normalized = String(option ?? fallback);
-  return { id: createLocalId('opt'), value: normalized, label: normalized, mediaRefs: [] };
+  return { id: createLocalId('opt'), value: normalized, label: normalized, mediaRefs: [], audioTracks: [] };
 }
 
 function getOptionValueForAnswerKey(option) {
@@ -812,6 +816,7 @@ function normalizeBlocks(blocks) {
         text: String(promptSource.text || ''),
         format: promptSource.format || 'plain_text',
         mediaRefs: normalizeMediaRefs(promptSource.mediaRefs),
+        audioTracks: normalizeAudioTracks(promptSource.audioTracks),
       };
       normalized.responseConfig = normalizeQuestionResponseConfig(source.responseConfig);
       return normalized;
@@ -843,7 +848,7 @@ function createDraftRecord(overrides = {}) {
       createdAt: overrides.metadata?.createdAt || updatedAt,
       serverLink: overrides.metadata?.serverLink || null,
       importedFrom: overrides.metadata?.importedFrom || null,
-      modelVersion: overrides.metadata?.modelVersion || 'package-compatible-v1',
+      modelVersion: overrides.metadata?.modelVersion || 'package-compatible-v2',
       subject: String(overrides.metadata?.subject || ''),
     },
   };
@@ -925,6 +930,9 @@ class EditorDraftSession {
 
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
+    this.autosaveGeneration = 0;
+    this.deletedDraftIds = new Set();
+    this.inFlightSaveCountsByDraftId = new Map();
     this.onStateChange = null;
     this.transientQuestionBlockIds = new Set();
     this.previewAudio = null;
@@ -939,6 +947,31 @@ class EditorDraftSession {
     this._loadUploadedDraftsActiveCount = 0;
     this._promptT2AInFlightTargets = new Set();
     this._optionT2AInFlightTargets = new Set();
+  }
+
+  registerInFlightDraftSave(localDraftId) {
+    if (!localDraftId) return;
+    const currentCount = this.inFlightSaveCountsByDraftId.get(localDraftId) || 0;
+    this.inFlightSaveCountsByDraftId.set(localDraftId, currentCount + 1);
+  }
+
+  unregisterInFlightDraftSave(localDraftId) {
+    if (!localDraftId) return;
+    const currentCount = this.inFlightSaveCountsByDraftId.get(localDraftId) || 0;
+    if (currentCount <= 1) {
+      this.inFlightSaveCountsByDraftId.delete(localDraftId);
+      return;
+    }
+    this.inFlightSaveCountsByDraftId.set(localDraftId, currentCount - 1);
+  }
+
+  getInFlightDraftSaveCount(localDraftId) {
+    return localDraftId ? (this.inFlightSaveCountsByDraftId.get(localDraftId) || 0) : 0;
+  }
+
+  clearDeletedDraftTombstoneIfIdle(localDraftId) {
+    if (!localDraftId || this.getInFlightDraftSaveCount(localDraftId) > 0) return;
+    this.deletedDraftIds.delete(localDraftId);
   }
 
   setOnStateChange(handler) {
@@ -979,6 +1012,8 @@ class EditorDraftSession {
     category = 'server',
     actionLabel = null,
     logActivity = true,
+    activityText = null,
+    activityReplaceSource = null,
   } = {}) {
     this.pruneExpiredNotifications();
     const normalizedText = String(text || '').trim();
@@ -993,6 +1028,7 @@ class EditorDraftSession {
       actionLabel: isNonEmptyString(actionLabel) ? actionLabel.trim() : null,
       ttlMs: Number.isFinite(Number(ttlMs)) && Number(ttlMs) > 0 ? Number(ttlMs) : null,
       logActivity: logActivity !== false,
+      activityReplaceSource: isNonEmptyString(activityReplaceSource) ? activityReplaceSource.trim() : null,
       createdAt: nowIso(),
     };
     this.state.notifications = [...this.state.notifications, notification]
@@ -1001,7 +1037,15 @@ class EditorDraftSession {
     // - transient progress events stay in active notifications/toasts only
     // - historical terminal events are recorded in activityLog
     if (notification.logActivity !== false) {
-      this.state.activityLog = [...this.state.activityLog, notification]
+      const activityNotification = {
+        ...notification,
+        text: isNonEmptyString(activityText) ? activityText.trim() : notification.text,
+      };
+      const previousActivity = Array.isArray(this.state.activityLog) ? this.state.activityLog : [];
+      const retainedActivity = activityNotification.activityReplaceSource
+        ? previousActivity.filter((item) => item?.source !== activityNotification.activityReplaceSource)
+        : previousActivity;
+      this.state.activityLog = [...retainedActivity, activityNotification]
         .slice(-ACTIVITY_MAX_STORED);
     }
     this.syncDeprecatedMessageFieldsFromNotifications();
@@ -1065,6 +1109,8 @@ class EditorDraftSession {
     text = '',
     ttlMs = null,
     actionLabel = null,
+    activityText = null,
+    activityReplaceSource = null,
   } = {}) {
     const normalizedSource = String(source || '').trim();
     if (!normalizedSource) return null;
@@ -1097,6 +1143,33 @@ class EditorDraftSession {
       text: normalizedText,
       ttlMs,
       actionLabel,
+      activityText,
+      activityReplaceSource,
+    });
+  }
+
+  replaceNotificationForSource({
+    source = 'editor',
+    category = 'server',
+    kind = 'info',
+    text = '',
+    ttlMs = null,
+    actionLabel = null,
+    activityText = null,
+    activityReplaceSource = null,
+  } = {}) {
+    const normalizedSource = String(source || '').trim();
+    if (!normalizedSource) return null;
+    this.clearNotificationsBySource(normalizedSource);
+    return this.pushNotification({
+      source: normalizedSource,
+      category,
+      kind,
+      text,
+      ttlMs,
+      actionLabel,
+      activityText,
+      activityReplaceSource,
     });
   }
 
@@ -1118,6 +1191,7 @@ class EditorDraftSession {
               text: String(block?.prompt?.text || ''),
               format: block?.prompt?.format || 'plain_text',
               mediaRefs: normalizeMediaRefs(block?.prompt?.mediaRefs),
+              audioTracks: normalizeAudioTracks(block?.prompt?.audioTracks),
             },
             responseConfig: isRecord(block.responseConfig)
               ? normalizeQuestionResponseConfig(block.responseConfig, { forContract: true })
@@ -1247,6 +1321,50 @@ class EditorDraftSession {
     this.validateCurrentDraft();
     this.persistRestoreMetadata();
     return this.state.draft;
+  }
+
+  async startNewWorksheet() {
+    const previousDraft = this.state.draft;
+    const previousDraftId = previousDraft?.localId || null;
+    const referencedAssetIds = previousDraft ? Array.from(collectDraftQuestionAssetIds(previousDraft)) : [];
+
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = null;
+
+    if (previousDraftId) {
+      this.autosaveGeneration += 1;
+      this.deletedDraftIds.add(previousDraftId);
+      await this.storage.drafts.remove(previousDraftId);
+      this.clearDeletedDraftTombstoneIfIdle(previousDraftId);
+    }
+
+    await Promise.all(referencedAssetIds.map(async (assetId) => {
+      try {
+        await this.storage.localAssets.remove(assetId);
+      } catch (error) {
+        console.warn('Unable to remove local asset while starting a new worksheet.', error);
+      }
+    }));
+
+    const draft = createDraftRecord();
+    this.state.draft = draft;
+    this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
+    this.state.draftRevision = 1;
+    this.state.lastSavedRevision = 0;
+    this.state.lastSavedAt = null;
+    this.state.lastManualSaveAt = null;
+    this.state.lastExportedAt = null;
+    this.state.lastImportedAt = null;
+    this.state.lastPersistenceError = null;
+    this.state.lastValidationWarning = null;
+    this.state.lastContractValidationIssueCount = 0;
+    this.state.lastSavedLocalValidationIssueCount = 0;
+    this.state.isPristineDraft = true;
+    this.transientQuestionBlockIds.clear();
+    this.validateCurrentDraft();
+    this.scheduleAutosave();
+    this.persistRestoreMetadata();
+    return draft;
   }
 
   updateTitle(nextTitle) {
@@ -2138,6 +2256,87 @@ class EditorDraftSession {
     this.touchDraft();
   }
 
+  applyQuestionOptionMultilinePaste(blockId, startIndex, rawText, options = {}) {
+    if (!this.state.draft || !blockId || !Number.isInteger(startIndex) || startIndex < 0) {
+      return { ok: false, reason: 'invalid-target' };
+    }
+    const labels = mapOptionsTextToLines(rawText);
+    if (labels.length <= 1) {
+      return { ok: false, reason: 'not-multiline' };
+    }
+
+    const targetBlock = this.findBlock(blockId);
+    if (!targetBlock || targetBlock.kind !== 'question') {
+      return { ok: false, reason: 'invalid-target' };
+    }
+    const targetConfig = normalizeQuestionResponseConfig(targetBlock.responseConfig);
+    if (targetConfig.inputType !== 'multiple_choice') {
+      return { ok: false, reason: 'not-multiple-choice' };
+    }
+
+    const existingOptions = Array.isArray(targetConfig.options)
+      ? targetConfig.options.map((option) => normalizeResponseOption(option))
+      : [];
+    const overwrittenOptions = labels
+      .map((_, offset) => existingOptions[startIndex + offset])
+      .filter(Boolean);
+    const audioBackedOptions = overwrittenOptions.filter((option) => {
+      return normalizeMediaRefs(option.mediaRefs, 'option_audio').length > 0;
+    });
+
+    if (audioBackedOptions.length > 0 && options.confirmRemoveAudio !== true) {
+      return {
+        ok: false,
+        reason: 'confirm-audio-removal-required',
+        audioOptionCount: audioBackedOptions.length,
+      };
+    }
+
+    const removedAssetIds = [];
+    this.state.draft.blocks = this.state.draft.blocks.map((block) => {
+      if (block.blockId !== blockId || block.kind !== 'question') return block;
+      const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
+      if (responseConfig.inputType !== 'multiple_choice') return block;
+      const nextOptions = Array.isArray(responseConfig.options)
+        ? responseConfig.options.map((option) => normalizeResponseOption(option))
+        : [];
+
+      labels.forEach((label, offset) => {
+        const optionIndex = startIndex + offset;
+        const existing = nextOptions[optionIndex]
+          ? normalizeResponseOption(nextOptions[optionIndex])
+          : { id: createLocalId('opt'), value: '', label: '', mediaRefs: [] };
+        normalizeMediaRefs(existing.mediaRefs, 'option_audio').forEach((ref) => {
+          removedAssetIds.push(ref.assetId);
+        });
+        nextOptions[optionIndex] = {
+          ...existing,
+          value: label,
+          label,
+          mediaRefs: removeSingleMediaRef(existing.mediaRefs, 'option_audio'),
+        };
+      });
+
+      return {
+        ...block,
+        responseConfig: normalizeQuestionResponseConfig({
+          ...responseConfig,
+          options: nextOptions,
+        }),
+      };
+    });
+    if (removedAssetIds.length > 0) {
+      this.pruneAssetLinks(removedAssetIds);
+    }
+    this.touchDraft();
+    return {
+      ok: true,
+      addedOptionCount: Math.max(0, startIndex + labels.length - existingOptions.length),
+      updatedOptionCount: labels.length,
+      removedAudioCount: new Set(removedAssetIds).size,
+    };
+  }
+
   addQuestionOption(blockId) {
     if (!this.state.draft || !blockId) return;
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
@@ -2423,32 +2622,56 @@ class EditorDraftSession {
     if (!this.state.draft) return null;
 
     const revisionAtSaveStart = this.state.draftRevision;
+    const draftIdAtSaveStart = this.state.draft.localId || null;
+    const generationAtSaveStart = this.autosaveGeneration;
     const updatedAt = nowIso();
-    const validation = this.validateCurrentDraft();
-    const normalizedDraft = validation.normalizedDraft;
-    const { validateDraftSchema } = await loadContracts();
-    const contractValidation = validateDraftSchema(normalizedDraft);
-
-    const snapshotToPersist = cloneDraftForPersistence({
-      ...this.state.draft,
-      metadata: {
-        ...this.state.draft.metadata,
-        localId: this.state.draft.localId,
-        origin: this.state.draft.metadata?.origin || 'local_created',
-        updatedAt,
-      },
-      contractDraft: normalizedDraft,
-      contractValidation: {
-        valid: contractValidation.valid,
-        errors: contractValidation.errors,
-      },
-    });
-
-    this.inFlightSaveCount += 1;
-    this.state.autosavePending = true;
+    let saveCountRegistered = false;
+    let snapshotToPersist = null;
+    let validation = null;
+    let normalizedDraft = null;
+    let contractValidation = null;
+    let staleCleanupSucceeded = false;
+    this.registerInFlightDraftSave(draftIdAtSaveStart);
 
     try {
+      validation = this.validateCurrentDraft();
+      normalizedDraft = validation.normalizedDraft;
+      const { validateDraftSchema } = await loadContracts();
+      contractValidation = validateDraftSchema(normalizedDraft);
+
+      snapshotToPersist = cloneDraftForPersistence({
+        ...this.state.draft,
+        metadata: {
+          ...this.state.draft.metadata,
+          localId: this.state.draft.localId,
+          origin: this.state.draft.metadata?.origin || 'local_created',
+          updatedAt,
+        },
+        contractDraft: normalizedDraft,
+        contractValidation: {
+          valid: contractValidation.valid,
+          errors: contractValidation.errors,
+        },
+      });
+
+      this.state.autosavePending = true;
+
+      if (
+        generationAtSaveStart !== this.autosaveGeneration ||
+        this.deletedDraftIds.has(draftIdAtSaveStart)
+      ) {
+        return null;
+      }
+
+      this.inFlightSaveCount += 1;
+      saveCountRegistered = true;
       const persisted = await this.storage.drafts.put(snapshotToPersist);
+      if (this.deletedDraftIds.has(persisted.localId)) {
+        await this.storage.drafts.remove(persisted.localId);
+        staleCleanupSucceeded = true;
+        return null;
+      }
+
       const shouldApplySaveStatus =
         this.state.draft?.localId === persisted.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
 
@@ -2492,6 +2715,7 @@ class EditorDraftSession {
       return persisted;
     } catch (error) {
       const shouldApplyErrorStatus =
+        snapshotToPersist &&
         this.state.draft?.localId === snapshotToPersist.metadata?.localId &&
         revisionAtSaveStart > this.state.lastSavedRevision;
       if (shouldApplyErrorStatus) {
@@ -2506,7 +2730,16 @@ class EditorDraftSession {
       }
       throw error;
     } finally {
-      this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
+      if (saveCountRegistered) {
+        this.inFlightSaveCount = Math.max(0, this.inFlightSaveCount - 1);
+      }
+      this.unregisterInFlightDraftSave(draftIdAtSaveStart);
+      if (
+        staleCleanupSucceeded ||
+        (!saveCountRegistered && this.deletedDraftIds.has(draftIdAtSaveStart))
+      ) {
+        this.clearDeletedDraftTombstoneIfIdle(draftIdAtSaveStart);
+      }
       this.state.autosavePending =
         this.inFlightSaveCount > 0 || this.state.lastSavedRevision < this.state.draftRevision;
       this.notifyStateChange();
@@ -2569,19 +2802,28 @@ class EditorDraftSession {
       ...ref,
       assetId: assetIdRemap.get(ref.assetId) || ref.assetId,
     }));
+      const remapAudioTracks = (audioTracks) => normalizeAudioTracks(audioTracks).map((track) => ({
+        ...track,
+        assetId: assetIdRemap.get(track.assetId) || track.assetId,
+      }));
 
       const remappedBlocks = normalizeBlocks(parsedPackage.worksheet.blocks).map((block) => {
       if (block.kind !== 'question') return block;
       const responseConfig = normalizeQuestionResponseConfig(block.responseConfig);
       const options = (responseConfig.options || []).map((option) => {
         const normalized = normalizeResponseOption(option);
-        return { ...normalized, mediaRefs: remapMediaRefs(normalized.mediaRefs) };
+        return {
+          ...normalized,
+          mediaRefs: remapMediaRefs(normalized.mediaRefs),
+          audioTracks: remapAudioTracks(normalized.audioTracks),
+        };
       });
       return {
         ...block,
         prompt: {
           ...(isRecord(block.prompt) ? block.prompt : {}),
           mediaRefs: remapMediaRefs(block?.prompt?.mediaRefs),
+          audioTracks: remapAudioTracks(block?.prompt?.audioTracks),
         },
         responseConfig: normalizeQuestionResponseConfig({ ...responseConfig, options }),
       };
@@ -2616,7 +2858,7 @@ class EditorDraftSession {
         createdAt: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.createdAt) || now,
         serverLink: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.serverLink) || null,
         importedFrom: 'package_zip',
-        modelVersion: 'package-compatible-v1',
+        modelVersion: 'package-compatible-v2',
         subject: (isRecord(parsedPackage.worksheet.metadata) && parsedPackage.worksheet.metadata.subject) || '',
       },
     });
@@ -2648,19 +2890,21 @@ class EditorDraftSession {
     try {
       const persisted = await this.autosave();
       this.state.lastManualSaveAt = nowIso();
-      this.setNotificationForSource({
+      this.replaceNotificationForSource({
         kind: 'success',
         category: 'editor',
         source: 'save.manual',
         text: editorNotification('save.savedDraft', {
           id: persisted?.localId || this.state.draft?.localId || t('common.values.unknown'),
         }),
+        activityText: editorNotification('save.savedLocalDraft'),
+        activityReplaceSource: 'save.manual',
       });
       this.notifyStateChange();
       return persisted;
     } catch (error) {
       console.error('Manual save failed', error);
-      this.setNotificationForSource({
+      this.replaceNotificationForSource({
         kind: 'error',
         category: 'editor',
         source: 'save.manual',
@@ -2735,7 +2979,7 @@ class EditorDraftSession {
       assets: draftAssets,
       metadata: {
         ...this.state.draft.metadata,
-        modelVersion: 'package-compatible-v1',
+        modelVersion: 'package-compatible-v2',
       },
     };
     return createWorksheetPackageFromDraft(packagedDraft, assets).bytes;
@@ -3935,6 +4179,7 @@ function renderEditorShell(session) {
     confirmLabel = t('common.actions.delete'),
     cancelLabel = t('common.actions.cancel'),
     variant = 'danger',
+    warningText = t('editor.modal.confirm.irreversibleWarning'),
   }) {
     if (activeConfirmDialog) {
       closeActiveConfirmDialog(false);
@@ -3972,8 +4217,10 @@ function renderEditorShell(session) {
       detailsList.appendChild(line);
     });
     const warning = document.createElement('p');
-    warning.className = 'confirm-modal__warning';
-    warning.textContent = t('editor.modal.confirm.irreversibleWarning');
+    warning.className = variant === 'warning'
+      ? 'confirm-modal__warning confirm-modal__warning--caution'
+      : 'confirm-modal__warning';
+    warning.textContent = warningText;
     const actionRow = document.createElement('div');
     actionRow.className = 'confirm-modal__actions';
     const cancelBtn = document.createElement('button');
@@ -3984,10 +4231,19 @@ function renderEditorShell(session) {
     deleteBtn.type = 'button';
     deleteBtn.className = variant === 'danger'
       ? 'confirm-modal__btn confirm-modal__btn--destructive'
-      : 'confirm-modal__btn';
+      : variant === 'warning'
+        ? 'confirm-modal__btn confirm-modal__btn--warning'
+        : 'confirm-modal__btn';
     deleteBtn.textContent = confirmLabel;
     actionRow.append(cancelBtn, deleteBtn);
-    dialog.append(heading, description, detailsHeading, detailsList, warning, actionRow);
+    dialog.append(heading, description);
+    if (removalItems.length > 0) {
+      dialog.append(detailsHeading, detailsList);
+    }
+    if (isNonEmptyString(warningText)) {
+      dialog.append(warning);
+    }
+    dialog.append(actionRow);
     overlay.appendChild(dialog);
     shell.appendChild(overlay);
 
@@ -4809,6 +5065,12 @@ function renderEditorShell(session) {
   saveBtn.type = 'button';
   saveBtn.className = 'sidebar-action-btn';
   setMediaActionButtonContent(saveBtn, 'save', t('editor.actions.saveLocalDraft'));
+  const worksheetActionsRow = document.createElement('div');
+  worksheetActionsRow.className = 'sidebar-worksheet-actions';
+  const startNewWorksheetBtn = document.createElement('button');
+  startNewWorksheetBtn.type = 'button';
+  startNewWorksheetBtn.className = 'sidebar-action-btn';
+  setMediaActionButtonContent(startNewWorksheetBtn, 'worksheetPlus', t('editor.actions.startNewWorksheet'));
   const addContentBtn = document.createElement('button');
   addContentBtn.type = 'button';
   addContentBtn.className = 'sidebar-action-btn';
@@ -6035,6 +6297,35 @@ function renderEditorShell(session) {
           if (isOptionInputComposing || event.isComposing) return;
           commitOptionInputValue();
         });
+        optionInput.addEventListener('paste', async (event) => {
+          const pastedText = event.clipboardData?.getData('text') || '';
+          if (mapOptionsTextToLines(pastedText).length <= 1) return;
+          event.preventDefault();
+          const outcome = session.applyQuestionOptionMultilinePaste(
+            selectedBlock.blockId,
+            optionIndex,
+            pastedText
+          );
+          if (outcome?.reason === 'confirm-audio-removal-required') {
+            const audioOptionCount = Number.isInteger(outcome.audioOptionCount)
+              ? outcome.audioOptionCount
+              : 0;
+            const confirmed = await confirmDangerAction({
+              title: t('editor.question.multilinePasteConfirm.title'),
+              bodyText: t('editor.question.multilinePasteConfirm.description', { count: audioOptionCount }),
+              confirmLabel: t('editor.question.multilinePasteConfirm.confirmLabel'),
+              removalItems: [t('editor.question.multilinePasteConfirm.audioRemoval')],
+            });
+            if (!confirmed) return;
+            session.applyQuestionOptionMultilinePaste(
+              selectedBlock.blockId,
+              optionIndex,
+              pastedText,
+              { confirmRemoveAudio: true }
+            );
+          }
+          updateSummary({ preserveDetailEditor: true });
+        });
         const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
         const optionActionsMenu = document.createElement('details');
         optionActionsMenu.className = 'option-actions-menu option-audio-menu';
@@ -6326,7 +6617,35 @@ function renderEditorShell(session) {
       openBtn.textContent = t('common.actions.open');
       openBtn.disabled = !serverReady;
       openBtn.addEventListener('click', async () => {
-        await guardServerMenuAction(openBtn, () => session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id));
+        const confirmed = await showConfirmDialog({
+          title: t('editor.uploadedDraft.openDialog.title'),
+          bodyText: t('editor.uploadedDraft.openDialog.description', { title: display.title }),
+          warningText: t('editor.uploadedDraft.openDialog.warning'),
+          confirmLabel: t('editor.uploadedDraft.openDialog.confirm'),
+          variant: 'warning',
+        });
+        if (!confirmed) return;
+        let result;
+        try {
+          result = await guardServerMenuAction(openBtn, async () => {
+            await session.flushLocalStateForAuthRedirect();
+            return session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
+          });
+        } catch (error) {
+          session.pushNotification({
+            kind: 'error',
+            category: 'server',
+            source: 'uploadedDraft.open',
+            text: error?.message || editorNotification('save.manualSaveFailed'),
+          });
+          session.notifyStateChange();
+          updateSummary();
+          return;
+        }
+        if (result?.ok) {
+          manageUploadedDraftsDialogOpen = false;
+          renderManageUploadedDraftsModal();
+        }
         updateSummary();
       });
       actions.appendChild(openBtn);
@@ -6638,6 +6957,27 @@ function renderEditorShell(session) {
     await session.saveNow();
     updateSummary();
   });
+  startNewWorksheetBtn.addEventListener('click', async () => {
+    const confirmed = await showConfirmDialog({
+      title: t('editor.newWorksheet.confirmTitle'),
+      bodyText: t('editor.newWorksheet.confirmDescription'),
+      removalItems: [
+        t('editor.newWorksheet.removeCurrentDraft'),
+        t('editor.newWorksheet.removeBlocks'),
+        t('editor.newWorksheet.removeLocalMedia'),
+      ],
+      confirmLabel: t('editor.newWorksheet.confirmLabel'),
+    });
+    if (!confirmed) return;
+    const nextDraft = await session.startNewWorksheet();
+    if (nextDraft?.localId) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('localDraftId', nextDraft.localId);
+      nextUrl.searchParams.delete('draftUpdatedAt');
+      window.history.replaceState(null, '', nextUrl.toString());
+    }
+    updateSummary();
+  });
   addContentBtn.addEventListener('click', () => {
     session.createBlock('content');
     updateSummary();
@@ -6849,7 +7189,14 @@ function renderEditorShell(session) {
       updateSummary();
       return;
     }
-    await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
+    const importResult = await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
+    const importedLocalDraftId = importResult?.draftRecord?.localId || session.state.draft?.localId;
+    if (importedLocalDraftId) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('localDraftId', importedLocalDraftId);
+      nextUrl.searchParams.delete('draftUpdatedAt');
+      window.history.replaceState(null, '', nextUrl.toString());
+    }
     importFileInput.value = '';
     updateSummary();
   });
@@ -6919,6 +7266,7 @@ function renderEditorShell(session) {
     updateSummary();
   });
 
+  worksheetActionsRow.appendChild(startNewWorksheetBtn);
   controlsRow.append(addContentBtn, addQuestionBtn);
   metaRow.append(saveBtn, exportBtn, importBtn, openViewerBtn);
   protectedActionsColumn.append(
@@ -6932,6 +7280,7 @@ function renderEditorShell(session) {
   leftPanel.append(
     leftHeading,
     metadataSection,
+    worksheetActionsRow,
     controlsRow,
     blockList,
     moreActions,
@@ -6945,9 +7294,8 @@ function renderEditorShell(session) {
   rightPanel.append(rightHeading, statusRow);
   layout.append(leftPanel, rightPanel);
   const languageSelector = createLanguageSelector({
-    onChange: async () => {
-      await flushLocaleChangeBeforeReload(session, 'editor.shell');
-      window.location.reload?.();
+    onChange: () => {
+      renderEditorShell(session);
     },
   });
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl, languageSelector);

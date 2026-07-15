@@ -41,3 +41,62 @@ test('requireAuthenticatedIdentity error message uses configured header name', (
     (error) => error instanceof AuthError && error.message === 'Missing required header: X-Forwarded-Custom-Sub'
   );
 });
+
+test('requireAuthenticatedIdentity rejects missing trusted proxy secret before OIDC headers', () => {
+  const req = {
+    headers: {
+      'x-oidc-sub': 'spoofed-user',
+    },
+  };
+
+  assert.throws(
+    () => requireAuthenticatedIdentity(
+      req,
+      { sub: 'x-oidc-sub', email: 'x-oidc-email', name: 'x-oidc-name' },
+      { secret: 'expected-secret', secretHeader: 'x-worksheet-proxy-secret' }
+    ),
+    (error) => error instanceof AuthError
+      && error.code === 'AUTH_REQUIRED'
+      && error.message === 'Missing or invalid trusted proxy secret.'
+  );
+});
+
+test('requireAuthenticatedIdentity rejects wrong trusted proxy secret', () => {
+  const req = {
+    headers: {
+      'x-worksheet-proxy-secret': 'wrong-secret',
+      'x-oidc-sub': 'user-sub',
+    },
+  };
+
+  assert.throws(
+    () => requireAuthenticatedIdentity(
+      req,
+      { sub: 'x-oidc-sub', email: 'x-oidc-email', name: 'x-oidc-name' },
+      { secret: 'expected-secret', secretHeader: 'x-worksheet-proxy-secret' }
+    ),
+    (error) => error instanceof AuthError && error.code === 'AUTH_REQUIRED'
+  );
+});
+
+test('requireAuthenticatedIdentity accepts correct trusted proxy secret plus OIDC headers', () => {
+  const req = {
+    headers: {
+      'x-worksheet-proxy-secret': 'expected-secret',
+      'x-oidc-sub': 'user-sub',
+      'x-oidc-email': 'user@example.com',
+    },
+  };
+
+  const identity = requireAuthenticatedIdentity(
+    req,
+    { sub: 'x-oidc-sub', email: 'x-oidc-email', name: 'x-oidc-name' },
+    { secret: 'expected-secret', secretHeader: 'x-worksheet-proxy-secret' }
+  );
+
+  assert.deepEqual(identity, {
+    sub: 'user-sub',
+    email: 'user@example.com',
+    name: null,
+  });
+});

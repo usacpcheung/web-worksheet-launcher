@@ -31,6 +31,7 @@
   --font-size-base: 1rem;
   --font-size-lg: 1.25rem;
   --font-size-xl: 1.5rem;
+  --roleplayscene-topbar-height: 4rem;
 }
 html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color: var(--color-text); background: var(--color-bg); font-size: var(--font-size-base); }
 body { display: flex; flex-direction: column; min-height: 100vh; }
@@ -114,6 +115,8 @@ button:disabled {
   color: #fff;
 }
 .topbar {
+  position: relative;
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -390,6 +393,16 @@ button:disabled {
   border-color: var(--color-accent-strong);
   color: #fff;
 }
+.confirm-actions__primary.confirm-actions__danger {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+}
+.confirm-actions__primary.confirm-actions__danger:hover:not(:disabled) {
+  border-color: var(--color-danger-text);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+}
 .server-modal-overlay {
   position: fixed;
   inset: 0;
@@ -437,8 +450,77 @@ button:disabled {
   overflow: auto;
   display: grid;
   gap: var(--space-md);
+  padding: 3px;
+  margin: -3px;
 }
 .server-modal__actions { justify-content: flex-end; }
+.discussion-print-details-form {
+  display: grid;
+  gap: var(--space-md);
+}
+.discussion-print-details-form__mode-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+.discussion-print-details-form__mode-label {
+  font-weight: 700;
+  color: var(--color-text);
+}
+.discussion-print-details-form__mode {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+.discussion-print-details-form__mode-button {
+  min-height: 2rem;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--color-muted);
+  padding: 0.25rem 0.75rem;
+  box-shadow: none;
+  font: inherit;
+  font-weight: 700;
+}
+.discussion-print-details-form__mode-button.is-active {
+  background: var(--color-accent);
+  color: #fff;
+}
+.discussion-print-details-form__mode-button:hover:not(.is-active) {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.discussion-print-details-form__label {
+  display: grid;
+  gap: var(--space-2xs);
+  font-weight: 700;
+  color: var(--color-text);
+}
+.discussion-print-details-form__input {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 400;
+}
+.discussion-print-details-form__input--readonly {
+  background: var(--color-surface-muted);
+  color: var(--color-muted);
+}
+.discussion-print-details-form__input:focus {
+  outline: 3px solid rgba(37, 99, 235, 0.18);
+  border-color: var(--color-accent);
+}
 .server-slot-usage,
 .server-empty {
   margin: 0;
@@ -952,6 +1034,10 @@ button:disabled {
   box-shadow: none;
 }
 .theater-panel-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
   min-height: 2.25rem;
   padding: 0 var(--space-sm);
   border: 1px solid var(--color-border);
@@ -1962,18 +2048,24 @@ button:disabled {
 }
 .player-cue-overlay {
   position: fixed;
-  inset: 0;
+  top: var(--roleplayscene-topbar-height, 4rem);
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: grid;
   place-items: center;
   padding: var(--space-md);
   background: rgba(15, 23, 42, 0.45);
   z-index: 30;
+  overflow: auto;
 }
 .player-cue-overlay[hidden] {
   display: none;
 }
 .player-cue-dialog {
-  width: min(540px, 100%);
+  width: min(720px, 100%);
+  max-height: max(14rem, calc(100vh - var(--roleplayscene-topbar-height, 4rem) - 2rem));
+  overflow: auto;
   background: var(--color-surface);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-md);
@@ -1999,6 +2091,93 @@ button:disabled {
   margin: 0;
   color: var(--color-text);
   white-space: pre-wrap;
+}
+.player-discussion-body {
+  white-space: normal;
+}
+.player-cue-dialog--discussion-only {
+  width: min(560px, 100%);
+}
+.player-cue-dialog--discussion-with-cue {
+  width: min(880px, 100%);
+}
+.player-discussion-layout {
+  display: grid;
+  gap: var(--space-md);
+}
+.player-discussion-layout--with-cue {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
+}
+.player-discussion-cue-panel,
+.player-discussion-input-panel {
+  display: grid;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+.player-discussion-cue-panel {
+  align-content: start;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+}
+.player-discussion-cue-panel h4,
+.player-discussion-input-panel h4 {
+  margin: 0;
+}
+.player-discussion-cue-text,
+.player-discussion-note,
+.player-discussion-hint {
+  margin: 0;
+}
+.player-discussion-cue-text {
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+.player-discussion-note,
+.player-discussion-hint {
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+}
+.player-discussion-label {
+  display: grid;
+  gap: var(--space-xs);
+  font-weight: 650;
+}
+.player-discussion-textarea {
+  width: 100%;
+  min-height: 11rem;
+  resize: vertical;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  font: inherit;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: #fff;
+}
+.player-discussion-textarea:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+  outline: none;
+}
+.player-discussion-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+.player-discussion-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+.theater-panel-action--primary {
+  border-color: var(--color-accent-soft);
+  background: #eff6ff;
+  color: var(--color-accent-strong);
 }
 .player-choices .the-end { font-size: var(--font-size-xl); text-align: center; font-weight: 600; }
 .validation-results { display: grid; gap: var(--space-xs); }
@@ -2231,5 +2410,17 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   .dialogue-speaker-add__actions {
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+}
+@media (max-width: 720px) {
+  .player-cue-dialog--discussion-with-cue,
+  .player-cue-dialog--discussion-only {
+    width: min(100%, 34rem);
+  }
+  .player-discussion-layout--with-cue {
+    grid-template-columns: 1fr;
+  }
+  .player-discussion-textarea {
+    min-height: 9rem;
   }
 }

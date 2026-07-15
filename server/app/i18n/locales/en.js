@@ -25,16 +25,16 @@ export default {
     "publishedBrowser": {
       "browsePublishedPackages": "Browse Published Packages",
       "openPackage": "Open package",
-      "empty": "Empty",
-      "filterByOwnerAriaLabel": "Filter By Owner Aria Label",
-      "filterByOwnerEmail": "Filter By Owner Email",
-      "filterBySubject": "Filter By Subject",
-      "filterBySubjectAriaLabel": "Filter By Subject Aria Label",
-      "filterByTitle": "Filter By Title",
-      "filterByTitleAriaLabel": "Filter By Title Aria Label",
+      "empty": "No published packages",
+      "filterByOwnerAriaLabel": "Filter by owner",
+      "filterByOwnerEmail": "Owner email",
+      "filterBySubject": "Filter by subject",
+      "filterBySubjectAriaLabel": "Filter by subject",
+      "filterByTitle": "Filter by title",
+      "filterByTitleAriaLabel": "Filter by title",
       "loading": "Loading",
-      "searchAriaLabel": "Search Aria Label",
-      "signInToLoad": "Sign In To Load"
+      "searchAriaLabel": "Search published packages",
+      "signInToLoad": "Sign in to load"
     },
     "language": {
       "label": "Language",
@@ -83,12 +83,21 @@ export default {
   "editor": {
     "actions": {
       "saveLocalDraft": "Save Local Draft",
+      "startNewWorksheet": "New worksheet",
       "addContent": "Add Content",
       "addQuestion": "Add Question",
       "openViewer": "Open in Viewer (same tab)",
       "importPackage": "Import package (.zip)",
       "exportPackage": "Export package (.zip)",
       "more": "More"
+    },
+    "newWorksheet": {
+      "confirmTitle": "Start a new worksheet?",
+      "confirmDescription": "This will delete the current local worksheet draft and start again from scratch.",
+      "confirmLabel": "Start new worksheet",
+      "removeCurrentDraft": "Current local draft record",
+      "removeBlocks": "All blocks, questions, answers, and worksheet metadata in this draft",
+      "removeLocalMedia": "Local media attached to this draft"
     },
     "server": {
       "uploadDraft": "Upload Draft",
@@ -110,35 +119,41 @@ export default {
       "browse": "Browse Published Packages",
       "copyViewerLink": "Copy Viewer Link",
       "openInEditor": "Open in Editor",
-      "metaSubjectOwner": "Meta Subject Owner {subject} {owner}",
-      "openingInEditor": "Opening In Editor"
+      "metaSubjectOwner": "Subject {subject}, owner {owner}",
+      "openingInEditor": "Opening in editor"
     },
     "uploadedDraft": {
       "manage": "Manage Uploaded Drafts",
+      "openDialog": {
+        "confirm": "Open draft",
+        "description": "This will replace the worksheet currently shown in the editor with a local copy of \"{title}\".",
+        "title": "Open uploaded draft?",
+        "warning": "Save or export the current worksheet first if you need to return to it."
+      },
       "deleteDialog": {
         "confirm": "Confirm",
-        "draftDescription": "Draft Description",
-        "publishedDescription": "Published Description",
-        "removeArtifact": "Remove Artifact",
-        "removeMetadata": "Remove Metadata",
-        "title": "Title"
+        "draftDescription": "This will delete the uploaded draft.",
+        "publishedDescription": "Published versions will remain unless you also remove published data.",
+        "removeArtifact": "Remove package file",
+        "removeMetadata": "Remove draft metadata",
+        "title": "Delete uploaded draft"
       },
-      "empty": "Empty",
+      "empty": "No uploaded drafts",
       "loading": "Loading",
-      "metaDraftId": "Meta Draft Id {value}",
-      "metaPublishState": "Meta Publish State {value}",
-      "metaPublishedId": "Meta Published Id {value}",
+      "metaDraftId": "Draft ID {value}",
+      "metaPublishState": "Publish state {value}",
+      "metaPublishedId": "Published ID {value}",
       "publishBadge": {
         "deleted": "Deleted",
-        "deletedHelp": "Deleted Help",
+        "deletedHelp": "This published version has been deleted.",
         "live": "Live",
-        "liveHelp": "Live Help",
-        "notPublished": "Not Published",
+        "liveHelp": "This draft has a published version.",
+        "notPublished": "Not published",
         "updated": "Updated"
       },
-      "publishNewVersion": "Publish New Version",
+      "publishNewVersion": "Publish new version",
       "publishing": "Publishing",
-      "slotUsage": "Slot Usage {used} {limit}"
+      "slotUsage": "{used} / {limit} slots used"
     },
     "sections": {
       "blocks": "Blocks",
@@ -155,26 +170,26 @@ export default {
         "question": "Question",
         "fallback": "{value}"
       },
-      "blockIdLabel": "Block Id Label",
-      "contentSectionTitle": "Content Section Title",
-      "contentTextLabel": "Content Text Label",
-      "contentTextPlaceholder": "Content Text Placeholder",
-      "copyAssetId": "Copy Asset Id",
-      "copyBlockId": "Copy Block Id",
-      "deleteBlockAriaLabel": "Delete Block Aria Label {index}",
-      "deleteConfirm": "Delete Confirm",
-      "deleteDialogTitle": "Delete Dialog Title {index}",
-      "deleteThisBlock": "Delete This Block",
-      "emptyState": "Empty State",
-      "entityLabel": "Entity Label {index}",
-      "promptAudioAssetId": "Prompt Audio Asset Id",
+      "blockIdLabel": "Block ID",
+      "contentSectionTitle": "Content",
+      "contentTextLabel": "Content text",
+      "contentTextPlaceholder": "Enter content to show students.",
+      "copyAssetId": "Copy asset ID",
+      "copyBlockId": "Copy block ID",
+      "deleteBlockAriaLabel": "Delete block {index}",
+      "deleteConfirm": "Delete",
+      "deleteDialogTitle": "Delete block {index}",
+      "deleteThisBlock": "Delete this block",
+      "emptyState": "No blocks yet.",
+      "entityLabel": "block {index}",
+      "promptAudioAssetId": "Question audio asset ID",
       "promptAudioLabel": "Question audio",
-      "promptImageAssetId": "Prompt Image Asset Id",
+      "promptImageAssetId": "Question image asset ID",
       "promptImageLabel": "Question image",
-      "promptLabel": "Prompt Label",
-      "promptMediaTitle": "Prompt Media Title",
-      "promptPlaceholder": "Prompt Placeholder",
-      "questionSectionTitle": "Question Section Title"
+      "promptLabel": "Prompt",
+      "promptMediaTitle": "Question media",
+      "promptPlaceholder": "Enter the question prompt.",
+      "questionSectionTitle": "Question"
     },
     "media": {
       "actions": {
@@ -245,50 +260,50 @@ export default {
     },
     "form": {
       "subject": {
-        "label": "Label",
-        "placeholder": "Placeholder"
+        "label": "Subject",
+        "placeholder": "e.g. Math"
       },
       "title": {
-        "label": "Label",
-        "placeholder": "Placeholder"
+        "label": "Title",
+        "placeholder": "e.g. Fractions practice"
       }
     },
     "labels": {
       "lastSaved": "Last Saved",
-      "localDraftId": "Local Draft Id"
+      "localDraftId": "Local draft ID"
     },
     "modal": {
       "confirm": {
-        "defaultDescription": "Default Description",
-        "deleteEntity": "Delete Entity {entity}",
-        "irreversibleWarning": "Irreversible Warning",
-        "thisWillRemove": "This Will Remove"
+        "defaultDescription": "Please confirm you want to continue.",
+        "deleteEntity": "Delete {entity}",
+        "irreversibleWarning": "This action cannot be undone.",
+        "thisWillRemove": "This will remove"
       },
       "publish": {
-        "description": "Description",
-        "publishedSubject": "Published Subject",
-        "publishedTitle": "Published Title",
-        "title": "Title"
+        "description": "After publishing, students can open this worksheet in the viewer.",
+        "publishedSubject": "Published subject",
+        "publishedTitle": "Published title",
+        "title": "Publish worksheet"
       },
       "publishConflict": {
-        "description": "Description",
-        "editNameSubject": "Edit Name Subject",
-        "title": "Title",
-        "warning": "Warning"
+        "description": "This draft already has a published version. You can update the name and subject before publishing.",
+        "editNameSubject": "Edit name and subject",
+        "title": "Publish conflict",
+        "warning": "Publishing will create a new online version."
       },
       "slotLimit": {
-        "description": "Description",
-        "title": "Title"
+        "description": "You have reached the uploaded draft limit. Delete an older draft before uploading another one.",
+        "title": "Draft slots full"
       },
       "uploadConflict": {
-        "description": "Description {title}",
-        "replaceUploadedDraft": "Replace Uploaded Draft",
-        "saveAsNewCopy": "Save As New Copy",
-        "statusAlreadyPublished": "Status Already Published",
-        "statusDraftOnly": "Status Draft Only",
-        "title": "Title",
-        "warningPublishedCopyUnaffected": "Warning Published Copy Unaffected",
-        "warningReplaceArtifact": "Warning Replace Artifact"
+        "description": "An uploaded draft named \"{title}\" already exists.",
+        "replaceUploadedDraft": "Replace uploaded draft",
+        "saveAsNewCopy": "Save as new copy",
+        "statusAlreadyPublished": "Published",
+        "statusDraftOnly": "Draft only",
+        "title": "Uploaded draft already exists",
+        "warningPublishedCopyUnaffected": "Published versions will not be affected.",
+        "warningReplaceArtifact": "Replacing will overwrite the existing draft package."
       }
     },
     "notifications": {
@@ -367,7 +382,8 @@ export default {
       },
       "save": {
         "manualSaveFailed": "Manual save failed.",
-        "savedDraft": "Saved draft {id}."
+        "savedDraft": "Saved draft {id}.",
+        "savedLocalDraft": "Saved local draft."
       },
       "uploadDraft": {
         "alreadyInProgress": "Upload already in progress.",
@@ -389,28 +405,28 @@ export default {
     },
     "option": {
       "add": "Add",
-      "includeInCorrectAnswers": "Include In Correct Answers",
-      "markAsCorrectAnswer": "Mark As Correct Answer",
-      "placeholder": "Placeholder {index}",
-      "sectionTitle": "Section Title",
-      "toggleCorrectAnswerAriaLabelMulti": "Toggle Correct Answer Aria Label Multi {index}",
-      "toggleCorrectAnswerAriaLabelSingle": "Toggle Correct Answer Aria Label Single {index}"
+      "includeInCorrectAnswers": "Include in correct answers",
+      "markAsCorrectAnswer": "Mark as correct answer",
+      "placeholder": "Option {index}",
+      "sectionTitle": "Options",
+      "toggleCorrectAnswerAriaLabelMulti": "Toggle option {index} as a correct answer",
+      "toggleCorrectAnswerAriaLabelSingle": "Mark option {index} as the correct answer"
     },
     "question": {
-      "allowSignedValues": "Allow Signed Values",
-      "answerInputType": "Answer Input Type",
-      "answerSectionTitle": "Answer Section Title",
-      "correctAnswer": "Correct Answer",
-      "decimalPlaces": "Decimal Places",
-      "decimalPlacesHint": "Decimal Places Hint",
+      "allowSignedValues": "Allow signed values",
+      "answerInputType": "Answer type",
+      "answerSectionTitle": "Answer",
+      "correctAnswer": "Correct answer",
+      "decimalPlaces": "Decimal places",
+      "decimalPlacesHint": "Leave blank to allow any number of decimal places.",
       "max": "Max",
-      "maxLength": "Max Length",
+      "maxLength": "Max length",
       "min": "Min",
-      "responseFormat": "Response Format",
-      "selectionMode": "Selection Mode",
-      "shuffleOptions": "Shuffle Options",
-      "toggleShuffleAria": "Toggle Shuffle Aria",
-      "toggleSignedValuesAria": "Toggle Signed Values Aria",
+      "responseFormat": "Response format",
+      "selectionMode": "Selection mode",
+      "shuffleOptions": "Shuffle options",
+      "toggleShuffleAria": "Toggle shuffle options",
+      "toggleSignedValuesAria": "Toggle signed values",
       "inputTypes": {
         "text": "Text",
         "number": "Number",
@@ -437,21 +453,27 @@ export default {
         "optionTextRemoval": "User-entered option text/values will be removed.",
         "title": "Switching answer type will remove data",
         "confirmLabel": "Switch and remove"
+      },
+      "multilinePasteConfirm": {
+        "audioRemoval": "Attached audio from overwritten options.",
+        "confirmLabel": "Replace options",
+        "description": "This paste will replace {count} option(s) that have attached audio. Replacing the text will remove those audio attachments.",
+        "title": "Replace options with pasted lines?"
       }
     },
     "reorder": {
-      "dragHandleAriaLabel": "Drag Handle Aria Label {index}",
-      "dragHandleTitle": "Drag Handle Title {index}",
-      "menuAriaLabel": "Menu Aria Label {index}",
-      "moreActionsAriaLabel": "More Actions Aria Label {index}",
-      "moreActionsTitle": "More Actions Title {index}",
-      "moveDown": "Move Down",
-      "moveDownTitle": "Move Down Title {index}",
-      "moveUp": "Move Up",
-      "moveUpTitle": "Move Up Title {index}"
+      "dragHandleAriaLabel": "Drag block {index}",
+      "dragHandleTitle": "Drag block {index}",
+      "menuAriaLabel": "Block {index} menu",
+      "moreActionsAriaLabel": "More actions for block {index}",
+      "moreActionsTitle": "More actions for block {index}",
+      "moveDown": "Move down",
+      "moveDownTitle": "Move block {index} down",
+      "moveUp": "Move up",
+      "moveUpTitle": "Move block {index} up"
     },
     "status": {
-      "selectedBlock": "Selected Block {value}"
+      "selectedBlock": "Selected block {value}"
     },
     "serverSession": {
       "ready": "Server session: ready ({user})",
@@ -499,66 +521,69 @@ export default {
       "nextBlockTitle": "Next block"
     },
     "attemptConflict": {
-      "description": "Description {title}",
-      "replaceServerAttempt": "Replace Server Attempt",
-      "title": "Title",
-      "warning": "Warning"
+      "description": "A server attempt already exists for \"{title}\".",
+      "replaceServerAttempt": "Replace server attempt",
+      "title": "Attempt already exists",
+      "warning": "Replacing will overwrite the existing server attempt."
     },
     "attemptDelete": {
-      "description": "Description {title}",
-      "title": "Title",
-      "warning": "Warning"
+      "description": "You are about to delete the server attempt for \"{title}\".",
+      "title": "Delete attempt",
+      "warning": "This action cannot be undone."
     },
     "attemptSlots": {
-      "description": "Description",
-      "limitReached": "Limit Reached {limit}",
-      "limitReachedUnknown": "Limit Reached Unknown",
-      "noAttemptsToDelete": "No Attempts To Delete",
-      "title": "Title"
+      "description": "When server attempt slots are full, delete an old attempt before uploading another one.",
+      "limitReached": "Limit reached ({limit})",
+      "limitReachedUnknown": "Limit reached",
+      "noAttemptsToDelete": "No attempts to delete",
+      "title": "Attempt slots"
     },
     "audio": {
       "playOptionAudioAriaLabel": "Play option audio",
       "playOptionAudioFailed": "Unable to play option audio.",
       "playOptionAudioTitle": "Play option audio",
-      "playQuestionAudioAriaLabel": "Play Question Audio Aria Label",
-      "playQuestionAudioTitle": "Play Question Audio Title",
-      "unableToPlayQuestionAudio": "Unable To Play Question Audio"
+      "playQuestionAudioAriaLabel": "Play question audio",
+      "playQuestionAudioTitle": "Play question audio",
+      "unableToPlayQuestionAudio": "Unable to play question audio"
     },
     "boot": {
-      "availableAfterSignIn": "Available After Sign In",
-      "goToStartScreen": "Go To Start Screen",
-      "signInAndOpenWorksheet": "Sign In And Open Worksheet",
-      "signInToOpenWorksheet": "Sign In To Open Worksheet",
-      "unableToOpen": "Unable To Open",
-      "whatYouCanDo": "What You Can Do"
+      "availableAfterSignIn": "Available after sign-in",
+      "goToStartScreen": "Go to start screen",
+      "signInAndOpenWorksheet": "Sign in and open worksheet",
+      "signInToOpenWorksheet": "Sign in to open worksheet",
+      "unableToOpen": "Unable to open",
+      "whatYouCanDo": "What you can do"
     },
     "check": {
       "correct": "Correct",
-      "greatWork": "Great Work",
+      "greatWork": "Great work",
       "incorrect": "Incorrect",
-      "missingAnswerKey": "Missing Answer Key",
-      "notGraded": "Not Graded",
-      "notQuite": "Not Quite",
+      "missingAnswerKey": "Missing answer key",
+      "notGraded": "Not graded",
+      "notQuite": "Not quite",
       "reveal": {
-        "correctAnswer": "Correct Answer {answer}",
-        "incorrectWithCorrectAnswer": "Incorrect With Correct Answer {answer}",
-        "noAnswer": "No Answer",
-        "yourAnswer": "Your Answer {answer}"
+        "correctAnswer": "Correct answer: {answer}",
+        "incorrectWithCorrectAnswer": "Incorrect. Correct answer: {answer}",
+        "noAnswer": "No answer",
+        "yourAnswer": "Your answer: {answer}"
       }
     },
     "details": {
-      "copyFieldAriaLabel": "Copy Field Aria Label",
-      "openTechnicalDetailsAriaLabel": "Open Details And Print Settings",
-      "openTechnicalDetailsTitle": "Details And Print Settings",
-      "printSchoolName": "Print School Name",
-      "studentName": "Student Name",
-      "studentNamePlaceholder": "Student Name Placeholder",
-      "title": "Details And Print Settings"
+      "copyFieldAriaLabel": "Copy field",
+      "openTechnicalDetailsAriaLabel": "Open details and print settings",
+      "openTechnicalDetailsTitle": "Details and print settings",
+      "printSchoolName": "Print school name",
+      "printSchoolNameMode": "School name mode",
+      "printSchoolNameDefault": "Default",
+      "printSchoolNameCustom": "Custom",
+      "studentName": "Student name",
+      "studentNamePlaceholder": "Enter student name",
+      "title": "Details and print settings"
     },
     "image": {
-      "couldNotLoad": "Could Not Load",
-      "couldNotRender": "Could Not Render",
-      "missingWithId": "Missing With Id {id}"
+      "couldNotLoad": "Could not load",
+      "couldNotRender": "Could not render",
+      "missingWithId": "Missing image {id}"
     },
     "notifications": {
       "auth": {
@@ -632,69 +657,70 @@ export default {
       "text": "Text response."
     },
     "print": {
-      "answerHeading": "Answer Heading",
-      "answerPrefix": "Answer Prefix",
-      "checkedResultHeading": "Checked Result Heading",
+      "answerHeading": "Answer",
+      "answerPrefix": "Answer:",
+      "checkedResultHeading": "Check result",
       "checkedSummary": "Checked {correct}/{total} correct",
+      "defaultSchoolName": "Hong Kong Red Cross Hospital Schools",
       "meta": {
-        "checkResult": "Check Result",
+        "checkResult": "Check result",
         "student": "Student",
         "subject": "Subject",
-        "submittedAt": "Submitted At"
+        "submittedAt": "Submitted at"
       },
-      "noPromptProvided": "No Prompt Provided",
-      "notAnswered": "Not Answered",
-      "printReportAriaLabel": "Print Report Aria Label",
-      "printReportTitle": "Print Report Title",
-      "questionHeading": "Question Heading",
-      "questionImageAlt": "Question Image Alt",
-      "questionImageUnavailable": "Question Image Unavailable",
+      "noPromptProvided": "No prompt provided",
+      "notAnswered": "Not answered",
+      "printReportAriaLabel": "Print report",
+      "printReportTitle": "Print report",
+      "questionHeading": "Question",
+      "questionImageAlt": "Question image",
+      "questionImageUnavailable": "Question image unavailable",
       "questionNumber": "Question Number {number}",
-      "reportTitleSuffix": "Report Title Suffix",
-      "worksheetFallbackTitle": "Worksheet Fallback Title"
+      "reportTitleSuffix": "Answer report",
+      "worksheetFallbackTitle": "Worksheet"
     },
     "published": {
-      "metaSubjectOwner": "Meta Subject Owner {subject} {owner}"
+      "metaSubjectOwner": "Subject {subject}, owner {owner}"
     },
     "recovery": {
-      "cancelRecovery": "Cancel Recovery",
-      "checkingStatus": "Checking Status",
-      "continueSignIn": "Continue Sign In",
-      "restoringSession": "Restoring Session",
-      "retryNow": "Retry Now"
+      "cancelRecovery": "Cancel recovery",
+      "checkingStatus": "Checking status",
+      "continueSignIn": "Continue sign-in",
+      "restoringSession": "Restoring session",
+      "retryNow": "Retry now"
     },
     "rewrite": {
       "action": "Rewrite",
-      "couldNotStart": "Could Not Start",
-      "hintEnterText": "Hint Enter Text",
-      "hintTooLong": "Hint Too Long {max}",
-      "inProgress": "In Progress",
-      "noActiveAttempt": "No Active Attempt",
-      "onlyForTextResponse": "Only For Text Response",
-      "temporarilyUnavailableSessionCheck": "Temporarily Unavailable Session Check",
-      "temporarilyUnavailableWithReason": "Temporarily Unavailable With Reason {reason}",
+      "couldNotStart": "Could not start",
+      "hintEnterText": "Enter a text answer first.",
+      "hintTooLong": "Text is too long. Maximum {max} characters.",
+      "inProgress": "In progress",
+      "noActiveAttempt": "No active attempt",
+      "onlyForTextResponse": "Only available for text responses",
+      "temporarilyUnavailableSessionCheck": "Temporarily unavailable while sign-in status is checked.",
+      "temporarilyUnavailableWithReason": "Temporarily unavailable: {reason}",
       "undo": "Undo"
     },
     "serverAttempts": {
       "deleting": "Deleting",
-      "description": "Description",
+      "description": "Review, download, or delete uploaded server attempts.",
       "downloading": "Downloading",
-      "empty": "Empty",
+      "empty": "No server attempts",
       "loading": "Loading",
       "manageRecommendation": "Open Manage server attempts to free slots or review existing uploads.",
       "resuming": "Resuming",
-      "signInToLoad": "Sign In To Load",
+      "signInToLoad": "Sign in to load",
       "slotUsage": "{used} of {limit} attempt slots used.",
-      "slotRecoveryBanner": "Slot Recovery Banner",
+      "slotRecoveryBanner": "Server attempt slots are full. Delete attempts you no longer need before uploading.",
       "status": {
         "checked": "Checked",
-        "inProgress": "In Progress",
+        "inProgress": "In progress",
         "submitted": "Submitted"
       },
-      "title": "Title"
+      "title": "Server attempts"
     },
     "shell": {
-      "blockProgressAriaLabel": "Block Progress Aria Label"
+      "blockProgressAriaLabel": "Block progress"
     },
     "status": {
       "finalizedAt": "Finalized{time}",
@@ -719,8 +745,8 @@ export default {
       "progressPercent": "Uploading attempt... {percent}%",
       "progressPreparing": "Preparing upload...",
       "progressSaving": "Saving upload...",
-      "saveAttemptAriaLabel": "Save Attempt Aria Label",
-      "saveAttemptTitle": "Save Attempt Title",
+      "saveAttemptAriaLabel": "Save attempt",
+      "saveAttemptTitle": "Save attempt",
       "exportAttemptAriaLabel": "Export attempt package (.zip)",
       "exportAttemptTitle": "Export attempt package (.zip)",
       "signInRequired": "Sign-in is required before uploading attempts."
