@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PackageService } from './package-service.js';
-import { createStoredZip } from '../../editor/zip-utils.js';
+import { createStoredZip, crc32 } from '../../editor/zip-utils.js';
 import { parseWorksheetPackage } from '../../editor/worksheet-package.js';
 
 function createFakeDb({
@@ -195,6 +195,34 @@ function createValidWorksheetZip({ title = 'T' } = {}) {
   ]);
 }
 
+function createValidV2WorksheetZip({ title = 'T' } = {}) {
+  const audioBytes = new Uint8Array([7, 8, 9]);
+  const checksum = crc32(audioBytes).toString(16).padStart(8, '0');
+  return createStoredZip([
+    {
+      path: 'manifest.json',
+      data: JSON.stringify({
+        format: 'worksheet-package', packageVersion: 2, schemaVersion: 2,
+        assets: [{ assetId: 'prompt_yue', path: 'media/prompt-yue.mp3', kind: 'audio', usage: 'question_audio', byteLength: 3, crc32: checksum }],
+        worksheet: { title },
+      }),
+    },
+    {
+      path: 'content/worksheet.json',
+      data: JSON.stringify({
+        title,
+        blocks: [{
+          blockId: 'q1', kind: 'question', prompt: {
+            text: 'Question',
+            audioTracks: [{ language: 'cantonese', assetId: 'prompt_yue', voicePresetId: 'cantonese', sourceTextHash: 'hash-q1' }],
+          }, responseConfig: { inputType: 'text' },
+        }],
+      }),
+    },
+    { path: 'media/prompt-yue.mp3', data: audioBytes },
+  ]);
+}
+
 test('uploadDraft acquires per-owner advisory lock before counting slots', async () => {
   const db = createFakeDb({ draftCount: 3 });
   const artifactStore = {
@@ -303,6 +331,27 @@ test('uploadDraft rejects invalid worksheet package before DB transaction and ar
   assert.equal(result.error.message, 'Uploaded worksheet package is invalid or corrupted.');
   assert.equal(artifactStoreCalled, false);
   assert.equal(db.state.queries.length, 0);
+});
+
+test('uploadDraft accepts a valid v2 worksheet package with multilingual audio tracks', async () => {
+  let storedBytes = null;
+  const service = createService({
+    db: createFakeDb(),
+    artifactStore: {
+      async storeArtifact({ bytes }) {
+        storedBytes = bytes;
+        return { artifactPath: 'drafts/v2.zip', absolutePath: '/tmp/v2.zip', artifactSha256: 'sha-v2', artifactSizeBytes: bytes.length };
+      },
+    },
+  });
+
+  const result = await service.uploadDraft({
+    identity: { sub: 'oidc-sub', email: 'teacher@example.test', name: 'Teacher' },
+    title: 'Multilingual', subject: 'Language', zipBytes: createValidV2WorksheetZip({ title: 'Multilingual' }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(storedBytes);
 });
 
 test('uploadDraft save-as-copy stores artifact with server-selected copy title inside package', async () => {
