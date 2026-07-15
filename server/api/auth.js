@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 function readHeader(req, headerName) {
   const value = req.headers[headerName];
   if (Array.isArray(value)) return value[0] || null;
@@ -21,7 +23,26 @@ export class AuthError extends Error {
   }
 }
 
-export function requireAuthenticatedIdentity(req, authHeaders) {
+function matchesSecret(actual, expected) {
+  if (typeof actual !== 'string' || typeof expected !== 'string') return false;
+  const actualBytes = Buffer.from(actual, 'utf8');
+  const expectedBytes = Buffer.from(expected, 'utf8');
+  if (actualBytes.length !== expectedBytes.length) return false;
+  return crypto.timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function requireTrustedProxySecret(req, trustedProxy) {
+  if (!trustedProxy?.secret) return;
+  const headerName = trustedProxy.secretHeader || 'x-worksheet-proxy-secret';
+  const suppliedSecret = readHeader(req, headerName);
+  if (!matchesSecret(suppliedSecret, trustedProxy.secret)) {
+    throw new AuthError('Missing or invalid trusted proxy secret.');
+  }
+}
+
+export function requireAuthenticatedIdentity(req, authHeaders, trustedProxy = null) {
+  requireTrustedProxySecret(req, trustedProxy);
+
   const subHeader = authHeaders.sub;
   const sub = readHeader(req, subHeader)?.trim();
   if (!sub) {

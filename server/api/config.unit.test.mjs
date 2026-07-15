@@ -10,6 +10,45 @@ function createEnv(overrides = {}) {
   };
 }
 
+test('loadConfig defaults API host to loopback without trusted proxy secret', () => {
+  const config = loadConfig(createEnv());
+
+  assert.equal(config.host, '127.0.0.1');
+  assert.deepEqual(config.trustedProxy, {
+    secret: null,
+    secretHeader: 'x-worksheet-proxy-secret',
+  });
+});
+
+test('loadConfig allows trusted proxy secret and custom header from env', () => {
+  const config = loadConfig(createEnv({
+    TRUSTED_PROXY_SECRET: 'long-random-secret',
+    TRUSTED_PROXY_SECRET_HEADER: 'X-Custom-Proxy-Secret',
+  }));
+
+  assert.deepEqual(config.trustedProxy, {
+    secret: 'long-random-secret',
+    secretHeader: 'x-custom-proxy-secret',
+  });
+});
+
+test('loadConfig rejects non-loopback HOST without trusted proxy secret', () => {
+  assert.throws(
+    () => loadConfig(createEnv({ HOST: '0.0.0.0' })),
+    /TRUSTED_PROXY_SECRET is required when HOST is not loopback/
+  );
+});
+
+test('loadConfig allows non-loopback HOST when trusted proxy secret is configured', () => {
+  const config = loadConfig(createEnv({
+    HOST: '0.0.0.0',
+    TRUSTED_PROXY_SECRET: 'long-random-secret',
+  }));
+
+  assert.equal(config.host, '0.0.0.0');
+  assert.equal(config.trustedProxy.secret, 'long-random-secret');
+});
+
 test('loadConfig exposes default RolePlayScene package resource limits', () => {
   const config = loadConfig(createEnv());
 

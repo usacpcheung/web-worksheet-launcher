@@ -194,6 +194,9 @@ test('player source wires cue and utility discussion entry points', async () => 
   assert.equal(source.includes("const openDiscussion = () => {"), true);
   assert.equal(source.includes("discussionButton.addEventListener('click', () => {"), true);
   assert.equal(source.includes("printButton.addEventListener('click', () => {"), true);
+  assert.equal(source.includes('const syncDiscussionPrintButton = () => {'), true);
+  assert.equal(source.includes('printDiscussionButton.disabled = !discussionSession?.hasAnyText?.();'), true);
+  assert.equal(source.includes('syncDiscussionPrintButton();\n    try {\n      onDiscussionChange?.('), true);
   assert.equal(source.includes('const rewriteTask = discussionSession?.rewrite?.(scene.id, textAtClick, { apiClient });'), true);
   assert.equal(source.includes('await rewriteTask;'), true);
   assert.equal(source.includes("if (typeof latestText === 'string') {"), true);
