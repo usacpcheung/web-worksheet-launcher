@@ -365,6 +365,7 @@ export default {
         "promptGenerated": "Question prompt audio generated and attached.",
         "promptRequired": "Enter a prompt before generating audio.",
         "promptTextTooLong": "Prompt must be {max} characters or fewer to generate audio.",
+        "sourceTextChangedDuringGeneration": "Text changed while audio was generating. No audio was attached; generate it again for the updated text.",
         "startFailed": "Unable to start audio generation. Please try again."
       },
       "browsePublished": {

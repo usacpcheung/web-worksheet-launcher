@@ -280,6 +280,44 @@ test('track attachment replaces only its selected language and generated audio f
   assert.equal(tracks.find((track) => track.language === 'english').voicePresetId, 'english');
 });
 
+test('generated audio is discarded when prompt or option text changes while the request is in flight', async () => {
+  const mod = await loadEditorModule();
+  const resolvers = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { put: async () => {}, remove: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      generateAudioFromText: () => new Promise((resolve) => resolvers.push(resolve)),
+    },
+  });
+  session.state.draft = {
+    localId: 'draft_stale_track_generation', assets: [], blocks: [{
+      blockId: 'q1', kind: 'question', position: 0,
+      prompt: { text: 'Original prompt', audioTracks: [] },
+      responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', value: 'Original option', label: 'Original option', audioTracks: [] }] },
+    }],
+  };
+
+  const promptGeneration = session.generateAudioTrack('q1', 'prompt', 'english');
+  session.state.draft.blocks[0].prompt.text = 'Updated prompt';
+  resolvers.shift()({ ok: true, data: new Uint8Array([1, 2, 3]) });
+  const promptResult = await promptGeneration;
+  assert.equal(promptResult.reason, 'source-text-changed');
+  assert.deepEqual(session.state.draft.blocks[0].prompt.audioTracks, []);
+
+  const optionGeneration = session.generateAudioTrack('q1', 'option', 'mandarin', { optionId: 'o1' });
+  session.state.draft.blocks[0].responseConfig.options[0].label = 'Updated option';
+  session.state.draft.blocks[0].responseConfig.options[0].value = 'Updated option';
+  resolvers.shift()({ ok: true, data: new Uint8Array([1, 2, 3]) });
+  const optionResult = await optionGeneration;
+  assert.equal(optionResult.reason, 'source-text-changed');
+  assert.deepEqual(session.state.draft.blocks[0].responseConfig.options[0].audioTracks, []);
+  assert.deepEqual(session.state.draft.assets, []);
+});
+
 test('legacy audio migration moves prompt and option audio into one selected track language', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());

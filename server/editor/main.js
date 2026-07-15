@@ -2150,6 +2150,16 @@ class EditorDraftSession {
     const optionId = options.optionId || null;
     const current = this.getAudioTrackTarget(blockId, target, optionId);
     if (!current) return { ok: false, reason: 'missing-target' };
+    if (
+      options.expectedSourceTextHash
+      && getAudioSourceTextHash(current.text) !== options.expectedSourceTextHash
+    ) {
+      return {
+        ok: false,
+        reason: 'source-text-changed',
+        error: { message: editorNotification('audioGeneration.sourceTextChangedDuringGeneration') },
+      };
+    }
     const existingTrack = getAudioTrack(current.audioTracks, language);
     if (existingTrack && options.confirmReplace !== true) {
       return { ok: false, reason: 'confirm-replace-required', existingAssetId: existingTrack.assetId };
@@ -2223,6 +2233,7 @@ class EditorDraftSession {
     if (!preset) return { ok: false, reason: 'missing-preset' };
     const existingTrack = getAudioTrack(current.audioTracks, language);
     if (existingTrack && options.confirmReplace !== true) return { ok: false, reason: 'confirm-replace-required', existingAssetId: existingTrack.assetId };
+    const expectedSourceTextHash = getAudioSourceTextHash(current.text);
     const audioResult = await this.apiClient.generateAudioFromText(textState.trimmedText, preset.options);
     if (!audioResult?.ok) return { ok: false, reason: 'generation-failed', error: audioResult?.error || null };
     const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
@@ -2232,6 +2243,7 @@ class EditorDraftSession {
       optionId,
       confirmReplace: true,
       voicePresetId: language,
+      expectedSourceTextHash,
     });
   }
 
@@ -6767,7 +6779,7 @@ function renderEditorShell(session) {
             language,
           });
           if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
-            session.setMediaFeedback(editorNotification('audioGeneration.failed'));
+            session.setMediaFeedback(result?.error?.message || editorNotification('audioGeneration.failed'));
           }
         } finally {
           promptT2AInFlightBlockIds.delete(blockId);
@@ -7257,7 +7269,7 @@ function renderEditorShell(session) {
                 language,
               });
               if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
-                session.setMediaFeedback(editorNotification('audioGeneration.failed'));
+                session.setMediaFeedback(result?.error?.message || editorNotification('audioGeneration.failed'));
               }
             } finally {
               optionT2AInFlightKeys.delete(optionT2AKey);

@@ -26,7 +26,6 @@ test('createWorksheetPackageFromDraft + parseWorksheetPackage round-trip with me
           format: 'plain_text',
           mediaRefs: [
             { assetId: 'asset_img_1', usage: 'question_image' },
-            { assetId: 'asset_audio_1', usage: 'question_audio' },
           ],
           audioTracks: [
             { language: 'mandarin', assetId: 'asset_audio_mandarin', voicePresetId: 'mandarin', sourceTextHash: 'prompt-v1' },
@@ -37,7 +36,7 @@ test('createWorksheetPackageFromDraft + parseWorksheetPackage round-trip with me
           inputType: 'multiple_choice',
           options: [
             {
-              id: 'opt_1', value: 'A', label: 'A', mediaRefs: [{ assetId: 'asset_opt_audio_1', usage: 'option_audio' }],
+              id: 'opt_1', value: 'A', label: 'A', mediaRefs: [],
               audioTracks: [{ language: 'english', assetId: 'asset_audio_english', voicePresetId: null, sourceTextHash: 'option-v1' }],
             },
           ],
@@ -46,8 +45,6 @@ test('createWorksheetPackageFromDraft + parseWorksheetPackage round-trip with me
     ],
     assets: [
       { assetId: 'asset_img_1', kind: 'image', usage: 'question_image', mimeType: 'image/png', path: 'media/q1.png' },
-      { assetId: 'asset_audio_1', kind: 'audio', usage: 'question_audio', mimeType: 'audio/mpeg', path: 'media/q1.mp3' },
-      { assetId: 'asset_opt_audio_1', kind: 'audio', usage: 'option_audio', mimeType: 'audio/mpeg', path: 'media/opt1.mp3' },
       { assetId: 'asset_audio_cantonese', kind: 'audio', usage: 'question_audio', mimeType: 'audio/mpeg', path: 'media/q1-yue.mp3' },
       { assetId: 'asset_audio_mandarin', kind: 'audio', usage: 'question_audio', mimeType: 'audio/mpeg', path: 'media/q1-zh.mp3' },
       { assetId: 'asset_audio_english', kind: 'audio', usage: 'option_audio', mimeType: 'audio/mpeg', path: 'media/opt1-en.mp3' },
@@ -57,8 +54,6 @@ test('createWorksheetPackageFromDraft + parseWorksheetPackage round-trip with me
 
   const assetById = new Map([
     ['asset_img_1', { binary: new Uint8Array([1, 2, 3, 4]) }],
-    ['asset_audio_1', { binary: new Uint8Array([10, 11, 12]) }],
-    ['asset_opt_audio_1', { binary: new Uint8Array([100, 101]) }],
     ['asset_audio_cantonese', { binary: new Uint8Array([13]) }],
     ['asset_audio_mandarin', { binary: new Uint8Array([14]) }],
     ['asset_audio_english', { binary: new Uint8Array([15]) }],
@@ -70,13 +65,53 @@ test('createWorksheetPackageFromDraft + parseWorksheetPackage round-trip with me
   assert.equal(parsed.manifest.format, 'worksheet-package');
   assert.equal(parsed.manifest.packageVersion, 2);
   assert.equal(parsed.manifest.schemaVersion, 2);
-  assert.equal(parsed.manifest.assets.length, 6);
-  assert.equal(parsed.worksheet.blocks[0].prompt.mediaRefs.length, 2);
-  assert.equal(parsed.worksheet.blocks[0].responseConfig.options[0].mediaRefs[0].usage, 'option_audio');
+  assert.equal(parsed.manifest.assets.length, 4);
+  assert.equal(parsed.worksheet.blocks[0].prompt.mediaRefs.length, 1);
+  assert.deepEqual(parsed.worksheet.blocks[0].responseConfig.options[0].mediaRefs, []);
   assert.deepEqual(parsed.worksheet.blocks[0].prompt.audioTracks.map((track) => track.language), ['cantonese', 'mandarin']);
   assert.deepEqual(parsed.worksheet.blocks[0].responseConfig.options[0].audioTracks, [
     { language: 'english', assetId: 'asset_audio_english', voicePresetId: null, sourceTextHash: 'option-v1' },
   ]);
+
+  const mixedDraft = structuredClone(draft);
+  mixedDraft.blocks[0].prompt.mediaRefs.push({ assetId: 'asset_audio_cantonese', usage: 'question_audio' });
+  assert.throws(
+    () => createWorksheetPackageFromDraft(mixedDraft, assetById),
+    /legacy audio attachments cannot be mixed with multilingual audio tracks/
+  );
+});
+
+test('package v2 rejects mixed legacy audio attachments and multilingual tracks', () => {
+  const audioBytes = new Uint8Array([1, 2, 3]);
+  const checksum = crc32(audioBytes).toString(16).padStart(8, '0');
+  const assets = [
+    { assetId: 'legacy_audio', path: 'media/legacy.mp3', kind: 'audio', usage: 'question_audio', byteLength: 3, crc32: checksum },
+    { assetId: 'track_audio', path: 'media/track.mp3', kind: 'audio', usage: 'question_audio', byteLength: 3, crc32: checksum },
+  ];
+  const zip = createStoredZip([
+    { path: 'manifest.json', data: JSON.stringify({ format: PACKAGE_FORMAT, packageVersion: PACKAGE_VERSION, schemaVersion: CONTENT_SCHEMA_VERSION, assets }) },
+    {
+      path: 'content/worksheet.json',
+      data: JSON.stringify({
+        title: 'Mixed audio',
+        blocks: [{
+          blockId: 'q1', kind: 'question', prompt: {
+            text: 'Question',
+            mediaRefs: [{ assetId: 'legacy_audio', usage: 'question_audio' }],
+            audioTracks: [{ language: 'english', assetId: 'track_audio', voicePresetId: 'english', sourceTextHash: 'track-hash' }],
+          },
+          responseConfig: { inputType: 'text' },
+        }],
+      }),
+    },
+    { path: 'media/legacy.mp3', data: audioBytes },
+    { path: 'media/track.mp3', data: audioBytes },
+  ]);
+
+  assert.throws(
+    () => parseWorksheetPackage(zip.buffer),
+    /legacy audio attachments cannot be mixed with multilingual audio tracks/
+  );
 });
 
 test('mapLegacyJsonToPackageModel rejects invalid legacy JSON and maps valid legacy JSON', () => {
