@@ -97,7 +97,7 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
         return json(res, 200, ok({ status: 'ok' }));
       }
 
-      const identity = requireAuthenticatedIdentity(req, config.authHeaders);
+      const identity = requireAuthenticatedIdentity(req, config.authHeaders, config.trustedProxy);
 
       if (req.method === 'GET' && url.pathname === '/api/v1/session') {
         return json(
@@ -627,9 +627,9 @@ export async function createApiServer(overrides = {}) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   createApiServer()
     .then(({ server, config }) => {
-      server.listen(config.port, () => {
+      server.listen(config.port, config.host, () => {
         // eslint-disable-next-line no-console
-        console.log(`API listening on http://127.0.0.1:${config.port}`);
+        console.log(`API listening on http://${config.host}:${config.port}`);
       });
     })
     .catch((error) => {

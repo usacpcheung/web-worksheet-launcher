@@ -4,7 +4,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { RolePlaySceneDraftService } from './roleplayscene-draft-service.js';
-import { validateRolePlayScenePackage } from './roleplayscene-package.js';
+import {
+  DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
+  ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED,
+  validateRolePlayScenePackage,
+} from './roleplayscene-package.js';
 import { createStoredZip } from '../../editor/zip-utils.js';
 
 const identity = {
@@ -229,11 +233,11 @@ function createFakeDb({
   return db;
 }
 
-function createService({ db, artifactStore }) {
+function createService({ db, artifactStore, config = {} }) {
   return new RolePlaySceneDraftService({
     db,
     artifactStore,
-    config: { draftSlotLimit: 3 },
+    config: { draftSlotLimit: 3, ...config },
   });
 }
 
@@ -395,6 +399,40 @@ test('uploadRolePlaySceneDraft rejects invalid packages before DB and artifact w
   assert.equal(result.ok, false);
   assert.equal(result.statusCode, 400);
   assert.equal(result.error.code, 'INVALID_ROLEPLAYSCENE_PACKAGE_ZIP');
+  assert.equal(artifactCalled, false);
+  assert.equal(db.state.queries.length, 0);
+});
+
+test('uploadRolePlaySceneDraft applies configured ZIP resource limits before DB and artifact writes', async () => {
+  const db = createFakeDb();
+  let artifactCalled = false;
+  const service = createService({
+    db,
+    artifactStore: {
+      async storeArtifact() {
+        artifactCalled = true;
+        throw new Error('storeArtifact should not run');
+      },
+    },
+    config: {
+      rolePlayScenePackageLimits: {
+        ...DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
+        maxEntries: 1,
+      },
+    },
+  });
+
+  const result = await service.uploadRolePlaySceneDraft({
+    identity,
+    title: 'Large Package',
+    description: '',
+    zipBytes: createRolePlaySceneZip(),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.statusCode, 400);
+  assert.equal(result.error.code, ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED);
+  assert.equal(result.error.details.limit, 'maxEntries');
   assert.equal(artifactCalled, false);
   assert.equal(db.state.queries.length, 0);
 });

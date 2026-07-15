@@ -143,9 +143,19 @@ assert.ok(
   mainSource.includes('teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {')
     && mainSource.includes('apiClient,')
     && mainSource.includes('ensureServerSessionReady,')
+    && mainSource.includes('onServerApiResult: syncServerSessionFromApiResult')
     && mainSource.includes('initialSelectedSceneId: editorSession.selectedSceneId')
     && mainSource.includes('onPreviewCurrentScene: startEditorScenePreview'),
   'RolePlayScene editor should receive server API/session hooks for protected T2A generation',
+);
+assert.ok(
+  mainSource.includes('function isServerAuthRequired(result)')
+    && mainSource.includes('function syncServerSessionFromApiResult(result)')
+    && mainSource.includes("status: 'not_ready'")
+    && mainSource.includes('syncServerSessionFromApiResult(result);')
+    && editorSource.includes("const onServerApiResult = typeof options.onServerApiResult === 'function'")
+    && editorSource.includes('onServerApiResult?.(result);'),
+  'late API auth failures should downgrade RolePlayScene session UI for server actions and T2A generation',
 );
 assert.ok(
   mainSource.includes('let editorSession = {')

@@ -45,6 +45,16 @@ try {
     'Import confirmation title should resolve from shared Traditional Chinese locale',
   );
   assert.strictEqual(
+    translate('toolbar.newStory'),
+    '開始新故事',
+    'New Story toolbar action should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
+    translate('messages.newStoryConfirmAccept'),
+    '開始新故事',
+    'New Story confirmation action should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
     translate('messages.importMissingMediaWarning', { path: 'media/missing.mp3' }),
     '缺少媒體檔案：media/missing.mp3',
     'Import missing-media warning should resolve from shared Traditional Chinese locale',
@@ -125,6 +135,16 @@ try {
     translate('messages.importConfirmAccept'),
     'Replace and import',
     'Import confirmation action should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('toolbar.newStory'),
+    'New Story',
+    'New Story toolbar action should resolve from shared English locale',
+  );
+  assert.strictEqual(
+    translate('messages.newStoryConfirmTitle'),
+    'Start a new story?',
+    'New Story confirmation title should resolve from shared English locale',
   );
   assert.strictEqual(
     translate('server.conflictCopy'),
