@@ -24,6 +24,10 @@ async function withServer({
         email: 'x-oidc-email',
         name: 'x-oidc-name',
       },
+      trustedProxy: {
+        secret: null,
+        secretHeader: 'x-worksheet-proxy-secret',
+      },
       browsePageLimitDefault: 20,
       browsePageLimitMax: 100,
       draftSlotLimit: 3,
@@ -129,6 +133,109 @@ async function withServer({
 }
 
 const authHeaders = { 'x-oidc-sub': 'user-sub' };
+
+test('GET /healthz remains unauthenticated', async () => {
+  await withServer(
+    {
+      configOverrides: {
+        trustedProxy: {
+          secret: 'expected-secret',
+          secretHeader: 'x-worksheet-proxy-secret',
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/healthz`);
+
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.deepEqual(payload, { ok: true, data: { status: 'ok' } });
+    }
+  );
+});
+
+test('GET /api/v1/session rejects spoofed OIDC headers without proxy secret when configured', async () => {
+  await withServer(
+    {
+      configOverrides: {
+        trustedProxy: {
+          secret: 'expected-secret',
+          secretHeader: 'x-worksheet-proxy-secret',
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/session`, {
+        headers: {
+          'x-oidc-sub': 'spoofed-user',
+        },
+      });
+
+      assert.equal(res.status, 401);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'AUTH_REQUIRED');
+      assert.equal(payload.error.message, 'Missing or invalid trusted proxy secret.');
+    }
+  );
+});
+
+test('GET /api/v1/session rejects wrong proxy secret when configured', async () => {
+  await withServer(
+    {
+      configOverrides: {
+        trustedProxy: {
+          secret: 'expected-secret',
+          secretHeader: 'x-worksheet-proxy-secret',
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/session`, {
+        headers: {
+          ...authHeaders,
+          'x-worksheet-proxy-secret': 'wrong-secret',
+        },
+      });
+
+      assert.equal(res.status, 401);
+      const payload = await res.json();
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, 'AUTH_REQUIRED');
+    }
+  );
+});
+
+test('GET /api/v1/session accepts Apache-shaped secret and OIDC headers', async () => {
+  await withServer(
+    {
+      configOverrides: {
+        trustedProxy: {
+          secret: 'expected-secret',
+          secretHeader: 'x-worksheet-proxy-secret',
+        },
+      },
+    },
+    async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/session`, {
+        headers: {
+          ...authHeaders,
+          'x-oidc-email': 'user@example.com',
+          'x-worksheet-proxy-secret': 'expected-secret',
+        },
+      });
+
+      assert.equal(res.status, 200);
+      const payload = await res.json();
+      assert.equal(payload.ok, true);
+      assert.deepEqual(payload.data.user, {
+        sub: 'user-sub',
+        email: 'user@example.com',
+        name: null,
+      });
+    }
+  );
+});
 
 test('POST /api/v1/drafts/upload forwards upload payload and returns success', async () => {
   let received = null;
