@@ -3861,7 +3861,10 @@ class EditorDraftSession {
         createZipFileFromBytes(artifact.data, `published-package-${normalizedPublishedPackageId}.zip`),
         { convertToEditableDraft: true, migrationSource: 'published-package' }
       );
-      if (imported?.canceled) return { ok: false, canceled: true, error: { message: 'Opening canceled. No worksheet was imported or changed.' } };
+      if (imported?.canceled) {
+        this.clearNotificationsBySource('publishedPackage.open');
+        return { ok: false, canceled: true, error: { message: 'Opening canceled. No worksheet was imported or changed.' } };
+      }
       this.pushNotification({
         kind: 'success',
         category: 'server',
@@ -5484,6 +5487,11 @@ function renderEditorShell(session) {
               text: editorNotification('browsePublished.openedPublishedPackageInEditor', { id: item.published_package_id }),
             });
             browsePublishedDialogOpen = false;
+          } else if (reopenResult?.canceled) {
+            browsePublishedState = {
+              ...browsePublishedState,
+              error: null,
+            };
           } else {
             const openError = session.state.serverActionMessage || reopenResult?.error?.message || editorNotification('browsePublished.failedOpenPublishedPackage');
             browsePublishedState = {

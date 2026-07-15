@@ -1322,6 +1322,8 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('if (browsePublishedDialogOpen) {\n      renderPublishedBrowserModal();\n    }'), true);
   assert.equal(source.includes('if (reopenResult?.ok) {'), true);
   assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
+  assert.equal(source.includes('} else if (reopenResult?.canceled) {'), true);
+  assert.equal(source.includes('error: null,'), true);
   assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || editorNotification('browsePublished.failedOpenPublishedPackage');"), true);
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
@@ -4614,6 +4616,28 @@ test('reopenPublishedPackageAsLocalCopy emits modal-open notification sequence',
     .map((item) => item.text);
   assert.equal(openActivityTexts.includes('editor.notifications.publishedPackage.opening'), false);
   assert.equal(openActivityTexts.includes('editor.notifications.publishedPackage.openedAsLocalCopy'), true);
+});
+
+test('canceling published package migration clears transient opening status without changing the draft', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      fetchPublishedPackageArtifact: async () => ({ ok: true, data: new Uint8Array([1, 2, 3]) }),
+    },
+  });
+  const originalDraft = { localId: 'draft_before_cancel' };
+  session.state.draft = originalDraft;
+  session.importWorksheetPackageFile = async () => ({ canceled: true, importedRecord: null, draftRecord: null });
+
+  const result = await session.reopenPublishedPackageAsLocalCopy('pkg_legacy_audio');
+
+  assert.equal(result.ok, false);
+  assert.equal(result.canceled, true);
+  assert.equal(session.state.draft, originalDraft);
+  assert.equal(session.state.openingPublishedPackageIds.size, 0);
+  assert.equal(session.state.notifications.some((item) => item.source === 'publishedPackage.open'), false);
+  assert.equal(session.state.serverActionMessage, null);
 });
 
 test('setRecoveryMessage emits visible recovery notification objects', async () => {
