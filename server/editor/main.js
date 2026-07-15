@@ -19,6 +19,7 @@ const AUTOSAVE_MS = 1000;
 const ACTIVITY_VISIBLE_INITIAL = 30;
 const ACTIVITY_MAX_STORED = 200;
 const ACTIVE_NOTIFICATIONS_MAX_STORED = 200;
+const DEFAULT_NOTIFICATION_TOAST_TTL_MS = 5000;
 const T2A_TEXT_MAX_LENGTH = 200;
 const DEFAULT_MODE = 'edit';
 const RESUME_FLAG_KEY = 'editor:lastSession';
@@ -27,6 +28,17 @@ let contractsPromise;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function getNotificationToastRemainingMs(notification, nowMs = Date.now()) {
+  if (!notification || notification.showToast === false) return 0;
+  const durationMs = Number.isFinite(Number(notification.ttlMs)) && Number(notification.ttlMs) > 0
+    ? Number(notification.ttlMs)
+    : DEFAULT_NOTIFICATION_TOAST_TTL_MS;
+  const createdAtMs = new Date(notification.createdAt || '').getTime();
+  const currentMs = Number(nowMs);
+  if (!Number.isFinite(createdAtMs) || !Number.isFinite(currentMs)) return 0;
+  return Math.max(0, Math.min(durationMs, createdAtMs + durationMs - currentMs));
 }
 
 function formatUploadedDraftTimestamp(createdAt, locale = undefined) {
@@ -1258,6 +1270,7 @@ class EditorDraftSession {
     logActivity = true,
     activityText = null,
     activityReplaceSource = null,
+    showToast = true,
   } = {}) {
     this.pruneExpiredNotifications();
     const normalizedText = String(text || '').trim();
@@ -1273,6 +1286,7 @@ class EditorDraftSession {
       ttlMs: Number.isFinite(Number(ttlMs)) && Number(ttlMs) > 0 ? Number(ttlMs) : null,
       logActivity: logActivity !== false,
       activityReplaceSource: isNonEmptyString(activityReplaceSource) ? activityReplaceSource.trim() : null,
+      showToast: showToast !== false,
       createdAt: nowIso(),
     };
     this.state.notifications = [...this.state.notifications, notification]
@@ -4238,7 +4252,13 @@ class EditorDraftSession {
           return { ok: false, status: 'generation_failed', error: { message } };
         }
         this.setRecoveryMessage(editorNotification('audioGeneration.optionGenerated'));
-        this.pushNotification({ kind: 'success', category: 'editor', source: 'option.t2a', text: editorNotification('audioGeneration.optionGenerated') });
+        this.pushNotification({
+          kind: 'success',
+          category: 'editor',
+          source: 'option.t2a',
+          text: editorNotification('audioGeneration.optionGenerated'),
+          showToast: false,
+        });
         this.notifyStateChange();
         return { ok: true, status: 'generated_editor_option_t2a_track', data: { blockId, optionId, language: payload.language } };
       }
@@ -4294,6 +4314,7 @@ class EditorDraftSession {
         category: 'editor',
         source: 'option.t2a',
         text: editorNotification('audioGeneration.optionGenerated'),
+        showToast: false,
       });
       this.notifyStateChange();
       return { ok: true, status: 'generated_editor_option_t2a', data: { blockId, optionId } };
@@ -5628,7 +5649,6 @@ function renderEditorShell(session) {
   let visibleActivityCount = ACTIVITY_VISIBLE_INITIAL;
   const dismissedToastIds = new Set();
   const toastTimers = new Map();
-  const DEFAULT_TOAST_TTL_MS = 5000;
 
   const getNotificationAriaLive = (kind) => (kind === 'error' ? 'assertive' : 'polite');
   const getNotificationRole = (kind) => (kind === 'error' ? 'alert' : 'status');
@@ -7844,20 +7864,24 @@ function renderEditorShell(session) {
         dismissedToastIds.delete(notificationId);
       }
     });
+    const toastNowMs = Date.now();
     const toastNotifications = session.state.notifications
-      .filter((notification) => notification?.id && !dismissedToastIds.has(notification.id))
+      .map((notification) => ({
+        notification,
+        remainingMs: getNotificationToastRemainingMs(notification, toastNowMs),
+      }))
+      .filter(({ notification, remainingMs }) => notification?.id
+        && remainingMs > 0
+        && !dismissedToastIds.has(notification.id))
       .slice(-4);
     toastContainer.innerHTML = '';
-    toastNotifications.forEach((notification) => {
-      const ttlMs = Number.isFinite(Number(notification?.ttlMs)) && Number(notification.ttlMs) > 0
-        ? Number(notification.ttlMs)
-        : DEFAULT_TOAST_TTL_MS;
+    toastNotifications.forEach(({ notification, remainingMs }) => {
       if (!toastTimers.has(notification.id)) {
         const timerHandle = window.setTimeout(() => {
           dismissedToastIds.add(notification.id);
           toastTimers.delete(notification.id);
           updateSummary();
-        }, ttlMs);
+        }, remainingMs);
         toastTimers.set(notification.id, timerHandle);
       }
       toastContainer.appendChild(renderNotificationCard(notification, 'notification-toast'));
@@ -8432,6 +8456,7 @@ export {
   getNumberQuestionValidationErrors,
   formatUploadedDraftTimestamp,
   toUploadedDraftDisplay,
+  getNotificationToastRemainingMs,
   getAudioSourceTextHash,
   getTextLanguageMismatch,
   migrateLegacyAudioBlocks,

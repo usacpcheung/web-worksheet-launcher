@@ -342,12 +342,258 @@ function createViewerIcon(name) {
     upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
     download: `<svg ${svgAttrs}><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>`,
     audio: `<svg ${svgAttrs}><path d="M11 5 6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18.5 6a8.5 8.5 0 0 1 0 12"></path></svg>`,
+    stop: `<svg ${svgAttrs}><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>`,
+    chevronDown: `<svg ${svgAttrs}><path d="m7 10 5 5 5-5"></path></svg>`,
     attempts: `<svg ${svgAttrs}><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><circle cx="4" cy="6" r="1.5"></circle><circle cx="4" cy="12" r="1.5"></circle><circle cx="4" cy="18" r="1.5"></circle></svg>`,
     worksheet: `<svg ${svgAttrs}><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v6h6"></path></svg>`,
     print: `<svg ${svgAttrs}><path d="M6 9V4h12v5"></path><path d="M6 18h12v2H6z"></path><path d="M6 14h12"></path><path d="M6 10H4a2 2 0 0 0-2 2v4h4"></path><path d="M18 16h4v-4a2 2 0 0 0-2-2h-2"></path></svg>`,
     language: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 0 20"></path><path d="M12 2a15.3 15.3 0 0 0 0 20"></path></svg>`,
   };
   return icons[name] || '';
+}
+
+let openViewerAudioMenu = null;
+let viewerAudioMenuDismissListenerAttached = false;
+
+function closeOpenViewerAudioMenu({ restoreFocus = false } = {}) {
+  const current = openViewerAudioMenu;
+  if (!current) return;
+  openViewerAudioMenu = null;
+  current.close?.();
+  if (restoreFocus) current.trigger?.focus?.();
+}
+
+function ensureViewerAudioMenuDismissListener() {
+  if (viewerAudioMenuDismissListenerAttached || typeof document?.addEventListener !== 'function') return;
+  viewerAudioMenuDismissListenerAttached = true;
+  document.addEventListener('pointerdown', (event) => {
+    const current = openViewerAudioMenu;
+    if (!current || current.root?.contains?.(event.target)) return;
+    closeOpenViewerAudioMenu();
+  });
+}
+
+function getViewerAudioLanguageLabel(language) {
+  if (!language) return '';
+  return t(`viewer.audio.languages.${language}`);
+}
+
+function resolveViewerAudioSources(audioTracks, legacyAudioRef = null) {
+  const tracks = normalizeAudioTrackList(audioTracks);
+  if (tracks.length > 0) {
+    return tracks.map((track) => ({
+      assetId: track.assetId,
+      language: track.language,
+      legacy: false,
+    }));
+  }
+  if (legacyAudioRef?.assetId) {
+    return [{ assetId: legacyAudioRef.assetId, language: null, legacy: true }];
+  }
+  return [];
+}
+
+function createViewerAudioControl({
+  audioTracks,
+  legacyAudioRef = null,
+  kind,
+  session,
+  reportMediaFeedback,
+} = {}) {
+  const sources = resolveViewerAudioSources(audioTracks, legacyAudioRef);
+  if (sources.length === 0 || !session?.playAssetAudio) return null;
+
+  const normalizedKind = kind === 'option' ? 'option' : 'question';
+  const hasMenu = sources.length > 1;
+  const root = document.createElement('div');
+  root.className = `viewer-audio-control viewer-audio-control--${normalizedKind}`;
+  root.dataset.viewerAudioControl = normalizedKind;
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'viewer-header-icon-btn question-card__prompt-audio-btn viewer-audio-control__trigger';
+  if (normalizedKind === 'option') trigger.classList.add('choice-audio-btn');
+  root.appendChild(trigger);
+
+  let menu = null;
+  let menuButtons = [];
+  let activeSource = null;
+  let isStarting = false;
+
+  const getPlayLabel = (source) => {
+    if (!source?.language) {
+      return normalizedKind === 'option'
+        ? t('viewer.audio.playOptionAudioAriaLabel')
+        : t('viewer.audio.playQuestionAudioAriaLabel');
+    }
+    return normalizedKind === 'option'
+      ? t('viewer.audio.playLanguageOptionAudioAriaLabel', { language: getViewerAudioLanguageLabel(source.language) })
+      : t('viewer.audio.playLanguageQuestionAudioAriaLabel', { language: getViewerAudioLanguageLabel(source.language) });
+  };
+
+  const getStopLabel = (source) => {
+    if (!source?.language) {
+      return normalizedKind === 'option'
+        ? t('viewer.audio.stopOptionAudioAriaLabel')
+        : t('viewer.audio.stopQuestionAudioAriaLabel');
+    }
+    return normalizedKind === 'option'
+      ? t('viewer.audio.stopLanguageOptionAudioAriaLabel', { language: getViewerAudioLanguageLabel(source.language) })
+      : t('viewer.audio.stopLanguageQuestionAudioAriaLabel', { language: getViewerAudioLanguageLabel(source.language) });
+  };
+
+  const setMenuOpen = (open, { restoreFocus = false } = {}) => {
+    if (!menu) return;
+    menu.hidden = !open;
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    root.classList.toggle('is-menu-open', open);
+    if (!open && openViewerAudioMenu?.root === root) openViewerAudioMenu = null;
+    if (restoreFocus) trigger.focus?.();
+  };
+
+  const setIdle = () => {
+    activeSource = null;
+    isStarting = false;
+    trigger.disabled = false;
+    trigger.removeAttribute('aria-busy');
+    root.classList.remove('is-playing', 'is-starting');
+    menuButtons.forEach((button) => { button.disabled = false; });
+    if (hasMenu) {
+      const label = normalizedKind === 'option'
+        ? t('viewer.audio.chooseOptionAudioLanguageAriaLabel')
+        : t('viewer.audio.chooseQuestionAudioLanguageAriaLabel');
+      trigger.innerHTML = `${createViewerIcon('audio')}<span class="viewer-audio-control__chevron">${createViewerIcon('chevronDown')}</span>`;
+      trigger.setAttribute('aria-label', label);
+      trigger.title = label;
+      trigger.setAttribute('aria-haspopup', 'true');
+      trigger.setAttribute('aria-expanded', menu?.hidden === false ? 'true' : 'false');
+    } else {
+      const label = getPlayLabel(sources[0]);
+      trigger.innerHTML = createViewerIcon('audio');
+      trigger.setAttribute('aria-label', label);
+      trigger.title = label;
+      trigger.removeAttribute('aria-haspopup');
+      trigger.removeAttribute('aria-expanded');
+    }
+  };
+
+  const setStarting = () => {
+    isStarting = true;
+    trigger.disabled = true;
+    trigger.setAttribute('aria-busy', 'true');
+    root.classList.add('is-starting');
+    menuButtons.forEach((button) => { button.disabled = true; });
+  };
+
+  const setPlaying = (source) => {
+    activeSource = source;
+    isStarting = false;
+    trigger.disabled = false;
+    trigger.removeAttribute('aria-busy');
+    root.classList.remove('is-starting');
+    root.classList.add('is-playing');
+    menuButtons.forEach((button) => { button.disabled = false; });
+    trigger.innerHTML = createViewerIcon('stop');
+    const label = getStopLabel(source);
+    trigger.setAttribute('aria-label', label);
+    trigger.title = label;
+    trigger.removeAttribute('aria-haspopup');
+    trigger.removeAttribute('aria-expanded');
+  };
+
+  const playSource = async (source) => {
+    if (!source || isStarting) return;
+    closeOpenViewerAudioMenu();
+    setMenuOpen(false);
+    setStarting();
+    if (typeof reportMediaFeedback === 'function') reportMediaFeedback('');
+    const result = await session.playAssetAudio(source.assetId, {
+      onStart: () => {
+        setPlaying(source);
+        if (typeof reportMediaFeedback === 'function') reportMediaFeedback('');
+      },
+      onEnded: setIdle,
+      onError: setIdle,
+      onInterrupted: setIdle,
+    });
+    if (!result?.ok) {
+      setIdle();
+      if (result?.reason !== 'superseded' && typeof reportMediaFeedback === 'function') {
+        reportMediaFeedback(
+          normalizedKind === 'option'
+            ? t('viewer.audio.playOptionAudioFailed')
+            : t('viewer.audio.unableToPlayQuestionAudio')
+        );
+      }
+    }
+  };
+
+  if (hasMenu) {
+    ensureViewerAudioMenuDismissListener();
+    menu = document.createElement('div');
+    menu.className = 'viewer-audio-control__menu';
+    menu.hidden = true;
+    menu.setAttribute('role', 'group');
+    menu.setAttribute(
+      'aria-label',
+      normalizedKind === 'option'
+        ? t('viewer.audio.chooseOptionAudioLanguageAriaLabel')
+        : t('viewer.audio.chooseQuestionAudioLanguageAriaLabel')
+    );
+    menuButtons = sources.map((source) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'viewer-audio-control__menu-item';
+      button.dataset.audioLanguage = source.language || '';
+      const icon = document.createElement('span');
+      icon.className = 'viewer-audio-control__menu-item-icon';
+      icon.innerHTML = createViewerIcon('audio');
+      const label = document.createElement('span');
+      label.textContent = getViewerAudioLanguageLabel(source.language);
+      button.append(icon, label);
+      button.setAttribute('aria-label', getPlayLabel(source));
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        playSource(source);
+      });
+      menu.appendChild(button);
+      return button;
+    });
+    root.appendChild(menu);
+    root.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || menu.hidden) return;
+      event.preventDefault();
+      setMenuOpen(false, { restoreFocus: true });
+    });
+  }
+
+  trigger.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isStarting) return;
+    if (activeSource) {
+      session.stopActiveAudio?.('interrupted');
+      return;
+    }
+    if (!hasMenu) {
+      playSource(sources[0]);
+      return;
+    }
+    const shouldOpen = menu.hidden;
+    closeOpenViewerAudioMenu();
+    setMenuOpen(shouldOpen);
+    if (shouldOpen) {
+      openViewerAudioMenu = {
+        root,
+        trigger,
+        close: () => setMenuOpen(false),
+      };
+      menuButtons[0]?.focus?.();
+    }
+  });
+
+  setIdle();
+  return root;
 }
 
 function createViewerStartSectionHeader({ icon = 'info', title, className = '' }) {
@@ -1073,7 +1319,6 @@ function createChoiceButtonGroup({
     labelText.textContent = String(opt.label ?? opt.value ?? '');
     labelWrap.appendChild(labelText);
 
-    const optionAudioRef = normalizeOptionMediaRefs(opt?.mediaRefs)[0] || null;
     button.append(prefix, labelWrap);
 
     button.addEventListener('click', () => {
@@ -1089,47 +1334,14 @@ function createChoiceButtonGroup({
     });
     row.appendChild(button);
 
-    if (optionAudioRef) {
-      const optionAudioBtn = document.createElement('button');
-      optionAudioBtn.type = 'button';
-      optionAudioBtn.className = 'viewer-header-icon-btn choice-audio-btn question-card__prompt-audio-btn';
-      optionAudioBtn.innerHTML = createViewerIcon('audio');
-      optionAudioBtn.setAttribute('aria-label', t('viewer.audio.playOptionAudioAriaLabel'));
-      optionAudioBtn.title = t('viewer.audio.playOptionAudioTitle');
-      optionAudioBtn.addEventListener('click', async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (optionAudioBtn.disabled) return;
-        optionAudioBtn.disabled = true;
-
-        const result = await session.playAssetAudio(optionAudioRef.assetId, {
-          onStart: () => {
-            if (typeof reportMediaFeedback === 'function') {
-              reportMediaFeedback('');
-            }
-          },
-          onEnded: () => {
-            optionAudioBtn.disabled = false;
-            if (typeof reportMediaFeedback === 'function') {
-              reportMediaFeedback('');
-            }
-          },
-          onError: () => {
-            optionAudioBtn.disabled = false;
-          },
-          onInterrupted: () => {
-            optionAudioBtn.disabled = false;
-          },
-        });
-        if (typeof reportMediaFeedback === 'function') {
-          if (!result.ok) {
-            optionAudioBtn.disabled = false;
-            reportMediaFeedback(result.message || t('viewer.audio.playOptionAudioFailed'));
-          }
-        }
-      });
-      row.appendChild(optionAudioBtn);
-    }
+    const optionAudioControl = createViewerAudioControl({
+      audioTracks: opt?.audioTracks,
+      legacyAudioRef: normalizeOptionMediaRefs(opt?.mediaRefs)[0] || null,
+      kind: 'option',
+      session,
+      reportMediaFeedback,
+    });
+    if (optionAudioControl) row.appendChild(optionAudioControl);
 
     container.appendChild(row);
   });
@@ -2363,27 +2575,29 @@ class ViewerAttemptSession {
   }
 
   stopActiveAudio(reason = 'interrupted') {
+    this._playRequestId += 1;
     this.finalizeActiveAudio(reason);
   }
 
   async playAssetAudio(assetId, hooks = {}) {
     if (!assetId) {
-      return { ok: false, message: 'Audio is not attached to this item.' };
+      return { ok: false, reason: 'missing-attachment', message: 'Audio is not attached to this item.' };
     }
     const requestId = ++this._playRequestId;
+    this.finalizeActiveAudio('interrupted');
     const asset = await this.storage.localAssets?.get?.(assetId);
     if (requestId !== this._playRequestId) {
-      return { ok: false, message: 'Audio request superseded.' };
+      return { ok: false, reason: 'superseded', message: 'Audio request superseded.' };
     }
     if (!asset?.binary) {
-      return { ok: false, message: `Audio asset is missing (${assetId}).` };
+      return { ok: false, reason: 'missing-asset', message: `Audio asset is missing (${assetId}).` };
     }
 
-    this.stopActiveAudio();
     const mimeType = asset?.metadata?.mimeType || 'audio/mpeg';
     const objectUrl = URL.createObjectURL(new Blob([asset.binary], { type: mimeType }));
     const audio = new Audio(objectUrl);
-    this.activeAudioPlayback = { audio, objectUrl, hooks, finalized: false };
+    const playback = { audio, objectUrl, hooks, finalized: false };
+    this.activeAudioPlayback = playback;
     this.activeAudio = audio;
     this.activeAudioObjectUrl = objectUrl;
     audio.addEventListener('ended', () => {
@@ -2398,11 +2612,17 @@ class ViewerAttemptSession {
     });
     try {
       await audio.play();
+      if (requestId !== this._playRequestId || this.activeAudioPlayback !== playback) {
+        return { ok: false, reason: 'superseded', message: 'Audio request superseded.' };
+      }
       hooks?.onStart?.();
       return { ok: true };
     } catch {
+      if (requestId !== this._playRequestId || this.activeAudioPlayback !== playback) {
+        return { ok: false, reason: 'superseded', message: 'Audio request superseded.' };
+      }
       this.stopActiveAudio('error');
-      return { ok: false, message: 'Audio playback failed. File may be blocked or corrupt.' };
+      return { ok: false, reason: 'playback-failed', message: 'Audio playback failed. File may be blocked or corrupt.' };
     }
   }
 
@@ -5902,6 +6122,8 @@ function renderViewerShell(session) {
     });
     if (nextSignature === blockSignature) return;
 
+    closeOpenViewerAudioMenu();
+    session.stopActiveAudio('interrupted');
     blockSignature = nextSignature;
     answerControls.clear();
     textControlFeedback.clear();
@@ -5944,39 +6166,14 @@ function renderViewerShell(session) {
     promptRow.append(promptTextWrap);
     card.append(promptRow);
 
-    if (questionAudioRef?.assetId) {
-      const questionAudioBtn = document.createElement('button');
-      questionAudioBtn.type = 'button';
-      questionAudioBtn.className = 'viewer-header-icon-btn question-card__prompt-audio-btn';
-      questionAudioBtn.setAttribute('aria-label', t('viewer.audio.playQuestionAudioAriaLabel'));
-      questionAudioBtn.title = t('viewer.audio.playQuestionAudioTitle');
-      questionAudioBtn.innerHTML = createViewerIcon('audio');
-      questionAudioBtn.addEventListener('click', async () => {
-        if (questionAudioBtn.disabled) return;
-        questionAudioBtn.disabled = true;
-
-        const result = await session.playAssetAudio(questionAudioRef.assetId, {
-          onStart: () => {
-            setMediaFeedback('');
-          },
-          onEnded: () => {
-            questionAudioBtn.disabled = false;
-            setMediaFeedback('');
-          },
-          onError: () => {
-            questionAudioBtn.disabled = false;
-          },
-          onInterrupted: () => {
-            questionAudioBtn.disabled = false;
-          },
-        });
-        if (!result.ok) {
-          questionAudioBtn.disabled = false;
-          setMediaFeedback(result.message || t('viewer.audio.unableToPlayQuestionAudio'));
-        }
-      });
-      promptRow.append(questionAudioBtn);
-    }
+    const questionAudioControl = createViewerAudioControl({
+      audioTracks: block.prompt?.audioTracks,
+      legacyAudioRef: questionAudioRef,
+      kind: 'question',
+      session,
+      reportMediaFeedback: setMediaFeedback,
+    });
+    if (questionAudioControl) promptRow.append(questionAudioControl);
 
     if (questionImageRef?.assetId) {
       const imageWrap = document.createElement('div');
@@ -6470,6 +6667,7 @@ function renderViewerShell(session) {
       return;
     }
 
+    closeOpenViewerAudioMenu();
     session.stopActiveAudio('interrupted');
     currentBlockIndex = clampedIndex;
     persistNavigationState(orderedBlocks);
@@ -7602,6 +7800,8 @@ export {
   getBooleanSelectionState,
   applyBooleanGroupState,
   getChoicePrefix,
+  resolveViewerAudioSources,
+  createViewerAudioControl,
   createChoiceButtonGroup,
   applyChoiceButtonGroupState,
   computeNextChoiceValue,

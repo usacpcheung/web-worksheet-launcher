@@ -574,11 +574,24 @@ export default {
       "title": "作答記錄空位"
     },
     "audio": {
+      "chooseOptionAudioLanguageAriaLabel": "選擇選項音訊語言",
+      "chooseQuestionAudioLanguageAriaLabel": "選擇題目音訊語言",
+      "languages": {
+        "cantonese": "粵語",
+        "mandarin": "普通話",
+        "english": "英語"
+      },
+      "playLanguageOptionAudioAriaLabel": "播放{language}選項音訊",
+      "playLanguageQuestionAudioAriaLabel": "播放{language}題目音訊",
       "playOptionAudioAriaLabel": "播放選項音訊",
       "playOptionAudioFailed": "無法播放選項音訊。",
       "playOptionAudioTitle": "播放選項音訊",
       "playQuestionAudioAriaLabel": "播放題目音訊",
       "playQuestionAudioTitle": "播放題目音訊",
+      "stopLanguageOptionAudioAriaLabel": "停止播放{language}選項音訊",
+      "stopLanguageQuestionAudioAriaLabel": "停止播放{language}題目音訊",
+      "stopOptionAudioAriaLabel": "停止播放選項音訊",
+      "stopQuestionAudioAriaLabel": "停止播放題目音訊",
       "unableToPlayQuestionAudio": "無法播放題目音訊"
     },
     "boot": {
