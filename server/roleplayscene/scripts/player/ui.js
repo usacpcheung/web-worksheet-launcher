@@ -2,6 +2,7 @@ import { translate } from '../i18n.js';
 import { renderPlayerChoices } from './choice-controls.js';
 import { createPlayerIcon } from './icons.js';
 import { renderSpeechBubblePlayerUI, splitSpeechBubbleText } from './speech-bubble-ui.js';
+import { DISCUSSION_REWRITE_MAX_CHARS } from './discussion-state.js';
 import {
   DIALOGUE_MIN_AUDIO_PAGE_SECONDS,
   estimateReadingSeconds,
@@ -364,6 +365,15 @@ function appendToolbarButtonContent(button, iconName, label) {
   button.setAttribute('aria-label', label);
 }
 
+function setClassEnabled(element, className, enabled) {
+  if (!element?.classList) return;
+  if (enabled) {
+    element.classList.add?.(className);
+  } else {
+    element.classList.remove?.(className);
+  }
+}
+
 export function renderPlayerUI({
   stageEl,
   uiEl,
@@ -374,6 +384,12 @@ export function renderPlayerUI({
   duckBackgroundAudio = null,
   restoreBackgroundAudio = null,
   historyControls = null,
+  discussionSession = null,
+  apiClient = null,
+  onDiscussionChange = null,
+  onPrintDiscussion = null,
+  initialViewState = null,
+  onViewStateChange = null,
 }) {
   stageEl.innerHTML = '';
   uiEl.innerHTML = '';
@@ -395,18 +411,20 @@ export function renderPlayerUI({
 
   const cueTitle = document.createElement('h3');
   cueTitle.id = cueOverlayId;
-  cueTitle.textContent = translate('player.choices.cueCardTitle');
+  cueTitle.textContent = discussionSession
+    ? translate('player.discussion.title')
+    : translate('player.choices.cueCardTitle');
 
   const cueClose = document.createElement('button');
   cueClose.type = 'button';
   cueClose.className = 'player-cue-close theater-icon-button';
   cueClose.appendChild(createPlayerIcon('close'));
-  cueClose.setAttribute('aria-label', translate('player.choices.cueCardCloseLabel'));
+  cueClose.setAttribute('aria-label', translate('player.discussion.closeLabel'));
 
   cueHeader.appendChild(cueTitle);
   cueHeader.appendChild(cueClose);
 
-  const cueBody = document.createElement('p');
+  const cueBody = document.createElement('div');
   cueBody.className = 'player-cue-body';
 
   cueDialog.appendChild(cueHeader);
@@ -415,10 +433,30 @@ export function renderPlayerUI({
   stageEl.appendChild(cueOverlay);
 
   let activeCueTrigger = null;
+  let cueOverlayState = null;
+  let playbackViewState = null;
+  let printDiscussionButton = null;
 
-  const closeCueCard = ({ returnFocus = false } = {}) => {
+  const syncDiscussionPrintButton = () => {
+    if (!printDiscussionButton) return;
+    printDiscussionButton.disabled = !discussionSession?.hasAnyText?.();
+  };
+
+  const emitViewState = () => {
+    if (typeof onViewStateChange !== 'function') return;
+    try {
+      onViewStateChange({
+        ...(playbackViewState || {}),
+        cueOverlay: cueOverlayState ? { ...cueOverlayState } : null,
+      });
+    } catch {
+      // View-state persistence is best-effort and should not interrupt playback.
+    }
+  };
+
+  const closeCueCard = ({ returnFocus = false, notify = true } = {}) => {
     cueOverlay.hidden = true;
-    cueBody.textContent = '';
+    cueBody.innerHTML = '';
     if (activeCueTrigger) {
       activeCueTrigger.setAttribute('aria-expanded', 'false');
       if (returnFocus && typeof activeCueTrigger.focus === 'function') {
@@ -426,27 +464,184 @@ export function renderPlayerUI({
       }
     }
     activeCueTrigger = null;
+    cueOverlayState = null;
+    if (notify) {
+      emitViewState();
+    }
   };
 
-  const openCueCard = (trigger, text) => {
-    if (!text) {
-      return;
+  const notifyDiscussionChange = () => {
+    syncDiscussionPrintButton();
+    try {
+      onDiscussionChange?.(discussionSession?.snapshot?.() ?? null);
+    } catch {
+      // Discussion state updates should not interrupt playback.
     }
+  };
+
+  const renderDiscussionForm = ({ cueText = '' } = {}) => {
+    cueBody.innerHTML = '';
+    const hasCue = Boolean(String(cueText || '').trim());
+    setClassEnabled(cueDialog, 'player-cue-dialog--discussion-with-cue', hasCue);
+    setClassEnabled(cueDialog, 'player-cue-dialog--discussion-only', !hasCue);
+
+    const layout = document.createElement('div');
+    layout.className = hasCue
+      ? 'player-discussion-layout player-discussion-layout--with-cue'
+      : 'player-discussion-layout player-discussion-layout--solo';
+
+    if (hasCue) {
+      const cuePanel = document.createElement('section');
+      cuePanel.className = 'player-discussion-cue-panel';
+      const cueHeading = document.createElement('h4');
+      cueHeading.textContent = translate('player.discussion.cueHeading');
+      const cueTextNode = document.createElement('p');
+      cueTextNode.className = 'player-discussion-cue-text';
+      cueTextNode.textContent = cueText;
+      cuePanel.append(cueHeading, cueTextNode);
+      layout.appendChild(cuePanel);
+    }
+
+    const inputPanel = document.createElement('section');
+    inputPanel.className = 'player-discussion-input-panel';
+    const label = document.createElement('label');
+    label.className = 'player-discussion-label';
+    label.textContent = translate('player.discussion.inputLabel');
+    const textarea = document.createElement('textarea');
+    textarea.className = 'player-discussion-textarea';
+    textarea.rows = hasCue ? 8 : 9;
+    textarea.value = discussionSession?.getText?.(scene.id) || '';
+    textarea.placeholder = translate('player.discussion.placeholder');
+    label.appendChild(textarea);
+
+    const footer = document.createElement('div');
+    footer.className = 'player-discussion-footer';
+    const note = document.createElement('p');
+    note.className = 'player-discussion-note';
+    note.textContent = translate('player.discussion.keptNote');
+    const hint = document.createElement('p');
+    hint.className = 'player-discussion-hint';
+    hint.setAttribute('role', 'status');
+    hint.setAttribute('aria-live', 'polite');
+    const actions = document.createElement('div');
+    actions.className = 'player-discussion-actions';
+
+    const undoButton = document.createElement('button');
+    undoButton.type = 'button';
+    undoButton.className = 'theater-panel-action';
+    undoButton.textContent = translate('player.discussion.undo');
+
+    const rewriteButton = document.createElement('button');
+    rewriteButton.type = 'button';
+    rewriteButton.className = 'theater-panel-action theater-panel-action--primary';
+    rewriteButton.textContent = translate('player.discussion.rewrite');
+
+    actions.append(undoButton, rewriteButton);
+    footer.append(note, actions);
+    inputPanel.append(label, footer, hint);
+    layout.appendChild(inputPanel);
+    cueBody.appendChild(layout);
+
+    const syncControls = () => {
+      const text = textarea.value || '';
+      const trimmedLength = text.trim().length;
+      const isRewriting = Boolean(
+        discussionSession?.isRewriting
+        && discussionSession?.rewritingSceneId === scene.id
+      );
+      rewriteButton.textContent = isRewriting
+        ? translate('player.discussion.rewriting')
+        : translate('player.discussion.rewrite');
+      rewriteButton.disabled = isRewriting || trimmedLength === 0 || trimmedLength > DISCUSSION_REWRITE_MAX_CHARS;
+      undoButton.disabled = isRewriting || !discussionSession?.hasUndo?.(scene.id);
+      const message = discussionSession?.getMessage?.(scene.id) || '';
+      if (message) {
+        hint.textContent = message;
+      } else if (trimmedLength === 0) {
+        hint.textContent = translate('player.discussion.hintEnterText');
+      } else if (trimmedLength > DISCUSSION_REWRITE_MAX_CHARS) {
+        hint.textContent = translate('player.discussion.hintTooLong', { max: DISCUSSION_REWRITE_MAX_CHARS });
+      } else {
+        hint.textContent = '';
+      }
+    };
+
+    textarea.addEventListener('input', () => {
+      discussionSession?.setText?.(scene.id, textarea.value, { manual: true });
+      notifyDiscussionChange();
+      syncControls();
+    });
+
+    undoButton.addEventListener('click', () => {
+      if (discussionSession?.undo?.(scene.id)) {
+        textarea.value = discussionSession.getText(scene.id);
+        notifyDiscussionChange();
+        syncControls();
+      }
+    });
+
+    rewriteButton.addEventListener('click', async () => {
+      if (rewriteButton.disabled) return;
+      const textAtClick = textarea.value || '';
+      const rewriteTask = discussionSession?.rewrite?.(scene.id, textAtClick, { apiClient });
+      syncControls();
+      await rewriteTask;
+      const latestText = discussionSession?.getText?.(scene.id);
+      if (typeof latestText === 'string') {
+        textarea.value = latestText;
+      }
+      notifyDiscussionChange();
+      syncControls();
+      textarea.focus();
+    });
+
+    syncControls();
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+      globalThis.requestAnimationFrame(() => textarea.focus?.());
+    }
+  };
+
+  const openCueCard = (trigger, text, cueOptions = {}) => {
     if (activeCueTrigger && activeCueTrigger !== trigger) {
       activeCueTrigger.setAttribute('aria-expanded', 'false');
     }
     activeCueTrigger = trigger;
-    activeCueTrigger.setAttribute('aria-expanded', 'true');
-    cueBody.textContent = text;
+    activeCueTrigger?.setAttribute('aria-expanded', 'true');
+    cueOverlayState = {
+      mode: 'cue',
+      choiceId: cueOptions.choiceId || '',
+      choiceIndex: Number.isInteger(cueOptions.choiceIndex) ? cueOptions.choiceIndex : -1,
+    };
+    if (discussionSession) {
+      cueTitle.textContent = translate('player.discussion.title');
+      cueClose.setAttribute('aria-label', translate('player.discussion.closeLabel'));
+      renderDiscussionForm({
+        cueText: text,
+      });
+    } else {
+      cueTitle.textContent = translate('player.choices.cueCardTitle');
+      cueClose.setAttribute('aria-label', translate('player.choices.cueCardCloseLabel'));
+      cueBody.textContent = text;
+    }
     cueOverlay.hidden = false;
+    emitViewState();
+  };
+
+  const openDiscussion = () => {
+    if (!discussionSession) return;
+    if (activeCueTrigger) {
+      activeCueTrigger.setAttribute('aria-expanded', 'false');
+    }
+    activeCueTrigger = null;
+    cueTitle.textContent = translate('player.discussion.title');
+    cueClose.setAttribute('aria-label', translate('player.discussion.closeLabel'));
+    cueOverlayState = { mode: 'discussion' };
+    renderDiscussionForm();
+    cueOverlay.hidden = false;
+    emitViewState();
   };
 
   cueClose.addEventListener('click', () => closeCueCard({ returnFocus: true }));
-  cueOverlay.addEventListener('click', (event) => {
-    if (event.target === cueOverlay) {
-      closeCueCard();
-    }
-  });
 
   const handleDocumentKeydown = (event) => {
     if (event.key === 'Escape' && !cueOverlay.hidden) {
@@ -454,25 +649,13 @@ export function renderPlayerUI({
     }
   };
 
-  const handleDocumentPointerDown = (event) => {
-    if (cueOverlay.hidden) {
-      return;
-    }
-    if (cueDialog.contains(event.target) || activeCueTrigger?.contains?.(event.target)) {
-      return;
-    }
-    closeCueCard();
-  };
-
   if (typeof document?.addEventListener === 'function') {
     document.addEventListener('keydown', handleDocumentKeydown);
-    document.addEventListener('pointerdown', handleDocumentPointerDown);
   }
 
   const cleanupCueCardListeners = () => {
     if (typeof document?.removeEventListener === 'function') {
       document.removeEventListener('keydown', handleDocumentKeydown);
-      document.removeEventListener('pointerdown', handleDocumentPointerDown);
     }
   };
 
@@ -546,7 +729,8 @@ export function renderPlayerUI({
   const appendUtilitiesPanel = () => {
     const hasMusic = Boolean(backgroundAudioControls);
     const hasHistory = Boolean(historyControls?.entries?.length);
-    if (!hasMusic && !hasHistory) return;
+    const hasDiscussionTools = Boolean(discussionSession);
+    if (!hasMusic && !hasHistory && !hasDiscussionTools) return;
 
     const utilitiesWrapper = document.createElement('div');
     utilitiesWrapper.className = 'theater-utilities';
@@ -588,6 +772,46 @@ export function renderPlayerUI({
 
     const panelContent = document.createElement('div');
     panelContent.className = 'theater-utilities-content';
+
+    if (hasDiscussionTools) {
+      const discussionSection = document.createElement('section');
+      discussionSection.className = 'theater-utilities-section theater-utilities-section--discussion';
+
+      const heading = document.createElement('h4');
+      heading.textContent = translate('player.discussion.utilityHeading');
+      discussionSection.appendChild(heading);
+
+      const discussionButton = document.createElement('button');
+      discussionButton.type = 'button';
+      discussionButton.className = 'theater-panel-action';
+      discussionButton.appendChild(createPlayerIcon('pencil'));
+      const discussionLabel = document.createElement('span');
+      discussionLabel.textContent = translate('player.discussion.button');
+      discussionButton.appendChild(discussionLabel);
+      discussionButton.setAttribute('aria-label', translate('player.discussion.button'));
+      discussionButton.addEventListener('click', () => {
+        setOpen(false);
+        openDiscussion();
+      });
+
+      const printButton = document.createElement('button');
+      printButton.type = 'button';
+      printButton.className = 'theater-panel-action';
+      printButton.appendChild(createPlayerIcon('print'));
+      const printLabel = document.createElement('span');
+      printLabel.textContent = translate('player.discussion.printButton');
+      printButton.appendChild(printLabel);
+      printButton.setAttribute('aria-label', translate('player.discussion.printButton'));
+      printDiscussionButton = printButton;
+      syncDiscussionPrintButton();
+      printButton.addEventListener('click', () => {
+        setOpen(false);
+        onPrintDiscussion?.();
+      });
+
+      discussionSection.append(discussionButton, printButton);
+      panelContent.appendChild(discussionSection);
+    }
 
     if (hasMusic) {
       const musicSection = document.createElement('section');
@@ -757,8 +981,29 @@ export function renderPlayerUI({
     ...options,
   });
 
+  const restoreCueOverlayState = () => {
+    const overlayState = initialViewState?.cueOverlay;
+    if (!overlayState || typeof overlayState !== 'object') return;
+    if (overlayState.mode === 'discussion') {
+      openDiscussion();
+      return;
+    }
+    if (overlayState.mode !== 'cue') return;
+    const choices = Array.isArray(scene.choices) ? scene.choices : [];
+    const choice = choices.find(item => item.id && item.id === overlayState.choiceId)
+      || choices[overlayState.choiceIndex];
+    const cueText = typeof choice?.cueCardText === 'string'
+      ? choice.cueCardText.trim()
+      : '';
+    if (!cueText) return;
+    openCueCard(null, cueText, {
+      choiceId: choice?.id || '',
+      choiceIndex: choices.indexOf(choice),
+    });
+  };
+
   if (speechBubbleEnabled) {
-    return renderSpeechBubblePlayerUI({
+    const speechCleanup = renderSpeechBubblePlayerUI({
       speechBubbleOverlay,
       theaterOverlay,
       theaterControlRail,
@@ -774,7 +1019,14 @@ export function renderPlayerUI({
       cleanupCueCardListeners,
       closeCueCard,
       renderNavigationControls,
+      initialViewState,
+      onViewStateChange: (nextPlaybackState) => {
+        playbackViewState = nextPlaybackState;
+        emitViewState();
+      },
     });
+    restoreCueOverlayState();
+    return speechCleanup;
   }
 
   const visibleEntries = (scene.dialogue || [])
@@ -782,12 +1034,17 @@ export function renderPlayerUI({
     .filter(entry => hasDialogueLineContent(entry.line));
 
   const timers = new Set();
-  let activeVisibleIndex = visibleEntries.length ? 0 : -1;
-  let activePageIndex = 0;
+  const initialActiveIndex = Number.isInteger(initialViewState?.activeVisibleIndex)
+    ? Math.max(0, Math.min(initialViewState.activeVisibleIndex, Math.max(0, visibleEntries.length - 1)))
+    : (visibleEntries.length ? 0 : -1);
+  let activeVisibleIndex = visibleEntries.length ? initialActiveIndex : -1;
+  let activePageIndex = Number.isInteger(initialViewState?.activePageIndex)
+    ? Math.max(0, initialViewState.activePageIndex)
+    : 0;
   let currentAudioActive = false;
   let playAllActive = false;
-  let choicesOpen = false;
-  let endOverlayOpen = !visibleEntries.length;
+  let choicesOpen = Boolean(initialViewState?.choicesOpen);
+  let endOverlayOpen = choicesOpen || Boolean(initialViewState?.endOverlayOpen) || !visibleEntries.length;
   let runToken = 0;
 
   const nextRunToken = () => {
@@ -1067,6 +1324,13 @@ export function renderPlayerUI({
     const activeEntry = getCurrentEntry();
     const pages = getEntryPages(activeEntry);
     const page = pages[activePageIndex] || '';
+    playbackViewState = {
+      activeVisibleIndex,
+      activePageIndex,
+      choicesOpen,
+      endOverlayOpen,
+    };
+    emitViewState();
 
     const toolbar = document.createElement('div');
     toolbar.className = 'theater-toolbar';
@@ -1191,12 +1455,13 @@ export function renderPlayerUI({
   }
 
   renderTheaterState();
+  restoreCueOverlayState();
 
   return () => {
     clearTimers();
     nextRunToken();
     cleanupCueCardListeners();
-    closeCueCard();
+    closeCueCard({ notify: false });
     stopDialoguePlayback();
   };
 }

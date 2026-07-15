@@ -24,9 +24,24 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   let backgroundDucked = false;
   let defaultBackgroundSource = null;
   let activeDialogueCleanup = null;
+  let currentViewState = null;
+  let currentViewStateSceneId = null;
   const backgroundTrack = createBackgroundAudioController({ defaultVolume: backgroundVolume });
   backgroundVolume = backgroundTrack.getPreferredVolume();
   backgroundTrack.setVolume(backgroundVolume);
+
+  function emitPlaybackState() {
+    if (typeof options.onPlaybackStateChange !== 'function') return;
+    options.onPlaybackStateChange({
+      currentSceneId,
+      sceneHistory: sceneHistory.slice(),
+      historyIndex,
+      currentViewStateSceneId,
+      currentViewState: currentViewState && typeof currentViewState === 'object'
+        ? { ...currentViewState }
+        : null,
+    });
+  }
 
   const duckBackgroundAudio = () => {
     backgroundDucked = true;
@@ -78,6 +93,22 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     stopActiveDialogue();
     unsubscribe();
     backgroundTrack.teardown();
+  }
+
+  function resetCurrentViewState(sceneId = null) {
+    currentViewState = null;
+    currentViewStateSceneId = sceneId;
+  }
+
+  function getCurrentViewState(sceneId) {
+    return currentViewStateSceneId === sceneId ? currentViewState : null;
+  }
+
+  function setCurrentViewState(sceneId, viewState) {
+    if (!sceneId) return;
+    currentViewStateSceneId = sceneId;
+    currentViewState = viewState && typeof viewState === 'object' ? viewState : null;
+    emitPlaybackState();
   }
 
   function findStartScene(project) {
@@ -356,6 +387,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
         const nextScene = findSceneById(project, nextId);
         maybeStopBeforeScene(nextScene);
         pushSceneToHistory(nextId);
+        resetCurrentViewState(nextId);
         renderCurrentScene();
       },
       backgroundAudioControls: store.get().audioGate
@@ -364,6 +396,12 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       duckBackgroundAudio,
       restoreBackgroundAudio,
       historyControls: createHistoryControls(project),
+      discussionSession: options.discussionSession ?? null,
+      apiClient: options.apiClient ?? null,
+      onDiscussionChange: options.onDiscussionChange ?? null,
+      onPrintDiscussion: options.onPrintDiscussion ?? null,
+      initialViewState: getCurrentViewState(scene.id),
+      onViewStateChange: (viewState) => setCurrentViewState(scene.id, viewState),
     });
 
     activeDialogueCleanup = typeof dialogueCleanup === 'function' ? dialogueCleanup : null;
@@ -399,6 +437,8 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     sceneHistory = [sceneId];
     historyIndex = 0;
     currentSceneId = sceneId;
+    resetCurrentViewState(sceneId);
+    emitPlaybackState();
     renderCurrentScene();
   }
 
@@ -407,6 +447,8 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     historyIndex = -1;
     currentSceneId = null;
     defaultBackgroundSource = null;
+    resetCurrentViewState();
+    emitPlaybackState();
   }
 
   function pushSceneToHistory(sceneId) {
@@ -421,6 +463,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     }
     historyIndex = sceneHistory.length - 1;
     currentSceneId = sceneId;
+    emitPlaybackState();
   }
 
   function syncHistoryWithProject(project) {
@@ -445,6 +488,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     }
 
     currentSceneId = sceneHistory[historyIndex] ?? null;
+    emitPlaybackState();
   }
 
   function goToHistoryIndex(index) {
@@ -458,6 +502,8 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     maybeStopBeforeScene(nextScene);
     historyIndex = index;
     currentSceneId = nextSceneId;
+    resetCurrentViewState(nextSceneId);
+    emitPlaybackState();
     renderCurrentScene();
   }
 
@@ -506,6 +552,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     if (clampedIndex !== historyIndex) {
       historyIndex = clampedIndex;
       currentSceneId = sceneHistory[historyIndex];
+      emitPlaybackState();
     }
 
     return {
@@ -519,11 +566,39 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     };
   }
 
-  const initialScene = findSceneById(store.get().project, options.initialSceneId);
-  if (initialScene) {
-    beginRunAt(initialScene.id);
+  const initialPlaybackState = options.initialPlaybackState && typeof options.initialPlaybackState === 'object'
+    ? options.initialPlaybackState
+    : null;
+  const initialProject = store.get().project;
+  const availableSceneIds = new Set(initialProject.scenes.map(scene => scene.id));
+  const restoredHistory = Array.isArray(initialPlaybackState?.sceneHistory)
+    ? initialPlaybackState.sceneHistory.filter(sceneId => availableSceneIds.has(sceneId))
+    : [];
+  if (restoredHistory.length) {
+    sceneHistory = restoredHistory;
+    historyIndex = Number.isInteger(initialPlaybackState.historyIndex)
+      ? Math.max(0, Math.min(initialPlaybackState.historyIndex, sceneHistory.length - 1))
+      : sceneHistory.length - 1;
+    currentSceneId = sceneHistory[historyIndex] ?? null;
+    if (
+      initialPlaybackState.currentViewStateSceneId === currentSceneId
+      && initialPlaybackState.currentViewState
+      && typeof initialPlaybackState.currentViewState === 'object'
+    ) {
+      currentViewStateSceneId = currentSceneId;
+      currentViewState = { ...initialPlaybackState.currentViewState };
+    } else {
+      resetCurrentViewState(currentSceneId);
+    }
+    emitPlaybackState();
+    renderCurrentScene();
   } else {
-    renderIntro();
+    const initialScene = findSceneById(initialProject, options.initialSceneId);
+    if (initialScene) {
+      beginRunAt(initialScene.id);
+    } else {
+      renderIntro();
+    }
   }
   return cleanup;
 }

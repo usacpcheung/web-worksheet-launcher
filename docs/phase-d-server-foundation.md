@@ -24,6 +24,8 @@ Out of scope (still deferred):
 
 - App runs behind Apache on Ubuntu VPS.
 - Apache performs OIDC and forwards trusted identity headers.
+- Node should bind to loopback (`HOST=127.0.0.1`) in production so public traffic reaches the API only through Apache.
+- When `TRUSTED_PROXY_SECRET` is configured, protected API endpoints trust OIDC identity headers only when Apache also sends the matching proxy-secret header.
 - Public Apache API path and internal Node API path may differ by deployment; canonical public prefix is `/api/worksheet-launcher/v1/*` and Node routes remain `/api/v1/*`.
 - Protected API endpoints require `X-OIDC-Sub` (default header key configured via `AUTH_HEADER_SUB`).
 - Optional metadata headers:
@@ -71,10 +73,15 @@ Required environment variables:
 Optional env variables:
 
 - `PORT` (default `8787`)
+- `HOST` (default `127.0.0.1`)
 - `AUTH_HEADER_SUB` (default `x-oidc-sub`)
 - `AUTH_HEADER_EMAIL` (default `x-oidc-email`)
 - `AUTH_HEADER_NAME` (default `x-oidc-name`)
+- `TRUSTED_PROXY_SECRET` (optional on loopback; required when `HOST` is not loopback)
+- `TRUSTED_PROXY_SECRET_HEADER` (default `x-worksheet-proxy-secret`)
 - `PACKAGE_UPLOAD_MAX_BYTES` (default `31457280` = `30 MB`)
+
+Allowed no-secret bind hosts are `127.0.0.1`, `localhost`, and `::1`. A non-loopback bind such as `HOST=0.0.0.0` fails startup unless `TRUSTED_PROXY_SECRET` is configured.
 
 Reference file: `.env.example`.
 
@@ -278,13 +285,15 @@ OIDCClaimPrefix "OIDC_CLAIM_"
   AuthType openid-connect
   Require valid-user
 
-  RequestHeader unset X-OIDC-Sub
-  RequestHeader unset X-OIDC-Email
-  RequestHeader unset X-OIDC-Name
+  RequestHeader unset X-OIDC-Sub early
+  RequestHeader unset X-OIDC-Email early
+  RequestHeader unset X-OIDC-Name early
+  RequestHeader unset X-Worksheet-Proxy-Secret early
 
   RequestHeader set X-OIDC-Sub "%{OIDC_CLAIM_sub}e" env=OIDC_CLAIM_sub
   RequestHeader set X-OIDC-Email "%{OIDC_CLAIM_email}e" env=OIDC_CLAIM_email
   RequestHeader set X-OIDC-Name "%{OIDC_CLAIM_name}e" env=OIDC_CLAIM_name
+  RequestHeader set X-Worksheet-Proxy-Secret "LONG_RANDOM_SECRET"
 </Location>
 
 # ---- Popup login page only (OIDC protected) ----
@@ -304,6 +313,16 @@ Alias /worksheet_launcher/app/    /opt/web-worksheet-launcher/server/app/
 ```
 
 Keep `/worksheet_launcher/app/login/` isolated for OIDC protection so shared runtime assets under `/worksheet_launcher/app/auth/`, `/worksheet_launcher/app/api/`, etc. remain publicly loadable unless explicitly required otherwise.
+
+Do not add `X-OIDC-*` identity headers or `X-Worksheet-Proxy-Secret` to `/worksheet_launcher/app/login/`. That login path is browser-facing and exists only to establish/refresh the Apache OIDC session; the private shared secret belongs only on the Apache-to-Node API proxy boundary.
+
+After Apache injects the API secret, set the matching API env values:
+
+```bash
+HOST=127.0.0.1
+TRUSTED_PROXY_SECRET=LONG_RANDOM_SECRET
+TRUSTED_PROXY_SECRET_HEADER=x-worksheet-proxy-secret
+```
 
 ## Local-first compatibility
 

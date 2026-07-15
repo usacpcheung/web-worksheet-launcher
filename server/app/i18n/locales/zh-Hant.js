@@ -124,6 +124,12 @@ export default {
     },
     "uploadedDraft": {
       "manage": "管理已上載草稿",
+      "openDialog": {
+        "confirm": "開啟草稿",
+        "description": "這會以「{title}」的本機副本取代目前在編輯器顯示的工作紙。",
+        "title": "要開啟已上載的草稿嗎？",
+        "warning": "如需稍後返回目前的工作紙，請先儲存或匯出它。"
+      },
       "deleteDialog": {
         "confirm": "確認",
         "draftDescription": "這會刪除已上載草稿。",
@@ -376,7 +382,8 @@ export default {
       },
       "save": {
         "manualSaveFailed": "手動儲存失敗。",
-        "savedDraft": "已儲存草稿 {id}。"
+        "savedDraft": "已儲存草稿 {id}。",
+        "savedLocalDraft": "已儲存本機草稿。"
       },
       "uploadDraft": {
         "alreadyInProgress": "上載正在進行中。",
@@ -446,6 +453,12 @@ export default {
         "optionTextRemoval": "將會移除使用者輸入的選項文字／值。",
         "title": "切換答案類型會移除資料",
         "confirmLabel": "切換並移除"
+      },
+      "multilinePasteConfirm": {
+        "audioRemoval": "被取代選項中的音訊附件。",
+        "confirmLabel": "取代選項",
+        "description": "這次貼上會取代 {count} 個已附加音訊的選項。取代文字會移除這些音訊附件。",
+        "title": "用貼上的多行文字取代選項？"
       }
     },
     "reorder": {
@@ -560,6 +573,9 @@ export default {
       "openTechnicalDetailsAriaLabel": "開啟詳細資料與列印設定",
       "openTechnicalDetailsTitle": "詳細資料與列印設定",
       "printSchoolName": "學校名稱",
+      "printSchoolNameMode": "學校名稱模式",
+      "printSchoolNameDefault": "預設",
+      "printSchoolNameCustom": "自訂",
       "studentName": "學生姓名",
       "studentNamePlaceholder": "輸入學生姓名",
       "title": "詳細資料與列印設定"
@@ -631,7 +647,7 @@ export default {
       }
     },
     "inputHelper": {
-      "boolean": "請選擇 True / False。",
+      "boolean": "請選擇是 / 否。",
       "multipleChoiceMulti": "可選擇一個或以上選項。",
       "multipleChoiceSingle": "只可選擇一個選項。",
       "numberBase": "只接受整數或小數（不支援分數，例如 2/3）。",
@@ -645,6 +661,7 @@ export default {
       "answerPrefix": "答案：",
       "checkedResultHeading": "檢查結果",
       "checkedSummary": "已檢查正確 {correct}/{total}",
+      "defaultSchoolName": "香港紅十字會醫院學校",
       "meta": {
         "checkResult": "檢查結果",
         "student": "學生",
@@ -732,7 +749,7 @@ export default {
       "saveAttemptTitle": "儲存作答記錄",
       "exportAttemptAriaLabel": "匯出作答套件（.zip）",
       "exportAttemptTitle": "匯出作答套件（.zip）",
-      "signInRequired": "上載作答前需要先登入。"
+      "signInRequired": "上載作答記錄前需要先登入。"
     }
   }
 }

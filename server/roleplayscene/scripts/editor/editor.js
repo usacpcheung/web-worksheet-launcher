@@ -33,6 +33,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     : 'storyMap';
   const apiClient = options.apiClient || null;
   const ensureServerSessionReady = options.ensureServerSessionReady || null;
+  const onServerApiResult = typeof options.onServerApiResult === 'function'
+    ? options.onServerApiResult
+    : null;
   const onEditorContextChange = typeof options.onEditorContextChange === 'function'
     ? options.onEditorContextChange
     : null;
@@ -879,6 +882,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       }
       const preset = getRolePlaySceneT2APresetById(presetId);
       const result = await apiClient.generateAudioFromText(textState.trimmedText, preset.options || {});
+      onServerApiResult?.(result);
       if (disposed) {
         return;
       }

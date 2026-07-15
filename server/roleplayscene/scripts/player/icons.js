@@ -56,6 +56,17 @@ export function createPlayerIcon(name) {
       appendPath('M3 4v5h5');
       appendPath('M12 7v5l3 2');
       break;
+    case 'pencil':
+      appendPath('M12 20h9');
+      appendPath('M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z');
+      break;
+    case 'print':
+      appendPath('M6 9V4h12v5');
+      appendPath('M6 18h12v2H6z');
+      appendPath('M6 14h12');
+      appendPath('M6 10H4a2 2 0 0 0-2 2v4h4');
+      appendPath('M18 16h4v-4a2 2 0 0 0-2-2h-2');
+      break;
     case 'close':
       appendPath('M18 6 6 18');
       appendPath('m6 6 12 12');

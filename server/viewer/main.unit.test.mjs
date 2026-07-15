@@ -105,6 +105,18 @@ async function loadViewerModule(overrides = {}) {
       return { worksheet: value };
     }),
     parseWorksheetPackage: overrides.parseWorksheetPackage || (() => ({ worksheet: { title: 'Imported package', blocks: [] } })),
+    normalizeAudioTracks: overrides.normalizeAudioTracks || ((tracks) => {
+      const order = { cantonese: 0, mandarin: 1, english: 2 };
+      const seen = new Set();
+      return (Array.isArray(tracks) ? tracks : []).filter((track) => {
+        if (!track || !Object.hasOwn(order, track.language) || seen.has(track.language) || !String(track.assetId || '').trim() || !String(track.sourceTextHash || '').trim()) return false;
+        if (track.voicePresetId != null && track.voicePresetId !== track.language) return false;
+        seen.add(track.language);
+        return true;
+      }).map((track) => ({ language: track.language, assetId: String(track.assetId).trim(), voicePresetId: track.voicePresetId ?? null, sourceTextHash: String(track.sourceTextHash).trim() }))
+        .sort((left, right) => order[left.language] - order[right.language]);
+    }),
+    collectAudioTrackAssetIds: overrides.collectAudioTrackAssetIds || ((tracks) => globalThis[bagName].normalizeAudioTracks(tracks).map((track) => track.assetId)),
     createStoredZip: overrides.createStoredZip || createStoredZip,
     crc32: overrides.crc32 || crc32,
     parseStoredZip: overrides.parseStoredZip || parseStoredZip,
@@ -147,6 +159,11 @@ async function loadViewerModule(overrides = {}) {
       replacement: 'const mapLegacyJsonToPackageModel = __testBag.mapLegacyJsonToPackageModel;\nconst parseWorksheetPackage = __testBag.parseWorksheetPackage;',
     },
     {
+      name: 'replace audio tracks import with test bag bindings',
+      pattern: /import\s*\{\s*collectAudioTrackAssetIds\s*,\s*normalizeAudioTracks\s*\}\s*from\s*['"]\.\.\/editor\/audio-tracks\.js['"];/,
+      replacement: 'const collectAudioTrackAssetIds = __testBag.collectAudioTrackAssetIds;\nconst normalizeAudioTracks = __testBag.normalizeAudioTracks;',
+    },
+    {
       name: 'replace zip utils imports with test bag bindings',
       pattern: /import\s*\{\s*createStoredZip\s*,\s*crc32\s*,\s*parseStoredZip\s*,\s*decodeUtf8\s*\}\s*from\s*['"]\.\.\/editor\/zip-utils\.js['"];/,
       replacement: 'const createStoredZip = __testBag.createStoredZip;\nconst crc32 = __testBag.crc32;\nconst parseStoredZip = __testBag.parseStoredZip;\nconst decodeUtf8 = __testBag.decodeUtf8;',
@@ -179,7 +196,7 @@ async function loadViewerModule(overrides = {}) {
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapViewer\(\)\.catch\([\s\S]*?\);\s*export\s*\{[\s\S]*?\};/,
-      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, readViewerPrintSchoolNamePreference, writeViewerPrintSchoolNamePreference, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
+      replacement: 'export { ViewerAttemptSession, normalizeViewerPayload, resolveImportedWorksheetPayload, normalizeViewerBlock, computeAnswerSummary, computeCheckResult, getCheckRevealMessage, hasGradeableQuestions, normalizeMultiSelectValues, areMultiSelectValuesEqual, partitionBlocksForDisplay, getInputHelperText, getNumberInputErrorMessage, coerceAnswerValueForQuestion, clampTextAnswer, computeTextLengthFeedback, updateTextCounterUI, getBooleanSelectionState, applyBooleanGroupState, getChoicePrefix, createChoiceButtonGroup, applyChoiceButtonGroupState, computeNextChoiceValue, deterministicShuffle, ensureControlDescribedBy, createInputErrorNode, getDefaultViewerPrintSchoolName, readViewerPrintSchoolNamePreferenceState, readViewerPrintSchoolNamePreference, writeViewerPrintSchoolNamePreference, computeResumeStartBlockIndex, buildTechnicalDetailsRows, classifyPrintQuestionLayout, buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml, startWorksheetPrintFlow, renderViewerStartPanel, renderViewerFatalError, bootstrapViewer, ViewerBootError, VIEWER_BOOT_ERROR_CODES };',
     },
   ]);
 
@@ -665,15 +682,32 @@ test('viewer print school preference defaults and persists through localStorage 
   const storage = {
     getItem: (key) => values.get(key) || null,
     setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
   };
 
+  assert.equal(mod.getDefaultViewerPrintSchoolName('zh-Hant'), '香港紅十字會醫院學校');
   assert.equal(
     mod.readViewerPrintSchoolNamePreference(storage),
     'Hong Kong Red Cross Hospital Schools'
   );
   assert.equal(mod.writeViewerPrintSchoolNamePreference('  St Anne School  ', storage), 'St Anne School');
   assert.equal(mod.readViewerPrintSchoolNamePreference(storage), 'St Anne School');
+  assert.deepEqual(
+    mod.readViewerPrintSchoolNamePreferenceState(storage),
+    { schoolName: 'St Anne School', custom: true }
+  );
   assert.equal(mod.writeViewerPrintSchoolNamePreference('   ', storage), 'Hong Kong Red Cross Hospital Schools');
+  values.delete('worksheetLauncher.viewer.printSchoolName.custom');
+  values.set('worksheetLauncher.viewer.printSchoolName', '香港紅十字會醫院學校');
+  assert.deepEqual(
+    mod.readViewerPrintSchoolNamePreferenceState(storage),
+    { schoolName: 'Hong Kong Red Cross Hospital Schools', custom: false }
+  );
+  values.set('worksheetLauncher.viewer.printSchoolName.custom', 'true');
+  assert.deepEqual(
+    mod.readViewerPrintSchoolNamePreferenceState(storage),
+    { schoolName: '香港紅十字會醫院學校', custom: true }
+  );
 });
 
 test('buildWorksheetPrintReportHtml records missing submitted timestamp without attempt id', async () => {
@@ -1156,6 +1190,56 @@ test('normalizeViewerPayload preserves worksheet subject and owner metadata', as
   assert.equal(payload.subject, 'ICT');
   assert.equal(payload.owner, 'owner@example.test');
   assert.equal(payload.owner_email, 'owner@example.test');
+});
+
+test('normalizeViewerPayload retains multilingual prompt and option audio tracks', async () => {
+  const mod = await loadViewerModule();
+  const payload = mod.normalizeViewerPayload({
+    blocks: [{
+      blockId: 'q1', kind: 'question', position: 0,
+      prompt: {
+        text: 'Question',
+        audioTracks: [
+          { language: 'english', assetId: 'prompt-en', voicePresetId: null, sourceTextHash: 'prompt-en-hash' },
+          { language: 'cantonese', assetId: 'prompt-yue', voicePresetId: 'cantonese', sourceTextHash: 'prompt-yue-hash' },
+        ],
+      },
+      responseConfig: {
+        inputType: 'multiple_choice',
+        options: [{
+          id: 'a', value: 'A', label: 'A',
+          audioTracks: [{ language: 'mandarin', assetId: 'option-zh', voicePresetId: 'mandarin', sourceTextHash: 'option-zh-hash' }],
+        }],
+      },
+    }],
+  });
+
+  assert.deepEqual(payload.blocks[0].prompt.audioTracks.map((track) => track.language), ['cantonese', 'english']);
+  assert.deepEqual(payload.blocks[0].responseConfig.options[0].audioTracks, [
+    { language: 'mandarin', assetId: 'option-zh', voicePresetId: 'mandarin', sourceTextHash: 'option-zh-hash' },
+  ]);
+});
+
+test('attempt package asset collection includes multilingual track binaries', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({});
+  const assetIds = session.collectAttemptPackageAssetIds({
+    blocks: [{
+      kind: 'question',
+      prompt: {
+        mediaRefs: [{ assetId: 'legacy-prompt', usage: 'question_audio' }],
+        audioTracks: [{ language: 'cantonese', assetId: 'track-yue', voicePresetId: 'cantonese', sourceTextHash: 'h-yue' }],
+      },
+      responseConfig: {
+        options: [{
+          mediaRefs: [{ assetId: 'legacy-option', usage: 'option_audio' }],
+          audioTracks: [{ language: 'english', assetId: 'track-en', voicePresetId: null, sourceTextHash: 'h-en' }],
+        }],
+      },
+    }],
+  });
+
+  assert.deepEqual(assetIds.sort(), ['legacy-option', 'legacy-prompt', 'track-en', 'track-yue']);
 });
 
 test('normalizeViewerBlock preserves non-canonical single_choice inputType without coercion', async () => {
@@ -1771,17 +1855,13 @@ test('viewer shell exposes check action only in completed state', async () => {
   assert.match(source, /checkBtn\.disabled = session\.state\.isFinalizing \|\| !checkAvailable;/);
 });
 
-test('viewer language change navigation flushes state and preserves local attempt intent', async () => {
+test('viewer language changes rerender without navigation or attempt flush', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  const matches = source.match(/await flushLocaleChangeBeforeReload\(session, source\);/g) || [];
-  assert.equal(matches.length >= 1, true);
-  assert.match(source, /if \(session\?\.state\?\.localAttemptId\) \{\s+nextUrl\.searchParams\.set\('localAttemptId', session\.state\.localAttemptId\);/);
-  assert.match(source, /nextUrl\.searchParams\.delete\('publishedPackageId'\);/);
-  assert.match(source, /nextUrl\.searchParams\.delete\('localDraftId'\);/);
-  assert.match(source, /nextUrl\.searchParams\.delete\('importedWorksheetId'\);/);
-  assert.match(source, /nextUrl\.searchParams\.delete\('viewerPayload'\);/);
-  assert.match(source, /nextUrl\.searchParams\.delete\('snapshot'\);/);
-  assert.match(source, /window\.location\.assign\(nextUrl\.toString\(\)\);/);
+  assert.equal(source.includes('flushLocaleChangeBeforeReload'), false);
+  assert.equal(source.includes('navigateForLocaleChange'), false);
+  assert.equal(source.includes('buildLocaleChangeNavigationUrl'), false);
+  assert.match(source, /variant: 'icon',\s+onChange: \(\) => \{\s+renderViewerShell\(session\);/);
+  assert.match(source, /const languageSelector = createLanguageSelector\(\{\s+onChange: \(\) => \{\s+renderViewerStartPanel\(session\);/);
 });
 
 test('active viewer uses compact language icon menu in the header actions', async () => {
@@ -1790,7 +1870,7 @@ test('active viewer uses compact language icon menu in the header actions', asyn
   assert.match(source, /if \(variant === 'icon'\)/);
   assert.match(source, /trigger\.className = 'viewer-header-icon-btn language-selector__trigger';/);
   assert.match(source, /trigger\.innerHTML = createViewerIcon\('language'\);/);
-  assert.match(source, /variant: 'icon',\s+onChange: async \(\) => \{\s+await navigateForLocaleChange\(session, 'viewer\.shell'\);/);
+  assert.match(source, /variant: 'icon',\s+onChange: \(\) => \{\s+renderViewerShell\(session\);/);
 });
 
 test('viewer details action stays available for print settings copy', async () => {
@@ -1799,7 +1879,16 @@ test('viewer details action stays available for print settings copy', async () =
   assert.match(source, /infoBtn\.title = t\('viewer\.details\.openTechnicalDetailsTitle'\);/);
   assert.match(source, /detailsTitle\.textContent = t\('viewer\.details\.title'\);/);
   assert.match(source, /learnerNameForm\.append\(learnerNameLabel, learnerNameInput, learnerNameSaveBtn\);/);
-  assert.match(source, /printSettingsForm\.append\(printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn\);/);
+  assert.match(source, /printSchoolNameModeGroup\.setAttribute\('role', 'group'\);/);
+  assert.match(source, /printSchoolNameDefaultBtn\.textContent = t\('viewer\.details\.printSchoolNameDefault'\);/);
+  assert.match(source, /printSchoolNameCustomBtn\.textContent = t\('viewer\.details\.printSchoolNameCustom'\);/);
+  assert.match(source, /printSettingsForm\.append\(printSchoolNameModeRow, printSchoolNameLabel, printSchoolNameInput, printSchoolNameSaveBtn\);/);
+  assert.match(source, /let printSchoolNameState = readViewerPrintSchoolNamePreferenceState\(\);/);
+  assert.match(source, /function syncPrintSchoolNameMode\(\) \{/);
+  assert.match(source, /printSchoolNameInput\.readOnly = !printSchoolNameCustom;/);
+  assert.match(source, /printSchoolNameDefaultBtn\.addEventListener\('click'/);
+  assert.match(source, /printSchoolNameCustomBtn\.addEventListener\('click'/);
+  assert.match(source, /printSchoolName = getDefaultViewerPrintSchoolName\(\);/);
 });
 
 
