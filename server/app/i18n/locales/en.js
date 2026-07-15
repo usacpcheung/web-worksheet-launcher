@@ -192,6 +192,40 @@ export default {
       "questionSectionTitle": "Question"
     },
     "media": {
+      "audioTracks": {
+        "languages": {
+          "cantonese": "Cantonese",
+          "mandarin": "Putonghua",
+          "english": "English"
+        },
+        "textChanged": "Text changed — review audio",
+        "moreActions": "More {language} audio actions",
+        "continueAnyway": "Continue",
+        "confirm": {
+          "mismatchTitle": "Generate or attach {language} audio?",
+          "chineseForEnglish": "This text appears mainly Chinese, but {language} audio is selected.",
+          "englishForChinese": "This text appears mainly English, but {language} audio is selected.",
+          "mismatchWarning": "Check that the selected audio language matches the text.",
+          "replaceAlso": " Continuing will also replace the current {language} audio.",
+          "regenerateTitle": "Regenerate {language} audio?",
+          "regeneratePromptBody": "Regenerating will replace the current {language} audio.",
+          "regenerateOptionBody": "Regenerating will replace the current {language} audio for option {index}.",
+          "replaceTitle": "Replace {language} audio?",
+          "replacePromptBody": "Replacing will discard the current {language} audio.",
+          "replaceOptionBody": "Replacing will discard the current {language} audio for this option.",
+          "removeTitle": "Remove {language} audio?",
+          "removePromptBody": "This will remove the {language} audio track.",
+          "removeOptionBody": "This will remove the {language} audio for option {index}."
+        },
+        "migration": {
+          "title": "Move legacy audio into language tracks",
+          "description": "This worksheet contains {count} legacy audio attachment(s). Choose how all of them should be handled before editing.",
+          "discard": "Discard all legacy audio",
+          "convertAndOpen": "Convert and open",
+          "confirmDiscard": "Discard all audio",
+          "discardConfirm": "This removes all legacy audio from the new editable copy. The original ZIP or server artifact is unchanged."
+        }
+      },
       "actions": {
         "attach": "Attach",
         "attachAudio": "Attach audio",
@@ -249,6 +283,7 @@ export default {
         "optionAudioReplacementCanceled": "Option audio replacement canceled."
       },
       "optionAudioMenu": "Option audio actions",
+      "optionAudioMenuTitle": "Option audio",
       "optionAudioMenuAttached": "Option audio actions, audio attached",
       "optionAudioMenuGenerating": "Option audio actions, generating",
       "preview": {
@@ -539,11 +574,24 @@ export default {
       "title": "Attempt slots"
     },
     "audio": {
+      "chooseOptionAudioLanguageAriaLabel": "Choose option audio language",
+      "chooseQuestionAudioLanguageAriaLabel": "Choose question audio language",
+      "languages": {
+        "cantonese": "Cantonese",
+        "mandarin": "Putonghua",
+        "english": "English"
+      },
+      "playLanguageOptionAudioAriaLabel": "Play {language} option audio",
+      "playLanguageQuestionAudioAriaLabel": "Play {language} question audio",
       "playOptionAudioAriaLabel": "Play option audio",
       "playOptionAudioFailed": "Unable to play option audio.",
       "playOptionAudioTitle": "Play option audio",
       "playQuestionAudioAriaLabel": "Play question audio",
       "playQuestionAudioTitle": "Play question audio",
+      "stopLanguageOptionAudioAriaLabel": "Stop {language} option audio",
+      "stopLanguageQuestionAudioAriaLabel": "Stop {language} question audio",
+      "stopOptionAudioAriaLabel": "Stop option audio",
+      "stopQuestionAudioAriaLabel": "Stop question audio",
       "unableToPlayQuestionAudio": "Unable to play question audio"
     },
     "boot": {

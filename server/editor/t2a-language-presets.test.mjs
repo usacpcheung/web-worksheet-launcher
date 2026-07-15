@@ -27,6 +27,7 @@ test('worksheet T2A language presets keep stable MiniMax voice and language boos
       options: {
         voice_id: 'English_compelling_lady1',
         language_boost: 'English',
+        speed: 0.85,
       },
     },
   ]);

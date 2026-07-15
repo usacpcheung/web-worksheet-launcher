@@ -192,6 +192,40 @@ export default {
       "questionSectionTitle": "題目"
     },
     "media": {
+      "audioTracks": {
+        "languages": {
+          "cantonese": "粵語",
+          "mandarin": "普通話",
+          "english": "英語"
+        },
+        "textChanged": "文字已變更，請檢查音訊",
+        "moreActions": "更多{language}音訊操作",
+        "continueAnyway": "繼續",
+        "confirm": {
+          "mismatchTitle": "生成或附加{language}音訊？",
+          "chineseForEnglish": "文字似乎主要為中文，但目前選擇了{language}音訊。",
+          "englishForChinese": "文字似乎主要為英文，但目前選擇了{language}音訊。",
+          "mismatchWarning": "請確認所選音訊語言與文字相符。",
+          "replaceAlso": " 繼續亦會取代目前的{language}音訊。",
+          "regenerateTitle": "重新生成{language}音訊？",
+          "regeneratePromptBody": "重新生成會取代目前的{language}音訊。",
+          "regenerateOptionBody": "重新生成會取代選項 {index} 目前的{language}音訊。",
+          "replaceTitle": "取代{language}音訊？",
+          "replacePromptBody": "取代會捨棄目前的{language}音訊。",
+          "replaceOptionBody": "取代會捨棄此選項目前的{language}音訊。",
+          "removeTitle": "移除{language}音訊？",
+          "removePromptBody": "這會移除{language}音軌。",
+          "removeOptionBody": "這會移除選項 {index} 的{language}音訊。"
+        },
+        "migration": {
+          "title": "將舊版音訊移至語言音軌",
+          "description": "此工作紙包含 {count} 個舊版音訊附件。編輯前請選擇如何處理全部音訊。",
+          "discard": "捨棄全部舊版音訊",
+          "convertAndOpen": "轉換並開啟",
+          "confirmDiscard": "捨棄全部音訊",
+          "discardConfirm": "這會從新的可編輯副本移除全部舊版音訊。原本的 ZIP 或伺服器檔案不會改變。"
+        }
+      },
       "actions": {
         "attach": "附加",
         "attachAudio": "附加音訊",
@@ -249,6 +283,7 @@ export default {
         "optionAudioReplacementCanceled": "已取消取代選項音訊。"
       },
       "optionAudioMenu": "選項音訊操作",
+      "optionAudioMenuTitle": "選項音訊",
       "optionAudioMenuAttached": "選項音訊操作，已附加音訊",
       "optionAudioMenuGenerating": "選項音訊操作，生成中",
       "preview": {
@@ -539,11 +574,24 @@ export default {
       "title": "作答記錄空位"
     },
     "audio": {
+      "chooseOptionAudioLanguageAriaLabel": "選擇選項音訊語言",
+      "chooseQuestionAudioLanguageAriaLabel": "選擇題目音訊語言",
+      "languages": {
+        "cantonese": "粵語",
+        "mandarin": "普通話",
+        "english": "英語"
+      },
+      "playLanguageOptionAudioAriaLabel": "播放{language}選項音訊",
+      "playLanguageQuestionAudioAriaLabel": "播放{language}題目音訊",
       "playOptionAudioAriaLabel": "播放選項音訊",
       "playOptionAudioFailed": "無法播放選項音訊。",
       "playOptionAudioTitle": "播放選項音訊",
       "playQuestionAudioAriaLabel": "播放題目音訊",
       "playQuestionAudioTitle": "播放題目音訊",
+      "stopLanguageOptionAudioAriaLabel": "停止播放{language}選項音訊",
+      "stopLanguageQuestionAudioAriaLabel": "停止播放{language}題目音訊",
+      "stopOptionAudioAriaLabel": "停止播放選項音訊",
+      "stopQuestionAudioAriaLabel": "停止播放題目音訊",
       "unableToPlayQuestionAudio": "無法播放題目音訊"
     },
     "boot": {

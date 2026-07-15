@@ -35,7 +35,8 @@ const createWorksheetPackageFromDraft = (draft, assets) => {
   globalThis.__lastCreateWorksheetPackageCall = { draft, assets };
   return { bytes: new Uint8Array([1, 2, 3]) };
 };
-const parseWorksheetPackage = () => ({ manifest: {}, worksheet: { title: 'Pkg', blocks: [] }, assets: [] });
+const parseWorksheetPackage = () => globalThis.__testParsedWorksheetPackage
+  || ({ manifest: {}, worksheet: { title: 'Pkg', blocks: [] }, assets: [] });
 `,
     },
     {
@@ -63,6 +64,15 @@ const normalizeAudioTracks = (tracks) => {
     .sort((left, right) => __audioTrackOrder[left.language] - __audioTrackOrder[right.language]);
 };
 const collectAudioTrackAssetIds = (tracks) => normalizeAudioTracks(tracks).map((track) => track.assetId);`,
+    },
+    {
+      name: 'replace worksheet T2A preset import with deterministic helper',
+      pattern: /import\s*\{\s*getWorksheetT2ALanguagePresetById\s*\}\s*from\s*['"]\.\/t2a-language-presets\.js['"];\s*/,
+      replacement: `const getWorksheetT2ALanguagePresetById = (id) => ({
+  cantonese: { id: 'cantonese', options: { voice_id: 'Cantonese_ProfessionalHost（F)', language_boost: 'Chinese,Yue' } },
+  mandarin: { id: 'mandarin', options: { voice_id: 'Chinese (Mandarin)_News_Anchor', language_boost: 'Chinese' } },
+  english: { id: 'english', options: { voice_id: 'English_compelling_lady1', language_boost: 'English', speed: 0.85 } },
+}[id] || null);`,
     },
     {
       name: 'replace shared auth utility imports with local test doubles',
@@ -146,7 +156,7 @@ function createEmptyQuestionBlock`,
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapEditor\(\)\.catch\([\s\S]*?\);\s*export\s*\{[^}]+\};/,
-      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay, normalizeDraftPublishState, getUploadedDraftPublishBadge };',
+      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay, normalizeDraftPublishState, getUploadedDraftPublishBadge, getNotificationToastRemainingMs, getAudioSourceTextHash, getTextLanguageMismatch, migrateLegacyAudioBlocks };',
     },
   ]);
 
@@ -229,6 +239,166 @@ test('normalizeBlocks retains multilingual prompt and option audio tracks', asyn
   assert.deepEqual(block.responseConfig.options[0].audioTracks, [
     { language: 'mandarin', assetId: 'option-zh', voicePresetId: 'mandarin', sourceTextHash: 'option-zh-hash' },
   ]);
+});
+
+test('audio source hashes and deterministic language mismatch thresholds are stable', async () => {
+  const mod = await loadEditorModule();
+  assert.equal(mod.getAudioSourceTextHash('  Hello world  '), mod.getAudioSourceTextHash('Hello world'));
+  assert.notEqual(mod.getAudioSourceTextHash('Hello'), mod.getAudioSourceTextHash('Hello!'));
+  assert.equal(mod.getTextLanguageMismatch('這是一段主要使用中文的題目內容', 'english'), 'chinese_text_for_english');
+  assert.equal(mod.getTextLanguageMismatch('This question is written in English.', 'cantonese'), 'english_text_for_chinese');
+  assert.equal(mod.getTextLanguageMismatch('This question is written in English.', 'mandarin'), 'english_text_for_chinese');
+  assert.equal(mod.getTextLanguageMismatch('Short', 'cantonese'), null);
+  assert.equal(mod.getTextLanguageMismatch('中文 English mixed text', 'english'), null);
+});
+
+test('track attachment replaces only its selected language and generated audio forwards its preset', async () => {
+  const mod = await loadEditorModule();
+  const removed = [];
+  const calls = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { put: async () => {}, remove: async (id) => { removed.push(id); } },
+    resumeFlags: { get: () => null, set: () => {} },
+  }, { apiClient: { generateAudioFromText: async (text, options) => { calls.push({ text, options }); return { ok: true, data: new Uint8Array([1, 2, 3]) }; } } });
+  session.state.draft = {
+    localId: 'draft_track_actions', assets: [], blocks: [{
+      blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Hello audio track', audioTracks: [] }, responseConfig: { inputType: 'text' },
+    }],
+  };
+  const first = await session.attachAudioTrack('q1', 'prompt', 'cantonese', createFakeFile({ name: 'a.mp3', type: 'audio/mpeg' }));
+  assert.equal(first.ok, true);
+  const replace = await session.attachAudioTrack('q1', 'prompt', 'cantonese', createFakeFile({ name: 'b.mp3', type: 'audio/mpeg' }), { confirmReplace: true });
+  assert.equal(replace.ok, true);
+  assert.equal(removed.includes(first.assetId), true);
+  const generated = await session.generateAudioTrack('q1', 'prompt', 'english');
+  assert.equal(generated.ok, true);
+  assert.deepEqual(calls[0].options, { voice_id: 'English_compelling_lady1', language_boost: 'English', speed: 0.85 });
+  const tracks = session.state.draft.blocks[0].prompt.audioTracks;
+  assert.deepEqual(tracks.map((track) => track.language), ['cantonese', 'english']);
+  assert.equal(tracks.find((track) => track.language === 'english').voicePresetId, 'english');
+});
+
+test('legacy audio migration moves prompt and option audio into one selected track language', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = {
+    localId: 'draft_legacy_migration', assets: [{ assetId: 'legacy_prompt' }, { assetId: 'legacy_option' }], blocks: [{
+      blockId: 'q1', kind: 'question', position: 0,
+      prompt: { text: '題目', mediaRefs: [{ usage: 'question_audio', assetId: 'legacy_prompt' }] },
+      responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', value: 'A', label: 'A', mediaRefs: [{ usage: 'option_audio', assetId: 'legacy_option' }] }] },
+    }],
+  };
+  const outcome = session.migrateLegacyAudioInDraft('cantonese');
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.legacyCount, 2);
+  const block = session.state.draft.blocks[0];
+  assert.equal(block.prompt.mediaRefs.some((ref) => ref.usage === 'question_audio'), false);
+  assert.equal(block.prompt.audioTracks[0].language, 'cantonese');
+  assert.equal(block.responseConfig.options[0].audioTracks[0].language, 'cantonese');
+});
+
+test('legacy migration discard prunes unreferenced audio and collisions fail without mutation', async () => {
+  const mod = await loadEditorModule();
+  const removed = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async (id) => { removed.push(id); } },
+    resumeFlags: { get: () => null, set: () => {} },
+  });
+  session.state.draft = {
+    localId: 'draft_discard_legacy', assets: [{ assetId: 'legacy_audio' }], blocks: [{
+      blockId: 'q1', kind: 'question', position: 0,
+      prompt: { text: 'Q', mediaRefs: [{ usage: 'question_audio', assetId: 'legacy_audio' }] },
+      responseConfig: { inputType: 'text' },
+    }],
+  };
+  const discarded = session.migrateLegacyAudioInDraft('discard');
+  assert.equal(discarded.ok, true);
+  assert.deepEqual(session.state.draft.assets, []);
+  assert.deepEqual(removed, ['legacy_audio']);
+
+  session.state.draft = {
+    localId: 'draft_collision', assets: [{ assetId: 'legacy' }, { assetId: 'track' }], blocks: [{
+      blockId: 'q1', kind: 'question', position: 0,
+      prompt: {
+        text: 'Q',
+        mediaRefs: [{ usage: 'question_audio', assetId: 'legacy' }],
+        audioTracks: [{ language: 'cantonese', assetId: 'track', voicePresetId: null, sourceTextHash: 'hash' }],
+      },
+      responseConfig: { inputType: 'text' },
+    }],
+  };
+  assert.throws(() => session.migrateLegacyAudioInDraft('cantonese'), /conflicts with an existing cantonese track/);
+  assert.equal(session.state.draft.blocks[0].prompt.mediaRefs[0].assetId, 'legacy');
+});
+
+test('resuming a local legacy draft requires migration before assigning or saving editor state', async () => {
+  const mod = await loadEditorModule();
+  const saved = [];
+  const migrationCalls = [];
+  const legacyDraft = {
+    localId: 'draft_local_legacy',
+    title: 'Legacy',
+    assets: [{ assetId: 'legacy_audio', kind: 'audio', usage: 'question_audio' }],
+    blocks: [{
+      blockId: 'q1', kind: 'question', position: 0,
+      prompt: { text: '普通話題目', mediaRefs: [{ usage: 'question_audio', assetId: 'legacy_audio' }] },
+      responseConfig: { inputType: 'text' },
+    }],
+  };
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => structuredClone(legacyDraft), put: async (value) => { saved.push(structuredClone(value)); return value; } },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { remove: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    resolveLegacyAudioMigration: async (context) => { migrationCalls.push(context); return 'mandarin'; },
+  });
+
+  await session.createOrOpenByLocalDraftId('draft_local_legacy');
+
+  assert.deepEqual(migrationCalls, [{ count: 1, required: true, source: 'local' }]);
+  assert.equal(saved.length >= 1, true);
+  assert.equal(session.state.draft.blocks[0].prompt.mediaRefs.some((ref) => ref.usage === 'question_audio'), false);
+  assert.equal(session.state.draft.blocks[0].prompt.audioTracks[0].language, 'mandarin');
+  assert.equal(session.state.draft.blocks[0].prompt.audioTracks[0].voicePresetId, null);
+});
+
+test('canceling package legacy migration performs no storage writes and preserves current editor state', async () => {
+  const mod = await loadEditorModule();
+  const writes = { imported: 0, assets: 0, drafts: 0 };
+  globalThis.__testParsedWorksheetPackage = {
+    manifest: { packageVersion: 1, schemaVersion: 1 },
+    worksheet: {
+      title: 'Legacy package',
+      blocks: [{
+        blockId: 'q1', kind: 'question', position: 0,
+        prompt: { text: '題目', mediaRefs: [{ usage: 'question_audio', assetId: 'legacy_audio' }] },
+        responseConfig: { inputType: 'text' },
+      }],
+    },
+    assets: [{ assetId: 'legacy_audio', path: 'assets/legacy_audio.mp3', kind: 'audio', usage: 'question_audio', binary: new Uint8Array([1]) }],
+  };
+  try {
+    const session = new mod.EditorDraftSession({
+      drafts: { get: async () => null, put: async (value) => { writes.drafts += 1; return value; } },
+      importedWorksheets: { put: async () => { writes.imported += 1; } },
+      localAssets: { get: async () => null, put: async () => { writes.assets += 1; } },
+      resumeFlags: { get: () => null, set: () => {} },
+    }, { resolveLegacyAudioMigration: async () => null });
+    session.state.draft = { localId: 'current', title: 'Current', assets: [], blocks: [] };
+
+    const result = await session.importWorksheetPackageFile({ arrayBuffer: async () => new ArrayBuffer(0) }, { convertToEditableDraft: true });
+
+    assert.deepEqual(result, { canceled: true, importedRecord: null, draftRecord: null });
+    assert.equal(session.state.draft.localId, 'current');
+    assert.deepEqual(writes, { imported: 0, assets: 0, drafts: 0 });
+  } finally {
+    delete globalThis.__testParsedWorksheetPackage;
+  }
 });
 
 
@@ -877,6 +1047,23 @@ test('pushNotification appends activity log entries and caps at 200 records', as
   assert.equal(session.state.notifications[199].text, 'event 209');
 });
 
+test('pushNotification can retain activity while suppressing a floating toast', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  const notification = session.pushNotification({
+    kind: 'success',
+    category: 'editor',
+    source: 'option.t2a',
+    text: 'Option audio generated.',
+    showToast: false,
+  });
+
+  assert.equal(notification.showToast, false);
+  assert.equal(session.state.notifications.at(-1).showToast, false);
+  assert.equal(session.state.activityLog.at(-1).text, 'Option audio generated.');
+  assert.equal(session.state.activityLog.at(-1).showToast, false);
+});
+
 test('pushNotification prunes expired ttl notifications before appending', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());
@@ -1239,15 +1426,20 @@ test('multiple-choice option actions include contextual generate/regenerate audi
   assert.equal(source.includes("await session.triggerProtectedAction('editorOptionT2A', {"), true);
   assert.equal(source.includes("text: getProtectedActionErrorMessage(result, editorNotification('audioGeneration.startFailed')),"), true);
   assert.equal(source.includes('getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)'), true);
-  assert.equal(source.includes("optionActionsRow.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);"), true);
+  assert.equal(source.includes("optionActionsRow.appendChild(optionTrackList);"), true);
+  assert.equal(source.includes("AUDIO_TRACK_LANGUAGE_IDS.forEach((language) =>"), true);
   assert.equal(source.includes("setOptionAudioMenuTriggerState(optionAudioMenuTrigger"), true);
 });
 
 test('stage3: option row triggers replace confirmation before option bridge generation when audio exists', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  const hasAudioConfirmIdx = source.indexOf("title: t('editor.media.confirm.regenerateOptionAudioTitle'");
-  const optionBridgeCallIdx = source.indexOf("await session.triggerProtectedAction('editorOptionT2A', {");
-  const optionSessionReadyIdx = source.indexOf("const sessionReady = await session.ensureServerSessionReady();");
+  const trackHandlerStart = source.indexOf("generateTrackBtn.addEventListener('click', async () => {");
+  const trackHandlerEnd = source.indexOf("const playTrackBtn = document.createElement('button');", trackHandlerStart);
+  const handlerSource = source.slice(trackHandlerStart, trackHandlerEnd);
+  const hasAudioConfirmIdx = handlerSource.indexOf('confirmAudioLanguageMismatch(latestOptionText, language, { replacing: Boolean(latestTrack) })');
+  const optionSessionReadyIdx = handlerSource.indexOf('await session.ensureServerSessionReady()');
+  const optionBridgeCallIdx = handlerSource.indexOf("await session.triggerProtectedAction('editorOptionT2A', {");
+  assert.equal(trackHandlerStart >= 0 && trackHandlerEnd > trackHandlerStart, true);
   assert.equal(hasAudioConfirmIdx >= 0, true);
   assert.equal(optionSessionReadyIdx >= 0, true);
   assert.equal(optionBridgeCallIdx >= 0, true);
@@ -1277,6 +1469,44 @@ test('multiple-choice option action state rerenders while typing when option ids
   assert.equal(source.includes("optionInput.dataset.optionIndex = String(optionIndex);"), true);
   assert.equal(source.includes('queueMicrotask(() => {'), true);
   assert.equal(source.includes('replacementOptionInput.setSelectionRange(activeOptionSelectionStart, activeOptionSelectionEnd);'), true);
+  assert.equal(source.includes('{ optionId }'), true);
+  assert.equal(source.includes("if (persistedOptionId === optionId) row.dataset.persistedOption = '1';"), true);
+});
+
+test('multilingual audio generation locks each prompt or option target and keeps the MC menu open', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const css = await fs.readFile(path.resolve('server/editor/main.css'), 'utf8');
+  assert.equal(source.includes('promptT2AInFlightBlockIds.add(blockId);'), true);
+  assert.equal(source.includes('promptTrackGenerationLanguageByBlockId.set(blockId, language);'), true);
+  assert.equal(source.includes('optionT2AInFlightKeys.add(optionT2AKey);'), true);
+  assert.equal(source.includes('optionTrackGenerationLanguageByKey.set(optionT2AKey, language);'), true);
+  assert.equal(source.includes('refreshPromptT2AControlsForSelectedBlock();'), true);
+  assert.equal(source.includes('refreshOptionRowT2AControls(selectedBlock.blockId, optionId, row);'), true);
+  assert.equal(source.includes('optionActionsMenu.dataset.optionAudioMenuKey = optionT2AKey;'), true);
+  assert.equal(source.includes('if (openOptionAudioMenuKey === optionT2AKey)'), true);
+  assert.equal(source.includes("optionAudioMenuTrigger.addEventListener('click', (event) => {"), true);
+  assert.equal(source.includes('event.preventDefault();'), true);
+  assert.equal(source.includes("setIconButtonContent(optionMenuCloseBtn, 'close');"), true);
+  assert.equal(source.includes("if (event.key !== 'Escape' || !optionActionsMenu.open) return;"), true);
+  assert.equal(source.includes('replacementAudioAction.focus()'), true);
+  assert.equal(css.includes('.option-audio-menu__header'), true);
+  assert.equal(css.includes('.editor-shell--option-audio-menu-open .notification-toast-container'), true);
+});
+
+test('multilingual audio editor uses flat prompt rows and compact state-driven option actions', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const css = await fs.readFile(path.resolve('server/editor/main.css'), 'utf8');
+
+  assert.equal(source.includes("mediaRows.className = 'media-row-list media-row-list--flat';"), true);
+  assert.equal(source.includes("track ? 'audio-track-row--attached' : 'audio-track-row--empty'"), true);
+  assert.equal(source.includes("className: 'audio-track-more-menu--prompt'"), true);
+  assert.equal(source.includes("optionMenuTitle.textContent = t('editor.media.optionAudioMenuTitle');"), true);
+  assert.equal(source.includes("track ? 'option-audio-track--attached' : 'option-audio-track--empty'"), true);
+  assert.equal(source.includes('trackActions.append(playTrackBtn, moreMenu);'), true);
+  assert.equal(source.includes('trackActions.append(attachTrackBtn, generateTrackBtn);'), true);
+  assert.equal(css.includes('container: prompt-audio-row / inline-size;'), true);
+  assert.equal(css.includes('@container prompt-audio-row (max-width: 760px)'), true);
+  assert.equal(css.includes('.option-audio-track--empty .option-audio-track__actions .media-action-btn'), true);
 });
 
 test('multiple-choice option input defers state updates while IME composition is active', async () => {
@@ -1361,6 +1591,20 @@ test('editor language change rerenders without reloading or flushing draft state
   assert.equal(source.includes('flushLocaleChangeBeforeReload'), false);
   assert.equal(source.includes('window.location.reload'), false);
   assert.match(source, /const languageSelector = createLanguageSelector\(\{\s+onChange: \(\) => \{\s+renderEditorShell\(session\);/);
+});
+
+test('toast lifetime stays anchored to notification creation across language rerenders', async () => {
+  const mod = await loadEditorModule();
+  const createdAt = '2026-07-14T00:00:00.000Z';
+  const createdAtMs = new Date(createdAt).getTime();
+  const notification = { id: 'notif_audio', createdAt, ttlMs: null, showToast: true };
+
+  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs), 5000);
+  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs + 3000), 2000);
+  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs + 5000), 0);
+  assert.equal(mod.getNotificationToastRemainingMs(notification, createdAtMs + 9000), 0);
+  assert.equal(mod.getNotificationToastRemainingMs({ ...notification, ttlMs: 1200 }, createdAtMs + 200), 1000);
+  assert.equal(mod.getNotificationToastRemainingMs({ ...notification, showToast: false }, createdAtMs), 0);
 });
 
 test('autosave mirrors persistence and validation warnings into deduped notification sources', async () => {
@@ -2700,9 +2944,17 @@ test('typing first visible option persists when options array starts empty', asy
   const block = session.createBlock('question');
 
   session.updateQuestionInputType(block.blockId, 'multiple_choice');
-  session.updateQuestionOptionAtIndex(block.blockId, 0, 'First typed option');
+  const provisionalOptionId = 'opt_provisional_first';
+  const persistedOptionId = session.updateQuestionOptionAtIndex(
+    block.blockId,
+    0,
+    'First typed option',
+    { optionId: provisionalOptionId }
+  );
 
   let updated = session.state.draft.blocks.find((entry) => entry.blockId === block.blockId);
+  assert.equal(persistedOptionId, provisionalOptionId);
+  assert.equal(updated.responseConfig.options[0].id, provisionalOptionId);
   assert.deepEqual(stripOptionIds(updated.responseConfig.options), [{ value: 'First typed option', label: 'First typed option' }]);
 
   session.addQuestionOption(block.blockId);
@@ -4664,6 +4916,10 @@ test('editor replayEditorOptionT2AIntent generates audio and attaches via canoni
   assert.equal(attachCalls[0][1], 'opt_1');
   assert.equal(typeof attachCalls[0][2]?.arrayBuffer, 'function');
   assert.equal(attachCalls[0][3]?.confirmReplace, false);
+  const successNotification = session.state.notifications
+    .find((item) => item.source === 'option.t2a' && item.kind === 'success');
+  assert.equal(successNotification?.showToast, false);
+  assert.equal(session.state.activityLog.some((item) => item.id === successNotification?.id), true);
 });
 
 test('editor replayEditorOptionT2AIntent returns plain-language errors for invalid option generation states', async () => {
