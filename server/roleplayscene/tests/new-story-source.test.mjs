@@ -15,6 +15,7 @@ const discussionConfirmIndex = mainSource.indexOf(
   handlerIndex,
 );
 const confirmIndex = mainSource.indexOf('const shouldStart = await confirmNewStory()', handlerIndex);
+const resetSequenceIndex = mainSource.indexOf('resetIdSequences()', handlerIndex);
 const replaceIndex = mainSource.indexOf(
   'applyPreparedProjectImport(store, { project: createProject() })',
   handlerIndex,
@@ -27,6 +28,10 @@ assert.ok(
   'New Story should protect unsaved discussion text before replacement confirmation',
 );
 assert.ok(confirmIndex > handlerIndex, 'New Story should request confirmation');
+assert.ok(
+  resetSequenceIndex > confirmIndex && resetSequenceIndex < replaceIndex,
+  'New Story should reset generated IDs after confirmation and before creating the replacement project',
+);
 assert.ok(replaceIndex > confirmIndex, 'New Story should replace the project only after confirmation');
 assert.ok(editModeIndex > replaceIndex, 'New Story should return to Edit mode after replacement');
 assert.ok(
