@@ -6,6 +6,7 @@ import {
   seedIdSequence,
   seedIdSequencesFromProject,
 } from '../scripts/utils/id.js';
+import { createProject, createScene } from '../scripts/model.js';
 
 resetIdSequences();
 
@@ -62,6 +63,18 @@ seedIdSequencesFromProject({
 });
 assert.equal(newId('scene'), 'scene-002', 'legacy scene IDs should reseed scene counter');
 assert.equal(newId('choice'), 'choice-0010', 'legacy choice IDs should reseed choice counter');
+
+resetIdSequences();
+
+seedIdSequencesFromProject({
+  scenes: [{ id: 'scene-099' }],
+});
+assert.equal(newId('scene'), 'scene-100', 'imported stories should continue after their highest scene ID');
+
+resetIdSequences();
+const freshStory = createProject();
+assert.equal(freshStory.scenes[0].id, 'scene-001', 'a fresh story should restart its scene ID sequence');
+assert.equal(createScene().id, 'scene-002', 'new scenes in the fresh story should retain sequential IDs');
 
 resetIdSequences();
 

@@ -16,6 +16,7 @@ import {
 import { validateProject } from './editor/validators.js';
 import { renderValidation } from './editor/inspector.js';
 import { createProject } from './model.js';
+import { resetIdSequences } from './utils/id.js';
 import { translate, onLocaleChange, getActiveLocale, getAvailableLocales, LOCALE_STORAGE_KEY } from './i18n.js';
 import { createServerApiClient } from '../../app/api/server-api-client.js';
 import { probeSession } from '../../app/auth/session-readiness.js';
@@ -2425,6 +2426,7 @@ btnNewStory?.addEventListener('click', async () => {
     leftView: 'storyMap',
     selectedSpeechBubbleAnchorId: null,
   };
+  resetIdSequences();
   await applyPreparedProjectImport(store, { project: createProject() });
   setMode('edit');
   showMessage({ textId: 'messages.newStoryStarted' });
