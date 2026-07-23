@@ -37,6 +37,20 @@ function normalizeMediaRefs(mediaRefs) {
     .filter(Boolean);
 }
 
+function hasLegacyAudioRefs(block) {
+  if (!isRecord(block) || (block.kind !== 'question' && !isRecord(block.prompt))) return false;
+  if (normalizeMediaRefs(block.prompt?.mediaRefs).some((ref) => ref.usage === 'question_audio')) return true;
+  const options = Array.isArray(block.responseConfig?.options) ? block.responseConfig.options : [];
+  return options.some((option) => normalizeMediaRefs(option?.mediaRefs).some((ref) => ref.usage === 'option_audio'));
+}
+
+function hasAudioTracks(block) {
+  if (!isRecord(block) || (block.kind !== 'question' && !isRecord(block.prompt))) return false;
+  if (normalizeAudioTracks(block.prompt?.audioTracks).length > 0) return true;
+  const options = Array.isArray(block.responseConfig?.options) ? block.responseConfig.options : [];
+  return options.some((option) => normalizeAudioTracks(option?.audioTracks).length > 0);
+}
+
 function normalizeWorksheetBlocks(blocks, { includeAudioTracks = true } = {}) {
   return (Array.isArray(blocks) ? blocks : []).map((block, index) => {
     const safe = isRecord(block) ? block : {};
@@ -128,6 +142,10 @@ function buildPackageManifest(draft) {
 function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
   if (!isRecord(draft)) {
     throw new Error('Draft record is required for package export.');
+  }
+  const draftBlocks = Array.isArray(draft.blocks) ? draft.blocks : [];
+  if (draftBlocks.some(hasLegacyAudioRefs) && draftBlocks.some(hasAudioTracks)) {
+    throw new Error('Cannot export worksheet package: legacy audio attachments cannot be mixed with multilingual audio tracks.');
   }
 
   const worksheet = {
@@ -247,7 +265,11 @@ function parseWorksheetPackage(arrayBuffer) {
 
   if (manifest.packageVersion === PACKAGE_VERSION) {
     const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
-    (Array.isArray(worksheet.blocks) ? worksheet.blocks : []).forEach((block, blockIndex) => {
+    const blocks = Array.isArray(worksheet.blocks) ? worksheet.blocks : [];
+    if (blocks.some(hasLegacyAudioRefs) && blocks.some(hasAudioTracks)) {
+      throw new Error('Invalid worksheet package: legacy audio attachments cannot be mixed with multilingual audio tracks.');
+    }
+    blocks.forEach((block, blockIndex) => {
       if (!isRecord(block) || (block.kind !== 'question' && !isRecord(block.prompt))) return;
       assertValidAudioTracks(block.prompt?.audioTracks, assetById, `worksheet.blocks[${blockIndex}].prompt`);
       const options = Array.isArray(block.responseConfig?.options) ? block.responseConfig.options : [];

@@ -327,6 +327,21 @@ function migrateLegacyAudioBlocks(blocks, choice) {
   return { blocks: migrated, legacyCount: legacyTargets.length };
 }
 
+function getLegacyAudioMigrationAction(choice) {
+  const isDiscard = choice === 'discard';
+  return {
+    buttonClassName: isDiscard
+      ? 'confirm-modal__btn confirm-modal__btn--destructive'
+      : 'confirm-modal__btn confirm-modal__btn--warning',
+    buttonLabelKey: isDiscard
+      ? 'editor.media.audioTracks.migration.discardAndOpen'
+      : 'editor.media.audioTracks.migration.convertAndOpen',
+    descriptionKey: isDiscard
+      ? 'editor.media.audioTracks.migration.discardConfirm'
+      : 'editor.media.audioTracks.migration.description',
+  };
+}
+
 function showLegacyAudioMigrationDialog({ count, required = false } = {}) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -380,23 +395,17 @@ function showLegacyAudioMigrationDialog({ count, required = false } = {}) {
     cancel.addEventListener('click', () => close(null));
     confirm.addEventListener('click', () => {
       const selected = choices.querySelector('input:checked')?.value || 'cantonese';
-      if (selected === 'discard') {
-        if (confirm.dataset.discardConfirmed !== '1') {
-          confirm.dataset.discardConfirmed = '1';
-          confirm.className = 'confirm-modal__btn confirm-modal__btn--destructive';
-          confirm.textContent = t('editor.media.audioTracks.migration.confirmDiscard');
-          description.textContent = t('editor.media.audioTracks.migration.discardConfirm');
-          return;
-        }
-      }
       close(selected);
     });
-    choices.addEventListener('change', () => {
-      delete confirm.dataset.discardConfirmed;
-      confirm.className = 'confirm-modal__btn confirm-modal__btn--warning';
-      confirm.textContent = t('editor.media.audioTracks.migration.convertAndOpen');
-      description.textContent = t('editor.media.audioTracks.migration.description', { count });
-    });
+    const updateConfirmAction = () => {
+      const selected = choices.querySelector('input:checked')?.value || 'cantonese';
+      const action = getLegacyAudioMigrationAction(selected);
+      confirm.className = action.buttonClassName;
+      confirm.textContent = t(action.buttonLabelKey);
+      description.textContent = t(action.descriptionKey, { count });
+    };
+    choices.addEventListener('change', updateConfirmAction);
+    updateConfirmAction();
     dialog.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && !required) close(null);
     });
@@ -2150,6 +2159,16 @@ class EditorDraftSession {
     const optionId = options.optionId || null;
     const current = this.getAudioTrackTarget(blockId, target, optionId);
     if (!current) return { ok: false, reason: 'missing-target' };
+    if (
+      options.expectedSourceTextHash
+      && getAudioSourceTextHash(current.text) !== options.expectedSourceTextHash
+    ) {
+      return {
+        ok: false,
+        reason: 'source-text-changed',
+        error: { message: editorNotification('audioGeneration.sourceTextChangedDuringGeneration') },
+      };
+    }
     const existingTrack = getAudioTrack(current.audioTracks, language);
     if (existingTrack && options.confirmReplace !== true) {
       return { ok: false, reason: 'confirm-replace-required', existingAssetId: existingTrack.assetId };
@@ -2223,6 +2242,7 @@ class EditorDraftSession {
     if (!preset) return { ok: false, reason: 'missing-preset' };
     const existingTrack = getAudioTrack(current.audioTracks, language);
     if (existingTrack && options.confirmReplace !== true) return { ok: false, reason: 'confirm-replace-required', existingAssetId: existingTrack.assetId };
+    const expectedSourceTextHash = getAudioSourceTextHash(current.text);
     const audioResult = await this.apiClient.generateAudioFromText(textState.trimmedText, preset.options);
     if (!audioResult?.ok) return { ok: false, reason: 'generation-failed', error: audioResult?.error || null };
     const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
@@ -2232,6 +2252,7 @@ class EditorDraftSession {
       optionId,
       confirmReplace: true,
       voicePresetId: language,
+      expectedSourceTextHash,
     });
   }
 
@@ -3849,7 +3870,10 @@ class EditorDraftSession {
         createZipFileFromBytes(artifact.data, `published-package-${normalizedPublishedPackageId}.zip`),
         { convertToEditableDraft: true, migrationSource: 'published-package' }
       );
-      if (imported?.canceled) return { ok: false, canceled: true, error: { message: 'Opening canceled. No worksheet was imported or changed.' } };
+      if (imported?.canceled) {
+        this.clearNotificationsBySource('publishedPackage.open');
+        return { ok: false, canceled: true, error: { message: 'Opening canceled. No worksheet was imported or changed.' } };
+      }
       this.pushNotification({
         kind: 'success',
         category: 'server',
@@ -5472,6 +5496,11 @@ function renderEditorShell(session) {
               text: editorNotification('browsePublished.openedPublishedPackageInEditor', { id: item.published_package_id }),
             });
             browsePublishedDialogOpen = false;
+          } else if (reopenResult?.canceled) {
+            browsePublishedState = {
+              ...browsePublishedState,
+              error: null,
+            };
           } else {
             const openError = session.state.serverActionMessage || reopenResult?.error?.message || editorNotification('browsePublished.failedOpenPublishedPackage');
             browsePublishedState = {
@@ -6767,7 +6796,7 @@ function renderEditorShell(session) {
             language,
           });
           if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
-            session.setMediaFeedback(editorNotification('audioGeneration.failed'));
+            session.setMediaFeedback(result?.error?.message || editorNotification('audioGeneration.failed'));
           }
         } finally {
           promptT2AInFlightBlockIds.delete(blockId);
@@ -7257,7 +7286,7 @@ function renderEditorShell(session) {
                 language,
               });
               if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
-                session.setMediaFeedback(editorNotification('audioGeneration.failed'));
+                session.setMediaFeedback(result?.error?.message || editorNotification('audioGeneration.failed'));
               }
             } finally {
               optionT2AInFlightKeys.delete(optionT2AKey);

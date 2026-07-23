@@ -222,7 +222,7 @@ export default {
           "description": "This worksheet contains {count} legacy audio attachment(s). Choose how all of them should be handled before editing.",
           "discard": "Discard all legacy audio",
           "convertAndOpen": "Convert and open",
-          "confirmDiscard": "Discard all audio",
+          "discardAndOpen": "Discard and open",
           "discardConfirm": "This removes all legacy audio from the new editable copy. The original ZIP or server artifact is unchanged."
         }
       },
@@ -365,6 +365,7 @@ export default {
         "promptGenerated": "Question prompt audio generated and attached.",
         "promptRequired": "Enter a prompt before generating audio.",
         "promptTextTooLong": "Prompt must be {max} characters or fewer to generate audio.",
+        "sourceTextChangedDuringGeneration": "Text changed while audio was generating. No audio was attached; generate it again for the updated text.",
         "startFailed": "Unable to start audio generation. Please try again."
       },
       "browsePublished": {

@@ -222,7 +222,7 @@ export default {
           "description": "此工作紙包含 {count} 個舊版音訊附件。編輯前請選擇如何處理全部音訊。",
           "discard": "捨棄全部舊版音訊",
           "convertAndOpen": "轉換並開啟",
-          "confirmDiscard": "捨棄全部音訊",
+          "discardAndOpen": "捨棄並開啟",
           "discardConfirm": "這會從新的可編輯副本移除全部舊版音訊。原本的 ZIP 或伺服器檔案不會改變。"
         }
       },
@@ -365,6 +365,7 @@ export default {
         "promptGenerated": "已產生並附加題目音訊。",
         "promptRequired": "請先輸入題目文字，再產生音訊。",
         "promptTextTooLong": "題目文字不可超過 {max} 個字元才可產生音訊。",
+        "sourceTextChangedDuringGeneration": "生成音訊時文字已變更。系統未附加音訊，請按更新後的文字重新生成。",
         "startFailed": "無法開始產生音訊。請再試一次。"
       },
       "browsePublished": {

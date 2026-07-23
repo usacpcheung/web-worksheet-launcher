@@ -156,7 +156,7 @@ function createEmptyQuestionBlock`,
     {
       name: 'replace bootstrap invocation with explicit test exports',
       pattern: /bootstrapEditor\(\)\.catch\([\s\S]*?\);\s*export\s*\{[^}]+\};/,
-      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay, normalizeDraftPublishState, getUploadedDraftPublishBadge, getNotificationToastRemainingMs, getAudioSourceTextHash, getTextLanguageMismatch, migrateLegacyAudioBlocks };',
+      replacement: 'export { EditorDraftSession, bootstrapEditor, createDraftRecord, normalizeBlocks, mapOptionsTextToResponseOptions, buildViewerUrlFromCurrentLocation, getNumberQuestionValidationErrors, formatUploadedDraftTimestamp, toUploadedDraftDisplay, normalizeDraftPublishState, getUploadedDraftPublishBadge, getNotificationToastRemainingMs, getAudioSourceTextHash, getTextLanguageMismatch, migrateLegacyAudioBlocks, getLegacyAudioMigrationAction };',
     },
   ]);
 
@@ -280,6 +280,44 @@ test('track attachment replaces only its selected language and generated audio f
   assert.equal(tracks.find((track) => track.language === 'english').voicePresetId, 'english');
 });
 
+test('generated audio is discarded when prompt or option text changes while the request is in flight', async () => {
+  const mod = await loadEditorModule();
+  const resolvers = [];
+  const session = new mod.EditorDraftSession({
+    drafts: { get: async () => null, put: async (v) => v },
+    importedWorksheets: { put: async () => {} },
+    localAssets: { put: async () => {}, remove: async () => {} },
+    resumeFlags: { get: () => null, set: () => {} },
+  }, {
+    apiClient: {
+      generateAudioFromText: () => new Promise((resolve) => resolvers.push(resolve)),
+    },
+  });
+  session.state.draft = {
+    localId: 'draft_stale_track_generation', assets: [], blocks: [{
+      blockId: 'q1', kind: 'question', position: 0,
+      prompt: { text: 'Original prompt', audioTracks: [] },
+      responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', value: 'Original option', label: 'Original option', audioTracks: [] }] },
+    }],
+  };
+
+  const promptGeneration = session.generateAudioTrack('q1', 'prompt', 'english');
+  session.state.draft.blocks[0].prompt.text = 'Updated prompt';
+  resolvers.shift()({ ok: true, data: new Uint8Array([1, 2, 3]) });
+  const promptResult = await promptGeneration;
+  assert.equal(promptResult.reason, 'source-text-changed');
+  assert.deepEqual(session.state.draft.blocks[0].prompt.audioTracks, []);
+
+  const optionGeneration = session.generateAudioTrack('q1', 'option', 'mandarin', { optionId: 'o1' });
+  session.state.draft.blocks[0].responseConfig.options[0].label = 'Updated option';
+  session.state.draft.blocks[0].responseConfig.options[0].value = 'Updated option';
+  resolvers.shift()({ ok: true, data: new Uint8Array([1, 2, 3]) });
+  const optionResult = await optionGeneration;
+  assert.equal(optionResult.reason, 'source-text-changed');
+  assert.deepEqual(session.state.draft.blocks[0].responseConfig.options[0].audioTracks, []);
+  assert.deepEqual(session.state.draft.assets, []);
+});
+
 test('legacy audio migration moves prompt and option audio into one selected track language', async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());
@@ -333,6 +371,21 @@ test('legacy migration discard prunes unreferenced audio and collisions fail wit
   };
   assert.throws(() => session.migrateLegacyAudioInDraft('cantonese'), /conflicts with an existing cantonese track/);
   assert.equal(session.state.draft.blocks[0].prompt.mediaRefs[0].assetId, 'legacy');
+});
+
+test('legacy migration discard is a single explicit discard-and-open action', async () => {
+  const mod = await loadEditorModule();
+
+  assert.deepEqual(mod.getLegacyAudioMigrationAction('discard'), {
+    buttonClassName: 'confirm-modal__btn confirm-modal__btn--destructive',
+    buttonLabelKey: 'editor.media.audioTracks.migration.discardAndOpen',
+    descriptionKey: 'editor.media.audioTracks.migration.discardConfirm',
+  });
+  assert.deepEqual(mod.getLegacyAudioMigrationAction('english'), {
+    buttonClassName: 'confirm-modal__btn confirm-modal__btn--warning',
+    buttonLabelKey: 'editor.media.audioTracks.migration.convertAndOpen',
+    descriptionKey: 'editor.media.audioTracks.migration.description',
+  });
 });
 
 test('resuming a local legacy draft requires migration before assigning or saving editor state', async () => {
@@ -1284,6 +1337,8 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('if (browsePublishedDialogOpen) {\n      renderPublishedBrowserModal();\n    }'), true);
   assert.equal(source.includes('if (reopenResult?.ok) {'), true);
   assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
+  assert.equal(source.includes('} else if (reopenResult?.canceled) {'), true);
+  assert.equal(source.includes('error: null,'), true);
   assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || editorNotification('browsePublished.failedOpenPublishedPackage');"), true);
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
@@ -4576,6 +4631,28 @@ test('reopenPublishedPackageAsLocalCopy emits modal-open notification sequence',
     .map((item) => item.text);
   assert.equal(openActivityTexts.includes('editor.notifications.publishedPackage.opening'), false);
   assert.equal(openActivityTexts.includes('editor.notifications.publishedPackage.openedAsLocalCopy'), true);
+});
+
+test('canceling published package migration clears transient opening status without changing the draft', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), {
+    apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { email: 'teacher@example.test' } } }),
+      fetchPublishedPackageArtifact: async () => ({ ok: true, data: new Uint8Array([1, 2, 3]) }),
+    },
+  });
+  const originalDraft = { localId: 'draft_before_cancel' };
+  session.state.draft = originalDraft;
+  session.importWorksheetPackageFile = async () => ({ canceled: true, importedRecord: null, draftRecord: null });
+
+  const result = await session.reopenPublishedPackageAsLocalCopy('pkg_legacy_audio');
+
+  assert.equal(result.ok, false);
+  assert.equal(result.canceled, true);
+  assert.equal(session.state.draft, originalDraft);
+  assert.equal(session.state.openingPublishedPackageIds.size, 0);
+  assert.equal(session.state.notifications.some((item) => item.source === 'publishedPackage.open'), false);
+  assert.equal(session.state.serverActionMessage, null);
 });
 
 test('setRecoveryMessage emits visible recovery notification objects', async () => {
