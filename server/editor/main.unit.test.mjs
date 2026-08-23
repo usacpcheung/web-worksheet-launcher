@@ -1548,6 +1548,24 @@ test('multilingual audio generation locks each prompt or option target and keeps
   assert.equal(css.includes('.editor-shell--option-audio-menu-open .notification-toast-container'), true);
 });
 
+test('multilingual audio generation restores prompt and option controls after warning cancellation', async () => {
+  const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const promptHandlerStart = source.indexOf('const generatePromptTrack = async () => {');
+  const promptHandlerEnd = source.indexOf("generateBtn.addEventListener('click', generatePromptTrack);", promptHandlerStart);
+  const promptHandlerSource = source.slice(promptHandlerStart, promptHandlerEnd);
+  assert.match(
+    promptHandlerSource,
+    /finally \{\s*promptT2AInFlightBlockIds\.delete\(blockId\);\s*promptTrackGenerationLanguageByBlockId\.delete\(blockId\);\s*restoreLegacyPromptInFlightMarker\(\);\s*refreshPromptT2AControlsForSelectedBlock\(\);\s*updateSummary\(\);/m
+  );
+  const optionHandlerStart = source.indexOf("generateTrackBtn.addEventListener('click', async () => {");
+  const optionHandlerEnd = source.indexOf("const playTrackBtn = document.createElement('button');", optionHandlerStart);
+  const optionHandlerSource = source.slice(optionHandlerStart, optionHandlerEnd);
+  assert.match(
+    optionHandlerSource,
+    /finally \{\s*optionT2AInFlightKeys\.delete\(optionT2AKey\);\s*optionTrackGenerationLanguageByKey\.delete\(optionT2AKey\);\s*restoreLegacyOptionInFlightMarker\(\);\s*refreshOptionRowT2AControls\(selectedBlock\.blockId, optionId, row\);\s*updateSummary\(\);/m
+  );
+});
+
 test('multilingual audio editor uses flat prompt rows and compact state-driven option actions', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   const css = await fs.readFile(path.resolve('server/editor/main.css'), 'utf8');
