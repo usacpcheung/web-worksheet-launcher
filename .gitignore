@@ -7,3 +7,6 @@ reference/*
 !.env.example
 
 node_modules/
+
+# Locally generated manuals, screenshots, and QA renders
+artifacts/
