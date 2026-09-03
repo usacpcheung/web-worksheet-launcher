@@ -43,7 +43,7 @@ assert.ok(
     && mainSource.includes('function showPublishDraftModal')
     && mainSource.includes("code === 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT'")
     && mainSource.includes('showPublishConflictModal(result)')
-    && mainSource.includes('await loadUploadedRolePlaySceneDrafts({ preflight: false, showManager: true })'),
+    && mainSource.includes('await loadUploadedRolePlaySceneDrafts({ preflight: false })'),
   'RolePlayScene should publish uploaded drafts, expose edit-title conflict recovery, and refresh draft markers',
 );
 assert.ok(

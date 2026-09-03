@@ -27,6 +27,15 @@ is `/api/v1`. These endpoints are separate from worksheet publishing.
   unchanged, as in the existing title override flow.
 - Existing ownership checks, title-conflict handling, and publish-state rules apply.
 
+Only one publishing flow can run at a time in the current page. All draft Publish
+buttons are disabled from opening the publish dialog through title-conflict and
+rename retries. Canceling before submission or during conflict recovery releases
+the guard. Closing the manager after submission does not cancel the request or
+release the guard early. Success and failures release it when processing ends.
+Delayed responses only refresh or replace the manager that initiated the request;
+they do not reopen a closed manager or replace another dialog. This frontend guard
+supplements the existing backend transaction and title-uniqueness protection.
+
 ## Browse published packages
 
 `GET /roleplayscene/published?q=restaurant&owner=teacher` combines filters with AND:
