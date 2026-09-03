@@ -100,6 +100,7 @@ const ImportConfirmationKind = Object.freeze({
 let isLoadingUploadedDrafts = false;
 let isUploadingDraft = false;
 const publishingDraftIds = new Set();
+let isPublishingDraftFlow = false;
 let openingUploadedDraft = null;
 let publishedScenes = [];
 let publishedScenesHasMore = false;
@@ -1531,7 +1532,7 @@ async function showDeletePublishedSceneConfirmation(scene) {
   });
 }
 
-function showPublishDraftModal(draft, initialTitle = '') {
+function showPublishDraftModal(draft, initialTitle = '', initialDescription = draft?.description ?? '') {
   return new Promise((resolve) => {
     let resolved = false;
     const settle = (value) => {
@@ -1554,7 +1555,21 @@ function showPublishDraftModal(draft, initialTitle = '') {
         input.maxLength = 160;
         input.setAttribute('aria-label', translate('server.publishTitleLabel'));
         field.append(label, input);
-        body.append(description, field);
+        const descriptionField = document.createElement('label');
+        descriptionField.className = 'field';
+        const descriptionLabel = document.createElement('span');
+        descriptionLabel.textContent = translate('server.publishDescriptionLabel');
+        const descriptionInput = document.createElement('textarea');
+        descriptionInput.name = 'description';
+        descriptionInput.rows = 3;
+        descriptionInput.value = initialDescription;
+        descriptionInput.setAttribute('aria-label', translate('server.publishDescriptionLabel'));
+        descriptionInput.setAttribute('aria-describedby', 'publish-description-hint');
+        const descriptionHint = document.createElement('small');
+        descriptionHint.id = 'publish-description-hint';
+        descriptionHint.textContent = translate('server.publishDescriptionHint');
+        descriptionField.append(descriptionLabel, descriptionInput, descriptionHint);
+        body.append(description, field, descriptionField);
       },
       actions: [
         {
@@ -1576,7 +1591,8 @@ function showPublishDraftModal(draft, initialTitle = '') {
               input?.focus();
               return;
             }
-            settle({ title });
+            const description = String(serverModalBody?.querySelector('textarea[name="description"]')?.value || '').trim();
+            settle({ title, description });
             closeServerModal('publish-confirm');
           },
         },
@@ -1709,7 +1725,8 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, all
         'confirm-actions__primary'
       );
       publishButton.dataset.draftAction = 'publish';
-      publishButton.disabled = draftOpenInProgress || publishingDraftIds.has(uploadedDraftId);
+      publishButton.disabled = draftOpenInProgress || isPublishingDraftFlow;
+      publishButton.dataset.idleLabel = translate(publishState === 'unpublished_changes' ? 'server.publishNewVersion' : 'server.publishDraft');
       publishButton.addEventListener('click', () => publishUploadedRolePlaySceneDraft(draft));
       actions.appendChild(publishButton);
     }
@@ -1748,7 +1765,13 @@ function syncUploadedDraftActionAvailability() {
     row.querySelectorAll('button[data-draft-action]').forEach((button) => {
       const action = button.dataset.draftAction;
       button.disabled = draftOpenInProgress
-        || (action === 'publish' && publishingDraftIds.has(uploadedDraftId));
+        || (action === 'publish' && (isPublishingDraftFlow
+          || uploadedDrafts.some(draft => getRolePlaySceneDraftId(draft) === uploadedDraftId
+            && draft.publish_state === 'current_version_published')));
+      if (action === 'publish') {
+        button.textContent = publishingDraftIds.has(uploadedDraftId)
+          ? translate('server.publishing') : button.dataset.idleLabel;
+      }
       if (action !== 'open') return;
       button.textContent = getUploadedDraftOpenButtonLabel(uploadedDraftId);
       if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
@@ -2238,51 +2261,66 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
 
 async function publishUploadedRolePlaySceneDraft(draft) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
-  if (!uploadedDraftId || openingUploadedDraft || publishingDraftIds.has(uploadedDraftId)) return;
+  if (!uploadedDraftId || openingUploadedDraft || isPublishingDraftFlow) return;
+  // Reserve the whole flow before opening a dialog, including conflict retries.
+  isPublishingDraftFlow = true;
+  syncUploadedDraftActionAvailability();
+  let pendingManager = null;
   let attemptedTitle = draft?.title || translate('server.values.untitledDraft');
-  while (true) {
-    const modalResult = await showPublishDraftModal(draft, attemptedTitle);
-    if (!modalResult) {
-      showMessage({ textId: 'server.publishCanceled' });
-      return;
-    }
-    attemptedTitle = modalResult.title;
-    publishingDraftIds.add(uploadedDraftId);
-    renderUploadedDraftManager();
-    showMessage({ textId: 'server.publishingMessage' });
-    let result;
-    try {
-      const sessionReady = await ensureServerSessionReady();
-      if (!sessionReady.ok) {
-        showMessage({ text: sessionReady.result?.error?.message || translate('server.signInRequired') });
+  let attemptedDescription = draft?.description ?? '';
+  try {
+    while (true) {
+      const modalResult = await showPublishDraftModal(draft, attemptedTitle, attemptedDescription);
+      if (!modalResult) {
+        showMessage({ textId: 'server.publishCanceled' });
         return;
       }
-      result = await apiClient.publishRolePlaySceneFromUploadedDraft(uploadedDraftId, { title: attemptedTitle });
-    } catch (err) {
-      showMessage({ text: err?.message || translate('server.publishFailed') });
-      return;
-    } finally {
-      publishingDraftIds.delete(uploadedDraftId);
-      if (!serverModalOverlay?.hidden) renderUploadedDraftManager();
-    }
+      attemptedTitle = modalResult.title;
+      attemptedDescription = modalResult.description;
+      publishingDraftIds.add(uploadedDraftId);
+      renderUploadedDraftManager();
+      pendingManager = activeServerModal;
+      showMessage({ textId: 'server.publishingMessage' });
+      let result;
+      try {
+        const sessionReady = await ensureServerSessionReady();
+        if (!sessionReady.ok) {
+          showMessage({ text: sessionReady.result?.error?.message || translate('server.signInRequired') });
+          return;
+        }
+        result = await apiClient.publishRolePlaySceneFromUploadedDraft(uploadedDraftId, { title: attemptedTitle, description: attemptedDescription });
+      } catch (err) {
+        showMessage({ text: err?.message || translate('server.publishFailed') });
+        return;
+      } finally {
+        publishingDraftIds.delete(uploadedDraftId);
+      }
 
-    if (result?.ok) {
-      showMessage({
-        textId: 'server.published',
-        textArgs: { id: result.data?.roleplayscene_published_scene_id || '' },
-      });
-      await loadUploadedRolePlaySceneDrafts({ preflight: false, showManager: true });
-      return;
-    }
-    if (result?.error?.code === 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT') {
+      if (result?.ok) {
+        showMessage({
+          textId: 'server.published',
+          textArgs: { id: result.data?.roleplayscene_published_scene_id || '' },
+        });
+        // Refresh data without reopening a manager the user closed or replaced.
+        await loadUploadedRolePlaySceneDrafts({ preflight: false });
+        return;
+      }
+      if (result?.error?.code === 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT') {
+        showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
+        if (!pendingManager || activeServerModal !== pendingManager) return;
+        const choice = await showPublishConflictModal(result);
+        if (choice === 'edit') continue;
+        showMessage({ textId: 'server.publishCanceled' });
+        return;
+      }
       showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
-      const choice = await showPublishConflictModal(result);
-      if (choice === 'edit') continue;
-      showMessage({ textId: 'server.publishCanceled' });
       return;
     }
-    showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
-    return;
+  } finally {
+    publishingDraftIds.delete(uploadedDraftId);
+    isPublishingDraftFlow = false;
+    if (pendingManager && activeServerModal === pendingManager) renderUploadedDraftManager();
+    syncUploadedDraftActionAvailability();
   }
 }
 

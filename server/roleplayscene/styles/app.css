@@ -454,6 +454,18 @@ button:disabled {
   margin: -3px;
 }
 .server-modal__actions { justify-content: flex-end; }
+.server-modal__body .field input,
+.server-modal__body .field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding: 0.55rem 0.65rem;
+  line-height: 1.35;
+}
+.server-modal__body .field textarea { resize: vertical; }
+.server-modal__body .field small { color: var(--color-text-muted); }
 .discussion-print-details-form {
   display: grid;
   gap: var(--space-md);

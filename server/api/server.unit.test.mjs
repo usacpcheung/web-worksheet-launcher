@@ -736,43 +736,52 @@ test('POST /api/v1/roleplayscene/published rejects malformed uploadedDraftId wit
   assert.equal(publishCalled, false);
 });
 
-test('POST /api/v1/roleplayscene/published forwards title and uploaded draft id', async () => {
-  let received = null;
-  await withServer(
-    {
-      rolePlaySceneDraftService: {
-        async publishRolePlaySceneFromDraft(payload) {
-          received = payload;
-          return {
-            ok: true,
-            statusCode: 201,
-            data: { roleplayscene_published_scene_id: 'p1', title: payload.title },
-          };
+for (const [name, metadata] of [
+  ['omitted', {}],
+  ['provided', { description: 'Practice ordering food.' }],
+  ['cleared', { description: '' }],
+]) {
+  test(`RolePlayScene publish forwards ${name} description`, async () => {
+    let received = null;
+    await withServer(
+      {
+        rolePlaySceneDraftService: {
+          async publishRolePlaySceneFromDraft(payload) {
+            received = payload;
+            return {
+              ok: true,
+              statusCode: 201,
+              data: { roleplayscene_published_scene_id: 'p1', title: payload.title },
+            };
+          },
         },
       },
-    },
-    async (baseUrl) => {
-      const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published`, {
-        method: 'POST',
-        headers: { ...authHeaders, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
-          title: 'Published Clinic',
-        }),
-      });
-      assert.equal(res.status, 201);
-      const payload = await res.json();
-      assert.equal(payload.ok, true);
-      assert.deepEqual(payload.data, { roleplayscene_published_scene_id: 'p1', title: 'Published Clinic' });
-    }
-  );
+      async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/v1/roleplayscene/published`, {
+          method: 'POST',
+          headers: { ...authHeaders, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+            title: 'Published Clinic',
+            ...metadata,
+          }),
+        });
+        assert.equal(res.status, 201);
+        const payload = await res.json();
+        assert.equal(payload.ok, true);
+        assert.deepEqual(payload.data, { roleplayscene_published_scene_id: 'p1', title: 'Published Clinic' });
+      }
+    );
 
-  assert.deepEqual(received, {
-    identity: { sub: 'user-sub', email: null, name: null },
-    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
-    title: 'Published Clinic',
+    assert.deepEqual(received, {
+      identity: { sub: 'user-sub', email: null, name: null },
+      uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+      title: 'Published Clinic',
+      ...metadata,
+    });
   });
-});
+
+}
 
 test('POST /api/v1/roleplayscene/published maps service errors with details', async () => {
   await withServer(
