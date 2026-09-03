@@ -85,6 +85,11 @@ try {
     'Deleted published-copy badge should resolve from shared Traditional Chinese locale',
   );
   assert.strictEqual(
+    translate('server.downloadingDraftProgress', { percent: 42 }),
+    '下載中 42%',
+    'Draft download progress should resolve from shared Traditional Chinese locale',
+  );
+  assert.strictEqual(
     translate('inspector.dialogue.t2aPresetBadge', { preset: '可愛女聲' }),
     'T2A：可愛女聲',
     'Dialogue T2A preset badge should resolve from shared Traditional Chinese locale',

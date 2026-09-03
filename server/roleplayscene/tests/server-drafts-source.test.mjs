@@ -258,7 +258,7 @@ assert.ok(
 );
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
-const fetchIndex = mainSource.indexOf('apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId)', openFunctionIndex);
+const fetchIndex = mainSource.indexOf('apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId', openFunctionIndex);
 const prepareIndex = mainSource.indexOf('preparedImport = await prepareProjectImport', openFunctionIndex);
 const confirmIndex = mainSource.indexOf('const shouldImport = await confirmProjectImport()', openFunctionIndex);
 const closeModalBeforeConfirmIndex = mainSource.indexOf("closeServerModal('import-confirm')", openFunctionIndex);
@@ -272,6 +272,13 @@ assert.ok(closeModalBeforeConfirmIndex > prepareIndex && closeModalBeforeConfirm
 assert.ok(confirmIndex > prepareIndex, 'uploaded draft open flow should confirm before replacing the local project');
 assert.ok(applyIndex > confirmIndex, 'uploaded draft open flow should apply only after confirmation');
 assert.ok(revokeIndex > confirmIndex, 'cancelled uploaded draft opens should revoke candidate object URLs');
+assert.ok(
+  mainSource.includes('openButton.setAttribute(\'aria-busy\', \'true\')')
+    && mainSource.includes("translate('server.downloadingDraftProgress'")
+    && mainSource.includes("translate('server.preparingDraft')")
+    && mainSource.includes("openButton.removeAttribute('aria-busy')"),
+  'uploaded draft open flow should expose download progress and restore its button state',
+);
 
 assert.ok(
   mainSource.includes("code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT'")

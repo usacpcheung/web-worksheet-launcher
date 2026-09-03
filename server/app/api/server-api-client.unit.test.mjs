@@ -215,6 +215,53 @@ test('fetchRolePlaySceneDraftArtifact parses zip payload', async () => {
   assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
 });
 
+test('fetchRolePlaySceneDraftArtifact reports streamed download progress', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
+    status: 200,
+    headers: {
+      'content-type': 'application/zip',
+      'content-length': '4',
+    },
+  });
+
+  const progressEvents = [];
+  const client = createServerApiClient();
+  const result = await client.fetchRolePlaySceneDraftArtifact(
+    '550e8400-e29b-41d4-a716-446655440000',
+    { onProgress: (progress) => progressEvents.push(progress) },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
+  assert.deepEqual(progressEvents.at(-1), {
+    loaded: 4,
+    total: 4,
+    lengthComputable: true,
+  });
+});
+
+test('fetchRolePlaySceneDraftArtifact reports indeterminate progress without content length', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => new Response(new Uint8Array([0x50, 0x4b]), {
+    status: 200,
+    headers: { 'content-type': 'application/zip' },
+  });
+
+  const progressEvents = [];
+  const client = createServerApiClient();
+  const result = await client.fetchRolePlaySceneDraftArtifact('draft-id', {
+    onProgress: (progress) => progressEvents.push(progress),
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(progressEvents.at(-1), {
+    loaded: 2,
+    total: 0,
+    lengthComputable: false,
+  });
+});
+
 test('deleteRolePlaySceneDraft sends DELETE to canonical roleplayscene drafts path', async () => {
   setTestWindow();
   let requestedUrl = null;

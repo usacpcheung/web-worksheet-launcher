@@ -1684,7 +1684,7 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, all
     const actions = document.createElement('div');
     actions.className = 'server-draft-row__actions';
     const openButton = createButton(translate('server.openDraft'));
-    openButton.addEventListener('click', () => openUploadedRolePlaySceneDraft(draft));
+    openButton.addEventListener('click', () => openUploadedRolePlaySceneDraft(draft, openButton));
     const downloadButton = createButton(translate('server.downloadDraft'));
     downloadButton.addEventListener('click', () => downloadUploadedRolePlaySceneDraft(draft));
     actions.append(openButton, downloadButton);
@@ -2235,7 +2235,7 @@ async function publishUploadedRolePlaySceneDraft(draft) {
   }
 }
 
-async function openUploadedRolePlaySceneDraft(draft) {
+async function openUploadedRolePlaySceneDraft(draft, openButton = null) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId) return;
   if (!(await ensureDiscussionCanBeDiscarded())) return;
@@ -2243,11 +2243,30 @@ async function openUploadedRolePlaySceneDraft(draft) {
   if (!sessionReady.ok) return;
   let preparedImport = null;
   try {
+    if (openButton) {
+      openButton.disabled = true;
+      openButton.setAttribute('aria-busy', 'true');
+      openButton.textContent = translate('server.downloadingDraft');
+    }
     showMessage({ textId: 'server.openingDraft' });
-    const artifact = await apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId);
+    const artifact = await apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId, {
+      onProgress: (progress) => {
+        if (!openButton?.isConnected) return;
+        const loaded = Number(progress?.loaded || 0);
+        const total = Number(progress?.total || 0);
+        openButton.textContent = progress?.lengthComputable && total > 0
+          ? translate('server.downloadingDraftProgress', {
+            percent: Math.max(0, Math.min(100, Math.round((loaded / total) * 100))),
+          })
+          : translate('server.downloadingDraft');
+      },
+    });
     if (!artifact.ok) {
       showMessage({ text: getServerErrorMessage(artifact, 'server.openFailed') });
       return;
+    }
+    if (openButton?.isConnected) {
+      openButton.textContent = translate('server.preparingDraft');
     }
     preparedImport = await prepareProjectImport(createZipFileFromBytes(
       artifact.data,
@@ -2281,6 +2300,12 @@ async function openUploadedRolePlaySceneDraft(draft) {
       revokeProjectObjectUrls(preparedImport.project);
     }
     showImportError(err);
+  } finally {
+    if (openButton?.isConnected) {
+      openButton.disabled = false;
+      openButton.removeAttribute('aria-busy');
+      openButton.textContent = translate('server.openDraft');
+    }
   }
 }
 
