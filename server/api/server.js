@@ -254,6 +254,7 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
           identity,
           uploadedDraftId: validatedUploadedDraftId.value,
           title: typeof payload.title === 'string' ? payload.title : '',
+          ...(typeof payload.description === 'string' ? { description: payload.description } : {}),
         });
         if (!result.ok) {
           return json(res, result.statusCode, fail(result.error.code, result.error.message, result.error.details));
