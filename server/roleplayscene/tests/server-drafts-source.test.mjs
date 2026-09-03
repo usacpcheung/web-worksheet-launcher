@@ -273,20 +273,32 @@ assert.ok(confirmIndex > prepareIndex, 'uploaded draft open flow should confirm 
 assert.ok(applyIndex > confirmIndex, 'uploaded draft open flow should apply only after confirmation');
 assert.ok(revokeIndex > confirmIndex, 'cancelled uploaded draft opens should revoke candidate object URLs');
 assert.ok(
-  mainSource.includes('openButton.setAttribute(\'aria-busy\', \'true\')')
-    && mainSource.includes("actionGroup?.querySelectorAll('button')")
-    && mainSource.includes('button.disabled = true')
-    && mainSource.includes('button.disabled = disabled')
+  mainSource.includes('let openingUploadedDraft = null')
+    && mainSource.includes('function syncUploadedDraftActionAvailability()')
+    && mainSource.includes("button.setAttribute('aria-busy', 'true')")
     && mainSource.includes("translate('server.downloadingDraftProgress'")
     && mainSource.includes("translate('server.preparingDraft')")
-    && mainSource.includes("openButton.removeAttribute('aria-busy')"),
-  'uploaded draft open flow should expose download progress and restore its button state',
+    && mainSource.includes("button.removeAttribute('aria-busy')"),
+  'uploaded draft open flow should expose durable download progress and synchronize button state',
 );
-const disableActionsIndex = mainSource.indexOf('button.disabled = true', openFunctionIndex);
+const claimOpenIndex = mainSource.indexOf("openingUploadedDraft = { uploadedDraftId, phase: 'downloading', percent: null }", openFunctionIndex);
 const firstOpenAwaitIndex = mainSource.indexOf('await ensureDiscussionCanBeDiscarded()', openFunctionIndex);
 assert.ok(
-  disableActionsIndex > openFunctionIndex && disableActionsIndex < firstOpenAwaitIndex,
-  'uploaded draft row actions should be disabled synchronously before the first open-flow await',
+  claimOpenIndex > openFunctionIndex && claimOpenIndex < firstOpenAwaitIndex,
+  'uploaded draft open flow should claim its global lock synchronously before the first await',
+);
+assert.ok(
+  mainSource.includes('if (!uploadedDraftId || openingUploadedDraft) return;')
+    && mainSource.includes('disabled: Boolean(openingUploadedDraft)')
+    && mainSource.includes("className: 'uploaded-drafts-refresh-action'")
+    && mainSource.includes("serverSaveButton.disabled = isUploadingDraft || Boolean(openingUploadedDraft)")
+    && mainSource.includes("serverManageButton.disabled = isLoadingUploadedDrafts || Boolean(openingUploadedDraft)")
+    && mainSource.includes("button.disabled = draftOpenInProgress\n        || (action === 'publish'"),
+  'uploaded draft manager should serialize opens and keep draft, refresh, save, and manage actions locked across modal re-renders',
+);
+assert.ok(
+  mainSource.includes('if (openingUploadedDraft?.percent === percent) return;'),
+  'uploaded draft progress should skip redundant percentage renders',
 );
 
 assert.ok(
