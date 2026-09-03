@@ -282,6 +282,12 @@ assert.ok(
     && mainSource.includes("openButton.removeAttribute('aria-busy')"),
   'uploaded draft open flow should expose download progress and restore its button state',
 );
+const disableActionsIndex = mainSource.indexOf('button.disabled = true', openFunctionIndex);
+const firstOpenAwaitIndex = mainSource.indexOf('await ensureDiscussionCanBeDiscarded()', openFunctionIndex);
+assert.ok(
+  disableActionsIndex > openFunctionIndex && disableActionsIndex < firstOpenAwaitIndex,
+  'uploaded draft row actions should be disabled synchronously before the first open-flow await',
+);
 
 assert.ok(
   mainSource.includes("code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT'")

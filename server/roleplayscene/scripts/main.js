@@ -2236,22 +2236,22 @@ async function publishUploadedRolePlaySceneDraft(draft) {
 }
 
 async function openUploadedRolePlaySceneDraft(draft, openButton = null, actionGroup = null) {
-  const uploadedDraftId = getRolePlaySceneDraftId(draft);
-  if (!uploadedDraftId) return;
-  if (!(await ensureDiscussionCanBeDiscarded())) return;
-  const sessionReady = await ensureServerSessionReady();
-  if (!sessionReady.ok) return;
-  let preparedImport = null;
   const actionButtonStates = Array.from(actionGroup?.querySelectorAll('button') || [])
     .map(button => ({ button, disabled: button.disabled }));
+  actionButtonStates.forEach(({ button }) => {
+    button.disabled = true;
+  });
+  if (openButton) {
+    openButton.setAttribute('aria-busy', 'true');
+    openButton.textContent = translate('server.downloadingDraft');
+  }
+  let preparedImport = null;
   try {
-    actionButtonStates.forEach(({ button }) => {
-      button.disabled = true;
-    });
-    if (openButton) {
-      openButton.setAttribute('aria-busy', 'true');
-      openButton.textContent = translate('server.downloadingDraft');
-    }
+    const uploadedDraftId = getRolePlaySceneDraftId(draft);
+    if (!uploadedDraftId) return;
+    if (!(await ensureDiscussionCanBeDiscarded())) return;
+    const sessionReady = await ensureServerSessionReady();
+    if (!sessionReady.ok) return;
     showMessage({ textId: 'server.openingDraft' });
     const artifact = await apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId, {
       onProgress: (progress) => {
