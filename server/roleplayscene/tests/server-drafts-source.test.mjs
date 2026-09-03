@@ -274,6 +274,9 @@ assert.ok(applyIndex > confirmIndex, 'uploaded draft open flow should apply only
 assert.ok(revokeIndex > confirmIndex, 'cancelled uploaded draft opens should revoke candidate object URLs');
 assert.ok(
   mainSource.includes('openButton.setAttribute(\'aria-busy\', \'true\')')
+    && mainSource.includes("actionGroup?.querySelectorAll('button')")
+    && mainSource.includes('button.disabled = true')
+    && mainSource.includes('button.disabled = disabled')
     && mainSource.includes("translate('server.downloadingDraftProgress'")
     && mainSource.includes("translate('server.preparingDraft')")
     && mainSource.includes("openButton.removeAttribute('aria-busy')"),

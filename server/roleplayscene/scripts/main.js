@@ -1684,7 +1684,7 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, all
     const actions = document.createElement('div');
     actions.className = 'server-draft-row__actions';
     const openButton = createButton(translate('server.openDraft'));
-    openButton.addEventListener('click', () => openUploadedRolePlaySceneDraft(draft, openButton));
+    openButton.addEventListener('click', () => openUploadedRolePlaySceneDraft(draft, openButton, actions));
     const downloadButton = createButton(translate('server.downloadDraft'));
     downloadButton.addEventListener('click', () => downloadUploadedRolePlaySceneDraft(draft));
     actions.append(openButton, downloadButton);
@@ -2235,16 +2235,20 @@ async function publishUploadedRolePlaySceneDraft(draft) {
   }
 }
 
-async function openUploadedRolePlaySceneDraft(draft, openButton = null) {
+async function openUploadedRolePlaySceneDraft(draft, openButton = null, actionGroup = null) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId) return;
   if (!(await ensureDiscussionCanBeDiscarded())) return;
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) return;
   let preparedImport = null;
+  const actionButtonStates = Array.from(actionGroup?.querySelectorAll('button') || [])
+    .map(button => ({ button, disabled: button.disabled }));
   try {
+    actionButtonStates.forEach(({ button }) => {
+      button.disabled = true;
+    });
     if (openButton) {
-      openButton.disabled = true;
       openButton.setAttribute('aria-busy', 'true');
       openButton.textContent = translate('server.downloadingDraft');
     }
@@ -2301,8 +2305,10 @@ async function openUploadedRolePlaySceneDraft(draft, openButton = null) {
     }
     showImportError(err);
   } finally {
+    actionButtonStates.forEach(({ button, disabled }) => {
+      if (button.isConnected) button.disabled = disabled;
+    });
     if (openButton?.isConnected) {
-      openButton.disabled = false;
       openButton.removeAttribute('aria-busy');
       openButton.textContent = translate('server.openDraft');
     }
