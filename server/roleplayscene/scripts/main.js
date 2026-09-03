@@ -100,6 +100,7 @@ const ImportConfirmationKind = Object.freeze({
 let isLoadingUploadedDrafts = false;
 let isUploadingDraft = false;
 const publishingDraftIds = new Set();
+let openingUploadedDraft = null;
 let publishedScenes = [];
 let publishedScenesHasMore = false;
 let publishedScenesNextOffset = null;
@@ -813,11 +814,11 @@ function updateServerSessionUi() {
     serverSignInButton.hidden = serverSession.status === 'ready';
   }
   if (serverSaveButton) {
-    serverSaveButton.disabled = isUploadingDraft;
+    serverSaveButton.disabled = isUploadingDraft || Boolean(openingUploadedDraft);
     serverSaveButton.textContent = isUploadingDraft ? translate('server.saving') : translate('server.save');
   }
   if (serverManageButton) {
-    serverManageButton.disabled = isLoadingUploadedDrafts;
+    serverManageButton.disabled = isLoadingUploadedDrafts || Boolean(openingUploadedDraft);
     serverManageButton.textContent = isLoadingUploadedDrafts ? translate('server.refreshing') : translate('server.manage');
   }
   if (serverBrowsePublishedButton) {
@@ -1665,8 +1666,12 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, all
   }
 
   drafts.forEach((draft) => {
+    const uploadedDraftId = getRolePlaySceneDraftId(draft);
+    const draftOpenInProgress = Boolean(openingUploadedDraft);
+    const isOpeningDraft = openingUploadedDraft?.uploadedDraftId === uploadedDraftId;
     const row = document.createElement('article');
     row.className = 'server-draft-row';
+    row.dataset.uploadedDraftId = uploadedDraftId;
     const header = document.createElement('div');
     header.className = 'server-draft-row__header';
     const title = document.createElement('h3');
@@ -1683,14 +1688,18 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, all
 
     const actions = document.createElement('div');
     actions.className = 'server-draft-row__actions';
-    const openButton = createButton(translate('server.openDraft'));
+    const openButton = createButton(getUploadedDraftOpenButtonLabel(uploadedDraftId));
+    openButton.dataset.draftAction = 'open';
+    openButton.disabled = draftOpenInProgress;
+    if (isOpeningDraft) openButton.setAttribute('aria-busy', 'true');
     openButton.addEventListener('click', () => openUploadedRolePlaySceneDraft(draft));
     const downloadButton = createButton(translate('server.downloadDraft'));
+    downloadButton.dataset.draftAction = 'download';
+    downloadButton.disabled = draftOpenInProgress;
     downloadButton.addEventListener('click', () => downloadUploadedRolePlaySceneDraft(draft));
     actions.append(openButton, downloadButton);
     const publishState = draft?.publish_state || 'draft_only';
     if (allowPublish && publishState !== 'current_version_published') {
-      const uploadedDraftId = getRolePlaySceneDraftId(draft);
       const publishButton = createButton(
         publishingDraftIds.has(uploadedDraftId)
           ? translate('server.publishing')
@@ -1699,17 +1708,56 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, all
             : translate('server.publishDraft'),
         'confirm-actions__primary'
       );
-      publishButton.disabled = publishingDraftIds.has(uploadedDraftId);
+      publishButton.dataset.draftAction = 'publish';
+      publishButton.disabled = draftOpenInProgress || publishingDraftIds.has(uploadedDraftId);
       publishButton.addEventListener('click', () => publishUploadedRolePlaySceneDraft(draft));
       actions.appendChild(publishButton);
     }
     const deleteButton = createButton(translate('server.deleteDraft'), 'server-danger-action');
+    deleteButton.dataset.draftAction = 'delete';
+    deleteButton.disabled = draftOpenInProgress;
     deleteButton.addEventListener('click', () => deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted }));
     actions.appendChild(deleteButton);
     row.appendChild(actions);
     list.appendChild(row);
   });
   container.appendChild(list);
+}
+
+function getUploadedDraftOpenButtonLabel(uploadedDraftId) {
+  if (openingUploadedDraft?.uploadedDraftId !== uploadedDraftId) {
+    return translate('server.openDraft');
+  }
+  if (openingUploadedDraft.phase === 'preparing') {
+    return translate('server.preparingDraft');
+  }
+  if (Number.isInteger(openingUploadedDraft.percent)) {
+    return translate('server.downloadingDraftProgress', { percent: openingUploadedDraft.percent });
+  }
+  return translate('server.downloadingDraft');
+}
+
+function syncUploadedDraftActionAvailability() {
+  const draftOpenInProgress = Boolean(openingUploadedDraft);
+  if (serverSaveButton) serverSaveButton.disabled = isUploadingDraft || draftOpenInProgress;
+  if (serverManageButton) serverManageButton.disabled = isLoadingUploadedDrafts || draftOpenInProgress;
+  const refreshButton = serverModalActions?.querySelector('.uploaded-drafts-refresh-action');
+  if (refreshButton) refreshButton.disabled = draftOpenInProgress;
+  serverModalBody?.querySelectorAll('.server-draft-row[data-uploaded-draft-id]').forEach((row) => {
+    const uploadedDraftId = String(row.dataset.uploadedDraftId || '');
+    row.querySelectorAll('button[data-draft-action]').forEach((button) => {
+      const action = button.dataset.draftAction;
+      button.disabled = draftOpenInProgress
+        || (action === 'publish' && publishingDraftIds.has(uploadedDraftId));
+      if (action !== 'open') return;
+      button.textContent = getUploadedDraftOpenButtonLabel(uploadedDraftId);
+      if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
+        button.setAttribute('aria-busy', 'true');
+      } else {
+        button.removeAttribute('aria-busy');
+      }
+    });
+  });
 }
 
 function renderUploadedDraftManager({
@@ -1740,7 +1788,10 @@ function renderUploadedDraftManager({
     actions: [
       {
         label: translate('server.refresh'),
+        disabled: Boolean(openingUploadedDraft),
+        className: 'uploaded-drafts-refresh-action',
         onClick: async () => {
+          if (openingUploadedDraft) return;
           const result = await loadUploadedRolePlaySceneDrafts({ preflight: true, showManager: false });
           if (result?.ok) {
             renderUploadedDraftManager({ onDraftDeleted, onClose, recoveryMode });
@@ -2118,7 +2169,7 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
 }
 
 async function uploadCurrentProjectToServer({ conflictAction = '', preflight = true } = {}) {
-  if (isUploadingDraft) return { ok: false, skipped: true };
+  if (isUploadingDraft || openingUploadedDraft) return { ok: false, skipped: true };
   if (preflight !== false) {
     const sessionReady = await ensureServerSessionReady();
     if (!sessionReady.ok) return sessionReady.result;
@@ -2187,7 +2238,7 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
 
 async function publishUploadedRolePlaySceneDraft(draft) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
-  if (!uploadedDraftId || publishingDraftIds.has(uploadedDraftId)) return;
+  if (!uploadedDraftId || openingUploadedDraft || publishingDraftIds.has(uploadedDraftId)) return;
   let attemptedTitle = draft?.title || translate('server.values.untitledDraft');
   while (true) {
     const modalResult = await showPublishDraftModal(draft, attemptedTitle);
@@ -2237,17 +2288,35 @@ async function publishUploadedRolePlaySceneDraft(draft) {
 
 async function openUploadedRolePlaySceneDraft(draft) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
-  if (!uploadedDraftId) return;
-  if (!(await ensureDiscussionCanBeDiscarded())) return;
-  const sessionReady = await ensureServerSessionReady();
-  if (!sessionReady.ok) return;
+  if (!uploadedDraftId || openingUploadedDraft) return;
+  openingUploadedDraft = { uploadedDraftId, phase: 'downloading', percent: null };
+  syncUploadedDraftActionAvailability();
   let preparedImport = null;
   try {
+    if (!(await ensureDiscussionCanBeDiscarded())) return;
+    const sessionReady = await ensureServerSessionReady();
+    if (!sessionReady.ok) return;
     showMessage({ textId: 'server.openingDraft' });
-    const artifact = await apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId);
+    const artifact = await apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId, {
+      onProgress: (progress) => {
+        const loaded = Number(progress?.loaded || 0);
+        const total = Number(progress?.total || 0);
+        if (!progress?.lengthComputable || total <= 0) return;
+        const percent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+        if (openingUploadedDraft?.percent === percent) return;
+        if (openingUploadedDraft?.uploadedDraftId !== uploadedDraftId) return;
+        openingUploadedDraft.percent = percent;
+        syncUploadedDraftActionAvailability();
+      },
+    });
     if (!artifact.ok) {
       showMessage({ text: getServerErrorMessage(artifact, 'server.openFailed') });
       return;
+    }
+    if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
+      openingUploadedDraft.phase = 'preparing';
+      openingUploadedDraft.percent = null;
+      syncUploadedDraftActionAvailability();
     }
     preparedImport = await prepareProjectImport(createZipFileFromBytes(
       artifact.data,
@@ -2281,12 +2350,17 @@ async function openUploadedRolePlaySceneDraft(draft) {
       revokeProjectObjectUrls(preparedImport.project);
     }
     showImportError(err);
+  } finally {
+    if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
+      openingUploadedDraft = null;
+      syncUploadedDraftActionAvailability();
+    }
   }
 }
 
 async function downloadUploadedRolePlaySceneDraft(draft) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
-  if (!uploadedDraftId) return;
+  if (!uploadedDraftId || openingUploadedDraft) return;
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) return;
   const artifact = await apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId);
@@ -2308,7 +2382,7 @@ async function downloadUploadedRolePlaySceneDraft(draft) {
 
 async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null } = {}) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
-  if (!uploadedDraftId) return;
+  if (!uploadedDraftId || openingUploadedDraft) return;
   const choice = await showDeleteDraftConfirmation(draft);
   if (choice !== 'delete') return;
   const sessionReady = await ensureServerSessionReady();

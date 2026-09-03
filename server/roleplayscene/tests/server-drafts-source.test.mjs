@@ -258,7 +258,7 @@ assert.ok(
 );
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
-const fetchIndex = mainSource.indexOf('apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId)', openFunctionIndex);
+const fetchIndex = mainSource.indexOf('apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId', openFunctionIndex);
 const prepareIndex = mainSource.indexOf('preparedImport = await prepareProjectImport', openFunctionIndex);
 const confirmIndex = mainSource.indexOf('const shouldImport = await confirmProjectImport()', openFunctionIndex);
 const closeModalBeforeConfirmIndex = mainSource.indexOf("closeServerModal('import-confirm')", openFunctionIndex);
@@ -272,6 +272,34 @@ assert.ok(closeModalBeforeConfirmIndex > prepareIndex && closeModalBeforeConfirm
 assert.ok(confirmIndex > prepareIndex, 'uploaded draft open flow should confirm before replacing the local project');
 assert.ok(applyIndex > confirmIndex, 'uploaded draft open flow should apply only after confirmation');
 assert.ok(revokeIndex > confirmIndex, 'cancelled uploaded draft opens should revoke candidate object URLs');
+assert.ok(
+  mainSource.includes('let openingUploadedDraft = null')
+    && mainSource.includes('function syncUploadedDraftActionAvailability()')
+    && mainSource.includes("button.setAttribute('aria-busy', 'true')")
+    && mainSource.includes("translate('server.downloadingDraftProgress'")
+    && mainSource.includes("translate('server.preparingDraft')")
+    && mainSource.includes("button.removeAttribute('aria-busy')"),
+  'uploaded draft open flow should expose durable download progress and synchronize button state',
+);
+const claimOpenIndex = mainSource.indexOf("openingUploadedDraft = { uploadedDraftId, phase: 'downloading', percent: null }", openFunctionIndex);
+const firstOpenAwaitIndex = mainSource.indexOf('await ensureDiscussionCanBeDiscarded()', openFunctionIndex);
+assert.ok(
+  claimOpenIndex > openFunctionIndex && claimOpenIndex < firstOpenAwaitIndex,
+  'uploaded draft open flow should claim its global lock synchronously before the first await',
+);
+assert.ok(
+  mainSource.includes('if (!uploadedDraftId || openingUploadedDraft) return;')
+    && mainSource.includes('disabled: Boolean(openingUploadedDraft)')
+    && mainSource.includes("className: 'uploaded-drafts-refresh-action'")
+    && mainSource.includes("serverSaveButton.disabled = isUploadingDraft || Boolean(openingUploadedDraft)")
+    && mainSource.includes("serverManageButton.disabled = isLoadingUploadedDrafts || Boolean(openingUploadedDraft)")
+    && mainSource.includes("button.disabled = draftOpenInProgress\n        || (action === 'publish'"),
+  'uploaded draft manager should serialize opens and keep draft, refresh, save, and manage actions locked across modal re-renders',
+);
+assert.ok(
+  mainSource.includes('if (openingUploadedDraft?.percent === percent) return;'),
+  'uploaded draft progress should skip redundant percentage renders',
+);
 
 assert.ok(
   mainSource.includes("code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT'")
