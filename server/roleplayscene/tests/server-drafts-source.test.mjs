@@ -107,12 +107,14 @@ assert.ok(
     && indexSource.includes('direct-launch-bootstrap.js')
     && cssSource.includes('.direct-launch-pending .layout')
     && mainSource.includes("setDirectLaunchState('checking-session'")
+    && mainSource.includes('UUID_V4ISH_PATTERN.test(normalizedSceneId)')
     && mainSource.includes("setDirectLaunchState('loading-metadata')")
     && mainSource.includes("setDirectLaunchState('downloading'")
     && mainSource.includes("setDirectLaunchState('preparing'")
     && mainSource.includes('isCurrentDirectLaunchAttempt')
     && mainSource.includes('if (!isDirect && openingPublishedSceneIds.has(publishedSceneId)) return;')
     && mainSource.includes('if (!isDirect) openingPublishedSceneIds.add(publishedSceneId);')
+    && mainSource.includes('directLaunch.active && !popupWasBlocked')
     && mainSource.includes("publishedPlay.source === 'direct'")
     && mainSource.includes('returnToRolePlaySceneEditor()'),
   'direct published links should block the editor, expose explicit loading states, ignore stale attempts, and reload on exit',

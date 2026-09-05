@@ -140,6 +140,7 @@ const PLAY_SESSION_STORAGE_KEY = 'roleplayscene:play-session:v1';
 const HEADER_TABLET_MIN_WIDTH = 768;
 const HEADER_COMPACT_MAX_WIDTH = 1023;
 const DEFAULT_TOPBAR_HEIGHT_PX = 64;
+const UUID_V4ISH_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -999,6 +1000,17 @@ function startDirectPublishedLaunch(sceneId, { initialPlaybackState = null } = {
   if (!normalizedSceneId) return;
   directLaunch.abortController?.abort();
   const attemptId = directLaunch.attemptId + 1;
+  if (!UUID_V4ISH_PATTERN.test(normalizedSceneId)) {
+    setDirectLaunchState('error', {
+      sceneId: normalizedSceneId,
+      sceneTitle: '',
+      attemptId,
+      progress: null,
+      errorKind: 'invalid-link',
+      abortController: null,
+    });
+    return;
+  }
   const abortController = typeof AbortController === 'function' ? new AbortController() : null;
   setDirectLaunchState('checking-session', {
     sceneId: normalizedSceneId,
@@ -1276,6 +1288,7 @@ function startServerSignIn() {
   const authFlowId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `roleplayscene_${Date.now()}`;
+  let popupWasBlocked = false;
   activeAuthFlow = startAuthPopupFlow({
     apiClient,
     source: 'roleplayscene',
@@ -1283,12 +1296,13 @@ function startServerSignIn() {
     pollIntervalMs: AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs,
     pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
     onPopupBlocked: () => {
+      popupWasBlocked = true;
       showMessage({ textId: 'server.popupBlocked' });
       if (directLaunch.active) setDirectLaunchState('authentication-required');
     },
     onStatusMessage: () => {
       showMessage({ textId: 'server.signInPending' });
-      if (directLaunch.active) setDirectLaunchState('authentication-pending');
+      if (directLaunch.active && !popupWasBlocked) setDirectLaunchState('authentication-pending');
     },
     onSessionReady: (result) => {
       serverSession = { status: 'ready', user: result.user || null, error: null };
@@ -2258,7 +2272,7 @@ async function openPublishedRolePlaySceneById(publishedSceneId, {
         pendingDirectPublishedSceneId = publishedSceneId;
         setDirectLaunchState('authentication-required');
       } else {
-        showDirectLaunchError(sessionReady.result, 'network');
+        showDirectLaunchError(sessionReady.result);
       }
     }
     return sessionReady.result;

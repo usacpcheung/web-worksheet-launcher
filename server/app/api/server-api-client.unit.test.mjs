@@ -403,6 +403,32 @@ test('published scene requests forward cancellation and artifact download progre
   });
 });
 
+test('published scene artifact reports a network error when its response stream is interrupted', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([0x50, 0x4b]));
+      controller.error(new TypeError('connection lost'));
+    },
+  }), {
+    status: 200,
+    headers: {
+      'content-type': 'application/zip',
+      'content-length': '4',
+    },
+  });
+
+  const client = createServerApiClient();
+  const result = await client.fetchRolePlayScenePublishedSceneArtifact(
+    '550e8400-e29b-41d4-a716-446655440000',
+    { onProgress() {} },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'NETWORK_ERROR');
+  assert.match(result.error.message, /connection was interrupted/i);
+});
+
 test('deleteRolePlayScenePublishedScene sends DELETE to published scene path', async () => {
   setTestWindow();
   let requestedUrl = null;

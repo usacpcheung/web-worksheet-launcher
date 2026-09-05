@@ -10,6 +10,8 @@ The page enters a blocking launch state before its first asynchronous operation.
 The normal toolbar and editor are hidden and inert while the client checks the
 session, loads metadata, downloads the ZIP, and prepares the project. The player
 is activated only after the complete package passes import validation.
+Malformed published IDs are rejected in the browser before an API path is built;
+the server continues to enforce its existing UUID validation as well.
 
 The launch states are `checking-session`, `authentication-required`,
 `authentication-pending`, `loading-metadata`, `downloading`, `preparing`, and

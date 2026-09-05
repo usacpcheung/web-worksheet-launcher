@@ -242,32 +242,42 @@ function createServerApiClient() {
       });
     }
 
-    if (typeof onProgress !== 'function' || !response.body?.getReader) {
-      const bytes = new Uint8Array(await response.arrayBuffer());
+    try {
+      if (typeof onProgress !== 'function' || !response.body?.getReader) {
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        return { ok: true, data: bytes, status: response.status };
+      }
+
+      const total = Number(response.headers.get('content-length') || 0);
+      const lengthComputable = Number.isFinite(total) && total > 0;
+      const reader = response.body.getReader();
+      const chunks = [];
+      let loaded = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        chunks.push(value);
+        loaded += value.byteLength;
+        onProgress({ loaded, total: lengthComputable ? total : 0, lengthComputable });
+      }
+
+      const bytes = new Uint8Array(loaded);
+      let offset = 0;
+      chunks.forEach((chunk) => {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      });
       return { ok: true, data: bytes, status: response.status };
+    } catch (error) {
+      const aborted = signal?.aborted || error?.name === 'AbortError';
+      return toStructuredError({
+        code: aborted ? 'ABORTED' : 'NETWORK_ERROR',
+        message: aborted
+          ? 'Server API request was cancelled.'
+          : `Connection was interrupted while reading server data. ${error?.message || String(error)}`,
+      });
     }
-
-    const total = Number(response.headers.get('content-length') || 0);
-    const lengthComputable = Number.isFinite(total) && total > 0;
-    const reader = response.body.getReader();
-    const chunks = [];
-    let loaded = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value?.byteLength) continue;
-      chunks.push(value);
-      loaded += value.byteLength;
-      onProgress({ loaded, total: lengthComputable ? total : 0, lengthComputable });
-    }
-
-    const bytes = new Uint8Array(loaded);
-    let offset = 0;
-    chunks.forEach((chunk) => {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    });
-    return { ok: true, data: bytes, status: response.status };
   }
 
   async function requestBinary(path, expectedMime, request = {}) {
