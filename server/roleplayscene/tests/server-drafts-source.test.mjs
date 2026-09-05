@@ -115,6 +115,7 @@ assert.ok(
     && mainSource.includes('if (!isDirect && openingPublishedSceneIds.has(publishedSceneId)) return;')
     && mainSource.includes('if (!isDirect) openingPublishedSceneIds.add(publishedSceneId);')
     && mainSource.includes('directLaunch.active && !popupWasBlocked')
+    && mainSource.includes("['authentication-required', 'authentication-pending', 'error'].includes(directLaunch.state)")
     && mainSource.includes("publishedPlay.source === 'direct'")
     && mainSource.includes('returnToRolePlaySceneEditor()'),
   'direct published links should block the editor, expose explicit loading states, ignore stale attempts, and reload on exit',

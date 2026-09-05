@@ -932,7 +932,7 @@ function renderDirectLaunch() {
   directLaunchProgress.hidden = !hasKnownProgress;
   directLaunchProgressBar.style.width = hasKnownProgress ? `${directLaunch.progress.percent}%` : '0%';
   directLaunchSpinner.hidden = ['authentication-required', 'error'].includes(directLaunch.state);
-  const needsAction = ['authentication-required', 'error'].includes(directLaunch.state);
+  const needsAction = ['authentication-required', 'authentication-pending', 'error'].includes(directLaunch.state);
   directLaunchActions.hidden = !needsAction;
   directLaunchSignInButton.hidden = directLaunch.state !== 'authentication-required';
   directLaunchRetryButton.hidden = directLaunch.state !== 'error'

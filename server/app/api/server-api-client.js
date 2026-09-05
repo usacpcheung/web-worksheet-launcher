@@ -52,6 +52,18 @@ function toStructuredError({ code, message, status = null, requiresSignIn = fals
   };
 }
 
+function toTransportError(error, { signal = null, duringRead = false } = {}) {
+  const aborted = signal?.aborted || error?.name === 'AbortError';
+  return toStructuredError({
+    code: aborted ? 'ABORTED' : 'NETWORK_ERROR',
+    message: aborted
+      ? 'Server API request was cancelled.'
+      : duringRead
+        ? `Connection was interrupted while reading server data. ${error?.message || String(error)}`
+        : `Unable to reach server API. ${error?.message || String(error)}`,
+  });
+}
+
 async function parseJsonResponse(response) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   if (!contentType.includes('application/json')) {
@@ -75,7 +87,8 @@ async function parseJsonResponse(response) {
   let parsed;
   try {
     parsed = await response.json();
-  } catch {
+  } catch (error) {
+    if (error?.name !== 'SyntaxError') throw error;
     return toStructuredError({
       code: 'INVALID_JSON_RESPONSE',
       message: 'Server returned malformed JSON.',
@@ -183,12 +196,13 @@ function createServerApiClient() {
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
     } catch (error) {
-      return toStructuredError({
-        code: 'NETWORK_ERROR',
-        message: `Unable to reach server API. ${error?.message || String(error)}`,
-      });
+      return toTransportError(error, { signal });
     }
-    return parseJsonResponse(response);
+    try {
+      return await parseJsonResponse(response);
+    } catch (error) {
+      return toTransportError(error, { signal, duringRead: true });
+    }
   }
 
   async function requestZip(path, request = {}) {
@@ -203,14 +217,16 @@ function createServerApiClient() {
         ...(body ? { body } : {}),
       });
     } catch (error) {
-      return toStructuredError({
-        code: 'NETWORK_ERROR',
-        message: `Unable to reach server API. ${error?.message || String(error)}`,
-      });
+      return toTransportError(error, { signal });
     }
 
     if (!response.ok) {
-      const parsedError = await parseErrorBody(response);
+      let parsedError;
+      try {
+        parsedError = await parseErrorBody(response);
+      } catch (error) {
+        return toTransportError(error, { signal, duringRead: true });
+      }
       if (authLikeStatus(response.status) || response.headers.get('content-type')?.includes('text/html')) {
         return toStructuredError({
           code: 'AUTH_REQUIRED',
@@ -270,13 +286,7 @@ function createServerApiClient() {
       });
       return { ok: true, data: bytes, status: response.status };
     } catch (error) {
-      const aborted = signal?.aborted || error?.name === 'AbortError';
-      return toStructuredError({
-        code: aborted ? 'ABORTED' : 'NETWORK_ERROR',
-        message: aborted
-          ? 'Server API request was cancelled.'
-          : `Connection was interrupted while reading server data. ${error?.message || String(error)}`,
-      });
+      return toTransportError(error, { signal, duringRead: true });
     }
   }
 

@@ -19,6 +19,7 @@ The launch states are `checking-session`, `authentication-required`,
 valid `Content-Length`; otherwise it remains indeterminate.
 
 Authentication resumes the same scene after the existing popup flow succeeds.
+Return to editor remains available while the popup flow is pending.
 Recoverable errors offer Retry. Missing or invalid links offer Browse Published.
 All terminal states offer Return to editor. Retry creates a new attempt identity,
 and callbacks from stale attempts cannot update the current launch state.
