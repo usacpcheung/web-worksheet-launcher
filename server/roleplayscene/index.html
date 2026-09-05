@@ -4,9 +4,26 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>RolePlayScene</title>
+  <script src="./scripts/direct-launch-bootstrap.js"></script>
   <link rel="stylesheet" href="./styles/app.css" />
 </head>
 <body>
+  <section id="direct-launch" class="direct-launch" role="status" aria-live="polite" aria-busy="true" hidden>
+    <div class="direct-launch__panel">
+      <div id="direct-launch-spinner" class="direct-launch__spinner" aria-hidden="true"></div>
+      <h1 id="direct-launch-title" tabindex="-1">Opening RolePlayScene…</h1>
+      <p id="direct-launch-detail">Checking access…</p>
+      <div id="direct-launch-progress" class="direct-launch__progress" hidden>
+        <div id="direct-launch-progress-bar" class="direct-launch__progress-bar"></div>
+      </div>
+      <div id="direct-launch-actions" class="direct-launch__actions" hidden>
+        <button id="direct-launch-signin" type="button" class="confirm-actions__primary" hidden>Sign in</button>
+        <button id="direct-launch-retry" type="button" class="confirm-actions__primary" hidden>Retry</button>
+        <button id="direct-launch-browse" type="button" hidden>Browse published scenes</button>
+        <button id="direct-launch-return" type="button">Return to editor</button>
+      </div>
+    </div>
+  </section>
   <header class="topbar">
     <h1>RolePlayScene</h1>
     <nav class="toolbar">
