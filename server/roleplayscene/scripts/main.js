@@ -70,6 +70,17 @@ const serverModalTitle = document.getElementById('server-modal-title');
 const serverModalBody = document.getElementById('server-modal-body');
 const serverModalActions = document.getElementById('server-modal-actions');
 const serverModalClose = document.getElementById('server-modal-close');
+const directLaunchRoot = document.getElementById('direct-launch');
+const directLaunchTitle = document.getElementById('direct-launch-title');
+const directLaunchDetail = document.getElementById('direct-launch-detail');
+const directLaunchSpinner = document.getElementById('direct-launch-spinner');
+const directLaunchProgress = document.getElementById('direct-launch-progress');
+const directLaunchProgressBar = document.getElementById('direct-launch-progress-bar');
+const directLaunchActions = document.getElementById('direct-launch-actions');
+const directLaunchSignInButton = document.getElementById('direct-launch-signin');
+const directLaunchRetryButton = document.getElementById('direct-launch-retry');
+const directLaunchBrowseButton = document.getElementById('direct-launch-browse');
+const directLaunchReturnButton = document.getElementById('direct-launch-return');
 
 const store = new Store();
 const apiClient = createServerApiClient();
@@ -109,8 +120,18 @@ let publishedScenesFilters = { q: '', title: '', description: '', owner: '' };
 let isLoadingPublishedScenes = false;
 let publishedScenesRequestId = 0;
 let openingPublishedSceneIds = new Set();
-let publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
+let publishedPlay = { active: false, store: null, preparedImport: null, scene: null, source: '' };
 let pendingDirectPublishedSceneId = '';
+let directLaunch = {
+  active: false,
+  state: 'inactive',
+  sceneId: '',
+  sceneTitle: '',
+  attemptId: 0,
+  progress: null,
+  errorKind: '',
+  abortController: null,
+};
 let discussionPrintDetails = { schoolName: '', schoolNameCustom: false, studentName: '' };
 let activePlaybackState = null;
 
@@ -542,6 +563,7 @@ function refreshLocaleUI(nextLocale) {
   if (lastMessagePayload) {
     showMessage(lastMessagePayload);
   }
+  if (directLaunch.active) renderDirectLaunch();
   syncTopbarHeightVariable();
 }
 
@@ -851,12 +873,182 @@ function updatePublishedPlayUi() {
   applyToolbarOverflowLayout();
 }
 
+function getDirectLaunchCopy() {
+  const openingTitle = directLaunch.sceneTitle
+    ? translate('published.direct.openingNamed', { title: directLaunch.sceneTitle })
+    : translate('published.direct.openingTitle');
+  if (directLaunch.state === 'authentication-required') {
+    return {
+      title: translate('published.direct.signInTitle'),
+      detail: translate('published.direct.signInDetail'),
+    };
+  }
+  if (directLaunch.state === 'authentication-pending') {
+    return {
+      title: translate('published.direct.signInTitle'),
+      detail: translate('published.direct.signInPending'),
+    };
+  }
+  if (directLaunch.state === 'error') {
+    const kind = ['missing', 'invalid-link', 'invalid-package', 'network'].includes(directLaunch.errorKind)
+      ? directLaunch.errorKind
+      : 'unknown';
+    return {
+      title: translate(`published.direct.errors.${kind}.title`),
+      detail: translate(`published.direct.errors.${kind}.detail`),
+    };
+  }
+  const detailKey = {
+    'checking-session': 'checkingAccess',
+    'loading-metadata': 'loadingMetadata',
+    downloading: directLaunch.progress?.lengthComputable ? 'downloadingProgress' : 'downloading',
+    preparing: 'preparing',
+  }[directLaunch.state] || 'checkingAccess';
+  return {
+    title: openingTitle,
+    detail: translate(`published.direct.${detailKey}`, {
+      percent: directLaunch.progress?.percent ?? 0,
+    }),
+  };
+}
+
+function renderDirectLaunch() {
+  if (!directLaunchRoot) return;
+  const visible = directLaunch.active;
+  directLaunchRoot.hidden = !visible;
+  document.documentElement.classList.toggle('direct-launch-pending', visible);
+  if (topbar) topbar.inert = visible;
+  if (appRoot) appRoot.inert = visible;
+  directLaunchRoot.setAttribute('aria-busy', String(visible && !['authentication-required', 'error'].includes(directLaunch.state)));
+  directLaunchRoot.classList.toggle('direct-launch--error', directLaunch.state === 'error');
+  directLaunchRoot.classList.toggle('direct-launch--authentication-required', directLaunch.state === 'authentication-required');
+  if (!visible) return;
+
+  const copy = getDirectLaunchCopy();
+  directLaunchTitle.textContent = copy.title;
+  directLaunchDetail.textContent = copy.detail;
+  const hasKnownProgress = directLaunch.state === 'downloading' && directLaunch.progress?.lengthComputable;
+  directLaunchProgress.hidden = !hasKnownProgress;
+  directLaunchProgressBar.style.width = hasKnownProgress ? `${directLaunch.progress.percent}%` : '0%';
+  directLaunchSpinner.hidden = ['authentication-required', 'error'].includes(directLaunch.state);
+  const needsAction = ['authentication-required', 'error'].includes(directLaunch.state);
+  directLaunchActions.hidden = !needsAction;
+  directLaunchSignInButton.hidden = directLaunch.state !== 'authentication-required';
+  directLaunchRetryButton.hidden = directLaunch.state !== 'error'
+    || ['missing', 'invalid-link'].includes(directLaunch.errorKind);
+  directLaunchBrowseButton.hidden = directLaunch.state !== 'error'
+    || !['missing', 'invalid-link'].includes(directLaunch.errorKind);
+  directLaunchReturnButton.hidden = !needsAction;
+  directLaunchSignInButton.textContent = translate('published.direct.signIn');
+  directLaunchRetryButton.textContent = translate('published.direct.retry');
+  directLaunchBrowseButton.textContent = translate('published.direct.browse');
+  directLaunchReturnButton.textContent = translate('published.direct.returnToEditor');
+}
+
+function setDirectLaunchState(state, updates = {}) {
+  directLaunch = { ...directLaunch, ...updates, active: state !== 'inactive', state };
+  renderDirectLaunch();
+  if (['authentication-required', 'error'].includes(state)) {
+    requestAnimationFrame(() => directLaunchTitle?.focus());
+  }
+}
+
+function finishDirectLaunch() {
+  pendingDirectPublishedSceneId = '';
+  directLaunch = {
+    ...directLaunch,
+    active: false,
+    state: 'inactive',
+    progress: null,
+    errorKind: '',
+    abortController: null,
+  };
+  renderDirectLaunch();
+}
+
+function getDirectLaunchErrorKind(result, fallback = 'unknown') {
+  const status = Number(result?.error?.status ?? result?.status);
+  const code = String(result?.error?.code || '').toUpperCase();
+  if (status === 404) return 'missing';
+  if (status === 400 || code.includes('INVALID_ROLEPLAYSCENE_PUBLISHED')) return 'invalid-link';
+  if (code === 'NETWORK_ERROR' || code === 'ABORTED') return 'network';
+  return fallback;
+}
+
+function showDirectLaunchError(result, fallback = 'unknown') {
+  setDirectLaunchState('error', { errorKind: getDirectLaunchErrorKind(result, fallback) });
+}
+
+function handleDirectLaunchFailure(result, fallback = 'unknown') {
+  if (isServerAuthRequired(result)) {
+    pendingDirectPublishedSceneId = directLaunch.sceneId;
+    setDirectLaunchState('authentication-required');
+    return;
+  }
+  showDirectLaunchError(result, fallback);
+}
+
+function isCurrentDirectLaunchAttempt(attemptId, sceneId) {
+  return directLaunch.active
+    && directLaunch.attemptId === attemptId
+    && directLaunch.sceneId === sceneId;
+}
+
+function startDirectPublishedLaunch(sceneId, { initialPlaybackState = null } = {}) {
+  const normalizedSceneId = String(sceneId || '').trim();
+  if (!normalizedSceneId) return;
+  directLaunch.abortController?.abort();
+  const attemptId = directLaunch.attemptId + 1;
+  const abortController = typeof AbortController === 'function' ? new AbortController() : null;
+  setDirectLaunchState('checking-session', {
+    sceneId: normalizedSceneId,
+    sceneTitle: '',
+    attemptId,
+    progress: null,
+    errorKind: '',
+    abortController,
+  });
+  openPublishedRolePlaySceneById(normalizedSceneId, {
+    source: 'direct',
+    initialPlaybackState,
+    directAttemptId: attemptId,
+    signal: abortController?.signal,
+  }).catch((err) => {
+    if (!isCurrentDirectLaunchAttempt(attemptId, normalizedSceneId)) return;
+    console.error(err);
+    showDirectLaunchError({ error: { code: 'NETWORK_ERROR' } }, 'network');
+  });
+}
+
+function buildRolePlaySceneEditorUrl({ browsePublished = false } = {}) {
+  const url = new URL(globalThis.location?.href || 'http://localhost/roleplayscene/');
+  url.searchParams.delete('publishedSceneId');
+  url.searchParams.delete('authReturn');
+  if (browsePublished) url.searchParams.set('browsePublished', '1');
+  else url.searchParams.delete('browsePublished');
+  url.hash = '';
+  return url.toString();
+}
+
+function returnToRolePlaySceneEditor(options = {}) {
+  directLaunch.abortController?.abort();
+  globalThis.location?.assign?.(buildRolePlaySceneEditorUrl(options));
+}
+
 function getDirectPublishedSceneIdFromLocation() {
   try {
     const params = new URLSearchParams(globalThis.location?.search || '');
     return String(params.get('publishedSceneId') || '').trim();
   } catch (err) {
     return '';
+  }
+}
+
+function shouldBrowsePublishedOnLoad() {
+  try {
+    return new URLSearchParams(globalThis.location?.search || '').get('browsePublished') === '1';
+  } catch {
+    return false;
   }
 }
 
@@ -1090,8 +1282,14 @@ function startServerSignIn() {
     authFlowId,
     pollIntervalMs: AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs,
     pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
-    onPopupBlocked: () => showMessage({ textId: 'server.popupBlocked' }),
-    onStatusMessage: () => showMessage({ textId: 'server.signInPending' }),
+    onPopupBlocked: () => {
+      showMessage({ textId: 'server.popupBlocked' });
+      if (directLaunch.active) setDirectLaunchState('authentication-required');
+    },
+    onStatusMessage: () => {
+      showMessage({ textId: 'server.signInPending' });
+      if (directLaunch.active) setDirectLaunchState('authentication-pending');
+    },
     onSessionReady: (result) => {
       serverSession = { status: 'ready', user: result.user || null, error: null };
       updateServerSessionUi();
@@ -1100,10 +1298,7 @@ function startServerSignIn() {
       if (pendingDirectPublishedSceneId) {
         const sceneId = pendingDirectPublishedSceneId;
         pendingDirectPublishedSceneId = '';
-        openPublishedRolePlaySceneById(sceneId, { source: 'direct' }).catch((err) => {
-          console.error(err);
-          showMessage({ textId: 'published.openFailed' });
-        });
+        startDirectPublishedLaunch(sceneId);
       }
     },
     onSessionNotReady: (result) => {
@@ -1114,6 +1309,7 @@ function startServerSignIn() {
       serverSession = { status: 'not_ready', user: null, error: result?.error?.message || translate('server.signInRequired') };
       updateServerSessionUi();
       showMessage({ text: serverSession.error });
+      if (directLaunch.active) setDirectLaunchState('authentication-required');
       activeAuthFlow = null;
     },
   });
@@ -2023,11 +2219,15 @@ async function loadPublishedRolePlaySceneScenes({
 
 async function exitPublishedPlay() {
   if (!(await ensureDiscussionCanBeDiscarded())) return;
+  if (publishedPlay.source === 'direct') {
+    returnToRolePlaySceneEditor();
+    return;
+  }
   if (publishedPlay.preparedImport?.project) {
     revokeProjectObjectUrls(publishedPlay.preparedImport.project);
   }
   editorPreview = null;
-  publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
+  publishedPlay = { active: false, store: null, preparedImport: null, scene: null, source: '' };
   discardDiscussion();
   setMode('edit');
   showMessage({ textId: 'published.exited' });
@@ -2039,39 +2239,87 @@ async function openPublishedRolePlayScene(scene) {
   return openPublishedRolePlaySceneById(sceneId, { scene });
 }
 
-async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse', initialPlaybackState = null } = {}) {
-  if (!(await ensureDiscussionCanBeDiscarded())) return { ok: false, canceled: true };
+async function openPublishedRolePlaySceneById(publishedSceneId, {
+  scene = null,
+  source = 'browse',
+  initialPlaybackState = null,
+  directAttemptId = 0,
+  signal = null,
+} = {}) {
+  const isDirect = source === 'direct';
+  const directAttemptIsCurrent = () => !isDirect
+    || isCurrentDirectLaunchAttempt(directAttemptId, publishedSceneId);
+  if (!isDirect && !(await ensureDiscussionCanBeDiscarded())) return { ok: false, canceled: true };
   const sessionReady = await ensureServerSessionReady();
+  if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
   if (!sessionReady.ok) {
-    if (source === 'direct') {
-      pendingDirectPublishedSceneId = publishedSceneId;
+    if (isDirect) {
+      if (sessionReady.result?.status === 'not_ready' || isServerAuthRequired(sessionReady.result)) {
+        pendingDirectPublishedSceneId = publishedSceneId;
+        setDirectLaunchState('authentication-required');
+      } else {
+        showDirectLaunchError(sessionReady.result, 'network');
+      }
     }
     return sessionReady.result;
   }
-  if (openingPublishedSceneIds.has(publishedSceneId)) return;
-  openingPublishedSceneIds.add(publishedSceneId);
+  if (!isDirect && openingPublishedSceneIds.has(publishedSceneId)) return;
+  if (!isDirect) openingPublishedSceneIds.add(publishedSceneId);
   if (!serverModalOverlay?.hidden) renderPublishedBrowserModal();
   let preparedImport = null;
   try {
     showMessage({ textId: 'published.opening' });
     let metadata = scene;
     if (!metadata) {
-      const metadataResult = await apiClient.fetchRolePlayScenePublishedScene(publishedSceneId);
+      if (isDirect) setDirectLaunchState('loading-metadata');
+      const metadataResult = await apiClient.fetchRolePlayScenePublishedScene(publishedSceneId, { signal });
+      if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
       if (!metadataResult.ok) {
-        showMessage({ text: getServerErrorMessage(metadataResult, 'published.openFailed') });
+        if (isDirect) handleDirectLaunchFailure(metadataResult);
+        else showMessage({ text: getServerErrorMessage(metadataResult, 'published.openFailed') });
         return metadataResult;
       }
       metadata = metadataResult.data;
     }
-    const artifact = await apiClient.fetchRolePlayScenePublishedSceneArtifact(publishedSceneId);
+    if (isDirect) {
+      setDirectLaunchState('downloading', {
+        sceneTitle: String(metadata?.title || '').trim(),
+        progress: null,
+      });
+    }
+    const artifact = await apiClient.fetchRolePlayScenePublishedSceneArtifact(publishedSceneId, {
+      signal,
+      onProgress: isDirect ? (progress) => {
+        if (!directAttemptIsCurrent()) return;
+        const loaded = Number(progress?.loaded || 0);
+        const total = Number(progress?.total || 0);
+        const lengthComputable = Boolean(progress?.lengthComputable) && total > 0;
+        const percent = lengthComputable
+          ? Math.max(0, Math.min(100, Math.round((loaded / total) * 100)))
+          : 0;
+        if (directLaunch.progress?.percent === percent
+          && directLaunch.progress?.lengthComputable === lengthComputable) return;
+        setDirectLaunchState('downloading', {
+          progress: { loaded, total, lengthComputable, percent },
+        });
+      } : null,
+    });
+    if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
     if (!artifact.ok) {
-      showMessage({ text: getServerErrorMessage(artifact, 'published.openFailed') });
+      if (isDirect) handleDirectLaunchFailure(artifact);
+      else showMessage({ text: getServerErrorMessage(artifact, 'published.openFailed') });
       return artifact;
     }
+    if (isDirect) setDirectLaunchState('preparing', { progress: null });
     preparedImport = await prepareProjectImport(createZipFileFromBytes(
       artifact.data,
       `${sanitizeFilename(metadata?.title, 'roleplayscene-published')}.zip`,
     ));
+    if (!directAttemptIsCurrent()) {
+      revokeProjectObjectUrls(preparedImport.project);
+      preparedImport = null;
+      return { ok: false, skipped: true, status: 'stale_attempt' };
+    }
     if (publishedPlay.preparedImport?.project) {
       revokeProjectObjectUrls(publishedPlay.preparedImport.project);
     }
@@ -2080,11 +2328,12 @@ async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, 
     playStore.set({ project: preparedImport.project });
     editorPreview = null;
     discardDiscussion();
-    publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata };
+    publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata, source };
     const playbackRecovery = initialPlaybackState
       || getMatchingPlaybackRecovery(preparedImport.project, { publishedSceneId });
     closeServerModal('published-open');
     setMode('play', { initialPlaybackState: playbackRecovery });
+    if (isDirect) finishDirectLaunch();
     showMessage({ textId: 'published.opened' });
     return { ok: true };
   } catch (err) {
@@ -2092,11 +2341,12 @@ async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, 
       revokeProjectObjectUrls(preparedImport.project);
     }
     console.error(err);
-    showImportError(err);
+    if (isDirect && directAttemptIsCurrent()) showDirectLaunchError(null, 'invalid-package');
+    else if (!isDirect) showImportError(err);
     return { ok: false, error: { message: err?.message || String(err) } };
   } finally {
-    openingPublishedSceneIds.delete(publishedSceneId);
-    if (!serverModalOverlay?.hidden) renderPublishedBrowserModal();
+    if (!isDirect) openingPublishedSceneIds.delete(publishedSceneId);
+    if (!isDirect && !serverModalOverlay?.hidden) renderPublishedBrowserModal();
   }
 }
 
@@ -2475,6 +2725,15 @@ if (dismissButton) {
   });
 }
 
+directLaunchSignInButton?.addEventListener('click', () => startServerSignIn());
+directLaunchRetryButton?.addEventListener('click', () => {
+  startDirectPublishedLaunch(directLaunch.sceneId);
+});
+directLaunchBrowseButton?.addEventListener('click', () => {
+  returnToRolePlaySceneEditor({ browsePublished: true });
+});
+directLaunchReturnButton?.addEventListener('click', () => returnToRolePlaySceneEditor());
+
 btnEdit.addEventListener('click', async () => {
   if (editorPreview && !publishedPlay.active) {
     if (!(await ensureDiscussionCanBeDiscarded())) return;
@@ -2668,26 +2927,29 @@ async function bootstrap() {
     console.error('Failed to initialise persistence', err);
     persistenceCleanup = () => {};
   }
+  if (directPublishedSceneId) {
+    startDirectPublishedLaunch(directPublishedSceneId);
+    return;
+  }
   probeServerSessionSilently().catch((err) => {
     console.error('Failed to probe server session', err);
     serverSession = { status: 'error', user: null, error: err?.message || String(err) };
     updateServerSessionUi();
   });
-  if (directPublishedSceneId) {
-    openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' }).catch((err) => {
-      console.error(err);
-      showMessage({ textId: 'published.openFailed' });
-    });
-    updateToolbarText();
-    updatePublishedPlayUi();
-    return;
-  }
   const recovery = readPlaySessionRecovery();
   const playbackRecovery = getMatchingPlaybackRecovery(store.get().project);
   if (recovery?.mode === 'play' && playbackRecovery) {
     setMode('play', { initialPlaybackState: playbackRecovery });
   } else {
     setMode('edit');
+  }
+  if (shouldBrowsePublishedOnLoad()) {
+    const cleanUrl = buildRolePlaySceneEditorUrl();
+    globalThis.history?.replaceState?.(null, '', cleanUrl);
+    loadPublishedRolePlaySceneScenes({ preflight: true, showBrowser: true }).catch((err) => {
+      console.error(err);
+      showMessage({ textId: 'published.listFailed' });
+    });
   }
 }
 

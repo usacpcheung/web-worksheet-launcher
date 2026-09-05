@@ -366,6 +366,43 @@ test('fetchRolePlayScenePublishedSceneArtifact parses zip payload', async () => 
   assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
 });
 
+test('published scene requests forward cancellation and artifact download progress', async () => {
+  setTestWindow();
+  const controller = new AbortController();
+  const progressEvents = [];
+  const seenSignals = [];
+  globalThis.fetch = async (url, request = {}) => {
+    seenSignals.push(request.signal);
+    if (!String(url).endsWith('/artifact')) {
+      return mockJsonResponse(200, { ok: true, data: { title: 'Clinic' } });
+    }
+    return new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
+      status: 200,
+      headers: {
+        'content-type': 'application/zip',
+        'content-length': '4',
+      },
+    });
+  };
+
+  const client = createServerApiClient();
+  await client.fetchRolePlayScenePublishedScene('550e8400-e29b-41d4-a716-446655440000', {
+    signal: controller.signal,
+  });
+  const artifact = await client.fetchRolePlayScenePublishedSceneArtifact('550e8400-e29b-41d4-a716-446655440000', {
+    signal: controller.signal,
+    onProgress: progress => progressEvents.push(progress),
+  });
+
+  assert.equal(artifact.ok, true);
+  assert.deepEqual(seenSignals, [controller.signal, controller.signal]);
+  assert.deepEqual(progressEvents.at(-1), {
+    loaded: 4,
+    total: 4,
+    lengthComputable: true,
+  });
+});
+
 test('deleteRolePlayScenePublishedScene sends DELETE to published scene path', async () => {
   setTestWindow();
   let requestedUrl = null;

@@ -169,7 +169,7 @@ function createServerApiClient() {
   }
 
   async function requestJson(path, request = {}) {
-    const { method = 'GET', query = null, body = null, headers = {} } = request;
+    const { method = 'GET', query = null, body = null, headers = {}, signal = null } = request;
     let response;
     try {
       response = await fetch(buildUrl(path, query), {
@@ -179,6 +179,7 @@ function createServerApiClient() {
           ...(body ? { 'content-type': 'application/json' } : {}),
           ...headers,
         },
+        ...(signal ? { signal } : {}),
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
     } catch (error) {
@@ -191,13 +192,14 @@ function createServerApiClient() {
   }
 
   async function requestZip(path, request = {}) {
-    const { method = 'GET', query = null, body = null, headers = {}, onProgress = null } = request;
+    const { method = 'GET', query = null, body = null, headers = {}, onProgress = null, signal = null } = request;
     let response;
     try {
       response = await fetch(buildUrl(path, query), {
         method,
         credentials: 'include',
         headers,
+        ...(signal ? { signal } : {}),
         ...(body ? { body } : {}),
       });
     } catch (error) {
@@ -527,11 +529,11 @@ function createServerApiClient() {
         },
       });
     },
-    fetchRolePlayScenePublishedScene(publishedSceneId) {
-      return requestJson(`/roleplayscene/published/${publishedSceneId}`);
+    fetchRolePlayScenePublishedScene(publishedSceneId, options = {}) {
+      return requestJson(`/roleplayscene/published/${publishedSceneId}`, options);
     },
-    fetchRolePlayScenePublishedSceneArtifact(publishedSceneId) {
-      return requestZip(`/roleplayscene/published/${publishedSceneId}/artifact`);
+    fetchRolePlayScenePublishedSceneArtifact(publishedSceneId, options = {}) {
+      return requestZip(`/roleplayscene/published/${publishedSceneId}/artifact`, options);
     },
     deleteRolePlayScenePublishedScene(publishedSceneId) {
       return requestJson(`/roleplayscene/published/${publishedSceneId}`, { method: 'DELETE' });
