@@ -103,16 +103,38 @@ test('zero-byte and absent data produce EMPTY_RECORDING', async () => {
   }
 });
 
-test('60-second deadline uses elapsed time, reschedules early timers and tolerates delayed timers', async () => {
-  for (const delay of [0, 8000]) {
+test('auto-stop leaves a scheduling margin and rejects recordings beyond 60 seconds', async () => {
+  for (const delay of [0, 200, 500, 501, 8500]) {
     const h = harness(); await h.session.start();
-    assert.equal(h.timer.delay, 60000);
-    h.advance(10000); h.fire(); assert.equal(h.timer.delay, 50000);
-    h.advance(50000 + delay); h.fire();
+    assert.equal(h.timer.delay, 59500);
+    h.advance(10000); h.fire(); assert.equal(h.timer.delay, 49500);
+    h.advance(49500 + delay); h.fire();
     assert.equal(h.recorder.stops, 1); assert.equal(h.session.state, 'stopping');
     h.recorder.data(); h.recorder.end();
-    assert.equal((await h.session.result).data.durationSeconds, 60 + delay / 1000); h.clean();
+    const result = await h.session.result;
+    if (delay <= 500) assert.equal(result.data.durationSeconds, 59.5 + delay / 1000);
+    else {
+      assert.equal(result.error.code, 'RECORDING_TOO_LONG');
+      assert.equal(result.data, undefined);
+    }
+    h.clean();
   }
+});
+
+test('manual and spontaneous stops also reject over-limit recordings', async () => {
+  for (const manual of [true, false]) {
+    const h = harness(); await h.session.start(); h.advance(68000);
+    if (manual) h.session.stop();
+    else h.recorder.state = 'inactive';
+    h.recorder.data(); h.recorder.end();
+    assert.equal((await h.session.result).error.code, 'RECORDING_TOO_LONG'); h.clean();
+  }
+});
+
+test('delayed final data does not inflate the duration captured at stop', async () => {
+  const h = harness(); await h.session.start(); h.advance(59000); h.session.stop();
+  h.advance(10000); h.recorder.data(); h.recorder.end();
+  assert.equal((await h.session.result).data.durationSeconds, 59); h.clean();
 });
 
 test('cancel before start never acquires microphone', async () => {
@@ -123,12 +145,23 @@ test('cancel before start never acquires microphone', async () => {
 });
 
 for (const method of ['cancel', 'stop', 'teardown']) {
+  test(`${method} settles start even when permission never resolves`, async () => {
+    const h = harness({ acquire: () => new Promise(() => {}) });
+    const starting = h.session.start();
+    await h.session[method]();
+    const outcome = await Promise.race([starting,
+      new Promise((resolve) => setImmediate(() => resolve('still pending')))]);
+    assert.equal(outcome.error?.code, 'CANCELED');
+    assert.equal(await h.session.result, outcome);
+    assert.equal(h.recorder, undefined);
+  });
   test(`${method} during permission cleans up late streams without constructing a recorder`, async () => {
     let release;
     const h = harness({ acquire: (stream) => new Promise((resolve) => { release = () => resolve(stream); }) });
     const starting = h.session.start();
     assert.equal((await h.session[method]()).error.code, 'CANCELED');
-    release(); assert.equal((await starting).error.code, 'CANCELED');
+    assert.equal((await starting).error.code, 'CANCELED');
+    release(); await Promise.resolve();
     assert.equal(h.recorder, undefined); h.clean();
   });
   test(`${method} during recording is idempotent and releases every track`, async () => {
