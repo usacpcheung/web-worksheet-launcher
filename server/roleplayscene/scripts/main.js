@@ -2234,6 +2234,7 @@ async function loadPublishedRolePlaySceneScenes({
 async function exitPublishedPlay() {
   if (!(await ensureDiscussionCanBeDiscarded())) return;
   if (publishedPlay.source === 'direct') {
+    discardDiscussion();
     returnToRolePlaySceneEditor();
     return;
   }
