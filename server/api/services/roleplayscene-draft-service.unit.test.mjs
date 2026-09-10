@@ -812,6 +812,54 @@ test('publishRolePlaySceneFromDraft copies artifact and updates uploaded draft m
   assert.equal(db.state.queries.some(sql => sql.includes('SET last_published_artifact_sha256')), true);
 });
 
+for (const [name, metadata, expected] of [
+  ['provided', { description: '  Practice ordering food.  ' }, 'Practice ordering food.'],
+  ['cleared', { description: '' }, ''],
+  ['whitespace', { description: '   ' }, ''],
+  ['omitted', {}, 'Draft conversation practice.'],
+]) {
+  test(`publishRolePlaySceneFromDraft saves ${name} description`, async () => {
+    const zipBytes = createPublishableRolePlaySceneZip();
+    const db = createPublishDb();
+    let stored = null;
+    const service = createService({
+      db,
+      artifactStore: {
+        async readArtifact(artifactPath) {
+          assert.equal(artifactPath, 'roleplayscene/drafts/source.zip');
+          return zipBytes;
+        },
+        async storeArtifact(input) {
+          stored = input;
+          return {
+            artifactPath: 'roleplayscene/published/new.zip',
+            absolutePath: '/tmp/new.zip',
+            artifactSha256: 'sha-published',
+            artifactSizeBytes: input.bytes.length,
+          };
+        },
+      },
+    });
+
+    const result = await service.publishRolePlaySceneFromDraft({
+      identity,
+      uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+      title: 'Published Clinic',
+      ...metadata,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.statusCode, 201);
+    assert.equal(result.data.description, expected);
+    assert.equal(result.data.source_roleplayscene_uploaded_draft_id, '550e8400-e29b-41d4-a716-446655440000');
+    assert.equal(stored.bucket, 'roleplayscene/published');
+    assert.equal(stored.ownerSub, 'oidc-sub');
+    assert.deepEqual(stored.bytes, zipBytes);
+    assert.equal(db.state.queries.some(sql => sql.includes('SET last_published_artifact_sha256')), true);
+  });
+
+}
+
 test('publishRolePlaySceneFromDraft is owner scoped', async () => {
   const service = createService({
     db: createPublishDb({ draftRow: null }),
@@ -1055,7 +1103,8 @@ test('listPublishedRolePlaySceneScenes filters and paginates published scenes', 
   assert.equal(result.hasMore, true);
   assert.equal(result.nextOffset, 21);
   assert.match(captured.sql, /FROM roleplayscene_published_scenes/);
-  assert.match(captured.sql, /lower\(description\) LIKE/);
+  assert.match(captured.sql, /WHERE \(lower\(title\) LIKE \$1 OR lower\(description\) LIKE \$1\)/);
+  assert.match(captured.sql, /AND \(lower\(owner_email\) LIKE \$4 OR lower\(owner_name\) LIKE \$4\)/);
   assert.deepEqual(captured.values, ['%clinic%', '%greeting%', '%practice%', '%teacher%', 2, 20]);
 });
 

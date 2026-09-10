@@ -77,6 +77,9 @@ export default {
     "deletedDraft": "Deleted uploaded RolePlayScene draft.",
     "openDraft": "Open",
     "openingDraft": "Opening uploaded RolePlayScene draft...",
+    "downloadingDraft": "Downloading...",
+    "downloadingDraftProgress": "Downloading {percent}%",
+    "preparingDraft": "Preparing...",
     "openFailed": "Unable to open uploaded RolePlayScene draft.",
     "openedDraft": "Opened uploaded RolePlayScene draft.",
     "openedDraftWithWarnings": "Opened uploaded RolePlayScene draft with warnings.",
@@ -92,8 +95,10 @@ export default {
     "publishFailed": "Unable to publish RolePlayScene draft.",
     "publishCanceled": "Publish canceled.",
     "publishTitle": "Publish RolePlayScene",
-    "publishBody": "Choose the public title for this uploaded RolePlayScene draft.",
+    "publishBody": "Choose a public title and optionally add a description for this uploaded RolePlayScene draft.",
     "publishTitleLabel": "Publish title",
+    "publishDescriptionLabel": "Description (optional)",
+    "publishDescriptionHint": "Briefly describe the situation, learning goals, or intended learners.",
     "publishTitleRequired": "Enter a title before publishing.",
     "publishConfirm": "Publish",
     "publishConflictTitle": "Published title already exists",
@@ -133,10 +138,10 @@ export default {
     "refreshing": "Refreshing...",
     "browseTitle": "Browse Published RolePlayScene",
     "search": "Search",
-    "searchLabel": "Search published RolePlayScene",
-    "searchPlaceholder": "Search title, description, or owner",
-    "ownerLabel": "Filter by owner",
-    "ownerPlaceholder": "Owner name or email",
+    "searchLabel": "Search title or description",
+    "searchPlaceholder": "Search title or description",
+    "ownerLabel": "Filter by owner name or email",
+    "ownerPlaceholder": "Filter by owner name or email",
     "refresh": "Refresh",
     "loadMore": "Load more",
     "noScenes": "No published RolePlayScene scenes found.",
@@ -160,6 +165,44 @@ export default {
     "listFailed": "Unable to load published RolePlayScene scenes.",
     "exit": "Exit published scene",
     "exited": "Exited published scene.",
+    "direct": {
+      "openingTitle": "Opening RolePlayScene…",
+      "openingNamed": "Opening \"{title}\"…",
+      "checkingAccess": "Checking access…",
+      "loadingMetadata": "Loading scene information…",
+      "downloading": "Loading package…",
+      "downloadingProgress": "Loading package… {percent}%",
+      "preparing": "Preparing scene…",
+      "signInTitle": "Sign in to open this RolePlayScene",
+      "signInDetail": "This published scene requires a server session.",
+      "signInPending": "Waiting for sign-in…",
+      "signIn": "Sign in",
+      "retry": "Retry",
+      "browse": "Browse published scenes",
+      "returnToEditor": "Return to editor",
+      "errors": {
+        "network": {
+          "title": "Couldn't load this RolePlayScene",
+          "detail": "Check your connection and try again."
+        },
+        "missing": {
+          "title": "This published RolePlayScene is no longer available",
+          "detail": "It may have been deleted by its owner."
+        },
+        "invalid-link": {
+          "title": "This RolePlayScene link is invalid",
+          "detail": "Check the link or browse available published scenes."
+        },
+        "invalid-package": {
+          "title": "This RolePlayScene package could not be opened",
+          "detail": "The package may be damaged or use an unsupported format."
+        },
+        "unknown": {
+          "title": "Unable to open this RolePlayScene",
+          "detail": "Try again or return to the editor."
+        }
+      }
+    },
     "meta": {
       "id": "Published ID",
       "owner": "Owner",

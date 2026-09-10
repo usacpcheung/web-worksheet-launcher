@@ -70,6 +70,17 @@ const serverModalTitle = document.getElementById('server-modal-title');
 const serverModalBody = document.getElementById('server-modal-body');
 const serverModalActions = document.getElementById('server-modal-actions');
 const serverModalClose = document.getElementById('server-modal-close');
+const directLaunchRoot = document.getElementById('direct-launch');
+const directLaunchTitle = document.getElementById('direct-launch-title');
+const directLaunchDetail = document.getElementById('direct-launch-detail');
+const directLaunchSpinner = document.getElementById('direct-launch-spinner');
+const directLaunchProgress = document.getElementById('direct-launch-progress');
+const directLaunchProgressBar = document.getElementById('direct-launch-progress-bar');
+const directLaunchActions = document.getElementById('direct-launch-actions');
+const directLaunchSignInButton = document.getElementById('direct-launch-signin');
+const directLaunchRetryButton = document.getElementById('direct-launch-retry');
+const directLaunchBrowseButton = document.getElementById('direct-launch-browse');
+const directLaunchReturnButton = document.getElementById('direct-launch-return');
 
 const store = new Store();
 const apiClient = createServerApiClient();
@@ -100,6 +111,8 @@ const ImportConfirmationKind = Object.freeze({
 let isLoadingUploadedDrafts = false;
 let isUploadingDraft = false;
 const publishingDraftIds = new Set();
+let isPublishingDraftFlow = false;
+let openingUploadedDraft = null;
 let publishedScenes = [];
 let publishedScenesHasMore = false;
 let publishedScenesNextOffset = null;
@@ -107,8 +120,18 @@ let publishedScenesFilters = { q: '', title: '', description: '', owner: '' };
 let isLoadingPublishedScenes = false;
 let publishedScenesRequestId = 0;
 let openingPublishedSceneIds = new Set();
-let publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
+let publishedPlay = { active: false, store: null, preparedImport: null, scene: null, source: '' };
 let pendingDirectPublishedSceneId = '';
+let directLaunch = {
+  active: false,
+  state: 'inactive',
+  sceneId: '',
+  sceneTitle: '',
+  attemptId: 0,
+  progress: null,
+  errorKind: '',
+  abortController: null,
+};
 let discussionPrintDetails = { schoolName: '', schoolNameCustom: false, studentName: '' };
 let activePlaybackState = null;
 
@@ -117,6 +140,7 @@ const PLAY_SESSION_STORAGE_KEY = 'roleplayscene:play-session:v1';
 const HEADER_TABLET_MIN_WIDTH = 768;
 const HEADER_COMPACT_MAX_WIDTH = 1023;
 const DEFAULT_TOPBAR_HEIGHT_PX = 64;
+const UUID_V4ISH_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -540,6 +564,7 @@ function refreshLocaleUI(nextLocale) {
   if (lastMessagePayload) {
     showMessage(lastMessagePayload);
   }
+  if (directLaunch.active) renderDirectLaunch();
   syncTopbarHeightVariable();
 }
 
@@ -813,11 +838,11 @@ function updateServerSessionUi() {
     serverSignInButton.hidden = serverSession.status === 'ready';
   }
   if (serverSaveButton) {
-    serverSaveButton.disabled = isUploadingDraft;
+    serverSaveButton.disabled = isUploadingDraft || Boolean(openingUploadedDraft);
     serverSaveButton.textContent = isUploadingDraft ? translate('server.saving') : translate('server.save');
   }
   if (serverManageButton) {
-    serverManageButton.disabled = isLoadingUploadedDrafts;
+    serverManageButton.disabled = isLoadingUploadedDrafts || Boolean(openingUploadedDraft);
     serverManageButton.textContent = isLoadingUploadedDrafts ? translate('server.refreshing') : translate('server.manage');
   }
   if (serverBrowsePublishedButton) {
@@ -849,12 +874,193 @@ function updatePublishedPlayUi() {
   applyToolbarOverflowLayout();
 }
 
+function getDirectLaunchCopy() {
+  const openingTitle = directLaunch.sceneTitle
+    ? translate('published.direct.openingNamed', { title: directLaunch.sceneTitle })
+    : translate('published.direct.openingTitle');
+  if (directLaunch.state === 'authentication-required') {
+    return {
+      title: translate('published.direct.signInTitle'),
+      detail: translate('published.direct.signInDetail'),
+    };
+  }
+  if (directLaunch.state === 'authentication-pending') {
+    return {
+      title: translate('published.direct.signInTitle'),
+      detail: translate('published.direct.signInPending'),
+    };
+  }
+  if (directLaunch.state === 'error') {
+    const kind = ['missing', 'invalid-link', 'invalid-package', 'network'].includes(directLaunch.errorKind)
+      ? directLaunch.errorKind
+      : 'unknown';
+    return {
+      title: translate(`published.direct.errors.${kind}.title`),
+      detail: translate(`published.direct.errors.${kind}.detail`),
+    };
+  }
+  const detailKey = {
+    'checking-session': 'checkingAccess',
+    'loading-metadata': 'loadingMetadata',
+    downloading: directLaunch.progress?.lengthComputable ? 'downloadingProgress' : 'downloading',
+    preparing: 'preparing',
+  }[directLaunch.state] || 'checkingAccess';
+  return {
+    title: openingTitle,
+    detail: translate(`published.direct.${detailKey}`, {
+      percent: directLaunch.progress?.percent ?? 0,
+    }),
+  };
+}
+
+function renderDirectLaunch() {
+  if (!directLaunchRoot) return;
+  const visible = directLaunch.active;
+  directLaunchRoot.hidden = !visible;
+  document.documentElement.classList.toggle('direct-launch-pending', visible);
+  if (topbar) topbar.inert = visible;
+  if (appRoot) appRoot.inert = visible;
+  directLaunchRoot.setAttribute('aria-busy', String(visible && !['authentication-required', 'error'].includes(directLaunch.state)));
+  directLaunchRoot.classList.toggle('direct-launch--error', directLaunch.state === 'error');
+  directLaunchRoot.classList.toggle('direct-launch--authentication-required', directLaunch.state === 'authentication-required');
+  if (!visible) return;
+
+  const copy = getDirectLaunchCopy();
+  directLaunchTitle.textContent = copy.title;
+  directLaunchDetail.textContent = copy.detail;
+  const hasKnownProgress = directLaunch.state === 'downloading' && directLaunch.progress?.lengthComputable;
+  directLaunchProgress.hidden = !hasKnownProgress;
+  directLaunchProgressBar.style.width = hasKnownProgress ? `${directLaunch.progress.percent}%` : '0%';
+  directLaunchSpinner.hidden = ['authentication-required', 'error'].includes(directLaunch.state);
+  const needsAction = ['authentication-required', 'authentication-pending', 'error'].includes(directLaunch.state);
+  directLaunchActions.hidden = !needsAction;
+  directLaunchSignInButton.hidden = directLaunch.state !== 'authentication-required';
+  directLaunchRetryButton.hidden = directLaunch.state !== 'error'
+    || ['missing', 'invalid-link'].includes(directLaunch.errorKind);
+  directLaunchBrowseButton.hidden = directLaunch.state !== 'error'
+    || !['missing', 'invalid-link'].includes(directLaunch.errorKind);
+  directLaunchReturnButton.hidden = !needsAction;
+  directLaunchSignInButton.textContent = translate('published.direct.signIn');
+  directLaunchRetryButton.textContent = translate('published.direct.retry');
+  directLaunchBrowseButton.textContent = translate('published.direct.browse');
+  directLaunchReturnButton.textContent = translate('published.direct.returnToEditor');
+}
+
+function setDirectLaunchState(state, updates = {}) {
+  directLaunch = { ...directLaunch, ...updates, active: state !== 'inactive', state };
+  renderDirectLaunch();
+  if (['authentication-required', 'error'].includes(state)) {
+    requestAnimationFrame(() => directLaunchTitle?.focus());
+  }
+}
+
+function finishDirectLaunch() {
+  pendingDirectPublishedSceneId = '';
+  directLaunch = {
+    ...directLaunch,
+    active: false,
+    state: 'inactive',
+    progress: null,
+    errorKind: '',
+    abortController: null,
+  };
+  renderDirectLaunch();
+}
+
+function getDirectLaunchErrorKind(result, fallback = 'unknown') {
+  const status = Number(result?.error?.status ?? result?.status);
+  const code = String(result?.error?.code || '').toUpperCase();
+  if (status === 404) return 'missing';
+  if (status === 400 || code.includes('INVALID_ROLEPLAYSCENE_PUBLISHED')) return 'invalid-link';
+  if (code === 'NETWORK_ERROR' || code === 'ABORTED') return 'network';
+  return fallback;
+}
+
+function showDirectLaunchError(result, fallback = 'unknown') {
+  setDirectLaunchState('error', { errorKind: getDirectLaunchErrorKind(result, fallback) });
+}
+
+function handleDirectLaunchFailure(result, fallback = 'unknown') {
+  if (isServerAuthRequired(result)) {
+    pendingDirectPublishedSceneId = directLaunch.sceneId;
+    setDirectLaunchState('authentication-required');
+    return;
+  }
+  showDirectLaunchError(result, fallback);
+}
+
+function isCurrentDirectLaunchAttempt(attemptId, sceneId) {
+  return directLaunch.active
+    && directLaunch.attemptId === attemptId
+    && directLaunch.sceneId === sceneId;
+}
+
+function startDirectPublishedLaunch(sceneId, { initialPlaybackState = null } = {}) {
+  const normalizedSceneId = String(sceneId || '').trim();
+  if (!normalizedSceneId) return;
+  directLaunch.abortController?.abort();
+  const attemptId = directLaunch.attemptId + 1;
+  if (!UUID_V4ISH_PATTERN.test(normalizedSceneId)) {
+    setDirectLaunchState('error', {
+      sceneId: normalizedSceneId,
+      sceneTitle: '',
+      attemptId,
+      progress: null,
+      errorKind: 'invalid-link',
+      abortController: null,
+    });
+    return;
+  }
+  const abortController = typeof AbortController === 'function' ? new AbortController() : null;
+  setDirectLaunchState('checking-session', {
+    sceneId: normalizedSceneId,
+    sceneTitle: '',
+    attemptId,
+    progress: null,
+    errorKind: '',
+    abortController,
+  });
+  openPublishedRolePlaySceneById(normalizedSceneId, {
+    source: 'direct',
+    initialPlaybackState,
+    directAttemptId: attemptId,
+    signal: abortController?.signal,
+  }).catch((err) => {
+    if (!isCurrentDirectLaunchAttempt(attemptId, normalizedSceneId)) return;
+    console.error(err);
+    showDirectLaunchError({ error: { code: 'NETWORK_ERROR' } }, 'network');
+  });
+}
+
+function buildRolePlaySceneEditorUrl({ browsePublished = false } = {}) {
+  const url = new URL(globalThis.location?.href || 'http://localhost/roleplayscene/');
+  url.searchParams.delete('publishedSceneId');
+  url.searchParams.delete('authReturn');
+  if (browsePublished) url.searchParams.set('browsePublished', '1');
+  else url.searchParams.delete('browsePublished');
+  url.hash = '';
+  return url.toString();
+}
+
+function returnToRolePlaySceneEditor(options = {}) {
+  directLaunch.abortController?.abort();
+  globalThis.location?.assign?.(buildRolePlaySceneEditorUrl(options));
+}
+
 function getDirectPublishedSceneIdFromLocation() {
   try {
     const params = new URLSearchParams(globalThis.location?.search || '');
     return String(params.get('publishedSceneId') || '').trim();
   } catch (err) {
     return '';
+  }
+}
+
+function shouldBrowsePublishedOnLoad() {
+  try {
+    return new URLSearchParams(globalThis.location?.search || '').get('browsePublished') === '1';
+  } catch {
+    return false;
   }
 }
 
@@ -1082,14 +1288,22 @@ function startServerSignIn() {
   const authFlowId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `roleplayscene_${Date.now()}`;
+  let popupWasBlocked = false;
   activeAuthFlow = startAuthPopupFlow({
     apiClient,
     source: 'roleplayscene',
     authFlowId,
     pollIntervalMs: AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs,
     pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
-    onPopupBlocked: () => showMessage({ textId: 'server.popupBlocked' }),
-    onStatusMessage: () => showMessage({ textId: 'server.signInPending' }),
+    onPopupBlocked: () => {
+      popupWasBlocked = true;
+      showMessage({ textId: 'server.popupBlocked' });
+      if (directLaunch.active) setDirectLaunchState('authentication-required');
+    },
+    onStatusMessage: () => {
+      showMessage({ textId: 'server.signInPending' });
+      if (directLaunch.active && !popupWasBlocked) setDirectLaunchState('authentication-pending');
+    },
     onSessionReady: (result) => {
       serverSession = { status: 'ready', user: result.user || null, error: null };
       updateServerSessionUi();
@@ -1098,10 +1312,7 @@ function startServerSignIn() {
       if (pendingDirectPublishedSceneId) {
         const sceneId = pendingDirectPublishedSceneId;
         pendingDirectPublishedSceneId = '';
-        openPublishedRolePlaySceneById(sceneId, { source: 'direct' }).catch((err) => {
-          console.error(err);
-          showMessage({ textId: 'published.openFailed' });
-        });
+        startDirectPublishedLaunch(sceneId);
       }
     },
     onSessionNotReady: (result) => {
@@ -1112,6 +1323,7 @@ function startServerSignIn() {
       serverSession = { status: 'not_ready', user: null, error: result?.error?.message || translate('server.signInRequired') };
       updateServerSessionUi();
       showMessage({ text: serverSession.error });
+      if (directLaunch.active) setDirectLaunchState('authentication-required');
       activeAuthFlow = null;
     },
   });
@@ -1530,7 +1742,7 @@ async function showDeletePublishedSceneConfirmation(scene) {
   });
 }
 
-function showPublishDraftModal(draft, initialTitle = '') {
+function showPublishDraftModal(draft, initialTitle = '', initialDescription = draft?.description ?? '') {
   return new Promise((resolve) => {
     let resolved = false;
     const settle = (value) => {
@@ -1553,7 +1765,21 @@ function showPublishDraftModal(draft, initialTitle = '') {
         input.maxLength = 160;
         input.setAttribute('aria-label', translate('server.publishTitleLabel'));
         field.append(label, input);
-        body.append(description, field);
+        const descriptionField = document.createElement('label');
+        descriptionField.className = 'field';
+        const descriptionLabel = document.createElement('span');
+        descriptionLabel.textContent = translate('server.publishDescriptionLabel');
+        const descriptionInput = document.createElement('textarea');
+        descriptionInput.name = 'description';
+        descriptionInput.rows = 3;
+        descriptionInput.value = initialDescription;
+        descriptionInput.setAttribute('aria-label', translate('server.publishDescriptionLabel'));
+        descriptionInput.setAttribute('aria-describedby', 'publish-description-hint');
+        const descriptionHint = document.createElement('small');
+        descriptionHint.id = 'publish-description-hint';
+        descriptionHint.textContent = translate('server.publishDescriptionHint');
+        descriptionField.append(descriptionLabel, descriptionInput, descriptionHint);
+        body.append(description, field, descriptionField);
       },
       actions: [
         {
@@ -1575,7 +1801,8 @@ function showPublishDraftModal(draft, initialTitle = '') {
               input?.focus();
               return;
             }
-            settle({ title });
+            const description = String(serverModalBody?.querySelector('textarea[name="description"]')?.value || '').trim();
+            settle({ title, description });
             closeServerModal('publish-confirm');
           },
         },
@@ -1665,8 +1892,12 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, all
   }
 
   drafts.forEach((draft) => {
+    const uploadedDraftId = getRolePlaySceneDraftId(draft);
+    const draftOpenInProgress = Boolean(openingUploadedDraft);
+    const isOpeningDraft = openingUploadedDraft?.uploadedDraftId === uploadedDraftId;
     const row = document.createElement('article');
     row.className = 'server-draft-row';
+    row.dataset.uploadedDraftId = uploadedDraftId;
     const header = document.createElement('div');
     header.className = 'server-draft-row__header';
     const title = document.createElement('h3');
@@ -1683,14 +1914,18 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, all
 
     const actions = document.createElement('div');
     actions.className = 'server-draft-row__actions';
-    const openButton = createButton(translate('server.openDraft'));
+    const openButton = createButton(getUploadedDraftOpenButtonLabel(uploadedDraftId));
+    openButton.dataset.draftAction = 'open';
+    openButton.disabled = draftOpenInProgress;
+    if (isOpeningDraft) openButton.setAttribute('aria-busy', 'true');
     openButton.addEventListener('click', () => openUploadedRolePlaySceneDraft(draft));
     const downloadButton = createButton(translate('server.downloadDraft'));
+    downloadButton.dataset.draftAction = 'download';
+    downloadButton.disabled = draftOpenInProgress;
     downloadButton.addEventListener('click', () => downloadUploadedRolePlaySceneDraft(draft));
     actions.append(openButton, downloadButton);
     const publishState = draft?.publish_state || 'draft_only';
     if (allowPublish && publishState !== 'current_version_published') {
-      const uploadedDraftId = getRolePlaySceneDraftId(draft);
       const publishButton = createButton(
         publishingDraftIds.has(uploadedDraftId)
           ? translate('server.publishing')
@@ -1699,17 +1934,63 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, all
             : translate('server.publishDraft'),
         'confirm-actions__primary'
       );
-      publishButton.disabled = publishingDraftIds.has(uploadedDraftId);
+      publishButton.dataset.draftAction = 'publish';
+      publishButton.disabled = draftOpenInProgress || isPublishingDraftFlow;
+      publishButton.dataset.idleLabel = translate(publishState === 'unpublished_changes' ? 'server.publishNewVersion' : 'server.publishDraft');
       publishButton.addEventListener('click', () => publishUploadedRolePlaySceneDraft(draft));
       actions.appendChild(publishButton);
     }
     const deleteButton = createButton(translate('server.deleteDraft'), 'server-danger-action');
+    deleteButton.dataset.draftAction = 'delete';
+    deleteButton.disabled = draftOpenInProgress;
     deleteButton.addEventListener('click', () => deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted }));
     actions.appendChild(deleteButton);
     row.appendChild(actions);
     list.appendChild(row);
   });
   container.appendChild(list);
+}
+
+function getUploadedDraftOpenButtonLabel(uploadedDraftId) {
+  if (openingUploadedDraft?.uploadedDraftId !== uploadedDraftId) {
+    return translate('server.openDraft');
+  }
+  if (openingUploadedDraft.phase === 'preparing') {
+    return translate('server.preparingDraft');
+  }
+  if (Number.isInteger(openingUploadedDraft.percent)) {
+    return translate('server.downloadingDraftProgress', { percent: openingUploadedDraft.percent });
+  }
+  return translate('server.downloadingDraft');
+}
+
+function syncUploadedDraftActionAvailability() {
+  const draftOpenInProgress = Boolean(openingUploadedDraft);
+  if (serverSaveButton) serverSaveButton.disabled = isUploadingDraft || draftOpenInProgress;
+  if (serverManageButton) serverManageButton.disabled = isLoadingUploadedDrafts || draftOpenInProgress;
+  const refreshButton = serverModalActions?.querySelector('.uploaded-drafts-refresh-action');
+  if (refreshButton) refreshButton.disabled = draftOpenInProgress;
+  serverModalBody?.querySelectorAll('.server-draft-row[data-uploaded-draft-id]').forEach((row) => {
+    const uploadedDraftId = String(row.dataset.uploadedDraftId || '');
+    row.querySelectorAll('button[data-draft-action]').forEach((button) => {
+      const action = button.dataset.draftAction;
+      button.disabled = draftOpenInProgress
+        || (action === 'publish' && (isPublishingDraftFlow
+          || uploadedDrafts.some(draft => getRolePlaySceneDraftId(draft) === uploadedDraftId
+            && draft.publish_state === 'current_version_published')));
+      if (action === 'publish') {
+        button.textContent = publishingDraftIds.has(uploadedDraftId)
+          ? translate('server.publishing') : button.dataset.idleLabel;
+      }
+      if (action !== 'open') return;
+      button.textContent = getUploadedDraftOpenButtonLabel(uploadedDraftId);
+      if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
+        button.setAttribute('aria-busy', 'true');
+      } else {
+        button.removeAttribute('aria-busy');
+      }
+    });
+  });
 }
 
 function renderUploadedDraftManager({
@@ -1740,7 +2021,10 @@ function renderUploadedDraftManager({
     actions: [
       {
         label: translate('server.refresh'),
+        disabled: Boolean(openingUploadedDraft),
+        className: 'uploaded-drafts-refresh-action',
         onClick: async () => {
+          if (openingUploadedDraft) return;
           const result = await loadUploadedRolePlaySceneDrafts({ preflight: true, showManager: false });
           if (result?.ok) {
             renderUploadedDraftManager({ onDraftDeleted, onClose, recoveryMode });
@@ -1949,11 +2233,16 @@ async function loadPublishedRolePlaySceneScenes({
 
 async function exitPublishedPlay() {
   if (!(await ensureDiscussionCanBeDiscarded())) return;
+  if (publishedPlay.source === 'direct') {
+    discardDiscussion();
+    returnToRolePlaySceneEditor();
+    return;
+  }
   if (publishedPlay.preparedImport?.project) {
     revokeProjectObjectUrls(publishedPlay.preparedImport.project);
   }
   editorPreview = null;
-  publishedPlay = { active: false, store: null, preparedImport: null, scene: null };
+  publishedPlay = { active: false, store: null, preparedImport: null, scene: null, source: '' };
   discardDiscussion();
   setMode('edit');
   showMessage({ textId: 'published.exited' });
@@ -1965,39 +2254,87 @@ async function openPublishedRolePlayScene(scene) {
   return openPublishedRolePlaySceneById(sceneId, { scene });
 }
 
-async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, source = 'browse', initialPlaybackState = null } = {}) {
-  if (!(await ensureDiscussionCanBeDiscarded())) return { ok: false, canceled: true };
+async function openPublishedRolePlaySceneById(publishedSceneId, {
+  scene = null,
+  source = 'browse',
+  initialPlaybackState = null,
+  directAttemptId = 0,
+  signal = null,
+} = {}) {
+  const isDirect = source === 'direct';
+  const directAttemptIsCurrent = () => !isDirect
+    || isCurrentDirectLaunchAttempt(directAttemptId, publishedSceneId);
+  if (!isDirect && !(await ensureDiscussionCanBeDiscarded())) return { ok: false, canceled: true };
   const sessionReady = await ensureServerSessionReady();
+  if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
   if (!sessionReady.ok) {
-    if (source === 'direct') {
-      pendingDirectPublishedSceneId = publishedSceneId;
+    if (isDirect) {
+      if (sessionReady.result?.status === 'not_ready' || isServerAuthRequired(sessionReady.result)) {
+        pendingDirectPublishedSceneId = publishedSceneId;
+        setDirectLaunchState('authentication-required');
+      } else {
+        showDirectLaunchError(sessionReady.result);
+      }
     }
     return sessionReady.result;
   }
-  if (openingPublishedSceneIds.has(publishedSceneId)) return;
-  openingPublishedSceneIds.add(publishedSceneId);
+  if (!isDirect && openingPublishedSceneIds.has(publishedSceneId)) return;
+  if (!isDirect) openingPublishedSceneIds.add(publishedSceneId);
   if (!serverModalOverlay?.hidden) renderPublishedBrowserModal();
   let preparedImport = null;
   try {
     showMessage({ textId: 'published.opening' });
     let metadata = scene;
     if (!metadata) {
-      const metadataResult = await apiClient.fetchRolePlayScenePublishedScene(publishedSceneId);
+      if (isDirect) setDirectLaunchState('loading-metadata');
+      const metadataResult = await apiClient.fetchRolePlayScenePublishedScene(publishedSceneId, { signal });
+      if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
       if (!metadataResult.ok) {
-        showMessage({ text: getServerErrorMessage(metadataResult, 'published.openFailed') });
+        if (isDirect) handleDirectLaunchFailure(metadataResult);
+        else showMessage({ text: getServerErrorMessage(metadataResult, 'published.openFailed') });
         return metadataResult;
       }
       metadata = metadataResult.data;
     }
-    const artifact = await apiClient.fetchRolePlayScenePublishedSceneArtifact(publishedSceneId);
+    if (isDirect) {
+      setDirectLaunchState('downloading', {
+        sceneTitle: String(metadata?.title || '').trim(),
+        progress: null,
+      });
+    }
+    const artifact = await apiClient.fetchRolePlayScenePublishedSceneArtifact(publishedSceneId, {
+      signal,
+      onProgress: isDirect ? (progress) => {
+        if (!directAttemptIsCurrent()) return;
+        const loaded = Number(progress?.loaded || 0);
+        const total = Number(progress?.total || 0);
+        const lengthComputable = Boolean(progress?.lengthComputable) && total > 0;
+        const percent = lengthComputable
+          ? Math.max(0, Math.min(100, Math.round((loaded / total) * 100)))
+          : 0;
+        if (directLaunch.progress?.percent === percent
+          && directLaunch.progress?.lengthComputable === lengthComputable) return;
+        setDirectLaunchState('downloading', {
+          progress: { loaded, total, lengthComputable, percent },
+        });
+      } : null,
+    });
+    if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
     if (!artifact.ok) {
-      showMessage({ text: getServerErrorMessage(artifact, 'published.openFailed') });
+      if (isDirect) handleDirectLaunchFailure(artifact);
+      else showMessage({ text: getServerErrorMessage(artifact, 'published.openFailed') });
       return artifact;
     }
+    if (isDirect) setDirectLaunchState('preparing', { progress: null });
     preparedImport = await prepareProjectImport(createZipFileFromBytes(
       artifact.data,
       `${sanitizeFilename(metadata?.title, 'roleplayscene-published')}.zip`,
     ));
+    if (!directAttemptIsCurrent()) {
+      revokeProjectObjectUrls(preparedImport.project);
+      preparedImport = null;
+      return { ok: false, skipped: true, status: 'stale_attempt' };
+    }
     if (publishedPlay.preparedImport?.project) {
       revokeProjectObjectUrls(publishedPlay.preparedImport.project);
     }
@@ -2006,11 +2343,12 @@ async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, 
     playStore.set({ project: preparedImport.project });
     editorPreview = null;
     discardDiscussion();
-    publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata };
+    publishedPlay = { active: true, store: playStore, preparedImport, scene: metadata, source };
     const playbackRecovery = initialPlaybackState
       || getMatchingPlaybackRecovery(preparedImport.project, { publishedSceneId });
     closeServerModal('published-open');
     setMode('play', { initialPlaybackState: playbackRecovery });
+    if (isDirect) finishDirectLaunch();
     showMessage({ textId: 'published.opened' });
     return { ok: true };
   } catch (err) {
@@ -2018,11 +2356,12 @@ async function openPublishedRolePlaySceneById(publishedSceneId, { scene = null, 
       revokeProjectObjectUrls(preparedImport.project);
     }
     console.error(err);
-    showImportError(err);
+    if (isDirect && directAttemptIsCurrent()) showDirectLaunchError(null, 'invalid-package');
+    else if (!isDirect) showImportError(err);
     return { ok: false, error: { message: err?.message || String(err) } };
   } finally {
-    openingPublishedSceneIds.delete(publishedSceneId);
-    if (!serverModalOverlay?.hidden) renderPublishedBrowserModal();
+    if (!isDirect) openingPublishedSceneIds.delete(publishedSceneId);
+    if (!isDirect && !serverModalOverlay?.hidden) renderPublishedBrowserModal();
   }
 }
 
@@ -2118,7 +2457,7 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
 }
 
 async function uploadCurrentProjectToServer({ conflictAction = '', preflight = true } = {}) {
-  if (isUploadingDraft) return { ok: false, skipped: true };
+  if (isUploadingDraft || openingUploadedDraft) return { ok: false, skipped: true };
   if (preflight !== false) {
     const sessionReady = await ensureServerSessionReady();
     if (!sessionReady.ok) return sessionReady.result;
@@ -2187,67 +2526,100 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
 
 async function publishUploadedRolePlaySceneDraft(draft) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
-  if (!uploadedDraftId || publishingDraftIds.has(uploadedDraftId)) return;
+  if (!uploadedDraftId || openingUploadedDraft || isPublishingDraftFlow) return;
+  // Reserve the whole flow before opening a dialog, including conflict retries.
+  isPublishingDraftFlow = true;
+  syncUploadedDraftActionAvailability();
+  let pendingManager = null;
   let attemptedTitle = draft?.title || translate('server.values.untitledDraft');
-  while (true) {
-    const modalResult = await showPublishDraftModal(draft, attemptedTitle);
-    if (!modalResult) {
-      showMessage({ textId: 'server.publishCanceled' });
-      return;
-    }
-    attemptedTitle = modalResult.title;
-    publishingDraftIds.add(uploadedDraftId);
-    renderUploadedDraftManager();
-    showMessage({ textId: 'server.publishingMessage' });
-    let result;
-    try {
-      const sessionReady = await ensureServerSessionReady();
-      if (!sessionReady.ok) {
-        showMessage({ text: sessionReady.result?.error?.message || translate('server.signInRequired') });
+  let attemptedDescription = draft?.description ?? '';
+  try {
+    while (true) {
+      const modalResult = await showPublishDraftModal(draft, attemptedTitle, attemptedDescription);
+      if (!modalResult) {
+        showMessage({ textId: 'server.publishCanceled' });
         return;
       }
-      result = await apiClient.publishRolePlaySceneFromUploadedDraft(uploadedDraftId, { title: attemptedTitle });
-    } catch (err) {
-      showMessage({ text: err?.message || translate('server.publishFailed') });
-      return;
-    } finally {
-      publishingDraftIds.delete(uploadedDraftId);
-      if (!serverModalOverlay?.hidden) renderUploadedDraftManager();
-    }
+      attemptedTitle = modalResult.title;
+      attemptedDescription = modalResult.description;
+      publishingDraftIds.add(uploadedDraftId);
+      renderUploadedDraftManager();
+      pendingManager = activeServerModal;
+      showMessage({ textId: 'server.publishingMessage' });
+      let result;
+      try {
+        const sessionReady = await ensureServerSessionReady();
+        if (!sessionReady.ok) {
+          showMessage({ text: sessionReady.result?.error?.message || translate('server.signInRequired') });
+          return;
+        }
+        result = await apiClient.publishRolePlaySceneFromUploadedDraft(uploadedDraftId, { title: attemptedTitle, description: attemptedDescription });
+      } catch (err) {
+        showMessage({ text: err?.message || translate('server.publishFailed') });
+        return;
+      } finally {
+        publishingDraftIds.delete(uploadedDraftId);
+      }
 
-    if (result?.ok) {
-      showMessage({
-        textId: 'server.published',
-        textArgs: { id: result.data?.roleplayscene_published_scene_id || '' },
-      });
-      await loadUploadedRolePlaySceneDrafts({ preflight: false, showManager: true });
-      return;
-    }
-    if (result?.error?.code === 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT') {
+      if (result?.ok) {
+        showMessage({
+          textId: 'server.published',
+          textArgs: { id: result.data?.roleplayscene_published_scene_id || '' },
+        });
+        // Refresh data without reopening a manager the user closed or replaced.
+        await loadUploadedRolePlaySceneDrafts({ preflight: false });
+        return;
+      }
+      if (result?.error?.code === 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT') {
+        showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
+        if (!pendingManager || activeServerModal !== pendingManager) return;
+        const choice = await showPublishConflictModal(result);
+        if (choice === 'edit') continue;
+        showMessage({ textId: 'server.publishCanceled' });
+        return;
+      }
       showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
-      const choice = await showPublishConflictModal(result);
-      if (choice === 'edit') continue;
-      showMessage({ textId: 'server.publishCanceled' });
       return;
     }
-    showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
-    return;
+  } finally {
+    publishingDraftIds.delete(uploadedDraftId);
+    isPublishingDraftFlow = false;
+    if (pendingManager && activeServerModal === pendingManager) renderUploadedDraftManager();
+    syncUploadedDraftActionAvailability();
   }
 }
 
 async function openUploadedRolePlaySceneDraft(draft) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
-  if (!uploadedDraftId) return;
-  if (!(await ensureDiscussionCanBeDiscarded())) return;
-  const sessionReady = await ensureServerSessionReady();
-  if (!sessionReady.ok) return;
+  if (!uploadedDraftId || openingUploadedDraft) return;
+  openingUploadedDraft = { uploadedDraftId, phase: 'downloading', percent: null };
+  syncUploadedDraftActionAvailability();
   let preparedImport = null;
   try {
+    if (!(await ensureDiscussionCanBeDiscarded())) return;
+    const sessionReady = await ensureServerSessionReady();
+    if (!sessionReady.ok) return;
     showMessage({ textId: 'server.openingDraft' });
-    const artifact = await apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId);
+    const artifact = await apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId, {
+      onProgress: (progress) => {
+        const loaded = Number(progress?.loaded || 0);
+        const total = Number(progress?.total || 0);
+        if (!progress?.lengthComputable || total <= 0) return;
+        const percent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+        if (openingUploadedDraft?.percent === percent) return;
+        if (openingUploadedDraft?.uploadedDraftId !== uploadedDraftId) return;
+        openingUploadedDraft.percent = percent;
+        syncUploadedDraftActionAvailability();
+      },
+    });
     if (!artifact.ok) {
       showMessage({ text: getServerErrorMessage(artifact, 'server.openFailed') });
       return;
+    }
+    if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
+      openingUploadedDraft.phase = 'preparing';
+      openingUploadedDraft.percent = null;
+      syncUploadedDraftActionAvailability();
     }
     preparedImport = await prepareProjectImport(createZipFileFromBytes(
       artifact.data,
@@ -2281,12 +2653,17 @@ async function openUploadedRolePlaySceneDraft(draft) {
       revokeProjectObjectUrls(preparedImport.project);
     }
     showImportError(err);
+  } finally {
+    if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
+      openingUploadedDraft = null;
+      syncUploadedDraftActionAvailability();
+    }
   }
 }
 
 async function downloadUploadedRolePlaySceneDraft(draft) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
-  if (!uploadedDraftId) return;
+  if (!uploadedDraftId || openingUploadedDraft) return;
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) return;
   const artifact = await apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId);
@@ -2308,7 +2685,7 @@ async function downloadUploadedRolePlaySceneDraft(draft) {
 
 async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null } = {}) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
-  if (!uploadedDraftId) return;
+  if (!uploadedDraftId || openingUploadedDraft) return;
   const choice = await showDeleteDraftConfirmation(draft);
   if (choice !== 'delete') return;
   const sessionReady = await ensureServerSessionReady();
@@ -2362,6 +2739,15 @@ if (dismissButton) {
     dismissMessage();
   });
 }
+
+directLaunchSignInButton?.addEventListener('click', () => startServerSignIn());
+directLaunchRetryButton?.addEventListener('click', () => {
+  startDirectPublishedLaunch(directLaunch.sceneId);
+});
+directLaunchBrowseButton?.addEventListener('click', () => {
+  returnToRolePlaySceneEditor({ browsePublished: true });
+});
+directLaunchReturnButton?.addEventListener('click', () => returnToRolePlaySceneEditor());
 
 btnEdit.addEventListener('click', async () => {
   if (editorPreview && !publishedPlay.active) {
@@ -2556,26 +2942,29 @@ async function bootstrap() {
     console.error('Failed to initialise persistence', err);
     persistenceCleanup = () => {};
   }
+  if (directPublishedSceneId) {
+    startDirectPublishedLaunch(directPublishedSceneId);
+    return;
+  }
   probeServerSessionSilently().catch((err) => {
     console.error('Failed to probe server session', err);
     serverSession = { status: 'error', user: null, error: err?.message || String(err) };
     updateServerSessionUi();
   });
-  if (directPublishedSceneId) {
-    openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' }).catch((err) => {
-      console.error(err);
-      showMessage({ textId: 'published.openFailed' });
-    });
-    updateToolbarText();
-    updatePublishedPlayUi();
-    return;
-  }
   const recovery = readPlaySessionRecovery();
   const playbackRecovery = getMatchingPlaybackRecovery(store.get().project);
   if (recovery?.mode === 'play' && playbackRecovery) {
     setMode('play', { initialPlaybackState: playbackRecovery });
   } else {
     setMode('edit');
+  }
+  if (shouldBrowsePublishedOnLoad()) {
+    const cleanUrl = buildRolePlaySceneEditorUrl();
+    globalThis.history?.replaceState?.(null, '', cleanUrl);
+    loadPublishedRolePlaySceneScenes({ preflight: true, showBrowser: true }).catch((err) => {
+      console.error(err);
+      showMessage({ textId: 'published.listFailed' });
+    });
   }
 }
 

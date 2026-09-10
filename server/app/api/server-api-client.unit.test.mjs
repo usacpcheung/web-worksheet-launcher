@@ -215,6 +215,53 @@ test('fetchRolePlaySceneDraftArtifact parses zip payload', async () => {
   assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
 });
 
+test('fetchRolePlaySceneDraftArtifact reports streamed download progress', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
+    status: 200,
+    headers: {
+      'content-type': 'application/zip',
+      'content-length': '4',
+    },
+  });
+
+  const progressEvents = [];
+  const client = createServerApiClient();
+  const result = await client.fetchRolePlaySceneDraftArtifact(
+    '550e8400-e29b-41d4-a716-446655440000',
+    { onProgress: (progress) => progressEvents.push(progress) },
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
+  assert.deepEqual(progressEvents.at(-1), {
+    loaded: 4,
+    total: 4,
+    lengthComputable: true,
+  });
+});
+
+test('fetchRolePlaySceneDraftArtifact reports indeterminate progress without content length', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => new Response(new Uint8Array([0x50, 0x4b]), {
+    status: 200,
+    headers: { 'content-type': 'application/zip' },
+  });
+
+  const progressEvents = [];
+  const client = createServerApiClient();
+  const result = await client.fetchRolePlaySceneDraftArtifact('draft-id', {
+    onProgress: (progress) => progressEvents.push(progress),
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(progressEvents.at(-1), {
+    loaded: 2,
+    total: 0,
+    lengthComputable: false,
+  });
+});
+
 test('deleteRolePlaySceneDraft sends DELETE to canonical roleplayscene drafts path', async () => {
   setTestWindow();
   let requestedUrl = null;
@@ -232,27 +279,36 @@ test('deleteRolePlaySceneDraft sends DELETE to canonical roleplayscene drafts pa
   assert.equal(requestedMethod, 'DELETE');
 });
 
-test('publishRolePlaySceneFromUploadedDraft sends uploadedDraftId and title', async () => {
-  setTestWindow();
-  let requestedUrl = null;
-  let requestBody = null;
-  globalThis.fetch = async (url, request = {}) => {
-    requestedUrl = url;
-    requestBody = request.body;
-    return mockJsonResponse(201, { ok: true, data: { roleplayscene_published_scene_id: 'p1' } });
-  };
+for (const [name, metadata] of [
+  ['omitted', {}],
+  ['provided', { description: 'Practice ordering food.' }],
+  ['cleared', { description: '' }],
+]) {
+  test(`RolePlayScene publish forwards ${name} description`, async () => {
+    setTestWindow();
+    let requestedUrl = null;
+    let requestBody = null;
+    globalThis.fetch = async (url, request = {}) => {
+      requestedUrl = url;
+      requestBody = request.body;
+      return mockJsonResponse(201, { ok: true, data: { roleplayscene_published_scene_id: 'p1' } });
+    };
 
-  const client = createServerApiClient();
-  const result = await client.publishRolePlaySceneFromUploadedDraft('550e8400-e29b-41d4-a716-446655440000', {
-    title: 'Published clinic',
+    const client = createServerApiClient();
+    const result = await client.publishRolePlaySceneFromUploadedDraft('550e8400-e29b-41d4-a716-446655440000', {
+      title: 'Published clinic',
+      ...metadata,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published');
+    assert.deepEqual(JSON.parse(requestBody), {
+      uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+      title: 'Published clinic',
+      ...metadata,
+    });
   });
-  assert.equal(result.ok, true);
-  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published');
-  assert.deepEqual(JSON.parse(requestBody), {
-    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
-    title: 'Published clinic',
-  });
-});
+
+}
 
 test('listRolePlayScenePublishedScenes builds query URL', async () => {
   setTestWindow();
@@ -308,6 +364,98 @@ test('fetchRolePlayScenePublishedSceneArtifact parses zip payload', async () => 
   assert.equal(result.ok, true);
   assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published/550e8400-e29b-41d4-a716-446655440000/artifact');
   assert.deepEqual(Array.from(result.data), [0x50, 0x4b, 0x03, 0x04]);
+});
+
+test('published scene requests forward cancellation and artifact download progress', async () => {
+  setTestWindow();
+  const controller = new AbortController();
+  const progressEvents = [];
+  const seenSignals = [];
+  globalThis.fetch = async (url, request = {}) => {
+    seenSignals.push(request.signal);
+    if (!String(url).endsWith('/artifact')) {
+      return mockJsonResponse(200, { ok: true, data: { title: 'Clinic' } });
+    }
+    return new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
+      status: 200,
+      headers: {
+        'content-type': 'application/zip',
+        'content-length': '4',
+      },
+    });
+  };
+
+  const client = createServerApiClient();
+  await client.fetchRolePlayScenePublishedScene('550e8400-e29b-41d4-a716-446655440000', {
+    signal: controller.signal,
+  });
+  const artifact = await client.fetchRolePlayScenePublishedSceneArtifact('550e8400-e29b-41d4-a716-446655440000', {
+    signal: controller.signal,
+    onProgress: progress => progressEvents.push(progress),
+  });
+
+  assert.equal(artifact.ok, true);
+  assert.deepEqual(seenSignals, [controller.signal, controller.signal]);
+  assert.deepEqual(progressEvents.at(-1), {
+    loaded: 4,
+    total: 4,
+    lengthComputable: true,
+  });
+});
+
+test('published scene artifact reports a network error when its response stream is interrupted', async () => {
+  setTestWindow();
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([0x50, 0x4b]));
+      controller.error(new TypeError('connection lost'));
+    },
+  }), {
+    status: 200,
+    headers: {
+      'content-type': 'application/zip',
+      'content-length': '4',
+    },
+  });
+
+  const client = createServerApiClient();
+  const result = await client.fetchRolePlayScenePublishedSceneArtifact(
+    '550e8400-e29b-41d4-a716-446655440000',
+    { onProgress() {} },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'NETWORK_ERROR');
+  assert.match(result.error.message, /connection was interrupted/i);
+});
+
+test('published scene requests report interrupted JSON and HTTP error bodies as network errors', async () => {
+  setTestWindow();
+  let requestCount = 0;
+  globalThis.fetch = async () => {
+    requestCount += 1;
+    const status = requestCount === 1 ? 200 : 500;
+    return {
+      ok: status === 200,
+      status,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => { throw new TypeError('connection lost'); },
+      text: async () => { throw new TypeError('connection lost'); },
+    };
+  };
+
+  const client = createServerApiClient();
+  const metadata = await client.fetchRolePlayScenePublishedScene(
+    '550e8400-e29b-41d4-a716-446655440000',
+  );
+  const artifactError = await client.fetchRolePlayScenePublishedSceneArtifact(
+    '550e8400-e29b-41d4-a716-446655440000',
+  );
+
+  assert.equal(metadata.ok, false);
+  assert.equal(metadata.error.code, 'NETWORK_ERROR');
+  assert.equal(artifactError.ok, false);
+  assert.equal(artifactError.error.code, 'NETWORK_ERROR');
 });
 
 test('deleteRolePlayScenePublishedScene sends DELETE to published scene path', async () => {

@@ -6802,6 +6802,7 @@ function renderEditorShell(session) {
           promptT2AInFlightBlockIds.delete(blockId);
           promptTrackGenerationLanguageByBlockId.delete(blockId);
           restoreLegacyPromptInFlightMarker();
+          refreshPromptT2AControlsForSelectedBlock();
           updateSummary();
         }
       };
@@ -7292,6 +7293,7 @@ function renderEditorShell(session) {
               optionT2AInFlightKeys.delete(optionT2AKey);
               optionTrackGenerationLanguageByKey.delete(optionT2AKey);
               restoreLegacyOptionInFlightMarker();
+              refreshOptionRowT2AControls(selectedBlock.blockId, optionId, row);
               updateSummary();
             }
           });

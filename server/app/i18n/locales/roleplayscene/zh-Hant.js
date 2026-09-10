@@ -77,6 +77,9 @@ export default {
     "deletedDraft": "已刪除上傳的 RolePlayScene 草稿。",
     "openDraft": "開啟",
     "openingDraft": "正在開啟已上傳的 RolePlayScene 草稿...",
+    "downloadingDraft": "下載中...",
+    "downloadingDraftProgress": "下載中 {percent}%",
+    "preparingDraft": "準備中...",
     "openFailed": "無法開啟已上傳的 RolePlayScene 草稿。",
     "openedDraft": "已開啟上傳的 RolePlayScene 草稿。",
     "openedDraftWithWarnings": "已開啟上傳的 RolePlayScene 草稿，但有警告。",
@@ -92,8 +95,10 @@ export default {
     "publishFailed": "無法發布 RolePlayScene 草稿。",
     "publishCanceled": "已取消發布。",
     "publishTitle": "發布 RolePlayScene",
-    "publishBody": "請選擇此上傳 RolePlayScene 草稿的公開標題。",
+    "publishBody": "請選擇此上傳 RolePlayScene 草稿的公開標題，並可選填描述。",
     "publishTitleLabel": "發布標題",
+    "publishDescriptionLabel": "描述（選填）",
+    "publishDescriptionHint": "簡述情境、學習目標或適合的學習者。",
     "publishTitleRequired": "請先輸入標題再發布。",
     "publishConfirm": "發布",
     "publishConflictTitle": "已存在同名發布項目",
@@ -133,10 +138,10 @@ export default {
     "refreshing": "重新整理中...",
     "browseTitle": "瀏覽已發布的 RolePlayScene",
     "search": "搜尋",
-    "searchLabel": "搜尋已發布的 RolePlayScene",
-    "searchPlaceholder": "搜尋標題、描述或擁有者",
-    "ownerLabel": "依擁有者篩選",
-    "ownerPlaceholder": "擁有者名稱或電郵",
+    "searchLabel": "搜尋標題或描述",
+    "searchPlaceholder": "搜尋標題或描述",
+    "ownerLabel": "按擁有者名稱或電郵篩選",
+    "ownerPlaceholder": "按擁有者名稱或電郵篩選",
     "refresh": "重新整理",
     "loadMore": "載入更多",
     "noScenes": "找不到已發布的 RolePlayScene。",
@@ -160,6 +165,44 @@ export default {
     "listFailed": "無法載入已發布的 RolePlayScene。",
     "exit": "離開已發布場景",
     "exited": "已離開已發布場景。",
+    "direct": {
+      "openingTitle": "正在開啟 RolePlayScene…",
+      "openingNamed": "正在開啟「{title}」…",
+      "checkingAccess": "正在檢查存取權限…",
+      "loadingMetadata": "正在載入場景資料…",
+      "downloading": "正在載入套件…",
+      "downloadingProgress": "正在載入套件… {percent}%",
+      "preparing": "正在準備場景…",
+      "signInTitle": "登入以開啟此 RolePlayScene",
+      "signInDetail": "此已發布場景需要伺服器工作階段。",
+      "signInPending": "正在等候登入…",
+      "signIn": "登入",
+      "retry": "重試",
+      "browse": "瀏覽已發布場景",
+      "returnToEditor": "返回編輯器",
+      "errors": {
+        "network": {
+          "title": "無法載入此 RolePlayScene",
+          "detail": "請檢查網絡連線後重試。"
+        },
+        "missing": {
+          "title": "此已發布的 RolePlayScene 已無法使用",
+          "detail": "擁有者可能已將它刪除。"
+        },
+        "invalid-link": {
+          "title": "此 RolePlayScene 連結無效",
+          "detail": "請檢查連結或瀏覽可用的已發布場景。"
+        },
+        "invalid-package": {
+          "title": "無法開啟此 RolePlayScene 套件",
+          "detail": "套件可能已損壞或使用不支援的格式。"
+        },
+        "unknown": {
+          "title": "無法開啟此 RolePlayScene",
+          "detail": "請重試或返回編輯器。"
+        }
+      }
+    },
     "meta": {
       "id": "發布 ID",
       "owner": "擁有者",
