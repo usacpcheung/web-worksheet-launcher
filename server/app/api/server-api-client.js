@@ -511,6 +511,7 @@ function createServerApiClient() {
         body: {
           uploadedDraftId,
           title: metadata.title || '',
+          ...(typeof metadata.description === 'string' ? { description: metadata.description } : {}),
         },
       });
     },

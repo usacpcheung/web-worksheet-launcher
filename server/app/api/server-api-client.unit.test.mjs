@@ -279,27 +279,36 @@ test('deleteRolePlaySceneDraft sends DELETE to canonical roleplayscene drafts pa
   assert.equal(requestedMethod, 'DELETE');
 });
 
-test('publishRolePlaySceneFromUploadedDraft sends uploadedDraftId and title', async () => {
-  setTestWindow();
-  let requestedUrl = null;
-  let requestBody = null;
-  globalThis.fetch = async (url, request = {}) => {
-    requestedUrl = url;
-    requestBody = request.body;
-    return mockJsonResponse(201, { ok: true, data: { roleplayscene_published_scene_id: 'p1' } });
-  };
+for (const [name, metadata] of [
+  ['omitted', {}],
+  ['provided', { description: 'Practice ordering food.' }],
+  ['cleared', { description: '' }],
+]) {
+  test(`RolePlayScene publish forwards ${name} description`, async () => {
+    setTestWindow();
+    let requestedUrl = null;
+    let requestBody = null;
+    globalThis.fetch = async (url, request = {}) => {
+      requestedUrl = url;
+      requestBody = request.body;
+      return mockJsonResponse(201, { ok: true, data: { roleplayscene_published_scene_id: 'p1' } });
+    };
 
-  const client = createServerApiClient();
-  const result = await client.publishRolePlaySceneFromUploadedDraft('550e8400-e29b-41d4-a716-446655440000', {
-    title: 'Published clinic',
+    const client = createServerApiClient();
+    const result = await client.publishRolePlaySceneFromUploadedDraft('550e8400-e29b-41d4-a716-446655440000', {
+      title: 'Published clinic',
+      ...metadata,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published');
+    assert.deepEqual(JSON.parse(requestBody), {
+      uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
+      title: 'Published clinic',
+      ...metadata,
+    });
   });
-  assert.equal(result.ok, true);
-  assert.equal(requestedUrl, '/api/worksheet-launcher/v1/roleplayscene/published');
-  assert.deepEqual(JSON.parse(requestBody), {
-    uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000',
-    title: 'Published clinic',
-  });
-});
+
+}
 
 test('listRolePlayScenePublishedScenes builds query URL', async () => {
   setTestWindow();

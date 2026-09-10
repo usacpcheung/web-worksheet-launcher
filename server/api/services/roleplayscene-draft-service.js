@@ -517,7 +517,7 @@ export class RolePlaySceneDraftService {
     return result.rowCount === 0 ? null : result.rows[0];
   }
 
-  async publishRolePlaySceneFromDraft({ identity, uploadedDraftId, title = '' }) {
+  async publishRolePlaySceneFromDraft({ identity, uploadedDraftId, title = '', description }) {
     const client = await this.db.connect();
     let artifact = null;
     try {
@@ -658,7 +658,7 @@ export class RolePlaySceneDraftService {
           identity.name,
           draft.roleplayscene_uploaded_draft_id,
           normalizedPublishedTitle,
-          draft.description || validation.metadata.description || '',
+          typeof description === 'string' ? description.trim() : (draft.description || validation.metadata.description || ''),
           validation.metadata.packageVersion,
           artifact.artifactPath,
           artifact.artifactSha256,
@@ -730,7 +730,7 @@ export class RolePlaySceneDraftService {
     if (query) {
       values.push(`%${String(query).toLowerCase()}%`);
       clauses.push(
-        `(lower(title) LIKE $${values.length} OR lower(description) LIKE $${values.length} OR lower(owner_email) LIKE $${values.length} OR lower(owner_name) LIKE $${values.length})`
+        `(lower(title) LIKE $${values.length} OR lower(description) LIKE $${values.length})`
       );
     }
     if (title) {
