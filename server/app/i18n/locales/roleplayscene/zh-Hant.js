@@ -165,6 +165,44 @@ export default {
     "listFailed": "無法載入已發布的 RolePlayScene。",
     "exit": "離開已發布場景",
     "exited": "已離開已發布場景。",
+    "direct": {
+      "openingTitle": "正在開啟 RolePlayScene…",
+      "openingNamed": "正在開啟「{title}」…",
+      "checkingAccess": "正在檢查存取權限…",
+      "loadingMetadata": "正在載入場景資料…",
+      "downloading": "正在載入套件…",
+      "downloadingProgress": "正在載入套件… {percent}%",
+      "preparing": "正在準備場景…",
+      "signInTitle": "登入以開啟此 RolePlayScene",
+      "signInDetail": "此已發布場景需要伺服器工作階段。",
+      "signInPending": "正在等候登入…",
+      "signIn": "登入",
+      "retry": "重試",
+      "browse": "瀏覽已發布場景",
+      "returnToEditor": "返回編輯器",
+      "errors": {
+        "network": {
+          "title": "無法載入此 RolePlayScene",
+          "detail": "請檢查網絡連線後重試。"
+        },
+        "missing": {
+          "title": "此已發布的 RolePlayScene 已無法使用",
+          "detail": "擁有者可能已將它刪除。"
+        },
+        "invalid-link": {
+          "title": "此 RolePlayScene 連結無效",
+          "detail": "請檢查連結或瀏覽可用的已發布場景。"
+        },
+        "invalid-package": {
+          "title": "無法開啟此 RolePlayScene 套件",
+          "detail": "套件可能已損壞或使用不支援的格式。"
+        },
+        "unknown": {
+          "title": "無法開啟此 RolePlayScene",
+          "detail": "請重試或返回編輯器。"
+        }
+      }
+    },
     "meta": {
       "id": "發布 ID",
       "owner": "擁有者",

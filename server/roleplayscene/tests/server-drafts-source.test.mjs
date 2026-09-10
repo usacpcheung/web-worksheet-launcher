@@ -48,8 +48,8 @@ assert.ok(
 );
 assert.ok(
   mainSource.includes('apiClient.listRolePlayScenePublishedScenes')
-    && mainSource.includes('apiClient.fetchRolePlayScenePublishedScene(publishedSceneId)')
-    && mainSource.includes('apiClient.fetchRolePlayScenePublishedSceneArtifact(publishedSceneId)')
+    && mainSource.includes('apiClient.fetchRolePlayScenePublishedScene(publishedSceneId, { signal })')
+    && mainSource.includes('apiClient.fetchRolePlayScenePublishedSceneArtifact(publishedSceneId, {')
     && mainSource.includes('apiClient.deleteRolePlayScenePublishedScene(sceneId)')
     && mainSource.includes('function renderPublishedBrowserModal')
     && mainSource.includes('function openPublishedRolePlaySceneById'),
@@ -64,7 +64,7 @@ assert.ok(
   'published browser should show owner-only delete with confirmation and refresh after deletion',
 );
 assert.ok(
-  mainSource.includes('let publishedPlay = { active: false, store: null, preparedImport: null, scene: null }')
+  mainSource.includes("let publishedPlay = { active: false, store: null, preparedImport: null, scene: null, source: '' }")
     && mainSource.includes('const playStore = new Store()')
     && mainSource.includes('playStore.set({ project: preparedImport.project })')
     && !publishedOpenSource.includes('applyPreparedProjectImport'),
@@ -79,7 +79,7 @@ assert.ok(
 );
 assert.ok(
   mainSource.includes("params.get('publishedSceneId')")
-    && mainSource.includes("openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' })")
+    && mainSource.includes('startDirectPublishedLaunch(directPublishedSceneId)')
     && mainSource.includes('pendingDirectPublishedSceneId'),
   'direct publishedSceneId URLs should open published scenes and support sign-in recovery',
 );
@@ -97,10 +97,28 @@ assert.ok(
   mainSource.includes('const directPublishedSceneId = getDirectPublishedSceneIdFromLocation();')
     && mainSource.includes('persistenceCleanup = directPublishedSceneId')
     && bootstrapSource.includes('if (directPublishedSceneId) {')
-    && /updatePublishedPlayUi\(\);\r?\n\s+return;/.test(bootstrapSource)
-    && bootstrapSource.indexOf("openPublishedRolePlaySceneById(directPublishedSceneId, { source: 'direct' })")
+    && bootstrapSource.includes('startDirectPublishedLaunch(directPublishedSceneId);')
+    && bootstrapSource.indexOf('startDirectPublishedLaunch(directPublishedSceneId);')
       < bootstrapSource.indexOf("const recovery = readPlaySessionRecovery();"),
   'direct published play links should bypass the editor-first startup path',
+);
+assert.ok(
+  indexSource.includes('id="direct-launch"')
+    && indexSource.includes('direct-launch-bootstrap.js')
+    && cssSource.includes('.direct-launch-pending .layout')
+    && mainSource.includes("setDirectLaunchState('checking-session'")
+    && mainSource.includes('UUID_V4ISH_PATTERN.test(normalizedSceneId)')
+    && mainSource.includes("setDirectLaunchState('loading-metadata')")
+    && mainSource.includes("setDirectLaunchState('downloading'")
+    && mainSource.includes("setDirectLaunchState('preparing'")
+    && mainSource.includes('isCurrentDirectLaunchAttempt')
+    && mainSource.includes('if (!isDirect && openingPublishedSceneIds.has(publishedSceneId)) return;')
+    && mainSource.includes('if (!isDirect) openingPublishedSceneIds.add(publishedSceneId);')
+    && mainSource.includes('directLaunch.active && !popupWasBlocked')
+    && mainSource.includes("['authentication-required', 'authentication-pending', 'error'].includes(directLaunch.state)")
+    && mainSource.includes("publishedPlay.source === 'direct'")
+    && mainSource.includes('returnToRolePlaySceneEditor()'),
+  'direct published links should block the editor, expose explicit loading states, ignore stale attempts, and reload on exit',
 );
 assert.ok(
   mainSource.includes('let publishedScenesRequestId = 0')

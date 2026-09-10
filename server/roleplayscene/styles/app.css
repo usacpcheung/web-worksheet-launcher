@@ -39,6 +39,73 @@ body.roleplayscene-editor-mode {
   height: 100vh;
   overflow: hidden;
 }
+.direct-launch {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: var(--space-lg);
+  background: var(--color-bg);
+}
+.direct-launch[hidden] { display: none; }
+.direct-launch-pending .topbar,
+.direct-launch-pending .app-messages,
+.direct-launch-pending .layout,
+.direct-launch-pending .confirm-overlay,
+.direct-launch-pending .server-modal-overlay { visibility: hidden; }
+.direct-launch-pending .direct-launch { display: grid; }
+.direct-launch__panel {
+  width: min(30rem, 100%);
+  display: grid;
+  justify-items: center;
+  gap: var(--space-md);
+  padding: 2rem;
+  text-align: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-soft);
+}
+.direct-launch__panel h1 { margin: 0; font-size: var(--font-size-xl); }
+.direct-launch__panel h1:focus { outline: none; }
+.direct-launch__panel p { margin: 0; color: var(--color-text-muted); line-height: 1.5; }
+.direct-launch__spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid var(--color-border-subtle);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  opacity: 0;
+  animation: direct-launch-spin 0.8s linear 0.18s infinite;
+}
+.direct-launch--error .direct-launch__spinner,
+.direct-launch--authentication-required .direct-launch__spinner { display: none; }
+.direct-launch__progress {
+  width: 100%;
+  height: 0.45rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-border-subtle);
+}
+.direct-launch__progress-bar {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition: width 0.16s ease;
+}
+.direct-launch__actions { display: flex; justify-content: center; gap: var(--space-sm); flex-wrap: wrap; }
+.direct-launch__actions[hidden] { display: none; }
+@keyframes direct-launch-spin {
+  from { opacity: 1; transform: rotate(0deg); }
+  to { opacity: 1; transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .direct-launch__spinner { animation: none; opacity: 1; border-top-color: var(--color-text-muted); }
+  .direct-launch__progress-bar { transition: none; }
+}
 button, select, input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
 button {
   border: 1px solid var(--color-border);
@@ -2425,6 +2492,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   }
 }
 @media (max-width: 720px) {
+  .direct-launch { padding: var(--space-md); }
+  .direct-launch__panel { padding: var(--space-lg); }
+  .direct-launch__actions { width: 100%; }
+  .direct-launch__actions button { flex: 1 1 10rem; }
   .player-cue-dialog--discussion-with-cue,
   .player-cue-dialog--discussion-only {
     width: min(100%, 34rem);

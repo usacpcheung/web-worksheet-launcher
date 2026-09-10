@@ -52,6 +52,18 @@ function toStructuredError({ code, message, status = null, requiresSignIn = fals
   };
 }
 
+function toTransportError(error, { signal = null, duringRead = false } = {}) {
+  const aborted = signal?.aborted || error?.name === 'AbortError';
+  return toStructuredError({
+    code: aborted ? 'ABORTED' : 'NETWORK_ERROR',
+    message: aborted
+      ? 'Server API request was cancelled.'
+      : duringRead
+        ? `Connection was interrupted while reading server data. ${error?.message || String(error)}`
+        : `Unable to reach server API. ${error?.message || String(error)}`,
+  });
+}
+
 async function parseJsonResponse(response) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   if (!contentType.includes('application/json')) {
@@ -75,7 +87,8 @@ async function parseJsonResponse(response) {
   let parsed;
   try {
     parsed = await response.json();
-  } catch {
+  } catch (error) {
+    if (error?.name !== 'SyntaxError') throw error;
     return toStructuredError({
       code: 'INVALID_JSON_RESPONSE',
       message: 'Server returned malformed JSON.',
@@ -169,7 +182,7 @@ function createServerApiClient() {
   }
 
   async function requestJson(path, request = {}) {
-    const { method = 'GET', query = null, body = null, headers = {} } = request;
+    const { method = 'GET', query = null, body = null, headers = {}, signal = null } = request;
     let response;
     try {
       response = await fetch(buildUrl(path, query), {
@@ -179,36 +192,41 @@ function createServerApiClient() {
           ...(body ? { 'content-type': 'application/json' } : {}),
           ...headers,
         },
+        ...(signal ? { signal } : {}),
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
     } catch (error) {
-      return toStructuredError({
-        code: 'NETWORK_ERROR',
-        message: `Unable to reach server API. ${error?.message || String(error)}`,
-      });
+      return toTransportError(error, { signal });
     }
-    return parseJsonResponse(response);
+    try {
+      return await parseJsonResponse(response);
+    } catch (error) {
+      return toTransportError(error, { signal, duringRead: true });
+    }
   }
 
   async function requestZip(path, request = {}) {
-    const { method = 'GET', query = null, body = null, headers = {}, onProgress = null } = request;
+    const { method = 'GET', query = null, body = null, headers = {}, onProgress = null, signal = null } = request;
     let response;
     try {
       response = await fetch(buildUrl(path, query), {
         method,
         credentials: 'include',
         headers,
+        ...(signal ? { signal } : {}),
         ...(body ? { body } : {}),
       });
     } catch (error) {
-      return toStructuredError({
-        code: 'NETWORK_ERROR',
-        message: `Unable to reach server API. ${error?.message || String(error)}`,
-      });
+      return toTransportError(error, { signal });
     }
 
     if (!response.ok) {
-      const parsedError = await parseErrorBody(response);
+      let parsedError;
+      try {
+        parsedError = await parseErrorBody(response);
+      } catch (error) {
+        return toTransportError(error, { signal, duringRead: true });
+      }
       if (authLikeStatus(response.status) || response.headers.get('content-type')?.includes('text/html')) {
         return toStructuredError({
           code: 'AUTH_REQUIRED',
@@ -240,32 +258,36 @@ function createServerApiClient() {
       });
     }
 
-    if (typeof onProgress !== 'function' || !response.body?.getReader) {
-      const bytes = new Uint8Array(await response.arrayBuffer());
+    try {
+      if (typeof onProgress !== 'function' || !response.body?.getReader) {
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        return { ok: true, data: bytes, status: response.status };
+      }
+
+      const total = Number(response.headers.get('content-length') || 0);
+      const lengthComputable = Number.isFinite(total) && total > 0;
+      const reader = response.body.getReader();
+      const chunks = [];
+      let loaded = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value?.byteLength) continue;
+        chunks.push(value);
+        loaded += value.byteLength;
+        onProgress({ loaded, total: lengthComputable ? total : 0, lengthComputable });
+      }
+
+      const bytes = new Uint8Array(loaded);
+      let offset = 0;
+      chunks.forEach((chunk) => {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      });
       return { ok: true, data: bytes, status: response.status };
+    } catch (error) {
+      return toTransportError(error, { signal, duringRead: true });
     }
-
-    const total = Number(response.headers.get('content-length') || 0);
-    const lengthComputable = Number.isFinite(total) && total > 0;
-    const reader = response.body.getReader();
-    const chunks = [];
-    let loaded = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value?.byteLength) continue;
-      chunks.push(value);
-      loaded += value.byteLength;
-      onProgress({ loaded, total: lengthComputable ? total : 0, lengthComputable });
-    }
-
-    const bytes = new Uint8Array(loaded);
-    let offset = 0;
-    chunks.forEach((chunk) => {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    });
-    return { ok: true, data: bytes, status: response.status };
   }
 
   async function requestBinary(path, expectedMime, request = {}) {
@@ -527,11 +549,11 @@ function createServerApiClient() {
         },
       });
     },
-    fetchRolePlayScenePublishedScene(publishedSceneId) {
-      return requestJson(`/roleplayscene/published/${publishedSceneId}`);
+    fetchRolePlayScenePublishedScene(publishedSceneId, options = {}) {
+      return requestJson(`/roleplayscene/published/${publishedSceneId}`, options);
     },
-    fetchRolePlayScenePublishedSceneArtifact(publishedSceneId) {
-      return requestZip(`/roleplayscene/published/${publishedSceneId}/artifact`);
+    fetchRolePlayScenePublishedSceneArtifact(publishedSceneId, options = {}) {
+      return requestZip(`/roleplayscene/published/${publishedSceneId}/artifact`, options);
     },
     deleteRolePlayScenePublishedScene(publishedSceneId) {
       return requestJson(`/roleplayscene/published/${publishedSceneId}`, { method: 'DELETE' });
