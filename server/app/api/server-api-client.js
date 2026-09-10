@@ -191,7 +191,7 @@ function createServerApiClient() {
   }
 
   async function requestZip(path, request = {}) {
-    const { method = 'GET', query = null, body = null, headers = {} } = request;
+    const { method = 'GET', query = null, body = null, headers = {}, onProgress = null } = request;
     let response;
     try {
       response = await fetch(buildUrl(path, query), {
@@ -240,7 +240,31 @@ function createServerApiClient() {
       });
     }
 
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (typeof onProgress !== 'function' || !response.body?.getReader) {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      return { ok: true, data: bytes, status: response.status };
+    }
+
+    const total = Number(response.headers.get('content-length') || 0);
+    const lengthComputable = Number.isFinite(total) && total > 0;
+    const reader = response.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      chunks.push(value);
+      loaded += value.byteLength;
+      onProgress({ loaded, total: lengthComputable ? total : 0, lengthComputable });
+    }
+
+    const bytes = new Uint8Array(loaded);
+    let offset = 0;
+    chunks.forEach((chunk) => {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    });
     return { ok: true, data: bytes, status: response.status };
   }
 
@@ -473,8 +497,10 @@ function createServerApiClient() {
         signal: options.signal,
       });
     },
-    fetchRolePlaySceneDraftArtifact(uploadedDraftId) {
-      return requestZip(`/roleplayscene/drafts/${uploadedDraftId}/artifact`);
+    fetchRolePlaySceneDraftArtifact(uploadedDraftId, options = {}) {
+      return requestZip(`/roleplayscene/drafts/${uploadedDraftId}/artifact`, {
+        onProgress: options.onProgress,
+      });
     },
     deleteRolePlaySceneDraft(uploadedDraftId) {
       return requestJson(`/roleplayscene/drafts/${uploadedDraftId}`, { method: 'DELETE' });
