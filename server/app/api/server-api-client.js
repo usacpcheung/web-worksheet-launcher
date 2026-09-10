@@ -26,6 +26,10 @@ function authLikeStatus(status) {
   return status === 401 || status === 403;
 }
 
+function canceledBridgeRequest() {
+  return toStructuredError({ code: 'ABORTED', message: 'Bridge request was canceled.' });
+}
+
 function normalizePublishedPackagesQuery(query = {}) {
   const source = query && typeof query === 'object' ? query : {};
   const normalizedLimit = Number(source.limit);
@@ -597,111 +601,172 @@ function createServerApiClient() {
     deletePublishedPackage(publishedPackageId) {
       return requestJson(`/published/${publishedPackageId}`, { method: 'DELETE' });
     },
-    async rewriteText(text) {
-      let response;
+    // Cancellation stops local waiting; admitted backend work may still complete.
+    async transcribeAudio(audioBlob, { signal } = {}) {
+      if (signal?.aborted) return canceledBridgeRequest();
       try {
-        response = await fetch(`${BRIDGE_API_BASE}/rewrite`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            text: String(text),
-            stream: false,
-          }),
+        const form = new FormData();
+        form.append('audio', audioBlob);
+        const response = await fetch(`${BRIDGE_API_BASE}/transcriptions`, {
+          method: 'POST', credentials: 'include', body: form,
+          ...(signal ? { signal } : {}),
         });
+        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+        const text = await response.text();
+        if (signal?.aborted) return canceledBridgeRequest();
+        if (!contentType.includes('application/json')) {
+          const auth = authLikeStatus(response.status) || (contentType.includes('text/html')
+            && /sign[\s-]?in|log[\s-]?in|auth|unauthori[sz]ed/i.test(text));
+          return toStructuredError({
+            code: auth ? 'AUTH_REQUIRED' : 'UNEXPECTED_NON_JSON_RESPONSE',
+            message: auth ? createAuthMessage() : 'Server returned an unexpected non-JSON response.',
+            status: response.status, requiresSignIn: auth,
+          });
+        }
+        let body;
+        try { body = JSON.parse(text); } catch {
+          return toStructuredError({ code: 'INVALID_JSON_RESPONSE',
+            message: 'Server returned malformed JSON.', status: response.status });
+        }
+        if (!response.ok || body?.ok !== true) {
+          return toStructuredError({
+            code: body?.error?.code || body?.code || (authLikeStatus(response.status) ? 'AUTH_REQUIRED' : 'API_ERROR'),
+            message: body?.error?.message || body?.message || (authLikeStatus(response.status) ? createAuthMessage() : 'API request failed.'),
+            status: response.status, requiresSignIn: authLikeStatus(response.status),
+          });
+        }
+        if (typeof body.result !== 'string' || !body.result.trim()) {
+          return toStructuredError({ code: 'BRIDGE_EMPTY_RESPONSE',
+            message: 'Bridge returned an empty transcription response.', status: response.status });
+        }
+        return { ok: true, data: { text: body.result,
+          durationSeconds: body.durationSeconds ?? null, requestId: body.requestId ?? null,
+          timings: body.timings ?? null }, status: response.status };
       } catch (error) {
-        return toStructuredError({
-          code: 'NETWORK_ERROR',
-          message: `Unable to reach bridge API. ${error?.message || String(error)}`,
-        });
+        if (signal?.aborted || error?.name === 'AbortError') return canceledBridgeRequest();
+        // Never include response bodies, audio, or thrown exception text in diagnostics.
+        return toStructuredError({ code: 'NETWORK_ERROR', message: 'Unable to reach bridge API.' });
       }
-
-      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-      const authBodyPreviewLimit = 1200;
-      if (contentType.includes('text/html')) {
-        const bodyText = await response.text();
-        const loweredBody = bodyText.toLowerCase();
-        const authHintedHtml = /sign[\s-]?in|log[\s-]?in|auth|unauthori[sz]ed/.test(loweredBody);
-        const shouldTreatAsAuth = authLikeStatus(response.status) || authHintedHtml;
-        if (shouldTreatAsAuth) {
-          return toStructuredError({
-            code: 'AUTH_REQUIRED',
-            message: createAuthMessage(),
-            status: response.status,
-            requiresSignIn: true,
-            details: {
-              contentType,
-              bodyPreview: bodyText.slice(0, authBodyPreviewLimit),
-              bodyLength: bodyText.length,
-              bodyTruncated: bodyText.length > authBodyPreviewLimit,
-            },
-          });
-        }
-        return toStructuredError({
-          code: 'UNEXPECTED_NON_JSON_RESPONSE',
-          message: 'Server returned an unexpected non-JSON response.',
-          status: response.status,
-          details: {
-            contentType,
-            bodyPreview: bodyText.slice(0, authBodyPreviewLimit),
-            bodyLength: bodyText.length,
-            bodyTruncated: bodyText.length > authBodyPreviewLimit,
-          },
-        });
-      }
-      if (!contentType.includes('application/json')) {
-        const bodyText = await response.text();
-        if (authLikeStatus(response.status)) {
-          return toStructuredError({
-            code: 'AUTH_REQUIRED',
-            message: createAuthMessage(),
-            status: response.status,
-            requiresSignIn: true,
-            details: {
-              contentType,
-              bodyPreview: bodyText.slice(0, authBodyPreviewLimit),
-              bodyLength: bodyText.length,
-              bodyTruncated: bodyText.length > authBodyPreviewLimit,
-            },
-          });
-        }
-        return toStructuredError({
-          code: 'UNEXPECTED_NON_JSON_RESPONSE',
-          message: 'Server returned an unexpected non-JSON response.',
-          status: response.status,
-          details: { contentType, bodyPreview: bodyText.slice(0, 120) },
-        });
-      }
-      let body;
+    },
+    async rewriteText(text, { signal } = {}) {
+      // Cancellation is opt-in; existing callers retain their legacy error contract.
+      if (signal?.aborted) return canceledBridgeRequest();
       try {
-        body = await response.json();
-      } catch {
-        return toStructuredError({
-          code: 'INVALID_JSON_RESPONSE',
-          message: 'Server returned malformed JSON.',
-          status: response.status,
-        });
+        let response;
+        try {
+          response = await fetch(`${BRIDGE_API_BASE}/rewrite`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              text: String(text),
+              stream: false,
+            }),
+            ...(signal ? { signal } : {}),
+          });
+        } catch (error) {
+          if (signal && (signal.aborted || error?.name === 'AbortError')) return canceledBridgeRequest();
+          return toStructuredError({
+            code: 'NETWORK_ERROR',
+            message: `Unable to reach bridge API. ${error?.message || String(error)}`,
+          });
+        }
+
+        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+        const authBodyPreviewLimit = 1200;
+        if (contentType.includes('text/html')) {
+          const bodyText = await response.text();
+          if (signal?.aborted) return canceledBridgeRequest();
+          const loweredBody = bodyText.toLowerCase();
+          const authHintedHtml = /sign[\s-]?in|log[\s-]?in|auth|unauthori[sz]ed/.test(loweredBody);
+          const shouldTreatAsAuth = authLikeStatus(response.status) || authHintedHtml;
+          if (shouldTreatAsAuth) {
+            return toStructuredError({
+              code: 'AUTH_REQUIRED',
+              message: createAuthMessage(),
+              status: response.status,
+              requiresSignIn: true,
+              details: {
+                contentType,
+                bodyPreview: bodyText.slice(0, authBodyPreviewLimit),
+                bodyLength: bodyText.length,
+                bodyTruncated: bodyText.length > authBodyPreviewLimit,
+              },
+            });
+          }
+          return toStructuredError({
+            code: 'UNEXPECTED_NON_JSON_RESPONSE',
+            message: 'Server returned an unexpected non-JSON response.',
+            status: response.status,
+            details: {
+              contentType,
+              bodyPreview: bodyText.slice(0, authBodyPreviewLimit),
+              bodyLength: bodyText.length,
+              bodyTruncated: bodyText.length > authBodyPreviewLimit,
+            },
+          });
+        }
+        if (!contentType.includes('application/json')) {
+          const bodyText = await response.text();
+          if (signal?.aborted) return canceledBridgeRequest();
+          if (authLikeStatus(response.status)) {
+            return toStructuredError({
+              code: 'AUTH_REQUIRED',
+              message: createAuthMessage(),
+              status: response.status,
+              requiresSignIn: true,
+              details: {
+                contentType,
+                bodyPreview: bodyText.slice(0, authBodyPreviewLimit),
+                bodyLength: bodyText.length,
+                bodyTruncated: bodyText.length > authBodyPreviewLimit,
+              },
+            });
+          }
+          return toStructuredError({
+            code: 'UNEXPECTED_NON_JSON_RESPONSE',
+            message: 'Server returned an unexpected non-JSON response.',
+            status: response.status,
+            details: { contentType, bodyPreview: bodyText.slice(0, 120) },
+          });
+        }
+        let body;
+        try {
+          body = await response.json();
+          if (signal?.aborted) return canceledBridgeRequest();
+        } catch (error) {
+          if (signal && (signal.aborted || error?.name === 'AbortError')) return canceledBridgeRequest();
+          return toStructuredError({
+            code: 'INVALID_JSON_RESPONSE',
+            message: 'Server returned malformed JSON.',
+            status: response.status,
+          });
+        }
+        if (!response.ok || body?.ok !== true) {
+          const errorCode = body?.error?.code || (authLikeStatus(response.status) ? 'AUTH_REQUIRED' : 'API_ERROR');
+          return toStructuredError({
+            code: errorCode,
+            message: body?.error?.message || (authLikeStatus(response.status) ? createAuthMessage() : 'API request failed.'),
+            status: response.status,
+            requiresSignIn: authLikeStatus(response.status),
+            details: body?.error?.details || null,
+          });
+        }
+        // Bridge returns { ok: true, result: "..." } — not data.text
+        const rewrittenText = typeof body.result === 'string' ? body.result.trim() : '';
+        if (!rewrittenText) {
+          return toStructuredError({
+            code: 'BRIDGE_EMPTY_RESPONSE',
+            message: 'Bridge returned an empty rewrite response.',
+            status: response.status,
+          });
+        }
+        return { ok: true, data: { text: rewrittenText }, status: response.status };
+      } catch (error) {
+        if (!signal) throw error;
+        if (signal && (signal.aborted || error?.name === 'AbortError')) return canceledBridgeRequest();
+        return toStructuredError({ code: 'NETWORK_ERROR', message: 'Unable to reach bridge API.' });
       }
-      if (!response.ok || body?.ok !== true) {
-        const errorCode = body?.error?.code || (authLikeStatus(response.status) ? 'AUTH_REQUIRED' : 'API_ERROR');
-        return toStructuredError({
-          code: errorCode,
-          message: body?.error?.message || (authLikeStatus(response.status) ? createAuthMessage() : 'API request failed.'),
-          status: response.status,
-          requiresSignIn: authLikeStatus(response.status),
-          details: body?.error?.details || null,
-        });
-      }
-      // Bridge returns { ok: true, result: "..." } — not data.text
-      const rewrittenText = typeof body.result === 'string' ? body.result.trim() : '';
-      if (!rewrittenText) {
-        return toStructuredError({
-          code: 'BRIDGE_EMPTY_RESPONSE',
-          message: 'Bridge returned an empty rewrite response.',
-          status: response.status,
-        });
-      }
-      return { ok: true, data: { text: rewrittenText }, status: response.status };
     },
     generateAudioFromText(text, options = {}) {
       const payload = {
