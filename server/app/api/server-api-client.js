@@ -649,6 +649,7 @@ function createServerApiClient() {
       }
     },
     async rewriteText(text, { signal } = {}) {
+      // Cancellation is opt-in; existing callers retain their legacy error contract.
       if (signal?.aborted) return canceledBridgeRequest();
       try {
         let response;
@@ -664,7 +665,7 @@ function createServerApiClient() {
             ...(signal ? { signal } : {}),
           });
         } catch (error) {
-          if (signal?.aborted || error?.name === 'AbortError') return canceledBridgeRequest();
+          if (signal && (signal.aborted || error?.name === 'AbortError')) return canceledBridgeRequest();
           return toStructuredError({
             code: 'NETWORK_ERROR',
             message: `Unable to reach bridge API. ${error?.message || String(error)}`,
@@ -734,7 +735,7 @@ function createServerApiClient() {
           body = await response.json();
           if (signal?.aborted) return canceledBridgeRequest();
         } catch (error) {
-          if (signal?.aborted || error?.name === 'AbortError') return canceledBridgeRequest();
+          if (signal && (signal.aborted || error?.name === 'AbortError')) return canceledBridgeRequest();
           return toStructuredError({
             code: 'INVALID_JSON_RESPONSE',
             message: 'Server returned malformed JSON.',
@@ -762,7 +763,8 @@ function createServerApiClient() {
         }
         return { ok: true, data: { text: rewrittenText }, status: response.status };
       } catch (error) {
-        if (signal?.aborted || error?.name === 'AbortError') return canceledBridgeRequest();
+        if (!signal) throw error;
+        if (signal && (signal.aborted || error?.name === 'AbortError')) return canceledBridgeRequest();
         return toStructuredError({ code: 'NETWORK_ERROR', message: 'Unable to reach bridge API.' });
       }
     },

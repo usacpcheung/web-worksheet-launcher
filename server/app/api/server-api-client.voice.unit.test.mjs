@@ -8,6 +8,26 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
 });
 function mockFetch(t, fn) { t.mock.method(globalThis, 'fetch', fn); }
 
+for (const name of ['TypeError', 'AbortError']) {
+  test(`rewrite without signal preserves legacy text-read rejection (${name})`, async (t) => {
+    const error = new Error('synthetic read failure'); error.name = name;
+    mockFetch(t, async () => ({ headers: new Headers({ 'content-type': 'text/html' }),
+      text: async () => { throw error; } }));
+    await assert.rejects(createServerApiClient().rewriteText('fixture'), value => value === error);
+  });
+  test(`rewrite without signal preserves legacy JSON-read error (${name})`, async (t) => {
+    const error = new Error('synthetic read failure'); error.name = name;
+    mockFetch(t, async () => ({ status: 200, headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => { throw error; } }));
+    assert.equal((await createServerApiClient().rewriteText('fixture')).error.code, 'INVALID_JSON_RESPONSE');
+  });
+}
+
+test('rewrite without signal preserves legacy fetch AbortError classification', async (t) => {
+  mockFetch(t, async () => { throw new DOMException('fixture', 'AbortError'); });
+  assert.equal((await createServerApiClient().rewriteText('fixture')).error.code, 'NETWORK_ERROR');
+});
+
 test('transcription sends only multipart audio to authenticated same-origin endpoint', async (t) => {
   const controller = new AbortController();
   mockFetch(t, async (url, init) => {
