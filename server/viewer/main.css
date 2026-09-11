@@ -2243,6 +2243,10 @@ input[type='text']::placeholder {
   word-break: break-word;
 }
 .viewer-voice { margin-top: 8px; }
+.viewer-package-load-button { width: 24ch; max-width: 100%; font-variant-numeric: tabular-nums; }
+.viewer-package-load-status { font-variant-numeric: tabular-nums; }
+.viewer-package-loading { box-sizing: border-box; max-width: 100%; }
+.viewer-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .question-card__text-footer[hidden], .question-card__review-status[hidden] { display: none; }
 .question-card__submitted-text { color: #111827; background: #f8fafc; }
 .question-card__review-status { color: #64748b; }
