@@ -6436,7 +6436,7 @@ test('rewrite row updates happen in place without mount/unmount checks', async (
   assert.equal(source.includes("rewriteRow.append(voiceUi.add, rewriteButton, undoButton);"), true);
   assert.equal(source.includes("rewriteMessages.append(textStatus, rewriteHint, rewriteError);"), true);
   assert.equal(source.includes("textActionsRow.append(textCounter, rewriteRow);"), true);
-  assert.equal(source.includes("card.append(helper, control, mediaFeedback, textFooter, inputError);"), true);
+  assert.equal(source.includes("card.append(helper, control, reviewStatus, mediaFeedback, textFooter, inputError);"), true);
   assert.equal(source.includes('if (rewriteRow.childNodes.length > 0) {'), false);
 });
 

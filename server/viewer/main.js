@@ -6343,10 +6343,6 @@ function renderViewerShell(session) {
       }
       answerControls.set(block.blockId, control);
       if (inputType === 'text') {
-        textControlFeedback.set(block.blockId, {
-          counter: textCounter,
-          status: textStatus,
-        });
         const textFooter = document.createElement('div');
         textFooter.className = 'question-card__text-footer';
         const textActionsRow = document.createElement('div');
@@ -6402,12 +6398,20 @@ function renderViewerShell(session) {
         rewriteMessages.append(textStatus, rewriteHint, rewriteError);
         textActionsRow.append(textCounter, rewriteRow);
         textFooter.append(textActionsRow, rewriteMessages, voiceUi.root);
+        const reviewStatus = document.createElement('p');
+        reviewStatus.className = 'question-card__review-status muted';
+        reviewStatus.textContent = t('viewer.review.notAnswered');
+        reviewStatus.hidden = true;
+        textControlFeedback.set(block.blockId, {
+          counter: textCounter, status: textStatus, footer: textFooter, helper, reviewStatus,
+          editingDescription: control.getAttribute('aria-describedby'),
+        });
 
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
           card.append(checkBanner, checkReveal);
         }
-        card.append(helper, control, mediaFeedback, textFooter, inputError);
+        card.append(helper, control, reviewStatus, mediaFeedback, textFooter, inputError);
       } else {
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
@@ -6489,7 +6493,24 @@ function renderViewerShell(session) {
         }
       }
       voiceControls.get(block.blockId)?.update();
-      if (inputType !== 'multiple_choice' && inputType !== 'boolean') {
+      if (inputType === 'text') {
+        const completed = session.state.status === 'completed';
+        const feedback = textControlFeedback.get(block.blockId);
+        control.closest('.question-card').classList.toggle('question-card--text-review', completed);
+        feedback.footer.hidden = completed;
+        feedback.helper.hidden = completed;
+        feedback.reviewStatus.hidden = !completed || Boolean(stateValue.trim());
+        control.hidden = completed && !stateValue.trim();
+        control.classList.toggle('question-card__submitted-text', completed);
+        control.disabled = false;
+        if (completed) {
+          control.readOnly = true;
+          // Hidden editing hints must not remain the review control's accessible description.
+          control.removeAttribute('aria-describedby');
+        } else if (feedback.editingDescription) {
+          control.setAttribute('aria-describedby', feedback.editingDescription);
+        }
+      } else if (inputType !== 'multiple_choice' && inputType !== 'boolean') {
         control.disabled = session.state.status === 'completed';
       }
       const card = control.closest('.question-card');

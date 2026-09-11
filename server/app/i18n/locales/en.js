@@ -519,6 +519,7 @@ export default {
     }
   },
   "viewer": {
+    "review": { "notAnswered": "Not answered" },
     "voice": {
       "resolveRecovery": "Review or discard the recovered text before starting another voice input or rewriting the whole answer.",
       "signInThenRewrite": "Sign in, then click Rewrite again. Your current answer will be used.",

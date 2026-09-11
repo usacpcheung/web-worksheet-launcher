@@ -519,6 +519,7 @@ export default {
     }
   },
   "viewer": {
+    "review": { "notAnswered": "未作答" },
     "voice": {
       "resolveRecovery": "請先檢查或捨棄復原內容，再開始新的語音輸入或改寫整個答案。",
       "signInThenRewrite": "請登入，然後再次按「改寫」。系統將使用你目前的答案。",
