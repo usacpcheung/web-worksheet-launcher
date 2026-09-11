@@ -1,5 +1,5 @@
 import { supportsAnswerRecording } from './answer-recording.js';
-import { REWRITE_INPUT_LIMIT, unicodeLength } from './answer-voice-workflow.js';
+import { REWRITE_INPUT_LIMIT, unicodeLength, hasRecoveryText, hasPendingRecovery } from './answer-voice-workflow.js';
 
 function button(label, action) {
   const node = document.createElement('button');
@@ -106,25 +106,29 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     root.hidden = completed;
     add.hidden = completed;
     const record = session.state.voiceRecovery[block.blockId];
-    add.disabled = Boolean(op || record?.text) || !supportsAnswerRecording()
+    add.disabled = Boolean(op) || hasPendingRecovery(record) || !supportsAnswerRecording()
       || control.value.length >= (block.responseConfig?.maxLength || 200);
     add.setAttribute('aria-describedby', status.root.id);
     control.readOnly = Boolean(own);
     control.classList.toggle('viewer-voice-readonly', Boolean(own));
     status.update(block.blockId);
-    hint.textContent = own ? t('viewer.voice.locked') : !supportsAnswerRecording() ? t('viewer.voice.errors.RECORDING_UNSUPPORTED')
+    hint.textContent = own ? t('viewer.voice.locked') : hasPendingRecovery(record) ? t('viewer.voice.resolveRecovery')
+      : !supportsAnswerRecording() ? t('viewer.voice.errors.RECORDING_UNSUPPORTED')
       : control.value.length >= (block.responseConfig?.maxLength || 200) ? t('viewer.voice.noRoom')
         : intent ? t('viewer.voice.atCursor') : t('viewer.voice.atEnd');
     recovery.hidden = !record || Boolean(own);
     if (record) {
       message.textContent = t(`viewer.voice.errors.${record.code || 'RECOVERED'}`);
-      editorLabel.hidden = !record.text && record.candidate === undefined;
+      if (record.phase === 'preflight') message.textContent = t(record.code === 'AUTH_REQUIRED'
+        ? (record.mode === 'rewrite' ? 'viewer.voice.signInThenRewrite' : 'viewer.voice.signInThenVoice')
+        : 'viewer.voice.preflightFailed');
+      editorLabel.hidden = !hasRecoveryText(record);
       const value = record.candidate ?? record.text;
       if (document.activeElement !== editor && editor.value !== value) editor.value = value;
       editor.readOnly = Boolean(op);
-      retry.hidden = record.candidate !== undefined || record.code === 'STALE_CONTEXT';
-      retry.textContent = t(record.text ? 'viewer.voice.retryRewrite' : 'viewer.voice.retryRecording');
-      retry.disabled = Boolean(op) || (record.text ? !record.text.trim() || unicodeLength(record.text) > REWRITE_INPUT_LIMIT : false);
+      retry.hidden = record.phase === 'preflight' || record.candidate !== undefined || record.code === 'STALE_CONTEXT';
+      retry.textContent = t(hasRecoveryText(record) ? 'viewer.voice.retryRewrite' : 'viewer.voice.retryRecording');
+      retry.disabled = Boolean(op) || (hasRecoveryText(record) ? !record.text.trim() || unicodeLength(record.text) > REWRITE_INPUT_LIMIT : false);
       insert.hidden = record.candidate === undefined || record.code === 'STALE_CONTEXT';
       insert.disabled = Boolean(op) || !editor.value.trim();
       append.hidden = record.code !== 'STALE_CONTEXT' || !editor.value.trim();

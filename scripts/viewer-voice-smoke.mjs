@@ -12,13 +12,13 @@ const page=await browser.newPage({viewport:{width:1280,height:900}});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
 const shot = async name => { if (screenshots) { await page.screenshot({path: screenshots + '/' + name, fullPage: false, animations: 'disabled'}); } };
-let failRewrite=false; let transcriptions=0;
+let failRewrite=false; let transcriptions=0; let sessionReady=true; let rewrittenSource;
 let finishTranscription;let hold=true;
 await page.route(url => url.pathname.startsWith('/api/'),async route=>{
  const url=route.request().url();
- if(url.endsWith('/session')) return route.fulfill({json:{ok:true,data:{user:{sub:'fixture',name:'Test learner'}}}});
+ if(url.endsWith('/session')) return route.fulfill({json:sessionReady ? {ok:true,data:{user:{sub:'fixture',name:'Test learner'}}} : {ok:false,error:{code:'AUTH_REQUIRED'}}});
  if(url.endsWith('/transcriptions')) {transcriptions++;if(hold)await new Promise(r=>{finishTranscription=r});return route.fulfill({json:{ok:true,result:'synthetic segment'}});}
- if(url.endsWith('/rewrite'))return route.fulfill({json:failRewrite ? {ok:false,error:{code:'UPSTREAM_FAILED'}} : {ok:true,result:'New segment'}});
+ if(url.endsWith('/rewrite')) { rewrittenSource=route.request().postDataJSON().text; return route.fulfill({json:failRewrite ? {ok:false,error:{code:'UPSTREAM_FAILED'}} : {ok:true,result:'New segment'}}); }
  return route.fulfill({json:{ok:true,data:{items:[]}}});
 });
 await page.addInitScript(()=>{
@@ -74,6 +74,16 @@ await page.getByRole('button',{name:'Stop',exact:true}).click();
 await page.waitForFunction(()=>!window.viewerSession.voice.active);
 assert.equal(await page.getByLabel('Recovered text').inputValue(), 'synthetic segment');
 const count=transcriptions;
+assert.equal(await page.getByRole('button',{name:'Rewrite',exact:true}).isDisabled(),true);
+await page.getByLabel('Recovered text').fill('');
+assert.equal(await page.getByLabel('Recovered text').isVisible(),true);
+assert.equal(await page.getByRole('button',{name:'Retry rewrite',exact:true}).isDisabled(),true);
+assert.equal(await page.getByRole('button',{name:'Add by voice',exact:true}).isDisabled(),true);
+await page.evaluate(()=>window.viewerSession.autosave());
+await page.reload();
+await page.getByLabel('Recovered text').waitFor();
+assert.equal(await page.getByLabel('Recovered text').inputValue(),'');
+assert.equal(await page.getByRole('button',{name:'Retry rewrite',exact:true}).isDisabled(),true);
 await page.getByLabel('Recovered text').fill('x'.repeat(2001));
 assert.equal(await page.getByRole('button',{name:'Retry rewrite',exact:true}).isDisabled(),true);
 await page.getByLabel('Recovered text').fill('shortened transcript');
@@ -93,6 +103,24 @@ await page.locator('.question-card > textarea').fill('Edited after voice');
 await page.getByRole('button',{name:'Go to next block',exact:true}).click();
 await page.getByRole('button',{name:'Go to previous block',exact:true}).click();
 assert.equal(await page.locator('.question-card > textarea').inputValue(),'Edited after voice');
+failRewrite=true;
+await page.getByRole('button',{name:'Add by voice',exact:true}).click();
+await page.getByRole('button',{name:'Stop',exact:true}).click();
+await page.waitForFunction(()=>!window.viewerSession.voice.active);
+await page.getByRole('button',{name:'Discard',exact:true}).click();
+assert.equal(await page.getByRole('button',{name:'Rewrite',exact:true}).isEnabled(),true);
+assert.equal(await page.getByRole('button',{name:'Add by voice',exact:true}).isEnabled(),true);
+sessionReady=false;
+await page.evaluate(()=>{window.viewerSession.beginServerSignIn=()=>{};});
+await page.getByRole('button',{name:'Rewrite',exact:true}).click();
+await page.waitForFunction(()=>!window.viewerSession.voice.active);
+assert.equal(await page.getByText('Sign in, then click Rewrite again. Your current answer will be used.',{exact:true}).isVisible(),true);
+assert.equal(await page.getByRole('button',{name:'Try again',exact:true}).isVisible(),false);
+await page.locator('.question-card > textarea').fill('Current answer after signing in');
+sessionReady=true; failRewrite=false;
+await page.getByRole('button',{name:'Rewrite',exact:true}).click();
+await page.waitForFunction(()=>!window.viewerSession.voice.active);
+assert.equal(rewrittenSource,'Current answer after signing in');
 assert.deepEqual(errors, []);
 console.log('PASS cross-question completion, focus, selection insertion, undo, mobile width, recovery editing and reload, rewrite-only retry; no browser errors');
 

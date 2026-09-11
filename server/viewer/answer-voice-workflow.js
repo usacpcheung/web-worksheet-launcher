@@ -3,6 +3,9 @@ import { createAnswerRecording } from './answer-recording.js';
 export const REWRITE_INPUT_LIMIT = 2000;
 export const AUDIO_UPLOAD_LIMIT = 20 * 1024 * 1024;
 export const unicodeLength = (value) => Array.from(String(value ?? '')).length;
+export const hasRecoveryText = record => record?.phase === 'text'
+  || Boolean(record?.text) || record?.candidate !== undefined;
+export const hasPendingRecovery = record => Boolean(record && record.phase !== 'preflight');
 export const isVoiceQuestion = (block) => block?.kind === 'question'
   && (block.responseConfig?.inputType || 'text') === 'text';
 
@@ -17,7 +20,8 @@ export function insertionIndex(text, intent) {
 
 export function insertVoiceSegment(answer, segment, index) {
   const prefix = answer.slice(0, index), suffix = answer.slice(index);
-  const gap = (left, right) => /[A-Za-z0-9]$/.test(left) && /^[A-Za-z0-9]/.test(right) ? ' ' : '';
+  const gap = (left, right) => /[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{N}]\p{M}*[.!?,;:…'"”’)\]]*$/u.test(left)
+    && /^["“‘'(\[]*[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{N}]/u.test(right) ? ' ' : '';
   const inserted = gap(prefix, segment) + segment + gap(segment, suffix);
   return { text: prefix + inserted + suffix, caret: prefix.length + inserted.length };
 }
@@ -28,9 +32,9 @@ export function normalizeVoiceRecovery(records, blocks = []) {
   const result = {};
   for (const block of blocks.filter(isVoiceQuestion)) {
     const item = records?.[block.blockId];
-    if (!item || typeof item.text !== 'string' || !item.text.trim()) continue;
+    if (!item || typeof item.text !== 'string' || !hasRecoveryText(item)) continue;
     result[block.blockId] = {
-      text: item.text, snapshot: typeof item.snapshot === 'string' ? item.snapshot : '',
+      phase: 'text', text: item.text, snapshot: typeof item.snapshot === 'string' ? item.snapshot : '',
       index: insertionIndex(typeof item.snapshot === 'string' ? item.snapshot : '',
         { deliberate: true, snapshot: item.snapshot, index: item.index }),
       mode: item.mode === 'rewrite' ? 'rewrite' : 'voice',
@@ -86,7 +90,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
   };
   const keep = (op, code, candidate) => {
     if (!valid(op)) return;
-    return recover(op.blockId, { mode: op.mode, text: op.text || '', snapshot: op.snapshot,
+    return recover(op.blockId, { mode: op.mode, phase: op.phase, text: op.text || '', snapshot: op.snapshot,
       index: op.index, createdAt: op.createdAt, code, ...(candidate !== undefined ? { candidate } : {}) });
   };
   const applyCandidate = (op, candidate) => {
@@ -105,11 +109,14 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
   async function run(blockId, { mode = 'voice', intent, retry, candidate, append = false, skipSession = false, sourceText, undoSnapshot } = {}) {
     const current = read(blockId);
     if (active || !current.editable || !current.attemptId || !isVoiceQuestion(current.block)) return { ok: false, status: 'busy_or_invalid' };
+    if (!retry && hasPendingRecovery(current.recovery)) return { ok: false, status: 'recovery_pending' };
+    if (hasRecoveryText(retry) && !retry.text.trim() && candidate === undefined) return { ok: false, status: 'empty_source' };
     const op = { id: ++sequence, attemptId: current.attemptId, contextKey: current.contextKey, blockId, mode,
       snapshot: retry?.snapshot ?? current.answer,
       index: insertionIndex(retry?.snapshot ?? current.answer, retry
         ? { deliberate: true, snapshot: retry.snapshot, index: retry.index } : intent),
-      createdAt: new Date().toISOString(), controller: new AbortController(), state: 'checking_session', text: retry?.text || '', undoSnapshot };
+      createdAt: new Date().toISOString(), controller: new AbortController(), state: 'checking_session',
+      phase: hasRecoveryText(retry) ? 'text' : retry?.phase || 'preflight', text: retry?.text || '', undoSnapshot };
     if (append) { op.snapshot = current.answer; op.index = current.answer.length; }
     if (mode === 'rewrite' || retry?.text || candidate !== undefined) pendingAudio = null;
     lastDiagnostic = null;
@@ -122,8 +129,11 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
         if (!session?.ok) throw session?.result?.error || session?.error || { code: 'AUTH_REQUIRED' };
       }
       if (!fresh(op)) { keep(op, 'STALE_CONTEXT'); return { ok: false }; }
-      if (mode === 'rewrite') op.text = retry?.text ?? sourceText ?? current.answer.trim();
-      else if (!retry?.text) {
+      if (mode === 'rewrite') {
+        op.text = hasRecoveryText(retry) ? retry.text : sourceText ?? current.answer.trim();
+        op.phase = 'text';
+      } else if (!hasRecoveryText(retry)) {
+        op.phase = 'capture';
         let blob;
         if (pendingAudio && pendingAudio.attemptId === op.attemptId && pendingAudio.blockId === blockId
           && pendingAudio.snapshot === op.snapshot) {
@@ -153,6 +163,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
         }
         blob = null;
         op.text = result.data.text;
+        op.phase = 'text';
         if (active !== op || !valid(op)) return { ok: false };
         await waitFor(keep(op, null), op.controller.signal);
       }

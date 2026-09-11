@@ -23,6 +23,10 @@ Do not merge or deploy automatically.
   Cloud work already accepted may still finish; no automatic retries are made.
 - Whole-answer Rewrite remains explicit. Undo restores the exact previous answer.
   Manual typing never triggers rewriting.
+- Unresolved recovery blocks new voice input and whole-answer Rewrite for that
+  question. Edit/retry or Discard remain available; typing and navigation stay
+  available. Clearing the recovered text keeps its editor open, including after
+  saving/reloading; Retry stays disabled until usable text is entered.
 
 ## Limits, recovery and privacy
 
@@ -33,14 +37,17 @@ Do not merge or deploy automatically.
   retained in an editable recovery area, never truncated into the answer.
 - Session readiness is checked before requesting microphone permission. Sign-in
   uses the existing flow and requires another explicit click; it never starts
-  recording automatically. Audio retained after an upload authentication failure
+  recording automatically. If the initial session check fails, click the original
+  action again after signing in; whole-answer Rewrite then uses the current answer.
+  No empty rewrite recovery source is queued. Audio retained after an upload authentication failure
   exists only in memory and is released on discard, teardown or a replacement task.
 - A transcribed segment is saved immediately as local attempt recovery before
   rewrite. Editing recovery follows normal autosave. If local storage fails, the
   existing save-error indicator applies; persistence cannot be guaranteed then.
 - Reload restores raw text for review/rewrite, not audio or a rewritten candidate.
   Retry after transcription does not upload/transcribe again. Recovery is excluded
-  from attempt packages, uploads and print. Completion/discard clears recovery.
+  from attempt packages, uploads and print. Successful completion/discard clears
+  recovery; failed completion restores it for further editing or saving.
 - Attempt/snapshot identity, answer snapshot and editability are checked before
   applying results. Changed answers require explicit recovery at the end.
 - Student messages use short error categories and do not expose upstream bodies.

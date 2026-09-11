@@ -520,6 +520,10 @@ export default {
   },
   "viewer": {
     "voice": {
+      "resolveRecovery": "Review or discard the recovered text before starting another voice input or rewriting the whole answer.",
+      "signInThenRewrite": "Sign in, then click Rewrite again. Your current answer will be used.",
+      "signInThenVoice": "Sign in, then click Add by voice again. Recording will not start automatically.",
+      "preflightFailed": "Processing did not start. Check your connection, then click the original action again.",
       "add": "Add by voice",
       "view": "View",
       "stop": "Stop",

@@ -9,7 +9,7 @@ function setup(options = {}) {
   const state = { attempt: 'a', contextKey: {}, editable: true, answers: { q1: 'Earlier', q2: 'Other' },
     recovery: {}, applied: [], states: [], requests: [], records: [], interval: null };
   const flow = createVoiceWorkflow({
-    context: blockId => ({ attemptId: state.attempt, contextKey: state.contextKey, editable: state.editable,
+    context: blockId => ({ attemptId: state.attempt, contextKey: state.contextKey, editable: state.editable, recovery: state.recovery[blockId],
       block: { blockId, kind: 'question', responseConfig: { inputType: 'text', maxLength: options.maxLength || 200 } },
       answer: state.answers[blockId] }),
     apply: (id, text, snapshot, caret) => { state.answers[id] = text; state.applied.push({ id, text, snapshot, caret }); },
@@ -177,7 +177,7 @@ test('local recovery normalization excludes audio, candidate and diagnostics', (
   const record = { text: 'raw fixture', candidate: 'candidate', blob: new Blob(), controller: {},
     snapshot: 'original', index: 2, mode: 'voice', createdAt: 'fixture', details: 'private' };
   const normalized = normalizeVoiceRecovery({ q1: record, q2: record }, [{ kind: 'question', blockId: 'q1' }]);
-  assert.deepEqual(normalized, { q1: { text: 'raw fixture', snapshot: 'original', index: 2, mode: 'voice', createdAt: 'fixture' } });
+  assert.deepEqual(normalized, { q1: { phase: 'text', text: 'raw fixture', snapshot: 'original', index: 2, mode: 'voice', createdAt: 'fixture' } });
 });
 
 test('empty rewrite output keeps the original answer and recoverable source', async () => {
@@ -194,4 +194,48 @@ test('restored invalid insertion index safely appends and does not split Unicode
   h.state.answers.q1 = 'a😀b';
   await h.flow.run('q1', { retry: { snapshot: 'a😀b', text: 'raw', index: 2 }, candidate: '中' });
   assert.equal(h.state.answers.q1, 'a😀中b');
+});
+
+test('unresolved recovery blocks new work until retry or discard, even after clearing text', async () => {
+  const h = setup({ rewrite: async () => ({ ok: false, error: { code: 'UPSTREAM_ERROR' } }) });
+  await h.record();
+  const previous = h.state.recovery.q1;
+  assert.equal((await h.flow.run('q1', { mode: 'rewrite' })).status, 'recovery_pending');
+  assert.equal(h.state.recovery.q1, previous);
+  previous.text = '';
+  assert.equal((await h.flow.run('q1')).status, 'recovery_pending');
+  assert.equal((await h.flow.run('q1', { retry: previous })).status, 'empty_source');
+  assert.equal(h.state.records.length, 1);
+  assert.equal(h.state.requests.length, 2);
+  const normalized = normalizeVoiceRecovery(h.state.recovery, [{kind:'question',blockId:'q1'}]);
+  assert.equal(normalized.q1.phase, 'text');
+  assert.equal(normalized.q1.text, '');
+  h.flow.discard('q1');
+  await h.flow.run('q1', {mode:'rewrite'});
+  assert.equal(h.state.requests.length, 3);
+});
+
+test('preflight failure ends whole rewrite; a new click uses the current answer after sign-in', async () => {
+  let ready = false;
+  const h = setup({ checkSession: async () => ({ok:ready,error:{code:'AUTH_REQUIRED'}}) });
+  await h.flow.run('q1', {mode:'rewrite'});
+  assert.equal(h.state.recovery.q1.phase, 'preflight');
+  assert.equal(h.state.requests.length, 0);
+  ready = true;
+  h.state.answers.q1 = 'Edited while signing in';
+  await h.flow.run('q1', {mode:'rewrite'});
+  assert.equal(h.state.requests[0].text, 'Edited while signing in');
+  assert.equal(h.state.records.length, 0);
+  assert.equal(h.state.recovery.q1, undefined);
+});
+
+test('sentence boundaries preserve punctuation, whitespace and Chinese without joining Latin words', () => {
+  for (const [left,right,expected] of [
+    ['I took a bus.','Then I walked.','I took a bus. Then I walked.'],
+    ['A café.','Élodie arrived.','A café. Élodie arrived.'],
+    ['Done!','Next','Done! Next'],
+    ['Done.\n','Next','Done.\nNext'],
+    ['中文。','補充。','中文。補充。'],
+    ['Hello',' world','Hello world']
+  ]) assert.equal(insertVoiceSegment(left,right,left.length).text,expected);
 });

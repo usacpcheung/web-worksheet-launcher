@@ -1,4 +1,4 @@
-import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength } from './answer-voice-workflow.js';
+import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
@@ -2433,6 +2433,7 @@ class ViewerAttemptSession {
       context: (blockId) => ({
         attemptId: this.state.localAttemptId,
         contextKey: this.state.viewerPayload,
+        recovery: this.state.voiceRecovery[blockId],
         editable: this.state.status !== 'completed' && !this.state.isFinalizing,
         block: this.state.viewerPayload?.blocks?.find(block => block.blockId === blockId),
         answer: String(this.state.answers?.[blockId]?.value ?? ''),
@@ -3098,6 +3099,7 @@ class ViewerAttemptSession {
     }
 
     this.voice.teardown();
+    const recoveryBeforeFinalize = this.state.voiceRecovery;
     this.state.voiceRecovery = {};
     this.state.isFinalizing = true;
     this.state.lastFinalizeError = null;
@@ -3121,6 +3123,7 @@ class ViewerAttemptSession {
       this.state.completedAt = null;
       this.state.submittedAt = null;
       this.state.checkResult = null;
+      this.state.voiceRecovery = recoveryBeforeFinalize;
       this.state.lastFinalizeError = `Finalize failed. Please check your connection and try again. ${error?.message || String(error)}`;
       this.persistResumeMetadata();
       this.notifyStateChange();
@@ -6462,7 +6465,7 @@ function renderViewerShell(session) {
         const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);
         const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
         const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= REWRITE_INPUT_LIMIT;
-        const canRewrite = !isAttemptCompleted && !session.voice.active && canRewriteByLength;
+        const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(session.state.voiceRecovery[block.blockId]) && canRewriteByLength;
 
         if (rewriteButton) {
           rewriteButton.textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');

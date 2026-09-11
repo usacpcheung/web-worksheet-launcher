@@ -6125,7 +6125,7 @@ test('rewrite controls remain always mounted for text questions and enforce disa
   assert.equal(source.includes("rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';"), true);
   assert.equal(source.includes("undoButton.className = 'question-card__undo-btn icon-nav-btn';"), true);
   assert.equal(source.includes('const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= REWRITE_INPUT_LIMIT;'), true);
-  assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !session.voice.active && canRewriteByLength;'), true);
+  assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(session.state.voiceRecovery[block.blockId]) && canRewriteByLength;'), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
   assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;'), true);
   assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintEnterText');"), true);
@@ -6545,4 +6545,25 @@ test('rewrite apply with unchanged resulting text is treated as success (not non
   assert.equal(session.state.answers.q1.value, 'same answer');
   assert.equal(Object.prototype.hasOwnProperty.call(session.state.undoBuffer, 'q1'), false);
   assert.equal(session.state.rewriteMessageByBlock.q1 || null, null);
+});
+
+test('failed finalization restores recovery and subsequent saves retain it', async () => {
+  const mod = await loadViewerModule();
+  let fail = true, saved;
+  const session = new mod.ViewerAttemptSession({attempts:{put:async value=>{
+    if(fail) throw new Error('storage unavailable');
+    saved = structuredClone(value); return saved;
+  }},resumeFlags:{set(){},get(){}}});
+  session.applyAttemptState({localAttemptId:'finalize-recovery',status:'in_progress',answers:{},
+    viewerPayload:{blocks:[{kind:'question',blockId:'q1',responseConfig:{inputType:'text',maxLength:200}}]}});
+  const recovery = {q1:{phase:'text',text:'Keep my transcript',snapshot:'',index:0,mode:'voice'}};
+  session.state.voiceRecovery = recovery;
+  await session.completeLocalAttempt();
+  assert.equal(session.state.status,'in_progress');
+  assert.equal(session.state.voiceRecovery,recovery);
+  fail = false;
+  await session.autosave();
+  assert.equal(saved.voiceRecovery.q1.text,'Keep my transcript');
+  await session.completeLocalAttempt();
+  assert.deepEqual(saved.voiceRecovery,{});
 });
