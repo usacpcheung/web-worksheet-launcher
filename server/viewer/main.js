@@ -6398,12 +6398,18 @@ function renderViewerShell(session) {
         rewriteMessages.append(textStatus, rewriteHint, rewriteError);
         textActionsRow.append(textCounter, rewriteRow);
         textFooter.append(textActionsRow, rewriteMessages, voiceUi.root);
-        const reviewStatus = document.createElement('p');
-        reviewStatus.className = 'question-card__review-status muted';
-        reviewStatus.textContent = t('viewer.review.notAnswered');
+        // Presentation-only control: no answer event handlers or storage binding.
+        // Clone the input shape so blank and answered reviews have identical sizing.
+        const reviewStatus = control.cloneNode(false);
+        reviewStatus.id = `${control.id}-review`;
+        reviewStatus.className = 'question-card__review-status question-card__submitted-text';
+        reviewStatus.value = t('viewer.review.notAnswered');
+        reviewStatus.readOnly = true;
+        reviewStatus.disabled = false;
+        reviewStatus.removeAttribute('aria-describedby');
         reviewStatus.hidden = true;
         textControlFeedback.set(block.blockId, {
-          counter: textCounter, status: textStatus, footer: textFooter, helper, reviewStatus,
+          counter: textCounter, status: textStatus, footer: textFooter, helper, reviewStatus, label,
           editingDescription: control.getAttribute('aria-describedby'),
         });
 
@@ -6501,6 +6507,7 @@ function renderViewerShell(session) {
         feedback.helper.hidden = completed;
         feedback.reviewStatus.hidden = !completed || Boolean(stateValue.trim());
         control.hidden = completed && !stateValue.trim();
+        feedback.label.htmlFor = control.hidden ? feedback.reviewStatus.id : control.id;
         control.classList.toggle('question-card__submitted-text', completed);
         control.disabled = false;
         if (completed) {

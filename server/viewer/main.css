@@ -2245,7 +2245,7 @@ input[type='text']::placeholder {
 .viewer-voice { margin-top: 8px; }
 .question-card__text-footer[hidden], .question-card__review-status[hidden] { display: none; }
 .question-card__submitted-text { color: #111827; background: #f8fafc; }
-.question-card__review-status { margin: 8px 0; }
+.question-card__review-status { color: #64748b; }
 .question-card--text-review { align-self: flex-start; }
 .viewer-voice-status, .viewer-voice-recovery-actions {
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px;

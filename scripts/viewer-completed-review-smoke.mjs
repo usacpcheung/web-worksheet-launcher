@@ -36,7 +36,7 @@ await page.evaluate(async()=>{
 errors.length=0;
 await page.goto(base + '/server/viewer/index.html?localAttemptId=voice-smoke');
 
-const field=()=>page.locator('.question-card > textarea');
+const field=()=>page.locator('.question-card > textarea:not(.question-card__review-status)');
 // Live editable -> temporarily locked -> completed transition, with real viewer rendering.
 assert.equal(await page.getByRole('button',{name:'Add by voice',exact:true}).isVisible(),true);
 assert.equal(await page.getByRole('button',{name:'Rewrite',exact:true}).isEnabled(),true);
@@ -96,8 +96,12 @@ for(const locale of ['en','zh-Hant']) {
   // Navigate through the existing accessible next-block control.
   await page.getByRole('button',{name:locale==='en'?'Go to next block':'前往下一個區塊',exact:true}).click();
   await page.locator('.question-card__review-status').waitFor();
-  assert.equal(await page.locator('.question-card__review-status').innerText(),locale==='en'?'Not answered':'未作答');
+  assert.equal(await page.locator('.question-card__review-status').inputValue(),locale==='en'?'Not answered':'未作答');
   assert.equal(await field().isVisible(),false);
+  assert.equal(await page.locator('.question-card__review-status').evaluate(e=>e.readOnly&&!e.disabled),true);
+  assert.equal(await page.evaluate(()=>String(window.viewerSession.state.answers.q2?.value??'')), '');
+  const reviewSize=await page.locator('.question-card__review-status').boundingBox();
+  assert.ok(reviewSize.height>=170);
   assert.equal(await page.locator('.question-card__text-footer').isVisible(),false);
   await page.locator('.question-card__review-status').evaluate(e=>e.scrollIntoView({block:'center'}));
   assert.equal(await page.locator('.question-card__review-status').evaluate(e=>e.getBoundingClientRect().bottom<=document.querySelector('.viewer-bottom-bar').getBoundingClientRect().top),true);
