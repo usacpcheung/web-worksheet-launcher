@@ -1926,3 +1926,12 @@ textarea.control {
     min-width: 0;
   }
 }
+/* Formatting is confined to the content/prompt editor. */
+.editor-text-field-label { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; position: relative; }
+.editor-text-field-label label { margin-right: auto; }
+.editor-text-preview-toggle,.editor-text-help summary { border: 1px solid #cbd5e1; border-radius: 8px; padding: .4rem .65rem; background: #fff; cursor: pointer; }
+.editor-text-help summary { list-style: none; }
+.editor-text-help-popover { position: absolute; right: 0; z-index: 20; width: min(25rem, 85vw); max-width: 100%; padding: .8rem; background: white; border: 1px solid #cbd5e1; border-radius: 8px; white-space: pre-wrap; box-shadow: 0 8px 24px #0002; }
+.editor-text-preview { width: 100%; box-sizing: border-box; overflow: auto; min-height: 10rem; }
+.editor-text-preview[hidden],#editor-block-editor[hidden] { display: none !important; }
+.editor-text-preview-toggle:focus-visible,.editor-text-help summary:focus-visible,.editor-text-preview:focus-visible { outline: 2px solid #4263eb; outline-offset: 2px; }

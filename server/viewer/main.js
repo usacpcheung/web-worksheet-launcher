@@ -1,4 +1,5 @@
 import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.js';
+import { setWorksheetText, renderWorksheetText, WORKSHEET_TEXT_CSS, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown } from '../app/worksheet-text.js';
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { viewerStorage } from './storage/index.js';
@@ -23,6 +24,7 @@ import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } fr
 import { PRINT_REPORT_CSS } from './print-report-styles.js';
 
 const app = document.getElementById('app');
+installWorksheetTextStyles(document);
 const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
 setLocale(resolveInitialLocale(), { persist: false });
 
@@ -721,10 +723,12 @@ function parseUploadedAttemptPackage(zipBytes) {
     throw new Error('Uploaded attempt package is missing required files.');
   }
   const manifest = JSON.parse(decodeUtf8(manifestEntry));
-  if (manifest?.format !== 'worksheet-attempt-package' || manifest?.packageVersion !== 1) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2].includes(manifest?.packageVersion)) {
     throw new Error('Uploaded attempt package format is not supported.');
   }
   const worksheet = JSON.parse(decodeUtf8(worksheetEntry));
+  assertWorksheetTextFormats(worksheet.blocks);
+  if (hasMarkdown(worksheet.blocks) && manifest.packageVersion !== 2) throw new Error('Markdown requires attempt package version 2.');
   const attempt = JSON.parse(decodeUtf8(attemptEntry));
   const assets = [];
   const assetManifest = Array.isArray(manifest?.assets) ? manifest.assets : [];
@@ -769,7 +773,7 @@ function parseLocalAttemptPackage(zipBytes) {
   if (manifest?.format === 'worksheet-package') {
     throw new Error(t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'));
   }
-  if (manifest?.format !== 'worksheet-attempt-package' || manifest?.packageVersion !== 1) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2].includes(manifest?.packageVersion)) {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
   }
 
@@ -783,6 +787,8 @@ function parseLocalAttemptPackage(zipBytes) {
   let attempt;
   try {
     worksheet = JSON.parse(decodeUtf8(worksheetEntry));
+    assertWorksheetTextFormats(worksheet.blocks);
+    if (hasMarkdown(worksheet.blocks) && manifest.packageVersion !== 2) throw new Error('Markdown requires attempt package version 2.');
     attempt = JSON.parse(decodeUtf8(attemptEntry));
   } catch {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
@@ -1915,6 +1921,7 @@ async function buildWorksheetPrintReportModel({
       blockId: block.blockId,
       questionNumber: index + 1,
       promptText: String(block?.prompt?.text || '').trim(),
+      promptFormat: block?.prompt?.format || 'plain_text',
       answerText: formatAnswerValueForPrint(block, learnerValue),
       result: buildPrintQuestionResult(block, checkResult),
       image: questionImage,
@@ -2021,7 +2028,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
         </header>
         <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
           <h3>${escapeHtml(t('viewer.print.questionHeading'))}</h3>
-          <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || t('viewer.print.noPromptProvided'))}</p>
+          <div class="print-question-text worksheet-text">${renderWorksheetText({ text: question.promptText || t('viewer.print.noPromptProvided'), format: question.promptFormat })}</div>
         </section>
         ${imageSectionHtml}
         <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
@@ -2038,7 +2045,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
 <head>
   <meta charset="utf-8">
   <title>${escapeHtml(reportModel.title)}</title>
-  <style>${PRINT_REPORT_CSS}</style>
+  <style>${PRINT_REPORT_CSS}\n${WORKSHEET_TEXT_CSS}</style>
 
 </head>
 <body>
@@ -3559,9 +3566,10 @@ class ViewerAttemptSession {
       },
     };
     const attempt = this.buildAttemptRecordForPackage();
+    assertWorksheetTextFormats(worksheet.blocks);
     const manifest = {
       format: 'worksheet-attempt-package',
-      packageVersion: 1,
+      packageVersion: hasMarkdown(worksheet.blocks) ? 2 : 1,
       schemaVersion: 1,
       generatedAt: nowIso(),
       worksheet: {
@@ -6041,7 +6049,9 @@ function renderViewerShell(session) {
     const nextSignature = JSON.stringify({
       blockId: currentBlockId,
       prompt: currentBlock?.prompt?.text || '',
+      promptFormat: currentBlock?.prompt?.format || 'plain_text',
       content: currentBlock?.content?.text || '',
+      contentFormat: currentBlock?.content?.format || 'plain_text',
       inputType: currentBlockInputType,
       maxLength: currentBlock?.responseConfig?.maxLength || null,
       options: Array.isArray(currentBlock?.responseConfig?.options)
@@ -6070,7 +6080,7 @@ function renderViewerShell(session) {
     if (currentBlock.kind === 'content') {
       const card = document.createElement('article');
       card.className = 'content-card viewer-card-transition';
-      card.textContent = currentBlock.content?.text || '';
+      setWorksheetText(card, currentBlock.content);
       blockList.appendChild(card);
       return;
     }
@@ -6078,11 +6088,13 @@ function renderViewerShell(session) {
     const block = currentBlock;
     const card = document.createElement('article');
     card.className = 'question-card viewer-card-transition';
-    const label = document.createElement('label');
+    const label = document.createElement('div');
+    label.className = 'question-card__prompt-label';
     const inputType = block.responseConfig?.inputType || 'text';
     const controlId = `answer-${block.blockId}`;
     label.id = `${controlId}-label`;
-    label.textContent = block.prompt?.text || t('viewer.stepper.question');
+    label.addEventListener('click', () => document.getElementById(label.htmlFor || controlId)?.focus());
+    setWorksheetText(label, { ...block.prompt, text: block.prompt?.text || t('viewer.stepper.question') });
     const mediaFeedback = document.createElement('p');
     mediaFeedback.className = 'viewer-media-feedback';
     mediaFeedback.setAttribute('role', 'status');
@@ -6382,6 +6394,7 @@ function renderViewerShell(session) {
         control.id = controlId;
         if (control.matches('input, select, textarea')) {
           label.htmlFor = controlId;
+          control.setAttribute('aria-labelledby', label.id);
         } else {
           label.removeAttribute('for');
         }

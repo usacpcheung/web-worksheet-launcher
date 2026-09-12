@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { parseWorksheetPackage, rewriteWorksheetPackageTitle } from '../../editor/worksheet-package.js';
 import { parseStoredZip, decodeUtf8 } from '../../editor/zip-utils.js';
+import { assertWorksheetTextFormats, hasMarkdown } from '../../app/worksheet-text.js';
 
 function normalizeText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -44,11 +45,13 @@ function validateUploadedAttemptPackage(zipBytes) {
     if (!manifest || !worksheet || !attempt) throw new Error('Missing required files.');
     const manifestJson = JSON.parse(decodeUtf8(manifest));
     if (manifestJson?.format !== 'worksheet-attempt-package') throw new Error('Unsupported manifest format.');
-    if (manifestJson?.packageVersion !== 1) throw new Error('Unsupported manifest packageVersion.');
+    if (![1, 2].includes(manifestJson?.packageVersion)) throw new Error('Unsupported manifest packageVersion.');
     if (manifestJson?.schemaVersion !== undefined && manifestJson?.schemaVersion !== 1) {
       throw new Error('Unsupported manifest schemaVersion.');
     }
     const worksheetJson = JSON.parse(decodeUtf8(worksheet));
+    assertWorksheetTextFormats(worksheetJson.blocks);
+    if (hasMarkdown(worksheetJson.blocks) && manifestJson.packageVersion !== 2) throw new Error('Markdown requires attempt package version 2.');
     const attemptJson = JSON.parse(decodeUtf8(attempt));
     if (attemptJson?.schemaVersion !== 1 || attemptJson?.kind !== 'worksheet-attempt') throw new Error('Unsupported attempt schema.');
     if (!['in_progress', 'submitted', 'checked'].includes(attemptJson?.status)) throw new Error('Invalid attempt status.');

@@ -6,6 +6,8 @@ import {
   parseWorksheetPackage,
 } from './worksheet-package.js';
 import { collectAudioTrackAssetIds, normalizeAudioTracks } from './audio-tracks.js';
+import { MARKDOWN_FORMAT, upgradeEditableBlocks, assertWorksheetTextFormats, worksheetTextToPlain, installWorksheetTextStyles } from '../app/worksheet-text.js';
+import { createTextPreview } from './text-preview.js';
 import { getWorksheetT2ALanguagePresetById } from './t2a-language-presets.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
 import { probeSession } from '../app/auth/session-readiness.js';
@@ -13,6 +15,7 @@ import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-p
 import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } from '../app/i18n/index.js';
 
 const app = document.getElementById('app');
+installWorksheetTextStyles(document);
 setLocale(resolveInitialLocale(), { persist: false });
 
 const AUTOSAVE_MS = 1000;
@@ -815,7 +818,7 @@ function createEmptyQuestionBlock(position) {
     position,
     prompt: {
       text: '',
-      format: 'plain_text',
+      format: MARKDOWN_FORMAT,
     },
     responseConfig: {
       inputType: 'text',
@@ -1056,7 +1059,7 @@ function normalizeBlocks(blocks) {
         position: 0,
         content: {
           text: '',
-          format: 'plain_text',
+          format: MARKDOWN_FORMAT,
         },
       },
     ];
@@ -1551,6 +1554,7 @@ class EditorDraftSession {
     }
 
     if (existing) {
+      assertWorksheetTextFormats(existing.blocks);
       const legacyTargets = collectLegacyAudioTargets(existing.blocks);
       if (legacyTargets.length > 0) {
         const choice = await this.resolveLegacyAudioMigration({ count: legacyTargets.length, required: true, source: 'local' });
@@ -1606,6 +1610,13 @@ class EditorDraftSession {
 
     this.state.draftRevision = 1;
     this.state.lastSavedRevision = existing ? 1 : 0;
+    const conversion = upgradeEditableBlocks(this.state.draft.blocks);
+    if (conversion.changed) {
+      this.state.draft = { ...this.state.draft, blocks: conversion.blocks };
+      this.state.draftRevision += 1;
+      this.scheduleAutosave();
+      if (existing) this.pushNotification({ kind: 'info', category: 'editor', source: 'formatting.converted', text: t('formatting.converted') });
+    }
     this.validateCurrentDraft();
     this.persistRestoreMetadata();
     return this.state.draft;
@@ -2144,7 +2155,7 @@ class EditorDraftSession {
     const block = this.findBlock(blockId);
     if (!block || block.kind !== 'question') return null;
     if (target === 'prompt') {
-      return { block, text: String(block.prompt?.text || ''), audioTracks: normalizeAudioTracks(block.prompt?.audioTracks) };
+      return { block, text: worksheetTextToPlain(block.prompt), audioTracks: normalizeAudioTracks(block.prompt?.audioTracks) };
     }
     const config = normalizeQuestionResponseConfig(block.responseConfig);
     const option = (config.options || []).map((item) => normalizeResponseOption(item)).find((item) => item.id === optionId);
@@ -2847,7 +2858,7 @@ class EditorDraftSession {
             position,
             content: {
               text: '',
-              format: 'plain_text',
+              format: MARKDOWN_FORMAT,
             },
           };
 
@@ -2909,7 +2920,7 @@ class EditorDraftSession {
         blockId: createLocalId('blk'),
         kind: 'content',
         position: 0,
-        content: { text: '', format: 'plain_text' },
+        content: { text: '', format: MARKDOWN_FORMAT },
       });
     }
 
@@ -3305,6 +3316,8 @@ class EditorDraftSession {
       },
     });
 
+      const conversion = upgradeEditableBlocks(draft.blocks);
+      draft.blocks = conversion.blocks;
       this.state.draft = draft;
       this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
       this.state.draftRevision += 1;
@@ -3314,6 +3327,7 @@ class EditorDraftSession {
       this.persistRestoreMetadata();
       const successMessage = editorNotification('import.importedPackageZip');
       this.pushNotification({ kind: 'success', category: 'editor', source: 'import.package_zip', text: successMessage });
+      if (conversion.changed) this.pushNotification({ kind: 'info', category: 'editor', source: 'formatting.converted', text: t('formatting.converted') });
       this.notifyStateChange();
       return { importedRecord, draftRecord: this.state.draft };
     } catch (error) {
@@ -4063,7 +4077,7 @@ class EditorDraftSession {
     }
     const blockId = String(payload.blockId);
     const block = this.findBlock(blockId);
-    const promptText = String(block?.prompt?.text || '').trim();
+    const promptText = worksheetTextToPlain(block?.prompt).trim();
     const inFlightKey = `prompt:${blockId}`;
     if (this._promptT2AInFlightTargets.has(inFlightKey)) {
       const message = editorNotification('audioGeneration.promptAlreadyInProgress');
@@ -4473,6 +4487,7 @@ function renderEditorShell(session) {
   blockEditor.id = 'editor-block-editor';
   blockEditor.rows = 8;
   blockEditor.className = 'control';
+  const textPreview = createTextPreview(blockEditor, t);
 
   const questionInputType = document.createElement('select');
   questionInputType.id = 'editor-question-input-type';
@@ -6173,7 +6188,7 @@ function renderEditorShell(session) {
     if (!selectedBlock || selectedBlock.kind !== 'question' || selectedBlock.blockId !== promptT2AUiRefs.blockId) {
       return;
     }
-    const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');
+    const promptTextState = getT2ATextEligibility(worksheetTextToPlain(selectedBlock?.prompt));
     const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
     const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
     const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
@@ -6193,7 +6208,7 @@ function renderEditorShell(session) {
     promptT2AUiRefs.attachBtn.disabled = isPromptT2AInFlight;
     promptT2AUiRefs.playBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
     promptT2AUiRefs.removeBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
-    const currentTextHash = getAudioSourceTextHash(selectedBlock?.prompt?.text || '');
+    const currentTextHash = getAudioSourceTextHash(worksheetTextToPlain(selectedBlock?.prompt));
     document.querySelectorAll(`[data-prompt-audio-track-block-id="${selectedBlock.blockId}"]`).forEach((trackRow) => {
       const language = trackRow.dataset.promptAudioTrackLanguage;
       const track = getAudioTrack(selectedBlock.prompt?.audioTracks, language);
@@ -6449,7 +6464,7 @@ function renderEditorShell(session) {
       contentLabel.textContent = t('editor.block.contentTextLabel');
       contentLabel.htmlFor = 'editor-block-editor';
       blockEditor.placeholder = t('editor.block.contentTextPlaceholder');
-      rightPanel.append(contentLabel, blockEditor);
+      textPreview.mount(rightPanel, contentLabel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.content);
       return;
     }
 
@@ -6458,7 +6473,7 @@ function renderEditorShell(session) {
     promptLabel.textContent = t('editor.block.promptLabel');
     promptLabel.htmlFor = 'editor-block-editor';
     blockEditor.placeholder = t('editor.block.promptPlaceholder');
-    rightPanel.append(promptLabel, blockEditor);
+    textPreview.mount(rightPanel, promptLabel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.prompt);
 
     const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
     const currentQuestionImageRef = getSingleMediaRef(promptMediaRefs, 'question_image');
@@ -6563,7 +6578,7 @@ function renderEditorShell(session) {
     }
     const questionAudioActions = document.createElement('div');
     questionAudioActions.className = 'media-row__actions';
-    const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');
+    const promptTextState = getT2ATextEligibility(worksheetTextToPlain(selectedBlock?.prompt));
     const promptExceedsT2ALimit = promptTextState.exceedsLimit;
     const promptT2AEligible = promptTextState.eligible;
     const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
@@ -6739,7 +6754,7 @@ function renderEditorShell(session) {
       stale.className = 'asset-status-badge asset-status-badge--warn';
       stale.dataset.audioTrackStale = '1';
       stale.textContent = t('editor.media.audioTracks.textChanged');
-      stale.hidden = !track || track.sourceTextHash === getAudioSourceTextHash(selectedBlock.prompt?.text || '');
+      stale.hidden = !track || track.sourceTextHash === getAudioSourceTextHash(worksheetTextToPlain(selectedBlock.prompt));
       trackMeta.appendChild(stale);
       const actions = document.createElement('div');
       actions.className = 'media-row__actions';

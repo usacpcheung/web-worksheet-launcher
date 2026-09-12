@@ -1,6 +1,11 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  formatting: {
+    preview: 'Preview', edit: 'Edit', help: 'Formatting help', empty: 'Nothing to preview',
+    converted: 'This worksheet now supports formatting. Its original text appearance has been preserved.',
+    examples: '## Heading\n### Subheading (levels 2–6)\n- Bullet point\n1. Numbered point\n> Quote\n**Bold** and *italic*\n\\* displays a literal *\n\nUse ordinary line breaks and blank lines. Lists and quotes have one level. Links, images, code and HTML are displayed as text.',
+  },
   roleplayscene,
   "common": {
     "actions": {

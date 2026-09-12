@@ -1,5 +1,6 @@
 import { createStoredZip, decodeUtf8, parseStoredZip, toUint8Array, crc32 } from './zip-utils.js';
 import { assertValidAudioTracks, normalizeAudioTracks } from './audio-tracks.js';
+import { assertWorksheetTextFormats, hasMarkdown } from '../app/worksheet-text.js';
 
 const PACKAGE_FORMAT = 'worksheet-package';
 const PACKAGE_VERSION = 2;
@@ -144,6 +145,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
     throw new Error('Draft record is required for package export.');
   }
   const draftBlocks = Array.isArray(draft.blocks) ? draft.blocks : [];
+  assertWorksheetTextFormats(draftBlocks);
   if (draftBlocks.some(hasLegacyAudioRefs) && draftBlocks.some(hasAudioTracks)) {
     throw new Error('Cannot export worksheet package: legacy audio attachments cannot be mixed with multilingual audio tracks.');
   }
@@ -159,6 +161,7 @@ function createWorksheetPackageFromDraft(draft, assetRecordsById = new Map()) {
   };
 
   const manifest = buildPackageManifest(draft);
+  if (hasMarkdown(draftBlocks)) { manifest.packageVersion = 3; manifest.schemaVersion = 3; }
   const entries = [
     { path: 'manifest.json', data: JSON.stringify(manifest, null, 2) },
     { path: 'content/worksheet.json', data: JSON.stringify(worksheet, null, 2) },
@@ -224,13 +227,16 @@ function parseWorksheetPackage(arrayBuffer) {
 
   if (
     manifest?.format !== PACKAGE_FORMAT
-    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION].includes(manifest?.packageVersion)
+    || ![LEGACY_PACKAGE_VERSION, PACKAGE_VERSION, 3].includes(manifest?.packageVersion)
   ) {
     throw new Error('Unsupported worksheet package format or packageVersion.');
   }
   if (manifest.packageVersion === PACKAGE_VERSION && manifest.schemaVersion !== CONTENT_SCHEMA_VERSION) {
     throw new Error('Unsupported worksheet package schemaVersion.');
   }
+  if (manifest.packageVersion === 3 && manifest.schemaVersion !== 3) throw new Error('Unsupported worksheet package schemaVersion.');
+  assertWorksheetTextFormats(worksheet.blocks);
+  if (hasMarkdown(worksheet.blocks) && manifest.packageVersion !== 3) throw new Error('Markdown requires worksheet package version 3.');
 
   const assets = normalizeAssetManifestList(manifest.assets);
 
@@ -263,7 +269,7 @@ function parseWorksheetPackage(arrayBuffer) {
     }
   });
 
-  if (manifest.packageVersion === PACKAGE_VERSION) {
+  if (manifest.packageVersion >= PACKAGE_VERSION) {
     const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
     const blocks = Array.isArray(worksheet.blocks) ? worksheet.blocks : [];
     if (blocks.some(hasLegacyAudioRefs) && blocks.some(hasAudioTracks)) {
@@ -289,7 +295,7 @@ function parseWorksheetPackage(arrayBuffer) {
     worksheet: {
       ...worksheet,
       blocks: normalizeWorksheetBlocks(worksheet.blocks, {
-        includeAudioTracks: manifest.packageVersion === PACKAGE_VERSION,
+        includeAudioTracks: manifest.packageVersion >= PACKAGE_VERSION,
       }),
     },
     assets: assets.map((asset) => ({

@@ -1,6 +1,11 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
+  formatting: {
+    preview: '預覽', edit: '編輯', help: '文字格式說明', empty: '沒有內容可預覽',
+    converted: '此工作紙現已支援文字格式，原有文字顯示方式已保留。',
+    examples: '## 標題\n### 小標題（支援第 2 至 6 級）\n- 項目\n1. 編號項目\n> 引用\n**粗體** 和 *斜體*\n\\* 顯示原本的 * 符號\n\n可直接換行或留空行。清單及引用只支援單層。連結、圖片、程式碼及 HTML 會顯示為文字。',
+  },
   roleplayscene,
   "common": {
     "actions": {

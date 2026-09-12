@@ -1386,7 +1386,7 @@ body {
   flex: 1;
 }
 
-.question-card label {
+.question-card label, .question-card__prompt-label {
   font-size: clamp(1.2rem, 1.08rem + 0.65vw, 1.65rem);
   line-height: 1.38;
   font-weight: 700;
@@ -2099,7 +2099,7 @@ input[type='text']::placeholder {
     max-width: calc(100vw - 32px);
   }
 
-  .question-card label {
+  .question-card label, .question-card__prompt-label {
     font-size: 1.2rem;
   }
 

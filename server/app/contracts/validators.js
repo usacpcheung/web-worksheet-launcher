@@ -1,4 +1,5 @@
 import { getNumberCorrectAnswerConfigViolation, normalizeNumberRules } from './number-input-validator.js';
+import { assertTextFormat } from '../worksheet-text.js';
 
 function isObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -152,6 +153,8 @@ function validateBlocks(blocks, path, errors) {
 
   blocks.forEach((block, index) => {
     const blockPath = `${path}[${index}]`;
+    try { assertTextFormat(block?.kind === 'question' ? block.prompt : block?.content); }
+    catch (error) { errors.push(`${blockPath}: ${error.message}`); }
     if (!isObject(block)) {
       errors.push(`${blockPath} must be an object`);
       return;
