@@ -37,9 +37,22 @@ test('history restore reflects paused audio and waits for one explicit activatio
     lifecycle.dispatchEvent(new Event('pageshow'));
     track.resumeAfterCapture();
     assert.equal(audio.paused, false, 'Capture suspension still resumes previously playing music');
+    lifecycle.dispatchEvent(new Event('pagehide'));
+    assert.equal(audio.paused, true, 'Leaving explicitly pauses music before the page freezes');
+    const playsBeforeReturn = audio.plays;
+    lifecycle.dispatchEvent(new Event('pageshow'));
+    track.play('music');
+    assert.equal(audio.plays, playsBeforeReturn, 'Returning and redraws never auto-resume');
+    track.play('music', { userInitiated: true });
+    assert.equal(audio.paused, false, 'One action activates music after returning');
+    track.suspendForCapture();
+    lifecycle.dispatchEvent(new Event('pagehide'));
+    track.resumeAfterCapture();
+    assert.equal(audio.paused, true, 'Capture completion cannot revive music after leaving');
     track.teardown();
     const before = notifications;
     lifecycle.dispatchEvent(new Event('pageshow'));
+    lifecycle.dispatchEvent(new Event('pagehide'));
     audio.dispatchEvent(new Event('pause'));
     assert.equal(notifications, before, 'Teardown removes lifecycle and media subscriptions');
   } finally { track.teardown(); globalThis.Audio = originalAudio; globalThis.window = originalWindow; }

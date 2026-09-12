@@ -30,6 +30,7 @@ try {
       project.scenes[0].backgroundAudio = { objectUrl: 'synthetic-music' };
       const data = { project, audioGate: true }; const listeners = new Set();
       const store = { get: () => data, set: update => { Object.assign(data, update); for (const fn of listeners) fn(); }, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); } };
+      window.redrawPlayer = () => store.set({ audioGate: false });
       window.discussion = new RolePlaySceneDiscussionSession({ apiClient }); window.discussion.bindProject(project);
       window.discussion.setText('one', 'Earlier discussion');
       window.cleanupPlayer = renderPlayer(store, document.querySelector('#left'), document.querySelector('#right'), () => {}, { initialSceneId: 'one', discussionSession: window.discussion, apiClient });
@@ -46,6 +47,14 @@ try {
         store.set({ audioGate: false });
         window.cleanupPlayer = renderPlayer(store, document.querySelector('#left'), document.querySelector('#right'), () => {});
       };
+      window.importSpacedScene = () => {
+        window.cleanupPlayer();
+        project.scenes[1].id = 'scene one 中文';
+        window.discussion.bindProject(project);
+        window.cleanupPlayer = renderPlayer(store, document.querySelector('#left'), document.querySelector('#right'), () => {}, {
+          initialSceneId: 'scene one 中文', discussionSession: window.discussion, apiClient,
+        });
+      };
     }, { locale, bubble });
     if (bubble) {
       await page.getByRole('button', { name: locale === 'en' ? 'Choices' : '選項', exact: true }).click();
@@ -58,6 +67,14 @@ try {
     const add = page.getByRole('button', { name: locale === 'en' ? 'Add by voice' : '用語音加入', exact: true });
     await add.click();
     await page.waitForFunction(() => window.discussion.voice.active?.state === 'recording');
+    assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), true);
+    assert.equal(await page.locator('.theater-utilities-section--music button').getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('.theater-utilities-section--music input').isDisabled(), true);
+    await page.evaluate(() => window.redrawPlayer());
+    assert.equal(await page.evaluate(() => window.discussion.voice.active?.state), 'recording', 'Same-scene redraw must not stop capture');
+    // Exercise the gate-opening music action without closing the discussion (closing intentionally stops capture).
+    await page.locator('.theater-utilities-section--music button').evaluate(button => button.click());
+    assert.equal(await page.evaluate(() => window.discussion.voice.active?.state), 'recording', 'Unmute gate update must not stop capture');
     assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), true);
     assert.equal(await field.evaluate(e => e.readOnly), true);
     assert.equal(await page.locator('.audio-play-all').isDisabled(), true);
@@ -120,6 +137,17 @@ try {
     assert.equal(await field.evaluate(e => e.getBoundingClientRect().right <= innerWidth), true);
     await page.evaluate(() => window.restoreMusicPlayer());
     await page.locator('.theater-utilities-toggle').click();
+    await page.locator('.theater-history-entry[data-scene-id="one"]').click();
+    await page.locator('.theater-utilities-toggle').click();
+    await page.locator('.theater-utilities-section--discussion button').first().click();
+    await add.click();
+    await page.waitForFunction(() => window.discussion.voice.active?.state === 'recording');
+    await page.locator('.theater-history-entry[data-scene-id="two"]').evaluate(button => button.click());
+    await page.waitForFunction(() => window.discussion.voice.active?.state === 'transcribing');
+    assert.equal(await page.evaluate(() => window.discussion.voice.active.blockId), 'one', 'Actual navigation stops capture for its original scene');
+    await page.evaluate(() => window.discussion.voice.cancel());
+    await page.evaluate(() => window.restoreMusicPlayer());
+    await page.locator('.theater-utilities-toggle').click();
     const music = page.locator('.theater-utilities-section--music');
     assert.equal(await music.isVisible(), true, 'Restored later scene retains inherited music controls');
     assert.equal(await music.locator('input').isDisabled(), true);
@@ -157,6 +185,13 @@ try {
     assert.equal(await coverMusic.locator('button').getAttribute('aria-pressed'), 'true');
     await coverMusic.locator('button').click();
     assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), false);
+    await page.evaluate(() => window.importSpacedScene());
+    await page.locator('.theater-utilities-toggle').click();
+    await page.locator('.theater-utilities-section--discussion button').first().click();
+    assert.equal(await add.evaluate(button => {
+      const ids = button.getAttribute('aria-describedby').split(/\s+/);
+      return ids.length === 1 && Boolean(document.getElementById(ids[0]));
+    }), true, 'Imported scene IDs cannot break the status description');
     assert.deepEqual(errors, []);
     await page.evaluate(() => window.cleanupPlayer());
     await context.close();

@@ -16,6 +16,7 @@ import {
 } from './dialogue-progression.js';
 
 export { splitSpeechBubbleText };
+let discussionDomId = 0;
 
 function createDialogueBoost(element) {
   const AudioContextCtor = globalThis?.AudioContext || globalThis?.webkitAudioContext;
@@ -491,9 +492,9 @@ export function renderPlayerUI({
     }
   };
 
-  const closeCueCard = ({ returnFocus = false, notify = true } = {}) => {
+  const closeCueCard = ({ returnFocus = false, notify = true, stopCapture = true } = {}) => {
     formLifetime?.abort();
-    discussionSession?.voice?.navigate();
+    if (stopCapture) discussionSession?.voice?.navigate();
     if (discussionSession?.state) discussionSession.state.lastActiveBlockId = null;
     updateFormVoice = () => {};
     cueOverlay.hidden = true;
@@ -555,7 +556,7 @@ export function renderPlayerUI({
     const textarea = document.createElement('textarea');
     textarea.className = 'player-discussion-textarea';
     textarea.rows = hasCue ? 8 : 9;
-    textarea.id = 'discussion-' + scene.id;
+    textarea.id = `roleplay-discussion-${++discussionDomId}`;
     textarea.value = discussionSession?.getText?.(scene.id) || '';
     textarea.placeholder = translate('player.discussion.placeholder');
     label.appendChild(textarea);
@@ -1533,7 +1534,7 @@ export function renderPlayerUI({
     clearTimers();
     nextRunToken();
     cleanupCueCardListeners();
-    closeCueCard({ notify: false });
+    closeCueCard({ notify: false, stopCapture: false });
     stopDialoguePlayback();
   };
 }

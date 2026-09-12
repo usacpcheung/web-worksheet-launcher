@@ -17,6 +17,8 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   rightEl.appendChild(uiPanel);
 
   let currentSceneId = null;
+  let renderedSceneId = null;
+  let renderedHistoryIndex = null;
   let sceneHistory = [];
   let historyIndex = -1;
   let voiceHistoryOrigin = null;
@@ -160,7 +162,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   function createBackgroundAudioControls({ activationSource = null } = {}) {
     return {
       volume: backgroundVolume,
-      get muted() { return backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked(); },
+      get muted() { return backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked() || backgroundTrack.isSuspended(); },
       set muted(_) { /* The controller owns the music preference. */ },
       subscribe: listener => backgroundTrack.subscribe(listener),
       onVolumeChange: (value) => {
@@ -168,13 +170,13 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
         backgroundTrack.setVolume(value);
       },
       onToggleMute: () => {
-        backgroundMuted = !(backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked());
+        backgroundMuted = !(backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked() || backgroundTrack.isSuspended());
         if (!backgroundMuted && activationSource && !store.get().audioGate) {
           ensureAudioGate(store);
         }
         backgroundTrack.setMuted(backgroundMuted, { userInitiated: true });
         if (!backgroundMuted && activationSource) backgroundTrack.play(activationSource, { userInitiated: true });
-        return backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked();
+        return backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked() || backgroundTrack.isSuspended();
       },
     };
   }
@@ -302,6 +304,9 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function renderIntro() {
+    if (renderedSceneId !== null) options.discussionSession?.voice?.navigate();
+    renderedSceneId = null;
+    renderedHistoryIndex = null;
     stopActiveDialogue();
     rightEl.classList?.add?.('pane--stage-only');
     const state = store.get();
@@ -376,7 +381,6 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function renderCurrentScene() {
-    options.discussionSession?.voice?.navigate();
     stopActiveDialogue();
     stage.classList?.remove?.('stage--intro');
     rightEl.classList?.add?.('pane--stage-only');
@@ -396,6 +400,11 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       return;
     }
 
+    if (renderedSceneId !== null && (renderedSceneId !== scene.id || renderedHistoryIndex !== historyIndex)) {
+      options.discussionSession?.voice?.navigate();
+    }
+    renderedSceneId = scene.id;
+    renderedHistoryIndex = historyIndex;
     syncBackgroundAudio(scene);
 
     const dialogueCleanup = renderPlayerUI({

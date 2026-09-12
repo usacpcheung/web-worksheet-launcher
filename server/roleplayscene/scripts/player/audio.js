@@ -33,7 +33,15 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
     notify();
   };
   const lifecycleTarget = typeof window === 'undefined' ? null : window;
+  const leavePage = () => {
+    interrupted = true;
+    resumeWanted = false;
+    playbackGeneration += 1;
+    activeAudio?.pause();
+    notify();
+  };
   lifecycleTarget?.addEventListener?.('pageshow', refreshPlayback);
+  lifecycleTarget?.addEventListener?.('pagehide', leavePage);
 
   const getEffectiveVolume = () => {
     if (muted) {
@@ -208,6 +216,7 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
     stop,
     teardown() {
       lifecycleTarget?.removeEventListener?.('pageshow', refreshPlayback);
+      lifecycleTarget?.removeEventListener?.('pagehide', leavePage);
       suspended = false; resumeWanted = false; stop(); listeners.clear();
     },
     suspendForCapture() {
@@ -216,15 +225,18 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
       suspended = true;
       playbackGeneration += 1;
       activeAudio?.pause();
+      notify();
     },
     resumeAfterCapture() {
       if (!suspended) return;
       suspended = false;
       const resume = resumeWanted; resumeWanted = false;
       if (resume && !muted && desiredSrc) play(desiredSrc);
+      notify();
     },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     isPlaybackBlocked: () => playbackBlocked || interrupted,
+    isSuspended: () => suspended,
     setVolume,
     setMuted,
     getCurrentSource,

@@ -807,7 +807,7 @@ export function renderSpeechBubblePlayerUI({
     clearSpeechTimers();
     nextSpeechRunToken();
     cleanupCueCardListeners();
-    closeCueCard({ notify: false });
+    closeCueCard({ notify: false, stopCapture: false });
     stopDialoguePlayback();
   };
 }
