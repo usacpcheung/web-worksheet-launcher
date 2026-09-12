@@ -104,6 +104,19 @@ try {
     await page.locator('.question-card__prompt-label h3').waitFor();
     await assertVisibleHeading(page.locator('.question-card__prompt-label h3'));
     await assertVisibleHeading(page.locator('.question-card__prompt-label h2'));
+    const typography = await page.evaluate(async () => {
+      const { setWorksheetText } = await import('/server/app/worksheet-text.js');
+      const prompt = document.querySelector('.question-card__prompt-label');
+      const plain = document.createElement('div'); plain.className = 'question-card__prompt-label';
+      setWorksheetText(plain, { text: '原有題目 Plain question', format: 'plain_text' });
+      prompt.parentElement.appendChild(plain);
+      const style = el => { const s = getComputedStyle(el); return [s.fontFamily, s.fontSize, s.fontWeight]; };
+      const result = { markdown: style(prompt), plain: style(plain), bold: style(prompt.querySelector('strong'))[2], heading: style(prompt.querySelector('h2'))[2] };
+      plain.remove(); return result;
+    });
+    assert.deepEqual(typography.plain, typography.markdown, 'Legacy and Markdown prompts share typography');
+    assert.equal(typography.markdown[2], '400');
+    assert.equal(typography.bold, '700'); assert.equal(typography.heading, '700');
     await page.locator('.question-card > textarea:not(.question-card__review-status)').fill('**Literal learner answer**');
     await page.evaluate(() => window.viewerSession.completeLocalAttempt());
     // Session completion notifies state; the prompt stays formatted and the answer stays literal.

@@ -124,7 +124,6 @@ export function setWorksheetText(element, field) {
 }
 export const WORKSHEET_TEXT_CSS = `
 .worksheet-text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
-.question-card__prompt-label.worksheet-text--markdown { font-weight: 400; }
 .worksheet-text p { margin: 0; }
 .worksheet-text h2,.worksheet-text h3,.worksheet-text h4,.worksheet-text h5,.worksheet-text h6 { margin: .5em 0 .25em; line-height: 1.3; text-transform: none; letter-spacing: normal; color: inherit; }
 .worksheet-text h2 { font-size: 1.35em; } .worksheet-text h3 { font-size: 1.2em; }

@@ -1395,6 +1395,14 @@ body {
   overflow-wrap: anywhere;
 }
 
+.question-card__prompt-label {
+  font-weight: 400;
+}
+
+.question-card__prompt-label :is(strong, h2, h3, h4, h5, h6) {
+  font-weight: 700;
+}
+
 .question-card__prompt-audio-btn {
   flex: 0 0 auto;
 }
