@@ -64,7 +64,7 @@ try {
     assert.equal(await page.locator('.editor-prompt-counter').isVisible(), false);
     await page.locator('#editor-block-kind').selectOption('question');
     assert.equal(await page.evaluate(() => window.editorSession.state.draft.blocks.at(-1).prompt.format), 'limited-markdown-v1');
-    await field.fill('### Question\n**Explain** your answer.');
+    await field.fill('## Question heading\n### Question\n**Explain** your answer.');
     await toggle.click();
     assert.equal(await preview.locator('h3').innerText(), 'Question');
     assert.equal(await page.evaluate(() => window.injected), undefined);
@@ -86,14 +86,29 @@ try {
     }, { payload, locale });
     await page.goto(base + '/server/viewer/index.html?localAttemptId=md-attempt');
     await page.locator('.content-card h2').waitFor();
+    const assertVisibleHeading = async locator => {
+      const state = await locator.evaluate(el => {
+        const style = getComputedStyle(el); const rect = el.getBoundingClientRect();
+        return { width: rect.width, height: rect.height, clip: style.clipPath, position: style.position };
+      });
+      assert.ok(state.width > 10 && state.height > 10, 'Authored heading must have visible dimensions');
+      assert.equal(state.clip, 'none');
+      assert.notEqual(state.position, 'absolute');
+    };
+    await assertVisibleHeading(page.locator('.content-card h2'));
+    assert.equal(await page.locator('.viewer-section-accessible-heading').evaluate(el => getComputedStyle(el).clipPath), 'inset(50%)');
+    if (shots) await page.screenshot({ path: `${shots}/markdown-content-heading-${locale}-${width}.png`, fullPage: true });
     assert.equal(await page.locator('.content-card').innerHTML(), previewHtml, 'Viewer and editor share exact renderer output');
     const nextLabel = await page.evaluate(async () => (await import('/server/app/i18n/index.js')).t('viewer.actions.nextBlock'));
     await page.getByRole('button', { name: nextLabel, exact: true }).click();
     await page.locator('.question-card__prompt-label h3').waitFor();
+    await assertVisibleHeading(page.locator('.question-card__prompt-label h3'));
+    await assertVisibleHeading(page.locator('.question-card__prompt-label h2'));
     await page.locator('.question-card > textarea:not(.question-card__review-status)').fill('**Literal learner answer**');
     await page.evaluate(() => window.viewerSession.completeLocalAttempt());
     // Session completion notifies state; the prompt stays formatted and the answer stays literal.
     await page.waitForFunction(() => window.viewerSession.state.status === 'completed');
+    await assertVisibleHeading(page.locator('.question-card__prompt-label h2'));
     assert.equal(await page.locator('.question-card__prompt-label strong').innerText(), 'Explain');
     const html = await page.evaluate(async () => {
       const { buildWorksheetPrintReportModel, buildWorksheetPrintReportHtml } = await import('/server/viewer/main.js');

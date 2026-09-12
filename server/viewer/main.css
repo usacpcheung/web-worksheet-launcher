@@ -1912,7 +1912,7 @@ input[type='text']::placeholder {
   font-size: 0.86rem;
 }
 
-.viewer-section h2 {
+.viewer-section-accessible-heading {
   position: absolute;
   inline-size: 1px;
   block-size: 1px;

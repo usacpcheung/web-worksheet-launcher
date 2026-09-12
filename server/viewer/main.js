@@ -5455,6 +5455,7 @@ function renderViewerShell(session) {
   const blockSection = document.createElement('section');
   blockSection.className = 'viewer-section';
   const blockHeading = document.createElement('h2');
+  blockHeading.className = 'viewer-section-accessible-heading';
   const blockList = document.createElement('div');
   blockList.id = 'viewer-answer-form';
   const stepper = document.createElement('div');
