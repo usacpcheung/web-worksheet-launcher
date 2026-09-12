@@ -41,6 +41,11 @@ try {
           discussionSession: window.discussion, apiClient,
         });
       };
+      window.showMusicCover = () => {
+        window.cleanupPlayer();
+        store.set({ audioGate: false });
+        window.cleanupPlayer = renderPlayer(store, document.querySelector('#left'), document.querySelector('#right'), () => {});
+      };
     }, { locale, bubble });
     if (bubble) {
       await page.getByRole('button', { name: locale === 'en' ? 'Choices' : '選項', exact: true }).click();
@@ -121,6 +126,15 @@ try {
     await music.locator('button').click(); // Explicit activation opens the audio gate and redraws.
     assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), false);
     await page.locator('.theater-utilities-toggle').click();
+    await page.evaluate(() => {
+      window.musicInstances.at(-1).paused = true;
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    });
+    assert.equal(await music.locator('button').getAttribute('aria-pressed'), 'true', 'Browser-restored pause updates the existing control');
+    assert.equal(await music.locator('input').isDisabled(), true);
+    await music.locator('button').click();
+    assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), false, 'One click enables paused music');
+    assert.equal(await music.locator('button').getAttribute('aria-pressed'), 'false');
     await music.locator('button').click(); // Turn music off before recording.
     await page.locator('.theater-utilities-section--discussion button').first().click();
     await add.click();
@@ -131,6 +145,18 @@ try {
     await page.keyboard.press('Escape');
     await page.locator('.theater-utilities-toggle').click();
     if (shots) await page.screenshot({ path: `${shots}/discussion-restored-music-${locale}-${width}-${bubble}.png` });
+    await page.evaluate(() => window.showMusicCover());
+    await page.locator('.theater-utilities-toggle').click();
+    const coverMusic = page.locator('.background-audio-controls');
+    await coverMusic.locator('button').click();
+    await page.locator('.theater-utilities-toggle').click();
+    await page.evaluate(() => {
+      window.musicInstances.at(-1).paused = true;
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    });
+    assert.equal(await coverMusic.locator('button').getAttribute('aria-pressed'), 'true');
+    await coverMusic.locator('button').click();
+    assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), false);
     assert.deepEqual(errors, []);
     await page.evaluate(() => window.cleanupPlayer());
     await context.close();

@@ -32,6 +32,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   let backgroundDucked = false;
   let defaultBackgroundSource = null;
   let activeDialogueCleanup = null;
+  let unsubscribeIntroMusic = null;
   let currentViewState = null;
   let currentViewStateSceneId = null;
   const backgroundTrack = createBackgroundAudioController({ defaultVolume: backgroundVolume });
@@ -92,6 +93,8 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   });
 
   function stopActiveDialogue() {
+    unsubscribeIntroMusic?.();
+    unsubscribeIntroMusic = null;
     if (activeDialogueCleanup) {
       const cleanupFn = activeDialogueCleanup;
       activeDialogueCleanup = null;
@@ -170,7 +173,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
           ensureAudioGate(store);
         }
         backgroundTrack.setMuted(backgroundMuted, { userInitiated: true });
-        if (!backgroundMuted && activationSource) backgroundTrack.play(activationSource);
+        if (!backgroundMuted && activationSource) backgroundTrack.play(activationSource, { userInitiated: true });
         return backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked();
       },
     };
@@ -229,6 +232,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     };
 
     updateMuteLabel(Boolean(controls.muted));
+    unsubscribeIntroMusic = controls.subscribe?.(() => updateMuteLabel(Boolean(controls.muted)));
 
     muteButton.addEventListener('click', () => {
       const nextMuted = controls.onToggleMute?.();

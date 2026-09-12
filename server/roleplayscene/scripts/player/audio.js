@@ -22,8 +22,18 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
   let resumeWanted = false;
   let playbackBlocked = false;
   let playbackGeneration = 0;
+  let interrupted = false;
+  let removeAudioListeners = () => {};
   const listeners = new Set();
   const notify = () => { for (const listener of listeners) listener(); };
+  const refreshPlayback = () => {
+    // Browser history restoration can pause media without changing our preference.
+    // Latch that interruption so ordinary scene redraws cannot restart it.
+    if (!suspended && activeAudio) interrupted = Boolean(activeAudio.paused || activeAudio.ended);
+    notify();
+  };
+  const lifecycleTarget = typeof window === 'undefined' ? null : window;
+  lifecycleTarget?.addEventListener?.('pageshow', refreshPlayback);
 
   const getEffectiveVolume = () => {
     if (muted) {
@@ -46,6 +56,8 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
 
   function stop({ preserveDesired = false } = {}) {
     playbackGeneration += 1;
+    removeAudioListeners();
+    removeAudioListeners = () => {};
     if (!preserveDesired) {
       desiredSrc = null;
     }
@@ -69,7 +81,8 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
     activeSrc = null;
   }
 
-  function play(src) {
+  function play(src, { userInitiated = false } = {}) {
+    if (userInitiated) interrupted = false;
     desiredSrc = src ?? null;
     if (!src) {
       stop();
@@ -79,6 +92,7 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
       if (activeSrc !== src) stop({ preserveDesired: true });
       return;
     }
+    if (interrupted) return;
     if (muted) {
       stop({ preserveDesired: true });
       return;
@@ -115,6 +129,11 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
 
     activeAudio = audio;
     activeSrc = src;
+    const syncAudio = () => { if (activeAudio === audio) refreshPlayback(); };
+    for (const event of ['pause', 'playing', 'ended']) audio.addEventListener?.(event, syncAudio);
+    removeAudioListeners = () => {
+      for (const event of ['pause', 'playing', 'ended']) audio.removeEventListener?.(event, syncAudio);
+    };
     const generation = ++playbackGeneration;
 
     try {
@@ -187,10 +206,13 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
   return {
     play,
     stop,
-    teardown() { suspended = false; resumeWanted = false; stop(); listeners.clear(); },
+    teardown() {
+      lifecycleTarget?.removeEventListener?.('pageshow', refreshPlayback);
+      suspended = false; resumeWanted = false; stop(); listeners.clear();
+    },
     suspendForCapture() {
       if (suspended) return;
-      resumeWanted = Boolean(activeAudio && !activeAudio.paused && !muted && !playbackBlocked);
+      resumeWanted = Boolean(activeAudio && !activeAudio.paused && !muted && !playbackBlocked && !interrupted);
       suspended = true;
       playbackGeneration += 1;
       activeAudio?.pause();
@@ -202,7 +224,7 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
       if (resume && !muted && desiredSrc) play(desiredSrc);
     },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    isPlaybackBlocked: () => playbackBlocked,
+    isPlaybackBlocked: () => playbackBlocked || interrupted,
     setVolume,
     setMuted,
     getCurrentSource,

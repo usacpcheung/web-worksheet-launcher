@@ -2,6 +2,49 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createBackgroundAudioController } from '../scripts/player/audio.js';
 
+test('history restore reflects paused audio and waits for one explicit activation', () => {
+  const originalAudio = globalThis.Audio;
+  const originalWindow = globalThis.window;
+  const lifecycle = new EventTarget();
+  globalThis.window = lifecycle;
+  let audio;
+  globalThis.Audio = class extends EventTarget {
+    constructor() { super(); audio = this; this.paused = true; this.plays = 0; }
+    play() { this.paused = false; this.plays++; this.dispatchEvent(new Event('playing')); }
+    pause() { this.paused = true; this.dispatchEvent(new Event('pause')); }
+  };
+  const track = createBackgroundAudioController();
+  let notifications = 0;
+  track.subscribe(() => { notifications++; });
+  try {
+    track.play('music');
+    lifecycle.dispatchEvent(new Event('pageshow'));
+    assert.equal(track.isPlaybackBlocked(), false, 'Playing music stays enabled');
+    audio.paused = true; // Frozen page may miss media events.
+    lifecycle.dispatchEvent(new Event('pageshow'));
+    assert.equal(track.isPlaybackBlocked(), true);
+    assert.equal(audio.plays, 1, 'Restoration does not restart music');
+    track.setMuted(false);
+    track.play('music');
+    assert.equal(audio.plays, 1, 'Redraw cannot bypass the interruption');
+    track.play('music', { userInitiated: true });
+    assert.equal(audio.plays, 2);
+    assert.equal(track.isPlaybackBlocked(), false);
+    audio.pause();
+    assert.equal(track.isPlaybackBlocked(), true, 'Browser media pause also updates state');
+    track.play('music', { userInitiated: true });
+    track.suspendForCapture();
+    lifecycle.dispatchEvent(new Event('pageshow'));
+    track.resumeAfterCapture();
+    assert.equal(audio.paused, false, 'Capture suspension still resumes previously playing music');
+    track.teardown();
+    const before = notifications;
+    lifecycle.dispatchEvent(new Event('pageshow'));
+    audio.dispatchEvent(new Event('pause'));
+    assert.equal(notifications, before, 'Teardown removes lifecycle and media subscriptions');
+  } finally { track.teardown(); globalThis.Audio = originalAudio; globalThis.window = originalWindow; }
+});
+
 test('background capture suspension preserves intent and ignores stale playback failures', async () => {
   const originalAudio = globalThis.Audio;
   const instances = [];

@@ -22,4 +22,6 @@ No backend routes, providers, environment settings, database migration, editor c
 
 ## VPS and device acceptance
 
+After browser Back/Forward restoration, music controls refresh from the media state. Stopped music stays stopped until the learner uses the existing Unmute control; scene redraws do not restart it. No separate Resume label is introduced. This is independent of the conditional music resumption after recording.
+
 Check out `codex/roleplayscene-discussion-voice` after fetching origin. No new configuration is required; existing transcription/rewrite routes and HTTPS microphone access must work. Test real recordings in Windows Chrome/Edge, actual iPad Safari and mobile Chrome. Verify music pauses before recording and resumes after microphone release only when previously playing, while dialogue requires explicit resume; verify music controls after browser Back/Forward; deny permission; expire login during upload; throttle/disconnect; cancel/retry; close or change scenes during each stage; replace stories with reused scene IDs; reload transcript recovery; print; and test cue-card layouts in portrait/landscape. Automated synthetic recordings do not establish real provider/device compatibility. No live provider calls or VPS deployment are performed during automated verification.
