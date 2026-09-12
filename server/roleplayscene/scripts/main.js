@@ -923,6 +923,7 @@ function renderDirectLaunch() {
   directLaunchRoot.setAttribute('aria-busy', String(visible && !['authentication-required', 'error'].includes(directLaunch.state)));
   directLaunchRoot.classList.toggle('direct-launch--error', directLaunch.state === 'error');
   directLaunchRoot.classList.toggle('direct-launch--authentication-required', directLaunch.state === 'authentication-required');
+  directLaunchRoot.classList.toggle('direct-launch--authentication-pending', directLaunch.state === 'authentication-pending');
   if (!visible) return;
 
   const copy = getDirectLaunchCopy();
