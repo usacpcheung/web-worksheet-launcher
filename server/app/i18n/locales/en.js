@@ -657,9 +657,9 @@ export default {
       "unableToPlayQuestionAudio": "Unable to play question audio"
     },
     "boot": {
-      "availableAfterSignIn": "Available after sign-in",
+      "availableAfterSignIn": "Sign in to continue opening this worksheet.",
       "goToStartScreen": "Go to start screen",
-      "signInAndOpenWorksheet": "Sign in and open worksheet",
+      "signInAndOpenWorksheet": "Sign in and continue",
       "signInToOpenWorksheet": "Sign in to open worksheet",
       "unableToOpen": "Unable to open",
       "whatYouCanDo": "What you can do"

@@ -1,0 +1,104 @@
+/* Shared presentation only for published-package authentication prompts. */
+body:has(.viewer-fatal-panel--recoverable-auth) { padding-bottom: 0; }
+#app:has(> .viewer-fatal-panel--recoverable-auth) {
+  box-sizing: border-box;
+  min-height: 100svh;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+}
+:is(.direct-launch--authentication-required, .direct-launch--authentication-pending) {
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 24px;
+}
+:is(.viewer-fatal-panel--recoverable-auth,
+  .direct-launch--authentication-required .direct-launch__panel,
+  .direct-launch--authentication-pending .direct-launch__panel) {
+  box-sizing: border-box;
+  width: min(100%, 560px);
+  margin: auto;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: center;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-left: 4px solid #2563eb;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgb(16 24 40 / 7%);
+  overflow-wrap: anywhere;
+}
+:is(.viewer-fatal-panel--recoverable-auth,
+  .direct-launch--authentication-required,
+  .direct-launch--authentication-pending) h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.35;
+  font-weight: 700;
+}
+:is(.viewer-fatal-panel--recoverable-auth,
+  .direct-launch--authentication-required,
+  .direct-launch--authentication-pending) p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #475467;
+}
+.viewer-fatal-panel--recoverable-auth .viewer-start-error:empty { display: none; }
+.viewer-fatal-panel--recoverable-auth .viewer-start-error { color: #b42318; }
+:is(.viewer-fatal-panel--recoverable-auth .viewer-start-actions,
+  .direct-launch--authentication-required .direct-launch__actions,
+  .direct-launch--authentication-pending .direct-launch__actions) {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+}
+:is(.viewer-fatal-panel--recoverable-auth,
+  .direct-launch--authentication-required,
+  .direct-launch--authentication-pending) button {
+  min-height: 44px;
+  min-width: 0;
+  padding: 10px 16px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #fff;
+  color: #344054;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+  box-shadow: none;
+}
+:is(.viewer-fatal-panel--recoverable-auth .viewer-start-btn--primary,
+  .direct-launch--authentication-required #direct-launch-signin) {
+  background: #315be8;
+  border-color: #315be8;
+  color: #fff;
+}
+:is(.viewer-fatal-panel--recoverable-auth,
+  .direct-launch--authentication-required,
+  .direct-launch--authentication-pending) button:focus-visible {
+  outline: 3px solid #93b4ff;
+  outline-offset: 3px;
+}
+:is(.viewer-fatal-panel--recoverable-auth,
+  .direct-launch--authentication-required,
+  .direct-launch--authentication-pending) button:disabled { opacity: 0.55; cursor: wait; }
+.viewer-fatal-panel--recoverable-auth .viewer-fatal-panel__details {
+  text-align: left;
+  font-size: 13px;
+  color: #667085;
+  min-width: 0;
+}
+.viewer-fatal-panel--recoverable-auth .viewer-fatal-panel__details summary { font-weight: 400; }
+@media (max-width: 480px) {
+  :is(.viewer-fatal-panel--recoverable-auth,
+    .direct-launch--authentication-required .direct-launch__panel,
+    .direct-launch--authentication-pending .direct-launch__panel) { padding: 24px 20px; }
+  :is(.viewer-fatal-panel--recoverable-auth,
+    .direct-launch--authentication-required,
+    .direct-launch--authentication-pending) button { flex: 1 1 100%; }
+}

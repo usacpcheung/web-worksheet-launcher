@@ -657,9 +657,9 @@ export default {
       "unableToPlayQuestionAudio": "無法播放題目音訊"
     },
     "boot": {
-      "availableAfterSignIn": "登入後可使用",
+      "availableAfterSignIn": "登入後即可繼續開啟此工作紙。",
       "goToStartScreen": "前往開始畫面",
-      "signInAndOpenWorksheet": "登入並開啟工作紙",
+      "signInAndOpenWorksheet": "登入並繼續",
       "signInToOpenWorksheet": "登入以開啟工作紙",
       "unableToOpen": "無法開啟",
       "whatYouCanDo": "你可以做的事"
