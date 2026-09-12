@@ -1,4 +1,5 @@
-export const DISCUSSION_REWRITE_MAX_CHARS = 300;
+import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, hasPendingRecovery } from '../../../viewer/answer-voice-workflow.js';
+export const DISCUSSION_REWRITE_MAX_CHARS = REWRITE_INPUT_LIMIT;
 
 const STORAGE_KEY = 'roleplayscene:discussion:v1';
 
@@ -58,10 +59,40 @@ function normalizeText(value) {
 }
 
 export class RolePlaySceneDiscussionSession {
-  constructor({ storage = globalThis?.sessionStorage, apiClient = null } = {}) {
+  constructor({ storage = globalThis?.sessionStorage, apiClient = null, checkSession = async () => ({ ok: true }), beginSignIn = () => {}, recording } = {}) {
     this.storage = getStorage(storage);
     this.apiClient = apiClient;
     this.projectFingerprint = '';
+    this.generation = 0;
+    this.project = null;
+    this.listeners = new Set();
+    this.recovery = {};
+    this.saveFailed = false;
+    this.state = { attemptRevision: 0, voiceRecovery: this.recovery, voiceApplied: null, answers: {}, viewerPayload: { blocks: [] }, lastActiveBlockId: null };
+    this.beginServerSignIn = beginSignIn;
+    this.scheduleAutosave = () => this.persist();
+    this.voice = createVoiceWorkflow({
+      api: apiClient, checkSession, recording,
+      context: id => ({ attemptId: String(this.generation), contextKey: this.projectFingerprint,
+        block: this.state.viewerPayload.blocks.find(b => b.blockId === id),
+        editable: Boolean(this.project), answer: this.getText(id), recovery: this.recovery[id] }),
+      apply: (id, text, previous, caret) => {
+        this.undoBySceneId[id] = previous;
+        this.setText(id, text, { manual: false });
+        this.state.voiceApplied = { id: ++this.appliedSequence, blockId: id, text, caret };
+      },
+      recover: (id, record) => {
+        if (record) this.recovery[id] = record; else delete this.recovery[id];
+        this.persist();
+        this.emit();
+      },
+      changed: () => {
+        this.isRewriting = Boolean(this.voice?.active);
+        this.rewritingSceneId = this.voice?.active?.blockId || null;
+        this.emit();
+      },
+    });
+    this.appliedSequence = 0;
     this.discussionBySceneId = {};
     this.undoBySceneId = {};
     this.messageBySceneId = {};
@@ -72,9 +103,20 @@ export class RolePlaySceneDiscussionSession {
   bindProject(project) {
     const nextFingerprint = computeDiscussionProjectFingerprint(project);
     if (nextFingerprint === this.projectFingerprint) {
+      if (project !== this.project) {
+        this.teardown();
+        this.project = project;
+      }
       return;
     }
+    this.voice.teardown();
+    this.generation++;
+    this.project = project;
     this.projectFingerprint = nextFingerprint;
+    this.recovery = {};
+    this.state.voiceRecovery = this.recovery;
+    this.state.voiceApplied = null;
+    this.state.viewerPayload.blocks = (project.scenes || []).map(scene => ({ blockId: scene.id, kind: 'question', responseConfig: { inputType: 'text', maxLength: Number.MAX_SAFE_INTEGER } }));
     this.discussionBySceneId = {};
     this.undoBySceneId = {};
     this.messageBySceneId = {};
@@ -87,6 +129,7 @@ export class RolePlaySceneDiscussionSession {
     return {
       fingerprint: this.projectFingerprint,
       discussionBySceneId: this.discussionBySceneId,
+      recovery: normalizeVoiceRecovery(this.recovery, this.state.viewerPayload.blocks),
     };
   }
 
@@ -100,21 +143,35 @@ export class RolePlaySceneDiscussionSession {
         return;
       }
       this.discussionBySceneId = { ...parsed.discussionBySceneId };
+      this.recovery = normalizeVoiceRecovery(parsed.recovery, this.state.viewerPayload.blocks);
+      this.state.voiceRecovery = this.recovery;
+      this.syncAnswers();
     } catch {
       // Ignore invalid recovery data.
     }
   }
 
   persist() {
-    if (!this.storage || !this.projectFingerprint) return;
+    if (!this.storage || !this.projectFingerprint) { this.saveFailed = true; return; }
     try {
       this.storage.setItem(STORAGE_KEY, JSON.stringify(this.getStoragePayload()));
+      this.saveFailed = false;
     } catch {
-      // Session backup is best-effort only.
+      this.saveFailed = true;
     }
   }
 
+  subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  emit() { this.syncAnswers(); for (const listener of this.listeners) listener(); }
+  syncAnswers() { this.state.answers = Object.fromEntries(Object.keys(this.discussionBySceneId).map(id => [id, { value: this.getText(id) }])); }
+  hasPendingWork() { return Boolean(this.voice.active) || Object.values(this.recovery).some(hasPendingRecovery); }
+  teardown() { this.voice.teardown(); this.generation++; this.state.lastActiveBlockId = null; }
+
   clear() {
+    this.voice.teardown();
+    this.generation++;
+    this.recovery = {};
+    this.state.voiceRecovery = this.recovery;
     this.discussionBySceneId = {};
     this.undoBySceneId = {};
     this.messageBySceneId = {};
@@ -159,6 +216,7 @@ export class RolePlaySceneDiscussionSession {
       [sceneId]: '',
     };
     this.persist();
+    this.syncAnswers();
   }
 
   undo(sceneId) {
@@ -171,50 +229,8 @@ export class RolePlaySceneDiscussionSession {
     return true;
   }
 
-  async rewrite(sceneId, textAtClick, { apiClient = this.apiClient } = {}) {
-    const sourceText = normalizeText(textAtClick);
-    const trimmed = sourceText.trim();
-    if (!sceneId || !apiClient || !trimmed || trimmed.length > DISCUSSION_REWRITE_MAX_CHARS || this.isRewriting) {
-      return { ok: false, status: 'rewrite_not_available' };
-    }
-    this.isRewriting = true;
-    this.rewritingSceneId = sceneId;
-    this.messageBySceneId = { ...this.messageBySceneId, [sceneId]: '' };
-    try {
-      const result = await apiClient.rewriteText(trimmed);
-      if (!result?.ok) {
-        const errorMessage = result?.error?.message || 'Rewrite could not be completed.';
-        this.messageBySceneId = { ...this.messageBySceneId, [sceneId]: errorMessage };
-        return { ok: false, status: 'rewrite_failed', error: result?.error };
-      }
-      if (this.getText(sceneId) !== sourceText) {
-        this.messageBySceneId = {
-          ...this.messageBySceneId,
-          [sceneId]: 'Your discussion changed before rewrite finished, so we did not apply the rewrite.',
-        };
-        return { ok: false, status: 'rewrite_stale_context' };
-      }
-      const rewrittenText = normalizeText(result.data?.text).trim();
-      if (rewrittenText === sourceText) {
-        const nextUndo = { ...this.undoBySceneId };
-        delete nextUndo[sceneId];
-        this.undoBySceneId = nextUndo;
-      } else {
-        this.undoBySceneId = { ...this.undoBySceneId, [sceneId]: sourceText };
-      }
-      this.setText(sceneId, rewrittenText, { manual: false });
-      return { ok: true, status: 'rewrite_applied' };
-    } catch (error) {
-      this.messageBySceneId = {
-        ...this.messageBySceneId,
-        [sceneId]: error?.message || 'Rewrite could not be completed.',
-      };
-      return { ok: false, status: 'rewrite_failed', error };
-    } finally {
-      this.isRewriting = false;
-      this.rewritingSceneId = null;
-      this.persist();
-    }
+  async rewrite(sceneId) {
+    return this.voice.run(sceneId, { mode: 'rewrite' });
   }
 
   snapshot() {

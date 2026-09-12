@@ -183,6 +183,8 @@ export function renderSpeechBubblePlayerUI({
   requestDuck,
   releaseDuck,
   stopDialoguePlayback,
+  registerVoicePause = null,
+  capturingVoice = () => false,
   cleanupCueCardListeners,
   closeCueCard,
   renderNavigationControls,
@@ -349,6 +351,7 @@ export function renderSpeechBubblePlayerUI({
   };
 
   const playActiveSpeechLine = ({ autoAdvance = false } = {}) => {
+    if (capturingVoice()) return;
     const entry = visibleEntries[activeVisibleIndex];
     if (!entry) return;
     clearSpeechTimers();
@@ -640,7 +643,7 @@ export function renderSpeechBubblePlayerUI({
         ? translate('player.toolbar.stopAudio')
         : translate('player.toolbar.playAudio'),
     );
-    playButton.disabled = !activeEntry?.line?.audio?.objectUrl || choicesOpen || endOverlayOpen;
+    playButton.disabled = capturingVoice() || !activeEntry?.line?.audio?.objectUrl || choicesOpen || endOverlayOpen;
     playButton.setAttribute('aria-pressed', speechAudioActive ? 'true' : 'false');
     playButton.addEventListener('click', () => {
       if (speechAudioActive) {
@@ -661,7 +664,7 @@ export function renderSpeechBubblePlayerUI({
         ? translate('player.speechBubble.stopAll')
         : translate('player.speechBubble.playAll'),
     );
-    playAllButton.disabled = !visibleEntries.length || choicesOpen || endOverlayOpen;
+    playAllButton.disabled = capturingVoice() || !visibleEntries.length || choicesOpen || endOverlayOpen;
     playAllButton.setAttribute('aria-pressed', speechPlayAllActive ? 'true' : 'false');
     playAllButton.addEventListener('click', () => {
       if (speechPlayAllActive) {
@@ -794,6 +797,7 @@ export function renderSpeechBubblePlayerUI({
   observeOverlayLayout();
   renderSpeechState();
 
+  registerVoicePause?.(() => { stopSpeechPlayback({ keepActive: true }); renderSpeechState(); });
   return () => {
     clearPendingAnchorReposition();
     overlayResizeObserver?.disconnect?.();

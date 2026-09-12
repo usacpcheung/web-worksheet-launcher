@@ -90,6 +90,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function cleanup() {
+    options.discussionSession?.teardown?.();
     stopActiveDialogue();
     unsubscribe();
     backgroundTrack.teardown();
@@ -147,6 +148,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
         backgroundTrack.setVolume(value);
       },
       onToggleMute: () => {
+        if (['requesting_permission', 'recording', 'stopping'].includes(options.discussionSession?.voice?.active?.state)) return true;
         backgroundMuted = !backgroundMuted;
         if (!backgroundMuted && activationSource && !store.get().audioGate) {
           ensureAudioGate(store);
@@ -356,6 +358,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function renderCurrentScene() {
+    options.discussionSession?.voice?.navigate();
     stopActiveDialogue();
     stage.classList?.remove?.('stage--intro');
     rightEl.classList?.add?.('pane--stage-only');
@@ -397,6 +400,12 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       restoreBackgroundAudio,
       historyControls: createHistoryControls(project),
       discussionSession: options.discussionSession ?? null,
+      pauseBackgroundForVoice: () => { backgroundMuted = true; backgroundTrack.setMuted(true); },
+      viewDiscussionScene: id => {
+        pushSceneToHistory(id); resetCurrentViewState(id);
+        currentViewState = { cueOverlay: { mode: 'discussion' } };
+        renderCurrentScene();
+      },
       apiClient: options.apiClient ?? null,
       onDiscussionChange: options.onDiscussionChange ?? null,
       onPrintDiscussion: options.onPrintDiscussion ?? null,

@@ -530,7 +530,7 @@ export default {
     "voice": {
       "resolveRecovery": "請先檢查或捨棄復原內容，再開始新的語音輸入或改寫整個答案。",
       "signInThenRewrite": "請登入，然後再次按「改寫」。系統將使用你目前的答案。",
-      "signInThenVoice": "請登入，然後再次按「語音新增」。錄音不會自動開始。",
+      "signInThenVoice": "請登入，然後再次按「用語音加入」。錄音不會自動開始。",
       "preflightFailed": "尚未開始處理。請檢查連線，然後再次按原來的操作按鈕。",
       "add": "用語音加入",
       "view": "查看",
