@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { parseWorksheetPackage, rewriteWorksheetPackageTitle } from '../../editor/worksheet-package.js';
 import { parseStoredZip, decodeUtf8 } from '../../editor/zip-utils.js';
-import { assertWorksheetTextFormats, hasMarkdown } from '../../app/worksheet-text.js';
+import { assertWorksheetTextFormats, hasMarkdown, promptTextState, PROMPT_TEXT_LIMIT } from '../../app/worksheet-text.js';
 
 function normalizeText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -775,6 +775,11 @@ export class PackageService {
       }
 
       const bytes = await this.artifactStore.readArtifact(draft.artifact_path);
+      const worksheet = parseWorksheetPackage(bytes).worksheet;
+      if (worksheet.blocks.some(block => block.kind === 'question' && promptTextState(block.prompt).exceedsLimit)) {
+        await client.query('ROLLBACK');
+        return { ok: false, statusCode: 400, error: { code: 'PROMPT_TOO_LONG', message: `Question prompts must be within ${PROMPT_TEXT_LIMIT} spoken-text characters to publish.`, details: { max: PROMPT_TEXT_LIMIT } } };
+      }
       const publishedPackageId = crypto.randomUUID();
       artifact = await this.artifactStore.storeArtifact({
         ownerSub: identity.sub,

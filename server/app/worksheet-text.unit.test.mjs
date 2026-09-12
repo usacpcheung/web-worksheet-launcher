@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MARKDOWN_FORMAT, renderWorksheetText, worksheetTextToPlain, upgradeEditableBlocks } from './worksheet-text.js';
+import { MARKDOWN_FORMAT, renderWorksheetText, worksheetTextToPlain, upgradeEditableBlocks, promptTextState } from './worksheet-text.js';
 import { createWorksheetPackageFromDraft, parseWorksheetPackage } from '../editor/worksheet-package.js';
 import { createStoredZip } from '../editor/zip-utils.js';
 const md = text => ({ text, format: MARKDOWN_FORMAT });
@@ -61,4 +61,11 @@ test('Markdown ZIP version prevents old readers from treating it as plain text',
 test('large unmatched punctuation has bounded processing cost', { timeout: 3000 }, () => {
   const text = '['.repeat(50000) + '* '.repeat(20000);
   assert.ok(renderWorksheetText(md(text)).length >= text.length);
+});
+test('spoken text keeps displayed numbers, Unicode punctuation and escaped symbols with 500 boundary', () => {
+  assert.equal(worksheetTextToPlain(md('## 題目\n3. **先讀**\n1. 再寫。\n- \\*星號\n> 「你好！」')), '題目\n3. 先讀\n4. 再寫。\n*星號\n「你好！」');
+  assert.equal(promptTextState(md('**' + '𠮷'.repeat(500) + '**')).count, 500);
+  assert.equal(promptTextState(md('**' + '𠮷'.repeat(500) + '**')).exceedsLimit, false);
+  assert.equal(promptTextState(md('𠮷'.repeat(501))).exceedsLimit, true);
+  assert.equal(promptTextState({ text: '**原文**', format: 'plain_text' }).text, '**原文**');
 });

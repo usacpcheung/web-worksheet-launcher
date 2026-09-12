@@ -45,6 +45,12 @@ Editor preview, viewer cards (editable and submitted), and the existing question
 
 Prompt audio generation uses a plain-text projection of that same tree, so spoken text excludes formatting markers. Existing operation identity and source-change guards remain in effect. Audio providers, authentication, learner voice/rewrite processing, and RolePlayScene are unchanged.
 
+Question prompts have a 500 Unicode code-point budget, counted from trimmed spoken text rather than Markdown source. Punctuation, internal spaces/newlines, and displayed numbered-list numbers count. Backslash escapes are decoded once; Chinese punctuation and literal symbols remain. The same text projection drives audio eligibility, language checks, generation and source hashes. Content blocks have no new limit. Option audio retains its 200-character budget.
+
+The prompt counter and inline warning allow authors to type/paste over 500 and save locally without truncation. Import/export also preserve long prompts. Publishing validates the stored uploaded artifact and returns `PROMPT_TOO_LONG` before creating a published artifact if any prompt exceeds 500. Previously published worksheets remain readable. Changing a block's type preserves both its source and format.
+
+Before testing prompt audio beyond 200 on the VPS, configure the separate rewrite bridge with `T2A_MAX_TEXT_LENGTH=500`. This repository does not change that service or its configuration. The limit is an application budget policy, not a claim about provider capacity.
+
 Printed output follows the existing report's question-only scope; it does not gain content-block sections. Package downloads store source Markdown rather than rendered HTML. Titles, instructions, choices, feedback, answers, and attached media retain their existing behavior.
 
 ## Verification

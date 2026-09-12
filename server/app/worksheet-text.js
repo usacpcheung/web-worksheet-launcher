@@ -1,6 +1,7 @@
 // Versioned worksheet text only. Never use this for learner answers or HTML input.
 export const MARKDOWN_FORMAT = 'limited-markdown-v1';
 export const PLAIN_FORMAT = 'plain_text';
+export const PROMPT_TEXT_LIMIT = 500;
 // Match the package normalizer's legacy question detection before normalization.
 const fieldKey = block => block?.kind === 'question' || (block?.prompt && typeof block.prompt === 'object') ? 'prompt' : 'content';
 export function assertTextFormat(field) {
@@ -103,8 +104,17 @@ export function renderWorksheetText(field) {
 }
 export function worksheetTextToPlain(field) {
   if (assertTextFormat(field) === PLAIN_FORMAT) return String(field?.text ?? '');
-  const plain = node => node.tag === 'text' ? node.text : (node.children || []).map(plain).join(node.tag === 'ul' || node.tag === 'ol' ? '\n' : '');
+  const plain = node => {
+    if (node.tag === 'text') return node.text;
+    if (node.tag === 'ol') return node.children.map((item, index) => `${node.start + index}. ${plain(item)}`).join('\n');
+    return (node.children || []).map(plain).join(node.tag === 'ul' ? '\n' : '');
+  };
   return parse(String(field?.text ?? '')).map(plain).join('\n');
+}
+export function promptTextState(field) {
+  const text = worksheetTextToPlain(field).trim();
+  const count = Array.from(text).length;
+  return { text, count, exceedsLimit: count > PROMPT_TEXT_LIMIT };
 }
 export function setWorksheetText(element, field) {
   element.classList.add('worksheet-text');

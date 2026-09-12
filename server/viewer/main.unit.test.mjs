@@ -6651,3 +6651,9 @@ test('imported worksheet keys support rewrite, recovery restore, retry and disca
     clearTimeout(session.autosaveTimer);
   }
 });
+test('print keeps leading Markdown whitespace and therefore matches viewer formatting', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({ viewerPayload: { title: 'T', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: '  ## Literal heading', format: 'limited-markdown-v1' }, responseConfig: { inputType: 'text' } }] }, answers: {} });
+  assert.equal(report.questions[0].promptText, '  ## Literal heading');
+  assert.ok(mod.buildWorksheetPrintReportHtml(report).includes('<p>  ## Literal heading</p>'));
+});

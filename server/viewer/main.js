@@ -1920,7 +1920,7 @@ async function buildWorksheetPrintReportModel({
     const question = {
       blockId: block.blockId,
       questionNumber: index + 1,
-      promptText: String(block?.prompt?.text || '').trim(),
+      promptText: String(block?.prompt?.text || ''),
       promptFormat: block?.prompt?.format || 'plain_text',
       answerText: formatAnswerValueForPrint(block, learnerValue),
       result: buildPrintQuestionResult(block, checkResult),
@@ -2028,7 +2028,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
         </header>
         <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
           <h3>${escapeHtml(t('viewer.print.questionHeading'))}</h3>
-          <div class="print-question-text worksheet-text">${renderWorksheetText({ text: question.promptText || t('viewer.print.noPromptProvided'), format: question.promptFormat })}</div>
+          <div class="print-question-text worksheet-text">${renderWorksheetText({ text: question.promptText?.trim() ? question.promptText : t('viewer.print.noPromptProvided'), format: question.promptFormat })}</div>
         </section>
         ${imageSectionHtml}
         <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">

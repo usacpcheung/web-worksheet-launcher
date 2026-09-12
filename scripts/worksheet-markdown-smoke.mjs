@@ -7,8 +7,10 @@ if (shots) await mkdir(shots, { recursive: true });
 const browser = await chromium.launch();
 try {
   for (const locale of ['en', 'zh-Hant']) for (const width of [1280, 390]) {
+    console.log(`Checking ${locale} at ${width}px`);
     const context = await browser.newContext({ viewport: { width, height: 900 } });
     const page = await context.newPage(); const errors = [];
+    page.setDefaultTimeout(10000);
     page.on('pageerror', error => { errors.push(error.message); console.error(error.message); });
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await context.route(url => url.pathname.startsWith('/api/'), route => route.fulfill({ json: { ok: true, data: { user: { sub: 'fixture' }, items: [] } } }));
@@ -43,6 +45,25 @@ try {
     assert.deepEqual(await field.evaluate(el => [el.selectionStart, el.selectionEnd, el === document.activeElement]), [3, 9, true]);
     assert.equal(await field.inputValue(), source);
     await page.evaluate(() => { window.editorSession.createBlock('question'); window.editorSession.notifyStateChange(); });
+    await field.fill('**' + '文'.repeat(500) + '**');
+    assert.match(await page.locator('.editor-prompt-counter').innerText(), /500 \/ 500/);
+    assert.equal(await field.getAttribute('aria-invalid'), 'false');
+    const generate = page.locator('[data-prompt-audio-track-block-id] [data-audio-track-action="generate"]').first();
+    assert.equal(await generate.isEnabled(), true);
+    await page.evaluate(() => { window.reviewAuthCalls = 0; window.originalReady = window.editorSession.ensureServerSessionReady; window.editorSession.ensureServerSessionReady = async () => { window.reviewAuthCalls++; return { ok: false }; }; });
+    await generate.click();
+    await page.waitForFunction(() => window.reviewAuthCalls === 1);
+    await page.evaluate(() => { window.editorSession.ensureServerSessionReady = window.originalReady; });
+    await field.fill('**' + '文'.repeat(501) + '**');
+    assert.equal(await field.getAttribute('aria-invalid'), 'true');
+    assert.equal(await generate.isEnabled(), false);
+    await page.evaluate(() => window.editorSession.saveNow());
+    assert.equal(await field.inputValue(), '**' + '文'.repeat(501) + '**');
+    if (shots) await page.screenshot({ path: `${shots}/markdown-limit-${locale}-${width}.png`, fullPage: true });
+    await page.locator('#editor-block-kind').selectOption('content');
+    assert.equal(await page.locator('.editor-prompt-counter').isVisible(), false);
+    await page.locator('#editor-block-kind').selectOption('question');
+    assert.equal(await page.evaluate(() => window.editorSession.state.draft.blocks.at(-1).prompt.format), 'limited-markdown-v1');
     await field.fill('### Question\n**Explain** your answer.');
     await toggle.click();
     assert.equal(await preview.locator('h3').innerText(), 'Question');
