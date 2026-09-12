@@ -47,7 +47,7 @@ test('cancel releases lock and story replacement rejects late results with reuse
   session.voice.cancel(); assert.equal(session.voice.active, null);
   session.bindProject({ ...project, meta: { title: 'Different story' } });
   session.setText('one', 'new story'); resolve({ ok: true, data: { text: 'late' } }); await task;
-  assert.equal(session.getText('one'), 'new story'); assert.deepEqual(session.recovery, {});
+  assert.equal(session.getText('one'), 'new story'); assert.deepEqual(Object.keys(session.recovery), []);
 });
 test('transcript recovery survives empty editing/reload and retry does not transcribe again', async () => {
   let fail = true;
@@ -77,4 +77,34 @@ test('whole discussion rewrite accepts over 300 and enforces 2000 Unicode code p
   session.setText('one', '中'.repeat(301)); await session.rewrite('one'); assert.equal(calls, 1);
   session.setText('one', '😀'.repeat(2000)); await session.rewrite('one'); assert.equal(calls, 2);
   session.setText('one', '😀'.repeat(2001)); await session.rewrite('one'); assert.equal(calls, 2);
+});
+
+test('imported property-name IDs support rewrite, undo, recovery reload and retry', async () => {
+  for (const id of ['constructor', '__proto__', 'toString']) {
+    let stored = null; let fail = false;
+    const storage = { getItem: () => stored, setItem: (_, value) => { stored = value; } };
+    const apiClient = { rewriteText: async () => fail ? { ok: false, error: { code: 'UPSTREAM_FAILED' } }
+      : { ok: true, data: { text: 'Rewritten' } } };
+    const unusual = { meta: { title: 'Imported' }, scenes: [{ id }] };
+    const session = new RolePlaySceneDiscussionSession({ storage, apiClient });
+    session.bindProject(unusual);
+    assert.equal(session.getMessage(id), '');
+    session.setText(id, 'Original');
+    assert.equal((await session.rewrite(id)).ok, true);
+    assert.equal(session.getText(id), 'Rewritten');
+    assert.equal(session.undo(id), true);
+    assert.equal(session.getText(id), 'Original');
+    fail = true; await session.rewrite(id);
+    assert.equal(Object.hasOwn(JSON.parse(stored).recovery, id), true);
+    const restored = new RolePlaySceneDiscussionSession({ storage, apiClient });
+    restored.bindProject(unusual);
+    assert.equal(restored.recovery[id].text, 'Original');
+    fail = false;
+    assert.equal((await restored.voice.run(id, { mode: 'rewrite', retry: restored.recovery[id] })).ok, true);
+    assert.equal(restored.getText(id), 'Rewritten');
+    assert.equal(restored.hasPendingWork(), false);
+    restored.clear();
+    assert.equal(Object.getPrototypeOf(restored.recovery), null);
+    assert.equal(restored.recovery[id], undefined);
+  }
 });

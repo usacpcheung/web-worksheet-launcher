@@ -29,19 +29,19 @@ export function insertVoiceSegment(answer, segment, index) {
 // Local-only whitelist. Audio, candidates, controllers and upstream diagnostics
 // are deliberately excluded. Reload resumes at transcript editing/rewrite.
 export function normalizeVoiceRecovery(records, blocks = []) {
-  const result = {};
+  const entries = [];
   for (const block of blocks.filter(isVoiceQuestion)) {
-    const item = records?.[block.blockId];
+    const item = records && Object.hasOwn(records, block.blockId) ? records[block.blockId] : null;
     if (!item || typeof item.text !== 'string' || !hasRecoveryText(item)) continue;
-    result[block.blockId] = {
+    entries.push([block.blockId, {
       phase: 'text', text: item.text, snapshot: typeof item.snapshot === 'string' ? item.snapshot : '',
       index: insertionIndex(typeof item.snapshot === 'string' ? item.snapshot : '',
         { deliberate: true, snapshot: item.snapshot, index: item.index }),
       mode: item.mode === 'rewrite' ? 'rewrite' : 'voice',
       createdAt: typeof item.createdAt === 'string' ? item.createdAt : '',
-    };
+    }]);
   }
-  return result;
+  return Object.fromEntries(entries);
 }
 
 function errorCode(error, stage) {

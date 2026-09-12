@@ -434,7 +434,14 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
         const originalIndex = voiceHistoryOrigin?.index;
         const index = Number.isInteger(originalIndex) && sceneHistory[originalIndex] === id
           ? originalIndex : sceneHistory.lastIndexOf(id);
-        if (index >= 0) goToHistoryIndex(index, { openDiscussion: true });
+        if (index >= 0) {
+          goToHistoryIndex(index, { openDiscussion: true });
+        } else if (findSceneById(store.get().project, id)) {
+          // A new branch can prune the operation's scene from history. Visiting
+          // it is still valid; preserve the existing history and append the visit.
+          sceneHistory.push(id);
+          goToHistoryIndex(sceneHistory.length - 1, { openDiscussion: true });
+        }
       },
       apiClient: options.apiClient ?? null,
       onDiscussionChange: options.onDiscussionChange ?? null,

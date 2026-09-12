@@ -66,7 +66,7 @@ export class RolePlaySceneDiscussionSession {
     this.generation = 0;
     this.project = null;
     this.listeners = new Set();
-    this.recovery = {};
+    this.recovery = Object.create(null);
     this.saveFailed = false;
     this.state = { attemptRevision: 0, voiceRecovery: this.recovery, voiceApplied: null, answers: {}, viewerPayload: { blocks: [] }, lastActiveBlockId: null };
     this.beginServerSignIn = beginSignIn;
@@ -77,7 +77,7 @@ export class RolePlaySceneDiscussionSession {
         block: this.state.viewerPayload.blocks.find(b => b.blockId === id),
         editable: Boolean(this.project), answer: this.getText(id), recovery: this.recovery[id] }),
       apply: (id, text, previous, caret) => {
-        this.undoBySceneId[id] = previous;
+        this.undoBySceneId = { ...this.undoBySceneId, [id]: previous };
         this.setText(id, text, { manual: false });
         this.state.voiceApplied = { id: ++this.appliedSequence, blockId: id, text, caret };
       },
@@ -113,7 +113,7 @@ export class RolePlaySceneDiscussionSession {
     this.generation++;
     this.project = project;
     this.projectFingerprint = nextFingerprint;
-    this.recovery = {};
+    this.recovery = Object.create(null);
     this.state.voiceRecovery = this.recovery;
     this.state.voiceApplied = null;
     this.state.viewerPayload.blocks = (project.scenes || []).map(scene => ({ blockId: scene.id, kind: 'question', responseConfig: { inputType: 'text', maxLength: Number.MAX_SAFE_INTEGER } }));
@@ -143,7 +143,7 @@ export class RolePlaySceneDiscussionSession {
         return;
       }
       this.discussionBySceneId = { ...parsed.discussionBySceneId };
-      this.recovery = normalizeVoiceRecovery(parsed.recovery, this.state.viewerPayload.blocks);
+      this.recovery = Object.assign(Object.create(null), normalizeVoiceRecovery(parsed.recovery, this.state.viewerPayload.blocks));
       this.state.voiceRecovery = this.recovery;
       this.syncAnswers();
     } catch {
@@ -170,7 +170,7 @@ export class RolePlaySceneDiscussionSession {
   clear() {
     this.voice.teardown();
     this.generation++;
-    this.recovery = {};
+    this.recovery = Object.create(null);
     this.state.voiceRecovery = this.recovery;
     this.discussionBySceneId = {};
     this.undoBySceneId = {};
@@ -190,7 +190,7 @@ export class RolePlaySceneDiscussionSession {
   }
 
   getMessage(sceneId) {
-    return normalizeText(this.messageBySceneId?.[sceneId]);
+    return Object.hasOwn(this.messageBySceneId, sceneId) ? normalizeText(this.messageBySceneId[sceneId]) : '';
   }
 
   hasUndo(sceneId) {

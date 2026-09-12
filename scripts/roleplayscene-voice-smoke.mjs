@@ -47,12 +47,27 @@ try {
         store.set({ audioGate: false });
         window.cleanupPlayer = renderPlayer(store, document.querySelector('#left'), document.querySelector('#right'), () => {});
       };
-      window.importSpacedScene = () => {
+      window.importSpacedScene = (id = 'scene one 中文') => {
         window.cleanupPlayer();
-        project.scenes[1].id = 'scene one 中文';
+        project.scenes[1].id = id;
+        project.scenes[0].choices[0].nextSceneId = id;
         window.discussion.bindProject(project);
         window.cleanupPlayer = renderPlayer(store, document.querySelector('#left'), document.querySelector('#right'), () => {}, {
-          initialSceneId: 'scene one 中文', discussionSession: window.discussion, apiClient,
+          initialSceneId: id, discussionSession: window.discussion, apiClient,
+        });
+      };
+      window.prepareBranch = () => {
+        window.cleanupPlayer();
+        const branchProject = { meta: { title: 'Branches' }, speakers: [], scenes: ['a', 'b', 'c'].map((id, i) => ({
+          id, type: i ? 'end' : 'start', dialogue: [{ text: id }], speechBubble: { enabled: bubble },
+          choices: i ? [] : [{ id: 'to-c', label: 'Go C', nextSceneId: 'c' }, { id: 'to-b', label: 'Go B', nextSceneId: 'b' }],
+        })) };
+        store.set({ project: branchProject });
+        window.discussion.bindProject(branchProject);
+        window.discussion.setText('b', 'Original B');
+        window.cleanupPlayer = renderPlayer(store, document.querySelector('#left'), document.querySelector('#right'), () => {}, {
+          initialPlaybackState: { sceneHistory: ['a', 'b'], historyIndex: 1, currentSceneId: 'b' },
+          discussionSession: window.discussion, apiClient,
         });
       };
     }, { locale, bubble });
@@ -192,6 +207,42 @@ try {
       const ids = button.getAttribute('aria-describedby').split(/\s+/);
       return ids.length === 1 && Boolean(document.getElementById(ids[0]));
     }), true, 'Imported scene IDs cannot break the status description');
+    for (const id of ['constructor', '__proto__', 'toString']) {
+      await page.evaluate(id => window.importSpacedScene(id), id);
+      await page.locator('.theater-utilities-toggle').click();
+      await page.locator('.theater-utilities-section--discussion button').first().click();
+      assert.equal(await add.isEnabled(), true, `Voice is available for ${id}`);
+      await field.fill('Imported discussion');
+      const rewrite = page.getByRole('button', { name: locale === 'en' ? 'Rewrite' : '重寫', exact: true });
+      assert.equal(await rewrite.isEnabled(), true);
+      await rewrite.click();
+      await page.waitForFunction(() => !window.discussion.voice.active);
+      assert.equal(await page.getByRole('button', { name: locale === 'en' ? 'Undo' : '復原', exact: true }).isEnabled(), true);
+    }
+    await page.evaluate(() => window.prepareBranch());
+    await page.locator('.theater-utilities-toggle').click();
+    await page.locator('.theater-utilities-section--discussion button').first().click();
+    await add.click();
+    await page.waitForFunction(() => window.discussion.voice.active?.state === 'recording');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => window.discussion.voice.active?.state === 'transcribing');
+    await page.locator('.theater-utilities-toggle').click();
+    await page.locator('.theater-history-entry[data-scene-id="a"]').click();
+    await page.getByRole('button', { name: locale === 'en' ? 'Choices' : '選項', exact: true }).click();
+    await page.getByRole('button', { name: 'Go C', exact: true }).click();
+    const history = () => page.locator('.theater-history-entry').evaluateAll(nodes => nodes.map(node => node.dataset.sceneId));
+    assert.deepEqual(await history(), ['a', 'c']);
+    await page.locator('.player-discussion-voice-status button').first().click();
+    assert.deepEqual(await history(), ['a', 'c', 'b']);
+    assert.equal(await page.locator('.theater-history-entry[aria-current="step"]').getAttribute('data-scene-id'), 'b');
+    assert.equal(await field.inputValue(), 'Original B');
+    await page.keyboard.press('Escape');
+    await page.locator('.player-discussion-voice-status button').first().click();
+    assert.deepEqual(await history(), ['a', 'c', 'b'], 'Repeated View does not duplicate the recovered visit');
+    await page.evaluate(() => window.finishTranscript());
+    await page.waitForFunction(() => !window.discussion.voice.active);
+    assert.equal(await field.inputValue(), 'Original B new segment');
+    assert.equal(await page.evaluate(() => window.discussion.getText('c')), '');
     assert.deepEqual(errors, []);
     await page.evaluate(() => window.cleanupPlayer());
     await context.close();
