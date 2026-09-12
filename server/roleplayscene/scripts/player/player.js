@@ -37,6 +37,11 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   const backgroundTrack = createBackgroundAudioController({ defaultVolume: backgroundVolume });
   backgroundVolume = backgroundTrack.getPreferredVolume();
   backgroundTrack.setVolume(backgroundVolume);
+  const unsubscribeVoiceMusic = options.discussionSession?.subscribe?.(() => {
+    const capture = ['requesting_permission', 'recording', 'stopping'].includes(options.discussionSession.voice?.active?.state);
+    if (capture) backgroundTrack.suspendForCapture();
+    else backgroundTrack.resumeAfterCapture();
+  });
 
   function emitPlaybackState() {
     if (typeof options.onPlaybackStateChange !== 'function') return;
@@ -98,6 +103,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function cleanup() {
+    unsubscribeVoiceMusic?.();
     unsubscribeVoiceHistory?.();
     options.discussionSession?.teardown?.();
     stopActiveDialogue();
@@ -151,22 +157,21 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   function createBackgroundAudioControls({ activationSource = null } = {}) {
     return {
       volume: backgroundVolume,
-      muted: backgroundMuted,
+      get muted() { return backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked(); },
+      set muted(_) { /* The controller owns the music preference. */ },
+      subscribe: listener => backgroundTrack.subscribe(listener),
       onVolumeChange: (value) => {
         backgroundVolume = value;
         backgroundTrack.setVolume(value);
       },
       onToggleMute: () => {
-        if (['requesting_permission', 'recording', 'stopping'].includes(options.discussionSession?.voice?.active?.state)) return true;
-        backgroundMuted = !backgroundMuted;
+        backgroundMuted = !(backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked());
         if (!backgroundMuted && activationSource && !store.get().audioGate) {
           ensureAudioGate(store);
-          backgroundTrack.setVolume(backgroundVolume);
-          backgroundTrack.exitDuckedState();
-          backgroundTrack.play(activationSource);
         }
-        backgroundTrack.setMuted(backgroundMuted);
-        return backgroundMuted;
+        backgroundTrack.setMuted(backgroundMuted, { userInitiated: true });
+        if (!backgroundMuted && activationSource) backgroundTrack.play(activationSource);
+        return backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked();
       },
     };
   }
@@ -402,14 +407,13 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
         resetCurrentViewState(nextId);
         renderCurrentScene();
       },
-      backgroundAudioControls: store.get().audioGate
-        ? createBackgroundAudioControls()
+      backgroundAudioControls: getEffectiveBackgroundSource(scene)
+        ? createBackgroundAudioControls({ activationSource: getEffectiveBackgroundSource(scene) })
         : null,
       duckBackgroundAudio,
       restoreBackgroundAudio,
       historyControls: createHistoryControls(project),
       discussionSession: options.discussionSession ?? null,
-      pauseBackgroundForVoice: () => { backgroundMuted = true; backgroundTrack.setMuted(true); },
       viewDiscussionScene: id => {
         const originalIndex = voiceHistoryOrigin?.index;
         const index = Number.isInteger(originalIndex) && sceneHistory[originalIndex] === id
@@ -590,6 +594,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     ? options.initialPlaybackState
     : null;
   const initialProject = store.get().project;
+  defaultBackgroundSource = findStartScene(initialProject)?.backgroundAudio?.objectUrl ?? null;
   const availableSceneIds = new Set(initialProject.scenes.map(scene => scene.id));
   const restoredHistory = Array.isArray(initialPlaybackState?.sceneHistory)
     ? initialPlaybackState.sceneHistory.filter(sceneId => availableSceneIds.has(sceneId))

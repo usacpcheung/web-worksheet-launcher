@@ -390,7 +390,6 @@ export function renderPlayerUI({
   discussionSession = null,
   apiClient = null,
   onDiscussionChange = null,
-  pauseBackgroundForVoice = null,
   viewDiscussionScene = null,
   onPrintDiscussion = null,
   initialViewState = null,
@@ -446,6 +445,7 @@ export function renderPlayerUI({
   let formLifetime = null;
   let stopForVoice = () => {};
   let syncMusicForVoice = () => {};
+  let unsubscribeMusic = null;
   let previousVoiceStage = null;
   const capturingVoice = () => ['requesting_permission', 'recording', 'stopping'].includes(discussionSession?.voice?.active?.state);
   const voiceTranslate = (key, vars) => key === 'viewer.voice.otherQuestion'
@@ -458,12 +458,11 @@ export function renderPlayerUI({
   const updateVoice = () => {
     const op = discussionSession?.voice?.active;
     if (op && ['requesting_permission', 'recording'].includes(op.state) && previousVoiceStage !== op.state) {
-      stopForVoice(); pauseBackgroundForVoice?.();
-      if (backgroundAudioControls) backgroundAudioControls.muted = true;
-      syncMusicForVoice();
+      stopForVoice();
     }
     if (['requesting_permission', 'recording', 'stopping'].includes(previousVoiceStage) && !capturingVoice()) stopForVoice();
     previousVoiceStage = op?.state;
+    syncMusicForVoice();
     voiceStatus?.update(null);
     if (voiceStatus) voiceStatus.root.hidden = !op || !cueOverlay.hidden;
     updateFormVoice(); syncDiscussionPrintButton();
@@ -713,6 +712,7 @@ export function renderPlayerUI({
   }
 
   const cleanupCueCardListeners = () => {
+    unsubscribeMusic?.();
     formLifetime?.abort();
     unsubscribeVoice?.();
     updateFormVoice = () => {};
@@ -933,6 +933,7 @@ export function renderPlayerUI({
 
       updateMuteLabel(Boolean(backgroundAudioControls.muted));
       syncMusicForVoice = () => updateMuteLabel(Boolean(backgroundAudioControls.muted));
+      unsubscribeMusic = backgroundAudioControls.subscribe?.(syncMusicForVoice);
 
       muteButton.addEventListener('click', () => {
         const nextMuted = backgroundAudioControls.onToggleMute?.();

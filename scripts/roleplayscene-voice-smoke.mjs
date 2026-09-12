@@ -17,15 +17,30 @@ try {
       const { setLocale } = await import('/server/app/i18n/index.js'); setLocale(locale);
       const { renderPlayer } = await import('/server/roleplayscene/scripts/player/player.js');
       const { RolePlaySceneDiscussionSession } = await import('/server/roleplayscene/scripts/player/discussion-state.js');
+      window.musicInstances = [];
+      window.Audio = class {
+        constructor(src) { this.src = src; this.paused = true; window.musicInstances.push(this); }
+        play() { this.paused = false; return Promise.resolve(); }
+        pause() { this.paused = true; }
+      };
       Object.defineProperty(navigator, 'mediaDevices', { value: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) }, configurable: true });
       window.MediaRecorder = class { static isTypeSupported() { return true; } constructor() { this.state = 'inactive'; this.mimeType = 'audio/webm'; } start() { this.state = 'recording'; } stop() { this.state = 'inactive'; queueMicrotask(() => { this.ondataavailable?.({ data: new Blob(['synthetic']) }); this.onstop?.(); }); } };
       const apiClient = { transcribeAudio: () => new Promise(resolve => { window.finishTranscript = () => resolve({ ok: true, data: { text: 'new segment' } }); }), rewriteText: async text => window.failRewrite ? { ok: false, error: { code: 'UPSTREAM_FAILED' } } : ({ ok: true, data: { text } }) };
       const project = { meta: { title: 'Voice practice' }, speakers: [], scenes: ['one', 'two'].map((id, i) => ({ id, type: i ? 'end' : 'start', dialogue: [{ text: 'Discuss your choice.' }], choices: i ? [] : [{ id: 'next', label: 'Next scene', nextSceneId: 'two', cueCardText: 'Explain your choice.' }], speechBubble: { enabled: bubble } })) };
-      const data = { project, audioGate: false }; const listeners = new Set();
+      project.scenes[0].backgroundAudio = { objectUrl: 'synthetic-music' };
+      const data = { project, audioGate: true }; const listeners = new Set();
       const store = { get: () => data, set: update => { Object.assign(data, update); for (const fn of listeners) fn(); }, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); } };
       window.discussion = new RolePlaySceneDiscussionSession({ apiClient }); window.discussion.bindProject(project);
       window.discussion.setText('one', 'Earlier discussion');
       window.cleanupPlayer = renderPlayer(store, document.querySelector('#left'), document.querySelector('#right'), () => {}, { initialSceneId: 'one', discussionSession: window.discussion, apiClient });
+      window.restoreMusicPlayer = () => {
+        window.cleanupPlayer();
+        store.set({ audioGate: false });
+        window.cleanupPlayer = renderPlayer(store, document.querySelector('#left'), document.querySelector('#right'), () => {}, {
+          initialPlaybackState: { sceneHistory: ['one', 'two'], historyIndex: 1, currentSceneId: 'two' },
+          discussionSession: window.discussion, apiClient,
+        });
+      };
     }, { locale, bubble });
     if (bubble) {
       await page.getByRole('button', { name: locale === 'en' ? 'Choices' : '選項', exact: true }).click();
@@ -38,11 +53,13 @@ try {
     const add = page.getByRole('button', { name: locale === 'en' ? 'Add by voice' : '用語音加入', exact: true });
     await add.click();
     await page.waitForFunction(() => window.discussion.voice.active?.state === 'recording');
+    assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), true);
     assert.equal(await field.evaluate(e => e.readOnly), true);
     assert.equal(await page.locator('.audio-play-all').isDisabled(), true);
     if (shots) await page.screenshot({ path: `${shots}/discussion-recording-${locale}-${width}-${bubble}.png` });
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => window.discussion.voice.active?.state === 'transcribing');
+    assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), false);
     assert.equal(await page.locator('.player-discussion-voice-status').isVisible(), true);
     await page.locator('.player-discussion-voice-status button').first().click();
     assert.equal(await field.isVisible(), true);
@@ -73,6 +90,7 @@ try {
       await page.locator('.theater-history-entry[data-scene-id="two"]').click();
       await page.locator('.theater-utilities-toggle').click();
       await page.locator('.theater-utilities-section--discussion button').first().click();
+      await field.focus();
       await page.evaluate(() => window.finishTranscript());
       await page.waitForFunction(() => !window.discussion.voice.active);
       assert.equal(await field.inputValue(), 'Scene two typing');
@@ -95,6 +113,24 @@ try {
       assert.equal(await field.inputValue(), 'Scene two typing edited recovery');
     }
     assert.equal(await field.evaluate(e => e.getBoundingClientRect().right <= innerWidth), true);
+    await page.evaluate(() => window.restoreMusicPlayer());
+    await page.locator('.theater-utilities-toggle').click();
+    const music = page.locator('.theater-utilities-section--music');
+    assert.equal(await music.isVisible(), true, 'Restored later scene retains inherited music controls');
+    assert.equal(await music.locator('input').isDisabled(), true);
+    await music.locator('button').click(); // Explicit activation opens the audio gate and redraws.
+    assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), false);
+    await page.locator('.theater-utilities-toggle').click();
+    await music.locator('button').click(); // Turn music off before recording.
+    await page.locator('.theater-utilities-section--discussion button').first().click();
+    await add.click();
+    await page.waitForFunction(() => window.discussion.voice.active?.state === 'recording');
+    await page.getByRole('button', { name: locale === 'en' ? 'Cancel' : '取消', exact: true }).click();
+    await page.waitForFunction(() => !window.discussion.voice.active);
+    assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), true, 'Previously off music stays off after cancellation');
+    await page.keyboard.press('Escape');
+    await page.locator('.theater-utilities-toggle').click();
+    if (shots) await page.screenshot({ path: `${shots}/discussion-restored-music-${locale}-${width}-${bubble}.png` });
     assert.deepEqual(errors, []);
     await page.evaluate(() => window.cleanupPlayer());
     await context.close();

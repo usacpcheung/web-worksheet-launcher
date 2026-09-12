@@ -2765,6 +2765,7 @@ btnEdit.addEventListener('click', async () => {
   setMode('edit');
 });
 btnPlay.addEventListener('click', () => {
+  if (mode === 'play') return;
   if (publishedPlay.active) {
     setMode('play');
     return;

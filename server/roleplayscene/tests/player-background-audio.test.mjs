@@ -221,12 +221,12 @@ function createIntroOnlyProject(startBackgroundAudio) {
   };
 }
 
-function renderWithProject(project, extraState = {}) {
+function renderWithProject(project, extraState = {}, options = {}) {
   const store = new Store();
   store.set({ project, ...extraState });
   const stageHost = new StubElement('div');
   const uiHost = new StubElement('div');
-  const cleanup = renderPlayer(store, stageHost, uiHost, () => {});
+  const cleanup = renderPlayer(store, stageHost, uiHost, () => {}, options);
   return { store, stageHost, uiHost, cleanup };
 }
 
@@ -279,6 +279,26 @@ resetAudioSpies();
   cleanup();
 }
 
+resetAudioSpies();
+
+for (const audioGate of [false, true]) {
+  const project = createIntroOnlyProject({ name: 'Loop', objectUrl: 'restored-loop.ogg' });
+  project.scenes.push({ ...project.scenes[0], id: 'second', type: SceneType.END, backgroundAudio: null });
+  const { stageHost, uiHost, cleanup } = renderWithProject(project, { audioGate }, {
+    initialPlaybackState: { sceneHistory: ['start-1', 'second'], historyIndex: 1, currentSceneId: 'second' },
+  });
+  try {
+    const slider = findElement(stageHost, el => el.tagName === 'input' && el.type === 'range')
+      || findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
+    assert.ok(slider, 'Restored scene exposes inherited music controls regardless of audio gate');
+    if (!audioGate) {
+      const unmute = findByText(stageHost, 'Unmute background music') || findByText(uiHost, 'Unmute background music');
+      assert.ok(unmute, 'Restored scene offers explicit music activation');
+      unmute.dispatchEvent('click');
+    }
+    assert.equal(getLatestInstanceForSrc('restored-loop.ogg')?.paused, false);
+  } finally { cleanup(); }
+}
 resetAudioSpies();
 
 {
