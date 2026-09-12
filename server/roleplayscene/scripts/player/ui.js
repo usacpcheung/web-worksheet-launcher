@@ -455,7 +455,7 @@ export function renderPlayerUI({
       ? translate('player.discussion.voice.' + key.replace('viewer.voice.', ''), vars) : sharedTranslate(key, vars);
   const viewVoice = id => { if (id === scene?.id) openDiscussion(); else viewDiscussionScene?.(id); };
   const voiceStatus = discussionSession?.voice ? createVoiceStatus({ session: discussionSession, t: voiceTranslate, view: viewVoice }) : null;
-  if (voiceStatus) { voiceStatus.root.hidden = true; voiceStatus.root.classList.add('player-discussion-voice-status'); stageEl.appendChild(voiceStatus.root); }
+  if (voiceStatus) { voiceStatus.root.hidden = true; voiceStatus.root.classList.add('player-discussion-voice-status'); stageEl.after(voiceStatus.root); }
   const updateVoice = () => {
     const op = discussionSession?.voice?.active;
     if (op && ['requesting_permission', 'recording'].includes(op.state) && previousVoiceStage !== op.state) {
@@ -716,6 +716,7 @@ export function renderPlayerUI({
     unsubscribeMusic?.();
     formLifetime?.abort();
     unsubscribeVoice?.();
+    voiceStatus?.root.remove();
     updateFormVoice = () => {};
     if (typeof document?.removeEventListener === 'function') {
       document.removeEventListener('keydown', handleDocumentKeydown);

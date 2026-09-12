@@ -60,7 +60,7 @@ try {
         window.cleanupPlayer();
         const branchProject = { meta: { title: 'Branches' }, speakers: [], scenes: ['a', 'b', 'c'].map((id, i) => ({
           id, type: i ? 'end' : 'start', dialogue: [{ text: id }], speechBubble: { enabled: bubble },
-          choices: i ? [] : [{ id: 'to-c', label: 'Go C', nextSceneId: 'c' }, { id: 'to-b', label: 'Go B', nextSceneId: 'b' }],
+          choices: i ? [] : [{ id: 'to-b', label: 'Go B', nextSceneId: 'b' }, { id: 'to-c', label: 'Go C', nextSceneId: 'c' }],
         })) };
         store.set({ project: branchProject });
         window.discussion.bindProject(branchProject);
@@ -229,6 +229,13 @@ try {
     await page.locator('.theater-utilities-toggle').click();
     await page.locator('.theater-history-entry[data-scene-id="a"]').click();
     await page.getByRole('button', { name: locale === 'en' ? 'Choices' : '選項', exact: true }).click();
+    // The lower choice must remain tappable while the cross-scene notice wraps on mobile.
+    assert.equal(await page.getByRole('button', { name: 'Go C', exact: true }).evaluate(button => {
+      const r = button.getBoundingClientRect();
+      return button.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+    }), true);
+    assert.equal(await page.locator('.player-discussion-voice-status').count(), 1);
+    if (shots) await page.screenshot({ path: `${shots}/discussion-choice-processing-${locale}-${width}-${bubble}.png` });
     await page.getByRole('button', { name: 'Go C', exact: true }).click();
     const history = () => page.locator('.theater-history-entry').evaluateAll(nodes => nodes.map(node => node.dataset.sceneId));
     assert.deepEqual(await history(), ['a', 'c']);

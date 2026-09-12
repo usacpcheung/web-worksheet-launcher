@@ -5,6 +5,7 @@ export const AUDIO_UPLOAD_LIMIT = 20 * 1024 * 1024;
 export const unicodeLength = (value) => Array.from(String(value ?? '')).length;
 export const hasRecoveryText = record => record?.phase === 'text'
   || Boolean(record?.text) || record?.candidate !== undefined;
+export const getVoiceRecovery = (records, id) => records && Object.hasOwn(records, id) ? records[id] : undefined;
 export const hasPendingRecovery = record => Boolean(record && record.phase !== 'preflight');
 export const isVoiceQuestion = (block) => block?.kind === 'question'
   && (block.responseConfig?.inputType || 'text') === 'text';

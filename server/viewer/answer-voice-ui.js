@@ -1,5 +1,5 @@
 import { supportsAnswerRecording } from './answer-recording.js';
-import { REWRITE_INPUT_LIMIT, unicodeLength, hasRecoveryText, hasPendingRecovery } from './answer-voice-workflow.js';
+import { REWRITE_INPUT_LIMIT, unicodeLength, hasRecoveryText, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 
 function button(label, action) {
   const node = document.createElement('button');
@@ -71,7 +71,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
   const editor = document.createElement('textarea'); editor.rows = 3;
   editorLabel.append(editor);
   editor.addEventListener('input', () => {
-    const record = session.state.voiceRecovery[block.blockId];
+    const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
     if (!record || session.voice.active) return;
     if (record.candidate !== undefined) record.candidate = editor.value;
     else record.text = editor.value;
@@ -80,15 +80,15 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     update();
   });
   const retry = button(t('viewer.voice.retryRewrite'), () => {
-    const record = session.state.voiceRecovery[block.blockId];
+    const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
     if (record) perform({ mode: record.mode, retry: record });
   });
   const insert = button(t('viewer.voice.insert'), () => {
-    const record = session.state.voiceRecovery[block.blockId];
+    const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
     if (record) perform({ mode: record.mode, retry: record, candidate: record.candidate });
   });
   const append = button(t('viewer.voice.append'), () => {
-    const record = session.state.voiceRecovery[block.blockId];
+    const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
     if (record) perform({ mode: 'voice', retry: record, append: true,
       ...(record.candidate !== undefined ? { candidate: record.candidate } : {}) });
   });
@@ -105,7 +105,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     const own = op?.blockId === block.blockId;
     root.hidden = completed;
     add.hidden = completed;
-    const record = session.state.voiceRecovery[block.blockId];
+    const record = getVoiceRecovery(session.state.voiceRecovery, block.blockId);
     add.disabled = Boolean(op) || hasPendingRecovery(record) || !supportsAnswerRecording()
       || control.value.length >= (block.responseConfig?.maxLength || 200);
     add.setAttribute('aria-describedby', status.root.id);
