@@ -19,6 +19,14 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   let currentSceneId = null;
   let sceneHistory = [];
   let historyIndex = -1;
+  let voiceHistoryOrigin = null;
+  const unsubscribeVoiceHistory = options.discussionSession?.subscribe?.(() => {
+    const operation = options.discussionSession.voice?.active;
+    if (!operation) { voiceHistoryOrigin = null; return; }
+    if (voiceHistoryOrigin?.operation !== operation) {
+      voiceHistoryOrigin = { operation, index: historyIndex };
+    }
+  });
   let backgroundVolume = 0.4;
   let backgroundMuted = false;
   let backgroundDucked = false;
@@ -90,6 +98,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function cleanup() {
+    unsubscribeVoiceHistory?.();
     options.discussionSession?.teardown?.();
     stopActiveDialogue();
     unsubscribe();
@@ -402,9 +411,10 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       discussionSession: options.discussionSession ?? null,
       pauseBackgroundForVoice: () => { backgroundMuted = true; backgroundTrack.setMuted(true); },
       viewDiscussionScene: id => {
-        pushSceneToHistory(id); resetCurrentViewState(id);
-        currentViewState = { cueOverlay: { mode: 'discussion' } };
-        renderCurrentScene();
+        const originalIndex = voiceHistoryOrigin?.index;
+        const index = Number.isInteger(originalIndex) && sceneHistory[originalIndex] === id
+          ? originalIndex : sceneHistory.lastIndexOf(id);
+        if (index >= 0) goToHistoryIndex(index, { openDiscussion: true });
       },
       apiClient: options.apiClient ?? null,
       onDiscussionChange: options.onDiscussionChange ?? null,
@@ -500,7 +510,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     emitPlaybackState();
   }
 
-  function goToHistoryIndex(index) {
+  function goToHistoryIndex(index, { openDiscussion = false } = {}) {
     if (index < 0 || index >= sceneHistory.length) {
       return;
     }
@@ -512,6 +522,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     historyIndex = index;
     currentSceneId = nextSceneId;
     resetCurrentViewState(nextSceneId);
+    if (openDiscussion) currentViewState = { cueOverlay: { mode: 'discussion' } };
     emitPlaybackState();
     renderCurrentScene();
   }

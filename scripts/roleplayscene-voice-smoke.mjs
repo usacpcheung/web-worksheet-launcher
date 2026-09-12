@@ -64,6 +64,15 @@ try {
       await page.locator('.theater-utilities-section--discussion button').first().click();
       await field.fill('Scene two typing');
       assert.equal(await add.isDisabled(), true);
+      await page.locator('.player-discussion-input-panel .viewer-voice-status button').first().click();
+      assert.equal(await field.inputValue(), 'Earlier discussion');
+      assert.deepEqual(await page.locator('.theater-history-entry').evaluateAll(nodes => nodes.map(e => e.dataset.sceneId)), ['one', 'two']);
+      assert.equal(await page.locator('.theater-history-entry[aria-current="step"]').getAttribute('data-scene-id'), 'one');
+      await page.keyboard.press('Escape');
+      await page.locator('.theater-utilities-toggle').click();
+      await page.locator('.theater-history-entry[data-scene-id="two"]').click();
+      await page.locator('.theater-utilities-toggle').click();
+      await page.locator('.theater-utilities-section--discussion button').first().click();
       await page.evaluate(() => window.finishTranscript());
       await page.waitForFunction(() => !window.discussion.voice.active);
       assert.equal(await field.inputValue(), 'Scene two typing');
