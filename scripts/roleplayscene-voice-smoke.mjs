@@ -151,9 +151,9 @@ try {
     const music = page.locator('.theater-utilities-section--music');
     assert.equal(await music.isVisible(), true, 'Restored later scene retains inherited music controls');
     assert.equal(await music.locator('input').isDisabled(), true);
-    await music.locator('button').click(); // Explicit activation opens the audio gate and redraws.
+    await music.locator('button').click(); // Explicit activation keeps the existing menu.
     assert.equal(await page.evaluate(() => window.musicInstances.at(-1).paused), false);
-    await page.locator('.theater-utilities-toggle').click();
+    assert.equal(await music.isVisible(), true);
     await page.evaluate(() => {
       window.musicInstances.at(-1).paused = true;
       window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
@@ -177,7 +177,7 @@ try {
     await page.locator('.theater-utilities-toggle').click();
     const coverMusic = page.locator('.background-audio-controls');
     await coverMusic.locator('button').click();
-    await page.locator('.theater-utilities-toggle').click();
+    assert.equal(await coverMusic.isVisible(), true);
     await page.evaluate(() => {
       window.musicInstances.at(-1).paused = true;
       window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));

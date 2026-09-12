@@ -37,6 +37,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   let unsubscribeIntroMusic = null;
   let currentViewState = null;
   let currentViewStateSceneId = null;
+  let updatingMusicGate = false;
   const backgroundTrack = createBackgroundAudioController({ defaultVolume: backgroundVolume });
   backgroundVolume = backgroundTrack.getPreferredVolume();
   backgroundTrack.setVolume(backgroundVolume);
@@ -70,6 +71,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   };
 
   const unsubscribe = store.subscribe(() => {
+    if (updatingMusicGate) return;
     const { project } = store.get();
     if (!currentSceneId) {
       renderIntro();
@@ -172,7 +174,8 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       onToggleMute: () => {
         backgroundMuted = !(backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked() || backgroundTrack.isSuspended());
         if (!backgroundMuted && activationSource && !store.get().audioGate) {
-          ensureAudioGate(store);
+          updatingMusicGate = true;
+          try { ensureAudioGate(store); } finally { updatingMusicGate = false; }
         }
         backgroundTrack.setMuted(backgroundMuted, { userInitiated: true });
         if (!backgroundMuted && activationSource) backgroundTrack.play(activationSource, { userInitiated: true });

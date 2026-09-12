@@ -2991,6 +2991,12 @@ window.addEventListener('beforeunload', (event) => {
     event.returnValue = '';
     return;
   }
+});
+
+// A cached page retains its DOM and must retain the listeners behind that DOM.
+// beforeunload can also be cancelled, so it must never destroy the active player.
+window.addEventListener('pagehide', (event) => {
+  if (event.persisted) return;
   if (typeof teardown === 'function') {
     teardown();
   }
