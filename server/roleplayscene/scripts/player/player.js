@@ -17,18 +17,35 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   rightEl.appendChild(uiPanel);
 
   let currentSceneId = null;
+  let renderedSceneId = null;
+  let renderedHistoryIndex = null;
   let sceneHistory = [];
   let historyIndex = -1;
+  let voiceHistoryOrigin = null;
+  const unsubscribeVoiceHistory = options.discussionSession?.subscribe?.(() => {
+    const operation = options.discussionSession.voice?.active;
+    if (!operation) { voiceHistoryOrigin = null; return; }
+    if (voiceHistoryOrigin?.operation !== operation) {
+      voiceHistoryOrigin = { operation, index: historyIndex };
+    }
+  });
   let backgroundVolume = 0.4;
   let backgroundMuted = false;
   let backgroundDucked = false;
   let defaultBackgroundSource = null;
   let activeDialogueCleanup = null;
+  let unsubscribeIntroMusic = null;
   let currentViewState = null;
   let currentViewStateSceneId = null;
+  let updatingMusicGate = false;
   const backgroundTrack = createBackgroundAudioController({ defaultVolume: backgroundVolume });
   backgroundVolume = backgroundTrack.getPreferredVolume();
   backgroundTrack.setVolume(backgroundVolume);
+  const unsubscribeVoiceMusic = options.discussionSession?.subscribe?.(() => {
+    const capture = ['requesting_permission', 'recording', 'stopping'].includes(options.discussionSession.voice?.active?.state);
+    if (capture) backgroundTrack.suspendForCapture();
+    else backgroundTrack.resumeAfterCapture();
+  });
 
   function emitPlaybackState() {
     if (typeof options.onPlaybackStateChange !== 'function') return;
@@ -54,6 +71,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   };
 
   const unsubscribe = store.subscribe(() => {
+    if (updatingMusicGate) return;
     const { project } = store.get();
     if (!currentSceneId) {
       renderIntro();
@@ -79,6 +97,8 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   });
 
   function stopActiveDialogue() {
+    unsubscribeIntroMusic?.();
+    unsubscribeIntroMusic = null;
     if (activeDialogueCleanup) {
       const cleanupFn = activeDialogueCleanup;
       activeDialogueCleanup = null;
@@ -90,6 +110,9 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function cleanup() {
+    unsubscribeVoiceMusic?.();
+    unsubscribeVoiceHistory?.();
+    options.discussionSession?.teardown?.();
     stopActiveDialogue();
     unsubscribe();
     backgroundTrack.teardown();
@@ -141,21 +164,22 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   function createBackgroundAudioControls({ activationSource = null } = {}) {
     return {
       volume: backgroundVolume,
-      muted: backgroundMuted,
+      get muted() { return backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked() || backgroundTrack.isSuspended(); },
+      set muted(_) { /* The controller owns the music preference. */ },
+      subscribe: listener => backgroundTrack.subscribe(listener),
       onVolumeChange: (value) => {
         backgroundVolume = value;
         backgroundTrack.setVolume(value);
       },
       onToggleMute: () => {
-        backgroundMuted = !backgroundMuted;
+        backgroundMuted = !(backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked() || backgroundTrack.isSuspended());
         if (!backgroundMuted && activationSource && !store.get().audioGate) {
-          ensureAudioGate(store);
-          backgroundTrack.setVolume(backgroundVolume);
-          backgroundTrack.exitDuckedState();
-          backgroundTrack.play(activationSource);
+          updatingMusicGate = true;
+          try { ensureAudioGate(store); } finally { updatingMusicGate = false; }
         }
-        backgroundTrack.setMuted(backgroundMuted);
-        return backgroundMuted;
+        backgroundTrack.setMuted(backgroundMuted, { userInitiated: true });
+        if (!backgroundMuted && activationSource) backgroundTrack.play(activationSource, { userInitiated: true });
+        return backgroundMuted || !store.get().audioGate || backgroundTrack.isPlaybackBlocked() || backgroundTrack.isSuspended();
       },
     };
   }
@@ -213,6 +237,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     };
 
     updateMuteLabel(Boolean(controls.muted));
+    unsubscribeIntroMusic = controls.subscribe?.(() => updateMuteLabel(Boolean(controls.muted)));
 
     muteButton.addEventListener('click', () => {
       const nextMuted = controls.onToggleMute?.();
@@ -282,6 +307,9 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function renderIntro() {
+    if (renderedSceneId !== null) options.discussionSession?.voice?.navigate();
+    renderedSceneId = null;
+    renderedHistoryIndex = null;
     stopActiveDialogue();
     rightEl.classList?.add?.('pane--stage-only');
     const state = store.get();
@@ -375,6 +403,11 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       return;
     }
 
+    if (renderedSceneId !== null && (renderedSceneId !== scene.id || renderedHistoryIndex !== historyIndex)) {
+      options.discussionSession?.voice?.navigate();
+    }
+    renderedSceneId = scene.id;
+    renderedHistoryIndex = historyIndex;
     syncBackgroundAudio(scene);
 
     const dialogueCleanup = renderPlayerUI({
@@ -390,13 +423,26 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
         resetCurrentViewState(nextId);
         renderCurrentScene();
       },
-      backgroundAudioControls: store.get().audioGate
-        ? createBackgroundAudioControls()
+      backgroundAudioControls: getEffectiveBackgroundSource(scene)
+        ? createBackgroundAudioControls({ activationSource: getEffectiveBackgroundSource(scene) })
         : null,
       duckBackgroundAudio,
       restoreBackgroundAudio,
       historyControls: createHistoryControls(project),
       discussionSession: options.discussionSession ?? null,
+      viewDiscussionScene: id => {
+        const originalIndex = voiceHistoryOrigin?.index;
+        const index = Number.isInteger(originalIndex) && sceneHistory[originalIndex] === id
+          ? originalIndex : sceneHistory.lastIndexOf(id);
+        if (index >= 0) {
+          goToHistoryIndex(index, { openDiscussion: true });
+        } else if (findSceneById(store.get().project, id)) {
+          // A new branch can prune the operation's scene from history. Visiting
+          // it is still valid; preserve the existing history and append the visit.
+          sceneHistory.push(id);
+          goToHistoryIndex(sceneHistory.length - 1, { openDiscussion: true });
+        }
+      },
       apiClient: options.apiClient ?? null,
       onDiscussionChange: options.onDiscussionChange ?? null,
       onPrintDiscussion: options.onPrintDiscussion ?? null,
@@ -491,7 +537,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     emitPlaybackState();
   }
 
-  function goToHistoryIndex(index) {
+  function goToHistoryIndex(index, { openDiscussion = false } = {}) {
     if (index < 0 || index >= sceneHistory.length) {
       return;
     }
@@ -503,6 +549,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     historyIndex = index;
     currentSceneId = nextSceneId;
     resetCurrentViewState(nextSceneId);
+    if (openDiscussion) currentViewState = { cueOverlay: { mode: 'discussion' } };
     emitPlaybackState();
     renderCurrentScene();
   }
@@ -570,6 +617,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     ? options.initialPlaybackState
     : null;
   const initialProject = store.get().project;
+  defaultBackgroundSource = findStartScene(initialProject)?.backgroundAudio?.objectUrl ?? null;
   const availableSceneIds = new Set(initialProject.scenes.map(scene => scene.id));
   const restoredHistory = Array.isArray(initialPlaybackState?.sceneHistory)
     ? initialPlaybackState.sceneHistory.filter(sceneId => availableSceneIds.has(sceneId))

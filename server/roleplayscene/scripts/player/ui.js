@@ -1,3 +1,6 @@
+import { createVoiceControls, createVoiceStatus } from '../../../viewer/answer-voice-ui.js';
+import { t as sharedTranslate } from '../../../app/i18n/index.js';
+import { unicodeLength, hasPendingRecovery } from '../../../viewer/answer-voice-workflow.js';
 import { translate } from '../i18n.js';
 import { renderPlayerChoices } from './choice-controls.js';
 import { createPlayerIcon } from './icons.js';
@@ -13,6 +16,7 @@ import {
 } from './dialogue-progression.js';
 
 export { splitSpeechBubbleText };
+let discussionDomId = 0;
 
 function createDialogueBoost(element) {
   const AudioContextCtor = globalThis?.AudioContext || globalThis?.webkitAudioContext;
@@ -387,6 +391,7 @@ export function renderPlayerUI({
   discussionSession = null,
   apiClient = null,
   onDiscussionChange = null,
+  viewDiscussionScene = null,
   onPrintDiscussion = null,
   initialViewState = null,
   onViewStateChange = null,
@@ -436,10 +441,43 @@ export function renderPlayerUI({
   let cueOverlayState = null;
   let playbackViewState = null;
   let printDiscussionButton = null;
+  let printDiscussionHint = null;
+  let updateFormVoice = () => {};
+  let formLifetime = null;
+  let stopForVoice = () => {};
+  let syncMusicForVoice = () => {};
+  let unsubscribeMusic = null;
+  let previousVoiceStage = null;
+  const capturingVoice = () => ['requesting_permission', 'recording', 'stopping'].includes(discussionSession?.voice?.active?.state);
+  const voiceTranslate = (key, vars) => key === 'viewer.voice.otherQuestion'
+    ? translate('player.discussion.voiceOtherScene', vars)
+    : ['locked', 'atEnd', 'atCursor', 'resolveRecovery', 'signInThenRewrite'].includes(key.replace('viewer.voice.', ''))
+      ? translate('player.discussion.voice.' + key.replace('viewer.voice.', ''), vars) : sharedTranslate(key, vars);
+  const viewVoice = id => { if (id === scene?.id) openDiscussion(); else viewDiscussionScene?.(id); };
+  const voiceStatus = discussionSession?.voice ? createVoiceStatus({ session: discussionSession, t: voiceTranslate, view: viewVoice }) : null;
+  if (voiceStatus) { voiceStatus.root.hidden = true; voiceStatus.root.classList.add('player-discussion-voice-status'); stageEl.after(voiceStatus.root); }
+  const updateVoice = () => {
+    const op = discussionSession?.voice?.active;
+    if (op && ['requesting_permission', 'recording'].includes(op.state) && previousVoiceStage !== op.state) {
+      stopForVoice();
+    }
+    if (['requesting_permission', 'recording', 'stopping'].includes(previousVoiceStage) && !capturingVoice()) stopForVoice();
+    previousVoiceStage = op?.state;
+    syncMusicForVoice();
+    voiceStatus?.update(null);
+    if (voiceStatus) voiceStatus.root.hidden = !op || !cueOverlay.hidden;
+    updateFormVoice(); syncDiscussionPrintButton();
+  };
+  const unsubscribeVoice = discussionSession?.subscribe?.(updateVoice);
 
   const syncDiscussionPrintButton = () => {
     if (!printDiscussionButton) return;
-    printDiscussionButton.disabled = !discussionSession?.hasAnyText?.();
+    printDiscussionButton.disabled = Boolean(discussionSession?.voice?.active) || !discussionSession?.hasAnyText?.();
+    printDiscussionButton.title = discussionSession?.voice?.active ? translate('player.discussion.printBusy') : '';
+    if (printDiscussionHint) {
+      printDiscussionHint.hidden = !discussionSession?.voice?.active;
+      printDiscussionHint.textContent = printDiscussionButton.title;
+    }
   };
 
   const emitViewState = () => {
@@ -454,9 +492,14 @@ export function renderPlayerUI({
     }
   };
 
-  const closeCueCard = ({ returnFocus = false, notify = true } = {}) => {
+  const closeCueCard = ({ returnFocus = false, notify = true, stopCapture = true } = {}) => {
+    formLifetime?.abort();
+    if (stopCapture) discussionSession?.voice?.navigate();
+    if (discussionSession?.state) discussionSession.state.lastActiveBlockId = null;
+    updateFormVoice = () => {};
     cueOverlay.hidden = true;
     cueBody.innerHTML = '';
+    updateVoice();
     if (activeCueTrigger) {
       activeCueTrigger.setAttribute('aria-expanded', 'false');
       if (returnFocus && typeof activeCueTrigger.focus === 'function') {
@@ -480,7 +523,10 @@ export function renderPlayerUI({
   };
 
   const renderDiscussionForm = ({ cueText = '' } = {}) => {
+    formLifetime?.abort();
+    formLifetime = new AbortController();
     cueBody.innerHTML = '';
+    if (discussionSession?.state) discussionSession.state.lastActiveBlockId = scene.id;
     const hasCue = Boolean(String(cueText || '').trim());
     setClassEnabled(cueDialog, 'player-cue-dialog--discussion-with-cue', hasCue);
     setClassEnabled(cueDialog, 'player-cue-dialog--discussion-only', !hasCue);
@@ -510,6 +556,7 @@ export function renderPlayerUI({
     const textarea = document.createElement('textarea');
     textarea.className = 'player-discussion-textarea';
     textarea.rows = hasCue ? 8 : 9;
+    textarea.id = `roleplay-discussion-${++discussionDomId}`;
     textarea.value = discussionSession?.getText?.(scene.id) || '';
     textarea.placeholder = translate('player.discussion.placeholder');
     label.appendChild(textarea);
@@ -536,25 +583,34 @@ export function renderPlayerUI({
     rewriteButton.className = 'theater-panel-action theater-panel-action--primary';
     rewriteButton.textContent = translate('player.discussion.rewrite');
 
-    actions.append(undoButton, rewriteButton);
+    const voiceControls = discussionSession?.voice ? createVoiceControls({
+      session: discussionSession, block: discussionSession.state.viewerPayload.blocks.find(b => b.blockId === scene.id),
+      control: textarea, t: voiceTranslate, view: viewVoice,
+      signal: formLifetime.signal,
+      applied: value => { textarea.value = value.text; },
+    }) : null;
+    if (voiceControls) actions.append(voiceControls.add);
+    actions.append(rewriteButton, undoButton);
     footer.append(note, actions);
     inputPanel.append(label, footer, hint);
+    if (voiceControls) inputPanel.append(voiceControls.root);
     layout.appendChild(inputPanel);
     cueBody.appendChild(layout);
 
     const syncControls = () => {
       const text = textarea.value || '';
-      const trimmedLength = text.trim().length;
+      const trimmedLength = unicodeLength(text.trim());
       const isRewriting = Boolean(
         discussionSession?.isRewriting
         && discussionSession?.rewritingSceneId === scene.id
       );
-      rewriteButton.textContent = isRewriting
+      rewriteButton.textContent = isRewriting && discussionSession?.voice?.active?.state === 'rewriting'
         ? translate('player.discussion.rewriting')
         : translate('player.discussion.rewrite');
-      rewriteButton.disabled = isRewriting || trimmedLength === 0 || trimmedLength > DISCUSSION_REWRITE_MAX_CHARS;
-      undoButton.disabled = isRewriting || !discussionSession?.hasUndo?.(scene.id);
-      const message = discussionSession?.getMessage?.(scene.id) || '';
+      rewriteButton.disabled = Boolean(discussionSession?.voice?.active) || hasPendingRecovery(discussionSession?.recovery?.[scene.id]) || isRewriting || trimmedLength === 0 || trimmedLength > DISCUSSION_REWRITE_MAX_CHARS;
+      undoButton.disabled = Boolean(discussionSession?.voice?.active) || isRewriting || !discussionSession?.hasUndo?.(scene.id);
+      const message = discussionSession?.saveFailed ? translate('player.discussion.saveFailed') : discussionSession?.getMessage?.(scene.id) || '';
+      voiceControls?.update();
       if (message) {
         hint.textContent = message;
       } else if (trimmedLength === 0) {
@@ -566,6 +622,7 @@ export function renderPlayerUI({
       }
     };
 
+    updateFormVoice = syncControls;
     textarea.addEventListener('input', () => {
       discussionSession?.setText?.(scene.id, textarea.value, { manual: true });
       notifyDiscussionChange();
@@ -582,6 +639,7 @@ export function renderPlayerUI({
 
     rewriteButton.addEventListener('click', async () => {
       if (rewriteButton.disabled) return;
+      if (voiceControls) { await voiceControls.rewrite(); return; }
       const textAtClick = textarea.value || '';
       const rewriteTask = discussionSession?.rewrite?.(scene.id, textAtClick, { apiClient });
       syncControls();
@@ -624,6 +682,7 @@ export function renderPlayerUI({
       cueBody.textContent = text;
     }
     cueOverlay.hidden = false;
+    updateVoice();
     emitViewState();
   };
 
@@ -654,6 +713,11 @@ export function renderPlayerUI({
   }
 
   const cleanupCueCardListeners = () => {
+    unsubscribeMusic?.();
+    formLifetime?.abort();
+    unsubscribeVoice?.();
+    voiceStatus?.root.remove();
+    updateFormVoice = () => {};
     if (typeof document?.removeEventListener === 'function') {
       document.removeEventListener('keydown', handleDocumentKeydown);
     }
@@ -803,13 +867,15 @@ export function renderPlayerUI({
       printButton.appendChild(printLabel);
       printButton.setAttribute('aria-label', translate('player.discussion.printButton'));
       printDiscussionButton = printButton;
+      printDiscussionHint = document.createElement('p');
+      printDiscussionHint.className = 'player-discussion-hint';
       syncDiscussionPrintButton();
       printButton.addEventListener('click', () => {
         setOpen(false);
         onPrintDiscussion?.();
       });
 
-      discussionSection.append(discussionButton, printButton);
+      discussionSection.append(discussionButton, printButton, printDiscussionHint);
       panelContent.appendChild(discussionSection);
     }
 
@@ -868,6 +934,8 @@ export function renderPlayerUI({
       };
 
       updateMuteLabel(Boolean(backgroundAudioControls.muted));
+      syncMusicForVoice = () => updateMuteLabel(Boolean(backgroundAudioControls.muted));
+      unsubscribeMusic = backgroundAudioControls.subscribe?.(syncMusicForVoice);
 
       muteButton.addEventListener('click', () => {
         const nextMuted = backgroundAudioControls.onToggleMute?.();
@@ -1016,6 +1084,8 @@ export function renderPlayerUI({
       requestDuck,
       releaseDuck,
       stopDialoguePlayback,
+      capturingVoice,
+      registerVoicePause: pause => { stopForVoice = pause; },
       cleanupCueCardListeners,
       closeCueCard,
       renderNavigationControls,
@@ -1026,6 +1096,7 @@ export function renderPlayerUI({
       },
     });
     restoreCueOverlayState();
+    updateVoice();
     return speechCleanup;
   }
 
@@ -1220,6 +1291,7 @@ export function renderPlayerUI({
   };
 
   function playCurrentTheaterLine({ autoAdvance = false } = {}) {
+    if (capturingVoice()) return;
     const entry = getCurrentEntry();
     if (!entry) return;
     clearTimers();
@@ -1361,7 +1433,7 @@ export function renderPlayerUI({
         ? translate('player.toolbar.stopAudio')
         : translate('player.toolbar.playAudio'),
     );
-    playButton.disabled = !activeEntry?.line?.audio?.objectUrl || choicesOpen || endOverlayOpen;
+    playButton.disabled = capturingVoice() || !activeEntry?.line?.audio?.objectUrl || choicesOpen || endOverlayOpen;
     playButton.setAttribute('aria-pressed', currentAudioActive ? 'true' : 'false');
     playButton.addEventListener('click', () => {
       if (currentAudioActive) {
@@ -1382,7 +1454,7 @@ export function renderPlayerUI({
         ? translate('player.speechBubble.stopAll')
         : translate('player.speechBubble.playAll'),
     );
-    playAllButton.disabled = !visibleEntries.length || choicesOpen || endOverlayOpen;
+    playAllButton.disabled = capturingVoice() || !visibleEntries.length || choicesOpen || endOverlayOpen;
     playAllButton.setAttribute('aria-pressed', playAllActive ? 'true' : 'false');
     playAllButton.addEventListener('click', () => {
       if (playAllActive) {
@@ -1454,14 +1526,16 @@ export function renderPlayerUI({
     theaterOverlay.appendChild(choicesPanel);
   }
 
+  stopForVoice = () => { stopTheaterPlayback(); renderTheaterState(); };
   renderTheaterState();
   restoreCueOverlayState();
+  updateVoice();
 
   return () => {
     clearTimers();
     nextRunToken();
     cleanupCueCardListeners();
-    closeCueCard({ notify: false });
+    closeCueCard({ notify: false, stopCapture: false });
     stopDialoguePlayback();
   };
 }

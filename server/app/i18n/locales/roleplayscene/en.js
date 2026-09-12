@@ -444,6 +444,10 @@ export default {
       "cueCardTriggerLabel": "Show cue card for {label}"
     },
     "discussion": {
+      "voice": {"locked":"This discussion is read-only while processing. You can cancel at any time.","atEnd":"Voice text will be added at the end of the discussion. Place the cursor to choose another position.","atCursor":"Voice text will be added at the cursor.","resolveRecovery":"Review or discard recovered text before adding voice or rewriting the discussion.","signInThenRewrite":"Sign in, then click Rewrite again. The current discussion will be used."},
+      "voiceOtherScene": "{stage} Scene {number}. Finish or cancel before starting another voice input or rewrite.",
+      "printBusy": "Finish or cancel voice input or rewriting before printing.",
+      "saveFailed": "Discussion recovery could not be saved. Keep this page open and copy your text.",
       "button": "Discussion",
       "title": "Scene discussion",
       "closeLabel": "Close scene discussion",

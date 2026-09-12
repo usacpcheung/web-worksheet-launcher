@@ -5,6 +5,7 @@ export const AUDIO_UPLOAD_LIMIT = 20 * 1024 * 1024;
 export const unicodeLength = (value) => Array.from(String(value ?? '')).length;
 export const hasRecoveryText = record => record?.phase === 'text'
   || Boolean(record?.text) || record?.candidate !== undefined;
+export const getVoiceRecovery = (records, id) => records && Object.hasOwn(records, id) ? records[id] : undefined;
 export const hasPendingRecovery = record => Boolean(record && record.phase !== 'preflight');
 export const isVoiceQuestion = (block) => block?.kind === 'question'
   && (block.responseConfig?.inputType || 'text') === 'text';
@@ -29,19 +30,19 @@ export function insertVoiceSegment(answer, segment, index) {
 // Local-only whitelist. Audio, candidates, controllers and upstream diagnostics
 // are deliberately excluded. Reload resumes at transcript editing/rewrite.
 export function normalizeVoiceRecovery(records, blocks = []) {
-  const result = {};
+  const entries = [];
   for (const block of blocks.filter(isVoiceQuestion)) {
-    const item = records?.[block.blockId];
+    const item = records && Object.hasOwn(records, block.blockId) ? records[block.blockId] : null;
     if (!item || typeof item.text !== 'string' || !hasRecoveryText(item)) continue;
-    result[block.blockId] = {
+    entries.push([block.blockId, {
       phase: 'text', text: item.text, snapshot: typeof item.snapshot === 'string' ? item.snapshot : '',
       index: insertionIndex(typeof item.snapshot === 'string' ? item.snapshot : '',
         { deliberate: true, snapshot: item.snapshot, index: item.index }),
       mode: item.mode === 'rewrite' ? 'rewrite' : 'voice',
       createdAt: typeof item.createdAt === 'string' ? item.createdAt : '',
-    };
+    }]);
   }
-  return result;
+  return Object.fromEntries(entries);
 }
 
 function errorCode(error, stage) {

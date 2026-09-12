@@ -6134,7 +6134,7 @@ test('rewrite controls remain always mounted for text questions and enforce disa
   assert.equal(source.includes("rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';"), true);
   assert.equal(source.includes("undoButton.className = 'question-card__undo-btn icon-nav-btn';"), true);
   assert.equal(source.includes('const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= REWRITE_INPUT_LIMIT;'), true);
-  assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(session.state.voiceRecovery[block.blockId]) && canRewriteByLength;'), true);
+  assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(getVoiceRecovery(session.state.voiceRecovery, block.blockId)) && canRewriteByLength;'), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
   assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;'), true);
   assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintEnterText');"), true);
@@ -6437,7 +6437,7 @@ test('in-flight rewrite state renders loading label while preserving always-visi
   assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');"), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
   assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;'), true);
-  assert.equal(source.includes('session.state.rewriteMessageByBlock?.[block.blockId]'), true);
+  assert.equal(source.includes('Object.hasOwn(session.state.rewriteMessageByBlock || {}, block.blockId)'), true);
 });
 
 test('rewrite row updates happen in place without mount/unmount checks', async () => {
@@ -6610,4 +6610,42 @@ test('published auth/download/import failures clear loading and allow explicit r
   await assert.rejects(()=>session.startFromPublishedPackage('a'),/bad ZIP/);
   assert.equal(session.packageLoad.current,null);
   assert.equal(session._openingPublishedPackageIds.size,0);
+});
+
+
+test('imported worksheet keys support rewrite, recovery restore, retry and discard', async () => {
+  const mod = await loadViewerModule();
+  for (const id of ['constructor', 'toString', '__proto__']) {
+    let saved, fail = true;
+    const session = new mod.ViewerAttemptSession({
+      attempts: { put: async value => { saved = structuredClone(value); return saved; } },
+      resumeFlags: { set() {}, get() {} },
+    }, { apiClient: { rewriteText: async () => fail
+      ? { ok: false, error: { code: 'UPSTREAM_FAILED' } }
+      : { ok: true, data: { text: 'Improved answer' } } } });
+    session.applyAttemptState({ localAttemptId: 'imported', status: 'in_progress',
+      viewerPayload: { worksheetId: 'w', snapshotId: 's', blocks: [
+        { blockId: id, kind: 'question', responseConfig: { inputType: 'text', maxLength: 200 } },
+      ] }, answers: { [id]: { value: 'Original answer' } } });
+    await session.voice.run(id, { mode: 'rewrite', skipSession: true });
+    assert.equal(Object.hasOwn(session.state.voiceRecovery, id), true);
+    assert.equal(session.state.voiceRecovery[id].text, 'Original answer');
+    await session.autosave();
+    session.applyAttemptState(saved);
+    assert.equal(session.state.voiceRecovery[id].text, 'Original answer');
+    fail = false;
+    await session.voice.run(id, { mode: 'rewrite', retry: session.state.voiceRecovery[id], skipSession: true });
+    assert.equal(session.state.answers[id].value, 'Improved answer');
+    assert.equal(session.state.undoBuffer[id], 'Original answer');
+    assert.equal(Object.hasOwn(session.state.voiceRecovery, id), false);
+    fail = true;
+    await session.voice.run(id, { mode: 'rewrite', skipSession: true });
+    session.voice.discard(id);
+    assert.equal(Object.hasOwn(session.state.voiceRecovery, id), false);
+    fail = false;
+    await session.voice.run(id, { mode: 'rewrite', skipSession: true });
+    assert.equal(session.state.answers[id].value, 'Improved answer');
+    session.voice.teardown();
+    clearTimeout(session.autosaveTimer);
+  }
 });
