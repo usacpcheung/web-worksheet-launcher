@@ -3,7 +3,7 @@ import roleplayscene from './roleplayscene/en.js';
 export default {
   formatting: {
     mode: 'Text display mode', syntax: 'You type', result: 'Result',
-    backToEditor: '← Back to editor',
+    backToEditor: 'Back to editor',
     returnSaveFailed: 'Your preview answers could not be saved. You are still in the viewer. Please try Back to editor again.',
     helpNote: 'Headings: levels 2–6 (## to ######). Use a backslash before punctuation to display it literally. Ordinary line breaks and blank lines work. Lists and quotes have one level. Links, images, code and HTML remain plain text.',
     promptCount: '{count} / {max} spoken-text characters',

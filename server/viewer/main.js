@@ -343,6 +343,7 @@ function normalizeUploadedAttemptRows(list) {
 function createViewerIcon(name) {
   const svgAttrs = 'class="viewer-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
   const icons = {
+    back: `<svg ${svgAttrs}><path d="m12 19-7-7 7-7"></path><path d="M5 12h14"></path></svg>`,
     info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
     upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
     download: `<svg ${svgAttrs}><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>`,
@@ -6792,8 +6793,11 @@ function renderViewerShell(session) {
   if (previewParams.get('preview') === '1' && editorDraftId) {
     const back = document.createElement('button');
     back.type = 'button';
-    back.className = 'viewer-back-to-editor';
-    back.textContent = t('formatting.backToEditor');
+    back.className = 'viewer-header-icon-btn viewer-back-to-editor';
+    back.innerHTML = createViewerIcon('back');
+    const backLabel = document.createElement('span');
+    backLabel.textContent = t('formatting.backToEditor');
+    back.append(backLabel);
     const editorUrl = new URL('../editor/', window.location.href);
     editorUrl.searchParams.set('localDraftId', editorDraftId);
     const returnError = document.createElement('p');
@@ -6806,7 +6810,7 @@ function renderViewerShell(session) {
       returning = true;
       back.disabled = true;
       back.setAttribute('aria-busy', 'true');
-      back.textContent = t('viewer.status.saving');
+      backLabel.textContent = t('viewer.status.saving');
       returnError.hidden = true;
       const attemptId = session.state.localAttemptId;
       try {
@@ -6825,7 +6829,7 @@ function renderViewerShell(session) {
         returning = false;
         back.disabled = false;
         back.removeAttribute('aria-busy');
-        back.textContent = t('formatting.backToEditor');
+        backLabel.textContent = t('formatting.backToEditor');
       }
     });
     header.append(back, returnError);
