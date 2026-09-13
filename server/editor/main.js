@@ -6,6 +6,8 @@ import {
   parseWorksheetPackage,
 } from './worksheet-package.js';
 import { collectAudioTrackAssetIds, normalizeAudioTracks } from './audio-tracks.js';
+import { MARKDOWN_FORMAT, PROMPT_TEXT_LIMIT, promptTextState, upgradeEditableBlocks, assertWorksheetTextFormats, worksheetTextToPlain, installWorksheetTextStyles } from '../app/worksheet-text.js';
+import { createTextPreview } from './text-preview.js';
 import { getWorksheetT2ALanguagePresetById } from './t2a-language-presets.js';
 import { MEDIA_LIMITS, IMAGE_MIME_TYPES, IMAGE_EXTENSIONS, AUDIO_MIME_TYPES, AUDIO_EXTENSIONS } from './media-config.js';
 import { probeSession } from '../app/auth/session-readiness.js';
@@ -13,6 +15,7 @@ import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from '../app/auth/auth-p
 import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } from '../app/i18n/index.js';
 
 const app = document.getElementById('app');
+installWorksheetTextStyles(document);
 setLocale(resolveInitialLocale(), { persist: false });
 
 const AUTOSAVE_MS = 1000;
@@ -211,7 +214,7 @@ function hasTypedText(value) {
 function getT2ATextEligibility(text, maxLength = T2A_TEXT_MAX_LENGTH) {
   const trimmedText = String(text ?? '').trim();
   const hasText = trimmedText.length > 0;
-  const exceedsLimit = trimmedText.length > maxLength;
+  const exceedsLimit = Array.from(trimmedText).length > maxLength;
   return {
     trimmedText,
     hasText,
@@ -815,7 +818,7 @@ function createEmptyQuestionBlock(position) {
     position,
     prompt: {
       text: '',
-      format: 'plain_text',
+      format: MARKDOWN_FORMAT,
     },
     responseConfig: {
       inputType: 'text',
@@ -1056,7 +1059,7 @@ function normalizeBlocks(blocks) {
         position: 0,
         content: {
           text: '',
-          format: 'plain_text',
+          format: MARKDOWN_FORMAT,
         },
       },
     ];
@@ -1497,6 +1500,7 @@ class EditorDraftSession {
       }
       if (block.kind === 'question') {
         if (!block?.prompt?.text?.trim()) errors.push(`draft.blocks[${index}].prompt.text is required for question blocks`);
+        if (promptTextState(block.prompt).exceedsLimit) errors.push(t('formatting.promptTooLong', { max: PROMPT_TEXT_LIMIT }));
         if (!isRecord(block.responseConfig)) errors.push(`draft.blocks[${index}].responseConfig is required for question blocks`);
         if (!CANONICAL_RESPONSE_INPUT_TYPES.has(block.responseConfig?.inputType)) {
           errors.push(
@@ -1551,6 +1555,7 @@ class EditorDraftSession {
     }
 
     if (existing) {
+      assertWorksheetTextFormats(existing.blocks);
       const legacyTargets = collectLegacyAudioTargets(existing.blocks);
       if (legacyTargets.length > 0) {
         const choice = await this.resolveLegacyAudioMigration({ count: legacyTargets.length, required: true, source: 'local' });
@@ -1606,6 +1611,13 @@ class EditorDraftSession {
 
     this.state.draftRevision = 1;
     this.state.lastSavedRevision = existing ? 1 : 0;
+    const conversion = upgradeEditableBlocks(this.state.draft.blocks);
+    if (conversion.changed) {
+      this.state.draft = { ...this.state.draft, blocks: conversion.blocks };
+      this.state.draftRevision += 1;
+      this.scheduleAutosave();
+      if (existing) this.pushNotification({ kind: 'info', category: 'editor', source: 'formatting.converted', text: t('formatting.converted') });
+    }
     this.validateCurrentDraft();
     this.persistRestoreMetadata();
     return this.state.draft;
@@ -2144,7 +2156,7 @@ class EditorDraftSession {
     const block = this.findBlock(blockId);
     if (!block || block.kind !== 'question') return null;
     if (target === 'prompt') {
-      return { block, text: String(block.prompt?.text || ''), audioTracks: normalizeAudioTracks(block.prompt?.audioTracks) };
+      return { block, text: worksheetTextToPlain(block.prompt), audioTracks: normalizeAudioTracks(block.prompt?.audioTracks) };
     }
     const config = normalizeQuestionResponseConfig(block.responseConfig);
     const option = (config.options || []).map((item) => normalizeResponseOption(item)).find((item) => item.id === optionId);
@@ -2236,7 +2248,7 @@ class EditorDraftSession {
     const optionId = options.optionId || null;
     const current = this.getAudioTrackTarget(blockId, target, optionId);
     if (!current) return { ok: false, reason: 'missing-target' };
-    const textState = getT2ATextEligibility(current.text);
+    const textState = getT2ATextEligibility(current.text, target === 'prompt' ? PROMPT_TEXT_LIMIT : T2A_TEXT_MAX_LENGTH);
     if (!textState.eligible) return { ok: false, reason: textState.hasText ? 'text-too-long' : 'missing-text' };
     const preset = getWorksheetT2ALanguagePresetById(language);
     if (!preset) return { ok: false, reason: 'missing-preset' };
@@ -2847,7 +2859,7 @@ class EditorDraftSession {
             position,
             content: {
               text: '',
-              format: 'plain_text',
+              format: MARKDOWN_FORMAT,
             },
           };
 
@@ -2909,7 +2921,7 @@ class EditorDraftSession {
         blockId: createLocalId('blk'),
         kind: 'content',
         position: 0,
-        content: { text: '', format: 'plain_text' },
+        content: { text: '', format: MARKDOWN_FORMAT },
       });
     }
 
@@ -2969,7 +2981,7 @@ class EditorDraftSession {
           kind: 'question',
           prompt: {
             text: String(block?.prompt?.text || block?.content?.text || ''),
-            format: block?.prompt?.format || 'plain_text',
+            format: block?.prompt?.format || block?.content?.format || 'plain_text',
           },
           responseConfig: isRecord(block.responseConfig)
             ? normalizeQuestionResponseConfig(block.responseConfig)
@@ -2983,7 +2995,7 @@ class EditorDraftSession {
         kind: 'content',
         content: {
           text: String(block?.content?.text || block?.prompt?.text || ''),
-          format: block?.content?.format || 'plain_text',
+          format: block?.content?.format || block?.prompt?.format || 'plain_text',
         },
         prompt: undefined,
         responseConfig: undefined,
@@ -3305,6 +3317,8 @@ class EditorDraftSession {
       },
     });
 
+      const conversion = upgradeEditableBlocks(draft.blocks);
+      draft.blocks = conversion.blocks;
       this.state.draft = draft;
       this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
       this.state.draftRevision += 1;
@@ -3314,6 +3328,7 @@ class EditorDraftSession {
       this.persistRestoreMetadata();
       const successMessage = editorNotification('import.importedPackageZip');
       this.pushNotification({ kind: 'success', category: 'editor', source: 'import.package_zip', text: successMessage });
+      if (conversion.changed) this.pushNotification({ kind: 'info', category: 'editor', source: 'formatting.converted', text: t('formatting.converted') });
       this.notifyStateChange();
       return { importedRecord, draftRecord: this.state.draft };
     } catch (error) {
@@ -3726,6 +3741,7 @@ class EditorDraftSession {
         subject: metadata.subject || '',
       });
       if (!publishResult.ok) {
+        if (publishResult.error?.code === 'PROMPT_TOO_LONG') publishResult.error.message = t('formatting.promptTooLong', { max: PROMPT_TEXT_LIMIT });
         this.pushNotification({ kind: 'error', category: 'server', source: 'publish.status', text: publishResult.error.message });
         this.notifyStateChange();
         return publishResult;
@@ -4063,7 +4079,7 @@ class EditorDraftSession {
     }
     const blockId = String(payload.blockId);
     const block = this.findBlock(blockId);
-    const promptText = String(block?.prompt?.text || '').trim();
+    const promptText = worksheetTextToPlain(block?.prompt).trim();
     const inFlightKey = `prompt:${blockId}`;
     if (this._promptT2AInFlightTargets.has(inFlightKey)) {
       const message = editorNotification('audioGeneration.promptAlreadyInProgress');
@@ -4087,8 +4103,8 @@ class EditorDraftSession {
         error: { message },
       };
     }
-    if (promptText.length > T2A_TEXT_MAX_LENGTH) {
-      const message = editorNotification('audioGeneration.promptTextTooLong', { max: T2A_TEXT_MAX_LENGTH });
+    if (Array.from(promptText).length > PROMPT_TEXT_LIMIT) {
+      const message = editorNotification('audioGeneration.promptTextTooLong', { max: PROMPT_TEXT_LIMIT });
       this.setRecoveryMessage(message);
       this.notifyStateChange();
       return {
@@ -4473,6 +4489,7 @@ function renderEditorShell(session) {
   blockEditor.id = 'editor-block-editor';
   blockEditor.rows = 8;
   blockEditor.className = 'control';
+  const textPreview = createTextPreview(blockEditor, t, createEditorIcon('info'));
 
   const questionInputType = document.createElement('select');
   questionInputType.id = 'editor-question-input-type';
@@ -5991,7 +6008,7 @@ function renderEditorShell(session) {
       button.type = 'button';
       button.className = 'block-select';
       const displayIndex = index + 1;
-      const previewSource = block.kind === 'question' ? block?.prompt?.text : block?.content?.text;
+      const previewSource = worksheetTextToPlain(block.kind === 'question' ? block?.prompt : block?.content);
       const preview = String(previewSource || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
       const blockIndex = document.createElement('span');
       blockIndex.className = 'block-select__index';
@@ -6173,7 +6190,7 @@ function renderEditorShell(session) {
     if (!selectedBlock || selectedBlock.kind !== 'question' || selectedBlock.blockId !== promptT2AUiRefs.blockId) {
       return;
     }
-    const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');
+    const promptTextState = getT2ATextEligibility(worksheetTextToPlain(selectedBlock?.prompt), PROMPT_TEXT_LIMIT);
     const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
     const currentQuestionAudioRef = getSingleMediaRef(promptMediaRefs, 'question_audio');
     const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
@@ -6187,13 +6204,13 @@ function renderEditorShell(session) {
     setMediaActionButtonContent(promptT2AUiRefs.generateBtn, promptT2AIcon, promptT2ALabel);
     promptT2AUiRefs.generateBtn.disabled = !promptTextState.eligible || isPromptT2AInFlight;
     promptT2AUiRefs.hint.textContent = promptTextState.exceedsLimit
-      ? getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)
+      ? getEditorTextTooLongForAudioLabel(PROMPT_TEXT_LIMIT)
       : '';
     promptT2AUiRefs.hint.hidden = !promptTextState.exceedsLimit;
     promptT2AUiRefs.attachBtn.disabled = isPromptT2AInFlight;
     promptT2AUiRefs.playBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
     promptT2AUiRefs.removeBtn.disabled = !currentQuestionAudioRef || isPromptT2AInFlight;
-    const currentTextHash = getAudioSourceTextHash(selectedBlock?.prompt?.text || '');
+    const currentTextHash = getAudioSourceTextHash(worksheetTextToPlain(selectedBlock?.prompt));
     document.querySelectorAll(`[data-prompt-audio-track-block-id="${selectedBlock.blockId}"]`).forEach((trackRow) => {
       const language = trackRow.dataset.promptAudioTrackLanguage;
       const track = getAudioTrack(selectedBlock.prompt?.audioTracks, language);
@@ -6449,7 +6466,7 @@ function renderEditorShell(session) {
       contentLabel.textContent = t('editor.block.contentTextLabel');
       contentLabel.htmlFor = 'editor-block-editor';
       blockEditor.placeholder = t('editor.block.contentTextPlaceholder');
-      rightPanel.append(contentLabel, blockEditor);
+      textPreview.mount(rightPanel, contentLabel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.content);
       return;
     }
 
@@ -6458,7 +6475,7 @@ function renderEditorShell(session) {
     promptLabel.textContent = t('editor.block.promptLabel');
     promptLabel.htmlFor = 'editor-block-editor';
     blockEditor.placeholder = t('editor.block.promptPlaceholder');
-    rightPanel.append(promptLabel, blockEditor);
+    textPreview.mount(rightPanel, promptLabel, `${session.state.draft.localId}:${selectedBlock.blockId}`, selectedBlock.prompt, true);
 
     const promptMediaRefs = normalizeMediaRefs(selectedBlock?.prompt?.mediaRefs);
     const currentQuestionImageRef = getSingleMediaRef(promptMediaRefs, 'question_image');
@@ -6563,7 +6580,7 @@ function renderEditorShell(session) {
     }
     const questionAudioActions = document.createElement('div');
     questionAudioActions.className = 'media-row__actions';
-    const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');
+    const promptTextState = getT2ATextEligibility(worksheetTextToPlain(selectedBlock?.prompt), PROMPT_TEXT_LIMIT);
     const promptExceedsT2ALimit = promptTextState.exceedsLimit;
     const promptT2AEligible = promptTextState.eligible;
     const isPromptT2AInFlight = promptT2AInFlightBlockIds.has(selectedBlock.blockId)
@@ -6594,7 +6611,7 @@ function renderEditorShell(session) {
     const questionAudioHint = document.createElement('p');
     questionAudioHint.className = 'muted';
     questionAudioHint.textContent = promptExceedsT2ALimit
-      ? getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)
+      ? getEditorTextTooLongForAudioLabel(PROMPT_TEXT_LIMIT)
       : '';
     if (!promptExceedsT2ALimit) {
       questionAudioHint.hidden = true;
@@ -6653,7 +6670,7 @@ function renderEditorShell(session) {
     });
     generateQuestionAudioBtn.addEventListener('click', async () => {
       const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlock.blockId);
-      const latestPromptState = getT2ATextEligibility(latestBlock?.prompt?.text || '');
+      const latestPromptState = getT2ATextEligibility(worksheetTextToPlain(latestBlock?.prompt), PROMPT_TEXT_LIMIT);
       if (!latestPromptState.eligible || promptT2AInFlightBlockIds.has(selectedBlock.blockId)) return;
       const sessionReady = await session.ensureServerSessionReady();
       if (!sessionReady.ok) {
@@ -6739,7 +6756,7 @@ function renderEditorShell(session) {
       stale.className = 'asset-status-badge asset-status-badge--warn';
       stale.dataset.audioTrackStale = '1';
       stale.textContent = t('editor.media.audioTracks.textChanged');
-      stale.hidden = !track || track.sourceTextHash === getAudioSourceTextHash(selectedBlock.prompt?.text || '');
+      stale.hidden = !track || track.sourceTextHash === getAudioSourceTextHash(worksheetTextToPlain(selectedBlock.prompt));
       trackMeta.appendChild(stale);
       const actions = document.createElement('div');
       actions.className = 'media-row__actions';
@@ -6769,8 +6786,8 @@ function renderEditorShell(session) {
       const generatePromptTrack = async () => {
         const blockId = selectedBlock.blockId;
         const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === blockId);
-        const latestPromptText = latestBlock?.prompt?.text || '';
-        if (!getT2ATextEligibility(latestPromptText).eligible || promptT2AInFlightBlockIds.has(blockId)) return;
+        const latestPromptText = worksheetTextToPlain(latestBlock?.prompt);
+        if (!getT2ATextEligibility(latestPromptText, PROMPT_TEXT_LIMIT).eligible || promptT2AInFlightBlockIds.has(blockId)) return;
         promptT2AInFlightBlockIds.add(blockId);
         promptTrackGenerationLanguageByBlockId.set(blockId, language);
         restoreLegacyPromptInFlightMarker();
@@ -8012,6 +8029,11 @@ function renderEditorShell(session) {
   openViewerBtn.addEventListener('click', async () => {
     const localDraftId = session.state.draft?.localId;
     if (!localDraftId) return;
+    const returnState = {
+      selectedBlockId: session.state.selectedBlockId,
+      scrollY: window.scrollY,
+      listScroll: blockList.scrollTop,
+    };
     if (collectLegacyAudioTargets(session.state.draft?.blocks).length > 0) {
       session.setMediaFeedback('Legacy audio must be migrated before preview.');
       updateSummary();
@@ -8020,6 +8042,9 @@ function renderEditorShell(session) {
     await session.saveNow();
     updateSummary();
     const draftUpdatedAt = session.state.draft?.metadata?.updatedAt || null;
+    try {
+      sessionStorage.setItem(`worksheet-editor-preview:${localDraftId}`, JSON.stringify(returnState));
+    } catch { /* Navigation still works when browser session storage is unavailable. */ }
     const viewerUrl = buildViewerUrlFromCurrentLocation(window.location.href, localDraftId, draftUpdatedAt);
     window.location.assign(viewerUrl);
   });
@@ -8384,7 +8409,16 @@ function renderEditorShell(session) {
 async function bootstrapEditor() {
   const session = new EditorDraftSession(editorStorage);
   const params = new URLSearchParams(window.location.search);
-  const initialRestore = session.getRouteUiRestoreMetadata();
+  let initialRestore = session.getRouteUiRestoreMetadata();
+  let previewReturn = null;
+  try {
+    const draftId = params.get('localDraftId');
+    const saved = JSON.parse(sessionStorage.getItem(`worksheet-editor-preview:${draftId}`) || 'null');
+    if (draftId && saved && typeof saved.selectedBlockId === 'string') {
+      previewReturn = saved;
+      initialRestore = { ...initialRestore, localId: draftId, selectedBlockId: saved.selectedBlockId };
+    }
+  } catch { /* Ignore unavailable or malformed session state. */ }
   const localDraftId = params.get('localDraftId') || initialRestore?.localId || null;
 
   await session.createOrOpenByLocalDraftId(localDraftId, {
@@ -8467,6 +8501,16 @@ async function bootstrapEditor() {
   session.persistRestoreMetadata();
 
   renderEditorShell(session);
+
+  if (previewReturn) {
+    const position = value => Number.isFinite(value) && value >= 0 ? value : 0;
+    requestAnimationFrame(() => {
+      window.scrollTo(0, position(previewReturn.scrollY));
+      const list = document.querySelector('.block-list');
+      if (list) list.scrollTop = position(previewReturn.listScroll);
+    });
+    try { sessionStorage.removeItem(`worksheet-editor-preview:${localDraftId}`); } catch { /* Optional state. */ }
+  }
 
   window.editorSession = session;
 }

@@ -1,6 +1,8 @@
+@import url('../app/fonts/worksheet-chinese.css');
+
 :root {
   color-scheme: light;
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-family: 'Worksheet Chinese', Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   --viewer-bottom-bar-clearance: 168px;
   --viewer-bottom-control-min-height: 52px;
   --viewer-bottom-control-padding-inline: 22px;
@@ -12,6 +14,9 @@ body {
   color: #111827;
   padding-bottom: var(--viewer-bottom-bar-clearance);
 }
+
+.viewer-header-icon-btn.viewer-back-to-editor { width: auto; gap: 8px; padding: 0 12px; margin-bottom: .5rem; font: inherit; }
+.viewer-back-to-editor .viewer-icon { width: 20px; height: 20px; flex: none; }
 
 #app {
   max-width: 1280px;
@@ -931,12 +936,15 @@ body {
 
 .viewer-header-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
 }
 
 .viewer-header h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: clamp(2rem, 1.7rem + 1.2vw, 2.8rem);
   line-height: 1.1;
   letter-spacing: -0.02em;
@@ -1386,13 +1394,21 @@ body {
   flex: 1;
 }
 
-.question-card label {
+.question-card label, .question-card__prompt-label {
   font-size: clamp(1.2rem, 1.08rem + 0.65vw, 1.65rem);
   line-height: 1.38;
   font-weight: 700;
   margin-bottom: 2px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.question-card__prompt-label {
+  font-weight: 500;
+}
+
+.question-card__prompt-label :is(strong, h2, h3, h4, h5, h6) {
+  font-weight: 700;
 }
 
 .question-card__prompt-audio-btn {
@@ -1912,7 +1928,7 @@ input[type='text']::placeholder {
   font-size: 0.86rem;
 }
 
-.viewer-section h2 {
+.viewer-section-accessible-heading {
   position: absolute;
   inline-size: 1px;
   block-size: 1px;
@@ -2099,7 +2115,7 @@ input[type='text']::placeholder {
     max-width: calc(100vw - 32px);
   }
 
-  .question-card label {
+  .question-card label, .question-card__prompt-label {
     font-size: 1.2rem;
   }
 

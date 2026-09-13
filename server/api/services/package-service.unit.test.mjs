@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { PackageService } from './package-service.js';
 import { createStoredZip, crc32 } from '../../editor/zip-utils.js';
-import { parseWorksheetPackage } from '../../editor/worksheet-package.js';
+import { parseWorksheetPackage, createWorksheetPackageFromDraft } from '../../editor/worksheet-package.js';
 
 function createFakeDb({
   draftCount = 0,
@@ -681,7 +681,7 @@ test('publishFromDraft removes artifact file when DB insert fails', async () => 
   const db = createFakeDb({ failInsert: true });
   const artifactStore = {
     async readArtifact() {
-      return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+      return createValidWorksheetZip();
     },
     async storeArtifact() {
       return { artifactPath: 'published/a.zip', absolutePath: artifactPath, artifactSha256: 'sha', artifactSizeBytes: 4 };
@@ -715,7 +715,7 @@ test('publishFromDraft returns conflict when owner already has same normalized t
     db,
     artifactStore: {
       async readArtifact() {
-        return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+        return createValidWorksheetZip();
       },
       async storeArtifact() {
         storeArtifactCalls += 1;
@@ -756,7 +756,7 @@ test('publishFromDraft blocks when current uploaded draft artifact hash was alre
     db,
     artifactStore: {
       async readArtifact() {
-        return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+        return createValidWorksheetZip();
       },
       async storeArtifact() {
         storeArtifactCalls += 1;
@@ -797,7 +797,7 @@ test('publishFromDraft supports published title/subject overrides without mutati
     },
     artifactStore: {
       async readArtifact() {
-        return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+        return createValidWorksheetZip();
       },
       async storeArtifact() {
         return { artifactPath: 'published/a.zip', absolutePath: '/tmp/a.zip', artifactSha256: 'sha', artifactSizeBytes: 4 };
@@ -825,7 +825,7 @@ test('publishFromDraft acquires owner lock and reads uploaded draft row FOR UPDA
     db,
     artifactStore: {
       async readArtifact() {
-        return Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+        return createValidWorksheetZip();
       },
       async storeArtifact() {
         return {
@@ -1106,4 +1106,26 @@ test('listPublished supports q compatibility filter across title/subject/owner f
     true
   );
   assert.deepEqual(capturedValues, ['%fractions%', 11, 5]);
+});
+test('publishing enforces the spoken 500 limit without restricting content or imported drafts', async () => {
+  for (const format of ['plain_text', 'limited-markdown-v1']) for (const count of [500, 501]) {
+    let writes = 0;
+    const db = createFakeDb();
+    const text = format === 'plain_text' ? '𠮷'.repeat(count) : '**' + '𠮷'.repeat(count) + '**';
+    const bytes = createWorksheetPackageFromDraft({ blocks: [
+      { blockId: 'q', kind: 'question', prompt: { text, format }, responseConfig: { inputType: 'text' } },
+      { blockId: 'c', kind: 'content', content: { text: 'long'.repeat(1000), format } },
+    ] }).bytes;
+    assert.equal(parseWorksheetPackage(bytes).worksheet.blocks[0].prompt.text, text);
+    const service = createService({ db, artifactStore: { readArtifact: async () => bytes, storeArtifact: async () => {
+      writes += 1; return { artifactPath: 'published/test.zip', artifactSha256: 'new', artifactSizeBytes: bytes.length };
+    } } });
+    const result = await service.publishFromDraft({ identity: { sub: 'oidc-sub' }, uploadedDraftId: 'u' });
+    assert.equal(result.ok, count === 500);
+    assert.equal(writes, count === 500 ? 1 : 0);
+    if (count === 501) {
+      assert.equal(result.error.code, 'PROMPT_TOO_LONG');
+      assert.ok(db.state.queries.includes('ROLLBACK'));
+    }
+  }
 });

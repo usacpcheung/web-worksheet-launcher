@@ -1,3 +1,4 @@
+import { URL as NodeURL } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -6,7 +7,7 @@ import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-he
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = await fs.readFile(filePath, 'utf8');
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source, [
     {
@@ -1424,7 +1425,7 @@ test('multiple-choice option audio controls gate placeholder options with helper
 
 test('question audio row adds contextual generate/regenerate control with prompt eligibility checks', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("const promptTextState = getT2ATextEligibility(selectedBlock?.prompt?.text || '');"), true);
+  assert.equal(source.includes("const promptTextState = getT2ATextEligibility(worksheetTextToPlain(selectedBlock?.prompt), PROMPT_TEXT_LIMIT);"), true);
   assert.equal(source.includes("setMediaActionButtonContent("), true);
   assert.equal(source.includes("generateQuestionAudioBtn,"), true);
   assert.equal(source.includes("isPromptT2AInFlight ? 'loading' : currentQuestionAudioRef ? 'refresh' : 'generate'"), true);
@@ -4947,7 +4948,7 @@ test('editor replayEditorPromptT2AIntent returns plain-language errors for inval
   assert.equal(missingPrompt.ok, false);
   assert.equal(missingPrompt.error.message, 'editor.notifications.audioGeneration.promptRequired');
 
-  session.state.draft.blocks[0].prompt.text = 'a'.repeat(201);
+  session.state.draft.blocks[0].prompt.text = 'a'.repeat(501);
   const tooLong = await session.replayEditorPromptT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
@@ -5294,4 +5295,69 @@ test('stage3: successful replay T2A attaches mp3 bytes through canonical media h
   assert.equal(optionAsset.kind, 'audio');
   assert.equal(promptAsset.mimeType, 'audio/mpeg');
   assert.equal(optionAsset.mimeType, 'audio/mpeg');
+});
+
+test('opening a legacy editable draft converts once, preserves literal speech, and saves its format', async () => {
+  const mod = await loadEditorModule();
+  const original = { localId: 'legacy-format', title: 'Legacy', blocks: [{ blockId: 'q', kind: 'question', position: 0,
+    prompt: { text: '**literal**\n- point\\path', format: 'plain_text' }, responseConfig: { inputType: 'text' } }] };
+  let stored = structuredClone(original);
+  const storage = { drafts: { get: async () => structuredClone(stored), put: async value => (stored = structuredClone(value)) },
+    resumeFlags: { get: () => null, set: () => {} } };
+  const session = new mod.EditorDraftSession(storage);
+  await session.createOrOpenByLocalDraftId(original.localId);
+  assert.equal(session.state.draft.blocks[0].prompt.format, 'limited-markdown-v1');
+  assert.equal(session.getAudioTrackTarget('q', 'prompt').text, original.blocks[0].prompt.text);
+  assert.equal(session.state.notifications.filter(item => item.source === 'formatting.converted').length, 1);
+  await session.saveNow();
+  const convertedSource = stored.blocks[0].prompt.text;
+  const reopened = new mod.EditorDraftSession(storage);
+  await reopened.createOrOpenByLocalDraftId(original.localId);
+  assert.equal(reopened.state.draft.blocks[0].prompt.text, convertedSource);
+  assert.equal(reopened.state.notifications.some(item => item.source === 'formatting.converted'), false);
+  assert.equal(original.blocks[0].prompt.format, 'plain_text');
+  clearTimeout(session.autosaveTimer); clearTimeout(reopened.autosaveTimer);
+});
+
+test('unknown draft formatting is rejected before replacing state or writing storage', async () => {
+  const mod = await loadEditorModule(); let writes = 0;
+  const session = new mod.EditorDraftSession({ drafts: { get: async () => ({ blocks: [{ kind: 'content', content: { text: 'keep', format: 'future' } }] }),
+    put: async () => { writes += 1; } }, resumeFlags: { get: () => null, set: () => {} } });
+  const previous = session.state.draft;
+  await assert.rejects(session.createOrOpenByLocalDraftId('future'), /Unsupported/);
+  assert.equal(session.state.draft, previous); assert.equal(writes, 0);
+});
+test('block kind conversion keeps Markdown and over-limit prompts remain locally saveable', async () => {
+  const mod = await loadEditorModule(); let saved;
+  const session = new mod.EditorDraftSession({ drafts: { get: async () => null, put: async value => (saved = value) }, resumeFlags: { get: () => null, set: () => {} } });
+  await session.createOrOpenByLocalDraftId('limit-test');
+  const id = session.state.selectedBlockId;
+  session.updateBlockContent(id, '**' + 'a'.repeat(501) + '**');
+  session.setSelectedBlockKind('question');
+  assert.equal(session.state.draft.blocks[0].prompt.format, 'limited-markdown-v1');
+  assert.equal(session.validateCurrentDraft().valid, false);
+  await session.saveNow();
+  assert.equal(saved.blocks[0].prompt.text, '**' + 'a'.repeat(501) + '**');
+  session.setSelectedBlockKind('content');
+  assert.equal(session.state.draft.blocks[0].content.format, 'limited-markdown-v1');
+  assert.equal(session.validateCurrentDraft().valid, true);
+  clearTimeout(session.autosaveTimer);
+});
+test('prompt audio sends displayed list numbers and counts the final Unicode text', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession({ drafts: { get: async () => null, put: async value => value }, resumeFlags: { get: () => null, set: () => {} } });
+  await session.createOrOpenByLocalDraftId('spoken-audio');
+  session.setSelectedBlockKind('question');
+  const id = session.state.selectedBlockId; let sent;
+  session.apiClient.generateAudioFromText = async text => { sent = text; return { ok: false }; };
+  session.updateBlockContent(id, '3. **閱讀**\n1. 寫下答案。');
+  await session.generateAudioTrack(id, 'prompt', 'cantonese');
+  assert.equal(sent, '3. 閱讀\n4. 寫下答案。');
+  session.updateBlockContent(id, '**' + '𠮷'.repeat(500) + '**');
+  await session.generateAudioTrack(id, 'prompt', 'cantonese');
+  assert.equal(sent, '𠮷'.repeat(500));
+  session.updateBlockContent(id, '𠮷'.repeat(501)); sent = null;
+  assert.equal((await session.generateAudioTrack(id, 'prompt', 'cantonese')).reason, 'text-too-long');
+  assert.equal(sent, null);
+  clearTimeout(session.autosaveTimer);
 });

@@ -324,3 +324,19 @@ test('uploadAttempt validator accepts checking block ids from worksheet.blockId 
   assert.equal(result.ok, true);
   assert.equal(result.statusCode, 201);
 });
+test('unsupported text formats and disguised Markdown attempts reject before database or artifact writes', async () => {
+  for (const [packageVersion, format] of [[1, 'limited-markdown-v1'], [2, 'future'], [3, 'plain_text']]) {
+    let writes = 0;
+    const service = createService({ db: { connect: async () => { writes += 1; throw new Error('Unexpected database access'); } },
+      artifactStore: { storeArtifact: async () => { writes += 1; } } });
+    const zipBytes = createStoredZip([
+      { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion, schemaVersion: 1 }) },
+      { path: 'content/worksheet.json', data: JSON.stringify({ blocks: [{ blockId: 'q', kind: 'question', prompt: { text: '**keep**', format } }] }) },
+      { path: 'content/attempt.json', data: JSON.stringify({ schemaVersion: 1, kind: 'worksheet-attempt', status: 'in_progress', answers: {} }) },
+    ]);
+    const result = await service.uploadAttempt({ identity: { sub: 'fixture' }, title: 'T', zipBytes, conflictAction: 'fail_on_conflict' });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'INVALID_ATTEMPT_PACKAGE');
+    assert.equal(writes, 0);
+  }
+});
