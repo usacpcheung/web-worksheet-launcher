@@ -4,6 +4,7 @@ export default {
   formatting: {
     mode: '文字顯示模式', syntax: '輸入格式', result: '顯示效果',
     backToEditor: '← 返回編輯器',
+    returnSaveFailed: '未能儲存預覽作答，已留在檢視器。請再次按「返回編輯器」重試。',
     helpNote: '標題支援第 2 至 6 級（## 至 ######）。在標點前加上反斜線，可顯示原本的符號。可直接換行或留空行。清單及引用只支援單層。連結、圖片、程式碼及 HTML 會顯示為純文字。',
     promptCount: '語音文字字元：{count} / {max}',
     promptTooLong: '題目的語音文字須在 {max} 個字元以內，才能發布或生成語訊。請縮短題目；仍可儲存至本機。',

@@ -76,8 +76,35 @@ try {
     if (shots) await page.screenshot({ path: `${shots}/polish-viewer-${locale}-${width}.png`, fullPage: true });
     assert.ok(fontRequests.size > 0 && fontRequests.size < 99, 'Only required font subsets load');
     await page.reload();
+    await page.locator('.viewer-back-to-editor').waitFor();
+    const answer = page.locator('.question-card textarea').first();
+    if (!await answer.isVisible()) await page.getByRole('button', { name: next, exact: true }).click();
+    await answer.waitFor();
+    await page.evaluate(() => {
+      window.originalFlush = window.viewerSession.flushLocalStateForAuthRedirect.bind(window.viewerSession);
+      window.flushCalls = 0;
+      window.viewerSession.flushLocalStateForAuthRedirect = async () => {
+        window.flushCalls++;
+        await new Promise((resolve, reject) => { window.rejectReturnSave = reject; });
+      };
+    });
+    await answer.fill('Preview answer before return');
+    await page.locator('.viewer-back-to-editor').click();
+    await page.waitForFunction(() => window.flushCalls === 1);
+    assert.equal(await page.locator('.viewer-back-to-editor').isDisabled(), true);
+    await page.locator('.viewer-back-to-editor').evaluate(el => el.click());
+    assert.equal(await page.evaluate(() => window.flushCalls), 1, 'Repeated activation cannot duplicate a pending return');
+    await page.evaluate(() => window.rejectReturnSave(new Error('Simulated storage failure')));
+    await page.getByRole('alert').filter({ hasText: locale === 'en' ? 'could not be saved' : '未能儲存預覽作答' }).waitFor();
+    assert.ok(page.url().includes('/viewer/'), 'Save failure stays in viewer');
+    assert.equal(await answer.inputValue(), 'Preview answer before return');
+    await page.evaluate(() => { window.viewerSession.flushLocalStateForAuthRedirect = window.originalFlush; });
+    const attemptId = await page.evaluate(() => window.viewerSession.state.localAttemptId);
+    await answer.fill('Latest answer immediately before return');
     await page.locator('.viewer-back-to-editor').click();
     await page.waitForFunction(() => window.editorSession);
+    const stored = await page.evaluate(async id => (await import('/server/viewer/storage/index.js')).viewerStorage.attempts.get(id), attemptId);
+    assert.ok(Object.values(stored.answers).some(answer => answer.value === 'Latest answer immediately before return'), 'Return flushes the debounce before navigating');
     assert.deepEqual(await page.evaluate(() => ({ draft: window.editorSession.state.draft.localId, block: window.editorSession.state.selectedBlockId })), before);
     assert.match(await field.inputValue(), /我要咖啡/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);

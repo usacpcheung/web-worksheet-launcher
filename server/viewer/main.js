@@ -6790,13 +6790,45 @@ function renderViewerShell(session) {
   const previewParams = new URLSearchParams(window.location.search);
   const editorDraftId = previewParams.get('localDraftId');
   if (previewParams.get('preview') === '1' && editorDraftId) {
-    const back = document.createElement('a');
+    const back = document.createElement('button');
+    back.type = 'button';
     back.className = 'viewer-back-to-editor';
     back.textContent = t('formatting.backToEditor');
     const editorUrl = new URL('../editor/', window.location.href);
     editorUrl.searchParams.set('localDraftId', editorDraftId);
-    back.href = editorUrl.href;
-    header.append(back);
+    const returnError = document.createElement('p');
+    returnError.className = 'control-error';
+    returnError.setAttribute('role', 'alert');
+    returnError.hidden = true;
+    let returning = false;
+    back.addEventListener('click', async () => {
+      if (returning) return;
+      returning = true;
+      back.disabled = true;
+      back.setAttribute('aria-busy', 'true');
+      back.textContent = t('viewer.status.saving');
+      returnError.hidden = true;
+      const attemptId = session.state.localAttemptId;
+      try {
+        // An answer can change while storage is pending. Save the latest revision too.
+        let revision;
+        do {
+          revision = session.state.attemptRevision;
+          await session.flushLocalStateForAuthRedirect();
+          if (signal.aborted || session.state.localAttemptId !== attemptId) return;
+        } while (session.state.attemptRevision !== revision);
+        window.location.assign(editorUrl.href);
+      } catch {
+        returnError.textContent = t('formatting.returnSaveFailed');
+        returnError.hidden = false;
+      } finally {
+        returning = false;
+        back.disabled = false;
+        back.removeAttribute('aria-busy');
+        back.textContent = t('formatting.backToEditor');
+      }
+    });
+    header.append(back, returnError);
   }
   header.append(headerTop, answerSummary, resumeWarning);
   blockSection.append(blockHeading, stepper, blockList, crossQuestionStatus.root);
