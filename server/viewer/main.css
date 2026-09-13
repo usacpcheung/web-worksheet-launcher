@@ -1,6 +1,8 @@
+@import url('../app/fonts/worksheet-chinese.css');
+
 :root {
   color-scheme: light;
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-family: 'Worksheet Chinese', Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   --viewer-bottom-bar-clearance: 168px;
   --viewer-bottom-control-min-height: 52px;
   --viewer-bottom-control-padding-inline: 22px;
@@ -12,6 +14,9 @@ body {
   color: #111827;
   padding-bottom: var(--viewer-bottom-bar-clearance);
 }
+
+.viewer-back-to-editor { display: inline-flex; align-items: center; min-height: 38px; padding: .25rem .6rem; margin-bottom: .5rem; border: 1px solid #cbd5e1; border-radius: 8px; color: #2845bb; background: #fff; text-decoration: none; }
+.viewer-back-to-editor:focus-visible { outline: 2px solid #4263eb; outline-offset: 2px; }
 
 #app {
   max-width: 1280px;
@@ -931,12 +936,15 @@ body {
 
 .viewer-header-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
 }
 
 .viewer-header h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: clamp(2rem, 1.7rem + 1.2vw, 2.8rem);
   line-height: 1.1;
   letter-spacing: -0.02em;
@@ -1396,7 +1404,7 @@ body {
 }
 
 .question-card__prompt-label {
-  font-weight: 400;
+  font-weight: 500;
 }
 
 .question-card__prompt-label :is(strong, h2, h3, h4, h5, h6) {

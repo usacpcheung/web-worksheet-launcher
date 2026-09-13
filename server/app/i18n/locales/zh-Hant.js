@@ -2,6 +2,9 @@ import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
   formatting: {
+    mode: '文字顯示模式', syntax: '輸入格式', result: '顯示效果',
+    backToEditor: '← 返回編輯器',
+    helpNote: '標題支援第 2 至 6 級（## 至 ######）。在標點前加上反斜線，可顯示原本的符號。可直接換行或留空行。清單及引用只支援單層。連結、圖片、程式碼及 HTML 會顯示為純文字。',
     promptCount: '語音文字字元：{count} / {max}',
     promptTooLong: '題目的語音文字須在 {max} 個字元以內，才能發布或生成語訊。請縮短題目；仍可儲存至本機。',
     preview: '預覽', edit: '編輯', help: '文字格式說明', empty: '沒有內容可預覽',
@@ -193,7 +196,7 @@ export default {
       "promptAudioLabel": "題目音訊",
       "promptImageAssetId": "題目圖片資源 ID",
       "promptImageLabel": "題目圖片",
-      "promptLabel": "題目",
+      "promptLabel": "題目文字",
       "promptMediaTitle": "題目媒體",
       "promptPlaceholder": "輸入題目內容。",
       "questionSectionTitle": "題目"

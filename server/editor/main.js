@@ -4489,7 +4489,7 @@ function renderEditorShell(session) {
   blockEditor.id = 'editor-block-editor';
   blockEditor.rows = 8;
   blockEditor.className = 'control';
-  const textPreview = createTextPreview(blockEditor, t);
+  const textPreview = createTextPreview(blockEditor, t, createEditorIcon('info'));
 
   const questionInputType = document.createElement('select');
   questionInputType.id = 'editor-question-input-type';
@@ -6008,7 +6008,7 @@ function renderEditorShell(session) {
       button.type = 'button';
       button.className = 'block-select';
       const displayIndex = index + 1;
-      const previewSource = block.kind === 'question' ? block?.prompt?.text : block?.content?.text;
+      const previewSource = worksheetTextToPlain(block.kind === 'question' ? block?.prompt : block?.content);
       const preview = String(previewSource || '').replace(/\s+/g, ' ').trim().slice(0, 60) || '—';
       const blockIndex = document.createElement('span');
       blockIndex.className = 'block-select__index';
@@ -8029,6 +8029,11 @@ function renderEditorShell(session) {
   openViewerBtn.addEventListener('click', async () => {
     const localDraftId = session.state.draft?.localId;
     if (!localDraftId) return;
+    const returnState = {
+      selectedBlockId: session.state.selectedBlockId,
+      scrollY: window.scrollY,
+      listScroll: blockList.scrollTop,
+    };
     if (collectLegacyAudioTargets(session.state.draft?.blocks).length > 0) {
       session.setMediaFeedback('Legacy audio must be migrated before preview.');
       updateSummary();
@@ -8037,6 +8042,9 @@ function renderEditorShell(session) {
     await session.saveNow();
     updateSummary();
     const draftUpdatedAt = session.state.draft?.metadata?.updatedAt || null;
+    try {
+      sessionStorage.setItem(`worksheet-editor-preview:${localDraftId}`, JSON.stringify(returnState));
+    } catch { /* Navigation still works when browser session storage is unavailable. */ }
     const viewerUrl = buildViewerUrlFromCurrentLocation(window.location.href, localDraftId, draftUpdatedAt);
     window.location.assign(viewerUrl);
   });
@@ -8401,7 +8409,16 @@ function renderEditorShell(session) {
 async function bootstrapEditor() {
   const session = new EditorDraftSession(editorStorage);
   const params = new URLSearchParams(window.location.search);
-  const initialRestore = session.getRouteUiRestoreMetadata();
+  let initialRestore = session.getRouteUiRestoreMetadata();
+  let previewReturn = null;
+  try {
+    const draftId = params.get('localDraftId');
+    const saved = JSON.parse(sessionStorage.getItem(`worksheet-editor-preview:${draftId}`) || 'null');
+    if (draftId && saved && typeof saved.selectedBlockId === 'string') {
+      previewReturn = saved;
+      initialRestore = { ...initialRestore, localId: draftId, selectedBlockId: saved.selectedBlockId };
+    }
+  } catch { /* Ignore unavailable or malformed session state. */ }
   const localDraftId = params.get('localDraftId') || initialRestore?.localId || null;
 
   await session.createOrOpenByLocalDraftId(localDraftId, {
@@ -8484,6 +8501,16 @@ async function bootstrapEditor() {
   session.persistRestoreMetadata();
 
   renderEditorShell(session);
+
+  if (previewReturn) {
+    const position = value => Number.isFinite(value) && value >= 0 ? value : 0;
+    requestAnimationFrame(() => {
+      window.scrollTo(0, position(previewReturn.scrollY));
+      const list = document.querySelector('.block-list');
+      if (list) list.scrollTop = position(previewReturn.listScroll);
+    });
+    try { sessionStorage.removeItem(`worksheet-editor-preview:${localDraftId}`); } catch { /* Optional state. */ }
+  }
 
   window.editorSession = session;
 }

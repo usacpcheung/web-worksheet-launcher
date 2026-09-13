@@ -58,3 +58,26 @@ Printed output follows the existing report's question-only scope; it does not ga
 Run `npm test` and, with `node scripts/static-server.mjs` serving port 8765, `node scripts/worksheet-markdown-smoke.mjs`. Set `VIEWER_SMOKE_URL` for a different local server and `VIEWER_SMOKE_SCREENSHOTS` for screenshot output.
 
 The smoke check covers real editor preview/Edit/help interactions, autosave and selection retention, empty and long content, source ZIP round trips, legacy import conversion, submitted review, and generated print output at 1280px and 390px in both languages. APIs are mocked; this is not a VPS or real audio-provider acceptance test. Regression tests also cover safe syntax/escaping, unknown-format rejection before writes, plain/Markdown attempt upload and resume, and conversion idempotence.
+# Authoring polish and Chinese typography
+
+The text field uses explicit Edit/Preview choices and the existing information
+SVG for a keyboard-accessible syntax/result help table. The prompt field is
+labelled “Question text / 題目文字”. Block navigation labels use the existing
+plain-text projection before truncation, preserving escaped literal symbols.
+
+Editor-origin viewer URLs retain the existing `preview=1` and `localDraftId`
+parameters. The viewer offers Back to editor for that flow. Optional session
+storage remembers the selected block and page/list scroll positions before
+leaving the editor; the return URL always targets the local editor and draft.
+If session storage is unavailable, navigation still works with normal draft
+restoration. No package, launch hash or postMessage changes are involved.
+
+Worksheet Chinese text uses locally hosted Noto Sans HK subsets. Latin fonts
+retain their previous families. Body text uses 400, question prompts use 500,
+and bold/headings use 700. See `server/app/fonts/README.md` for provenance,
+licensing and refresh instructions. Print waits up to five seconds for fonts,
+then permits system fallback instead of indefinitely blocking printing.
+
+Run `node scripts/worksheet-polish-smoke.mjs` against the local static server
+for bilingual desktop/mobile coverage of help, toggles, sidebar escaping,
+return navigation after refresh, real browser font selection and overflow.

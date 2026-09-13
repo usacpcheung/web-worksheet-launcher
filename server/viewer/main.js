@@ -2075,7 +2075,14 @@ function buildWorksheetPrintReportHtml(reportModel) {
             })
         )));
 
-      waitForImages.then(() => {
+      const waitForFonts = new Promise(resolve => {
+        const ready = () => resolve(document.fonts ? document.fonts.ready : undefined);
+        if (document.readyState === 'complete') ready();
+        else window.addEventListener('load', ready, { once: true });
+      });
+      Promise.all([waitForImages, Promise.race([
+        waitForFonts, new Promise(resolve => setTimeout(resolve, 5000))
+      ])]).then(() => {
         if (typeof window.focus === 'function') {
           window.focus();
         }
@@ -6780,6 +6787,17 @@ function renderViewerShell(session) {
   nextBtn.addEventListener('click', goNext);
 
   headerTop.append(heading, headerActions);
+  const previewParams = new URLSearchParams(window.location.search);
+  const editorDraftId = previewParams.get('localDraftId');
+  if (previewParams.get('preview') === '1' && editorDraftId) {
+    const back = document.createElement('a');
+    back.className = 'viewer-back-to-editor';
+    back.textContent = t('formatting.backToEditor');
+    const editorUrl = new URL('../editor/', window.location.href);
+    editorUrl.searchParams.set('localDraftId', editorDraftId);
+    back.href = editorUrl.href;
+    header.append(back);
+  }
   header.append(headerTop, answerSummary, resumeWarning);
   blockSection.append(blockHeading, stepper, blockList, crossQuestionStatus.root);
   shell.append(header, blockSection);

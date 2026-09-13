@@ -2,6 +2,9 @@ import roleplayscene from './roleplayscene/en.js';
 
 export default {
   formatting: {
+    mode: 'Text display mode', syntax: 'You type', result: 'Result',
+    backToEditor: '← Back to editor',
+    helpNote: 'Headings: levels 2–6 (## to ######). Use a backslash before punctuation to display it literally. Ordinary line breaks and blank lines work. Lists and quotes have one level. Links, images, code and HTML remain plain text.',
     promptCount: '{count} / {max} spoken-text characters',
     promptTooLong: 'Question prompts must be within {max} spoken-text characters to publish or generate audio. Shorten the prompt; local saving is still available.',
     preview: 'Preview', edit: 'Edit', help: 'Formatting help', empty: 'Nothing to preview',
@@ -193,7 +196,7 @@ export default {
       "promptAudioLabel": "Question audio",
       "promptImageAssetId": "Question image asset ID",
       "promptImageLabel": "Question image",
-      "promptLabel": "Prompt",
+      "promptLabel": "Question text",
       "promptMediaTitle": "Question media",
       "promptPlaceholder": "Enter the question prompt.",
       "questionSectionTitle": "Question"

@@ -1,9 +1,12 @@
 import { setWorksheetText, promptTextState, PROMPT_TEXT_LIMIT } from '../app/worksheet-text.js';
 
-export function createTextPreview(textarea, t) {
+export function createTextPreview(textarea, t, infoIcon = '') {
   const button = document.createElement('button'); button.type = 'button'; button.className = 'editor-text-preview-toggle';
+  const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'editor-text-edit-toggle';
+  const modes = document.createElement('div'); modes.className = 'editor-text-modes'; modes.setAttribute('role', 'group');
+  modes.append(edit, button);
   const help = document.createElement('details'); help.className = 'editor-text-help';
-  const summary = document.createElement('summary'); summary.textContent = '?';
+  const summary = document.createElement('summary'); summary.innerHTML = infoIcon;
   const examples = document.createElement('div'); examples.className = 'editor-text-help-popover';
   help.append(summary, examples);
   help.addEventListener('keydown', event => { if (event.key === 'Escape') { help.open = false; summary.focus(); event.stopPropagation(); } });
@@ -25,11 +28,29 @@ export function createTextPreview(textarea, t) {
   };
   textarea.addEventListener('input', updateLimit);
   const sync = () => {
-    button.textContent = t(showing ? 'formatting.edit' : 'formatting.preview');
-    button.setAttribute('aria-expanded', String(showing)); button.setAttribute('aria-controls', preview.id);
+    button.textContent = t('formatting.preview'); edit.textContent = t('formatting.edit');
+    modes.setAttribute('aria-label', t('formatting.mode'));
+    button.setAttribute('aria-pressed', String(showing)); edit.setAttribute('aria-pressed', String(!showing));
+    button.setAttribute('aria-controls', preview.id); edit.setAttribute('aria-controls', textarea.id);
     summary.setAttribute('aria-label', t('formatting.help'));
-    examples.textContent = t('formatting.examples');
+    examples.replaceChildren();
+    const title = document.createElement('strong'); title.textContent = t('formatting.help'); examples.append(title);
+    const table = document.createElement('table');
+    const head = table.createTHead().insertRow();
+    for (const text of [t('formatting.syntax'), t('formatting.result')]) {
+      const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = text; head.append(cell);
+    }
+    const body = table.createTBody();
+    const lines = t('formatting.examples').split('\n');
+    for (const source of [...lines.slice(0, 6), '\\*']) {
+      const row = body.insertRow(); const code = document.createElement('code'); code.textContent = source;
+      row.insertCell().append(code);
+      setWorksheetText(row.insertCell(), { text: source, format: 'limited-markdown-v1' });
+    }
+    const note = document.createElement('p'); note.className = 'muted'; note.textContent = t('formatting.helpNote');
+    examples.append(table, note);
     preview.setAttribute('aria-label', t('formatting.preview'));
+    preview.classList.toggle('editor-text-preview--prompt', isPrompt);
     textarea.hidden = showing; preview.hidden = !showing;
     updateLimit();
     if (height) preview.style.height = `${height}px`;
@@ -38,23 +59,26 @@ export function createTextPreview(textarea, t) {
       else { preview.classList.remove('muted'); setWorksheetText(preview, { ...field, text: textarea.value }); }
     }
   };
-  button.addEventListener('click', () => {
-    if (!showing) {
+  const setMode = next => {
+    if (showing === next) return;
+    if (next) {
       selection = [textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection, textarea.scrollTop];
       height = textarea.getBoundingClientRect().height || 180;
     }
-    showing = !showing; sync();
+    showing = next; sync();
     if (!showing) {
       textarea.focus();
       if (selection) { textarea.setSelectionRange(...selection.slice(0, 3)); textarea.scrollTop = selection[3]; }
     }
-  });
+  };
+  button.addEventListener('click', () => setMode(true));
+  edit.addEventListener('click', () => setMode(false));
   return {
     mount(parent, label, nextKey, nextField, nextIsPrompt = false) {
       if (key !== nextKey) { showing = false; help.open = false; selection = null; height = null; key = nextKey; }
       field = nextField;
       isPrompt = nextIsPrompt;
-      const header = document.createElement('div'); header.className = 'editor-text-field-label'; header.append(label, button, help);
+      const header = document.createElement('div'); header.className = 'editor-text-field-label'; header.append(label, modes, help);
       parent.append(header, textarea, preview, counter, warning); sync();
     },
   };

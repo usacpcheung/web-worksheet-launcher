@@ -21,10 +21,11 @@ try {
     await page.waitForFunction(() => window.editorSession);
     const field = page.locator('#editor-block-editor');
     const toggle = page.locator('.editor-text-preview-toggle');
+    const edit = page.locator('.editor-text-edit-toggle');
     const preview = page.locator('.editor-text-preview');
     await field.fill(''); await toggle.click();
     assert.equal(await preview.innerText(), locale === 'en' ? 'Nothing to preview' : '沒有內容可預覽');
-    await toggle.click();
+    await edit.click();
     const source = '## Lesson\n- **重要**\n- *Second*\n\nLine one\nLine two\n<script>window.injected=true</script>\n![image](https://example.invalid/a.png)';
     await field.fill(source);
     await field.evaluate(el => el.setSelectionRange(3, 9));
@@ -41,7 +42,7 @@ try {
     if (shots) await page.screenshot({ path: `${shots}/markdown-help-${locale}-${width}.png`, fullPage: true });
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('.editor-text-help').evaluate(el => el.open), false);
-    await toggle.click();
+    await edit.click();
     assert.deepEqual(await field.evaluate(el => [el.selectionStart, el.selectionEnd, el === document.activeElement]), [3, 9, true]);
     assert.equal(await field.inputValue(), source);
     await page.evaluate(() => { window.editorSession.createBlock('question'); window.editorSession.notifyStateChange(); });
@@ -115,7 +116,7 @@ try {
       plain.remove(); return result;
     });
     assert.deepEqual(typography.plain, typography.markdown, 'Legacy and Markdown prompts share typography');
-    assert.equal(typography.markdown[2], '400');
+    assert.equal(typography.markdown[2], '500');
     assert.equal(typography.bold, '700'); assert.equal(typography.heading, '700');
     await page.locator('.question-card > textarea:not(.question-card__review-status)').fill('**Literal learner answer**');
     await page.evaluate(() => window.viewerSession.completeLocalAttempt());
@@ -157,7 +158,7 @@ try {
     assert.ok(JSON.stringify(imported.original).includes('plain_text'), 'Retained import is still plain text');
     await toggle.click();
     assert.equal(await preview.locator('strong,em,h2,ul').count(), 0, 'Converted source keeps literal appearance');
-    await toggle.click();
+    await edit.click();
     await field.fill('## Long content\n' + 'longword'.repeat(500) + '\n- end');
     await toggle.click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
