@@ -307,6 +307,9 @@ export default {
     "dialogue": {
       "title": "對話（最多 3 行）",
       "lineLabel": "第 {index} 行",
+      "moveUp": "上移",
+      "moveDown": "下移",
+      "moveLocked": "音訊生成完成後，即可調整台詞次序。",
       "speakerLabel": "說話者",
       "speakerNone": "不指定說話者",
       "speakerAdd": "新增說話者...",

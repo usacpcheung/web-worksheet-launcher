@@ -307,6 +307,9 @@ export default {
     "dialogue": {
       "title": "Dialogue (max 3 lines)",
       "lineLabel": "Line {index}",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "moveLocked": "Dialogue order can be changed after audio generation finishes.",
       "speakerLabel": "Speaker",
       "speakerNone": "No speaker",
       "speakerAdd": "Add speaker...",

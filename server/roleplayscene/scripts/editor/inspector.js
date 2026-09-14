@@ -35,6 +35,8 @@ function attachComposedValueListener(field, callback) {
 }
 
 const ICONS = {
+  up: '<path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path>',
+  down: '<path d="m5 12 7 7 7-7"></path><path d="M12 5v14"></path>',
   info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>',
   image: '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="8.5" cy="10.5" r="1.5"></circle><path d="M21 15l-4.5-4.5L7 20"></path>',
   audio: '<path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle>',
@@ -282,6 +284,12 @@ export function renderInspector(hostEl, project, scene, actions) {
 
   const dialogue = createInspectorSection(translate('inspector.dialogue.title'), 'dialogue', 'dialogue-editor');
   const speakers = Array.isArray(project.speakers) ? project.speakers : [];
+  const orderLocked = actions.isDialogueOrderLocked?.(scene.id) === true;
+  if (orderLocked) {
+    const hint = document.createElement('p'); hint.className = 'hint';
+    hint.textContent = translate('inspector.dialogue.moveLocked');
+    dialogue.body.appendChild(hint);
+  }
 
   scene.dialogue.forEach((line, index) => {
     const lineParts = createLightRow(translate('inspector.dialogue.lineLabel', { index: index + 1 }), 'dialogue-line');
@@ -410,7 +418,7 @@ export function renderInspector(hostEl, project, scene, actions) {
     t2aControls.className = 'dialogue-t2a-controls';
 
     const presetLabel = document.createElement('label');
-    presetLabel.className = 'dialogue-t2a-controls__preset';
+    presetLabel.className = 'field dialogue-t2a-controls__preset';
     const presetText = document.createElement('span');
     presetText.textContent = translate('inspector.dialogue.t2aPresetLabel');
     presetLabel.appendChild(presetText);
@@ -455,6 +463,17 @@ export function renderInspector(hostEl, project, scene, actions) {
     }
 
     const removeLineBtn = createActionButton(translate('inspector.dialogue.deleteLine'), 'danger');
+    for (const direction of [-1, 1]) {
+      const label = translate(direction < 0 ? 'inspector.dialogue.moveUp' : 'inspector.dialogue.moveDown');
+      const move = createActionButton('');
+      move.classList.add('dialogue-move-button');
+      move.setAttribute('aria-label', label); move.title = label;
+      move.dataset.focusKey = `dialogue-move-${scene.id}-${index}-${direction}`;
+      move.appendChild(createEditorIcon(direction < 0 ? 'up' : 'down'));
+      move.disabled = orderLocked || index + direction < 0 || index + direction >= scene.dialogue.length;
+      move.addEventListener('click', () => actions.onMoveDialogue?.(scene.id, index, direction));
+      lineParts.actions.appendChild(move);
+    }
     removeLineBtn.textContent = translate('inspector.dialogue.deleteLine');
     removeLineBtn.addEventListener('click', () => actions.onRemoveDialogue?.(scene.id, index));
     removeLineBtn.disabled = scene.dialogue.length <= 1;

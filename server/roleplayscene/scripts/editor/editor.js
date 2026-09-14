@@ -42,7 +42,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   const onPreviewCurrentScene = typeof options.onPreviewCurrentScene === 'function'
     ? options.onPreviewCurrentScene
     : null;
-  const dialogueT2AInFlightKeys = new Set();
+  const dialogueT2AInFlightKeys = new Map();
   let activeDialoguePreview = null;
   let disposed = false;
   let selectedSpeechBubbleAnchorId = options.initialSelectedSpeechBubbleAnchorId ?? null;
@@ -147,6 +147,8 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       onSetSceneBackgroundAudio: setSceneBackgroundAudio,
       onAddDialogue: addDialogue,
       onRemoveDialogue: removeDialogue,
+      onMoveDialogue: moveDialogue,
+      isDialogueOrderLocked: sceneId => Array.from(dialogueT2AInFlightKeys.values()).includes(sceneId),
       onUpdateDialogueText: updateDialogueText,
       onUpdateDialogueSpeaker: updateDialogueSpeaker,
       onStartCreateSpeakerForDialogue: startCreateSpeakerForDialogue,
@@ -570,6 +572,36 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     });
   }
 
+  function moveDialogue(sceneId, index, direction) {
+    const scene = store.get().project.scenes.find(scene => scene.id === sceneId);
+    const target = index + direction;
+    if (disposed || !scene || !Number.isInteger(index) || ![-1, 1].includes(direction)
+      || index < 0 || target < 0 || index >= scene.dialogue.length || target >= scene.dialogue.length
+      || Array.from(dialogueT2AInFlightKeys.values()).includes(sceneId)) return;
+    stopDialoguePreview({ refresh: false });
+    if (speakerDraftContext?.sceneId === sceneId) {
+      const old = speakerDraftContext.index;
+      const next = old === index ? target : old === target ? index : old;
+      speakerDraftContext = { ...speakerDraftContext, index: next, key: getSpeakerDraftKey(sceneId, next) };
+    }
+    const presets = Array.from(inspectorHost.querySelectorAll?.('.dialogue-t2a-controls__preset select') || []).map(select => select.value);
+    [presets[index], presets[target]] = [presets[target], presets[index]];
+    mutateProject(prev => ({ ...prev, scenes: prev.scenes.map(current => {
+      if (current.id !== sceneId) return current;
+      const draft = { ...current, dialogue: [...current.dialogue] };
+      [draft.dialogue[index], draft.dialogue[target]] = [draft.dialogue[target], draft.dialogue[index]];
+      return draft;
+    }) }));
+    Array.from(inspectorHost.querySelectorAll?.('.dialogue-t2a-controls__preset select') || []).forEach((select, i) => {
+      if (presets[i]) select.value = presets[i];
+    });
+    const focusDirection = target === 0 ? 1 : target === scene.dialogue.length - 1 ? -1 : direction;
+    const key = `dialogue-move-${sceneId}-${target}-${focusDirection}`;
+    const button = Array.from(inspectorHost.querySelectorAll?.('[data-focus-key]') || []).find(el => el.dataset.focusKey === key);
+    button?.focus();
+    button?.scrollIntoView?.({ block: 'nearest' });
+  }
+
   function removeDialogue(sceneId, index) {
     if (activeDialoguePreview?.sceneId === sceneId && index <= activeDialoguePreview.index) {
       stopDialoguePreview();
@@ -857,7 +889,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       showMessage({ textId: 'inspector.dialogue.t2aUnavailable' });
       return;
     }
-    dialogueT2AInFlightKeys.add(key);
+    dialogueT2AInFlightKeys.set(key, sceneId);
     update();
     let confirmedAudioSignature = null;
     try {

@@ -654,6 +654,10 @@ button:disabled {
   gap: var(--space-xs);
   flex-wrap: wrap;
 }
+
+.dialogue-line .dialogue-move-button { width: 38px; min-width: 38px; height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.dialogue-move-button .rps-editor-icon { width: 20px; height: 20px; background: transparent; color: inherit; }
+.dialogue-line .dialogue-move-button + .rps-editor-action--danger { margin-left: 6px; }
 .dialogue-t2a-controls__preset {
   display: grid;
   gap: var(--space-2xs);
