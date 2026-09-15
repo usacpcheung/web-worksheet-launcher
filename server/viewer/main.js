@@ -6927,7 +6927,7 @@ function renderPublishedPackageAuthRecoveryPanel(session, options = {}) {
 
   const startPanelBtn = document.createElement('button');
   startPanelBtn.type = 'button';
-  startPanelBtn.className = 'viewer-start-btn viewer-start-btn--primary';
+  startPanelBtn.className = 'viewer-start-btn';
   startPanelBtn.textContent = t('viewer.boot.goToStartScreen');
   startPanelBtn.disabled = options.secondaryDisabled === true;
   startPanelBtn.addEventListener('click', async () => {
