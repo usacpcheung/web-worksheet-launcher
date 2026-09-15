@@ -210,7 +210,7 @@ function createServerApiClient() {
   }
 
   async function requestZip(path, request = {}) {
-    const { method = 'GET', query = null, body = null, headers = {}, onProgress = null, signal = null } = request;
+    const { method = 'GET', query = null, body = null, headers = {}, onProgress = null, signal = null, requireIdentityEncoding = false } = request;
     let response;
     try {
       response = await fetch(buildUrl(path, query), {
@@ -269,7 +269,9 @@ function createServerApiClient() {
       }
 
       const total = Number(response.headers.get('content-length') || 0);
-      const lengthComputable = Number.isFinite(total) && total > 0;
+      const encoding = response.headers.get('content-encoding');
+      const lengthComputable = Number.isFinite(total) && total > 0
+        && (!requireIdentityEncoding || !encoding || encoding.toLowerCase() === 'identity');
       const reader = response.body.getReader();
       const chunks = [];
       let loaded = 0;
@@ -595,8 +597,8 @@ function createServerApiClient() {
     listPublishedPackages(query = {}) {
       return requestJson('/published', { query: normalizePublishedPackagesQuery(query) });
     },
-    fetchPublishedPackageArtifact(publishedPackageId) {
-      return requestZip(`/published/${publishedPackageId}/artifact`);
+    fetchPublishedPackageArtifact(publishedPackageId, options = {}) {
+      return requestZip(`/published/${publishedPackageId}/artifact`, { ...options, requireIdentityEncoding: true });
     },
     deletePublishedPackage(publishedPackageId) {
       return requestJson(`/published/${publishedPackageId}`, { method: 'DELETE' });

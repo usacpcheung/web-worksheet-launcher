@@ -519,6 +519,13 @@ export default {
     }
   },
   "viewer": {
+    "packageLoad": {
+      "checking": "Checking sign-in…",
+      "downloading": "Downloading…",
+      "downloadingPercent": "Downloading {percent}%",
+      "opening": "Opening…",
+      "failed": "Could not open this package. Please try again."
+    },
     "review": { "notAnswered": "Not answered" },
     "voice": {
       "resolveRecovery": "Review or discard the recovered text before starting another voice input or rewriting the whole answer.",

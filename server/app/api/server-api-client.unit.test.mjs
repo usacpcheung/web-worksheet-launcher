@@ -888,3 +888,18 @@ test('bridge methods always use /api/rewrite-bridge urls regardless of API base 
   ]);
   assert.equal(client.publicApiBase, '/api/worksheet-launcher/v1');
 });
+
+for (const encoding of [null, 'gzip']) {
+  test(`published artifact exposes download progress with ${encoding || 'identity'} encoding`, async () => {
+    setTestWindow();
+    globalThis.fetch = async () => new Response(new ReadableStream({start(c) {
+      c.enqueue(new Uint8Array([1,2]));c.enqueue(new Uint8Array([3,4]));c.close();
+    }}), {headers:{'content-type':'application/zip','content-length':'4',...(encoding?{'content-encoding':encoding}:{})}});
+    const events=[]; const client=createServerApiClient();
+    const result=await client.fetchPublishedPackageArtifact('fixture',{onProgress:p=>events.push(p)});
+    assert.equal(result.ok,true);assert.deepEqual([...result.data],[1,2,3,4]);
+    assert.deepEqual(events.map(e=>e.loaded),[2,4]);
+    assert.equal(events[0].lengthComputable,!encoding);
+    assert.equal(events[0].total,encoding?0:4);
+  });
+}

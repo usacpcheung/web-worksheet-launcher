@@ -519,6 +519,13 @@ export default {
     }
   },
   "viewer": {
+    "packageLoad": {
+      "checking": "正在檢查登入狀態…",
+      "downloading": "下載中…",
+      "downloadingPercent": "下載中 {percent}%",
+      "opening": "正在開啟…",
+      "failed": "無法開啟此套件。請再試一次。"
+    },
     "review": { "notAnswered": "未作答" },
     "voice": {
       "resolveRecovery": "請先檢查或捨棄復原內容，再開始新的語音輸入或改寫整個答案。",

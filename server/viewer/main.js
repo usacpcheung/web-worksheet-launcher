@@ -1,3 +1,4 @@
+import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.js';
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { viewerStorage } from './storage/index.js';
@@ -2468,6 +2469,7 @@ class ViewerAttemptSession {
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
     this.onStateChange = null;
+    this.packageLoad = new PackageLoadProgress();
     this.activeAudio = null;
     this.activeAudioObjectUrl = null;
     this.activeAudioPlayback = null;
@@ -4471,19 +4473,26 @@ class ViewerAttemptSession {
       this.notifyStateChange();
       return { ok: false, error: { message } };
     }
-    if (this._openingPublishedPackageIds.has(normalizedPublishedPackageId)) {
+    if (this._openingPublishedPackageIds.size > 0) {
       return { ok: false, skipped: true, error: { message: `Open already in progress for ${normalizedPublishedPackageId}.` } };
     }
     this._openingPublishedPackageIds.add(normalizedPublishedPackageId);
+    const progressToken = this.packageLoad.start(normalizedPublishedPackageId);
     try {
       const sessionReady = await this.preflightPublishedSession();
       if (!sessionReady.ok) return sessionReady.result;
-      const artifact = await this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId);
+      this.packageLoad.update(progressToken, 'downloading');
+      const artifact = await this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, {
+        onProgress: progress => this.packageLoad.update(progressToken, 'downloading', progress),
+      });
       if (!artifact.ok) {
         this.state.serverActionMessage = artifact.error.message;
         this.notifyStateChange();
         return artifact;
       }
+      this.packageLoad.update(progressToken, 'opening');
+      // Yield to the browser before synchronous ZIP parsing begins.
+      await new Promise(resolve => setTimeout(resolve, 0));
       const started = await this.startImportedWorksheetFromPackageFile(artifact.data, {
         sourceSubject: options?.sourceSubject || '',
         sourceOwner: options?.sourceOwner || '',
@@ -4493,6 +4502,7 @@ class ViewerAttemptSession {
       return { ok: true, data: started };
     } finally {
       this._openingPublishedPackageIds.delete(normalizedPublishedPackageId);
+      this.packageLoad.finish(progressToken);
     }
   }
 
@@ -5125,12 +5135,33 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   overlay.append(dialog);
   host.appendChild(overlay);
 
+  const loadButtons = new Map();
+  const loadAnnouncement = document.createElement('span');
+  loadAnnouncement.className = 'viewer-sr-only';
+  loadAnnouncement.setAttribute('role', 'status');
+  dialog.append(loadAnnouncement);
   let closing = false;
+  const updateLoadButtons = () => {
+    if (closing || !overlay.isConnected) return;
+    const progress = session.packageLoad.current;
+    const unavailable = Boolean(progress) || session.state.serverSession?.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN || session.state.isLoadingPublishedPackages;
+    for (const control of [titleFilterInput, subjectFilterInput, ownerFilterInput, searchBtn, refreshBtn]) control.disabled = unavailable;
+    loadMoreBtn.disabled = unavailable || !session.state.publishedHasMore;
+    for (const [id, button] of loadButtons) {
+      button.disabled = Boolean(progress) || !id;
+      button.textContent = progress?.id === id ? packageLoadLabel(progress, t) : t('common.publishedBrowser.openPackage');
+      button.setAttribute('aria-label', progress?.id === id ? packageLoadLabel(progress, t, { announce: true }) : t('common.publishedBrowser.openPackage'));
+    }
+    const spoken = packageLoadLabel(progress, t, { announce: true });
+    if (loadAnnouncement.textContent !== spoken) loadAnnouncement.textContent = spoken;
+  };
+  const unsubscribeLoad = session.packageLoad.subscribe(updateLoadButtons);
   let signInInFlight = false;
   let searchDebounceTimer = null;
   const closeModal = () => {
     if (closing) return;
     closing = true;
+    unsubscribeLoad();
     if (searchDebounceTimer) {
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = null;
@@ -5160,6 +5191,8 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     loadMoreBtn.hidden = !isLoggedIn || !session.state.publishedHasMore;
     loadMoreBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages || !session.state.publishedHasMore;
     refreshBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingPublishedPackages;
+    if (session.packageLoad.current && loadButtons.size) { updateLoadButtons(); return; }
+    loadButtons.clear();
     list.innerHTML = '';
     if (!isLoggedIn) {
       const signedOut = document.createElement('p');
@@ -5215,16 +5248,33 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       rowActions.className = 'published-result-actions';
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
-      openBtn.className = 'confirm-modal__btn published-result-action';
+      openBtn.className = 'confirm-modal__btn published-result-action viewer-package-load-button';
       openBtn.textContent = t('common.publishedBrowser.openPackage');
       openBtn.disabled = !item.published_package_id;
+      const loadError = document.createElement('p');
+      loadError.className = 'viewer-list-error';
+      loadError.setAttribute('role', 'alert');
+      loadError.hidden = true;
+      loadButtons.set(item.published_package_id || '', openBtn);
       openBtn.addEventListener('click', async () => {
-        const result = await session.startFromPublishedPackage(item.published_package_id, {
-          sourceSubject: item.subject || '',
-          sourceOwner: item.owner_email || item.owner_name || item.owner_sub || '',
-        });
+        if (session.packageLoad.current) return;
+        loadError.hidden = true;
+        let result;
+        try {
+          result = await session.startFromPublishedPackage(item.published_package_id, {
+            sourceSubject: item.subject || '',
+            sourceOwner: item.owner_email || item.owner_name || item.owner_sub || '',
+          });
+        } catch {
+          result = { ok: false };
+        }
         if (!result.ok) {
-          renderRows();
+          if (!closing && openBtn.isConnected) {
+            loadError.textContent = t('viewer.packageLoad.failed');
+            loadError.hidden = false;
+            if (result.error?.requiresSignIn) { signInBtn.hidden = false; signInBtn.disabled = false; }
+            updateLoadButtons();
+          }
           return;
         }
         if (session.state.localAttemptId) {
@@ -5239,9 +5289,10 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         window.viewerSession = session;
       });
       rowActions.append(openBtn);
-      row.append(titleLine, subjectOwner, idLine, rowActions);
+      row.append(titleLine, subjectOwner, idLine, rowActions, loadError);
       list.append(row);
     });
+    updateLoadButtons();
   };
 
   const refreshBrowse = async (options = {}) => {
@@ -7234,6 +7285,32 @@ function renderViewerStartPanel(session, options = {}) {
   }
 }
 
+function showPublishedPackageLoading(session) {
+  const root = document.getElementById('app');
+  const panel = document.createElement('section');
+  panel.className = 'viewer-start-panel viewer-package-loading';
+  const label = document.createElement('p');
+  label.className = 'viewer-package-load-status muted';
+  const announcement = document.createElement('span');
+  announcement.className = 'viewer-sr-only';
+  announcement.setAttribute('role', 'status');
+  panel.append(label, announcement);
+  root.innerHTML = '';
+  root.append(panel);
+  label.textContent = t('viewer.packageLoad.checking');
+  let unsubscribe;
+  let started = false;
+  unsubscribe = session.packageLoad.subscribe(progress => {
+    if (!panel.isConnected) { unsubscribe?.(); return; }
+    if (!progress) { if (started) unsubscribe?.(); return; }
+    started = true;
+    label.textContent = packageLoadLabel(progress, t);
+    const spoken = packageLoadLabel(progress, t, { announce: true });
+    if (announcement.textContent !== spoken) announcement.textContent = spoken;
+  });
+  return unsubscribe;
+}
+
 async function bootstrapViewer() {
   const session = new ViewerAttemptSession(viewerStorage);
   const hasOnlyAllowedKeys = (payload, allowedKeys) => {
@@ -7297,6 +7374,9 @@ async function bootstrapViewer() {
   const isAuthCallbackMode = hasAuthReturn && hasAuthCallback;
   const hasLaunchIntent = hasViewerLaunchIntent(params, { includeAuthReturn: true });
 
+  if (params.get('publishedPackageId') && !params.get('localAttemptId') && !isAuthCallbackMode) {
+    showPublishedPackageLoading(session);
+  }
   await session.refreshServerSession();
   if (!hasLaunchIntent && session.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
     await session.browsePublishedPackages('');
@@ -7404,7 +7484,7 @@ async function bootstrapViewer() {
           },
           onSessionReady: async ({ finalizeFlow }) => {
             try {
-              updatePanel('Sign-in completed. Opening worksheet...', true);
+              showPublishedPackageLoading(session);
               finalizeFlow();
               const result = await session.startFromPublishedPackage(publishedPackageId);
               const handled = await handlePublishedPackageOpenResult(publishedPackageId, result, error);

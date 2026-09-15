@@ -246,7 +246,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/answer-(?:voice-workflow|voice-ui)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|package-load-progress)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -3509,6 +3509,15 @@ function createFakeDom() {
       this.attrs = {};
     }
 
+    set innerHTML(value) {
+      this._innerHTML = value;
+      this.children = [];
+    }
+
+    get innerHTML() {
+      return this._innerHTML || '';
+    }
+
     append(...nodes) {
       this.children.push(...nodes);
     }
@@ -6566,4 +6575,39 @@ test('failed finalization restores recovery and subsequent saves retain it', asy
   assert.equal(saved.voiceRecovery.q1.text,'Keep my transcript');
   await session.completeLocalAttempt();
   assert.deepEqual(saved.voiceRecovery,{});
+});
+
+test('published opening reports preflight, download and opening, blocks competing IDs, and ignores late progress', async () => {
+  const mod=await loadViewerModule();
+  let release, callback;
+  const session=new mod.ViewerAttemptSession({}, {apiClient:{fetchPublishedPackageArtifact:async(id,options)=>{
+    callback=options.onProgress;callback({loaded:2,total:4,lengthComputable:true});
+    await new Promise(r=>{release=r;});return{ok:true,data:new Uint8Array([1])};
+  }}});
+  session.preflightPublishedSession=async()=>({ok:true});
+  session.startImportedWorksheetFromPackageFile=async()=>{
+    assert.equal(session.packageLoad.current.stage,'opening');return{};
+  };
+  const stages=[];session.packageLoad.subscribe(p=>stages.push(p?{...p}:null));
+  const pending=session.startFromPublishedPackage('a');
+  await new Promise(r=>setImmediate(r));
+  assert.equal((await session.startFromPublishedPackage('b')).skipped,true);
+  assert.ok(stages.some(p=>p?.percent===50));release();assert.equal((await pending).ok,true);
+  callback({loaded:4,total:4,lengthComputable:true});assert.equal(session.packageLoad.current,null);
+  assert.deepEqual(stages.filter(Boolean).map(p=>p.stage),['checking','downloading','downloading','opening']);
+});
+
+test('published auth/download/import failures clear loading and allow explicit retry', async () => {
+  const mod=await loadViewerModule();
+  const session=new mod.ViewerAttemptSession({}, {apiClient:{fetchPublishedPackageArtifact:async()=>({ok:false,error:{code:'NETWORK_ERROR',message:'offline'}})}});
+  session.preflightPublishedSession=async()=>({ok:false,result:{ok:false,error:{requiresSignIn:true}}});
+  assert.equal((await session.startFromPublishedPackage('a')).error.requiresSignIn,true);
+  assert.equal(session.packageLoad.current,null);
+  session.preflightPublishedSession=async()=>({ok:true});
+  assert.equal((await session.startFromPublishedPackage('a')).error.code,'NETWORK_ERROR');
+  session.apiClient.fetchPublishedPackageArtifact=async()=>({ok:true,data:new Uint8Array([1])});
+  session.startImportedWorksheetFromPackageFile=async()=>{throw Error('bad ZIP');};
+  await assert.rejects(()=>session.startFromPublishedPackage('a'),/bad ZIP/);
+  assert.equal(session.packageLoad.current,null);
+  assert.equal(session._openingPublishedPackageIds.size,0);
 });
