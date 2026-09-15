@@ -90,7 +90,10 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
   }
 
   function play(src, { userInitiated = false } = {}) {
-    if (userInitiated) interrupted = false;
+    if (userInitiated) {
+      interrupted = false;
+      playbackBlocked = false;
+    }
     desiredSrc = src ?? null;
     if (!src) {
       stop();
@@ -100,7 +103,7 @@ export function createBackgroundAudioController({ defaultVolume = 0.4 } = {}) {
       if (activeSrc !== src) stop({ preserveDesired: true });
       return;
     }
-    if (interrupted) return;
+    if (interrupted || playbackBlocked) return;
     if (muted) {
       stop({ preserveDesired: true });
       return;
