@@ -42,7 +42,10 @@ const server = createServer(async (req, res) => {
       res.writeHead(response.status, { 'Content-Type': response.headers.get('content-type') || 'text/plain' });
       res.end(Buffer.from(await response.arrayBuffer()));
     }
-  } catch (error) { res.writeHead(500); res.end(String(error)); }
+  } catch {
+    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Smoke fixture request failed.');
+  }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const browser = await chromium.launch({ channel: 'chromium', ignoreDefaultArgs: ['--disable-back-forward-cache'] });

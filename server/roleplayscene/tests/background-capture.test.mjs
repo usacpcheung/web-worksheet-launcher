@@ -137,6 +137,10 @@ test('autoplay rejection retains a source for explicit retry', async () => {
     track.resumeAfterCapture();
     assert.equal(attempts, 1, 'Recording does not retry music that was never playing');
     track.play('music');
+    track.play('another-scene-music');
+    assert.equal(attempts, 1, 'Redraws and scene changes cannot retry blocked playback');
+    assert.equal(track.isPlaybackBlocked(), true);
+    track.play('another-scene-music', { userInitiated: true });
     assert.equal(attempts, 2);
     assert.equal(track.isPlaybackBlocked(), false);
   } finally { track.teardown(); globalThis.Audio = originalAudio; }
