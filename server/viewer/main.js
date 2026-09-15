@@ -1,3 +1,5 @@
+import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery } from './answer-voice-workflow.js';
+import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
@@ -2392,6 +2394,8 @@ class ViewerAttemptSession {
       isRewriting: false,
       rewritingBlockId: null,
       rewriteMessageByBlock: {},
+      voiceRecovery: {},
+      voiceApplied: null,
       lastProtectedAction: null,
       serverSession: {
         status: VIEWER_SERVER_SESSION_STATES.CHECKING,
@@ -2423,6 +2427,44 @@ class ViewerAttemptSession {
       serverSessionEverReady: false,
     };
 
+    this.voice = createVoiceWorkflow({
+      api: this.apiClient,
+      checkSession: () => this.ensureServerSessionReady(),
+      context: (blockId) => ({
+        attemptId: this.state.localAttemptId,
+        contextKey: this.state.viewerPayload,
+        recovery: this.state.voiceRecovery[blockId],
+        editable: this.state.status !== 'completed' && !this.state.isFinalizing,
+        block: this.state.viewerPayload?.blocks?.find(block => block.blockId === blockId),
+        answer: String(this.state.answers?.[blockId]?.value ?? ''),
+      }),
+      apply: (blockId, text, snapshot, caret) => {
+        const activeBlock = this.state.lastActiveBlockId;
+        this.state.undoBuffer = { ...this.state.undoBuffer, [blockId]: snapshot };
+        if (text === String(this.state.answers?.[blockId]?.value ?? '')) delete this.state.undoBuffer[blockId];
+        this.state.voiceApplied = { blockId, text, caret, id: this.voice.active.id };
+        this.setAnswer(blockId, text);
+        this.state.lastActiveBlockId = activeBlock;
+      },
+      recover: (blockId, record) => {
+        const next = { ...this.state.voiceRecovery };
+        if (record) next[blockId] = record; else delete next[blockId];
+        this.state.voiceRecovery = next;
+        this.state.attemptRevision += 1;
+        if (this.state.localAttemptId) {
+          clearTimeout(this.autosaveTimer);
+          // Save recovery transitions immediately. Autosave retains the visible
+          // save-error state if local storage fails; never log transcript text.
+          return this.autosave().catch(() => null);
+        }
+      },
+      changed: () => {
+        this.state.isRewriting = this.voice?.active?.state === 'rewriting';
+        this.state.rewritingBlockId = this.state.isRewriting ? this.voice.active.blockId : null;
+        this.notifyStateChange();
+      },
+      ...(options.voiceOptions || {}),
+    });
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
     this.onStateChange = null;
@@ -2957,6 +2999,10 @@ class ViewerAttemptSession {
   }
 
   applyAttemptState(attemptRecord, options = {}) {
+    this.voice.teardown();
+    this.state.voiceApplied = null;
+    this.state.voiceRecovery = attemptRecord.status === 'completed' ? {} : normalizeVoiceRecovery(
+      attemptRecord.voiceRecovery, attemptRecord.viewerPayload?.blocks || []);
     this.state.localAttemptId = attemptRecord.localAttemptId || attemptRecord.localId;
     this.state.viewerPayload = attemptRecord.viewerPayload;
     this.state.answers = attemptRecord.answers || {};
@@ -3048,10 +3094,13 @@ class ViewerAttemptSession {
   }
 
   async completeLocalAttempt() {
-    if (!this.state.localAttemptId || this.state.isFinalizing || this.state.status === 'completed') {
+    if (!this.state.localAttemptId || this.state.isFinalizing || this.voice.active || this.state.status === 'completed') {
       return null;
     }
 
+    this.voice.teardown();
+    const recoveryBeforeFinalize = this.state.voiceRecovery;
+    this.state.voiceRecovery = {};
     this.state.isFinalizing = true;
     this.state.lastFinalizeError = null;
     this.state.status = 'completed';
@@ -3074,6 +3123,7 @@ class ViewerAttemptSession {
       this.state.completedAt = null;
       this.state.submittedAt = null;
       this.state.checkResult = null;
+      this.state.voiceRecovery = recoveryBeforeFinalize;
       this.state.lastFinalizeError = `Finalize failed. Please check your connection and try again. ${error?.message || String(error)}`;
       this.persistResumeMetadata();
       this.notifyStateChange();
@@ -3165,6 +3215,7 @@ class ViewerAttemptSession {
       completedAt: this.state.completedAt,
       submittedAt: this.state.submittedAt || null,
       answers: normalizedAnswers,
+      voiceRecovery: normalizeVoiceRecovery(this.state.voiceRecovery, this.state.viewerPayload.blocks),
       subject: persistedSubject,
       owner: persistedOwner,
       // checkResult is transient UI state and must not be persisted.
@@ -4135,191 +4186,16 @@ class ViewerAttemptSession {
   }
 
   async replayViewerRewriteIntent(payload = {}) {
-    const blockId = typeof payload.blockId === 'string' ? payload.blockId : null;
     const validation = this.validateViewerRewriteIntentPayload(payload);
-    if (!validation.ok) {
-      if (blockId) {
-        this.setRewriteMessage(blockId, validation.message);
-      } else {
-        this.setRecoveryMessage(validation.message);
-      }
-      console.warn('[viewer] Ignoring stale/invalid rewrite recovery intent.', {
-        action: 'viewerRewrite',
-        payload,
-      });
-      return { ok: false, status: 'invalid_context' };
+    if (!validation.ok) return { ok: false, status: 'invalid_context' };
+    const snapshot = payload.answerTextRawAtClickTime ?? payload.answerTextAtClickTime;
+    const block = this.state.viewerPayload.blocks.find(item => item.blockId === payload.blockId);
+    if (normalizeTextForRewriteSnapshotCompare(block, snapshot) !== normalizeTextForRewriteSnapshotCompare(
+      block, this.state.answers?.[payload.blockId]?.value)) {
+      return { ok: false, status: 'rewrite_stale_context' };
     }
-
-    const blocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
-    const targetBlock = blockId ? blocks.find((block) => block?.blockId === blockId) : null;
-    const isRewriteTargetSupported = Boolean(
-      targetBlock
-      && targetBlock.kind === 'question'
-      && targetBlock.responseConfig?.inputType === 'text'
-    );
-    if (!isRewriteTargetSupported) {
-      this.setRewriteMessage(blockId, 'Rewrite is only available for text-response questions.');
-      return { ok: false, status: 'unsupported_target' };
-    }
-
-    const answerTextAtClickTime = typeof payload.answerTextAtClickTime === 'string'
-      ? payload.answerTextAtClickTime
-      : String(payload.answerTextAtClickTime ?? '');
-    const trimmedClickText = answerTextAtClickTime.trim();
-    if (!trimmedClickText) {
-      this.setRewriteMessage(blockId, 'Nothing to rewrite yet. Enter a response first, then try Rewrite again.');
-      return { ok: false, status: 'empty_source_text' };
-    }
-
-    this.state.isRewriting = true;
-    this.state.rewritingBlockId = blockId;
-    this.setRewriteMessage(blockId, null);
-    this.setRecoveryMessage(null);
-    this.notifyStateChange();
-
-    const clearRewriteFlags = () => {
-      this.state.isRewriting = false;
-      this.state.rewritingBlockId = null;
-    };
-
-    const currentAnswerValue = (attemptBlockId) => {
-      const answerRecord = attemptBlockId ? this.state.answers?.[attemptBlockId] : null;
-      const rawValue = answerRecord && typeof answerRecord === 'object'
-        ? answerRecord.value
-        : answerRecord;
-      return typeof rawValue === 'string' ? rawValue : String(rawValue ?? '');
-    };
-
-    try {
-      const rewriteResult = await this.apiClient.rewriteText(trimmedClickText);
-      if (!rewriteResult?.ok) {
-        const rewriteError = rewriteResult?.error || rewriteResult || null;
-        const errorCode = typeof rewriteError?.code === 'string' && rewriteError.code.trim()
-          ? rewriteError.code.trim()
-          : 'UNKNOWN_ERROR';
-        const errorStatus = Number.isFinite(Number(rewriteError?.status))
-          ? Number(rewriteError.status)
-          : null;
-        const errorMessage = typeof rewriteError?.message === 'string' && rewriteError.message.trim()
-          ? rewriteError.message.trim()
-          : 'No additional error message provided.';
-        const errorDetails = rewriteError?.details;
-        const detailsPreviewLimit = 1200;
-        const rawDetailsText = errorDetails == null
-          ? ''
-          : String(typeof errorDetails === 'object' ? JSON.stringify(errorDetails) : errorDetails);
-        const detailsText = rawDetailsText.length > detailsPreviewLimit
-          ? `${rawDetailsText.slice(0, detailsPreviewLimit)}...`
-          : rawDetailsText;
-
-        this.setRewriteMessage(
-          blockId,
-          `Rewrite could not be completed. code=${errorCode}${errorStatus !== null ? ` | status=${errorStatus}` : ''} | message=${errorMessage}${detailsText ? ` | details=${detailsText}` : ''}`
-        );
-        console.error('[viewer] Rewrite request failed.', {
-          blockId,
-          sourceLength: trimmedClickText.length,
-          error: rewriteError,
-        });
-        return {
-          ok: false,
-          status: 'rewrite_failed',
-          error: rewriteError,
-        };
-      }
-
-      const currentAttemptId = this.state.localAttemptId || null;
-      const intentAttemptId = typeof payload.localAttemptId === 'string' ? payload.localAttemptId : null;
-      const refreshedBlocks = Array.isArray(this.state.viewerPayload?.blocks) ? this.state.viewerPayload.blocks : [];
-      const refreshedBlock = blockId ? refreshedBlocks.find((block) => block?.blockId === blockId) : null;
-      const isFreshContext = Boolean(
-        currentAttemptId
-        && intentAttemptId
-        && currentAttemptId === intentAttemptId
-        && refreshedBlock
-        && refreshedBlock.kind === 'question'
-        && refreshedBlock.responseConfig?.inputType === 'text'
-        && this.state.status !== 'completed'
-        && (!this.state.lastActiveBlockId || this.state.lastActiveBlockId === blockId)
-      );
-      const normalizedCurrentAnswer = normalizeTextForRewriteSnapshotCompare(
-        refreshedBlock,
-        currentAnswerValue(blockId)
-      );
-      const snapshotCompareSource = typeof payload.answerTextRawAtClickTime === 'string'
-        ? payload.answerTextRawAtClickTime
-        : answerTextAtClickTime;
-      const normalizedSnapshotAnswer = normalizeTextForRewriteSnapshotCompare(
-        refreshedBlock,
-        snapshotCompareSource
-      );
-      const answerMatchesSnapshot = normalizedCurrentAnswer === normalizedSnapshotAnswer;
-
-      if (!isFreshContext || !answerMatchesSnapshot) {
-        this.setRewriteMessage(
-          blockId,
-          'Your answer changed before rewrite finished, so we did not apply the rewrite. Please review and try again.'
-        );
-        return { ok: false, status: 'rewrite_stale_context' };
-      }
-
-      const preRewriteAnswer = typeof payload.answerTextRawAtClickTime === 'string'
-        ? payload.answerTextRawAtClickTime
-        : currentAnswerValue(blockId);
-      const rewrittenText = String(rewriteResult.data?.text ?? '').trim();
-      this.state.undoBuffer = {
-        ...this.state.undoBuffer,
-        [blockId]: preRewriteAnswer,
-      };
-      const beforeApplyAnswer = currentAnswerValue(blockId);
-      this.setAnswer(blockId, rewrittenText);
-      const afterApplyAnswer = currentAnswerValue(blockId);
-      if (this.state.status === 'completed') {
-        const nextUndoBuffer = { ...(this.state.undoBuffer || {}) };
-        delete nextUndoBuffer[blockId];
-        this.state.undoBuffer = nextUndoBuffer;
-        this.setRewriteMessage(
-          blockId,
-          'Rewrite finished, but your answer could not be updated because this attempt is no longer editable.'
-        );
-        return { ok: false, status: 'rewrite_not_applied' };
-      }
-      if (afterApplyAnswer === beforeApplyAnswer) {
-        const nextUndoBuffer = { ...(this.state.undoBuffer || {}) };
-        delete nextUndoBuffer[blockId];
-        this.state.undoBuffer = nextUndoBuffer;
-      }
-      this.setRewriteMessage(blockId, null);
-      this.setRecoveryMessage(null);
-      return { ok: true, status: 'rewrite_applied' };
-    } catch (error) {
-      const thrownError = error && typeof error === 'object'
-        ? error
-        : { message: String(error) };
-      const errorCode = typeof thrownError?.code === 'string' && thrownError.code.trim()
-        ? thrownError.code.trim()
-        : 'UNEXPECTED_REWRITE_ERROR';
-      const errorMessage = typeof thrownError?.message === 'string' && thrownError.message.trim()
-        ? thrownError.message.trim()
-        : 'No additional error message provided.';
-      this.setRewriteMessage(
-        blockId,
-        `Rewrite could not be completed. code=${errorCode} | message=${errorMessage}`
-      );
-      console.error('[viewer] Rewrite request threw an unexpected error.', {
-        blockId,
-        sourceLength: trimmedClickText.length,
-        error: thrownError,
-      });
-      return {
-        ok: false,
-        status: 'rewrite_failed',
-        error: thrownError,
-      };
-    } finally {
-      clearRewriteFlags();
-      this.notifyStateChange();
-    }
+    return this.voice.run(payload.blockId, { mode: 'rewrite', skipSession: true,
+      sourceText: String(payload.answerTextAtClickTime ?? '').trim(), undoSnapshot: payload.answerTextRawAtClickTime });
   }
 
   async triggerProtectedAction(actionId, intentPayload = {}) {
@@ -5490,6 +5366,11 @@ function renderViewerShell(session) {
   }
   activeViewerShellAbortController = new AbortController();
   const { signal } = activeViewerShellAbortController;
+  signal.addEventListener('abort', () => session.voice.teardown(), { once: true });
+  window.addEventListener('pagehide', () => session.voice.teardown(), { signal });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) session.voice.navigate();
+  }, { signal });
 
   const shell = document.createElement('div');
   shell.className = 'viewer-shell';
@@ -5537,6 +5418,10 @@ function renderViewerShell(session) {
   nextBtn.setAttribute('aria-label', t('viewer.actions.nextBlock'));
   nextBtn.title = t('viewer.actions.nextBlockTitle');
   navActions.append(prevBtn, nextBtn);
+  const voiceControls = new Map();
+  const crossQuestionStatus = createVoiceStatus({ session, t,
+    view: blockId => navigateToBlockIndex(getOrderedBlocks().findIndex(block => block.blockId === blockId)),
+  });
   const answerControls = new Map();
   const textControlFeedback = new Map();
   let blockSignature = null;
@@ -6125,6 +6010,7 @@ function renderViewerShell(session) {
     closeOpenViewerAudioMenu();
     session.stopActiveAudio('interrupted');
     blockSignature = nextSignature;
+    voiceControls.clear();
     answerControls.clear();
     textControlFeedback.clear();
     blockList.innerHTML = '';
@@ -6457,10 +6343,6 @@ function renderViewerShell(session) {
       }
       answerControls.set(block.blockId, control);
       if (inputType === 'text') {
-        textControlFeedback.set(block.blockId, {
-          counter: textCounter,
-          status: textStatus,
-        });
         const textFooter = document.createElement('div');
         textFooter.className = 'question-card__text-footer';
         const textActionsRow = document.createElement('div');
@@ -6470,53 +6352,21 @@ function renderViewerShell(session) {
         const rewriteMessages = document.createElement('div');
         rewriteMessages.className = 'question-card__rewrite-messages';
 
+        const voiceUi = createVoiceControls({ session, block, control, t, signal,
+          view: blockId => navigateToBlockIndex(getOrderedBlocks().findIndex(item => item.blockId === blockId)),
+          applied: value => {
+            cacheRawControlValue(block.blockId, value.text);
+            control.value = value.text;
+          },
+        });
+        voiceControls.set(block.blockId, voiceUi);
         const rewriteButton = document.createElement('button');
         rewriteButton.type = 'button';
         rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';
         rewriteButton.textContent = t('viewer.rewrite.action');
-        rewriteButton.addEventListener('click', async () => {
-          if (rewriteButton.disabled) {
-            return;
-          }
-          const rewriteIntentPayload = buildViewerRewriteIntentPayloadForBlock(block);
-          if (!rewriteIntentPayload) {
-            const message = t('viewer.notifications.rewrite.onlyForTextResponse');
-            session.pushNotification({
-              kind: 'warn',
-              text: message,
-              ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
-            });
-            renderUI();
-            return;
-          }
-          const protectedActionResult = await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);
-          if (protectedActionResult?.status === 'redirected') {
-            return;
-          }
-          if (protectedActionResult?.status !== 'executed') {
-            let blockedMessage = t('viewer.notifications.rewrite.couldNotStart');
-            if (protectedActionResult?.status === 'blocked_session_probe') {
-              const probeFailureMessage = protectedActionResult?.result?.error?.message
-                || protectedActionResult?.result?.result?.error?.message
-                || '';
-              blockedMessage = probeFailureMessage
-                ? t('viewer.notifications.rewrite.temporarilyUnavailableWithReason', { reason: probeFailureMessage })
-                : t('viewer.notifications.rewrite.temporarilyUnavailableSessionCheck');
-            } else if (protectedActionResult?.status === 'blocked_no_local_id') {
-              blockedMessage = t('viewer.notifications.rewrite.noActiveAttempt');
-            }
-            session.pushNotification({
-              kind: 'warn',
-              text: blockedMessage,
-              ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
-            });
-            session.setRewriteMessage(block.blockId, blockedMessage);
-            renderUI();
-            return;
-          }
-          const rewrittenValue = session.state.answers?.[block.blockId]?.value;
-          cacheRawControlValue(block.blockId, String(rewrittenValue ?? ''));
-          renderUI();
+        rewriteButton.setAttribute('aria-describedby', `${control.id}-voice-status`);
+        rewriteButton.addEventListener('click', () => {
+          if (!rewriteButton.disabled) voiceUi.rewrite();
         });
 
         const undoButton = document.createElement('button');
@@ -6544,16 +6394,30 @@ function renderViewerShell(session) {
         rewriteHint.className = 'question-card__rewrite-hint';
         const rewriteError = document.createElement('p');
         rewriteError.className = 'question-card__rewrite-error';
-        rewriteRow.append(rewriteButton, undoButton);
+        rewriteRow.append(voiceUi.add, rewriteButton, undoButton);
         rewriteMessages.append(textStatus, rewriteHint, rewriteError);
         textActionsRow.append(textCounter, rewriteRow);
-        textFooter.append(textActionsRow, rewriteMessages);
+        textFooter.append(textActionsRow, rewriteMessages, voiceUi.root);
+        // Presentation-only control: no answer event handlers or storage binding.
+        // Clone the input shape so blank and answered reviews have identical sizing.
+        const reviewStatus = control.cloneNode(false);
+        reviewStatus.id = `${control.id}-review`;
+        reviewStatus.className = 'question-card__review-status question-card__submitted-text';
+        reviewStatus.value = t('viewer.review.notAnswered');
+        reviewStatus.readOnly = true;
+        reviewStatus.disabled = false;
+        reviewStatus.removeAttribute('aria-describedby');
+        reviewStatus.hidden = true;
+        textControlFeedback.set(block.blockId, {
+          counter: textCounter, status: textStatus, footer: textFooter, helper, reviewStatus, label,
+          editingDescription: control.getAttribute('aria-describedby'),
+        });
 
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
           card.append(checkBanner, checkReveal);
         }
-        card.append(helper, control, mediaFeedback, textFooter, inputError);
+        card.append(helper, control, reviewStatus, mediaFeedback, textFooter, inputError);
       } else {
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
@@ -6606,25 +6470,25 @@ function renderViewerShell(session) {
         const undoButton = card?.querySelector('.question-card__undo-btn');
         const rewriteHint = card?.querySelector('.question-card__rewrite-hint');
         const rewriteError = card?.querySelector('.question-card__rewrite-error');
-        const trimmedAnswerLength = getTrimmedAnswerTextForBlock(block.blockId).length;
+        const trimmedAnswerLength = unicodeLength(getTrimmedAnswerTextForBlock(block.blockId));
         const isAttemptCompleted = session.state.status === 'completed';
         const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);
         const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
-        const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= 300;
-        const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;
+        const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= REWRITE_INPUT_LIMIT;
+        const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(session.state.voiceRecovery[block.blockId]) && canRewriteByLength;
 
         if (rewriteButton) {
           rewriteButton.textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');
           rewriteButton.disabled = !canRewrite;
         }
         if (undoButton) {
-          undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;
+          undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;
         }
         if (rewriteHint) {
           if (trimmedAnswerLength === 0) {
             rewriteHint.textContent = t('viewer.rewrite.hintEnterText');
-          } else if (trimmedAnswerLength > 300) {
-            rewriteHint.textContent = t('viewer.rewrite.hintTooLong', { max: 300 });
+          } else if (trimmedAnswerLength > REWRITE_INPUT_LIMIT) {
+            rewriteHint.textContent = t('viewer.rewrite.hintTooLong', { max: REWRITE_INPUT_LIMIT });
           } else {
             rewriteHint.textContent = '';
           }
@@ -6634,7 +6498,26 @@ function renderViewerShell(session) {
           rewriteError.textContent = rewriteInlineMessage ? `⚠️ ${rewriteInlineMessage}` : '';
         }
       }
-      if (inputType !== 'multiple_choice' && inputType !== 'boolean') {
+      voiceControls.get(block.blockId)?.update();
+      if (inputType === 'text') {
+        const completed = session.state.status === 'completed';
+        const feedback = textControlFeedback.get(block.blockId);
+        control.closest('.question-card').classList.toggle('question-card--text-review', completed);
+        feedback.footer.hidden = completed;
+        feedback.helper.hidden = completed;
+        feedback.reviewStatus.hidden = !completed || Boolean(stateValue.trim());
+        control.hidden = completed && !stateValue.trim();
+        feedback.label.htmlFor = control.hidden ? feedback.reviewStatus.id : control.id;
+        control.classList.toggle('question-card__submitted-text', completed);
+        control.disabled = false;
+        if (completed) {
+          control.readOnly = true;
+          // Hidden editing hints must not remain the review control's accessible description.
+          control.removeAttribute('aria-describedby');
+        } else if (feedback.editingDescription) {
+          control.setAttribute('aria-describedby', feedback.editingDescription);
+        }
+      } else if (inputType !== 'multiple_choice' && inputType !== 'boolean') {
         control.disabled = session.state.status === 'completed';
       }
       const card = control.closest('.question-card');
@@ -6669,6 +6552,7 @@ function renderViewerShell(session) {
 
     closeOpenViewerAudioMenu();
     session.stopActiveAudio('interrupted');
+    session.voice.navigate();
     currentBlockIndex = clampedIndex;
     persistNavigationState(orderedBlocks);
     renderUI();
@@ -6689,6 +6573,8 @@ function renderViewerShell(session) {
     if (orderedBlocks.length === 0) return;
     currentBlockIndex = Math.min(Math.max(currentBlockIndex, 0), orderedBlocks.length - 1);
     const currentBlock = orderedBlocks[currentBlockIndex];
+    crossQuestionStatus.update(currentBlock.blockId);
+    crossQuestionStatus.root.hidden = !session.voice.active || (currentBlock.kind === 'question' && (currentBlock.responseConfig?.inputType || 'text') === 'text');
     const stepperSignature = getStepperOrderSignature(orderedBlocks);
     const activeIndexChanged = currentBlockIndex !== lastStepperActiveIndex;
     const orderChanged = stepperSignature !== stepperOrderSignature;
@@ -6722,7 +6608,8 @@ function renderViewerShell(session) {
     resumeWarning.hidden = !session.state.recoveryMessage;
     renderViewerNotifications(session);
     saveBtn.disabled = session.state.isFinalizing;
-    completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing;
+    completeBtn.disabled = session.state.status === 'completed' || session.state.isFinalizing || Boolean(session.voice.active);
+    completeBtn.title = session.voice.active ? t('viewer.voice.finishFirst') : '';
     const checkAvailable = session.state.status === 'completed';
     const printAvailable = session.state.status === 'completed';
     checkBtn.hidden = !checkAvailable;
@@ -6829,7 +6716,7 @@ function renderViewerShell(session) {
 
   headerTop.append(heading, headerActions);
   header.append(headerTop, answerSummary, resumeWarning);
-  blockSection.append(blockHeading, stepper, blockList);
+  blockSection.append(blockHeading, stepper, blockList, crossQuestionStatus.root);
   shell.append(header, blockSection);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';

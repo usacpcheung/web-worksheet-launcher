@@ -1,3 +1,4 @@
+import { URL as NodeURL } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -5,6 +6,48 @@ import path from 'node:path';
 import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
 import { createStoredZip, parseStoredZip, decodeUtf8, crc32 } from '../editor/zip-utils.js';
 import { PackageService } from '../api/services/package-service.js';
+
+test('voice recovery persists locally, resumes, is excluded from packages and clears on submission', async () => {
+  const mod = await loadViewerModule();
+  let saved;
+  const storage = { attempts: { put: async value => { saved = structuredClone(value); return saved; } },
+    resumeFlags: { set() {}, get() {} } };
+  const session = new mod.ViewerAttemptSession(storage);
+  const blocks = [{ blockId: 'q1', kind: 'question', responseConfig: { inputType: 'text', maxLength: 200 } }];
+  session.applyAttemptState({ localAttemptId: 'fixture', status: 'in_progress',
+    viewerPayload: { worksheetId: 'w', snapshotId: 's', blocks }, answers: {} });
+  session.state.voiceRecovery = { q1: { text: 'private fixture', snapshot: '', index: 0,
+    candidate: 'candidate fixture', mode: 'voice', blob: new Blob(['audio fixture']) } };
+  await session.autosave();
+  assert.equal(saved.voiceRecovery.q1.text, 'private fixture');
+  assert.equal(saved.voiceRecovery.q1.blob, undefined);
+  assert.equal(saved.voiceRecovery.q1.candidate, undefined);
+  session.applyAttemptState(saved);
+  assert.equal(session.state.voiceRecovery.q1.text, 'private fixture');
+  assert.ok(!JSON.stringify(session.buildAttemptRecordForPackage()).includes('private fixture'));
+  await session.completeLocalAttempt();
+  assert.deepEqual(saved.voiceRecovery, {});
+  assert.deepEqual(session.state.voiceRecovery, {});
+});
+
+test('active voice operation blocks submission, releases on cancel, and cannot mutate another attempt', async () => {
+  const mod = await loadViewerModule();
+  let resolve;
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { set() {} } }, {
+    voiceOptions: { checkSession: () => new Promise(r => { resolve = r; }) },
+  });
+  session.state.localAttemptId = 'a';
+  session.state.viewerPayload = { blocks: [{ kind: 'question', blockId: 'q1', responseConfig: { inputType: 'text' } }] };
+  const pending = session.voice.run('q1');
+  assert.equal(await session.completeLocalAttempt(), null);
+  assert.equal(session.state.status, 'in_progress');
+  session.voice.cancel(); await pending;
+  assert.equal(session.voice.active, null);
+  resolve({ ok: true });
+  await new Promise(r => setImmediate(r));
+  assert.deepEqual(session.state.answers, {});
+  clearTimeout(session.autosaveTimer);
+});
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
@@ -203,7 +246,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource)}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/answer-(?:voice-workflow|voice-ui)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -6067,17 +6110,13 @@ test('rewrite assist snapshots answer text from answer record value', async () =
   assert.equal(source.includes('const buildViewerRewriteIntentPayloadForBlock = (questionBlock) => {'), true);
   assert.equal(source.includes('const getRawAnswerTextForBlock = (blockId) => {'), true);
   assert.equal(source.includes('answerTextRawAtClickTime: getRawAnswerTextForBlock(blockId),'), true);
-  assert.equal(source.includes("const protectedActionResult = await session.triggerProtectedAction('viewerRewrite', rewriteIntentPayload);"), true);
+  assert.equal(source.includes("if (!rewriteButton.disabled) voiceUi.rewrite();"), true);
 });
 
-test('rewrite click handler surfaces blocked protected-action statuses before touching cached answers', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("if (protectedActionResult?.status === 'redirected') {"), true);
-  assert.equal(source.includes("if (protectedActionResult?.status !== 'executed') {"), true);
-  assert.equal(source.includes("protectedActionResult?.status === 'blocked_session_probe'"), true);
-  assert.equal(source.includes('session.pushNotification({'), true);
-  assert.equal(source.includes('session.setRewriteMessage(block.blockId, blockedMessage);'), true);
-  assert.equal(source.includes("session.state.utilityMessage = blockedMessage;"), false);
+test('voice and rewrite use a session preflight before recording or sending text', async () => {
+  const source = await fs.readFile(path.resolve('server/viewer/answer-voice-workflow.js'), 'utf8');
+  assert.ok(source.indexOf('checkSession()') < source.indexOf('op.recorder = recording()'));
+  assert.ok(source.includes('if (!fresh(op))'));
 });
 
 test('rewrite controls remain always mounted for text questions and enforce disabled states by rules', async () => {
@@ -6085,12 +6124,12 @@ test('rewrite controls remain always mounted for text questions and enforce disa
   assert.equal(source.includes("if (inputType === 'text') {"), true);
   assert.equal(source.includes("rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';"), true);
   assert.equal(source.includes("undoButton.className = 'question-card__undo-btn icon-nav-btn';"), true);
-  assert.equal(source.includes('const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= 300;'), true);
-  assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !isRewriteInFlight && canRewriteByLength;'), true);
+  assert.equal(source.includes('const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= REWRITE_INPUT_LIMIT;'), true);
+  assert.equal(source.includes('const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(session.state.voiceRecovery[block.blockId]) && canRewriteByLength;'), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
-  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
+  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;'), true);
   assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintEnterText');"), true);
-  assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintTooLong', { max: 300 });"), true);
+  assert.equal(source.includes("rewriteHint.textContent = t('viewer.rewrite.hintTooLong', { max: REWRITE_INPUT_LIMIT });"), true);
 });
 
 test('render signature excludes rewrite-row dynamic flags to avoid remounting for text length transitions', async () => {
@@ -6250,8 +6289,9 @@ test('replayViewerRewriteIntent accepts auth-restore maxLength truncation when s
     answerTextAtClickTime: '01234567890123456789EXTRA_CHARS_TYPED_BEFORE_AUTH',
   });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(result.ok, false);
+  assert.equal(session.state.voiceRecovery.q1.code, 'ANSWER_TOO_LONG');
+  assert.ok(session.state.voiceRecovery.q1.candidate.length > session.state.viewerPayload.blocks[0].responseConfig.maxLength);
 });
 
 test('replayViewerRewriteIntent stale-check prefers raw snapshot and save-equivalent clamp-then-trim normalization', async () => {
@@ -6290,8 +6330,9 @@ test('replayViewerRewriteIntent stale-check prefers raw snapshot and save-equiva
     answerTextRawAtClickTime: '   abcde',
   });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.status, 'rewrite_applied');
+  assert.equal(result.ok, false);
+  assert.equal(session.state.voiceRecovery.q1.code, 'ANSWER_TOO_LONG');
+  assert.ok(session.state.voiceRecovery.q1.candidate.length > session.state.viewerPayload.blocks[0].responseConfig.maxLength);
 });
 
 test('viewer replayProtectedAction receives payload and avoids mutation on stale context', async () => {
@@ -6386,16 +6427,16 @@ test('in-flight rewrite state renders loading label while preserving always-visi
   assert.equal(source.includes('const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;'), true);
   assert.equal(source.includes("rewriteButton.textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');"), true);
   assert.equal(source.includes('rewriteButton.disabled = !canRewrite;'), true);
-  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || isRewriteInFlight || !hasUndoEntry;'), true);
+  assert.equal(source.includes('undoButton.disabled = isAttemptCompleted || Boolean(session.voice.active) || !hasUndoEntry;'), true);
   assert.equal(source.includes('session.state.rewriteMessageByBlock?.[block.blockId]'), true);
 });
 
 test('rewrite row updates happen in place without mount/unmount checks', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes("rewriteRow.append(rewriteButton, undoButton);"), true);
+  assert.equal(source.includes("rewriteRow.append(voiceUi.add, rewriteButton, undoButton);"), true);
   assert.equal(source.includes("rewriteMessages.append(textStatus, rewriteHint, rewriteError);"), true);
   assert.equal(source.includes("textActionsRow.append(textCounter, rewriteRow);"), true);
-  assert.equal(source.includes("card.append(helper, control, mediaFeedback, textFooter, inputError);"), true);
+  assert.equal(source.includes("card.append(helper, control, reviewStatus, mediaFeedback, textFooter, inputError);"), true);
   assert.equal(source.includes('if (rewriteRow.childNodes.length > 0) {'), false);
 });
 
@@ -6430,7 +6471,8 @@ test('rewrite API failure keeps original answer unchanged and clears in-flight f
   assert.equal(session.state.answers.q1.value, 'original answer');
   assert.equal(session.state.isRewriting, false);
   assert.equal(session.state.rewritingBlockId, null);
-  assert.equal(session.state.rewriteMessageByBlock.q1.includes('Rewrite could not be completed'), true);
+  assert.equal(session.state.voiceRecovery.q1.code, 'REWRITE_FAILED');
+  assert.equal(session.state.voiceRecovery.q1.text, 'original answer');
   assert.equal(session.state.recoveryMessage, null);
 });
 
@@ -6467,7 +6509,8 @@ test('rewrite API thrown error keeps original answer unchanged and clears in-fli
   assert.equal(session.state.answers.q1.value, 'original answer');
   assert.equal(session.state.isRewriting, false);
   assert.equal(session.state.rewritingBlockId, null);
-  assert.equal(session.state.rewriteMessageByBlock.q1.includes('Rewrite could not be completed'), true);
+  assert.equal(session.state.voiceRecovery.q1.code, 'REWRITE_FAILED');
+  assert.equal(session.state.voiceRecovery.q1.text, 'original answer');
 });
 
 test('rewrite apply with unchanged resulting text is treated as success (not non-editable)', async () => {
@@ -6502,4 +6545,25 @@ test('rewrite apply with unchanged resulting text is treated as success (not non
   assert.equal(session.state.answers.q1.value, 'same answer');
   assert.equal(Object.prototype.hasOwnProperty.call(session.state.undoBuffer, 'q1'), false);
   assert.equal(session.state.rewriteMessageByBlock.q1 || null, null);
+});
+
+test('failed finalization restores recovery and subsequent saves retain it', async () => {
+  const mod = await loadViewerModule();
+  let fail = true, saved;
+  const session = new mod.ViewerAttemptSession({attempts:{put:async value=>{
+    if(fail) throw new Error('storage unavailable');
+    saved = structuredClone(value); return saved;
+  }},resumeFlags:{set(){},get(){}}});
+  session.applyAttemptState({localAttemptId:'finalize-recovery',status:'in_progress',answers:{},
+    viewerPayload:{blocks:[{kind:'question',blockId:'q1',responseConfig:{inputType:'text',maxLength:200}}]}});
+  const recovery = {q1:{phase:'text',text:'Keep my transcript',snapshot:'',index:0,mode:'voice'}};
+  session.state.voiceRecovery = recovery;
+  await session.completeLocalAttempt();
+  assert.equal(session.state.status,'in_progress');
+  assert.equal(session.state.voiceRecovery,recovery);
+  fail = false;
+  await session.autosave();
+  assert.equal(saved.voiceRecovery.q1.text,'Keep my transcript');
+  await session.completeLocalAttempt();
+  assert.deepEqual(saved.voiceRecovery,{});
 });
