@@ -1,5 +1,8 @@
 # Task: Parent launcher dedupe and cleanup
 
+> **Widget retirement (Step 2):** Historical completed task. The formerly canonical SDK has now also been retired; do not restore it using this checklist.
+> See [scope, retained services and deployment gates](widget-removal-step2.md).
+
 ## Context
 
 There were two copies of `parent-launcher.js` in the repository:

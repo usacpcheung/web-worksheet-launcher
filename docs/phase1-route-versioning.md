@@ -1,5 +1,8 @@
 # Compatibility Decision Note: Phase 1 Route Versioning
 
+> **Widget retirement (Step 2):** The legacy popup preservation/versioned-widget requirements and popup rows below are superseded. Editor/viewer route separation remains valid; do not remove shared auth routes or broad worksheet_launcher prefixes.
+> See [scope, retained services and deployment gates](widget-removal-step2.md).
+
 > **Related docs**
 > - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
 > - This document is part of the Phase 1 documentation set.

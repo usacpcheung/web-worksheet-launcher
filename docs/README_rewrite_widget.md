@@ -1,5 +1,8 @@
 # Rewrite Bridge Widget (OIDC-Protected)
 
+> **Widget retirement (Step 2):** The widget implementation and embedding examples below are retired and retained only as historical reference. Do not copy these installation instructions. Shared rewrite/transcription/T2A bridge services remain supported.
+> See [scope, retained services and deployment gates](widget-removal-step2.md).
+
 This repository includes a reusable **Rewrite Widget UI** for the rewrite service.
 
 ## Scope of this widget

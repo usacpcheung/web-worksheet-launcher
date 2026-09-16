@@ -1,5 +1,9 @@
 # Widget retirement: Step 1 regression boundary
 
+> Historical Step 1 baseline. Step 2 is stacked on its branch before merge;
+> see [the approved removal scope](widget-removal-step2.md) for the current
+> state. The evidence below describes the files before their retirement.
+
 Status: preparation only. No runtime behavior, deployment route, payload format,
 or legacy file is removed by this PR. Baseline: main-v1 c84927e.
 
@@ -58,7 +62,8 @@ These are review targets, not permission to delete everything they mention:
 
 ## Gate for Step 2
 
-Merge this tests/documentation-only PR after checks pass. A separate approved
+Merge in dependency order after checks pass; Step 2 may be developed stacked
+on this tests/documentation-only PR while main-v1 remains unchanged. A separate approved
 PR must enumerate exact deletion targets, inspect their callers and external
 deployment consumers, update the applicable documentation/rules, and provide
 a rollback plan. Do not delete bridge APIs, shared auth, storage or product

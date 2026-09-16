@@ -5,9 +5,12 @@ Scope: entire repository tree from the project root.
 
 ## Project Scope
 
-- Parent prototype entry point: `parent_prototype/parent.html`
-- Popup renderer entry point: `server/worksheet_launcher/render.html`
-- Interface contract source of truth: `docs/message-contract.md`
+- Worksheet editor: `server/editor/index.html`
+- Worksheet viewer: `server/viewer/index.html`
+- RolePlayScene: `server/roleplayscene/index.html`
+- Shared application services: `server/app/` and `server/api/`
+- Auth callback contract: `docs/message-contract.md`
+- Legacy widget retirement scope: `docs/widget-removal-step2.md`
 - RolePlayScene editor-mode UI guidance:
   `.agents/skills/roleplayscene-editor-ui-design/SKILL.md`
 
@@ -20,36 +23,37 @@ Scope: entire repository tree from the project root.
 
 ## Non-negotiable Compatibility Rules
 
-- Do **not** modify `server/worksheet_launcher/widgets/rewrite-widget.js` for
-  prototype-specific behavior.
-- For prototype-specific widget behavior, create a versioned file (for example
-  `server/worksheet_launcher/widgets/rewrite-widget.v2.js`).
-- Load versioned widget files from `server/worksheet_launcher/render.html` when
-  needed, instead of editing `rewrite-widget.js` in place.
+- Widget retirement must not change any editor, viewer, or RolePlayScene
+  functionality, including existing content compatibility and shared services.
+- The legacy parent demo/SDK, popup renderer and rewrite widget have been
+  removed by the approved retirement work. Do not reintroduce them.
+- Keep shared rewrite, transcription and T2A bridge APIs, authentication,
+  storage, publishing and all product runtime code intact during retirement.
+- The deployed `/worksheet_launcher/app/login/popup.html` route is shared
+  authentication, not the retired widget. Do not remove broad URL prefixes.
 
 ## Contract Discipline
 
-- Any change to launch hash parameters or popup `postMessage` schema must update
-  `docs/message-contract.md` in the same PR.
-- Parent-side validation must always enforce all of the following:
-  - `event.origin`
-  - `event.data.type`
-  - `event.data.rid`
+- Changes to supported auth callback messages must update
+  `docs/message-contract.md` in the same PR. Preserve origin, message type,
+  source-window and auth-flow correlation validation.
+- Legacy `worksheetResult` and launch-query contracts are historical only.
+- Changes to product package/attempt contracts must update their applicable
+  contract documentation and preserve existing content compatibility.
 
 ## Phase Boundary
 
-- Phase 1 is contracts/scaffolding only.
-- New runtime behavior must be introduced in later phases with explicit,
-  versioned changes.
+- Historical Phase 1 scaffold requirements do not require restoring retired
+  popup files. They are superseded by the widget retirement decision.
+- Database, Apache, OIDC and external bridge deployment changes are outside
+  the code-only widget retirement PR.
 
 ## PR Checklist
 
 Before merging, confirm all of the following:
 
-- `server/worksheet_launcher/widgets/rewrite-widget.js` is unchanged unless
-  explicit approval exists for modifying it.
-- If interfaces changed, `docs/message-contract.md` was updated in the same PR.
-- Scaffold paths still exist:
-  - `parent_prototype/parent.html`
-  - `server/worksheet_launcher/render.html`
-  - `server/worksheet_launcher/widgets/rewrite-widget.css`
+- Product regression and widget-retirement boundary tests pass.
+- Core product functionality and shared services are preserved.
+- Applicable contract and retirement documentation reflects the changes.
+- External parent integrations and deployment mappings have been checked
+  before deploying removal; record the rollback commit and live QA results.
