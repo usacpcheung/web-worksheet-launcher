@@ -198,6 +198,54 @@ function installDomGlobals() {
   };
 }
 
+test('dialogue arrows reorder complete entries and reject boundary moves', () => {
+  installDomGlobals();
+  const project = makeProject();
+  project.scenes[0].dialogue = ['A', 'B', 'C'].map((text, i) => ({ text,
+    speakerId: `speaker-${i}`, audio: { name: `${text}.mp3`, objectUrl: `blob:${text}` },
+    bubble: { mode: 'anchor', anchorId: `anchor-${i}` },
+  }));
+  const original = structuredClone(project.scenes[0].dialogue);
+  const store = new TestStore(project);
+  const right = document.createElement('div');
+  renderEditor(store, document.createElement('div'), right, () => {});
+  const button = (index, direction) => findElement(right, el => el.dataset?.focusKey === `dialogue-move-scene-1-${index}-${direction}`);
+  assert.equal(button(0, -1).disabled, true);
+  button(0, -1).dispatchEvent('click');
+  assert.deepEqual(store.get().project.scenes[0].dialogue, original);
+  button(2, -1).dispatchEvent('click');
+  assert.deepEqual(store.get().project.scenes[0].dialogue, [original[0], original[2], original[1]]);
+  button(1, 1).dispatchEvent('click');
+  assert.deepEqual(store.get().project.scenes[0].dialogue, original);
+  assert.equal(button(2, 1).disabled, true);
+});
+
+test('pending audio locks scene reordering even through a stale button handler', async () => {
+  installDomGlobals();
+  const project = makeProject({ text: 'Same text' });
+  project.scenes[0].dialogue.push({ ...project.scenes[0].dialogue[0], speakerId: 'other' });
+  const store = new TestStore(project);
+  const right = document.createElement('div');
+  const deferred = createDeferred();
+  let calls = 0;
+  renderEditor(store, document.createElement('div'), right, () => {}, {
+    ensureServerSessionReady: async () => ({ ok: true }),
+    apiClient: { generateAudioFromText: () => { calls++; return deferred.promise; } },
+  });
+  const staleMove = findElement(right, el => el.dataset?.focusKey === 'dialogue-move-scene-1-0-1');
+  findButtonByText(right, 'Generate audio').dispatchEvent('click');
+  await waitFor(() => calls === 1);
+  assert.equal(findElement(right, el => el.dataset?.focusKey === 'dialogue-move-scene-1-0-1').disabled, true);
+  staleMove.dispatchEvent('click');
+  assert.notEqual(store.get().project.scenes[0].dialogue[0].speakerId, 'other');
+  deferred.resolve({ ok: true, data: new Uint8Array([1, 2, 3]) });
+  await waitFor(() => findElement(right, el => el.dataset?.focusKey === 'dialogue-move-scene-1-0-1').disabled === false);
+  assert.ok(store.get().project.scenes[0].dialogue[0].audio);
+  assert.equal(store.get().project.scenes[0].dialogue[1].audio, null);
+  findElement(right, el => el.dataset?.focusKey === 'dialogue-move-scene-1-0-1').dispatchEvent('click');
+  assert.ok(store.get().project.scenes[0].dialogue[1].audio);
+});
+
 test('T2A result is discarded when dialogue text changes before response', async () => {
   installDomGlobals();
   const apiDeferred = createDeferred();
