@@ -67,6 +67,23 @@ try {
     throw new Error(`Expected exactly one active mode button, found ${activeMode}.`);
   }
 
+  await page.locator('#file-input').setInputFiles({
+    name: 'mode-regression.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ meta: { title: 'Mode regression' }, scenes: [
+      { id: 'start', type: 'start', dialogue: [{ text: 'Welcome' }], choices: [{ label: 'Finish', nextSceneId: 'end' }] },
+      { id: 'end', type: 'end', dialogue: [{ text: 'Done' }], choices: [] },
+    ] })),
+  });
+  await page.locator('#import-confirm-accept').click();
+  await page.locator('#import-confirm-overlay').waitFor({ state: 'hidden' });
+  await page.locator('#mode-play').click();
+  await page.locator('.player-intro-begin').click();
+  await page.locator('.player-stage-frame').waitFor();
+  await page.locator('#mode-play').click();
+  if (await page.locator('.player-intro-begin').count()) {
+    throw new Error('Clicking the active Play mode reset the story to its cover.');
+  }
+
   if (assetFailures.length || pageErrors.length) {
     throw new Error([
       `RolePlayScene loaded with ${assetFailures.length} asset failure(s) and ${pageErrors.length} page error(s).`,

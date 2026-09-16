@@ -84,7 +84,7 @@ const directLaunchReturnButton = document.getElementById('direct-launch-return')
 
 const store = new Store();
 const apiClient = createServerApiClient();
-const discussionSession = new RolePlaySceneDiscussionSession({ apiClient });
+const discussionSession = new RolePlaySceneDiscussionSession({ apiClient, checkSession: ensureServerSessionReady, beginSignIn: startServerSignIn });
 
 let mode = 'edit'; // 'edit' | 'play'
 let teardown = null;
@@ -1549,6 +1549,7 @@ function promptDiscussionPrintDetails() {
 
 async function printRolePlaySceneDiscussion() {
   const activeProject = getActiveStore().get().project;
+  if (discussionSession.voice.active) { showMessage({ textId: 'player.discussion.printBusy' }); return; }
   discussionSession.bindProject(activeProject);
   if (!discussionSession.hasAnyText()) {
     showMessage({ text: translate('player.discussion.printEmpty') });
@@ -1556,6 +1557,7 @@ async function printRolePlaySceneDiscussion() {
   }
   const details = await promptDiscussionPrintDetails();
   if (!details) return;
+  if (discussionSession.voice.active) { showMessage({ textId: 'player.discussion.printBusy' }); return; }
   const printWindow = globalThis.open?.('', 'roleplayscene_discussion_print', 'width=960,height=720,resizable=yes,scrollbars=yes');
   if (!printWindow || !printWindow.document) {
     showMessage({ text: translate('player.discussion.printPopupBlocked') });
@@ -1698,7 +1700,7 @@ function confirmNewStory() {
 }
 
 async function ensureDiscussionCanBeDiscarded() {
-  if (!discussionSession.hasAnyText()) return true;
+  if (!discussionSession.hasAnyText() && !discussionSession.hasPendingWork()) return true;
   return await confirmDiscardDiscussion();
 }
 
@@ -2763,6 +2765,7 @@ btnEdit.addEventListener('click', async () => {
   setMode('edit');
 });
 btnPlay.addEventListener('click', () => {
+  if (mode === 'play') return;
   if (publishedPlay.active) {
     setMode('play');
     return;
@@ -2983,11 +2986,17 @@ onLocaleChange((nextLocale) => {
 });
 
 window.addEventListener('beforeunload', (event) => {
-  if (discussionSession.hasAnyText()) {
+  if (discussionSession.hasAnyText() || discussionSession.hasPendingWork()) {
     event.preventDefault();
     event.returnValue = '';
     return;
   }
+});
+
+// A cached page retains its DOM and must retain the listeners behind that DOM.
+// beforeunload can also be cancelled, so it must never destroy the active player.
+window.addEventListener('pagehide', (event) => {
+  if (event.persisted) return;
   if (typeof teardown === 'function') {
     teardown();
   }

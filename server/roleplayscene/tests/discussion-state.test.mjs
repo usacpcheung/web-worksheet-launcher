@@ -117,10 +117,12 @@ test('discussion rewrite failure and stale context preserve current text', async
   stale.bindProject(project);
   stale.setText('start', 'before');
   const pending = stale.rewrite('start', 'before');
+  await new Promise(resolve => setImmediate(resolve));
   stale.setText('start', 'changed while rewriting');
   resolveRewrite({ ok: true, data: { text: 'should not apply' } });
   const result = await pending;
-  assert.equal(result.status, 'rewrite_stale_context');
+  assert.equal(result.status, 'recovery_required');
+  assert.equal(stale.recovery.start.code, 'STALE_CONTEXT');
   assert.equal(stale.getText('start'), 'changed while rewriting');
 });
 
@@ -195,7 +197,7 @@ test('player source wires cue and utility discussion entry points', async () => 
   assert.equal(source.includes("discussionButton.addEventListener('click', () => {"), true);
   assert.equal(source.includes("printButton.addEventListener('click', () => {"), true);
   assert.equal(source.includes('const syncDiscussionPrintButton = () => {'), true);
-  assert.equal(source.includes('printDiscussionButton.disabled = !discussionSession?.hasAnyText?.();'), true);
+  assert.equal(source.includes('printDiscussionButton.disabled = Boolean(discussionSession?.voice?.active) || !discussionSession?.hasAnyText?.();'), true);
   assert.equal(source.includes('syncDiscussionPrintButton();\n    try {\n      onDiscussionChange?.('), true);
   assert.equal(source.includes('const rewriteTask = discussionSession?.rewrite?.(scene.id, textAtClick, { apiClient });'), true);
   assert.equal(source.includes('await rewriteTask;'), true);

@@ -444,6 +444,10 @@ export default {
       "cueCardTriggerLabel": "顯示「{label}」的提示卡"
     },
     "discussion": {
+      "voice": {"locked":"處理期間此討論暫時唯讀。你可以隨時取消。","atEnd":"語音文字會加入討論末尾。移動游標可選擇其他位置。","atCursor":"語音文字會加入游標所在位置。","resolveRecovery":"請先檢查或捨棄復原內容，再用語音加入或改寫討論。","signInThenRewrite":"請登入，然後再次按「重寫」。系統會使用當時的討論內容。"},
+      "voiceOtherScene": "{stage} 場景 {number} 的討論。請先完成或取消，再開始另一項語音輸入或改寫。",
+      "printBusy": "請先完成或取消語音輸入或改寫，再列印。",
+      "saveFailed": "未能儲存討論復原內容。請保持此頁開啟並複製文字。",
       "button": "討論",
       "title": "場景討論",
       "closeLabel": "關閉場景討論",

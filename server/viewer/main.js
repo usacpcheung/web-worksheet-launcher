@@ -1,5 +1,5 @@
 import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.js';
-import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery } from './answer-voice-workflow.js';
+import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
@@ -2169,12 +2169,12 @@ function overlayAnswersOnViewerPayload(viewerPayload, rawAnswers = {}) {
     ? viewerPayload.blocks.filter((block) => block?.kind === 'question')
     : [];
   questionBlocks.forEach((questionBlock) => {
-    const saved = rawAnswers?.[questionBlock.blockId];
+    const saved = rawAnswers && Object.hasOwn(rawAnswers, questionBlock.blockId) ? rawAnswers[questionBlock.blockId] : undefined;
     if (!saved) return;
-    normalizedAnswers[questionBlock.blockId] = {
+    Object.defineProperty(normalizedAnswers, questionBlock.blockId, { enumerable: true, configurable: true, writable: true, value: {
       ...saved,
       value: coerceAnswerValueForQuestion(questionBlock, saved?.value, { phase: 'save' }),
-    };
+    } });
   });
   return normalizedAnswers;
 }
@@ -2434,7 +2434,7 @@ class ViewerAttemptSession {
       context: (blockId) => ({
         attemptId: this.state.localAttemptId,
         contextKey: this.state.viewerPayload,
-        recovery: this.state.voiceRecovery[blockId],
+        recovery: getVoiceRecovery(this.state.voiceRecovery, blockId),
         editable: this.state.status !== 'completed' && !this.state.isFinalizing,
         block: this.state.viewerPayload?.blocks?.find(block => block.blockId === blockId),
         answer: String(this.state.answers?.[blockId]?.value ?? ''),
@@ -2448,8 +2448,8 @@ class ViewerAttemptSession {
         this.state.lastActiveBlockId = activeBlock;
       },
       recover: (blockId, record) => {
-        const next = { ...this.state.voiceRecovery };
-        if (record) next[blockId] = record; else delete next[blockId];
+        const next = record ? { ...this.state.voiceRecovery, [blockId]: record } : { ...this.state.voiceRecovery };
+        if (!record) delete next[blockId];
         this.state.voiceRecovery = next;
         this.state.attemptRevision += 1;
         if (this.state.localAttemptId) {
@@ -3190,10 +3190,10 @@ class ViewerAttemptSession {
         (block) => block.blockId === blockId && block.kind === 'question'
       );
       if (!questionBlock) return;
-      normalizedAnswers[blockId] = {
+      Object.defineProperty(normalizedAnswers, blockId, { enumerable: true, configurable: true, writable: true, value: {
         ...answer,
         value: coerceAnswerValueForQuestion(questionBlock, answer?.value, { phase: 'save' }),
-      };
+      } });
     });
 
     const attemptRecord = {
@@ -3435,7 +3435,7 @@ class ViewerAttemptSession {
     }
     const nextMessages = { ...(this.state.rewriteMessageByBlock || {}) };
     if (message) {
-      nextMessages[blockId] = String(message);
+      Object.defineProperty(nextMessages, blockId, { value: String(message), enumerable: true, configurable: true, writable: true });
     } else {
       delete nextMessages[blockId];
     }
@@ -6526,7 +6526,7 @@ function renderViewerShell(session) {
         const hasUndoEntry = Object.prototype.hasOwnProperty.call(session.state.undoBuffer || {}, block.blockId);
         const isRewriteInFlight = session.state.isRewriting && session.state.rewritingBlockId === block.blockId;
         const canRewriteByLength = trimmedAnswerLength > 0 && trimmedAnswerLength <= REWRITE_INPUT_LIMIT;
-        const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(session.state.voiceRecovery[block.blockId]) && canRewriteByLength;
+        const canRewrite = !isAttemptCompleted && !session.voice.active && !hasPendingRecovery(getVoiceRecovery(session.state.voiceRecovery, block.blockId)) && canRewriteByLength;
 
         if (rewriteButton) {
           rewriteButton.textContent = isRewriteInFlight ? t('viewer.rewrite.inProgress') : t('viewer.rewrite.action');
@@ -6545,7 +6545,7 @@ function renderViewerShell(session) {
           }
         }
         if (rewriteError) {
-          const rewriteInlineMessage = String(session.state.rewriteMessageByBlock?.[block.blockId] || '');
+          const rewriteInlineMessage = String(Object.hasOwn(session.state.rewriteMessageByBlock || {}, block.blockId) ? session.state.rewriteMessageByBlock[block.blockId] : '');
           rewriteError.textContent = rewriteInlineMessage ? `⚠️ ${rewriteInlineMessage}` : '';
         }
       }

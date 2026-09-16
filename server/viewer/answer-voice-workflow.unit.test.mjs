@@ -5,6 +5,17 @@ import { createVoiceWorkflow, insertVoiceSegment, insertionIndex, normalizeVoice
 
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
+test('recovery normalization accepts own special-name IDs and ignores inherited records', () => {
+  const record = { phase: 'text', text: 'Recovered', snapshot: 'Original', index: 8 };
+  const records = Object.create({ inherited: record }, Object.getOwnPropertyDescriptors(Object.fromEntries([
+    ['__proto__', record], ['constructor', record], ['toString', record],
+  ])));
+  const blocks = ['__proto__', 'constructor', 'toString', 'inherited'].map(blockId => ({ blockId, kind: 'question' }));
+  const normalized = normalizeVoiceRecovery(records, blocks);
+  assert.deepEqual(Object.keys(normalized), ['__proto__', 'constructor', 'toString']);
+  assert.equal(Object.getPrototypeOf(normalized), Object.prototype);
+  assert.equal(JSON.parse(JSON.stringify(normalized)).__proto__.text, 'Recovered');
+});
 function setup(options = {}) {
   const state = { attempt: 'a', contextKey: {}, editable: true, answers: { q1: 'Earlier', q2: 'Other' },
     recovery: {}, applied: [], states: [], requests: [], records: [], interval: null };

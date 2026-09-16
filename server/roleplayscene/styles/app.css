@@ -50,6 +50,25 @@ body.roleplayscene-editor-mode {
   background: var(--color-bg);
 }
 .direct-launch[hidden] { display: none; }
+
+/* Discussion voice adapters use the shared workflow without viewer page styles. */
+.player-discussion-input-panel .viewer-voice { margin-top: 8px; }
+.player-discussion-input-panel .viewer-voice-status,
+.player-discussion-voice-status,
+.player-discussion-input-panel .viewer-voice-recovery-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.player-discussion-voice-status { flex: 0 0 auto; min-width: 0; margin-top: 12px; background: #fff; padding: 10px; border: 1px solid #d0d5dd; border-radius: 8px; box-shadow: 0 2px 8px #0001; }
+.player-discussion-input-panel .viewer-voice-status > span:first-child,
+.player-discussion-voice-status > span:first-child { flex: 1 1 160px; }
+.player-discussion-input-panel .viewer-voice-hint { color: #475467; font-size: 13px; }
+.player-discussion-input-panel .viewer-voice-recovery label { display: grid; gap: 6px; }
+.player-discussion-input-panel .viewer-voice-recovery textarea { box-sizing: border-box; width: 100%; }
+.player-discussion-input-panel .viewer-voice button,
+.player-discussion-input-panel .question-card__voice-btn,
+.player-discussion-voice-status button { min-height: 44px; padding: 8px 12px; border: 1px solid #b7c5e7; border-radius: 8px; background: #eff4ff; color: #1e3a8a; }
+.player-discussion-input-panel .viewer-voice [hidden],
+.player-discussion-input-panel .viewer-voice-status[hidden],
+.player-discussion-voice-status[hidden] { display: none; }
+.player-discussion-input-panel .viewer-voice-timer { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .direct-launch-pending .topbar,
 .direct-launch-pending .app-messages,
 .direct-launch-pending .layout,
