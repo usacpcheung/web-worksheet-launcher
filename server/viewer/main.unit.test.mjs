@@ -51,7 +51,7 @@ test('active voice operation blocks submission, releases on cancel, and cannot m
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
-  const source = await fs.readFile(filePath, 'utf8');
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href));
   const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
 
   globalThis[bagName] = {
@@ -610,7 +610,7 @@ test('buildWorksheetPrintReportHtml emits layout-mode classes for print paginati
   assert.equal(normalizedHtml.includes('break-inside: avoid;'), true);
   assert.equal(normalizedHtml.includes('.print-question-section--image'), true);
   assert.equal(normalizedHtml.includes('break-inside: auto;'), true);
-  const mediumPromptIndex = normalizedHtml.indexOf('<p class="print-question-text">Medium prompt</p>');
+  const mediumPromptIndex = normalizedHtml.indexOf('<div class="print-question-text worksheet-text">Medium prompt</div>');
   const imageSectionIndex = normalizedHtml.indexOf('<section class="print-question-section print-question-section--image print-question-section--flow">');
   assert.equal(mediumPromptIndex >= 0, true);
   assert.equal(imageSectionIndex > mediumPromptIndex, true);
@@ -5284,7 +5284,7 @@ test('buildUploadedAttemptPackage creates manifest, worksheet, attempt, and medi
   assert.equal(JSON.stringify(attempt).includes('mediaRefs'), false);
 });
 
-test('buildUploadedAttemptPackage output is accepted by server upload attempt package validator', async () => {
+for (const format of ['plain_text', 'limited-markdown-v1']) test(`buildUploadedAttemptPackage ${format} output is accepted by server upload attempt package validator`, async () => {
   const mod = await loadViewerModule();
   const assetBytes = new Uint8Array([10, 20, 30]);
   const session = new mod.ViewerAttemptSession({
@@ -5320,7 +5320,7 @@ test('buildUploadedAttemptPackage output is accepted by server upload attempt pa
         blockId: 'q1',
         kind: 'question',
         position: 0,
-        prompt: { text: 'Q1', mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
+        prompt: { text: '**Q1**', format, mediaRefs: [{ usage: 'question_image', assetId: 'img_1' }] },
         responseConfig: { inputType: 'text', correctAnswer: 'A' },
       },
     ],
@@ -5826,11 +5826,11 @@ test('exportCurrentAttemptPackage exports active attempt without login or upload
   }
 });
 
-test('importAttemptPackageFromFile creates a new local attempt and preserves checked state after resume', async () => {
+for (const format of ['plain_text', 'limited-markdown-v1']) test(`importAttemptPackageFromFile preserves ${format} and checked state after resume`, async () => {
   const mod = await loadViewerModule();
   const packageBytes = createStoredZip([
-    { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion: 1, assets: [] }) },
-    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Restored Checked', subject: 'ICT', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] }) },
+    { path: 'manifest.json', data: JSON.stringify({ format: 'worksheet-attempt-package', packageVersion: format === 'plain_text' ? 1 : 2, assets: [] }) },
+    { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Restored Checked', subject: 'ICT', blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: '**Q**', format }, responseConfig: { inputType: 'text' } }] }) },
     { path: 'content/attempt.json', data: JSON.stringify({ status: 'checked', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', submittedAt: '2026-01-02T00:00:00.000Z', answers: { q1: { value: 'A' } }, checking: { checkedAt: '2026-01-02T00:01:00.000Z', correctCount: 1, totalQuestions: 1, items: { q1: { result: 'correct' } } } }) },
   ]);
   const importedWorksheets = new Map();
@@ -5871,6 +5871,8 @@ test('importAttemptPackageFromFile creates a new local attempt and preserves che
   assert.equal(resumed, true);
   assert.equal(resumedSession.state.checkResult.statusByBlockId.q1, 'correct');
   assert.equal(resumedSession.state.answers.q1.value, 'A');
+  assert.equal(resumedSession.state.viewerPayload.blocks[0].prompt.text, '**Q**');
+  assert.equal(resumedSession.state.viewerPayload.blocks[0].prompt.format, format);
 });
 
 test('importAttemptPackageFromFile rejects worksheet packages and missing required files without creating attempts', async () => {
@@ -6648,4 +6650,10 @@ test('imported worksheet keys support rewrite, recovery restore, retry and disca
     session.voice.teardown();
     clearTimeout(session.autosaveTimer);
   }
+});
+test('print keeps leading Markdown whitespace and therefore matches viewer formatting', async () => {
+  const mod = await loadViewerModule();
+  const report = await mod.buildWorksheetPrintReportModel({ viewerPayload: { title: 'T', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: '  ## Literal heading', format: 'limited-markdown-v1' }, responseConfig: { inputType: 'text' } }] }, answers: {} });
+  assert.equal(report.questions[0].promptText, '  ## Literal heading');
+  assert.ok(mod.buildWorksheetPrintReportHtml(report).includes('<p>  ## Literal heading</p>'));
 });

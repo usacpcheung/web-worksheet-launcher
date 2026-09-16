@@ -1,4 +1,5 @@
 import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.js';
+import { setWorksheetText, renderWorksheetText, WORKSHEET_TEXT_CSS, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown } from '../app/worksheet-text.js';
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { viewerStorage } from './storage/index.js';
@@ -23,6 +24,7 @@ import { getAvailableLocales, getLocale, resolveInitialLocale, setLocale, t } fr
 import { PRINT_REPORT_CSS } from './print-report-styles.js';
 
 const app = document.getElementById('app');
+installWorksheetTextStyles(document);
 const bottomBarRoot = document.getElementById('viewer-bottom-bar-root');
 setLocale(resolveInitialLocale(), { persist: false });
 
@@ -341,6 +343,7 @@ function normalizeUploadedAttemptRows(list) {
 function createViewerIcon(name) {
   const svgAttrs = 'class="viewer-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
   const icons = {
+    back: `<svg ${svgAttrs}><path d="m12 19-7-7 7-7"></path><path d="M5 12h14"></path></svg>`,
     info: `<svg ${svgAttrs}><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>`,
     upload: `<svg ${svgAttrs}><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>`,
     download: `<svg ${svgAttrs}><path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path></svg>`,
@@ -721,10 +724,12 @@ function parseUploadedAttemptPackage(zipBytes) {
     throw new Error('Uploaded attempt package is missing required files.');
   }
   const manifest = JSON.parse(decodeUtf8(manifestEntry));
-  if (manifest?.format !== 'worksheet-attempt-package' || manifest?.packageVersion !== 1) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2].includes(manifest?.packageVersion)) {
     throw new Error('Uploaded attempt package format is not supported.');
   }
   const worksheet = JSON.parse(decodeUtf8(worksheetEntry));
+  assertWorksheetTextFormats(worksheet.blocks);
+  if (hasMarkdown(worksheet.blocks) && manifest.packageVersion !== 2) throw new Error('Markdown requires attempt package version 2.');
   const attempt = JSON.parse(decodeUtf8(attemptEntry));
   const assets = [];
   const assetManifest = Array.isArray(manifest?.assets) ? manifest.assets : [];
@@ -769,7 +774,7 @@ function parseLocalAttemptPackage(zipBytes) {
   if (manifest?.format === 'worksheet-package') {
     throw new Error(t('viewer.notifications.localAttemptImport.worksheetPackageNotAttempt'));
   }
-  if (manifest?.format !== 'worksheet-attempt-package' || manifest?.packageVersion !== 1) {
+  if (manifest?.format !== 'worksheet-attempt-package' || ![1, 2].includes(manifest?.packageVersion)) {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
   }
 
@@ -783,6 +788,8 @@ function parseLocalAttemptPackage(zipBytes) {
   let attempt;
   try {
     worksheet = JSON.parse(decodeUtf8(worksheetEntry));
+    assertWorksheetTextFormats(worksheet.blocks);
+    if (hasMarkdown(worksheet.blocks) && manifest.packageVersion !== 2) throw new Error('Markdown requires attempt package version 2.');
     attempt = JSON.parse(decodeUtf8(attemptEntry));
   } catch {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
@@ -1914,7 +1921,8 @@ async function buildWorksheetPrintReportModel({
     const question = {
       blockId: block.blockId,
       questionNumber: index + 1,
-      promptText: String(block?.prompt?.text || '').trim(),
+      promptText: String(block?.prompt?.text || ''),
+      promptFormat: block?.prompt?.format || 'plain_text',
       answerText: formatAnswerValueForPrint(block, learnerValue),
       result: buildPrintQuestionResult(block, checkResult),
       image: questionImage,
@@ -2021,7 +2029,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
         </header>
         <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
           <h3>${escapeHtml(t('viewer.print.questionHeading'))}</h3>
-          <p class="print-question-text">${formatMultilineTextForHtml(question.promptText || t('viewer.print.noPromptProvided'))}</p>
+          <div class="print-question-text worksheet-text">${renderWorksheetText({ text: question.promptText?.trim() ? question.promptText : t('viewer.print.noPromptProvided'), format: question.promptFormat })}</div>
         </section>
         ${imageSectionHtml}
         <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
@@ -2038,7 +2046,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
 <head>
   <meta charset="utf-8">
   <title>${escapeHtml(reportModel.title)}</title>
-  <style>${PRINT_REPORT_CSS}</style>
+  <style>${PRINT_REPORT_CSS}\n${WORKSHEET_TEXT_CSS}</style>
 
 </head>
 <body>
@@ -2068,7 +2076,14 @@ function buildWorksheetPrintReportHtml(reportModel) {
             })
         )));
 
-      waitForImages.then(() => {
+      const waitForFonts = new Promise(resolve => {
+        const ready = () => resolve(document.fonts ? document.fonts.ready : undefined);
+        if (document.readyState === 'complete') ready();
+        else window.addEventListener('load', ready, { once: true });
+      });
+      Promise.all([waitForImages, Promise.race([
+        waitForFonts, new Promise(resolve => setTimeout(resolve, 5000))
+      ])]).then(() => {
         if (typeof window.focus === 'function') {
           window.focus();
         }
@@ -3559,9 +3574,10 @@ class ViewerAttemptSession {
       },
     };
     const attempt = this.buildAttemptRecordForPackage();
+    assertWorksheetTextFormats(worksheet.blocks);
     const manifest = {
       format: 'worksheet-attempt-package',
-      packageVersion: 1,
+      packageVersion: hasMarkdown(worksheet.blocks) ? 2 : 1,
       schemaVersion: 1,
       generatedAt: nowIso(),
       worksheet: {
@@ -5447,6 +5463,7 @@ function renderViewerShell(session) {
   const blockSection = document.createElement('section');
   blockSection.className = 'viewer-section';
   const blockHeading = document.createElement('h2');
+  blockHeading.className = 'viewer-section-accessible-heading';
   const blockList = document.createElement('div');
   blockList.id = 'viewer-answer-form';
   const stepper = document.createElement('div');
@@ -6041,7 +6058,9 @@ function renderViewerShell(session) {
     const nextSignature = JSON.stringify({
       blockId: currentBlockId,
       prompt: currentBlock?.prompt?.text || '',
+      promptFormat: currentBlock?.prompt?.format || 'plain_text',
       content: currentBlock?.content?.text || '',
+      contentFormat: currentBlock?.content?.format || 'plain_text',
       inputType: currentBlockInputType,
       maxLength: currentBlock?.responseConfig?.maxLength || null,
       options: Array.isArray(currentBlock?.responseConfig?.options)
@@ -6070,7 +6089,7 @@ function renderViewerShell(session) {
     if (currentBlock.kind === 'content') {
       const card = document.createElement('article');
       card.className = 'content-card viewer-card-transition';
-      card.textContent = currentBlock.content?.text || '';
+      setWorksheetText(card, currentBlock.content);
       blockList.appendChild(card);
       return;
     }
@@ -6078,11 +6097,13 @@ function renderViewerShell(session) {
     const block = currentBlock;
     const card = document.createElement('article');
     card.className = 'question-card viewer-card-transition';
-    const label = document.createElement('label');
+    const label = document.createElement('div');
+    label.className = 'question-card__prompt-label';
     const inputType = block.responseConfig?.inputType || 'text';
     const controlId = `answer-${block.blockId}`;
     label.id = `${controlId}-label`;
-    label.textContent = block.prompt?.text || t('viewer.stepper.question');
+    label.addEventListener('click', () => document.getElementById(label.htmlFor || controlId)?.focus());
+    setWorksheetText(label, { ...block.prompt, text: block.prompt?.text || t('viewer.stepper.question') });
     const mediaFeedback = document.createElement('p');
     mediaFeedback.className = 'viewer-media-feedback';
     mediaFeedback.setAttribute('role', 'status');
@@ -6382,6 +6403,7 @@ function renderViewerShell(session) {
         control.id = controlId;
         if (control.matches('input, select, textarea')) {
           label.htmlFor = controlId;
+          control.setAttribute('aria-labelledby', label.id);
         } else {
           label.removeAttribute('for');
         }
@@ -6766,6 +6788,52 @@ function renderViewerShell(session) {
   nextBtn.addEventListener('click', goNext);
 
   headerTop.append(heading, headerActions);
+  const previewParams = new URLSearchParams(window.location.search);
+  const editorDraftId = previewParams.get('localDraftId');
+  if (previewParams.get('preview') === '1' && editorDraftId) {
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'viewer-header-icon-btn viewer-back-to-editor';
+    back.innerHTML = createViewerIcon('back');
+    const backLabel = document.createElement('span');
+    backLabel.textContent = t('formatting.backToEditor');
+    back.append(backLabel);
+    const editorUrl = new URL('../editor/', window.location.href);
+    editorUrl.searchParams.set('localDraftId', editorDraftId);
+    const returnError = document.createElement('p');
+    returnError.className = 'control-error';
+    returnError.setAttribute('role', 'alert');
+    returnError.hidden = true;
+    let returning = false;
+    back.addEventListener('click', async () => {
+      if (returning) return;
+      returning = true;
+      back.disabled = true;
+      back.setAttribute('aria-busy', 'true');
+      backLabel.textContent = t('viewer.status.saving');
+      returnError.hidden = true;
+      const attemptId = session.state.localAttemptId;
+      try {
+        // An answer can change while storage is pending. Save the latest revision too.
+        let revision;
+        do {
+          revision = session.state.attemptRevision;
+          await session.flushLocalStateForAuthRedirect();
+          if (signal.aborted || session.state.localAttemptId !== attemptId) return;
+        } while (session.state.attemptRevision !== revision);
+        window.location.assign(editorUrl.href);
+      } catch {
+        returnError.textContent = t('formatting.returnSaveFailed');
+        returnError.hidden = false;
+      } finally {
+        returning = false;
+        back.disabled = false;
+        back.removeAttribute('aria-busy');
+        backLabel.textContent = t('formatting.backToEditor');
+      }
+    });
+    header.append(back, returnError);
+  }
   header.append(headerTop, answerSummary, resumeWarning);
   blockSection.append(blockHeading, stepper, blockList, crossQuestionStatus.root);
   shell.append(header, blockSection);

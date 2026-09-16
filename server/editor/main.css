@@ -1,6 +1,8 @@
+@import url('../app/fonts/worksheet-chinese.css');
+
 :root {
   color-scheme: light;
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-family: 'Worksheet Chinese', Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 }
 
 body {
@@ -1926,3 +1928,27 @@ textarea.control {
     min-width: 0;
   }
 }
+/* Formatting is confined to the content/prompt editor. */
+.editor-text-field-label { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; position: relative; }
+.editor-text-field-label label { margin-right: auto; }
+.editor-text-preview-toggle,.editor-text-edit-toggle,.editor-text-help summary { border: 1px solid #cbd5e1; border-radius: 8px; padding: .4rem .65rem; background: #fff; cursor: pointer; }
+.editor-text-modes { display: inline-flex; flex-shrink: 0; }
+.editor-text-modes button { border-radius: 0; }
+.editor-text-modes button:first-child { border-radius: 8px 0 0 8px; }
+.editor-text-modes button:last-child { border-radius: 0 8px 8px 0; margin-left: -1px; }
+.editor-text-modes button[aria-pressed="true"] { background: #eef2ff; color: #2845bb; position: relative; }
+.editor-text-help summary { list-style: none; }
+.editor-text-help-popover { position: absolute; right: 0; z-index: 20; width: min(30rem, 85vw); max-width: 100%; max-height: 65vh; overflow: auto; padding: .8rem; background: white; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 8px 24px #0002; }
+.editor-text-help summary { display: flex; align-items: center; justify-content: center; min-width: 38px; min-height: 38px; box-sizing: border-box; }
+.editor-text-help summary::-webkit-details-marker { display: none; }
+.editor-text-help table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: .85rem; margin-top: .6rem; }
+.editor-text-help th,.editor-text-help td { text-align: left; vertical-align: top; padding: .5rem; border-bottom: 1px solid #e2e8f0; overflow-wrap: anywhere; }
+.editor-text-help code { white-space: pre-wrap; }
+.editor-text-help td.worksheet-text > :first-child { margin-top: 0; }
+.editor-text-help td.worksheet-text > :last-child { margin-bottom: 0; }
+.editor-text-help-popover > p { font-size: .8rem; line-height: 1.6; }
+.editor-text-edit-toggle:focus-visible { outline: 2px solid #4263eb; outline-offset: 2px; }
+.editor-text-preview { width: 100%; box-sizing: border-box; overflow: auto; min-height: 10rem; }
+.editor-text-preview--prompt { font-weight: 500; }
+.editor-text-preview[hidden],#editor-block-editor[hidden] { display: none !important; }
+.editor-text-preview-toggle:focus-visible,.editor-text-help summary:focus-visible,.editor-text-preview:focus-visible { outline: 2px solid #4263eb; outline-offset: 2px; }

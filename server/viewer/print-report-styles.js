@@ -1,4 +1,5 @@
 export const PRINT_REPORT_CSS = `
+    @import url("${new URL('../app/fonts/worksheet-chinese.css', import.meta.url).href}");
     @page {
       size: A4 portrait;
       margin: 16mm 14mm 18mm 14mm;
@@ -6,7 +7,7 @@ export const PRINT_REPORT_CSS = `
 
     :root {
       color-scheme: light;
-      font-family: "Georgia", "Times New Roman", serif;
+      font-family: "Worksheet Chinese", "Georgia", "Times New Roman", serif;
       color: #111;
       background: #fff;
     }
@@ -143,6 +144,8 @@ export const PRINT_REPORT_CSS = `
       white-space: pre-wrap;
       word-break: break-word;
     }
+
+    .print-question-text { font-weight: 500; }
 
     .print-question-image-wrap {
       margin-top: 0;
