@@ -14,13 +14,24 @@ Primary surfaces:
 - `/server/editor/index.html`, `/server/editor/main.css`, `/server/editor/main.js`
 - `/server/viewer/index.html`, `/server/viewer/main.css`, `/server/viewer/main.js`
 
-For RolePlayScene-specific work, also load `.agents/skills/roleplayscene-editor-ui-design/SKILL.md`.
+For RolePlayScene-specific work, use `.agents/skills/roleplayscene-editor-ui-design/SKILL.md`.
+Load both when a change genuinely spans worksheet and RolePlayScene UI.
+
+## Product Boundaries
+
+Follow the repository `AGENTS.md` for compatibility and cleanup rules. This
+skill guides UI work; it does not authorize feature retirement or redesign.
+Preserve save/resume, package compatibility, publishing, auth, completed-review
+read-only behavior, voice recovery/undo and audio generation during visual work.
+Viewer package/audio helpers and its voice workflow have cross-module consumers;
+check those callers when touching shared behavior.
 
 ## Shared Product Language
 
 Keep the app light, utilitarian, and workflow-focused:
 
-- Use Inter/system font, light color scheme, neutral text, and pale gray/blue workspace backgrounds.
+- Preserve the bundled `Worksheet Chinese` font import from `server/app/fonts/worksheet-chinese.css` and the existing Inter/system fallbacks. Do not replace local font subsets with remote font requests as incidental UI cleanup.
+- Use a light color scheme, neutral text, and pale gray/blue workspace backgrounds.
 - Prefer white or near-white surfaces with thin neutral borders and restrained shadows.
 - Use 8px radius for buttons, rows, inputs, menus, and compact tools; 10-12px for panels and modals; larger radii only where viewer cards already use them.
 - Favor dense but readable controls over marketing-style composition.
@@ -96,7 +107,7 @@ Before finishing UI work:
 - Verify desktop and narrow mobile layouts for overlap, hidden fixed-bottom content, and long text wrapping.
 - Keep explicit responsive constraints for fixed-format elements such as button rows, stepper nodes, option rows, media rows, and bottom bars.
 - Preserve keyboard access for buttons, menus, modals, form controls, and steppers.
-- Use `textContent` for user/imported text.
+- Use `textContent` for plain user/imported text. Supported worksheet Markdown must go through `server/app/worksheet-text.js` (`setWorksheetText` or `renderWorksheetText`); never interpolate raw input into HTML or bypass its format validation.
 - Provide `aria-label` for icon-only buttons and accessible labels for dialogs/forms.
 - Keep disabled states visibly disabled.
 - Keep errors close to the field or action that caused them.
@@ -108,5 +119,20 @@ Before finishing UI work:
 - Reuse existing class families before adding new ones.
 - If a new pattern must be added, make it surface-scoped (`editor-*` or `viewer-*`) unless it is intentionally shared.
 - Avoid coupling viewer-only UI to editor-only implementation classes except for already shared patterns.
-- Keep visual edits narrowly scoped to `/server/editor` or `/server/viewer` unless the request explicitly includes popup renderer or parent prototype surfaces.
+- Keep visual edits scoped to the requested product surface and necessary shared helpers. The legacy widget renderer and parent prototype are retired; do not restore them.
 - Run the relevant unit tests when behavior changes; for visual-only CSS changes, at least inspect the rendered surface in browser tooling when practical.
+
+## Focused Regression Checks
+
+- `npm test` is the Node suite; browser smoke scripts are separate.
+- For text/layout changes, select `scripts/worksheet-markdown-smoke.mjs`,
+  `scripts/worksheet-polish-smoke.mjs` and/or
+  `scripts/viewer-completed-review-smoke.mjs` according to affected behavior.
+- For voice/rewrite changes, use `scripts/viewer-voice-smoke.mjs` and
+  `scripts/viewer-imported-ids-smoke.mjs`; check RolePlayScene discussion too
+  when the shared voice workflow changes.
+- For loading or auth UI, use `scripts/viewer-package-load-progress-smoke.mjs`
+  or `scripts/package-sign-in-style-smoke.mjs`. Read each script's fixture/server
+  setup before running it; do not point synthetic tests at production data.
+- Check both supported locales, narrow/mobile and desktop layouts, keyboard
+  focus, browser errors and the affected interaction. State what was not tested.

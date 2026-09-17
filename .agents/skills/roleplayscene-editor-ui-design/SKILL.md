@@ -9,9 +9,18 @@ Use this skill for RolePlayScene editor-mode and player/playback UI design.
 Editor and player should feel like the same app, but they should not use the
 same layout model.
 
+The folder name is historical: this skill covers both modes. Follow repository
+`AGENTS.md` for product compatibility and cleanup rules. UI guidance does not
+authorize changing schemas, retiring features, or deploying changes.
+
 The main reference surface is `/server/editor`, especially its authoring shell,
 panels, section headers, buttons, icons, media rows, action groups, form
 controls, and confirmation modals.
+
+Primary implementation areas are `server/roleplayscene/scripts/editor/`,
+`server/roleplayscene/scripts/player/`, `scripts/main.js` within that module,
+and `server/roleplayscene/styles/app.css`. Use the worksheet UI skill as well
+only when the change also touches worksheet surfaces or their shared patterns.
 
 ## Direction
 
@@ -244,3 +253,25 @@ Accessibility requirements:
   separate.
 - Do not change schema, launch hash, postMessage contracts, storage shape, or
   player behavior when a task is only visual refresh.
+
+## Behavior and Regression Boundaries
+
+- Preserve dialogue ordering together with attached media, scene IDs and links,
+  import/export compatibility, direct published links and draft persistence.
+- Preserve discussion text/recovery/undo across UI changes and navigation.
+  Discussion uses `server/viewer/answer-voice-workflow.js`; changes there
+  also require viewer regression checks.
+- Preserve explicit audio activation, background-music capture coordination and
+  browser Back/Forward restoration. Redraws must not bypass blocked autoplay.
+- Keep plain scene dialogue/choice text on the existing `textContent` path;
+  worksheet Markdown support is not permission to introduce scene rich text.
+- Run affected Node tests and the relevant browser scripts separately:
+  `scripts/roleplayscene-dialogue-order-smoke.mjs`,
+  `scripts/roleplayscene-voice-smoke.mjs`,
+  `scripts/roleplayscene-music-navigation-smoke.mjs` and/or
+  `scripts/roleplayscene-smoke.mjs`. Shared sign-in UI has
+  `scripts/package-sign-in-style-smoke.mjs`.
+- Inspect script setup before use. Check editor/player modes as affected,
+  English/Traditional Chinese, desktop/mobile, focus and console errors.
+  Fixture audio/microphone/auth checks do not establish live-provider or
+  real-device compatibility; report that limitation.
