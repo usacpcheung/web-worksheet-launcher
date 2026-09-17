@@ -18,7 +18,7 @@ panels, section headers, buttons, icons, media rows, action groups, form
 controls, and confirmation modals.
 
 Primary implementation areas are `server/roleplayscene/scripts/editor/`,
-`server/roleplayscene/scripts/player/`, `scripts/main.js` within that module,
+`server/roleplayscene/scripts/player/`, `server/roleplayscene/scripts/main.js`,
 and `server/roleplayscene/styles/app.css`. Use the worksheet UI skill as well
 only when the change also touches worksheet surfaces or their shared patterns.
 
