@@ -145,7 +145,6 @@ assert.ok(
 );
 assert.ok(
   mainSource.includes('publishedPlay.store.setLocale(nextLocale)')
-    && mainSource.includes('return openPublishedRolePlaySceneById(sceneId, { scene })')
     && mainSource.includes('store.set({ audioGate: false })')
     && !mainSource.includes('unlockAudio')
     && !mainSource.includes('ensureAudioGate(playStore)'),

@@ -6267,15 +6267,10 @@ function renderEditorShell(session) {
       normalizeResponseOption(option, `option_${index}`));
     const option = normalizedOptions.find((item) => String(item?.id || '') === optionId) || null;
     if (!option) return;
-    const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
     const optionTextState = getT2ATextEligibility(option?.label ?? option?.value ?? '');
     const optionT2AKey = `${selectedBlockId}:${optionId}`;
     const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);
 
-    const optionAudioBtn = row.querySelector('[data-option-audio-btn="1"]');
-    const optionT2ABtn = row.querySelector('[data-option-t2a-btn="1"]');
-    const playOptionAudioBtn = row.querySelector('[data-option-play-btn="1"]');
-    const removeOptionAudioBtn = row.querySelector('[data-option-remove-audio-btn="1"]');
     const optionT2AHint = row.querySelector('[data-option-t2a-hint="1"]');
     const optionAudioAttached = row.querySelector('[data-option-audio-attached="1"]');
     const optionAudioMenuTrigger = row.querySelector('[data-option-audio-menu-trigger="1"]');
@@ -6286,30 +6281,6 @@ function renderEditorShell(session) {
       isGenerating: isOptionT2AInFlight,
       isPersisted: isPersistedOption,
     });
-    if (optionAudioBtn instanceof HTMLButtonElement) {
-      optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
-      setMediaActionButtonContent(
-        optionAudioBtn,
-        'upload',
-        optionAudioRef ? t('editor.media.actions.replaceAudioEllipsis') : t('editor.media.actions.attachAudioEllipsis')
-      );
-    }
-    if (optionT2ABtn instanceof HTMLButtonElement) {
-      const optionT2ALabel = getEditorAudioGenerationLabel({
-        isGenerating: isOptionT2AInFlight,
-        hasAudio: Boolean(optionAudioRef),
-        includeAudio: true,
-      });
-      const optionT2AIcon = isOptionT2AInFlight ? 'loading' : optionAudioRef ? 'refresh' : 'generate';
-      setMediaActionButtonContent(optionT2ABtn, optionT2AIcon, optionT2ALabel);
-      optionT2ABtn.disabled = !isPersistedOption || !optionTextState.eligible || isOptionT2AInFlight;
-    }
-    if (playOptionAudioBtn instanceof HTMLButtonElement) {
-      playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
-    }
-    if (removeOptionAudioBtn instanceof HTMLButtonElement) {
-      removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
-    }
     if (optionT2AHint instanceof HTMLElement) {
       optionT2AHint.hidden = !isPersistedOption || !optionTextState.exceedsLimit;
       optionT2AHint.textContent = optionTextState.exceedsLimit
@@ -7156,7 +7127,6 @@ function renderEditorShell(session) {
           }
           updateSummary({ preserveDetailEditor: true });
         });
-        const optionAudioRef = getSingleMediaRef(option.mediaRefs, 'option_audio');
         const optionActionsMenu = document.createElement('details');
         optionActionsMenu.className = 'option-actions-menu option-audio-menu';
         optionActionsMenu.dataset.optionAudioMenuKey = optionT2AKey;
@@ -7366,163 +7336,6 @@ function renderEditorShell(session) {
         });
         optionActionsRow.appendChild(optionTrackList);
 
-        const optionAudioBtn = document.createElement('button');
-        optionAudioBtn.type = 'button';
-        optionAudioBtn.className = 'media-action-btn option-actions-menu__item';
-        optionAudioBtn.dataset.optionAudioBtn = '1';
-        setMediaActionButtonContent(
-          optionAudioBtn,
-          'upload',
-          optionAudioRef ? t('editor.media.actions.replaceAudioEllipsis') : t('editor.media.actions.attachAudioEllipsis')
-        );
-        optionAudioBtn.title = isPersistedOption
-          ? optionAudioRef ? t('editor.media.actions.replaceOptionAudio') : t('editor.media.actions.attachOptionAudio')
-          : t('editor.media.enterOptionTextBeforeAttachingAudio');
-        optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;
-        optionAudioBtn.addEventListener('click', () => {
-          if (!isPersistedOption) {
-            session.setMediaFeedback(editorNotification('media.optionTextRequired'));
-            updateSummary();
-            return;
-          }
-          pendingOptionAudioTarget = { blockId: selectedBlock.blockId, optionId };
-          optionAudioInput.value = '';
-          optionAudioInput.click();
-        });
-        const removeOptionAudioBtn = document.createElement('button');
-        removeOptionAudioBtn.type = 'button';
-        removeOptionAudioBtn.className = 'media-action-btn media-action-btn--remove option-actions-menu__item';
-        removeOptionAudioBtn.dataset.optionRemoveAudioBtn = '1';
-        setMediaActionButtonContent(removeOptionAudioBtn, 'trash', t('editor.media.actions.removeAudio'));
-        removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
-        removeOptionAudioBtn.addEventListener('click', async () => {
-          await runMediaAction(async () => {
-            const confirmed = await confirmDangerAction({
-              title: t('editor.media.confirm.removeOptionAudioTitle', { index: optionIndex + 1 }),
-              bodyText: t('editor.media.confirm.removeOptionAudioBody', { index: optionIndex + 1 }),
-              confirmLabel: t('editor.media.actions.removeAudio'),
-              removalItems: [t('editor.media.confirm.currentOptionAudioAttachment')],
-            });
-            if (!confirmed) return;
-            const result = await session.removeOptionAudio(selectedBlock.blockId, optionId, { confirmRemove: true });
-            if (result.ok || result.reason !== 'confirm-remove-required') {
-              updateSummary();
-            }
-          });
-        });
-        const playOptionAudioBtn = document.createElement('button');
-        playOptionAudioBtn.type = 'button';
-        playOptionAudioBtn.className = 'media-action-btn option-actions-menu__item';
-        playOptionAudioBtn.dataset.optionPlayBtn = '1';
-        setMediaActionButtonContent(playOptionAudioBtn, 'play', t('editor.media.actions.playAudio'));
-        playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;
-        playOptionAudioBtn.addEventListener('click', async () => {
-          if (!optionAudioRef?.assetId || playOptionAudioBtn.disabled) return;
-          playOptionAudioBtn.disabled = true;
-          const result = await session.playAssetAudio(optionAudioRef.assetId, {
-            onEnded: () => {
-              playOptionAudioBtn.disabled = false;
-            },
-            onError: () => {
-              playOptionAudioBtn.disabled = false;
-            },
-            onInterrupted: () => {
-              playOptionAudioBtn.disabled = false;
-            },
-          });
-          if (!result.ok) {
-            playOptionAudioBtn.disabled = false;
-          }
-          updateSummary();
-        });
-        const optionT2ABtn = document.createElement('button');
-        optionT2ABtn.type = 'button';
-        optionT2ABtn.className = 'media-action-btn option-actions-menu__item';
-        optionT2ABtn.dataset.optionT2aBtn = '1';
-        const optionT2ALabel = getEditorAudioGenerationLabel({
-          isGenerating: isOptionT2AInFlight,
-          hasAudio: Boolean(optionAudioRef),
-          includeAudio: true,
-        });
-        setMediaActionButtonContent(
-          optionT2ABtn,
-          isOptionT2AInFlight ? 'loading' : optionAudioRef ? 'refresh' : 'generate',
-          optionT2ALabel
-        );
-        optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;
-        optionT2ABtn.addEventListener('click', async () => {
-          if (!isPersistedOption) {
-            session.setMediaFeedback(editorNotification('audioGeneration.optionTextRequired'));
-            updateSummary();
-            return;
-          }
-          const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === selectedBlock.blockId);
-          const latestResponseConfig = normalizeQuestionResponseConfig(latestBlock?.responseConfig);
-          const latestOptions = (latestResponseConfig.options || []).map((item, index) =>
-            normalizeResponseOption(item, `option_${index}`));
-          const latestOption = latestOptions.find((item) => String(item?.id || '') === optionId) || null;
-          const latestOptionTextState = getT2ATextEligibility(latestOption?.label ?? latestOption?.value ?? '');
-          if (!latestOptionTextState.eligible || optionT2AInFlightKeys.has(optionT2AKey)) return;
-          const sessionReady = await session.ensureServerSessionReady();
-          if (!sessionReady.ok) {
-            return;
-          }
-          optionT2AInFlightKeys.add(optionT2AKey);
-          optionT2AInFlightKey = optionT2AKey;
-          updateSummary();
-          if (optionAudioRef) {
-            const confirmed = await confirmDangerAction({
-              title: t('editor.media.confirm.regenerateOptionAudioTitle', { index: optionIndex + 1 }),
-              bodyText: t('editor.media.confirm.regenerateOptionAudioBody', { index: optionIndex + 1 }),
-              confirmLabel: t('editor.media.actions.regenerateAudio'),
-              removalItems: [t('editor.media.confirm.currentOptionAudioAttachment')],
-            });
-            if (!confirmed) {
-              optionT2AInFlightKeys.delete(optionT2AKey);
-              restoreLegacyOptionInFlightMarker();
-              session.setMediaFeedback(t('editor.media.feedback.optionAudioRegenerationCanceled'));
-              updateSummary();
-              return;
-            }
-          }
-          try {
-            const result = await session.triggerProtectedAction('editorOptionT2A', {
-              blockId: selectedBlock.blockId,
-              optionId,
-              target: 'option',
-              localDraftId: session.state.draft?.localId || null,
-            });
-            const status = String(result?.status || '').trim();
-            if (status !== 'executed' && status !== 'redirected' && result?.ok !== true) {
-              session.pushNotification({
-                kind: 'error',
-                category: 'editor',
-                source: 'option.t2a',
-                text: getProtectedActionErrorMessage(result, editorNotification('audioGeneration.startFailed')),
-              });
-              session.notifyStateChange();
-            }
-          } catch (error) {
-            const detail = String(error?.message || '').trim();
-            const text = detail
-              ? editorNotification('audioGeneration.failedWithDetail', { detail })
-              : editorNotification('audioGeneration.failed');
-            session.pushNotification({
-              kind: 'error',
-              category: 'editor',
-              source: 'option.t2a',
-              text,
-            });
-            session.notifyStateChange();
-          } finally {
-            optionT2AInFlightKeys.delete(optionT2AKey);
-            restoreLegacyOptionInFlightMarker();
-            updateSummary();
-          }
-        });
-        const legacyOptionActions = document.createElement('div');
-        legacyOptionActions.hidden = true;
-        legacyOptionActions.append(optionAudioBtn, optionT2ABtn, playOptionAudioBtn, removeOptionAudioBtn);
         optionActionsMenu.append(optionAudioMenuTrigger, optionActionsRow);
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
