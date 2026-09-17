@@ -2,7 +2,7 @@
 
 > **Related docs**
 > - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
-> - Popup launch/postMessage contract: `docs/message-contract.md`
+> - Active auth callback and historical popup contract: `docs/message-contract.md`
 > - DB schema direction: `worksheet_launcher_db_schema.md`
 >
 > **Phase boundary note:** Phase 1 remains contracts/scaffolding only. This file specifies later-phase runtime targets.
@@ -28,7 +28,18 @@ This spec defines the target behavior for later-phase editor/viewer implementati
 | --- | --- | --- | --- | --- |
 | `/editor/` | Editor app | `server/editor/index.html` | Yes | Local-first create/edit/import/export/autosave. |
 | `/viewer/` | Viewer app | `server/viewer/index.html` | Yes | Local-first attempt flow and explicit source loading. |
-| `/worksheet/render.html` | Popup compatibility renderer | `server/worksheet_launcher/render.html` | Launch-controlled | Compatibility-only popup surface; not main runtime. |
+
+**Retired route:** `/worksheet/render.html` and its former entry file
+`server/worksheet_launcher/render.html` are no longer supplied by this repo.
+The legacy parent SDK, widget launch query and `worksheetResult` exchange are
+retired, not supported compatibility surfaces. Do not recreate this route from
+historical Phase 1 guidance or redirect its payloads to the viewer.
+See [widget retirement scope and deployment gates](docs/widget-removal-step2.md).
+
+The shared `/worksheet_launcher/app/login/popup.html` OIDC route and its auth
+callback contract remain supported and unchanged, as do editor, viewer and
+RolePlayScene functionality and shared rewrite/transcription/T2A services.
+This retirement does not authorize broad Apache route-prefix removal.
 
 Auth trigger rule:
 - Route boot remains public.
