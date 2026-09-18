@@ -6428,7 +6428,6 @@ function renderEditorShell(session) {
     const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey || optionT2AInFlightKeys.has(optionT2AKey);
 
     const optionT2AHint = row.querySelector('[data-option-t2a-hint="1"]');
-    const optionAudioAttached = row.querySelector('[data-option-audio-attached="1"]');
     const optionAudioMenuTrigger = row.querySelector('[data-option-audio-menu-trigger="1"]');
     const isPersistedOption = row.dataset.persistedOption === '1';
 
@@ -6442,10 +6441,6 @@ function renderEditorShell(session) {
       optionT2AHint.textContent = optionTextState.exceedsLimit
         ? getEditorTextTooLongForAudioLabel(T2A_TEXT_MAX_LENGTH)
         : '';
-    }
-    if (optionAudioAttached instanceof HTMLElement) {
-      optionAudioAttached.hidden = true;
-      optionAudioAttached.textContent = '';
     }
     const currentTextHash = getAudioSourceTextHash(option?.label ?? option?.value ?? '');
     row.querySelectorAll('[data-option-audio-track-language]').forEach((trackSection) => {
@@ -7529,11 +7524,6 @@ function renderEditorShell(session) {
           : '';
         optionT2AHint.hidden = !isPersistedOption || !optionTextExceedsT2ALimit;
         row.appendChild(optionT2AHint);
-        const optionAudioAttached = document.createElement('span');
-        optionAudioAttached.className = 'muted option-row__meta';
-        optionAudioAttached.dataset.optionAudioAttached = '1';
-        optionAudioAttached.hidden = true;
-        row.appendChild(optionAudioAttached);
         questionOptionsList.appendChild(row);
       });
       rightPanel.append(questionOptionsList, questionOptionWarning, addOptionBtn, questionOptions);
@@ -7847,7 +7837,6 @@ function renderEditorShell(session) {
     const isUploadingDraft = session.state.isUploadingDraft;
     const isUploadDraftFlowActive = session.state.isUploadDraftFlowActive;
     const isRefreshingUploadedDrafts = session.state.isLoadingUploadedDrafts;
-    const activePublishCount = session.state.publishingDraftIds?.size || 0;
 
     const totalActivity = Array.isArray(session.state.activityLog) ? session.state.activityLog.length : 0;
     visibleActivityCount = Math.min(
