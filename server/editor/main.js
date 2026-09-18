@@ -6297,10 +6297,10 @@ function renderEditorShell(session) {
       const track = getAudioTrack(option.audioTracks, language);
       const status = trackSection.querySelector('[data-audio-track-status="1"]');
       const stale = trackSection.querySelector('[data-audio-track-stale="1"]');
-      const attachBtn = trackSection.querySelector('[data-audio-track-action="attach"]');
-      const generateBtn = trackSection.querySelector('[data-audio-track-action="generate"]');
-      const playBtn = trackSection.querySelector('[data-audio-track-action="play"]');
-      const removeBtn = trackSection.querySelector('[data-audio-track-action="remove"]');
+      const attachBtn = trackSection.querySelector('[data-option-audio-action="attach"]');
+      const generateBtn = trackSection.querySelector('[data-option-audio-action="generate"]');
+      const playBtn = trackSection.querySelector('[data-option-audio-action="play"]');
+      const removeBtn = trackSection.querySelector('[data-option-audio-action="remove"]');
       const moreMenu = trackSection.querySelector('.audio-track-more-menu');
       trackSection.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
       trackSection.classList.toggle('option-audio-track--attached', Boolean(track));
