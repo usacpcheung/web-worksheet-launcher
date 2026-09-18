@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, access } from 'node:fs/promises';
 import { createServerApiClient } from './api/server-api-client.js';
 
 // A source-level tripwire, not a replacement for browser/runtime regression tests.
@@ -22,9 +22,35 @@ for (const component of ['editor', 'viewer', 'roleplayscene', 'app', 'api']) {
       const source = await readFile(file, 'utf8');
       assert.doesNotMatch(source, /rewrite-widget|parent_prototype|worksheet_launcher\/(?:render\.(?:html|js|css)|widgets\/)/i,
         `${file.pathname} must not depend on the retiring popup; shared login and bridge routes are allowed`);
+      // Case-sensitive SDK symbols: worksheetLauncher.* product storage keys stay valid.
+      assert.doesNotMatch(source, /\bRewriteWidget\b|\bWorksheetLauncher\s*\.\s*create\b|\bworksheetResult\b|rw_draft_v1/,
+        `${file.pathname} must not use retired SDK globals, messages or widget storage`);
     }
   });
 }
+
+// Exact paths only: the similarly named shared auth route must remain.
+for (const retiredPath of [
+  'parent_prototype/parent.html',
+  'parent_prototype/sdk/parent-launcher.js',
+  'server/worksheet_launcher/render.html',
+  'server/worksheet_launcher/render.js',
+  'server/worksheet_launcher/render.css',
+  'server/worksheet_launcher/widgets/rewrite-widget.js',
+  'server/worksheet_launcher/widgets/rewrite-widget.css',
+  'server/worksheet_launcher/render-source.test.mjs',
+]) {
+  test(`retired file stays absent: ${retiredPath}`, async () => {
+    await assert.rejects(access(new URL(`../../${retiredPath}`, import.meta.url)), { code: 'ENOENT' });
+  });
+}
+
+test('retirement preserves product entry points and shared login page', async () => {
+  for (const entry of ['editor/index.html', 'viewer/index.html', 'roleplayscene/index.html', 'app/login/popup.html']) {
+    const source = await readFile(new URL(`../${entry}`, import.meta.url), 'utf8');
+    assert.match(source, /<script\b/i, `missing application entry: ${entry}`);
+  }
+});
 
 test('shared product APIs work without a widget global or popup renderer', async (t) => {
   const calls = [];

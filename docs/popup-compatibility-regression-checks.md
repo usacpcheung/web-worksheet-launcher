@@ -1,5 +1,8 @@
 # Popup compatibility regression checks
 
+> **Widget retirement (Step 2):** The popup-specific checklist below is historical and no longer an acceptance gate. Use the retirement boundary tests and retained-product regression checks instead.
+> See [scope, retained services and deployment gates](widget-removal-step2.md).
+
 Use this checklist when reviewing popup-launcher-related changes to ensure the v1 compatibility slice remains stable.
 
 - [ ] Parent app can still launch popup successfully.

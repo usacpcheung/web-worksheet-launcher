@@ -1,5 +1,8 @@
 # Worksheet Render Route Security Headers (`/worksheet/render.html`)
 
+> **Widget retirement (Step 2):** Historical renderer-only configuration. The renderer and its assets are removed from this branch. This PR does not change Apache/CSP configuration; do not remove shared OIDC or API protections using these examples.
+> See [scope, retained services and deployment gates](widget-removal-step2.md).
+
 This document defines deployment headers for the popup renderer delivery path:
 
 - HTML route: `server/worksheet_launcher/render.html`

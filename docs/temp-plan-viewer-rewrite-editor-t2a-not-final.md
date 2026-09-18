@@ -1,5 +1,8 @@
 # Temporary Draft Plan: Viewer Rewrite + Editor T2A
 
+> **Widget retirement (Step 2):** The frozen-widget preservation clause is superseded by retirement. Product rewrite and T2A functionality remains supported; this draft is not authority to delete shared services.
+> See [scope, retained services and deployment gates](widget-removal-step2.md).
+
 Status: temporary working draft, not finalized.
 
 ## Review-driven revision log (why each change was made)

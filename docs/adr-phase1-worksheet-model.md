@@ -1,5 +1,8 @@
 # ADR: Phase 1 Worksheet Data Model Boundaries
 
+> **Widget retirement (Step 2):** Only the legacy popup preservation/scaffold clauses are superseded. Data-model and editor/viewer compatibility guidance remains applicable. The historical decision text is retained below.
+> See [scope, retained services and deployment gates](widget-removal-step2.md).
+
 > **Related docs**
 > - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
 > - This document is part of the Phase 1 documentation set.

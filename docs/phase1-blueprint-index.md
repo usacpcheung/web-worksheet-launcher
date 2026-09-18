@@ -1,5 +1,8 @@
 # Phase 1 Blueprint Index
 
+> **Widget retirement (Step 2):** Popup transport/route references below are historical after widget retirement. Product data models and active auth contracts remain supported.
+> See [scope, retained services and deployment gates](widget-removal-step2.md).
+
 This index provides a single reliable entry point for Phase 1 contract and architecture references.
 
 ## Which doc is normative for what

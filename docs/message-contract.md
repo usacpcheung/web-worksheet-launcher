@@ -1,5 +1,20 @@
 # Message Contract (Phase 1 Popup Compatibility Slice)
 
+> **Contract retirement (Step 2):** The legacy parent demo/SDK and popup renderer
+> are removed. The launch query (`w`, `rid`, `returnOrigin`), widget adapter
+> and `worksheetResult` contracts below are historical and no longer provided
+> by this branch. This intentionally ends the legacy external parent integration;
+> there is no automatic translation to viewer packages or replacement result message.
+> Existing externally hosted copies must be checked before deployment.
+>
+> **Still active and unchanged:** the Editor/Viewer OIDC popup callback section
+> below, `worksheet-launcher-auth-complete`, `authFlowId`, shared login URL,
+> session API and product package/attempt contracts. Do not remove auth popup
+> validation or broadly disable `postMessage`.
+>
+> See [retirement scope and rollback](widget-removal-step2.md). This note
+> supersedes legacy preservation/Phase 1 constraints in the historical sections.
+
 > **Related docs**
 > - Phase 1 blueprint index: `docs/phase1-blueprint-index.md`
 > - This document is part of the Phase 1 documentation set.

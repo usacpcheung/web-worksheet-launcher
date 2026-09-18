@@ -1,5 +1,8 @@
 # Parent Launcher SDK (WorksheetLauncher)
 
+> **Widget retirement (Step 2):** The parent SDK and demo have been removed. The examples and source-of-truth statements below describe the retired version, not a supported integration. External copies must be inventoried before deployment; there is no drop-in replacement for worksheetResult.
+> See [scope, retained services and deployment gates](widget-removal-step2.md).
+
 This document shows the public parent-side API for launching the worksheet popup and receiving one rewritten answer.
 
 > **Source of truth:** `parent_prototype/sdk/parent-launcher.js` is the canonical SDK source in this repo.
