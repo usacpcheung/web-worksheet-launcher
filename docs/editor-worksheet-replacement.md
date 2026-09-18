@@ -39,6 +39,8 @@ error and releases the load lock without replacing the active worksheet.
 Closing the list does not cancel an accepted load; reopening it restores the
 current progress. Failure releases the lock so the user can retry. Stage changes
 are announced through a live status without announcing every percentage.
+Only the persistent shell status is a live region; duplicate text inside package
+list dialogs is visual-only, preventing duplicate stage announcements.
 The pre-download session check has a separate 15-second timeout and an owned,
 abortable request, so it cannot join an already stalled shared session probe.
 Timeout releases the load lock and leaves the current worksheet intact. Late

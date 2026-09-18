@@ -5,6 +5,25 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
 
+test('modal load-status copies are visual-only and preserve the single shell announcer', async () => {
+  const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
+  const helper = source.slice(source.indexOf('  function createVisualLoadStatus()'), source.indexOf('  const refreshPackageLoadControls'));
+  const originalAttributes = { role: 'status', 'aria-live': 'polite', 'data-editor-load-status': '1' };
+  const loadStatus = { cloneNode(deep) {
+    assert.equal(deep, false);
+    const attributes = { ...originalAttributes };
+    return { attributes, removeAttribute: key => delete attributes[key], setAttribute: (key, value) => { attributes[key] = value; } };
+  } };
+  const create = new Function('loadStatus', `${helper}; return createVisualLoadStatus;`)(loadStatus);
+  for (let modal = 0; modal < 2; modal++) {
+    const copy = create();
+    assert.deepEqual(copy.attributes, { 'data-editor-load-status': '1', 'aria-hidden': 'true' });
+  }
+  assert.equal(originalAttributes.role, 'status');
+  assert.equal(originalAttributes['aria-live'], 'polite');
+  assert.equal(source.split('dialog.appendChild(createVisualLoadStatus());').length - 1, 2);
+});
+
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href));

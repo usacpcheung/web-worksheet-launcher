@@ -4777,6 +4777,14 @@ function renderEditorShell(session) {
   loadStatus.dataset.editorLoadStatus = '1';
   loadStatus.setAttribute('role', 'status');
   loadStatus.setAttribute('aria-live', 'polite');
+  function createVisualLoadStatus() {
+    const copy = loadStatus.cloneNode(false);
+    // Only the persistent shell region announces stages. Modal copies are visual.
+    copy.removeAttribute('role');
+    copy.removeAttribute('aria-live');
+    copy.setAttribute('aria-hidden', 'true');
+    return copy;
+  }
   const refreshPackageLoadControls = () => {
     const progress = session.packageLoad.current;
     const label = progress ? t(`editor.packageLoad.${progress.stage === 'downloading' && progress.percent !== null ? 'downloadingPercent' : progress.stage}`, { percent: progress.percent }) : '';
@@ -5727,7 +5735,7 @@ function renderEditorShell(session) {
     closeBtn.textContent = t('common.actions.close');
     actions.append(loadMoreBtn, refreshBtn, closeBtn);
     dialog.append(heading, filterRow, results, actions);
-    dialog.appendChild(loadStatus.cloneNode(false));
+    dialog.appendChild(createVisualLoadStatus());
     overlay.appendChild(dialog);
     browsePublishedModalRoot.appendChild(overlay);
     refreshPackageLoadControls();
@@ -7770,7 +7778,7 @@ function renderEditorShell(session) {
     });
     actions.append(refreshBtn, closeBtn);
     dialog.append(heading, slotUsage, list, actions);
-    dialog.appendChild(loadStatus.cloneNode(false));
+    dialog.appendChild(createVisualLoadStatus());
     overlay.appendChild(dialog);
     manageUploadedDraftsModalRoot.appendChild(overlay);
     refreshPackageLoadControls();
