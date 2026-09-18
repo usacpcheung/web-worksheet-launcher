@@ -130,6 +130,26 @@ storage layout, package format or supported behavior changes are included.
 - Only then consider deleting the wrapper export, after checking external module
   consumers. Retain both phases, object-URL cleanup and all supported formats.
 
+#### B2 follow-up: test the two production import phases
+
+Rechecked against `main-v1` commit `d0f9357`: production local and server-backed
+imports use preparation and explicit application, not `importProject`. The test
+suite now calls these phases for all five former successful wrapper scenarios
+(current ZIP, legacy JSON, legacy ZIP/media, plain JSON and ID reseeding) and
+preparation for all nine former wrapper rejection scenarios. Existing format,
+media, cue-card and error assertions are retained.
+
+Preparation checks snapshot the active project independently, require no store
+notifications and reject IndexedDB open/delete attempts on success or failure.
+A media-bearing cancellation/confirmation scenario verifies candidate URL
+cleanup, preservation of active URLs on cancel, and old-URL cleanup on apply.
+These are isolated Node checks, not a real-browser IndexedDB durability test or
+proof of the confirmation dialog's event wiring. Existing UI/source guards stay.
+
+The exported `importProject` compatibility wrapper remains because external
+direct imports have not been confirmed absent. This follow-up changes tests and
+documentation only; no import behavior, formats or runtime exports are removed.
+
 ## Must retain: easily mistaken for dead code
 
 | Area | Concrete active path / reason |
