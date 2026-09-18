@@ -304,6 +304,13 @@ test('New Worksheet releases its lock after deletion failure', async () => {
   session.state.draft = mod.createDraftRecord({ localId: 'old' });
   await assert.rejects(session.startNewWorksheet(), /Deletion failed/);
   assert.equal(session.packageLoad.current, null);
+  assert.equal(session.deletedDraftIds.has('old'), false);
+  assert.equal(session.state.draft.localId, 'old');
+  assert.ok(session.autosaveTimer);
+  session.updateTitle('Saved after failed reset');
+  const saved = await session.autosave();
+  assert.equal(saved.title, 'Saved after failed reset');
+  clearTimeout(session.autosaveTimer);
 });
 
 for (const source of ['uploaded', 'published']) {

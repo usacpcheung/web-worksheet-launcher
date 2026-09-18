@@ -1154,6 +1154,7 @@ class EditorDraftSession {
     this.resolveLegacyAudioMigration = options.resolveLegacyAudioMigration || showLegacyAudioMigrationDialog;
     this.packageLoad = new PackageLoadProgress();
     this.packageDownloadIdleMs = options.packageDownloadIdleMs ?? 60_000;
+    this.packageSessionTimeoutMs = options.packageSessionTimeoutMs ?? 15_000;
     this.state = {
       draft: null,
       selectedBlockId: null,
@@ -1641,7 +1642,14 @@ class EditorDraftSession {
       if (previousDraftId) {
         this.autosaveGeneration += 1;
         this.deletedDraftIds.add(previousDraftId);
-        await this.storage.drafts.remove(previousDraftId);
+        try {
+          await this.storage.drafts.remove(previousDraftId);
+        } catch (error) {
+          // The worksheet remains active: it must remain saveable as well.
+          this.deletedDraftIds.delete(previousDraftId);
+          this.scheduleAutosave();
+          throw error;
+        }
         this.clearDeletedDraftTombstoneIfIdle(previousDraftId);
       }
 
@@ -3613,8 +3621,11 @@ class EditorDraftSession {
     return this.probeServerSessionSilently({ force: true });
   }
 
-  async probeServerSessionSilently({ force = false } = {}) {
-    const result = await probeSession({ apiClient: this.apiClient, force });
+  async probeServerSessionSilently({ force = false, timeoutMs = null } = {}) {
+    const result = await probeSession({ apiClient: this.apiClient, force, timeoutMs });
+    if (result.error?.code === 'SESSION_PROBE_TIMEOUT') {
+      result.error.message = t('editor.packageLoad.sessionTimeout');
+    }
     if (result.status !== 'ready') {
       this.state.serverSession = {
         status: result.status === 'error' ? 'error' : 'not_ready',
@@ -3633,8 +3644,8 @@ class EditorDraftSession {
     return result;
   }
 
-  async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.') {
-    const result = await this.probeServerSessionSilently({ force: true });
+  async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.', options = {}) {
+    const result = await this.probeServerSessionSilently({ force: true, timeoutMs: options.timeoutMs });
     if (result.ok && this.state.serverSession.status === 'ready') {
       return { ok: true, result };
     }
@@ -3918,7 +3929,7 @@ class EditorDraftSession {
     if (this.packageLoad.current) return { ok: false, skipped: true };
     const loadToken = this.packageLoad.start(`uploaded:${uploadedDraftId}`);
     try {
-      const sessionReady = await this.ensureServerSessionReady();
+      const sessionReady = await this.ensureServerSessionReady(undefined, { timeoutMs: this.packageSessionTimeoutMs });
       if (!sessionReady.ok) return sessionReady.result;
       const artifact = await this.downloadWorksheetArtifact(loadToken,
         options => this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId, options));
@@ -3962,7 +3973,7 @@ class EditorDraftSession {
     this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: editorNotification('publishedPackage.opening'), logActivity: false });
     this.notifyStateChange();
     try {
-      const sessionReady = await this.ensureServerSessionReady();
+      const sessionReady = await this.ensureServerSessionReady(undefined, { timeoutMs: this.packageSessionTimeoutMs });
       if (!sessionReady.ok) return sessionReady.result;
       const artifact = await this.downloadWorksheetArtifact(loadToken,
         options => this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, options));
@@ -7964,7 +7975,14 @@ function renderEditorShell(session) {
       confirmLabel: t('editor.newWorksheet.confirmLabel'),
     });
     if (!confirmed || session.packageLoad.current) return;
-    const nextDraft = await session.startNewWorksheet();
+    let nextDraft;
+    try {
+      nextDraft = await session.startNewWorksheet();
+    } catch (error) {
+      session.pushNotification({ kind: 'error', category: 'editor', source: 'worksheet.new', text: error?.message || editorNotification('save.manualSaveFailed') });
+      updateSummary();
+      return;
+    }
     if (nextDraft?.localId) {
       const nextUrl = new URL(window.location.href);
       nextUrl.searchParams.set('localDraftId', nextDraft.localId);

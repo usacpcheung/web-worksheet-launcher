@@ -138,6 +138,7 @@ export default {
       "confirm": "Open worksheet"
     },
     "packageLoad": {
+      "sessionTimeout": "Session check timed out. Refresh your server session and try again.",
       "creating": "Creating worksheet…",
       "timeout": "Download stalled. Check your connection and try opening the worksheet again.",
       "checking": "Checking…",

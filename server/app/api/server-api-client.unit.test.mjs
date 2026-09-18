@@ -15,6 +15,18 @@ function setTestWindow(search = '') {
   };
 }
 
+test('session requests forward cancellation without changing the endpoint', async (t) => {
+  setTestWindow();
+  const controller = new AbortController();
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, '/api/worksheet-launcher/v1/session');
+    assert.equal(options.signal, controller.signal);
+    assert.equal(options.credentials, 'include');
+    return mockJsonResponse(200, { ok: true, data: { user: { sub: 'test' } } });
+  });
+  assert.equal((await createServerApiClient().getSession({ signal: controller.signal })).ok, true);
+});
+
 test('uploaded draft downloads report streamed progress and omit unsafe compressed percentages', async () => {
   setTestWindow();
   for (const encoding of [null, 'gzip']) {

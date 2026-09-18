@@ -18,6 +18,8 @@ Export remains the way to keep a portable backup.
 
 Legacy-audio migration confirmation is separate and remains supported.
 New Worksheet retains its existing destructive-action confirmation.
+If deleting the current draft fails, it remains active and autosaving resumes;
+the error is shown without deleting its media or switching worksheets.
 Viewer and RolePlayScene loading behavior is unchanged.
 
 ## Download and opening feedback
@@ -37,6 +39,11 @@ error and releases the load lock without replacing the active worksheet.
 Closing the list does not cancel an accepted load; reopening it restores the
 current progress. Failure releases the lock so the user can retry. Stage changes
 are announced through a live status without announcing every percentage.
+The pre-download session check has a separate 15-second timeout and an owned,
+abortable request, so it cannot join an already stalled shared session probe.
+Timeout releases the load lock and leaves the current worksheet intact. Late
+responses cannot resume that load or update the shared session cache. Other
+products retain their existing session-probe behavior.
 
 The UI yields before parsing to give feedback a rendering opportunity. This is
 not a worker-based ZIP parser and does not guarantee smooth rendering throughout

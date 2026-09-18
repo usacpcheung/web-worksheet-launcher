@@ -15,11 +15,14 @@ const zip = Buffer.from(createStoredZip([
   { path: 'content/worksheet.json', data: JSON.stringify({ title: 'Progress fixture', blocks: [{ blockId: 'c1', kind: 'content', position: 0, content: 'Test content' }] }) },
   { path: 'padding.bin', data: new Uint8Array(65536) },
 ]));
-let pending, mode = 'known', requests = 0;
+let pending, pendingSession, mode = 'known', requests = 0;
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname;
   const json = data => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: true, data })); };
-  if (path.endsWith('/session')) return json({ user: { sub: 'fixture' } });
+  if (path.endsWith('/session')) {
+    if (mode === 'session-stalled') { pendingSession = res; return; }
+    return json({ user: { sub: 'fixture' } });
+  }
   if (path.endsWith('/published')) return json({ items: ['one', 'two'].map(id => ({ published_package_id: id, title: `Published ${id}` })) });
   if (path.endsWith('/drafts')) return json({ items: ['one', 'two'].map(id => ({ uploaded_draft_id: id, title: `Draft ${id}` })) });
   if (path.endsWith('/artifact')) {
@@ -70,6 +73,26 @@ try {
         await page.getByRole('button', { name: labels[source === 'published' ? 'editor.published.browse' : 'editor.uploadedDraft.manage'], exact: true }).click();
       };
       await openList();
+      await page.locator(`[data-editor-package-load="${source}:one"]`).waitFor();
+      const originalId = await page.evaluate(() => {
+        window.editorSession.packageSessionTimeoutMs = 800;
+        return window.editorSession.state.draft.localId;
+      });
+      mode = 'session-stalled';
+      const beforeRequests = requests;
+      await page.locator(`[data-editor-package-load="${source}:one"]`).click();
+      await page.locator('.confirm-modal').filter({ has: page.locator('.confirm-modal__warning') }).locator('button').last().click();
+      await page.waitForFunction(() => window.editorSession.packageLoad.current?.stage === 'checking');
+      await page.waitForFunction(() => !window.editorSession.packageLoad.current);
+      assert.equal(requests, beforeRequests);
+      assert.equal(await page.evaluate(() => window.editorSession.state.draft.localId), originalId);
+      assert.equal(await page.getByRole('button', { name: labels['editor.actions.importPackage'], exact: true }).isEnabled(), true);
+      assert.match(await page.locator('body').innerText(), /Session check timed out|登入狀態檢查已逾時/);
+      mode = 'known';
+      await page.evaluate(() => window.editorSession.refreshServerSession());
+      pendingSession?.end(JSON.stringify({ ok: false, error: { status: 401 } }));
+      assert.equal(await page.evaluate(() => window.editorSession.state.serverSession.status), 'ready');
+      if (source === 'published') await page.locator('.browse-modal__search-btn').click();
       for (const nextMode of ['stalled', 'invalid', 'unknown', 'known']) {
         mode = nextMode; pending = null;
         await page.evaluate(mode => { window.editorSession.packageDownloadIdleMs = mode === 'stalled' ? 800 : 60000; }, mode);
@@ -149,7 +172,7 @@ try {
         if (mode !== 'invalid') assert.equal(await page.evaluate(() => window.editorSession.state.draft.title), 'Progress fixture');
       }
       assert.deepEqual(errors, []);
-      console.log(`PASS ${source} ${locale} ${width}: streamed percent, unknown size, invalid ZIP retry, shared lock, DOM stability, close/reopen`);
+      console.log(`PASS ${source} ${locale} ${width}: session timeout/retry, streamed percent, unknown size, invalid ZIP retry, shared lock, DOM stability, close/reopen`);
     } finally { await context.close(); }
   }
 } finally {

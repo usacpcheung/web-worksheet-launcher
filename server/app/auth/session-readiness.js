@@ -59,9 +59,32 @@ function canUseCachedProbe() {
   return Boolean(latestProbeCache && latestProbeCache.expiresAt > nowMs());
 }
 
-async function probeSession({ apiClient, force = false }) {
+async function probeSession({ apiClient, force = false, timeoutMs = null }) {
   if (!apiClient || typeof apiClient.getSession !== 'function') {
     throw new Error('probeSession requires apiClient.getSession().');
+  }
+
+  // Explicitly bounded callers own their request. Never join a potentially
+  // stalled shared probe, or let a late response replace the shared cache.
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    const controller = new AbortController();
+    let timer;
+    try {
+      const timeout = new Promise(resolve => {
+        timer = setTimeout(() => {
+          resolve({ ok: false, error: { code: 'SESSION_PROBE_TIMEOUT', message: 'Session check timed out. Please try again.' } });
+          controller.abort();
+        }, timeoutMs);
+      });
+      return normalizeProbeResult(await Promise.race([
+        timeout,
+        apiClient.getSession({ signal: controller.signal }),
+      ]));
+    } catch (error) {
+      return normalizeProbeResult({ error });
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   if (inFlightProbePromise) {

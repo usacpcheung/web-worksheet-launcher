@@ -138,6 +138,7 @@ export default {
       "confirm": "開啟工作紙"
     },
     "packageLoad": {
+      "sessionTimeout": "登入狀態檢查已逾時。請重新整理伺服器登入狀態，然後再試。",
       "creating": "正在建立工作紙…",
       "timeout": "下載已停頓。請檢查網絡連線，然後重新開啟工作紙。",
       "checking": "正在檢查…",
