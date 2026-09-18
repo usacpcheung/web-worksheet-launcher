@@ -133,13 +133,17 @@ export default {
       "metaSubjectOwner": "Subject {subject}, owner {owner}",
       "openingInEditor": "Opening in editor"
     },
+    "replaceWorksheet": {
+      "title": "Replace the current worksheet?",
+      "confirm": "Open worksheet"
+    },
     "uploadedDraft": {
       "manage": "Manage Uploaded Drafts",
       "openDialog": {
         "confirm": "Open draft",
         "description": "This will replace the worksheet currently shown in the editor with a local copy of \"{title}\".",
         "title": "Open uploaded draft?",
-        "warning": "Save or export the current worksheet first if you need to return to it."
+        "warning": "The current worksheet will be saved locally before switching. Export it first if you need a separate backup."
       },
       "deleteDialog": {
         "confirm": "Confirm",

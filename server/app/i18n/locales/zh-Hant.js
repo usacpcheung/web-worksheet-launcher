@@ -133,13 +133,17 @@ export default {
       "metaSubjectOwner": "科目 {subject}，擁有者 {owner}",
       "openingInEditor": "正在編輯器開啟"
     },
+    "replaceWorksheet": {
+      "title": "要取代目前的工作紙嗎？",
+      "confirm": "開啟工作紙"
+    },
     "uploadedDraft": {
       "manage": "管理已上載草稿",
       "openDialog": {
         "confirm": "開啟草稿",
         "description": "這會以「{title}」的本機副本取代目前在編輯器顯示的工作紙。",
         "title": "要開啟已上載的草稿嗎？",
-        "warning": "如需稍後返回目前的工作紙，請先儲存或匯出它。"
+        "warning": "切換前會先將目前的工作紙儲存於本機。如需獨立備份，請先匯出。"
       },
       "deleteDialog": {
         "confirm": "確認",

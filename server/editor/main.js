@@ -3207,6 +3207,7 @@ class EditorDraftSession {
         const referencedIds = collectDraftQuestionAssetIds({ blocks: migrated.blocks });
         parsedPackage.assets = parsedPackage.assets.filter((asset) => referencedIds.has(asset.assetId));
       }
+      if (options.convertToEditableDraft) await this.saveBeforeWorksheetReplacement();
       const importedLocalId = createLocalId('imported');
       const now = nowIso();
       const importedRecord = {
@@ -3290,6 +3291,8 @@ class EditorDraftSession {
         return { importedRecord, draftRecord: null };
       }
 
+      // Imports may await asset storage while the user continues editing.
+      await this.saveBeforeWorksheetReplacement();
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
       this.state.autosavePending = false;
@@ -3963,6 +3966,17 @@ class EditorDraftSession {
     this.persistRestoreMetadata();
   }
 
+
+  async saveBeforeWorksheetReplacement() {
+    if (!this.state.draft) return;
+    // Always save at least once: the outgoing draft may not yet be persisted.
+    do {
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+      const saved = await this.autosave();
+      if (!saved) throw new Error(editorNotification('save.manualSaveFailed'));
+    } while (this.state.lastSavedRevision < this.state.draftRevision);
+  }
 
   async flushLocalStateForAuthRedirect() {
     if (!this.state.draft) return null;
@@ -5503,9 +5517,17 @@ function renderEditorShell(session) {
         openInEditorBtn.disabled = !serverReady || browsePublishedState.loading || isOpening;
         openInEditorBtn.addEventListener('click', async () => {
           if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
+          const confirmed = await showConfirmDialog({
+            title: t('editor.replaceWorksheet.title'),
+            bodyText: t('editor.uploadedDraft.openDialog.description', { title: item.title || item.published_package_id }),
+            warningText: t('editor.uploadedDraft.openDialog.warning'),
+            confirmLabel: t('editor.replaceWorksheet.confirm'),
+            variant: 'warning',
+          });
+          if (!confirmed) return;
           const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);
           renderPublishedBrowserModal();
-          const reopenResult = await reopenPromise;
+          const reopenResult = await reopenPromise.catch((error) => ({ ok: false, error: { message: error.message } }));
           if (reopenResult?.ok) {
             emitPublishedBrowseNotification({
               kind: 'success',
@@ -8095,7 +8117,26 @@ function renderEditorShell(session) {
       updateSummary();
       return;
     }
-    const importResult = await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
+    const confirmed = await showConfirmDialog({
+      title: t('editor.replaceWorksheet.title'),
+      bodyText: t('editor.uploadedDraft.openDialog.description', { title: file.name }),
+      warningText: t('editor.uploadedDraft.openDialog.warning'),
+      confirmLabel: t('editor.replaceWorksheet.confirm'),
+      variant: 'warning',
+    });
+    if (!confirmed) {
+      importFileInput.value = '';
+      return;
+    }
+    let importResult;
+    try {
+      importResult = await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });
+    } catch {
+      // The importer reports validation/storage failures; retain the current draft.
+      importFileInput.value = '';
+      updateSummary();
+      return;
+    }
     if (importResult?.canceled) {
       importFileInput.value = '';
       updateSummary();
