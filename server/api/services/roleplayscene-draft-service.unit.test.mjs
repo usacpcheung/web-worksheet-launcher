@@ -341,12 +341,13 @@ function createConflictRow(overrides = {}) {
 test('uploadRolePlaySceneDraft creates row and stores artifact in roleplayscene drafts bucket', async () => {
   const db = createFakeDb();
   const zipBytes = createRolePlaySceneZip();
+  const expectedBytes = Uint8Array.from(zipBytes);
   let stored = null;
   const service = createService({
     db,
     artifactStore: {
       async storeArtifact(input) {
-        stored = input;
+        stored = { ...input, bytes: Uint8Array.from(input.bytes) };
         return {
           artifactPath: 'roleplayscene/drafts/oidc-sub/new.zip',
           absolutePath: '/tmp/new.zip',
@@ -378,7 +379,7 @@ test('uploadRolePlaySceneDraft creates row and stores artifact in roleplayscene 
     ownerSub: identity.sub,
     bucket: 'roleplayscene/drafts',
     artifactId: result.data.roleplayscene_uploaded_draft_id,
-    bytes: zipBytes,
+    bytes: expectedBytes,
   });
 });
 
@@ -781,6 +782,7 @@ test('listOwnRolePlaySceneDrafts excludes artifact_path and includes publish_sta
 
 test('publishRolePlaySceneFromDraft copies artifact and updates uploaded draft marker', async () => {
   const zipBytes = createPublishableRolePlaySceneZip();
+  const expectedBytes = Uint8Array.from(zipBytes);
   const db = createPublishDb();
   let stored = null;
   const service = createService({
@@ -791,7 +793,7 @@ test('publishRolePlaySceneFromDraft copies artifact and updates uploaded draft m
         return zipBytes;
       },
       async storeArtifact(input) {
-        stored = input;
+        stored = { ...input, bytes: Uint8Array.from(input.bytes) };
         return {
           artifactPath: 'roleplayscene/published/new.zip',
           absolutePath: '/tmp/new.zip',
@@ -818,7 +820,7 @@ test('publishRolePlaySceneFromDraft copies artifact and updates uploaded draft m
     ownerSub: identity.sub,
     bucket: 'roleplayscene/published',
     artifactId: result.data.roleplayscene_published_scene_id,
-    bytes: zipBytes,
+    bytes: expectedBytes,
   });
   assert.equal(db.state.queries.some(sql => sql.includes('SET last_published_artifact_sha256')), true);
 });
