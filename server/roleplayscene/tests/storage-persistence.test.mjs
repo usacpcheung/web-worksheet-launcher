@@ -8,7 +8,6 @@ import {
   revokeProjectObjectUrls,
   setupPersistence,
   createProjectArchive,
-  importProject,
   prepareProjectImport,
   applyPreparedProjectImport,
   extractProjectFromArchive,
@@ -25,6 +24,36 @@ if (typeof globalThis.Blob === 'undefined') {
 }
 if (typeof globalThis.File === 'undefined') {
   globalThis.File = NodeFile;
+}
+
+// Preparation must not change the active store or touch persistent storage,
+// whether it succeeds (awaiting confirmation) or rejects invalid input.
+async function prepareWithoutSideEffects(activeStore, file) {
+  const previousState = activeStore.get();
+  const previousSnapshot = structuredClone(serializeProject(previousState.project));
+  const indexedDBDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB');
+  let persistenceCalls = 0;
+  let notifications = 0;
+  const unsubscribe = activeStore.subscribe(() => { notifications += 1; });
+  Object.defineProperty(globalThis, 'indexedDB', {
+    configurable: true,
+    value: {
+      open() { persistenceCalls += 1; throw new Error('Preparation must not open IndexedDB'); },
+      deleteDatabase() { persistenceCalls += 1; throw new Error('Preparation must not delete IndexedDB'); },
+    },
+  });
+  try {
+    return await prepareProjectImport(file);
+  } finally {
+    unsubscribe();
+    if (indexedDBDescriptor) Object.defineProperty(globalThis, 'indexedDB', indexedDBDescriptor);
+    else delete globalThis.indexedDB;
+    assert.strictEqual(activeStore.get(), previousState, 'preparation must retain the active store state');
+    assert.deepStrictEqual(serializeProject(activeStore.get().project), previousSnapshot,
+      'preparation must not mutate existing project data in place');
+    assert.strictEqual(notifications, 0, 'preparation must not notify autosave subscribers');
+    assert.strictEqual(persistenceCalls, 0, 'preparation must not access IndexedDB');
+  }
 }
 
 const originalCreateObjectURL = URL.createObjectURL;
@@ -140,7 +169,8 @@ assert.strictEqual(projectJson.scenes[0].image.path, mediaPaths.find(path => pat
 const archiveBlob = new Blob([archiveData], { type: 'application/zip' });
 const archiveFile = new File([archiveBlob], 'persistent-adventure.zip', { type: 'application/zip' });
 const importStore = new Store();
-await importProject(importStore, archiveFile);
+const importStorePrepared = await prepareWithoutSideEffects(importStore, archiveFile);
+await applyPreparedProjectImport(importStore, importStorePrepared);
 const importedProject = importStore.get().project;
 assert.strictEqual(importedProject.meta.title, 'Persistent Adventure', 'imported project should hydrate meta data');
 assert.strictEqual(importedProject.speakers[0].name, 'Kelvin', 'imported project should hydrate speakers');
@@ -181,7 +211,8 @@ const legacySnapshot = {
 };
 const legacyFile = new File([JSON.stringify(legacySnapshot, null, 2)], 'legacy.json', { type: 'application/json' });
 const legacyStore = new Store();
-await importProject(legacyStore, legacyFile);
+const legacyStorePrepared = await prepareWithoutSideEffects(legacyStore, legacyFile);
+await applyPreparedProjectImport(legacyStore, legacyStorePrepared);
 const legacyProject = legacyStore.get().project;
 assert.strictEqual(legacyProject.meta.title, 'Legacy Project', 'legacy import should hydrate meta');
 assert.deepStrictEqual(legacyProject.speakers, [], 'legacy import should default speakers to empty array');
@@ -228,7 +259,8 @@ const legacyArchiveFile = new File(
   { type: 'application/zip' },
 );
 const legacyArchiveStore = new Store();
-await importProject(legacyArchiveStore, legacyArchiveFile);
+const legacyArchiveStorePrepared = await prepareWithoutSideEffects(legacyArchiveStore, legacyArchiveFile);
+await applyPreparedProjectImport(legacyArchiveStore, legacyArchiveStorePrepared);
 assert.strictEqual(legacyArchiveStore.get().project.meta.title, 'Legacy Zip Project', 'legacy ZIP import should still work');
 assert.strictEqual(
   await legacyArchiveStore.get().project.scenes[0].image.blob.text(),
@@ -270,7 +302,8 @@ const plainImportSnapshot = {
 };
 const plainFile = new File([JSON.stringify(plainImportSnapshot, null, 2)], 'plain.json', { type: 'application/json' });
 const plainStore = new Store();
-await importProject(plainStore, plainFile);
+const plainStorePrepared = await prepareWithoutSideEffects(plainStore, plainFile);
+await applyPreparedProjectImport(plainStore, plainStorePrepared);
 const plainHydrated = hydrateProject(serializeProject(plainStore.get().project));
 assert.strictEqual(plainHydrated.scenes[0].choices[0].cueCardText, '', 'plain JSON import + hydrate should default cueCardText to empty string');
 
@@ -305,7 +338,8 @@ const seededSnapshot = {
 const seededFile = new File([JSON.stringify(seededSnapshot, null, 2)], 'seeded.json', { type: 'application/json' });
 const seededStore = new Store();
 resetIdSequences();
-await importProject(seededStore, seededFile);
+const seededStorePrepared = await prepareWithoutSideEffects(seededStore, seededFile);
+await applyPreparedProjectImport(seededStore, seededStorePrepared);
 assert.strictEqual(newId('scene'), 'scene-003', 'imported scene IDs should reseed scene sequence');
 assert.strictEqual(newId('choice'), 'choice-0008', 'imported choice IDs should reseed choice sequence');
 assert.strictEqual(newId('speaker'), 'speaker-0006', 'imported speaker IDs should reseed speaker sequence');
@@ -399,7 +433,7 @@ const replacementFile = new File(
 );
 const safetyStore = new Store();
 safetyStore.set({ project: existingProject });
-const preparedReplacement = await prepareProjectImport(replacementFile);
+const preparedReplacement = await prepareWithoutSideEffects(safetyStore, replacementFile);
 assert.strictEqual(
   safetyStore.get().project.meta.title,
   'Existing Project',
@@ -409,7 +443,7 @@ revokeProjectObjectUrls(preparedReplacement.project);
 
 const confirmedStore = new Store();
 confirmedStore.set({ project: existingProject });
-const confirmedPrepared = await prepareProjectImport(replacementFile);
+const confirmedPrepared = await prepareWithoutSideEffects(confirmedStore, replacementFile);
 await applyPreparedProjectImport(confirmedStore, confirmedPrepared);
 assert.strictEqual(
   confirmedStore.get().project.meta.title,
@@ -417,11 +451,50 @@ assert.strictEqual(
   'applying a prepared import should replace the project after confirmation',
 );
 
+// Mirror main.js cancellation: release candidate media, retain active media;
+// a later confirmed import releases only the old project's URLs.
+const mediaStore = new Store();
+const mediaCreatedUrls = [];
+const mediaRevokedUrls = [];
+URL.createObjectURL = () => {
+  const url = `blob:import-safety-${mediaCreatedUrls.length}`;
+  mediaCreatedUrls.push(url);
+  return url;
+};
+URL.revokeObjectURL = url => { mediaRevokedUrls.push(url); };
+try {
+  mediaStore.set({ project: hydrateProject(serialised) });
+  const activeProject = mediaStore.get().project;
+  const activeUrls = [...mediaCreatedUrls];
+  assert.strictEqual(activeUrls.length, 3, 'active fixture has image, background and dialogue URLs');
+  const canceledImport = await prepareWithoutSideEffects(mediaStore, archiveFile);
+  const candidateUrls = mediaCreatedUrls.slice(activeUrls.length);
+  assert.strictEqual(candidateUrls.length, 3, 'prepared archive hydrates all three media URLs');
+  assert.deepStrictEqual(mediaRevokedUrls, [], 'preparation must not revoke active media');
+  revokeProjectObjectUrls(canceledImport.project);
+  assert.strictEqual(mediaStore.get().project, activeProject, 'cancel retains the active project');
+  assert.deepStrictEqual([...mediaRevokedUrls].sort(), [...candidateUrls].sort(),
+    'cancel revokes only candidate media URLs');
+
+  const beforeConfirmedPreparation = mediaCreatedUrls.length;
+  const acceptedImport = await prepareWithoutSideEffects(mediaStore, archiveFile);
+  const acceptedUrls = mediaCreatedUrls.slice(beforeConfirmedPreparation);
+  assert.strictEqual(acceptedUrls.length, 3);
+  await applyPreparedProjectImport(mediaStore, acceptedImport);
+  assert.strictEqual(mediaStore.get().project, acceptedImport.project);
+  assert.deepStrictEqual([...mediaRevokedUrls].sort(), [...candidateUrls, ...activeUrls].sort(),
+    'confirmed replacement releases old media but keeps accepted media usable');
+} finally {
+  revokeProjectObjectUrls(mediaStore.get().project);
+  URL.createObjectURL = originalCreateObjectURL;
+  URL.revokeObjectURL = originalRevokeObjectURL;
+}
+
 const badZipStore = new Store();
 badZipStore.set({ project: existingProject });
 const badZipFile = new File([new Uint8Array([1, 2, 3])], 'bad.zip', { type: 'application/zip' });
 await assert.rejects(
-  () => importProject(badZipStore, badZipFile),
+  () => prepareWithoutSideEffects(badZipStore, badZipFile),
   err => err?.code === ImportErrorCode.INVALID_ZIP,
   'invalid ZIP should reject with INVALID_ZIP',
 );
@@ -432,7 +505,7 @@ const missingProjectArchive = await zip({
 });
 const missingProjectFile = new File([new Blob([missingProjectArchive], { type: 'application/zip' })], 'missing-project.zip', { type: 'application/zip' });
 await assert.rejects(
-  () => importProject(badZipStore, missingProjectFile),
+  () => prepareWithoutSideEffects(badZipStore, missingProjectFile),
   err => err?.code === ImportErrorCode.MISSING_PROJECT_JSON,
   'archive missing project.json should reject with MISSING_PROJECT_JSON',
 );
@@ -447,7 +520,7 @@ const missingManifestFile = new File(
   { type: 'application/zip' },
 );
 await assert.rejects(
-  () => importProject(badZipStore, missingManifestFile),
+  () => prepareWithoutSideEffects(badZipStore, missingManifestFile),
   err => err?.code === ImportErrorCode.MISSING_PACKAGE_MANIFEST,
   'new package missing manifest.json should reject safely',
 );
@@ -467,7 +540,7 @@ const missingContentProjectFile = new File(
   { type: 'application/zip' },
 );
 await assert.rejects(
-  () => importProject(badZipStore, missingContentProjectFile),
+  () => prepareWithoutSideEffects(badZipStore, missingContentProjectFile),
   err => err?.code === ImportErrorCode.MISSING_PACKAGE_PROJECT,
   'new package missing content/project.json should reject safely',
 );
@@ -488,7 +561,7 @@ const unsupportedPackageFile = new File(
   { type: 'application/zip' },
 );
 await assert.rejects(
-  () => importProject(badZipStore, unsupportedPackageFile),
+  () => prepareWithoutSideEffects(badZipStore, unsupportedPackageFile),
   err => err?.code === ImportErrorCode.UNSUPPORTED_PACKAGE,
   'unsupported manifest format should reject safely',
 );
@@ -509,7 +582,7 @@ const unsupportedVersionFile = new File(
   { type: 'application/zip' },
 );
 await assert.rejects(
-  () => importProject(badZipStore, unsupportedVersionFile),
+  () => prepareWithoutSideEffects(badZipStore, unsupportedVersionFile),
   err => err?.code === ImportErrorCode.UNSUPPORTED_PACKAGE,
   'unsupported manifest packageVersion should reject safely',
 );
@@ -530,7 +603,7 @@ const invalidContentProjectFile = new File(
   { type: 'application/zip' },
 );
 await assert.rejects(
-  () => importProject(badZipStore, invalidContentProjectFile),
+  () => prepareWithoutSideEffects(badZipStore, invalidContentProjectFile),
   err => err?.code === ImportErrorCode.INVALID_JSON,
   'invalid content/project.json should reject safely',
 );
@@ -538,7 +611,7 @@ assert.strictEqual(badZipStore.get().project.meta.title, 'Existing Project', 'in
 
 const invalidJsonFile = new File(['{not json'], 'invalid.json', { type: 'application/json' });
 await assert.rejects(
-  () => importProject(badZipStore, invalidJsonFile),
+  () => prepareWithoutSideEffects(badZipStore, invalidJsonFile),
   err => err?.code === ImportErrorCode.INVALID_JSON,
   'invalid JSON should reject with INVALID_JSON',
 );
@@ -550,7 +623,7 @@ const invalidProjectFile = new File(
   { type: 'application/json' },
 );
 await assert.rejects(
-  () => importProject(badZipStore, invalidProjectFile),
+  () => prepareWithoutSideEffects(badZipStore, invalidProjectFile),
   err => err?.code === ImportErrorCode.INVALID_PROJECT,
   'structurally invalid project should reject with INVALID_PROJECT',
 );
