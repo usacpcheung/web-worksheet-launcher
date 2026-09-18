@@ -274,6 +274,122 @@ for (const source of ['uploaded', 'published']) {
   }
 }
 
+test('New Worksheet holds the replacement lock until media deletion finishes', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  let finishRemoval, beginRemoval;
+  const started = new Promise(resolve => { beginRemoval = resolve; });
+  storage.drafts.remove = async () => {};
+  storage.localAssets = { remove: async () => { beginRemoval(); await new Promise(resolve => { finishRemoval = resolve; }); } };
+  const session = new mod.EditorDraftSession(storage);
+  session.state.draft = mod.createDraftRecord({ localId: 'old', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Q', mediaRefs: [{ usage: 'question_image', assetId: 'image' }] } }] });
+  const creating = session.startNewWorksheet();
+  await started;
+  assert.equal(session.packageLoad.current.stage, 'creating');
+  assert.equal(await session.startNewWorksheet(), null);
+  assert.equal((await session.importWorksheetPackageFile(null, { convertToEditableDraft: true })).canceled, true);
+  assert.equal((await session.reopenUploadedDraftAsLocalCopy('one')).skipped, true);
+  assert.equal((await session.reopenPublishedPackageAsLocalCopy('one')).skipped, true);
+  finishRemoval();
+  await creating;
+  assert.equal(session.packageLoad.current, null);
+  clearTimeout(session.autosaveTimer);
+});
+
+test('New Worksheet releases its lock after deletion failure', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  storage.drafts.remove = async () => { throw new Error('Deletion failed'); };
+  const session = new mod.EditorDraftSession(storage);
+  session.state.draft = mod.createDraftRecord({ localId: 'old' });
+  await assert.rejects(session.startNewWorksheet(), /Deletion failed/);
+  assert.equal(session.packageLoad.current, null);
+});
+
+for (const source of ['uploaded', 'published']) {
+  test(`${source} stalled downloads abort, unlock and ignore late completion`, async () => {
+    const mod = await loadEditorModule();
+    const session = new mod.EditorDraftSession(createSessionForTests(), { packageDownloadIdleMs: 15 });
+    session.ensureServerSessionReady = async () => ({ ok: true });
+    session.state.draft = mod.createDraftRecord({ localId: 'old' });
+    let signal, progress, finish;
+    session.apiClient.fetchUploadedDraftArtifact = session.apiClient.fetchPublishedPackageArtifact = async (_id, options) => {
+      signal = options.signal;
+      progress = options.onProgress;
+      return new Promise(resolve => { finish = resolve; });
+    };
+    const load = source === 'uploaded' ? session.reopenUploadedDraftAsLocalCopy('one') : session.reopenPublishedPackageAsLocalCopy('one');
+    await assert.rejects(load);
+    assert.equal(signal.aborted, true);
+    assert.equal(session.packageLoad.current, null);
+    progress({ loaded: 100, total: 100, lengthComputable: true });
+    finish({ ok: true, data: new Uint8Array([1]) });
+    await Promise.resolve();
+    assert.equal(session.state.draft.localId, 'old');
+    assert.equal(session.packageLoad.current, null);
+  });
+}
+
+test('download inactivity timer resets on new bytes and ignores events after completion', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests(), { packageDownloadIdleMs: 100 });
+  const token = session.packageLoad.start('test');
+  let report;
+  const result = await session.downloadWorksheetArtifact(token, async options => {
+    report = options.onProgress;
+    for (let loaded = 1; loaded <= 4; loaded++) {
+      await new Promise(resolve => setTimeout(resolve, 35));
+      report({ loaded, total: 4, lengthComputable: true });
+    }
+    assert.equal(options.signal.aborted, false);
+    return { ok: true };
+  });
+  assert.equal(result.ok, true);
+  session.packageLoad.update(token, 'saving');
+  report({ loaded: 5, total: 5, lengthComputable: true });
+  assert.equal(token.stage, 'saving');
+  session.packageLoad.finish(token);
+});
+
+test('incoming draft persistence failure retains outgoing state and selection', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  storage.importedWorksheets = { put: async () => {} };
+  storage.drafts.put = async value => {
+    if (value.localId !== 'old') throw new Error('Incoming quota failure');
+    return value;
+  };
+  const session = new mod.EditorDraftSession(storage);
+  session.state.draft = mod.createDraftRecord({ localId: 'old', title: 'Keep me' });
+  session.state.selectedBlockId = 'selection';
+  await assert.rejects(session.importWorksheetPackageFile({ arrayBuffer: async () => new ArrayBuffer(0) }, { convertToEditableDraft: true }), /Incoming quota failure/);
+  assert.equal(session.state.draft.localId, 'old');
+  assert.equal(session.state.draft.title, 'Keep me');
+  assert.equal(session.state.selectedBlockId, 'selection');
+  assert.equal(session.packageLoad.current, null);
+});
+
+test('edits made during incoming persistence are saved before committing replacement', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  storage.importedWorksheets = { put: async () => {} };
+  const session = new mod.EditorDraftSession(storage);
+  session.state.draft = mod.createDraftRecord({ localId: 'old', title: 'Before' });
+  const outgoingSaves = [];
+  storage.drafts.put = async value => {
+    if (value.localId === 'old') outgoingSaves.push(value.title);
+    else {
+      assert.equal(session.state.draft.localId, 'old');
+      session.state.draft.title = 'Edit while saving incoming';
+      session.state.draftRevision += 1;
+    }
+    return value;
+  };
+  await session.importWorksheetPackageFile({ arrayBuffer: async () => new ArrayBuffer(0) }, { convertToEditableDraft: true });
+  assert.equal(outgoingSaves.at(-1), 'Edit while saving incoming');
+  assert.notEqual(session.state.draft.localId, 'old');
+});
+
 function stripOptionIds(options = []) {
   return (Array.isArray(options) ? options : []).map((option) => ({
     value: option.value,
@@ -1438,7 +1554,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
   assert.equal(source.includes('} else if (reopenResult?.canceled) {'), true);
   assert.equal(source.includes('error: null,'), true);
-  assert.equal(source.includes("const openError = session.state.serverActionMessage || reopenResult?.error?.message || editorNotification('browsePublished.failedOpenPublishedPackage');"), true);
+  assert.equal(source.includes("const openError = reopenResult?.error?.message || session.state.serverActionMessage || editorNotification('browsePublished.failedOpenPublishedPackage');"), true);
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
   assert.equal(source.includes("summary.textContent = t('common.sections.details');"), true);

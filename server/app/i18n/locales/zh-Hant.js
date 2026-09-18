@@ -138,6 +138,8 @@ export default {
       "confirm": "開啟工作紙"
     },
     "packageLoad": {
+      "creating": "正在建立工作紙…",
+      "timeout": "下載已停頓。請檢查網絡連線，然後重新開啟工作紙。",
       "checking": "正在檢查…",
       "downloading": "正在下載…",
       "downloadingPercent": "正在下載… {percent}%",

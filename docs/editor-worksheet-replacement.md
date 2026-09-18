@@ -11,6 +11,9 @@ copy; it does not alter the uploaded draft or published package on the server.
 The outgoing worksheet is saved locally before import storage begins and again
 before the active draft switches, to include edits made during asynchronous
 loading. An outgoing save failure stops the switch and reports an error.
+The incoming draft is also persisted before becoming active. If that write fails,
+the outgoing worksheet and selection remain active. Incoming asset/import staging
+records may already exist; this is not an atomic transaction across all stores.
 Export remains the way to keep a portable backup.
 
 Legacy-audio migration confirmation is separate and remains supported.
@@ -27,6 +30,10 @@ is distinct from import completion; ZIP parsing and local storage can take longe
 
 Only one worksheet load runs at a time in an editor session. Other Open buttons,
 local import, New Worksheet and viewer navigation are disabled until it finishes.
+New Worksheet takes the same lock during deletion/creation, so a load cannot race
+an already-started reset. Downloads abort after 60 seconds without new bytes;
+each received chunk resets the inactivity timer. A timeout reports a retryable
+error and releases the load lock without replacing the active worksheet.
 Closing the list does not cancel an accepted load; reopening it restores the
 current progress. Failure releases the lock so the user can retry. Stage changes
 are announced through a live status without announcing every percentage.

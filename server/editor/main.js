@@ -1153,6 +1153,7 @@ class EditorDraftSession {
     this.apiClient = options.apiClient || createServerApiClient();
     this.resolveLegacyAudioMigration = options.resolveLegacyAudioMigration || showLegacyAudioMigrationDialog;
     this.packageLoad = new PackageLoadProgress();
+    this.packageDownloadIdleMs = options.packageDownloadIdleMs ?? 60_000;
     this.state = {
       draft: null,
       selectedBlockId: null,
@@ -1626,47 +1627,54 @@ class EditorDraftSession {
   }
 
   async startNewWorksheet() {
-    const previousDraft = this.state.draft;
-    const previousDraftId = previousDraft?.localId || null;
-    const referencedAssetIds = previousDraft ? Array.from(collectDraftQuestionAssetIds(previousDraft)) : [];
+    if (this.packageLoad.current) return null;
+    const loadToken = this.packageLoad.start('new');
+    this.packageLoad.update(loadToken, 'creating');
+    try {
+      const previousDraft = this.state.draft;
+      const previousDraftId = previousDraft?.localId || null;
+      const referencedAssetIds = previousDraft ? Array.from(collectDraftQuestionAssetIds(previousDraft)) : [];
 
-    clearTimeout(this.autosaveTimer);
-    this.autosaveTimer = null;
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
 
-    if (previousDraftId) {
-      this.autosaveGeneration += 1;
-      this.deletedDraftIds.add(previousDraftId);
-      await this.storage.drafts.remove(previousDraftId);
-      this.clearDeletedDraftTombstoneIfIdle(previousDraftId);
-    }
-
-    await Promise.all(referencedAssetIds.map(async (assetId) => {
-      try {
-        await this.storage.localAssets.remove(assetId);
-      } catch (error) {
-        console.warn('Unable to remove local asset while starting a new worksheet.', error);
+      if (previousDraftId) {
+        this.autosaveGeneration += 1;
+        this.deletedDraftIds.add(previousDraftId);
+        await this.storage.drafts.remove(previousDraftId);
+        this.clearDeletedDraftTombstoneIfIdle(previousDraftId);
       }
-    }));
 
-    const draft = createDraftRecord();
-    this.state.draft = draft;
-    this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
-    this.state.draftRevision = 1;
-    this.state.lastSavedRevision = 0;
-    this.state.lastSavedAt = null;
-    this.state.lastManualSaveAt = null;
-    this.state.lastExportedAt = null;
-    this.state.lastImportedAt = null;
-    this.state.lastPersistenceError = null;
-    this.state.lastValidationWarning = null;
-    this.state.lastContractValidationIssueCount = 0;
-    this.state.lastSavedLocalValidationIssueCount = 0;
-    this.state.isPristineDraft = true;
-    this.transientQuestionBlockIds.clear();
-    this.validateCurrentDraft();
-    this.scheduleAutosave();
-    this.persistRestoreMetadata();
-    return draft;
+      await Promise.all(referencedAssetIds.map(async (assetId) => {
+        try {
+          await this.storage.localAssets.remove(assetId);
+        } catch (error) {
+          console.warn('Unable to remove local asset while starting a new worksheet.', error);
+        }
+      }));
+
+      const draft = createDraftRecord();
+      this.state.draft = draft;
+      this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
+      this.state.draftRevision = 1;
+      this.state.lastSavedRevision = 0;
+      this.state.lastSavedAt = null;
+      this.state.lastManualSaveAt = null;
+      this.state.lastExportedAt = null;
+      this.state.lastImportedAt = null;
+      this.state.lastPersistenceError = null;
+      this.state.lastValidationWarning = null;
+      this.state.lastContractValidationIssueCount = 0;
+      this.state.lastSavedLocalValidationIssueCount = 0;
+      this.state.isPristineDraft = true;
+      this.transientQuestionBlockIds.clear();
+      this.validateCurrentDraft();
+      this.scheduleAutosave();
+      this.persistRestoreMetadata();
+      return draft;
+    } finally {
+      this.packageLoad.finish(loadToken);
+    }
   }
 
   updateTitle(nextTitle) {
@@ -3307,14 +3315,6 @@ class EditorDraftSession {
         return { importedRecord, draftRecord: null };
       }
 
-      // Imports may await asset storage while the user continues editing.
-      await stage('saving');
-      await this.saveBeforeWorksheetReplacement();
-      this.packageLoad.update(loadToken, 'opening');
-      clearTimeout(this.autosaveTimer);
-      this.autosaveTimer = null;
-      this.state.autosavePending = false;
-
       const draft = createDraftRecord({
       title: parsedPackage.worksheet.title || 'Imported worksheet',
       blocks: remappedBlocks,
@@ -3340,12 +3340,36 @@ class EditorDraftSession {
 
       const conversion = upgradeEditableBlocks(draft.blocks);
       draft.blocks = conversion.blocks;
-      this.state.draft = draft;
-      this.state.selectedBlockId = draft.blocks[0]?.blockId || null;
+      // Persist the incoming record without exposing it as the active worksheet.
+      // A quota/storage failure must leave the outgoing editor state intact.
+      const normalizedDraft = this.normalizeDraftForContracts(draft);
+      const { validateDraftSchema } = await loadContracts();
+      const contractValidation = validateDraftSchema(normalizedDraft);
+      const persisted = await this.storage.drafts.put(cloneDraftForPersistence({
+        ...draft,
+        contractDraft: normalizedDraft,
+        contractValidation,
+      }));
+      // Include edits made while asset/incoming-record persistence was pending.
+      await stage('saving');
+      await this.saveBeforeWorksheetReplacement();
+      this.packageLoad.update(loadToken, 'opening');
+      clearTimeout(this.autosaveTimer);
+      this.autosaveTimer = null;
+      this.state.draft = persisted;
+      this.state.selectedBlockId = persisted.blocks[0]?.blockId || null;
       this.state.draftRevision += 1;
+      this.state.lastSavedRevision = this.state.draftRevision;
+      this.state.lastSavedAt = persisted.metadata.updatedAt;
+      this.state.lastPersistenceError = null;
+      this.state.autosavePending = false;
       this.state.lastImportedAt = nowIso();
-      this.validateCurrentDraft();
-      await this.autosave();
+      this.state.lastSavedLocalValidationIssueCount = this.validateCurrentDraft().errors.length;
+      this.state.lastContractValidationIssueCount = contractValidation.errors.length;
+      this.state.lastValidationWarning = contractValidation.valid ? null
+        : `Draft saved locally with validation warnings (${contractValidation.errors.length}).`;
+      this.setNotificationForSource({ source: 'autosave.persistence', category: 'editor', kind: 'error', text: null });
+      this.setNotificationForSource({ source: 'autosave.validation', category: 'editor', kind: 'warn', text: this.state.lastValidationWarning });
       this.persistRestoreMetadata();
       const successMessage = editorNotification('import.importedPackageZip');
       this.pushNotification({ kind: 'success', category: 'editor', source: 'import.package_zip', text: successMessage });
@@ -3857,16 +3881,47 @@ class EditorDraftSession {
     }
   }
 
+  async downloadWorksheetArtifact(loadToken, fetchArtifact) {
+    const controller = new AbortController();
+    let timer, timedOut = false, finished = false, lastLoaded = 0;
+    let rejectTimeout;
+    const timeout = new Promise((_, reject) => { rejectTimeout = reject; });
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        rejectTimeout(new Error(t('editor.packageLoad.timeout')));
+      }, this.packageDownloadIdleMs);
+    };
+    resetTimer();
+    this.packageLoad.update(loadToken, 'downloading');
+    try {
+      return await Promise.race([timeout, fetchArtifact({
+        signal: controller.signal,
+        onProgress: progress => {
+          if (finished || timedOut || this.packageLoad.current !== loadToken) return;
+          if (Number(progress?.loaded) > lastLoaded) {
+            lastLoaded = Number(progress.loaded);
+            resetTimer();
+          }
+          this.packageLoad.update(loadToken, 'downloading', progress);
+        },
+      })]);
+    } finally {
+      finished = true;
+      clearTimeout(timer);
+    }
+  }
+
   async reopenUploadedDraftAsLocalCopy(uploadedDraftId) {
     if (this.packageLoad.current) return { ok: false, skipped: true };
     const loadToken = this.packageLoad.start(`uploaded:${uploadedDraftId}`);
     try {
       const sessionReady = await this.ensureServerSessionReady();
       if (!sessionReady.ok) return sessionReady.result;
-      this.packageLoad.update(loadToken, 'downloading');
-      const artifact = await this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId, {
-        onProgress: progress => this.packageLoad.update(loadToken, 'downloading', progress),
-      });
+      const artifact = await this.downloadWorksheetArtifact(loadToken,
+        options => this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId, options));
       if (!artifact.ok) {
         this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.open', text: artifact.error.message });
         this.notifyStateChange();
@@ -3909,10 +3964,8 @@ class EditorDraftSession {
     try {
       const sessionReady = await this.ensureServerSessionReady();
       if (!sessionReady.ok) return sessionReady.result;
-      this.packageLoad.update(loadToken, 'downloading');
-      const artifact = await this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, {
-        onProgress: progress => this.packageLoad.update(loadToken, 'downloading', progress),
-      });
+      const artifact = await this.downloadWorksheetArtifact(loadToken,
+        options => this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, options));
       if (!artifact.ok) {
         this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.open', text: artifact.error.message });
         this.notifyStateChange();
@@ -5601,7 +5654,7 @@ function renderEditorShell(session) {
               error: null,
             };
           } else {
-            const openError = session.state.serverActionMessage || reopenResult?.error?.message || editorNotification('browsePublished.failedOpenPublishedPackage');
+            const openError = reopenResult?.error?.message || session.state.serverActionMessage || editorNotification('browsePublished.failedOpenPublishedPackage');
             browsePublishedState = {
               ...browsePublishedState,
               error: openError,

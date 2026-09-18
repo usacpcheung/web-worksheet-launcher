@@ -70,9 +70,10 @@ try {
         await page.getByRole('button', { name: labels[source === 'published' ? 'editor.published.browse' : 'editor.uploadedDraft.manage'], exact: true }).click();
       };
       await openList();
-      for (const nextMode of ['invalid', 'unknown', 'known']) {
+      for (const nextMode of ['stalled', 'invalid', 'unknown', 'known']) {
         mode = nextMode; pending = null;
-        if (source === 'published' && nextMode === 'unknown') await page.locator('.browse-modal__search-btn').click();
+        await page.evaluate(mode => { window.editorSession.packageDownloadIdleMs = mode === 'stalled' ? 800 : 60000; }, mode);
+        if (source === 'published' && ['invalid', 'unknown'].includes(nextMode)) await page.locator('.browse-modal__search-btn').click();
         if (nextMode === 'known') await openList();
         const button = page.locator(`[data-editor-package-load="${source}:one"]`);
         await button.click();
@@ -102,6 +103,14 @@ try {
           }
         });
         pending.first();
+        if (mode === 'stalled') {
+          const originalId = await page.evaluate(() => window.editorSession.state.draft.localId);
+          await page.waitForFunction(() => !window.editorSession.packageLoad.current);
+          assert.equal(await page.evaluate(() => window.editorSession.state.draft.localId), originalId);
+          assert.equal(await page.getByRole('button', { name: labels['editor.actions.importPackage'], exact: true }).isEnabled(), true);
+          assert.match(await page.locator('body').innerText(), /Download stalled|下載已停頓/);
+          continue;
+        }
         if (mode === 'known') await page.waitForFunction(() => window.editorSession.packageLoad.current?.percent > 0);
         else await page.waitForTimeout(100);
         assert.equal(await page.evaluate(() => window.progressDomChecks.every(Boolean)), true);
