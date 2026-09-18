@@ -2251,12 +2251,6 @@ async function exitPublishedPlay() {
   showMessage({ textId: 'published.exited' });
 }
 
-async function openPublishedRolePlayScene(scene) {
-  const sceneId = getRolePlayScenePublishedSceneId(scene);
-  if (!sceneId) return;
-  return openPublishedRolePlaySceneById(sceneId, { scene });
-}
-
 async function openPublishedRolePlaySceneById(publishedSceneId, {
   scene = null,
   source = 'browse',

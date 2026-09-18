@@ -1419,7 +1419,7 @@ test('multiple-choice option audio controls gate placeholder options with helper
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.equal(source.includes('const persistedOptionIds = new Set(normalizedOptions.map((option) => String(option?.id || \'\')));'), true);
   assert.equal(source.includes('const isPersistedOption = persistedOptionIds.has(optionId);'), true);
-  assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("attachTrackBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("editorNotification('media.optionTextRequired')"), true);
 });
 
@@ -1472,11 +1472,9 @@ test('multiple-choice option actions include contextual generate/regenerate audi
     source,
     /const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey\s*\|\|\s*optionT2AInFlightKeys\.has\(optionT2AKey\);/
   );
-  assert.equal(source.includes("const optionT2ALabel = getEditorAudioGenerationLabel({"), true);
   assert.equal(source.includes('getEditorAudioGenerationLabel({'), true);
   assert.equal(source.includes("setMediaActionButtonContent("), true);
-  assert.equal(source.includes("optionT2ABtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;"), true);
-  assert.equal(source.includes("optionT2AInFlightKey = optionT2AKey;"), true);
+  assert.equal(source.includes("generateTrackBtn.disabled = !isPersistedOption || !optionTextEligibleForT2A || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("optionT2AInFlightKey = null;"), true);
   assert.equal(source.includes("actionId: 'editorOptionT2A'"), false);
   assert.equal(source.includes("await session.triggerProtectedAction('editorOptionT2A', {"), true);
@@ -1510,9 +1508,9 @@ test('stage3: in-flight lock is row-scoped by block/option key and leaves unrela
     source,
     /const isOptionT2AInFlight = optionT2AInFlightKey === optionT2AKey\s*\|\|\s*optionT2AInFlightKeys\.has\(optionT2AKey\);/
   );
-  assert.equal(source.includes("optionAudioBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
-  assert.equal(source.includes("playOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;"), true);
-  assert.equal(source.includes("removeOptionAudioBtn.disabled = !optionAudioRef || !isPersistedOption || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("attachTrackBtn.disabled = !isPersistedOption || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("playTrackBtn.disabled = !track || isOptionT2AInFlight;"), true);
+  assert.equal(source.includes("removeTrackBtn.disabled = !track || isOptionT2AInFlight;"), true);
   assert.equal(source.includes("await runMediaAction(async () => {\n            if (optionAudioRef)"), false);
   assert.equal(source.includes("await runMediaAction(async () => {\n        if (currentQuestionAudioRef)"), false);
   assert.equal(source.includes("status !== 'executed' && status !== 'redirected'"), true);
