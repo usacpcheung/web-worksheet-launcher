@@ -192,6 +192,26 @@ Recommended test work, in a separate coverage-focused PR:
   client authoring and server untrusted-upload validation are separate boundaries.
 - No whole test-file deletion is recommended in this audit.
 
+## Confirmation behavior coverage follow-up
+
+`scripts/roleplayscene-confirmation-smoke.mjs` exercises the real RolePlayScene
+entry and event handlers with synthetic local ZIP/JSON files, isolated browser
+contexts and real IndexedDB. It checks import and New Story confirmation,
+button/Escape cancellation, keyboard focus cycling, invalid JSON preservation
+and retry, candidate/old media URL cleanup, and confirmed state after reload.
+The matrix is English/Traditional Chinese at 1280px and 390px widths.
+
+Run a local `node scripts/static-server.mjs`, then in another terminal run
+`node scripts/roleplayscene-confirmation-smoke.mjs`. Override the default
+`http://127.0.0.1:8765` with `VIEWER_SMOKE_URL`; optional screenshots use
+`VIEWER_SMOKE_SCREENSHOTS` (choose a directory outside the repository).
+
+Keep `import-safety-source.test.mjs` and `new-story-source.test.mjs`: the new
+script is separate from the Node suite and does not yet cover unsaved discussion
+confirmation, toolbar ordering, or every structural guard. No existing test is
+removed. Server auth is mocked; live auth/provider requests, server-backed
+package loading and storage-write failure injection are outside this check.
+
 ## Proposed implementation order and gates
 
 1. **Small editor cleanup PR: A1 + A2 only.** Full Node suite, option-audio smoke,
