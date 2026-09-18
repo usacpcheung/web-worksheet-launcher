@@ -28,7 +28,7 @@ currently justified for deletion by this audit.
   against callbacks, immediately invoked functions, exports and tests.
 - Followed shared package/audio/voice consumers, legacy import paths, production
   artifact-store calls and selected source-string tests.
-- Ran `node --test "server/**/*.test.mjs"` on the unchanged baseline:
+- Ran `node --test "server/**/*.test.mjs"` using Node 24 on the unchanged baseline:
   **929 passed, 0 failed, 0 skipped**.
 
 This is a targeted static audit, not an exhaustive control-flow or production
@@ -187,8 +187,12 @@ git grep -n -E 'activePublishCount|optionAudioAttached|option-audio-attached'
 git grep -n -E 'getRolePlaySceneDraftArtifactBucket|getRolePlayScenePublishedArtifactBucket|createRolePlaySceneDraftArtifactStoreInput'
 git grep -n -E 'importProject|prepareProjectImport|applyPreparedProjectImport' -- server/roleplayscene scripts
 git grep -n -E 'roleplayscene-package\.js|worksheet-package\.js|answer-voice-workflow\.js' -- server scripts
-node --test "server/**/*.test.mjs"
+node --test
 ```
+
+Run these commands from the repository root. `node --test` uses built-in test
+discovery and also works on Node 20, whose test runner does not expand the quoted
+glob used in the original Node 24 audit run. Browser smoke scripts are separate.
 
 After adding this report, symbol searches also match this document; exclude
 `docs/` when comparing code-only references. Revalidate against the implementation
