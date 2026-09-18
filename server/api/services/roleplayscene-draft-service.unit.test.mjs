@@ -340,6 +340,7 @@ function createConflictRow(overrides = {}) {
 
 test('uploadRolePlaySceneDraft creates row and stores artifact in roleplayscene drafts bucket', async () => {
   const db = createFakeDb();
+  const zipBytes = createRolePlaySceneZip();
   let stored = null;
   const service = createService({
     db,
@@ -360,7 +361,7 @@ test('uploadRolePlaySceneDraft creates row and stores artifact in roleplayscene 
     identity,
     title: '',
     description: '',
-    zipBytes: createRolePlaySceneZip(),
+    zipBytes,
   });
 
   assert.equal(result.ok, true);
@@ -372,8 +373,13 @@ test('uploadRolePlaySceneDraft creates row and stores artifact in roleplayscene 
   assert.equal(result.data.media_count, 2);
   assert.equal(result.data.publish_state, 'draft_only');
   assert.deepEqual(result.data.warnings, []);
-  assert.equal(stored.ownerSub, 'oidc-sub');
-  assert.equal(stored.bucket, 'roleplayscene/drafts');
+  assert.ok(result.data.roleplayscene_uploaded_draft_id);
+  assert.deepEqual(stored, {
+    ownerSub: identity.sub,
+    bucket: 'roleplayscene/drafts',
+    artifactId: result.data.roleplayscene_uploaded_draft_id,
+    bytes: zipBytes,
+  });
 });
 
 test('uploadRolePlaySceneDraft rejects invalid packages before DB and artifact writes', async () => {
@@ -806,9 +812,14 @@ test('publishRolePlaySceneFromDraft copies artifact and updates uploaded draft m
   assert.equal(result.statusCode, 201);
   assert.equal(result.data.title, 'Published Clinic');
   assert.equal(result.data.source_roleplayscene_uploaded_draft_id, '550e8400-e29b-41d4-a716-446655440000');
-  assert.equal(stored.bucket, 'roleplayscene/published');
-  assert.equal(stored.ownerSub, 'oidc-sub');
-  assert.deepEqual(stored.bytes, zipBytes);
+  assert.ok(result.data.roleplayscene_published_scene_id);
+  assert.notEqual(result.data.roleplayscene_published_scene_id, result.data.source_roleplayscene_uploaded_draft_id);
+  assert.deepEqual(stored, {
+    ownerSub: identity.sub,
+    bucket: 'roleplayscene/published',
+    artifactId: result.data.roleplayscene_published_scene_id,
+    bytes: zipBytes,
+  });
   assert.equal(db.state.queries.some(sql => sql.includes('SET last_published_artifact_sha256')), true);
 });
 
