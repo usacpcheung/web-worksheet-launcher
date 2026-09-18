@@ -1,3 +1,4 @@
+import { PackageLoadProgress } from '../viewer/package-load-progress.js';
 import { editorStorage } from './storage/index.js';
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 import { createServerApiClient } from '../app/api/server-api-client.js';
@@ -1151,6 +1152,7 @@ class EditorDraftSession {
     this.storage = storage;
     this.apiClient = options.apiClient || createServerApiClient();
     this.resolveLegacyAudioMigration = options.resolveLegacyAudioMigration || showLegacyAudioMigrationDialog;
+    this.packageLoad = new PackageLoadProgress();
     this.state = {
       draft: null,
       selectedBlockId: null,
@@ -3186,11 +3188,21 @@ class EditorDraftSession {
   }
 
   async importWorksheetPackageFile(file, options = {}) {
+    if (this.packageLoad.current && this.packageLoad.current !== options.loadToken) {
+      return { canceled: true, importedRecord: null, draftRecord: null };
+    }
+    const loadToken = options.loadToken || this.packageLoad.start('local');
+    const stage = async name => {
+      this.packageLoad.update(loadToken, name);
+      // Give the status a rendering opportunity before synchronous ZIP parsing.
+      await new Promise(resolve => setTimeout(resolve, 0));
+    };
     try {
       if (!file || typeof file.arrayBuffer !== 'function') {
         throw new Error(editorNotification('import.zipRequired'));
       }
 
+      await stage('opening');
       const parsedPackage = parseWorksheetPackage(await file.arrayBuffer());
       const legacyTargets = collectLegacyAudioTargets(parsedPackage.worksheet.blocks);
       if (legacyTargets.length > 0) {
@@ -3207,7 +3219,11 @@ class EditorDraftSession {
         const referencedIds = collectDraftQuestionAssetIds({ blocks: migrated.blocks });
         parsedPackage.assets = parsedPackage.assets.filter((asset) => referencedIds.has(asset.assetId));
       }
-      if (options.convertToEditableDraft) await this.saveBeforeWorksheetReplacement();
+      if (options.convertToEditableDraft) {
+        await stage('saving');
+        await this.saveBeforeWorksheetReplacement();
+        await stage('opening');
+      }
       const importedLocalId = createLocalId('imported');
       const now = nowIso();
       const importedRecord = {
@@ -3292,7 +3308,9 @@ class EditorDraftSession {
       }
 
       // Imports may await asset storage while the user continues editing.
+      await stage('saving');
       await this.saveBeforeWorksheetReplacement();
+      this.packageLoad.update(loadToken, 'opening');
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
       this.state.autosavePending = false;
@@ -3343,6 +3361,8 @@ class EditorDraftSession {
       });
       this.notifyStateChange();
       throw error;
+    } finally {
+      if (!options.loadToken) this.packageLoad.finish(loadToken);
     }
   }
 
@@ -3838,27 +3858,36 @@ class EditorDraftSession {
   }
 
   async reopenUploadedDraftAsLocalCopy(uploadedDraftId) {
-    const sessionReady = await this.ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-    const artifact = await this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId);
-    if (!artifact.ok) {
-      this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.open', text: artifact.error.message });
+    if (this.packageLoad.current) return { ok: false, skipped: true };
+    const loadToken = this.packageLoad.start(`uploaded:${uploadedDraftId}`);
+    try {
+      const sessionReady = await this.ensureServerSessionReady();
+      if (!sessionReady.ok) return sessionReady.result;
+      this.packageLoad.update(loadToken, 'downloading');
+      const artifact = await this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId, {
+        onProgress: progress => this.packageLoad.update(loadToken, 'downloading', progress),
+      });
+      if (!artifact.ok) {
+        this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.open', text: artifact.error.message });
+        this.notifyStateChange();
+        return artifact;
+      }
+      const imported = await this.importWorksheetPackageFile(
+        createZipFileFromBytes(artifact.data, `uploaded-draft-${uploadedDraftId}.zip`),
+        { convertToEditableDraft: true, migrationSource: 'uploaded-draft', loadToken }
+      );
+      if (imported?.canceled) return { ok: false, canceled: true, error: { message: 'Opening canceled. No worksheet was imported or changed.' } };
+      this.pushNotification({
+        kind: 'success',
+        category: 'server',
+        source: 'uploadedDraft.open',
+        text: editorNotification('uploadDraft.openedAsLocalCopy', { id: uploadedDraftId }),
+      });
       this.notifyStateChange();
-      return artifact;
+      return { ok: true, data: imported };
+    } finally {
+      this.packageLoad.finish(loadToken);
     }
-    const imported = await this.importWorksheetPackageFile(
-      createZipFileFromBytes(artifact.data, `uploaded-draft-${uploadedDraftId}.zip`),
-      { convertToEditableDraft: true, migrationSource: 'uploaded-draft' }
-    );
-    if (imported?.canceled) return { ok: false, canceled: true, error: { message: 'Opening canceled. No worksheet was imported or changed.' } };
-    this.pushNotification({
-      kind: 'success',
-      category: 'server',
-      source: 'uploadedDraft.open',
-      text: editorNotification('uploadDraft.openedAsLocalCopy', { id: uploadedDraftId }),
-    });
-    this.notifyStateChange();
-    return { ok: true, data: imported };
   }
 
   async reopenPublishedPackageAsLocalCopy(publishedPackageId) {
@@ -3866,20 +3895,24 @@ class EditorDraftSession {
     if (!normalizedPublishedPackageId) {
       return { ok: false, error: { message: editorNotification('publishedPackage.idRequired') } };
     }
-    if (this.state.openingPublishedPackageIds.has(normalizedPublishedPackageId)) {
+    if (this.packageLoad.current || this.state.openingPublishedPackageIds.has(normalizedPublishedPackageId)) {
       return {
         ok: false,
         skipped: true,
         error: { message: editorNotification('publishedPackage.openAlreadyInProgress', { id: normalizedPublishedPackageId }) },
       };
     }
+    const loadToken = this.packageLoad.start(`published:${normalizedPublishedPackageId}`);
     this.state.openingPublishedPackageIds.add(normalizedPublishedPackageId);
     this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: editorNotification('publishedPackage.opening'), logActivity: false });
     this.notifyStateChange();
     try {
       const sessionReady = await this.ensureServerSessionReady();
       if (!sessionReady.ok) return sessionReady.result;
-      const artifact = await this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId);
+      this.packageLoad.update(loadToken, 'downloading');
+      const artifact = await this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, {
+        onProgress: progress => this.packageLoad.update(loadToken, 'downloading', progress),
+      });
       if (!artifact.ok) {
         this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.open', text: artifact.error.message });
         this.notifyStateChange();
@@ -3887,7 +3920,7 @@ class EditorDraftSession {
       }
       const imported = await this.importWorksheetPackageFile(
         createZipFileFromBytes(artifact.data, `published-package-${normalizedPublishedPackageId}.zip`),
-        { convertToEditableDraft: true, migrationSource: 'published-package' }
+        { convertToEditableDraft: true, migrationSource: 'published-package', loadToken }
       );
       if (imported?.canceled) {
         this.clearNotificationsBySource('publishedPackage.open');
@@ -3903,6 +3936,7 @@ class EditorDraftSession {
       return { ok: true, data: imported };
     } finally {
       this.state.openingPublishedPackageIds.delete(normalizedPublishedPackageId);
+      this.packageLoad.finish(loadToken);
       this.notifyStateChange();
     }
   }
@@ -4674,6 +4708,30 @@ function renderEditorShell(session) {
   let promptT2AUiRefs = null;
   let activeConfirmDialog = null;
   let mediaActionInFlight = false;
+  const loadStatus = document.createElement('p');
+  loadStatus.className = 'muted';
+  loadStatus.dataset.editorLoadStatus = '1';
+  loadStatus.setAttribute('role', 'status');
+  loadStatus.setAttribute('aria-live', 'polite');
+  const refreshPackageLoadControls = () => {
+    const progress = session.packageLoad.current;
+    const label = progress ? t(`editor.packageLoad.${progress.stage === 'downloading' && progress.percent !== null ? 'downloadingPercent' : progress.stage}`, { percent: progress.percent }) : '';
+    shell.querySelectorAll('[data-editor-package-load]').forEach(button => {
+      const active = progress?.id === button.dataset.editorPackageLoad;
+      button.disabled = Boolean(progress) || session.state.serverSession?.status !== 'ready';
+      button.textContent = active ? label : button.dataset.idleLabel;
+      button.setAttribute('aria-busy', active ? 'true' : 'false');
+      button.setAttribute('aria-label', active ? t(`editor.packageLoad.${progress.stage}`) : button.dataset.idleLabel);
+    });
+    importBtn.disabled = Boolean(progress);
+    startNewWorksheetBtn.disabled = Boolean(progress);
+    openViewerBtn.disabled = Boolean(progress);
+    const spoken = progress ? t(`editor.packageLoad.${progress.stage}`) : '';
+    shell.querySelectorAll('[data-editor-load-status]').forEach(status => {
+      if (status.textContent !== spoken) status.textContent = spoken;
+      status.hidden = !progress;
+    });
+  };
 
   const restoreLegacyPromptInFlightMarker = () => {
     promptT2AInFlightBlockId = promptT2AInFlightBlockIds.values().next().value || null;
@@ -5512,11 +5570,13 @@ function renderEditorShell(session) {
         const openInEditorBtn = document.createElement('button');
         openInEditorBtn.type = 'button';
         openInEditorBtn.className = 'uploaded-draft-action published-result-action';
+        openInEditorBtn.dataset.editorPackageLoad = `published:${item.published_package_id}`;
+        openInEditorBtn.dataset.idleLabel = t('editor.published.openInEditor');
         const isOpening = session.state.openingPublishedPackageIds.has(item.published_package_id);
         openInEditorBtn.textContent = isOpening ? t('editor.published.openingInEditor') : t('editor.published.openInEditor');
         openInEditorBtn.disabled = !serverReady || browsePublishedState.loading || isOpening;
         openInEditorBtn.addEventListener('click', async () => {
-          if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
+          if (session.packageLoad.current || session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
           const confirmed = await showConfirmDialog({
             title: t('editor.replaceWorksheet.title'),
             bodyText: t('editor.uploadedDraft.openDialog.description', { title: item.title || item.published_package_id }),
@@ -5524,7 +5584,7 @@ function renderEditorShell(session) {
             confirmLabel: t('editor.replaceWorksheet.confirm'),
             variant: 'warning',
           });
-          if (!confirmed) return;
+          if (!confirmed || session.packageLoad.current) return;
           const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);
           renderPublishedBrowserModal();
           const reopenResult = await reopenPromise.catch((error) => ({ ok: false, error: { message: error.message } }));
@@ -5603,8 +5663,10 @@ function renderEditorShell(session) {
     closeBtn.textContent = t('common.actions.close');
     actions.append(loadMoreBtn, refreshBtn, closeBtn);
     dialog.append(heading, filterRow, results, actions);
+    dialog.appendChild(loadStatus.cloneNode(false));
     overlay.appendChild(dialog);
     browsePublishedModalRoot.appendChild(overlay);
+    refreshPackageLoadControls();
 
     const captureFilters = () => {
       browsePublishedState = {
@@ -7485,9 +7547,12 @@ function renderEditorShell(session) {
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
       openBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
+      openBtn.dataset.editorPackageLoad = `uploaded:${item.uploaded_draft_id}`;
+      openBtn.dataset.idleLabel = t('common.actions.open');
       openBtn.textContent = t('common.actions.open');
       openBtn.disabled = !serverReady;
       openBtn.addEventListener('click', async () => {
+        if (session.packageLoad.current) return;
         const confirmed = await showConfirmDialog({
           title: t('editor.uploadedDraft.openDialog.title'),
           bodyText: t('editor.uploadedDraft.openDialog.description', { title: display.title }),
@@ -7495,13 +7560,10 @@ function renderEditorShell(session) {
           confirmLabel: t('editor.uploadedDraft.openDialog.confirm'),
           variant: 'warning',
         });
-        if (!confirmed) return;
+        if (!confirmed || session.packageLoad.current) return;
         let result;
         try {
-          result = await guardServerMenuAction(openBtn, async () => {
-            await session.flushLocalStateForAuthRedirect();
-            return session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
-          });
+          result = await session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
         } catch (error) {
           session.pushNotification({
             kind: 'error',
@@ -7644,8 +7706,10 @@ function renderEditorShell(session) {
     });
     actions.append(refreshBtn, closeBtn);
     dialog.append(heading, slotUsage, list, actions);
+    dialog.appendChild(loadStatus.cloneNode(false));
     overlay.appendChild(dialog);
     manageUploadedDraftsModalRoot.appendChild(overlay);
+    refreshPackageLoadControls();
     closeBtn.focus();
   }
 
@@ -7794,6 +7858,7 @@ function renderEditorShell(session) {
     manageUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;
     signInBtn.hidden = serverReady;
     if (manageUploadedDraftsDialogOpen) renderManageUploadedDraftsModal();
+    refreshPackageLoadControls();
   };
 
   session.setOnStateChange(() => {
@@ -7804,6 +7869,7 @@ function renderEditorShell(session) {
     if (manageUploadedDraftsDialogOpen) {
       renderManageUploadedDraftsModal();
     }
+    refreshPackageLoadControls();
   });
 
   titleInput.addEventListener('input', () => {
@@ -7833,6 +7899,7 @@ function renderEditorShell(session) {
     updateSummary();
   });
   startNewWorksheetBtn.addEventListener('click', async () => {
+    if (session.packageLoad.current) return;
     const confirmed = await showConfirmDialog({
       title: t('editor.newWorksheet.confirmTitle'),
       bodyText: t('editor.newWorksheet.confirmDescription'),
@@ -7843,7 +7910,7 @@ function renderEditorShell(session) {
       ],
       confirmLabel: t('editor.newWorksheet.confirmLabel'),
     });
-    if (!confirmed) return;
+    if (!confirmed || session.packageLoad.current) return;
     const nextDraft = await session.startNewWorksheet();
     if (nextDraft?.localId) {
       const nextUrl = new URL(window.location.href);
@@ -8102,6 +8169,7 @@ function renderEditorShell(session) {
     importFileInput.click();
   });
   importFileInput.addEventListener('change', async () => {
+    if (session.packageLoad.current) { importFileInput.value = ''; return; }
     const [file] = importFileInput.files || [];
     if (!file) return;
     const isZipFile = file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip';
@@ -8124,7 +8192,7 @@ function renderEditorShell(session) {
       confirmLabel: t('editor.replaceWorksheet.confirm'),
       variant: 'warning',
     });
-    if (!confirmed) {
+    if (!confirmed || session.packageLoad.current) {
       importFileInput.value = '';
       return;
     }
@@ -8252,8 +8320,11 @@ function renderEditorShell(session) {
   });
   topBar.append(saveStateEl, validationEl, lastSavedEl, localDraftIdEl, languageSelector);
   shell.append(topBar, layout);
+  shell.appendChild(loadStatus);
   shell.appendChild(browsePublishedModalRoot);
   shell.appendChild(manageUploadedDraftsModalRoot);
+  session.unsubscribeEditorPackageLoad?.();
+  session.unsubscribeEditorPackageLoad = session.packageLoad.subscribe(refreshPackageLoadControls);
   shell.appendChild(toastContainer);
   app.innerHTML = '';
   app.append(shell);

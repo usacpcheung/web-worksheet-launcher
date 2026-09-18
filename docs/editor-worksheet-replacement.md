@@ -17,9 +17,30 @@ Legacy-audio migration confirmation is separate and remains supported.
 New Worksheet retains its existing destructive-action confirmation.
 Viewer and RolePlayScene loading behavior is unchanged.
 
+## Download and opening feedback
+
+Uploaded-draft and published-package Open buttons show Checking, Downloading,
+Saving current worksheet and Opening stages. Download percentages appear only
+when the response supplies a usable uncompressed Content-Length. Otherwise the
+button shows Downloading without inventing a percentage. Download completion
+is distinct from import completion; ZIP parsing and local storage can take longer.
+
+Only one worksheet load runs at a time in an editor session. Other Open buttons,
+local import, New Worksheet and viewer navigation are disabled until it finishes.
+Closing the list does not cancel an accepted load; reopening it restores the
+current progress. Failure releases the lock so the user can retry. Stage changes
+are announced through a live status without announcing every percentage.
+
+The UI yields before parsing to give feedback a rendering opportunity. This is
+not a worker-based ZIP parser and does not guarantee smooth rendering throughout
+large synchronous decompression operations.
+
 ## Verification
 
 - `npm test`
+- `node scripts/editor-load-progress-smoke.mjs` (self-hosted streamed fixtures:
+  known/unknown size, invalid ZIP retry, shared lock, stable DOM during progress,
+  close/reopen, save-stage feedback, both locales and desktop/mobile).
 - `node scripts/editor-replacement-smoke.mjs` (set `VIEWER_SMOKE_URL` to the
   local static server; default for this script is `http://127.0.0.1:8892`).
 

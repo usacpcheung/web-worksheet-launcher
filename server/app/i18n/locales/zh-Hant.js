@@ -137,6 +137,13 @@ export default {
       "title": "要取代目前的工作紙嗎？",
       "confirm": "開啟工作紙"
     },
+    "packageLoad": {
+      "checking": "正在檢查…",
+      "downloading": "正在下載…",
+      "downloadingPercent": "正在下載… {percent}%",
+      "saving": "正在儲存目前的工作紙…",
+      "opening": "正在開啟…"
+    },
     "uploadedDraft": {
       "manage": "管理已上載草稿",
       "openDialog": {

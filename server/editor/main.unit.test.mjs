@@ -9,7 +9,7 @@ async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href));
 
-  const rewrittenSource = rewriteModuleSourceForTests(source, [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)), [
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
@@ -228,6 +228,51 @@ test('replacement saves edits made while the first save is pending', async () =>
   await session.saveBeforeWorksheetReplacement();
   assert.equal(saves, 2);
 });
+
+for (const source of ['uploaded', 'published']) {
+  for (const outcome of ['success', 'download-failure', 'throw', 'cancel', 'save-failure']) {
+    test(`${source} load progress releases the shared lock after ${outcome}`, async () => {
+      const mod = await loadEditorModule();
+      const session = new mod.EditorDraftSession(createSessionForTests());
+      session.state.draft = mod.createDraftRecord({ localId: 'old' });
+      session.ensureServerSessionReady = async () => ({ ok: true });
+      let finishDownload, report;
+      const download = new Promise(resolve => { finishDownload = resolve; });
+      const fetchArtifact = async (_id, options) => {
+        report = options.onProgress;
+        await download;
+        if (outcome === 'throw') throw new Error('Network failure');
+        return outcome === 'download-failure' ? { ok: false, error: { message: 'Download failed' } } : { ok: true, data: new Uint8Array([1]) };
+      };
+      session.apiClient.fetchUploadedDraftArtifact = session.apiClient.fetchPublishedPackageArtifact = fetchArtifact;
+      if (outcome === 'cancel') session.importWorksheetPackageFile = async () => ({ canceled: true });
+      if (outcome === 'save-failure') session.storage.drafts.put = async () => { throw new Error('Storage full'); };
+      const stages = [];
+      session.packageLoad.subscribe(progress => stages.push(progress?.stage || 'idle'));
+      const run = source === 'uploaded' ? session.reopenUploadedDraftAsLocalCopy('one') : session.reopenPublishedPackageAsLocalCopy('one');
+      await Promise.resolve();
+      assert.equal(session.packageLoad.current.stage, 'downloading');
+      report({ loaded: 25, total: 100, lengthComputable: true });
+      assert.equal(session.packageLoad.current.percent, 25);
+      report({ loaded: 25, total: 0, lengthComputable: false });
+      assert.equal(session.packageLoad.current.percent, null);
+      assert.equal((await session.reopenUploadedDraftAsLocalCopy('two')).skipped, true);
+      assert.equal((await session.reopenPublishedPackageAsLocalCopy('two')).skipped, true);
+      assert.equal((await session.importWorksheetPackageFile(null, { convertToEditableDraft: true })).canceled, true);
+      finishDownload();
+      if (outcome === 'throw' || outcome === 'save-failure') await assert.rejects(run);
+      else assert.equal((await run).ok, outcome === 'success');
+      assert.equal(session.packageLoad.current, null);
+      report({ loaded: 100, total: 100, lengthComputable: true });
+      assert.equal(session.packageLoad.current, null, 'late events cannot restore stale status');
+      if (outcome === 'success') {
+        assert.ok(stages.includes('saving'));
+        assert.ok(stages.includes('opening'));
+      } else assert.equal(session.state.draft.localId, 'old');
+      clearTimeout(session.autosaveTimer);
+    });
+  }
+}
 
 function stripOptionIds(options = []) {
   return (Array.isArray(options) ? options : []).map((option) => ({
@@ -1385,7 +1430,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("ownerFilter.placeholder = t('common.publishedBrowser.filterByOwnerEmail');"), true);
   assert.equal(source.includes("copyBtn.textContent = t('editor.published.copyViewerLink');"), true);
   assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? t('editor.published.openingInEditor') : t('editor.published.openInEditor');"), true);
-  assert.equal(source.includes('if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;'), true);
+  assert.equal(source.includes('if (session.packageLoad.current || session.state.openingPublishedPackageIds.has(item.published_package_id)) return;'), true);
   assert.equal(source.includes('const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);'), true);
   assert.equal(source.includes('const reopenResult = await reopenPromise.catch('), true);
   assert.equal(source.includes('if (browsePublishedDialogOpen) {\n      renderPublishedBrowserModal();\n    }'), true);
@@ -2171,7 +2216,7 @@ test('opening an uploaded draft confirms, saves pending edits, and closes its mo
   assert.match(source, /confirmLabel:\s*t\('editor\.uploadedDraft\.openDialog\.confirm'\)/);
   assert.match(source, /variant:\s*'warning'/);
   assert.match(source, /if \(!confirmed\) return;/);
-  assert.match(source, /await session\.flushLocalStateForAuthRedirect\(\);/);
+  assert.match(source, /await this\.saveBeforeWorksheetReplacement\(\);/);
   assert.match(source, /if \(result\?\.ok\)\s*\{\s*manageUploadedDraftsDialogOpen = false;/m);
 });
 

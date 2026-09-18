@@ -137,6 +137,13 @@ export default {
       "title": "Replace the current worksheet?",
       "confirm": "Open worksheet"
     },
+    "packageLoad": {
+      "checking": "Checking…",
+      "downloading": "Downloading…",
+      "downloadingPercent": "Downloading… {percent}%",
+      "saving": "Saving current worksheet…",
+      "opening": "Opening…"
+    },
     "uploadedDraft": {
       "manage": "Manage Uploaded Drafts",
       "openDialog": {

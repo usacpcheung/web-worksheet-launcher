@@ -505,8 +505,8 @@ function createServerApiClient() {
         signal: options.signal,
       });
     },
-    fetchUploadedDraftArtifact(uploadedDraftId) {
-      return requestZip(`/drafts/${uploadedDraftId}/artifact`);
+    fetchUploadedDraftArtifact(uploadedDraftId, options = {}) {
+      return requestZip(`/drafts/${uploadedDraftId}/artifact`, { ...options, requireIdentityEncoding: true });
     },
     deleteUploadedDraft(uploadedDraftId) {
       return requestJson(`/drafts/${uploadedDraftId}`, { method: 'DELETE' });
