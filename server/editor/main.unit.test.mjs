@@ -176,6 +176,59 @@ function createEmptyQuestionBlock`,
   return import(dataUrl);
 }
 
+for (const source of ['local', 'uploaded', 'published']) {
+  for (const failSave of [false, true]) {
+    test(`${source} replacement ${failSave ? 'stops on save failure' : 'saves pending edits before switching'}`, async () => {
+      const mod = await loadEditorModule();
+      const writes = [];
+      const storage = createSessionForTests();
+      storage.drafts.put = async value => {
+        if (failSave) throw new Error('Storage full');
+        writes.push(['draft', structuredClone(value)]);
+        return value;
+      };
+      storage.importedWorksheets = { put: async value => writes.push(['import', value]) };
+      const session = new mod.EditorDraftSession(storage);
+      session.state.draft = mod.createDraftRecord({ localId: 'outgoing', title: 'Unsaved edit' });
+      session.state.draftRevision = 2;
+      session.state.lastSavedRevision = 1;
+      session.ensureServerSessionReady = async () => ({ ok: true });
+      session.apiClient.fetchUploadedDraftArtifact = session.apiClient.fetchPublishedPackageArtifact = async () => ({ ok: true, data: new Uint8Array([1]) });
+      const run = () => source === 'local'
+        ? session.importWorksheetPackageFile({ arrayBuffer: async () => new ArrayBuffer(0) }, { convertToEditableDraft: true })
+        : source === 'uploaded' ? session.reopenUploadedDraftAsLocalCopy('draft1') : session.reopenPublishedPackageAsLocalCopy('pkg1');
+      if (failSave) {
+        await assert.rejects(run, /Storage full/);
+        assert.equal(session.state.draft.localId, 'outgoing');
+        assert.equal(session.state.draft.title, 'Unsaved edit');
+        assert.deepEqual(writes, []);
+      } else {
+        await run();
+        assert.equal(writes[0][0], 'draft');
+        assert.equal(writes[0][1].title, 'Unsaved edit');
+        assert.equal(writes[0][1].localId, 'outgoing');
+        assert.notEqual(session.state.draft.localId, 'outgoing');
+      }
+      clearTimeout(session.autosaveTimer);
+    });
+  }
+}
+
+test('replacement saves edits made while the first save is pending', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft = mod.createDraftRecord({ localId: 'outgoing' });
+  session.state.draftRevision = 1;
+  let saves = 0;
+  session.autosave = async () => {
+    session.state.lastSavedRevision = session.state.draftRevision;
+    if (++saves === 1) session.state.draftRevision += 1;
+    return session.state.draft;
+  };
+  await session.saveBeforeWorksheetReplacement();
+  assert.equal(saves, 2);
+});
+
 function stripOptionIds(options = []) {
   return (Array.isArray(options) ? options : []).map((option) => ({
     value: option.value,
@@ -1334,7 +1387,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes("openInEditorBtn.textContent = isOpening ? t('editor.published.openingInEditor') : t('editor.published.openInEditor');"), true);
   assert.equal(source.includes('if (session.state.openingPublishedPackageIds.has(item.published_package_id)) return;'), true);
   assert.equal(source.includes('const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);'), true);
-  assert.equal(source.includes('const reopenResult = await reopenPromise;'), true);
+  assert.equal(source.includes('const reopenResult = await reopenPromise.catch('), true);
   assert.equal(source.includes('if (browsePublishedDialogOpen) {\n      renderPublishedBrowserModal();\n    }'), true);
   assert.equal(source.includes('if (reopenResult?.ok) {'), true);
   assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
@@ -1930,7 +1983,7 @@ test('viewer navigation no longer uses hardcoded /viewer absolute assign path', 
 
 test('package import updates editor URL to imported local draft id', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
-  assert.equal(source.includes("const importResult = await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });"), true);
+  assert.equal(source.includes("importResult = await session.importWorksheetPackageFile(file, { convertToEditableDraft: true });"), true);
   assert.equal(source.includes("const importedLocalDraftId = importResult?.draftRecord?.localId || session.state.draft?.localId;"), true);
   assert.equal(source.includes("nextUrl.searchParams.set('localDraftId', importedLocalDraftId);"), true);
   assert.equal(source.includes("nextUrl.searchParams.delete('draftUpdatedAt');"), true);
