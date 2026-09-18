@@ -97,6 +97,20 @@ Line references below refer to the baseline commit, not future edits.
   be disproved locally. Confirm no external consumer relies on these names
   before removing exports. Bucket values, routes and storage layout must not change.
 
+#### B1 follow-up: production-call coverage first
+
+Rechecked against `main-v1` commit `7c76876`: the three helpers still have only
+test callers in this repository. External direct imports remain unconfirmed, so
+the helpers and their existing tests are retained. This follow-up is tests-only,
+not approval to remove the exports.
+
+The upload and publish service tests now assert the complete artifact-store
+input: owner, literal storage bucket, artifact ID matching the returned database
+record, and unchanged ZIP bytes. They also require nonempty record IDs and ensure
+the published artifact does not reuse the source draft ID. These checks exercise
+the public service operations rather than only the unused wrappers. No runtime,
+storage layout, package format or supported behavior changes are included.
+
 ### B2 — RolePlayScene `importProject` wrapper: test migration, not feature removal
 
 - [storage](../server/roleplayscene/scripts/storage.js), lines 684–688, wraps

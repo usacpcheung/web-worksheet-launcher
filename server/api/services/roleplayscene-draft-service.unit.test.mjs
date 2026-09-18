@@ -340,12 +340,14 @@ function createConflictRow(overrides = {}) {
 
 test('uploadRolePlaySceneDraft creates row and stores artifact in roleplayscene drafts bucket', async () => {
   const db = createFakeDb();
+  const zipBytes = createRolePlaySceneZip();
+  const expectedBytes = Uint8Array.from(zipBytes);
   let stored = null;
   const service = createService({
     db,
     artifactStore: {
       async storeArtifact(input) {
-        stored = input;
+        stored = { ...input, bytes: Uint8Array.from(input.bytes) };
         return {
           artifactPath: 'roleplayscene/drafts/oidc-sub/new.zip',
           absolutePath: '/tmp/new.zip',
@@ -360,7 +362,7 @@ test('uploadRolePlaySceneDraft creates row and stores artifact in roleplayscene 
     identity,
     title: '',
     description: '',
-    zipBytes: createRolePlaySceneZip(),
+    zipBytes,
   });
 
   assert.equal(result.ok, true);
@@ -372,8 +374,13 @@ test('uploadRolePlaySceneDraft creates row and stores artifact in roleplayscene 
   assert.equal(result.data.media_count, 2);
   assert.equal(result.data.publish_state, 'draft_only');
   assert.deepEqual(result.data.warnings, []);
-  assert.equal(stored.ownerSub, 'oidc-sub');
-  assert.equal(stored.bucket, 'roleplayscene/drafts');
+  assert.ok(result.data.roleplayscene_uploaded_draft_id);
+  assert.deepEqual(stored, {
+    ownerSub: identity.sub,
+    bucket: 'roleplayscene/drafts',
+    artifactId: result.data.roleplayscene_uploaded_draft_id,
+    bytes: expectedBytes,
+  });
 });
 
 test('uploadRolePlaySceneDraft rejects invalid packages before DB and artifact writes', async () => {
@@ -775,6 +782,7 @@ test('listOwnRolePlaySceneDrafts excludes artifact_path and includes publish_sta
 
 test('publishRolePlaySceneFromDraft copies artifact and updates uploaded draft marker', async () => {
   const zipBytes = createPublishableRolePlaySceneZip();
+  const expectedBytes = Uint8Array.from(zipBytes);
   const db = createPublishDb();
   let stored = null;
   const service = createService({
@@ -785,7 +793,7 @@ test('publishRolePlaySceneFromDraft copies artifact and updates uploaded draft m
         return zipBytes;
       },
       async storeArtifact(input) {
-        stored = input;
+        stored = { ...input, bytes: Uint8Array.from(input.bytes) };
         return {
           artifactPath: 'roleplayscene/published/new.zip',
           absolutePath: '/tmp/new.zip',
@@ -806,9 +814,14 @@ test('publishRolePlaySceneFromDraft copies artifact and updates uploaded draft m
   assert.equal(result.statusCode, 201);
   assert.equal(result.data.title, 'Published Clinic');
   assert.equal(result.data.source_roleplayscene_uploaded_draft_id, '550e8400-e29b-41d4-a716-446655440000');
-  assert.equal(stored.bucket, 'roleplayscene/published');
-  assert.equal(stored.ownerSub, 'oidc-sub');
-  assert.deepEqual(stored.bytes, zipBytes);
+  assert.ok(result.data.roleplayscene_published_scene_id);
+  assert.notEqual(result.data.roleplayscene_published_scene_id, result.data.source_roleplayscene_uploaded_draft_id);
+  assert.deepEqual(stored, {
+    ownerSub: identity.sub,
+    bucket: 'roleplayscene/published',
+    artifactId: result.data.roleplayscene_published_scene_id,
+    bytes: expectedBytes,
+  });
   assert.equal(db.state.queries.some(sql => sql.includes('SET last_published_artifact_sha256')), true);
 });
 
