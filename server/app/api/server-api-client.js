@@ -488,8 +488,8 @@ function createServerApiClient() {
       if (authFlowId) query.authFlowId = authFlowId;
       return buildAppUrl(DEFAULT_SIGN_IN_POPUP_PATH, Object.keys(query).length > 0 ? query : null);
     },
-    getSession() {
-      return requestJson('/session');
+    getSession(options = {}) {
+      return requestJson('/session', { signal: options.signal });
     },
     listUploadedDrafts() {
       return requestJson('/drafts');
@@ -505,8 +505,8 @@ function createServerApiClient() {
         signal: options.signal,
       });
     },
-    fetchUploadedDraftArtifact(uploadedDraftId) {
-      return requestZip(`/drafts/${uploadedDraftId}/artifact`);
+    fetchUploadedDraftArtifact(uploadedDraftId, options = {}) {
+      return requestZip(`/drafts/${uploadedDraftId}/artifact`, { ...options, requireIdentityEncoding: true });
     },
     deleteUploadedDraft(uploadedDraftId) {
       return requestJson(`/drafts/${uploadedDraftId}`, { method: 'DELETE' });

@@ -682,6 +682,13 @@ textarea.control {
   flex: 0 0 auto;
 }
 
+.uploaded-draft-action[data-editor-package-load] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+
 .uploaded-draft-action--primary {
   background: #eff6ff;
   border-color: #93c5fd;
@@ -1952,3 +1959,15 @@ textarea.control {
 .editor-text-preview--prompt { font-weight: 500; }
 .editor-text-preview[hidden],#editor-block-editor[hidden] { display: none !important; }
 .editor-text-preview-toggle:focus-visible,.editor-text-help summary:focus-visible,.editor-text-preview:focus-visible { outline: 2px solid #4263eb; outline-offset: 2px; }
+
+/* After action variants: unavailable actions are neutral, with readable progress. */
+:is(.uploaded-draft-action, .sidebar-action-btn, .icon-btn,
+    .confirm-modal__btn, .browse-modal__search-btn, .option-add-btn,
+    .id-copy-menu__copy, .block-reorder-menu__item):disabled {
+  color: #667085;
+  background: #f2f4f7;
+  border-color: #d0d5dd;
+  opacity: 1;
+  box-shadow: none;
+  cursor: default;
+}

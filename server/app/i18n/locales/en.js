@@ -137,6 +137,16 @@ export default {
       "title": "Replace the current worksheet?",
       "confirm": "Open worksheet"
     },
+    "packageLoad": {
+      "sessionTimeout": "Session check timed out. Refresh your server session and try again.",
+      "creating": "Creating worksheet…",
+      "timeout": "Download stalled. Check your connection and try opening the worksheet again.",
+      "checking": "Checking…",
+      "downloading": "Downloading…",
+      "downloadingPercent": "Downloading… {percent}%",
+      "saving": "Saving current worksheet…",
+      "opening": "Opening…"
+    },
     "uploadedDraft": {
       "manage": "Manage Uploaded Drafts",
       "openDialog": {

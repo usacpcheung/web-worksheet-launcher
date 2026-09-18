@@ -15,6 +15,36 @@ function setTestWindow(search = '') {
   };
 }
 
+test('session requests forward cancellation without changing the endpoint', async (t) => {
+  setTestWindow();
+  const controller = new AbortController();
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, '/api/worksheet-launcher/v1/session');
+    assert.equal(options.signal, controller.signal);
+    assert.equal(options.credentials, 'include');
+    return mockJsonResponse(200, { ok: true, data: { user: { sub: 'test' } } });
+  });
+  assert.equal((await createServerApiClient().getSession({ signal: controller.signal })).ok, true);
+});
+
+test('uploaded draft downloads report streamed progress and omit unsafe compressed percentages', async () => {
+  setTestWindow();
+  for (const encoding of [null, 'gzip']) {
+    const events = [];
+    globalThis.fetch = async () => new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new Uint8Array([1, 2]));
+      controller.enqueue(new Uint8Array([3, 4]));
+      controller.close();
+    } }), { headers: { 'content-type': 'application/zip', 'content-length': '4', ...(encoding ? { 'content-encoding': encoding } : {}) } });
+    const result = await createServerApiClient().fetchUploadedDraftArtifact('draft1', { onProgress: event => events.push(event) });
+    assert.equal(result.ok, true);
+    assert.deepEqual(Array.from(result.data), [1, 2, 3, 4]);
+    assert.deepEqual(events.map(event => event.loaded), [2, 4]);
+    assert.equal(events[0].lengthComputable, !encoding);
+    assert.equal(events[0].total, encoding ? 0 : 4);
+  }
+});
+
 test('createServerApiClient uses production public base path by default', async () => {
   setTestWindow();
   globalThis.fetch = async () => mockJsonResponse(200, { ok: true, data: { ready: true } });

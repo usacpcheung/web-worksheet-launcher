@@ -2288,6 +2288,17 @@ input[type='text']::placeholder {
 .viewer-voice-recovery textarea { width: 100%; box-sizing: border-box; margin-bottom: 8px; }
 .viewer-voice [hidden], .viewer-voice-status[hidden], .viewer-voice[hidden] { display: none !important; }
 .viewer-voice .icon-nav-btn, .viewer-voice-status .icon-nav-btn { min-height: 44px; }
+/* Scope to actions, not answer choices: completed-review selection stays visible. */
+:is(.uploaded-draft-action, .confirm-modal__btn,
+    .viewer-details-form__save, .viewer-details-list__copy,
+    .viewer-details-modal__close):disabled {
+  color: #667085;
+  background: #f2f4f7;
+  border-color: #d0d5dd;
+  opacity: 1;
+  box-shadow: none;
+  cursor: default;
+}
 @media (max-width: 520px) {
   .question-card__rewrite-row { display: grid; grid-template-columns: 1.3fr 1fr .8fr; width: 100%; }
   .question-card__rewrite-row .icon-nav-btn { min-width: 0; padding-inline: 8px; }

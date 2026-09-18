@@ -12,6 +12,39 @@ test.beforeEach(() => {
   __resetSessionProbeStateForTests();
 });
 
+test('bounded probes bypass stalled shared requests, abort and permit retry without late cache writes', async () => {
+  let finishShared, finishExpired, expiredSignal;
+  const shared = probeSession({ apiClient: { getSession: () => new Promise(resolve => { finishShared = resolve; }) } });
+  const expired = await probeSession({ timeoutMs: 10, apiClient: {
+    getSession: ({ signal }) => {
+      expiredSignal = signal;
+      return new Promise(resolve => { finishExpired = resolve; });
+    },
+  } });
+  assert.equal(expired.error.code, 'SESSION_PROBE_TIMEOUT');
+  assert.equal(expiredSignal.aborted, true);
+  const ready = { ok: true, data: { user: { id: 'current' } } };
+  const retry = await probeSession({ timeoutMs: 50, apiClient: { getSession: async () => ready } });
+  assert.equal(retry.user.id, 'current');
+  finishShared(ready);
+  await shared;
+  finishExpired({ ok: false, error: { status: 401, message: 'Expired old response' } });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const cached = await probeSession({ apiClient: { getSession: () => { throw new Error('Should use cache'); } } });
+  assert.equal(cached.user.id, 'current');
+});
+
+test('bounded probes normalize rejection and do not abort completed requests', async () => {
+  let signal;
+  const result = await probeSession({ timeoutMs: 10, apiClient: {
+    getSession: async options => { signal = options.signal; throw new Error('offline'); },
+  } });
+  assert.equal(result.status, 'error');
+  assert.equal(result.error.message, 'offline');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(signal.aborted, false);
+});
+
 test('probeSession normalizes ready session', async () => {
   const apiClient = {
     getSession: async () => ({ ok: true, data: { user: { id: 'u_1' } } }),

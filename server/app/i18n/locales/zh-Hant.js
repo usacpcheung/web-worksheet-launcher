@@ -137,6 +137,16 @@ export default {
       "title": "要取代目前的工作紙嗎？",
       "confirm": "開啟工作紙"
     },
+    "packageLoad": {
+      "sessionTimeout": "登入狀態檢查已逾時。請重新整理伺服器登入狀態，然後再試。",
+      "creating": "正在建立工作紙…",
+      "timeout": "下載已停頓。請檢查網絡連線，然後重新開啟工作紙。",
+      "checking": "正在檢查…",
+      "downloading": "正在下載…",
+      "downloadingPercent": "正在下載… {percent}%",
+      "saving": "正在儲存目前的工作紙…",
+      "opening": "正在開啟…"
+    },
     "uploadedDraft": {
       "manage": "管理已上載草稿",
       "openDialog": {

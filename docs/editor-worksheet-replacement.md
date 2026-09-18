@@ -11,15 +11,52 @@ copy; it does not alter the uploaded draft or published package on the server.
 The outgoing worksheet is saved locally before import storage begins and again
 before the active draft switches, to include edits made during asynchronous
 loading. An outgoing save failure stops the switch and reports an error.
+The incoming draft is also persisted before becoming active. If that write fails,
+the outgoing worksheet and selection remain active. Incoming asset/import staging
+records may already exist; this is not an atomic transaction across all stores.
 Export remains the way to keep a portable backup.
 
 Legacy-audio migration confirmation is separate and remains supported.
 New Worksheet retains its existing destructive-action confirmation.
+If deleting the current draft fails, it remains active and autosaving resumes;
+the error is shown without deleting its media or switching worksheets.
 Viewer and RolePlayScene loading behavior is unchanged.
+
+## Download and opening feedback
+
+Uploaded-draft and published-package Open buttons show Checking, Downloading,
+Saving current worksheet and Opening stages. Download percentages appear only
+when the response supplies a usable uncompressed Content-Length. Otherwise the
+button shows Downloading without inventing a percentage. Download completion
+is distinct from import completion; ZIP parsing and local storage can take longer.
+
+Only one worksheet load runs at a time in an editor session. Other Open buttons,
+local import, New Worksheet and viewer navigation are disabled until it finishes.
+New Worksheet takes the same lock during deletion/creation, so a load cannot race
+an already-started reset. Downloads abort after 60 seconds without new bytes;
+each received chunk resets the inactivity timer. A timeout reports a retryable
+error and releases the load lock without replacing the active worksheet.
+Closing the list does not cancel an accepted load; reopening it restores the
+current progress. Failure releases the lock so the user can retry. Stage changes
+are announced through a live status without announcing every percentage.
+Only the persistent shell status is a live region; duplicate text inside package
+list dialogs is visual-only, preventing duplicate stage announcements.
+The pre-download session check has a separate 15-second timeout and an owned,
+abortable request, so it cannot join an already stalled shared session probe.
+Timeout releases the load lock and leaves the current worksheet intact. Late
+responses cannot resume that load or update the shared session cache. Other
+products retain their existing session-probe behavior.
+
+The UI yields before parsing to give feedback a rendering opportunity. This is
+not a worker-based ZIP parser and does not guarantee smooth rendering throughout
+large synchronous decompression operations.
 
 ## Verification
 
 - `npm test`
+- `node scripts/editor-load-progress-smoke.mjs` (self-hosted streamed fixtures:
+  known/unknown size, invalid ZIP retry, shared lock, stable DOM during progress,
+  close/reopen, save-stage feedback, both locales and desktop/mobile).
 - `node scripts/editor-replacement-smoke.mjs` (set `VIEWER_SMOKE_URL` to the
   local static server; default for this script is `http://127.0.0.1:8892`).
 
