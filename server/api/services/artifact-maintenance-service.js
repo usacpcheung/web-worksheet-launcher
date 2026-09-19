@@ -720,8 +720,3 @@ export class ArtifactMaintenanceService {
     }
   }
 }
-
-export const ARTIFACT_MAINTENANCE_DEFAULTS = {
-  orphanMinAgeMs: DEFAULT_ORPHAN_MIN_AGE_MS,
-  retentionMs: DEFAULT_RETENTION_MS,
-};
