@@ -1,4 +1,5 @@
 import { PackageLoadProgress } from '../viewer/package-load-progress.js';
+import { attachBlockDragReorder } from './block-drag-reorder.js';
 import { editorStorage } from './storage/index.js';
 import { SharedAuthGate } from '../app/auth/shared-auth-gate.js';
 import { createServerApiClient } from '../app/api/server-api-client.js';
@@ -4512,6 +4513,7 @@ class EditorDraftSession {
 }
 
 function renderEditorShell(session) {
+  session.cancelBlockDrag?.();
   if (!app) return;
 
   const shell = document.createElement('div');
@@ -5995,7 +5997,6 @@ function renderEditorShell(session) {
     updateNumberValidationFeedback(selectedBlock);
   };
 
-  let draggedBlockId = null;
   let closeActiveBlockReorderMenu = null;
   let activeBlockReorderAnchor = null;
   const reorderStatus = document.createElement('span');
@@ -6106,12 +6107,14 @@ function renderEditorShell(session) {
     dialog.showModal();
     select.focus();
   };
-  const clearBlockDragState = () => {
-    blockList.querySelectorAll('.block-item--dragging, .block-item--drop-before, .block-item--drop-after')
-      .forEach((node) => {
-        node.classList.remove('block-item--dragging', 'block-item--drop-before', 'block-item--drop-after');
-      });
-  };
+  const blockDrag = attachBlockDragReorder(blockList, {
+    getBlocks: orderedBlocks,
+    getDraftId: () => session.state.draft?.localId,
+    onMove: (id, index) => moveBlock(id, index, '.block-drag-handle'),
+    onFinish: () => updateSummary(),
+    onStart: () => closeBlockReorderMenu(),
+  });
+  session.cancelBlockDrag = blockDrag.cancel;
   const closeBlockReorderMenu = () => {
     if (typeof closeActiveBlockReorderMenu === 'function') {
       closeActiveBlockReorderMenu();
@@ -6242,6 +6245,10 @@ function renderEditorShell(session) {
   };
 
   const renderBlockList = () => {
+    // Autosave/status updates must not remove the native drag source. A real
+    // worksheet/order change cancels the gesture rather than applying a stale drop.
+    if (blockDrag.active && blockDrag.current()) return;
+    blockDrag.cancel();
     // The menu lives under document.body, not blockList. Capture its owning
     // trigger before rebuilding rows so background saves cannot strand focus.
     const focused = blockList.contains(document.activeElement) ? document.activeElement
@@ -6273,49 +6280,6 @@ function renderEditorShell(session) {
       dragHandle.innerHTML = createEditorIcon('grip');
       dragHandle.addEventListener('click', (event) => {
         event.stopPropagation();
-      });
-      dragHandle.addEventListener('dragstart', (event) => {
-        draggedBlockId = block.blockId;
-        item.classList.add('block-item--dragging');
-        if (event.dataTransfer) {
-          event.dataTransfer.effectAllowed = 'move';
-          event.dataTransfer.setData('text/plain', block.blockId);
-        }
-      });
-      dragHandle.addEventListener('dragend', () => {
-        draggedBlockId = null;
-        clearBlockDragState();
-      });
-      item.addEventListener('dragover', (event) => {
-        if (!draggedBlockId || draggedBlockId === block.blockId) return;
-        event.preventDefault();
-        blockList.querySelectorAll('.block-item--drop-before, .block-item--drop-after')
-          .forEach((node) => {
-            if (node !== item) node.classList.remove('block-item--drop-before', 'block-item--drop-after');
-          });
-        const rect = item.getBoundingClientRect();
-        const dropAfter = event.clientY > rect.top + rect.height / 2;
-        item.classList.toggle('block-item--drop-before', !dropAfter);
-        item.classList.toggle('block-item--drop-after', dropAfter);
-        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-      });
-      item.addEventListener('dragleave', () => {
-        item.classList.remove('block-item--drop-before', 'block-item--drop-after');
-      });
-      item.addEventListener('drop', (event) => {
-        if (!draggedBlockId || draggedBlockId === block.blockId) return;
-        event.preventDefault();
-        const sourceIndex = blocks.findIndex((entry) => entry.blockId === draggedBlockId);
-        if (sourceIndex < 0) return;
-        const rect = item.getBoundingClientRect();
-        const dropAfter = event.clientY > rect.top + rect.height / 2;
-        let targetIndex = dropAfter ? index + 1 : index;
-        if (sourceIndex < targetIndex) targetIndex -= 1;
-        targetIndex = Math.max(0, Math.min(targetIndex, blocks.length - 1));
-        session.reorderBlockToIndex(draggedBlockId, targetIndex);
-        draggedBlockId = null;
-        clearBlockDragState();
-        updateSummary();
       });
       const button = document.createElement('button');
       button.type = 'button';
