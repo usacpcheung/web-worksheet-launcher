@@ -99,22 +99,43 @@ try {
       await page.waitForFunction(() => window.editorSession?.state.draft?.blocks.length === 18);
       assert.deepEqual(await order(), expected, 'drag order persists');
       // Synthetic events supplement native drags for asynchronous state changes.
-      for (const change of ['external', 'order', 'draft']) {
+      for (const change of ['unchanged', 'external', 'order', 'draft']) {
         const result = await page.evaluate(change => {
           const s = window.editorSession;
+          // Reset every case so the control and stale drops use the same source
+          // and destination, rather than accidentally testing a no-op move.
+          s.state.draft.blocks = structuredClone(window.dragFixtureBlocks ||= s.state.draft.blocks);
+          s.touchDraft();
           const list = document.querySelector('.block-list');
+          list.scrollTop = 0;
+          list.scrollIntoView({ block: 'center' });
+          const destination = list.children[3].getBoundingClientRect();
+          const clientX = destination.left + destination.width / 2;
+          const clientY = destination.bottom - 3;
+          const hit = document.elementFromPoint(clientX, clientY);
+          if (clientY < 0 || clientY >= innerHeight || !hit || !list.children[3].contains(hit)) {
+            throw new Error('Stale-drop fixture destination must be visible and hit-testable');
+          }
           const transfer = new DataTransfer();
           if (change !== 'external') list.querySelector('.block-drag-handle').dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
-          if (change === 'order') s.reorderBlockToIndex(s.state.draft.blocks[0].blockId, 2);
+          if (change === 'order') s.reorderBlockToIndex(s.state.draft.blocks[0].blockId, 1);
           if (change === 'draft') { s.state.draft.localId += '-replacement'; s.touchDraft(); }
           const before = s.state.draft.blocks.map(b => b.blockId);
-          const rect = list.getBoundingClientRect();
-          const init = { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: rect.x + 40, clientY: rect.y + 5 };
+          const init = { bubbles: true, cancelable: true, dataTransfer: transfer, clientX, clientY };
           list.dispatchEvent(new DragEvent('dragover', init));
-          list.dispatchEvent(new DragEvent('drop', init));
-          return { before, after: s.state.draft.blocks.map(b => b.blockId), markers: list.querySelectorAll('.block-item--dragging, .block-item--drop-before, .block-item--drop-after').length };
+          const drop = new DragEvent('drop', init);
+          list.dispatchEvent(drop);
+          return { before, after: s.state.draft.blocks.map(b => b.blockId), accepted: drop.defaultPrevented, markers: list.querySelectorAll('.block-item--dragging, .block-item--drop-before, .block-item--drop-after').length };
         }, change);
-        assert.deepEqual(result.after, result.before, `${change} cannot apply a stale/unrelated drop`);
+        if (change === 'unchanged') {
+          const moved = result.before.slice();
+          moved.splice(3, 0, moved.shift());
+          assert.deepEqual(result.after, moved, 'control drop moves the first block to position four');
+          assert.equal(result.accepted, true);
+        } else {
+          assert.deepEqual(result.after, result.before, `${change} cannot apply a stale/unrelated drop`);
+          assert.equal(result.accepted, false, `${change} drop is rejected, not just a no-op`);
+        }
         assert.equal(result.markers, 0);
       }
       assert.deepEqual(errors, []);
