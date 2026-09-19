@@ -286,3 +286,33 @@ glob used in the original Node 24 audit run. Browser smoke scripts are separate.
 After adding this report, symbol searches also match this document; exclude
 `docs/` when comparing code-only references. Revalidate against the implementation
 PR baseline; the evidence above is pinned to the stated commit.
+
+## Broader audit follow-up: unused DOM helpers and defaults export
+
+Baseline and rollback point: `d767c8aa056e4b78934d79b2bd91cf481d06f745`
+(main-v1 after PR #292).
+
+- Remove only `server/roleplayscene/scripts/utils/dom.js`, an unreferenced module
+  containing `$`, `$$` and `h`, and the unused `ARTIFACT_MAINTENANCE_DEFAULTS`
+  export from `server/api/services/artifact-maintenance-service.js`.
+- Tracked source/script searches found no imports of the DOM module and no
+  consumers of the exported defaults object. RolePlayScene loads its bootstrap
+  and main entry scripts; no dynamic loader for this helper was found.
+- Keep `ArtifactMaintenanceService`, its CLI and tests, and the internal
+  `DEFAULT_ORPHAN_MIN_AGE_MS` / `DEFAULT_RETENTION_MS` constants used directly by
+  its constructor. No operational defaults, UI flows, formats or tests change.
+- Targeted local source searches in the bridge, separate RolePlayScene,
+  sims-uploader and TeachingRelatedAppAndSite directories found no references.
+  This does not establish coverage of every external project or ignored file.
+- User-supplied VPS evidence on a clean `main-v1` at `fcc15df` searched source
+  and deployment config under `/opt`, `/var/www`, `/usr/local/bin`,
+  `/etc/systemd/system` and `/etc/apache2`, excluding dependencies, Git metadata
+  and review worktrees. The only matches were the defaults declaration and CLI
+  / unit-test imports of `ArtifactMaintenanceService` inside this repository.
+  No DOM-module reference appeared. The two reported broken sims-uploader
+  service links are unrelated and were not changed. PR #292 only changed the
+  test harness, so the older VPS baseline does not change these caller findings.
+- Evidence is bounded to these searches, not all hosts or dynamically assembled
+  external imports. No deployment has been performed for this removal; live QA
+  remains a deployment gate. Run the full Node and all retained-product browser
+  smoke suites before merging, and record results in the implementation PR.
