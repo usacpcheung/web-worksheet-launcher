@@ -327,6 +327,35 @@ body {
 .block-reorder-menu {
   position: fixed;
   z-index: 1000;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+}
+
+.editor-reorder-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+dialog.editor-block-position-dialog {
+  box-sizing: border-box;
+  width: min(540px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  color: inherit;
+}
+
+.editor-block-position-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.editor-block-position-dialog::backdrop {
+  background: rgb(15 23 42 / 40%);
 }
 
 .block-reorder-menu__body {
