@@ -1,5 +1,8 @@
 # Post-retirement code and test cleanup audit
 
+> Current development branch: `main` (renamed from `main-v1` after PR #293).
+> The filename and historical branch/commit references are retained for traceability.
+
 ## Decision and scope
 
 **Removal follow-up (baseline `3a97931`, 2026-09-19):** after the coverage work
@@ -233,7 +236,7 @@ package loading and storage-write failure injection are outside this check.
 4. **Coverage modernization**, only after the above: replace selected brittle
    source assertions with behavior checks, separately from functional fixes.
 
-Each implementation PR should start from current `main-v1`, record the exact
+Each new implementation PR should start from current `main`, record the exact
 deletion scope and retained behavior, pass CodeQL/review gates and report untested
 areas. If a real bug is uncovered, stop classifying it as cleanup and propose a
 focused fix with regression coverage. Keep rollback at a small PR/commit boundary.

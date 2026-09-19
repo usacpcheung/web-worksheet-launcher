@@ -2,6 +2,13 @@
 
 Worksheet editor, learner viewer, and RolePlayScene authoring/playback with shared authentication, publishing, voice and AI services.
 
+## Development branch
+
+The default branch is `main`, renamed from `main-v1` after PR #293 without
+changing the application content. Base new work and pull requests on `main`.
+Historical documents retain their original branch names and commit IDs; those
+references are not instructions to use an old branch or rollback commit today.
+
 ## Product entry points
 
 - Editor: `server/editor/index.html`

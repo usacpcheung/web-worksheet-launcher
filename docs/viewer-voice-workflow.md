@@ -1,7 +1,8 @@
 # PR 2: incremental voice answers
 
-Base: `main-v1`, after voice foundation PR #272 (`9ee9304`). Keep this PR on
-`codex/viewer-voice-workflow` until review and VPS/device acceptance are complete.
+Historical implementation base: `main-v1`, after voice foundation PR #272
+(`9ee9304`); the implementation branch was `codex/viewer-voice-workflow`.
+The feature is merged. New changes target `main`, renamed after PR #293.
 Do not merge or deploy automatically.
 
 ## Learner behavior
@@ -109,6 +110,8 @@ and mobile Chrome. Live provider calls require explicit authorization.
 - Inspect VPS service/proxy logs for request failures without sharing learner
   content or credentials. Confirm existing worksheet, audio and RolePlayScene flows.
 
-Rollback during acceptance: return the VPS checkout to the previously validated
-`main-v1` revision (`9ee9304`) and use the normal service/cache refresh procedure.
-This PR introduces no database migration to reverse.
+Historical acceptance rollback used the then-validated `main-v1` revision
+`9ee9304`; this is not a current deployment rollback recommendation. For a new
+deployment, record and use its own previously validated commit and the normal
+service/cache refresh procedure. The original voice PR introduced no database
+migration to reverse.

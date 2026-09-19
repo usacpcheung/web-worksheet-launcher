@@ -1,8 +1,11 @@
 # Widget retirement: Step 2
 
-This code-only PR is stacked on Step 1 (#279). It must not change any function
-of the worksheet editor, viewer or RolePlayScene. Both PRs remain unmerged
-during validation; this document does not authorize a VPS deployment.
+This document records the completed Step 2 retirement, originally stacked on
+Step 1 (#279). References to the original PR sequence, test counts and `main-v1`
+below are historical. New work targets `main`, renamed after PR #293.
+The compatibility boundaries remain current: do not change any function of the
+worksheet editor, viewer or RolePlayScene. This document does not authorize a
+VPS deployment.
 
 ## Exact deletion scope and code evidence
 
@@ -70,8 +73,9 @@ fixture server. No live credentials, API services or production data were used.
   IDs, viewer voice, native music navigation and RolePlayScene voice.
 - Verify product/shared runtime diffs against #279 are empty. The only changed
   file under the retained product trees is the boundary test itself.
-- Review CI and PR findings. Merge #279 before this PR; retarget this PR to
-  `main-v1` and rerun checks before its merge. Do not bypass branch protections.
+- Original merge gate: review CI and PR findings, merge #279 first, retarget
+  Step 2 to the then-default `main-v1`, and rerun checks. For new work, target
+  `main`. Do not bypass branch protections.
 
 Local browser checks use isolated storage and synthetic API/microphone fixtures;
 they do not prove live OIDC, upstream AI providers or real-device mic behavior.
