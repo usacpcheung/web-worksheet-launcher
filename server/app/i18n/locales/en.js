@@ -531,7 +531,15 @@ export default {
       "moveDown": "Move down",
       "moveDownTitle": "Move block {index} down",
       "moveUp": "Move up",
-      "moveUpTitle": "Move block {index} up"
+      "moveUpTitle": "Move block {index} up",
+      "beginning": "Move to beginning",
+      "end": "Move to end",
+      "position": "Move to position…",
+      "positionTitle": "Move block {index}",
+      "positionLabel": "Final position (all blocks)",
+      "positionHelp": "Content and questions share one sequence. Other blocks keep their relative order.",
+      "move": "Move",
+      "moved": "Block moved to position {index} of {total}"
     },
     "status": {
       "selectedBlock": "Selected block {value}"
