@@ -1,6 +1,6 @@
 # Widget retirement: Step 1 regression boundary
 
-> Historical Step 1 baseline. Step 2 is stacked on its branch before merge;
+> Historical Step 1 baseline. Step 2 was stacked on its branch before merge;
 > see [the approved removal scope](widget-removal-step2.md) for the current
 > state. The evidence below describes the files before their retirement.
 
@@ -60,7 +60,7 @@ These are review targets, not permission to delete everything they mention:
 | `docs/popup-compatibility-regression-checks.md` | Replace or archive only the checks for the explicitly retired surface. |
 | `docs/adr-phase1-worksheet-model.md`, `docs/task-parent-launcher-cleanup.md`, `docs/temp-plan-viewer-rewrite-editor-t2a-not-final.md` | Label historical context rather than silently rewriting decisions. |
 
-## Gate for Step 2
+## Historical gate for Step 2
 
 Merge in dependency order after checks pass; Step 2 may be developed stacked
 on this tests/documentation-only PR while main-v1 remains unchanged. A separate approved
