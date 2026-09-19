@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  createRolePlaySceneDraftArtifactStoreInput,
   DEFAULT_ROLEPLAYSCENE_PACKAGE_LIMITS,
-  getRolePlaySceneDraftArtifactBucket,
-  getRolePlayScenePublishedArtifactBucket,
   ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET,
   ROLEPLAYSCENE_PUBLISHED_ARTIFACT_BUCKET,
   ROLEPLAYSCENE_PACKAGE_FORMAT,
@@ -480,24 +477,10 @@ test('validateRolePlayScenePackage allows extra unreferenced media', () => {
 });
 
 test('RolePlayScene draft artifact bucket stays isolated from worksheet buckets', () => {
-  assert.equal(getRolePlaySceneDraftArtifactBucket(), 'roleplayscene/drafts');
-  assert.equal(getRolePlayScenePublishedArtifactBucket(), 'roleplayscene/published');
+  assert.equal(ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET, 'roleplayscene/drafts');
   assert.equal(ROLEPLAYSCENE_PUBLISHED_ARTIFACT_BUCKET, 'roleplayscene/published');
   assert.equal(ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET.includes('drafts'), true);
   assert.notEqual(ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET, 'drafts');
   assert.notEqual(ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET, 'attempts');
   assert.notEqual(ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET, 'published');
-
-  const input = createRolePlaySceneDraftArtifactStoreInput({
-    identity: { sub: 'owner-sub' },
-    uploadedDraftId: 'draft-id',
-    zipBytes: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
-  });
-
-  assert.deepEqual(input, {
-    ownerSub: 'owner-sub',
-    bucket: 'roleplayscene/drafts',
-    artifactId: 'draft-id',
-    bytes: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
-  });
 });

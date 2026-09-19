@@ -2,8 +2,14 @@
 
 ## Decision and scope
 
+**Removal follow-up (baseline `3a97931`, 2026-09-19):** after the coverage work
+in PRs #288–#290 and the local/VPS consumer checks below, the four B1/B2 exports
+are removed in this follow-up. Earlier sections describe the historical audit
+and deferral decisions; the retained production functions and compatibility
+formats remain unchanged.
+
 Baseline: `173d09811128d2a6cd04342385f72aee4cb712dc` (`main-v1`, after PRs
-#279–#285). This PR changes documentation only. It does not approve deletion,
+#279–#285). The original audit PR changed documentation only. It did not approve deletion,
 change runtime behavior, remove tests, or authorize deployment.
 
 **Invariant:** preserve every supported worksheet editor, viewer and RolePlayScene
@@ -35,7 +41,7 @@ This is a targeted static audit, not an exhaustive control-flow or production
 coverage analysis. It does not establish whether externally hosted modules,
 deployment scripts outside Git, all dynamic selectors, every locale key or every
 CSS rule are unused. No browser tests, live provider requests, database operations
-or VPS checks were run for this documentation-only PR.
+or VPS checks were run for the original documentation-only audit PR.
 
 ## Candidates supported by code evidence
 
@@ -233,6 +239,35 @@ areas. If a real bug is uncovered, stop classifying it as cleanup and propose a
 focused fix with regression coverage. Keep rollback at a small PR/commit boundary.
 
 ## Reproducible checks
+
+### B1/B2 final consumer check and removal scope
+
+- Rechecked tracked source/scripts on `3a97931`: the three B1 helpers were
+  referenced only by their package-unit test; the B2 wrapper had no remaining
+  caller. Production draft/publish services import bucket constants directly;
+  RolePlayScene local/server imports use prepare/apply functions. Module imports
+  are not evidence of calls to these particular exports.
+- Searched available sibling local projects for helper names and cross-repo
+  module references. The separate `roleplayscene` project uses its own storage
+  module and wrapper, not this repository's exports; it is not changed here.
+- User-supplied VPS output showed a clean `main-v1` checkout at `3a97931`, with
+  the API service running `/opt/web-worksheet-launcher/server/api/server.js`.
+  The scan covered JS/MJS/TS, shell, service and conf files under `/opt`,
+  `/var/www`, `/usr/local/bin`, `/etc/systemd/system` and `/etc/apache2`, excluding
+  dependencies, Git metadata and review worktrees. Matches were confined to
+  this checkout. Two broken `sims-uploader` service symlinks were reported;
+  those unrelated services were not repaired or changed.
+- This is bounded evidence, not proof about every external host, cached client,
+  dynamically constructed import or file type/path outside the scan. The user
+  approved the narrow removal after reviewing the VPS output.
+- Remove only `getRolePlaySceneDraftArtifactBucket`,
+  `getRolePlayScenePublishedArtifactBucket`,
+  `createRolePlaySceneDraftArtifactStoreInput`, and `importProject`.
+  Keep bucket constants and their direct isolation assertions, production
+  artifact-input coverage, prepare/apply, all legacy formats and browser guards.
+  No route, schema, storage path, authentication, bridge or UI changes.
+
+### Commands
 
 ```sh
 git rev-parse HEAD

@@ -236,23 +236,6 @@ function validateRolePlaySceneBubbleConfig(project) {
   return { errors, warnings };
 }
 
-export function getRolePlaySceneDraftArtifactBucket() {
-  return ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET;
-}
-
-export function getRolePlayScenePublishedArtifactBucket() {
-  return ROLEPLAYSCENE_PUBLISHED_ARTIFACT_BUCKET;
-}
-
-export function createRolePlaySceneDraftArtifactStoreInput({ identity, uploadedDraftId, zipBytes }) {
-  return {
-    ownerSub: identity?.sub,
-    bucket: ROLEPLAYSCENE_DRAFT_ARTIFACT_BUCKET,
-    artifactId: uploadedDraftId,
-    bytes: zipBytes,
-  };
-}
-
 export function rewriteRolePlayScenePackageTitle(zipBytes, title, options = {}) {
   const files = parseZipEntries(zipBytes, options);
   const manifest = parseJsonEntry(files, MANIFEST_PATH, {
