@@ -6240,7 +6240,11 @@ function renderEditorShell(session) {
   };
 
   const renderBlockList = () => {
-    const focused = blockList.contains(document.activeElement) ? document.activeElement : null;
+    // The menu lives under document.body, not blockList. Capture its owning
+    // trigger before rebuilding rows so background saves cannot strand focus.
+    const focused = blockList.contains(document.activeElement) ? document.activeElement
+      : activeBlockReorderAnchor && document.activeElement?.closest('.block-reorder-menu')
+        ? activeBlockReorderAnchor : null;
     const focusedId = focused?.closest('.block-item')?.dataset.blockId;
     const focusedClass = focused?.classList.contains('block-drag-handle') ? '.block-drag-handle'
       : focused?.classList.contains('block-select') ? '.block-select'

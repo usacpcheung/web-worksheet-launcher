@@ -38,6 +38,16 @@ try {
       const order = () => page.evaluate(() => window.editorSession.state.draft.blocks.map(block => block.blockId));
       const open = async id => { await row(id).locator('.block-reorder-trigger').click(); await menu().waitFor(); };
       await open(0);
+      await page.evaluate(() => window.editorSession.autosave());
+      await menu().waitFor({ state: 'detached' });
+      assert.equal(await row(0).locator('.block-reorder-trigger').evaluate(el => el === document.activeElement), true,
+        'autosave restores focus to the rebuilt menu trigger');
+      await page.keyboard.press('Enter');
+      await menu().waitFor();
+      await page.evaluate(() => window.editorSession.notifyStateChange());
+      assert.equal(await row(0).locator('.block-reorder-trigger').evaluate(el => el === document.activeElement), true,
+        'other background refreshes preserve the keyboard continuation point');
+      await open(0);
       assert.equal(await menu().getByRole('menuitem', { name: labels.beginning, exact: true }).isDisabled(), true);
       await menu().getByRole('menuitem', { name: labels.end, exact: true }).click();
       assert.equal((await order()).at(-1), 'reorder-0');
@@ -79,6 +89,9 @@ try {
       const before = await order();
       const text = page.locator('textarea:visible').first();
       await text.focus();
+      await page.evaluate(() => window.editorSession.notifyStateChange());
+      assert.equal(await text.evaluate(el => document.activeElement === el), true,
+        'background updates do not steal focus from the detail editor');
       await page.keyboard.press('Control+Shift+ArrowDown');
       assert.deepEqual(await order(), before, 'text-field shortcuts do not move blocks');
       assert.equal(await page.evaluate(() => {
