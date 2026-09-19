@@ -846,7 +846,7 @@ function updateServerSessionUi() {
     serverManageButton.textContent = isLoadingUploadedDrafts ? translate('server.refreshing') : translate('server.manage');
   }
   if (serverBrowsePublishedButton) {
-    serverBrowsePublishedButton.disabled = isLoadingPublishedScenes;
+    serverBrowsePublishedButton.disabled = isLoadingPublishedScenes || Boolean(openingUploadedDraft);
     serverBrowsePublishedButton.textContent = isLoadingPublishedScenes ? translate('published.refreshing') : translate('published.browse');
   }
   updatePublishedPlayUi();
@@ -1969,6 +1969,31 @@ function getUploadedDraftOpenButtonLabel(uploadedDraftId) {
 
 function syncUploadedDraftActionAvailability() {
   const draftOpenInProgress = Boolean(openingUploadedDraft);
+  if (btnImport) btnImport.disabled = draftOpenInProgress;
+  if (btnNewStory) btnNewStory.disabled = draftOpenInProgress;
+  if (serverBrowsePublishedButton) {
+    serverBrowsePublishedButton.disabled = draftOpenInProgress || isLoadingPublishedScenes;
+    serverBrowsePublishedButton.textContent = translate(isLoadingPublishedScenes ? 'published.refreshing' : 'published.browse');
+  }
+  serverModalBody?.querySelectorAll('.published-browser-filters input, .published-browser-filters button, [data-published-delete]').forEach(control => {
+    control.disabled = draftOpenInProgress || isLoadingPublishedScenes;
+  });
+  serverModalActions?.querySelectorAll('[data-published-list-action]').forEach(control => {
+    control.disabled = draftOpenInProgress || isLoadingPublishedScenes
+      || (control.dataset.publishedListAction === 'more' && !publishedScenesHasMore);
+    if (control.dataset.publishedListAction === 'refresh') {
+      control.textContent = translate(isLoadingPublishedScenes ? 'published.refreshing' : 'published.refresh');
+    }
+  });
+  serverModalBody?.querySelectorAll('[data-published-edit-id]').forEach(button => {
+    button.disabled = draftOpenInProgress;
+    const active = openingUploadedDraft?.published
+      && openingUploadedDraft.uploadedDraftId === button.dataset.publishedEditId;
+    button.textContent = active
+      ? getUploadedDraftOpenButtonLabel(openingUploadedDraft.uploadedDraftId)
+      : translate('published.editCopy');
+    button.setAttribute('aria-busy', String(Boolean(active)));
+  });
   if (serverSaveButton) serverSaveButton.disabled = isUploadingDraft || draftOpenInProgress;
   if (serverManageButton) serverManageButton.disabled = isLoadingUploadedDrafts || draftOpenInProgress;
   const refreshButton = serverModalActions?.querySelector('.uploaded-drafts-refresh-action');
@@ -2113,10 +2138,14 @@ function renderPublishedSceneRows(container, scenes) {
     });
     const downloadButton = createButton(translate('published.download'));
     downloadButton.addEventListener('click', () => downloadPublishedRolePlayScene(scene));
-    actions.append(playLink, copyLinkButton, downloadButton);
+    const editCopyButton = createButton(translate('published.editCopy'));
+    editCopyButton.dataset.publishedEditId = sceneId;
+    editCopyButton.addEventListener('click', () => openUploadedRolePlaySceneDraft(scene, { published: true }));
+    actions.append(playLink, editCopyButton, copyLinkButton, downloadButton);
     const currentUserSub = serverSession.user?.sub || '';
     if (currentUserSub && scene?.owner_sub === currentUserSub) {
       const deleteButton = createButton(translate('published.delete'), 'server-danger-action');
+      deleteButton.dataset.publishedDelete = 'true';
       deleteButton.addEventListener('click', () => deletePublishedRolePlayScene(scene));
       actions.appendChild(deleteButton);
     }
@@ -2124,6 +2153,7 @@ function renderPublishedSceneRows(container, scenes) {
     list.appendChild(row);
   });
   container.appendChild(list);
+  syncUploadedDraftActionAvailability();
 }
 
 function renderPublishedBrowserModal() {
@@ -2146,10 +2176,11 @@ function renderPublishedBrowserModal() {
       ownerInput.setAttribute('aria-label', translate('published.ownerLabel'));
       const searchButton = createButton(translate('published.search'), 'confirm-actions__primary');
       searchButton.type = 'submit';
-      searchButton.disabled = isLoadingPublishedScenes;
+      searchButton.disabled = isLoadingPublishedScenes || Boolean(openingUploadedDraft);
       form.append(queryInput, ownerInput, searchButton);
       form.addEventListener('submit', (event) => {
         event.preventDefault();
+        if (openingUploadedDraft || isLoadingPublishedScenes) return;
         publishedScenesFilters = {
           ...publishedScenesFilters,
           q: String(queryInput.value || '').trim(),
@@ -2166,12 +2197,14 @@ function renderPublishedBrowserModal() {
     actions: [
       {
         label: isLoadingPublishedScenes ? translate('published.refreshing') : translate('published.refresh'),
-        disabled: isLoadingPublishedScenes,
+        disabled: isLoadingPublishedScenes || Boolean(openingUploadedDraft),
+        className: 'published-refresh-action',
         onClick: () => loadPublishedRolePlaySceneScenes({ preflight: true, showBrowser: true }),
       },
       {
         label: translate('published.loadMore'),
-        disabled: isLoadingPublishedScenes || !publishedScenesHasMore,
+        disabled: isLoadingPublishedScenes || Boolean(openingUploadedDraft) || !publishedScenesHasMore,
+        className: 'published-more-action',
         onClick: () => loadPublishedRolePlaySceneScenes({ preflight: true, append: true, showBrowser: true }),
       },
       {
@@ -2181,6 +2214,11 @@ function renderPublishedBrowserModal() {
       },
     ],
   });
+  const refresh = serverModalActions?.querySelector('.published-refresh-action');
+  const more = serverModalActions?.querySelector('.published-more-action');
+  if (refresh) refresh.dataset.publishedListAction = 'refresh';
+  if (more) more.dataset.publishedListAction = 'more';
+  syncUploadedDraftActionAvailability();
 }
 
 async function loadPublishedRolePlaySceneScenes({
@@ -2188,7 +2226,7 @@ async function loadPublishedRolePlaySceneScenes({
   append = false,
   showBrowser = false,
 } = {}) {
-  if (isLoadingPublishedScenes) {
+  if (isLoadingPublishedScenes || openingUploadedDraft) {
     return { ok: false, skipped: true, status: 'already_loading' };
   }
   const requestId = ++publishedScenesRequestId;
@@ -2202,18 +2240,19 @@ async function loadPublishedRolePlaySceneScenes({
       const sessionReady = await ensureServerSessionReady();
       if (!sessionReady.ok) return sessionReady.result;
     }
+    if (requestId !== publishedScenesRequestId) return { ok: false, skipped: true, status: 'stale_response' };
     const offset = append ? Number(publishedScenesNextOffset || publishedScenes.length || 0) : 0;
     const result = await apiClient.listRolePlayScenePublishedScenes({
       ...publishedScenesFilters,
       limit: 20,
       offset,
     });
+    if (requestId !== publishedScenesRequestId) {
+      return { ok: false, skipped: true, status: 'stale_response' };
+    }
     if (!result.ok) {
       showMessage({ text: getServerErrorMessage(result, 'published.listFailed') });
       return result;
-    }
-    if (requestId !== publishedScenesRequestId) {
-      return { ok: false, skipped: true, status: 'stale_response' };
     }
     const incoming = Array.isArray(result.data?.items) ? result.data.items : [];
     publishedScenes = append ? [...publishedScenes, ...incoming] : incoming;
@@ -2385,6 +2424,7 @@ async function downloadPublishedRolePlayScene(scene) {
 }
 
 async function deletePublishedRolePlayScene(scene) {
+  if (openingUploadedDraft) return;
   const sceneId = getRolePlayScenePublishedSceneId(scene);
   if (!sceneId) return;
   const choice = await showDeletePublishedSceneConfirmation(scene);
@@ -2586,22 +2626,36 @@ async function publishUploadedRolePlaySceneDraft(draft) {
   }
 }
 
-async function openUploadedRolePlaySceneDraft(draft) {
-  const uploadedDraftId = getRolePlaySceneDraftId(draft);
+async function openUploadedRolePlaySceneDraft(draft, { published = false } = {}) {
+  const uploadedDraftId = published ? getRolePlayScenePublishedSceneId(draft) : getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId || openingUploadedDraft) return;
-  openingUploadedDraft = { uploadedDraftId, phase: 'downloading', percent: null };
+  const operation = { uploadedDraftId, published, phase: 'downloading', percent: null };
+  openingUploadedDraft = operation;
+  // Invalidate requests started before the copy lock, including responses that
+  // arrive after cancellation/success has already released that lock.
+  publishedScenesRequestId++;
+  isLoadingPublishedScenes = false;
   syncUploadedDraftActionAvailability();
   let preparedImport = null;
   try {
     if (!(await ensureDiscussionCanBeDiscarded())) return;
     const sessionReady = await ensureServerSessionReady();
     if (!sessionReady.ok) return;
-    showMessage({ textId: 'server.openingDraft' });
-    const artifact = await apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId, {
+    showMessage({ textId: published ? 'published.opening' : 'server.openingDraft' });
+    const fetchArtifact = published
+      ? apiClient.fetchRolePlayScenePublishedSceneArtifact.bind(apiClient)
+      : apiClient.fetchRolePlaySceneDraftArtifact.bind(apiClient);
+    const artifact = await fetchArtifact(uploadedDraftId, {
       onProgress: (progress) => {
+        if (openingUploadedDraft !== operation || operation.phase !== 'downloading') return;
         const loaded = Number(progress?.loaded || 0);
         const total = Number(progress?.total || 0);
-        if (!progress?.lengthComputable || total <= 0) return;
+        if (!progress?.lengthComputable || !Number.isFinite(total) || total <= 0
+          || !Number.isFinite(loaded) || loaded < 0 || loaded > total) {
+          openingUploadedDraft.percent = null;
+          syncUploadedDraftActionAvailability();
+          return;
+        }
         const percent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
         if (openingUploadedDraft?.percent === percent) return;
         if (openingUploadedDraft?.uploadedDraftId !== uploadedDraftId) return;
@@ -2610,7 +2664,7 @@ async function openUploadedRolePlaySceneDraft(draft) {
       },
     });
     if (!artifact.ok) {
-      showMessage({ text: getServerErrorMessage(artifact, 'server.openFailed') });
+      showMessage({ text: getServerErrorMessage(artifact, published ? 'published.openFailed' : 'server.openFailed') });
       return;
     }
     if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
@@ -2622,6 +2676,13 @@ async function openUploadedRolePlaySceneDraft(draft) {
       artifact.data,
       `${sanitizeFilename(draft?.title, 'roleplayscene-draft')}.zip`,
     ));
+    if (published) {
+      const suffixLength = translate('published.copyTitle', { title: '' }).length;
+      preparedImport.project.meta.title = translate('published.copyTitle', {
+        title: String(preparedImport.project.meta.title || draft?.title || translate('published.values.untitledScene'))
+          .slice(0, Math.max(0, 120 - suffixLength)),
+      });
+    }
     closeServerModal('import-confirm');
     const shouldImport = await confirmProjectImport();
     if (!shouldImport) {
@@ -2630,6 +2691,22 @@ async function openUploadedRolePlaySceneDraft(draft) {
       return;
     }
     discardDiscussion();
+    if (published) {
+      // Direct published links deliberately skip local persistence at startup.
+      // Reconnect it only after the user accepts replacing their local story.
+      if (getDirectPublishedSceneIdFromLocation()) {
+        persistenceCleanup();
+        persistenceCleanup = await setupPersistence(store, { showMessage });
+        directLaunch.abortController?.abort();
+        finishDirectLaunch();
+        globalThis.history?.replaceState?.(null, '', buildRolePlaySceneEditorUrl());
+      }
+      if (teardown) { teardown(); teardown = null; }
+      if (publishedPlay.preparedImport?.project) revokeProjectObjectUrls(publishedPlay.preparedImport.project);
+      publishedPlay = { active: false, store: null, preparedImport: null, scene: null, source: '' };
+      editorPreview = null;
+      editorSession = { selectedSceneId: null, leftView: 'storyMap', selectedSpeechBubbleAnchorId: null };
+    }
     await applyPreparedProjectImport(store, preparedImport);
     const missingMediaWarnings = preparedImport.missingMediaPaths.map(path => (
       translate('messages.importMissingMediaWarning', { path })
@@ -2638,12 +2715,13 @@ async function openUploadedRolePlaySceneDraft(draft) {
       ? preparedImport.validation.warnings
       : [];
     showMessage({
-      textId: missingMediaWarnings.length || validationWarnings.length
+      textId: published ? 'published.openedEditCopy' : missingMediaWarnings.length || validationWarnings.length
         ? 'server.openedDraftWithWarnings'
         : 'server.openedDraft',
       warnings: [...validationWarnings, ...missingMediaWarnings],
     });
     setMode('edit');
+    if (published) updatePublishedPlayUi();
   } catch (err) {
     console.error(err);
     if (preparedImport?.project && store.get().project !== preparedImport.project) {
@@ -2799,6 +2877,7 @@ btnPlay.addEventListener('click', () => {
 
 btnImport.addEventListener('click', () => fileInput.click());
 btnNewStory?.addEventListener('click', async () => {
+  if (openingUploadedDraft) return;
   if (!(await ensureDiscussionCanBeDiscarded())) return;
   const shouldStart = await confirmNewStory();
   if (!shouldStart) return;
@@ -2876,6 +2955,7 @@ if (typeof globalThis.ResizeObserver === 'function' && topbar) {
 }
 
 fileInput.addEventListener('change', async (e) => {
+  if (openingUploadedDraft) { fileInput.value = ''; return; }
   const file = e.target.files?.[0];
   if (!file) return;
   let preparedImport = null;

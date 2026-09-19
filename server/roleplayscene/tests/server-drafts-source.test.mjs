@@ -131,7 +131,7 @@ assert.ok(
 assert.ok(
   mainSource.includes('searchButton.disabled = isLoadingPublishedScenes')
     && mainSource.includes("label: isLoadingPublishedScenes ? translate('published.refreshing') : translate('published.refresh')")
-    && mainSource.includes('disabled: isLoadingPublishedScenes || !publishedScenesHasMore'),
+    && mainSource.includes('disabled: isLoadingPublishedScenes || Boolean(openingUploadedDraft) || !publishedScenesHasMore'),
   'published browser refresh/search/load-more controls should be disabled while loading',
 );
 assert.ok(
@@ -275,7 +275,7 @@ assert.ok(
 );
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
-const fetchIndex = mainSource.indexOf('apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId', openFunctionIndex);
+const fetchIndex = mainSource.indexOf('await fetchArtifact(uploadedDraftId', openFunctionIndex);
 const prepareIndex = mainSource.indexOf('preparedImport = await prepareProjectImport', openFunctionIndex);
 const confirmIndex = mainSource.indexOf('const shouldImport = await confirmProjectImport()', openFunctionIndex);
 const closeModalBeforeConfirmIndex = mainSource.indexOf("closeServerModal('import-confirm')", openFunctionIndex);
@@ -298,7 +298,7 @@ assert.ok(
     && mainSource.includes("button.removeAttribute('aria-busy')"),
   'uploaded draft open flow should expose durable download progress and synchronize button state',
 );
-const claimOpenIndex = mainSource.indexOf("openingUploadedDraft = { uploadedDraftId, phase: 'downloading', percent: null }", openFunctionIndex);
+const claimOpenIndex = mainSource.indexOf('openingUploadedDraft = operation', openFunctionIndex);
 const firstOpenAwaitIndex = mainSource.indexOf('await ensureDiscussionCanBeDiscarded()', openFunctionIndex);
 assert.ok(
   claimOpenIndex > openFunctionIndex && claimOpenIndex < firstOpenAwaitIndex,
