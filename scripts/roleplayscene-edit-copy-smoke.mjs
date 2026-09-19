@@ -57,6 +57,10 @@ try {
         await button.click();
         await page.waitForFunction(() => document.querySelector('[data-published-edit-id]')?.getAttribute('aria-busy') === 'true');
         assert.equal(await button.isDisabled(), true);
+        assert.equal(await page.locator('.published-browser-filters button').isDisabled(), true);
+        assert.equal(await page.locator('.published-refresh-action').isDisabled(), true);
+        assert.equal(await page.locator('.published-more-action').isDisabled(), true);
+        assert.equal(await page.locator('#server-browse-published-btn').isDisabled(), true);
         assert.equal(await title.inputValue(), 'Keep my current story');
         await button.evaluate(el => el.click());
         await waitDownload();

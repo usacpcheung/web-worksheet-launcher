@@ -131,7 +131,7 @@ assert.ok(
 assert.ok(
   mainSource.includes('searchButton.disabled = isLoadingPublishedScenes')
     && mainSource.includes("label: isLoadingPublishedScenes ? translate('published.refreshing') : translate('published.refresh')")
-    && mainSource.includes('disabled: isLoadingPublishedScenes || !publishedScenesHasMore'),
+    && mainSource.includes('disabled: isLoadingPublishedScenes || Boolean(openingUploadedDraft) || !publishedScenesHasMore'),
   'published browser refresh/search/load-more controls should be disabled while loading',
 );
 assert.ok(

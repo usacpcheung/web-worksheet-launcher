@@ -11,6 +11,7 @@ function harness({ confirm = true, failure = false } = {}) {
   const candidate = { meta: { title: 'Published' }, scenes: [{ id: 'scene-021' }] };
   const context = vm.createContext({
     openingUploadedDraft: null, teardown: null, publishedPlay: {}, editorPreview: null, editorSession: {},
+    publishedScenesRequestId: 0, isLoadingPublishedScenes: false,
     getRolePlayScenePublishedSceneId: () => 'pub', getRolePlaySceneDraftId: () => 'draft',
     getDirectPublishedSceneIdFromLocation: () => '',
     syncUploadedDraftActionAvailability() { events.push(['state', context.openingUploadedDraft && { ...context.openingUploadedDraft }]); },
