@@ -681,12 +681,6 @@ export async function applyPreparedProjectImport(store, preparedImport) {
   await reseedPersistence(project);
 }
 
-export async function importProject(store, file) {
-  const prepared = await prepareProjectImport(file);
-  await applyPreparedProjectImport(store, prepared);
-  return prepared;
-}
-
 export async function extractProjectFromArchive(fileOrBytes, options = {}) {
   const buffer = fileOrBytes instanceof Uint8Array
     ? fileOrBytes
