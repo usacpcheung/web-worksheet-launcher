@@ -114,6 +114,27 @@ try {
       await dialog.getByRole('button', { name: labels.move, exact: true }).click();
       await dialog.waitFor({ state: 'detached' });
       assert.deepEqual(await order(), changedOrder, 'stale dialog cannot reorder a changed sequence');
+      await page.evaluate(() => {
+        const session = window.editorSession;
+        session.state.draft.blocks = [session.state.draft.blocks.find(block => block.blockId === 'reorder-0')];
+        session.state.draft.blocks[0].position = 0;
+        session.notifyStateChange();
+      });
+      await open(0);
+      assert.equal(await menu().locator('button:not(:disabled)').count(), 0);
+      assert.equal(await row(0).locator('.block-reorder-trigger').evaluate(el => document.activeElement === el), true);
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Escape');
+      await menu().waitFor({ state: 'detached' });
+      assert.equal(await row(0).locator('.block-reorder-trigger').evaluate(el => document.activeElement === el), true);
+      for (const key of ['Tab', 'Shift+Tab']) {
+        await open(0);
+        await page.keyboard.press(key);
+        await menu().waitFor({ state: 'detached' });
+        assert.equal(await row(0).locator('.block-reorder-trigger').getAttribute('aria-expanded'), 'false');
+        assert.equal(await page.evaluate(() => document.activeElement.tagName === 'BUTTON'), true);
+      }
+      assert.deepEqual(await order(), ['reorder-0'], 'dismissal never mutates the single block');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
       assert.deepEqual(errors, []);
       console.log(`PASS ${locale} ${width}: 18 blocks, endpoints, position/cancel, shortcuts, focus, text isolation, data and reload`);

@@ -6198,7 +6198,8 @@ function renderEditorShell(session) {
       closeBlockReorderMenu();
     };
     const onKeyDown = (event) => {
-      if (!menu.contains(event.target)) return;
+      // With one block all actions are disabled and focus stays on the trigger.
+      if (!menu.contains(event.target) && !anchor.contains(event.target)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         closeBlockReorderMenu();
@@ -6209,6 +6210,7 @@ function renderEditorShell(session) {
       if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       const items = Array.from(body.querySelectorAll('button:not(:disabled)'));
+      if (items.length === 0) return;
       const current = items.indexOf(document.activeElement);
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
         : (current + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
