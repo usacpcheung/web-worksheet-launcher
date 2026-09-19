@@ -38,6 +38,8 @@ await page.goto(base + '/server/viewer/index.html?localAttemptId=voice-smoke');
 
 const field=()=>page.locator('.question-card > textarea:not(.question-card__review-status)');
 // Live editable -> temporarily locked -> completed transition, with real viewer rendering.
+// Navigation can finish before IndexedDB-backed attempt loading renders the controls.
+await page.getByRole('button',{name:'Add by voice',exact:true}).waitFor({state:'visible'});
 assert.equal(await page.getByRole('button',{name:'Add by voice',exact:true}).isVisible(),true);
 assert.equal(await page.getByRole('button',{name:'Rewrite',exact:true}).isEnabled(),true);
 assert.equal(await page.getByRole('button',{name:'Undo',exact:true}).isDisabled(),true);

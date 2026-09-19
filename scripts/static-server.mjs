@@ -32,14 +32,32 @@ function resolveRequestPath(url) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const absolute = resolveRequestPath(req.url);
+  let absolute;
+  try {
+    absolute = resolveRequestPath(req.url);
+  } catch {
+    res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Bad request');
+    return;
+  }
   if (!absolute) {
     res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('Forbidden');
     return;
   }
   try {
-    const info = await stat(absolute);
+    let info = await stat(absolute);
+    if (info.isDirectory()) {
+      const url = new URL(req.url, `http://${host}:${port}`);
+      if (!url.pathname.endsWith('/')) {
+        // Keep relative scripts/styles relative to the directory, not its parent.
+        res.writeHead(301, { location: `${url.pathname}/${url.search}` });
+        res.end();
+        return;
+      }
+      absolute = path.join(absolute, 'index.html');
+      info = await stat(absolute);
+    }
     if (!info.isFile()) {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('Not found');
@@ -57,5 +75,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Static server listening at http://${host}:${port}/`);
+  console.log(`Static server listening at http://${host}:${server.address().port}/`);
 });
