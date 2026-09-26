@@ -125,8 +125,13 @@ try {
       assert.equal(await page.locator('.graph-scene-tooltip').isVisible(), true);
       await field.click();
       assert.equal(await field.evaluate(el => el.scrollHeight <= el.clientHeight + 1), true);
-      await page.getByRole('button', { name: locale === 'en' ? 'Copy name' : '複製名稱', exact: true }).click();
+      await field.press('ControlOrMeta+A');
+      await field.press('ControlOrMeta+C');
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), fullName);
+      await idField.click();
+      await idField.press('ControlOrMeta+A');
+      await idField.press('ControlOrMeta+C');
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'scene01');
       assert.equal(await page.locator('#right-pane').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true, 'long destination/ID does not widen inspector');
       if (shots) {
         await field.scrollIntoViewIfNeeded();

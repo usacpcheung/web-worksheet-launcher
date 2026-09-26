@@ -48,8 +48,9 @@ name as its fallback. Discussion print titles show name and ID for disambiguatio
 
 The right-hand editor panel (below the map on narrow screens) has a labeled
 **Scene name / 場景名稱** field at the top of Scene basics, followed by the read-only
-**Scene ID / 場景 ID**. Both wrap to show the complete value and offer Copy actions.
-Clipboard-unavailable browsers select the field for manual copying instead.
+**Scene ID / 場景 ID**. Compact label-and-field rows keep the section short; the ID
+uses a smaller metadata row. Both values wrap fully and support native text
+selection and copying, without dedicated Copy buttons.
 
 Names update map/destination labels as the author types; Chinese IME composition
 is committed only after composition ends. Newly edited names allow 80 Unicode
@@ -95,7 +96,7 @@ not introduce a bulk repair or rewrite of existing publications.
   validation, safe ID generation, recovery and print associations.
 - `node scripts/roleplayscene-scene-name-smoke.mjs`: isolated English/Traditional
   Chinese Chromium contexts at 1280px and 390px; real editor input/IME, duplicate
-  labels, long names/IDs, keyboard/hover/copy, flow preservation, autosave/reload,
+  labels, long names/IDs, keyboard/hover/native copying, flow preservation, autosave/reload,
   old local/server draft loading, exported and uploaded packages, rejected-import
   preservation. The edit-copy smoke also asserts the name written for an old
   published package.

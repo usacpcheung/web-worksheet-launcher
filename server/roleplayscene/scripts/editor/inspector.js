@@ -224,7 +224,7 @@ export function renderInspector(hostEl, project, scene, actions) {
   typeSelect.addEventListener('change', () => {
     actions.onSetSceneType?.(scene.id, typeSelect.value);
   });
-  basics.body.appendChild(createField(translate('inspector.sceneTypeLabel'), typeSelect));
+  basics.body.appendChild(createField(translate('inspector.sceneTypeLabel'), typeSelect, 'rps-scene-type-field'));
   hostEl.appendChild(basics.section);
 
   const mediaSection = createInspectorSection(translate('inspector.sections.sceneMedia'), 'image', 'rps-inspector-section--media');

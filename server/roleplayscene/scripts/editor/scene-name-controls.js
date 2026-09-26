@@ -17,25 +17,6 @@ function wrappedField(label, value) {
   return { field, input, wrapper };
 }
 
-function copyButton(input, label) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'rps-editor-action rps-scene-copy';
-  button.textContent = label;
-  button.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(input.value);
-      button.textContent = translate('inspector.sceneName.copied');
-    } catch {
-      // Selection remains a usable fallback on browsers without clipboard access.
-      input.focus();
-      input.select();
-      button.textContent = translate('inspector.sceneName.copySelected');
-    }
-  });
-  return button;
-}
-
 export function renderSceneNameFields(scene, actions) {
   const host = document.createElement('div');
   host.className = 'rps-scene-identity';
@@ -78,17 +59,11 @@ export function renderSceneNameFields(scene, actions) {
     }
   });
   validate();
-  const nameRow = document.createElement('div');
-  nameRow.className = 'rps-scene-identity-row';
-  nameRow.append(name.field, copyButton(name.input, translate('inspector.sceneName.copyName')));
-
   const id = wrappedField(translate('inspector.sceneName.idLabel'), scene.id);
+  id.field.classList.add('rps-scene-id-field');
   id.input.readOnly = true;
   id.input.spellcheck = false;
   id.input.dataset.focusKey = `scene-id-${scene.id}`;
-  const idRow = document.createElement('div');
-  idRow.className = 'rps-scene-identity-row rps-scene-id-row';
-  idRow.append(id.field, copyButton(id.input, translate('inspector.sceneName.copyId')));
-  host.append(nameRow, error, idRow);
+  host.append(name.field, error, id.field);
   return host;
 }

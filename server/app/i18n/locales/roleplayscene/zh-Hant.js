@@ -269,10 +269,6 @@ export default {
     "sceneName": {
       "label": "場景名稱",
       "idLabel": "場景 ID",
-      "copyName": "複製名稱",
-      "copyId": "複製 ID",
-      "copied": "已複製",
-      "copySelected": "已選取文字，請複製",
       "tooLong": "尚未儲存。請使用不多於 {max} 個字元，或保留原有名稱。"
     },
     "sceneTypeLabel": "場景類型",

@@ -2535,10 +2535,13 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .inspector-header { flex-wrap: wrap; }
 .inspector-header h3 { flex: 1 0 100%; }
 .inspector-actions { justify-content: flex-start; }
-.rps-scene-identity { display: grid; gap: var(--space-sm); min-width: 0; }
-.rps-scene-identity-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-xs); align-items: end; }
-.rps-scene-identity .field { min-width: 0; }
-.rps-scene-copy { align-self: end; }
+.rps-inspector-section--basics .rps-inspector-section__body { gap: var(--space-xs); }
+.rps-scene-identity { display: grid; gap: var(--space-xs); min-width: 0; }
+.rps-scene-identity .field,
+.rps-scene-type-field {
+  grid-template-columns: 6.25rem minmax(0, 1fr); gap: var(--space-xs);
+  align-items: center; min-width: 0;
+}
 .rps-wrapped-text { display: grid; min-width: 0; }
 .rps-wrapped-text::after,
 .inspector .rps-wrapped-text textarea {
@@ -2548,7 +2551,12 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 }
 .rps-wrapped-text::after { content: attr(data-value) ' '; visibility: hidden; pointer-events: none; }
 .inspector .rps-wrapped-text textarea { resize: none; overflow: hidden; height: 100%; }
-.inspector .rps-scene-id-row textarea { background: #f6f8fb; color: var(--color-text-muted); }
+.rps-scene-id-field .rps-wrapped-text::after,
+.inspector .rps-scene-id-field textarea {
+  padding: 0; min-height: 1.35rem; border-color: transparent; font-size: var(--font-size-sm);
+}
+.inspector .rps-scene-id-field textarea { background: transparent; color: var(--color-text-muted); }
+.inspector .rps-scene-id-field textarea:not(:focus) { box-shadow: none; }
 .rps-scene-name-error { color: #b91c1c; margin: 0; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .rps-scene-name-error[hidden] { display: none; }
 .rps-destination-detail { margin: 0; color: var(--color-text-muted); font-size: var(--font-size-sm); font-weight: normal; overflow-wrap: anywhere; white-space: pre-wrap; }
