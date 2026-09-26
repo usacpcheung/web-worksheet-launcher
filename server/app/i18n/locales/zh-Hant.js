@@ -531,7 +531,15 @@ export default {
       "moveDown": "下移",
       "moveDownTitle": "將第 {index} 個區塊下移",
       "moveUp": "上移",
-      "moveUpTitle": "將第 {index} 個區塊上移"
+      "moveUpTitle": "將第 {index} 個區塊上移",
+      "beginning": "移至最前",
+      "end": "移至最後",
+      "position": "移至指定位置…",
+      "positionTitle": "移動第 {index} 個區塊",
+      "positionLabel": "最終位置（所有區塊）",
+      "positionHelp": "內容與問題共用同一排序。其他區塊的相對次序保持不變。",
+      "move": "移動",
+      "moved": "區塊已移至第 {index} 個位置，共 {total} 個"
     },
     "status": {
       "selectedBlock": "已選取區塊 {value}"
