@@ -261,9 +261,19 @@ export default {
       "replace": "Replace"
     },
     "header": {
+      "selectedScene": "Selected scene",
       "previewCurrentScene": "Preview Current Scene",
       "addScene": "Add Scene",
       "deleteScene": "Delete Scene"
+    },
+    "sceneName": {
+      "label": "Scene name",
+      "idLabel": "Scene ID",
+      "copyName": "Copy name",
+      "copyId": "Copy ID",
+      "copied": "Copied",
+      "copySelected": "Selected — use Copy",
+      "tooLong": "Not saved. Use {max} characters or fewer, or keep the original name."
     },
     "sceneTypeLabel": "Scene type",
     "sceneTypes": {

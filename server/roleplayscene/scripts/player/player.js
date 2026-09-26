@@ -1,3 +1,4 @@
+import { getSceneName } from '../scene-name.js';
 import { ensureAudioGate, createBackgroundAudioController } from './audio.js';
 import { renderPlayerUI } from './ui.js';
 import { createPlayerIcon } from './icons.js';
@@ -328,7 +329,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     if (startScene?.image?.objectUrl) {
       const introImage = document.createElement('img');
       introImage.src = startScene.image.objectUrl;
-      introImage.alt = translate('player.stageImageAlt', { sceneId: startScene.id });
+      introImage.alt = translate('player.stageImageAlt', { sceneId: getSceneName(startScene) });
       introFrame.appendChild(introImage);
     } else {
       const introStage = document.createElement('div');
@@ -583,7 +584,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
         if (!scene) {
           return null;
         }
-        const fallback = scene.id || sceneId;
+        const fallback = getSceneName(scene) || sceneId;
         const firstLine = scene.dialogue?.[0]?.text?.trim();
         const fullLabel = firstLine || fallback;
         const label = truncateHistoryLabel(fullLabel);

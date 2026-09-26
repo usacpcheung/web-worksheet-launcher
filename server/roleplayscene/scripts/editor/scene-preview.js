@@ -1,3 +1,4 @@
+import { getSceneLabel } from '../scene-name.js';
 import { translate } from '../i18n.js';
 
 function getClampedPercent(value) {
@@ -31,7 +32,7 @@ export function renderScenePreview(hostEl, scene, actions) {
   const header = document.createElement('div');
   header.className = 'scene-preview__header';
   const title = document.createElement('h3');
-  title.textContent = translate('editor.scenePreview.title', { sceneId: scene.id });
+  title.textContent = translate('editor.scenePreview.title', { sceneId: getSceneLabel(scene) });
   header.appendChild(title);
   if (speechBubble.enabled) {
     const hint = document.createElement('p');
@@ -49,12 +50,12 @@ export function renderScenePreview(hostEl, scene, actions) {
     ? 'scene-preview__frame'
     : 'scene-preview__frame scene-preview__frame--empty';
   frame.setAttribute('role', speechBubble.enabled ? 'group' : 'img');
-  frame.setAttribute('aria-label', translate('editor.scenePreview.stageLabel', { sceneId: scene.id }));
+  frame.setAttribute('aria-label', translate('editor.scenePreview.stageLabel', { sceneId: getSceneLabel(scene) }));
 
   if (scene.image?.objectUrl) {
     const img = document.createElement('img');
     img.src = scene.image.objectUrl;
-    img.alt = translate('inspector.image.previewAlt', { sceneId: scene.id });
+    img.alt = translate('inspector.image.previewAlt', { sceneId: getSceneLabel(scene) });
     frame.appendChild(img);
   } else {
     const emptyStage = document.createElement('span');

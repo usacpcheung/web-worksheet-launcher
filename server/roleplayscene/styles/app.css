@@ -2530,3 +2530,29 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     min-height: 9rem;
   }
 }
+
+/* Scene labels wrap in the selected-scene panel; only map labels are shortened. */
+.inspector-header { flex-wrap: wrap; }
+.inspector-header h3 { flex: 1 0 100%; }
+.inspector-actions { justify-content: flex-start; }
+.rps-scene-identity { display: grid; gap: var(--space-sm); min-width: 0; }
+.rps-scene-identity-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-xs); align-items: end; }
+.rps-scene-identity .field { min-width: 0; }
+.rps-scene-copy { align-self: end; }
+.rps-wrapped-text { display: grid; min-width: 0; }
+.rps-wrapped-text::after,
+.inspector .rps-wrapped-text textarea {
+  grid-area: 1 / 1; padding: .55rem .65rem; border: 1px solid #cbd5e1;
+  font: inherit; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere;
+  min-height: 2.6rem; width: 100%; box-sizing: border-box;
+}
+.rps-wrapped-text::after { content: attr(data-value) ' '; visibility: hidden; pointer-events: none; }
+.inspector .rps-wrapped-text textarea { resize: none; overflow: hidden; height: 100%; }
+.inspector .rps-scene-id-row textarea { background: #f6f8fb; color: var(--color-text-muted); }
+.rps-scene-name-error { color: #b91c1c; margin: 0; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.rps-scene-name-error[hidden] { display: none; }
+.rps-destination-detail { margin: 0; color: var(--color-text-muted); font-size: var(--font-size-sm); font-weight: normal; overflow-wrap: anywhere; white-space: pre-wrap; }
+.inspector select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+.scene-preview__header h3 { overflow-wrap: anywhere; white-space: pre-wrap; }
+.graph-scene-tooltip { position: fixed; z-index: 50; max-width: min(24rem, calc(100vw - 24px)); padding: .6rem .75rem; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: #fff; color: var(--color-text); box-shadow: 0 4px 16px #0f172a24; overflow-wrap: anywhere; white-space: pre-wrap; font-size: var(--font-size-sm); }
+.graph-scene-tooltip[hidden] { display: none; }

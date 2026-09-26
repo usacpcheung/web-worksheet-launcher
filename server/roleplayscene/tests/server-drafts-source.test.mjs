@@ -432,11 +432,11 @@ assert.ok(
 
 assert.ok(
   inspectorSource.includes("const sceneHeading = document.createElement('h3')")
-    && inspectorSource.includes('sceneHeading.textContent = scene.id')
+    && inspectorSource.includes('renderSceneNameFields(scene, actions)')
     && inspectorSource.includes("translate('inspector.header.previewCurrentScene')")
     && inspectorSource.includes('actions.onPreviewCurrentScene?.(scene.id)')
     && !inspectorSource.includes('header.innerHTML = `<h3>${scene.id}</h3>`'),
-  'RolePlayScene inspector should render imported scene IDs as text, not HTML, and expose current-scene preview',
+  'RolePlayScene inspector should use the scene-name fields and expose current-scene preview',
 );
 
 assert.ok(

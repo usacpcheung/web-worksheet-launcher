@@ -1,3 +1,4 @@
+import { canEditSceneName, getSceneName } from '../scene-name.js';
 import { renderGraph } from './graph.js';
 import { renderInspector } from './inspector.js';
 import { renderScenePreview } from './scene-preview.js';
@@ -47,6 +48,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   let disposed = false;
   let selectedSpeechBubbleAnchorId = options.initialSelectedSpeechBubbleAnchorId ?? null;
   let speakerDraftContext = null;
+  const sceneNameDrafts = new Map();
 
   const unsubscribe = store.subscribe(() => {
     syncSelection();
@@ -140,6 +142,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
 
     renderInspector(inspectorHost, project, scene, {
       onUpdateProjectTitle: updateProjectTitle,
+      getSceneNameDraft: id => sceneNameDrafts.get(id),
+      onUpdateSceneName: updateSceneName,
+      onCommitSceneName: commitSceneName,
       onAddScene: addScene,
       onDeleteScene: deleteScene,
       onSetSceneType: setSceneType,
@@ -206,6 +211,19 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         title: value,
       },
     }));
+  }
+
+  function updateSceneName(id, value) {
+    sceneNameDrafts.set(id, value);
+    const scene = store.get().project.scenes.find(item => item.id === id);
+    if (!scene || !canEditSceneName(value, scene.name ?? getSceneName(scene))) return;
+    const name = getSceneName({ id, name: value });
+    if (scene.name === name) return;
+    mutateProject(prev => ({ ...prev, scenes: prev.scenes.map(item => item.id === id ? { ...item, name } : item) }));
+  }
+
+  function commitSceneName(id) {
+    sceneNameDrafts.delete(id);
   }
 
   function addScene() {
