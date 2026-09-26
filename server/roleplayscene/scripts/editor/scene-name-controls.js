@@ -1,5 +1,11 @@
 import { translate } from '../i18n.js';
-import { canEditSceneName, getSceneName, MAX_SCENE_NAME_LENGTH } from '../scene-name.js';
+import { canEditSceneName, getSceneName, MAX_SCENE_NAME_LENGTH, sceneNameInputValue } from '../scene-name.js';
+
+const refreshers = new WeakMap();
+
+export function refreshSceneNameFields(host, scene, actions) {
+  refreshers.get(host)?.(scene, actions);
+}
 
 function wrappedField(label, value) {
   const field = document.createElement('label');
@@ -14,10 +20,11 @@ function wrappedField(label, value) {
   input.value = value;
   wrapper.appendChild(input);
   field.append(caption, wrapper);
-  return { field, input, wrapper };
+  return { field, caption, input, wrapper };
 }
 
 export function renderSceneNameFields(scene, actions) {
+  const originalName = getSceneName(scene);
   const host = document.createElement('div');
   host.className = 'rps-scene-identity';
   const value = actions.getSceneNameDraft?.(scene.id) ?? scene.name ?? getSceneName(scene);
@@ -30,7 +37,8 @@ export function renderSceneNameFields(scene, actions) {
   name.input.setAttribute('aria-describedby', error.id);
   error.setAttribute('role', 'status');
   const validate = () => {
-    const valid = canEditSceneName(name.input.value, scene.name ?? getSceneName(scene));
+    const valid = canEditSceneName(name.input.value, getSceneName(scene))
+      || canEditSceneName(name.input.value, originalName);
     error.textContent = valid ? '' : translate('inspector.sceneName.tooLong', { max: MAX_SCENE_NAME_LENGTH });
     error.hidden = valid;
     name.input.setAttribute('aria-invalid', String(!valid));
@@ -39,15 +47,15 @@ export function renderSceneNameFields(scene, actions) {
   let composing = false;
   const update = () => {
     name.wrapper.setAttribute('data-value', name.input.value);
-    if (composing) return;
-    validate();
-    actions.onUpdateSceneName?.(scene.id, name.input.value);
+    if (!composing) validate();
+    actions.onUpdateSceneName?.(scene.id, name.input.value, { composing, originalName });
   };
   name.input.addEventListener('compositionstart', () => { composing = true; });
   name.input.addEventListener('compositionend', () => { composing = false; update(); });
   name.input.addEventListener('input', event => {
     name.wrapper.setAttribute('data-value', name.input.value);
-    if (!event.isComposing) update();
+    if (event.isComposing) composing = true;
+    update();
   });
   name.input.addEventListener('blur', () => {
     if (!composing && validate()) {
@@ -65,5 +73,17 @@ export function renderSceneNameFields(scene, actions) {
   id.input.spellcheck = false;
   id.input.dataset.focusKey = `scene-id-${scene.id}`;
   host.append(name.field, error, id.field);
+  refreshers.set(host, (nextScene, nextActions) => {
+    scene = nextScene;
+    actions = nextActions;
+    name.caption.textContent = translate('inspector.sceneName.label');
+    id.caption.textContent = translate('inspector.sceneName.idLabel');
+    if (composing) return;
+    const nextValue = sceneNameInputValue(actions.getSceneNameDraft?.(scene.id) ?? getSceneName(scene));
+    // Assigning value, even while restoring focus, can clear native undo/IME.
+    if (name.input.value !== nextValue) name.input.value = nextValue;
+    name.wrapper.setAttribute('data-value', name.input.value);
+    validate();
+  });
   return host;
 }

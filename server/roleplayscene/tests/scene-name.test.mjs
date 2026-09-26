@@ -28,6 +28,8 @@ test('scene names are additive metadata, preserve long legacy values and count U
   assert.equal(createScene({ id: 'old-id', name: long }).name, long);
   assert.equal(canEditSceneName(long, long), true);
   assert.equal(canEditSceneName(`${long}!`, long), false);
+  assert.equal(canEditSceneName(long + '\nWindows', long + '\r\nWindows'), true);
+  assert.equal(canEditSceneName(long + '\nChanged', long + '\r\nWindows'), false);
   assert.equal(canEditSceneName('🍵'.repeat(80), ''), true);
   assert.equal(canEditSceneName('🍵'.repeat(81), ''), false);
   assert.equal(getSceneLabel({ id: 'a', name: 'Tea' }), 'Tea · a');

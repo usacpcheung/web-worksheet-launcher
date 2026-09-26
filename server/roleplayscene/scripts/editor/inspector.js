@@ -1,5 +1,5 @@
 import { getSceneLabel } from '../scene-name.js';
-import { renderSceneNameFields } from './scene-name-controls.js';
+import { renderSceneNameFields, refreshSceneNameFields } from './scene-name-controls.js';
 import { MAX_DIALOGUE_LINES, SceneType, createChoice } from '../model.js';
 import { translate } from '../i18n.js';
 import { renderDialogueBubbleControls, renderSpeechBubbleEditorSection } from './speech-bubble-inspector.js';
@@ -148,7 +148,39 @@ function createLightRow(titleText, className = '') {
   return { row, header, body, actions };
 }
 
+const renderedInspectors = new WeakMap();
+
 export function renderInspector(hostEl, project, scene, actions) {
+  const next = document.createElement('div');
+  buildInspector(next, project, scene, actions);
+  const previous = renderedInspectors.get(hostEl);
+  const oldBasics = hostEl.querySelector('.rps-inspector-section--basics');
+  const newBasics = next.querySelector('.rps-inspector-section--basics');
+  const oldChildren = Array.from(hostEl.children);
+  const newChildren = Array.from(next.children);
+  const keepNameField = scene && previous?.sceneId === scene.id
+    && previous.session === actions.sceneNameSession && oldBasics && newBasics
+    && oldChildren.indexOf(oldBasics) === newChildren.indexOf(newBasics);
+  hostEl.classList.add('inspector');
+  if (keepNameField) {
+    // Keep the name field and all its ancestors attached during store updates.
+    // Moving it out and back would still interrupt IME and native undo.
+    refreshSceneNameFields(oldBasics.querySelector('.rps-scene-identity'), scene, actions);
+    oldBasics.querySelector('.rps-inspector-section__header').replaceWith(newBasics.querySelector('.rps-inspector-section__header'));
+    oldBasics.querySelector('.rps-scene-type-field').replaceWith(newBasics.querySelector('.rps-scene-type-field'));
+    oldChildren.forEach((child, index) => {
+      if (child === oldBasics) return;
+      if (newChildren[index]) child.replaceWith(newChildren[index]);
+      else child.remove();
+    });
+    newChildren.slice(oldChildren.length).forEach(child => hostEl.appendChild(child));
+  } else {
+    hostEl.replaceChildren(...newChildren);
+  }
+  renderedInspectors.set(hostEl, { sceneId: scene?.id, session: actions.sceneNameSession });
+}
+
+function buildInspector(hostEl, project, scene, actions) {
   hostEl.innerHTML = '';
   hostEl.classList.add('inspector');
 

@@ -1,4 +1,4 @@
-import { canEditSceneName, getSceneName } from '../scene-name.js';
+import { canEditSceneName, getSceneName, sceneNameInputValue } from '../scene-name.js';
 import { renderGraph } from './graph.js';
 import { renderInspector } from './inspector.js';
 import { renderScenePreview } from './scene-preview.js';
@@ -48,7 +48,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   let disposed = false;
   let selectedSpeechBubbleAnchorId = options.initialSelectedSpeechBubbleAnchorId ?? null;
   let speakerDraftContext = null;
-  const sceneNameDrafts = new Map();
+  const fallbackNameDrafts = new Map();
+  const getNameDrafts = () => store.editorSceneNameDrafts ?? fallbackNameDrafts;
+  let cleanupGraph = null;
 
   const unsubscribe = store.subscribe(() => {
     syncSelection();
@@ -58,6 +60,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   function cleanup() {
     disposed = true;
     stopDialoguePreview({ refresh: false });
+    cleanupGraph?.();
     unsubscribe();
   }
 
@@ -139,12 +142,18 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     renderLeftPane(project, scene);
 
     const validationResults = validateProject(project);
+    const nameSession = getNameDrafts();
 
     renderInspector(inspectorHost, project, scene, {
       onUpdateProjectTitle: updateProjectTitle,
-      getSceneNameDraft: id => sceneNameDrafts.get(id),
-      onUpdateSceneName: updateSceneName,
-      onCommitSceneName: commitSceneName,
+      sceneNameSession: nameSession,
+      getSceneNameDraft: id => nameSession.get(id),
+      onUpdateSceneName: (...args) => {
+        if (getNameDrafts() === nameSession) updateSceneName(...args);
+      },
+      onCommitSceneName: id => {
+        if (getNameDrafts() === nameSession) commitSceneName(id);
+      },
       onAddScene: addScene,
       onDeleteScene: deleteScene,
       onSetSceneType: setSceneType,
@@ -185,7 +194,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     if (focusKey) {
       const nextFocus = Array.from(inspectorHost.querySelectorAll('[data-focus-key]'))
         .find(element => element.dataset?.focusKey === focusKey);
-      if (nextFocus && typeof nextFocus.focus === 'function') {
+      if (nextFocus && nextFocus !== activeElement && typeof nextFocus.focus === 'function') {
         nextFocus.focus();
         if (
           selectionStart !== null
@@ -213,17 +222,21 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     }));
   }
 
-  function updateSceneName(id, value) {
-    sceneNameDrafts.set(id, value);
+  function updateSceneName(id, value, { composing = false, originalName } = {}) {
+    if (disposed) return;
+    getNameDrafts().set(id, value);
+    if (composing) return;
     const scene = store.get().project.scenes.find(item => item.id === id);
-    if (!scene || !canEditSceneName(value, scene.name ?? getSceneName(scene))) return;
-    const name = getSceneName({ id, name: value });
-    if (scene.name === name) return;
+    if (!scene || (!canEditSceneName(value, getSceneName(scene)) && !canEditSceneName(value, originalName))) return;
+    const name = typeof originalName === 'string' && sceneNameInputValue(value) === sceneNameInputValue(originalName)
+      ? originalName
+      : getSceneName({ id, name: value });
+    if (sceneNameInputValue(getSceneName(scene)) === sceneNameInputValue(name)) return;
     mutateProject(prev => ({ ...prev, scenes: prev.scenes.map(item => item.id === id ? { ...item, name } : item) }));
   }
 
   function commitSceneName(id) {
-    sceneNameDrafts.delete(id);
+    getNameDrafts().delete(id);
   }
 
   function addScene() {
@@ -255,6 +268,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       showMessage({ textId: 'inspector.notifications.cannotDeleteStart' });
       return;
     }
+    getNameDrafts().delete(sceneId);
     if (scene.image?.objectUrl) {
       URL.revokeObjectURL(scene.image.objectUrl);
     }
@@ -385,6 +399,8 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   }
 
   function renderLeftPane(project, scene) {
+    cleanupGraph?.();
+    cleanupGraph = null;
     leftToolbar.innerHTML = '';
     const views = [
       { id: 'storyMap', label: translate('editor.views.storyMap') },
@@ -423,7 +439,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     const graphHost = document.createElement('div');
     graphHost.className = 'graph-container';
     leftContent.appendChild(graphHost);
-    renderGraph(graphHost, project, selectedId, (id) => {
+    cleanupGraph = renderGraph(graphHost, project, selectedId, (id) => {
       if (id !== selectedId) {
         stopDialoguePreview({ refresh: false });
       }

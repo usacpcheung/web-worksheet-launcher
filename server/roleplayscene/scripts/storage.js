@@ -523,7 +523,7 @@ async function reseedPersistence(project) {
     db = await openDatabase();
     await writeSnapshot(db, snapshot);
   } catch (err) {
-    console.warn('Failed to reseed IndexedDB after manual import/export', err);
+    console.warn('Failed to reseed IndexedDB after manual import', err);
   } finally {
     if (db) db.close();
   }
@@ -562,6 +562,7 @@ export async function setupPersistence(store, { showMessage = noop } = {}) {
         try {
           const hydrated = hydrateProject(snapshot, { previousProject: store.get().project });
           seedIdSequencesFromProject(hydrated);
+          store.resetEditorDrafts?.();
           store.set({ project: hydrated });
         } finally {
           applyingSnapshot = false;
@@ -688,6 +689,7 @@ export async function applyPreparedProjectImport(store, preparedImport) {
   const previous = store.get().project;
   revokeProjectObjectUrls(previous);
   seedIdSequencesFromProject(project);
+  store.resetEditorDrafts?.();
   store.set({ project });
   await reseedPersistence(project);
 }
@@ -777,5 +779,6 @@ export async function exportProject(store) {
   a.remove();
   URL.revokeObjectURL(url);
 
-  await reseedPersistence(project);
+  // Export is a snapshot download. Autosave owns the current draft; writing
+  // this captured project here could undo edits made while building the ZIP.
 }

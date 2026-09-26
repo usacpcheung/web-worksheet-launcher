@@ -216,8 +216,7 @@ assert.ok(
   'RolePlayScene editor should manage one active edit-mode dialogue audio preview with cleanup and failure messaging',
 );
 assert.ok(
-  editorSource.includes('stopDialoguePreview({ refresh: false });\r\n    unsubscribe();')
-    || editorSource.includes('stopDialoguePreview({ refresh: false });\n    unsubscribe();'),
+  /function cleanup\(\) \{[^}]*?disposed = true;[\s\S]*?stopDialoguePreview\(\{ refresh: false \}\);[\s\S]*?unsubscribe\(\);/.test(editorSource),
   'RolePlayScene editor teardown should stop active dialogue audio previews',
 );
 assert.ok(

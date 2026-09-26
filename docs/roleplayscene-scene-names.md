@@ -53,12 +53,23 @@ uses a smaller metadata row. Both values wrap fully and support native text
 selection and copying, without dedicated Copy buttons.
 
 Names update map/destination labels as the author types; Chinese IME composition
-is committed only after composition ends. Newly edited names allow 80 Unicode
+is committed only after composition ends. The name input remains attached during
+editor updates, preserving native undo/redo and composition while audio generation
+finishes. Newly edited names allow 80 Unicode
 code points. An unchanged inherited longer name remains valid and is never
 silently clipped. An over-limit edit stays visible with a “Not saved” error;
 the last valid value remains in the project and in saves/exports. Clearing the
 field falls back to its ID when the edit is committed. The name draft remains
 editable until blur, so users can select-all and type a replacement normally.
+Unfinished names survive scene selection and preview within the current tab's
+editor session. Loading a different project or starting a new story clears them,
+even when scene IDs are reused. They are not serialized or retained across reload.
+Textarea line-ending normalization does not invalidate an unchanged inherited
+name; undo can restore the original long value with its original line endings.
+
+Export downloads the project snapshot captured when export starts. It does not
+write that older snapshot back to local persistence: edits or project replacement
+during ZIP creation remain under the existing autosave/import persistence path.
 
 The SVG map fits text to the actual available width, accounting for the image
 thumbnail, and appends an ellipsis without changing stored data. Hover or
@@ -66,6 +77,8 @@ keyboard focus reveals the full name and ID; Escape dismisses the tooltip.
 Selecting a card exposes the complete values in the editor, including on touch.
 Destination controls store IDs, show `name · id`, and have a wrapping description
 of their current target. All imported names are rendered as text, never HTML.
+Escape dismisses hover tooltips regardless of keyboard focus. Graph disposal
+removes its keyboard handler and pending hide timer.
 
 ## Import integrity and compatibility
 
@@ -102,6 +115,11 @@ not introduce a bulk repair or rewrite of existing publications.
   published package.
 - Retained RolePlayScene edit-copy, confirmation, dialogue-order, voice and
   music-navigation smoke scripts cover the adjacent consumers separately.
+- `node scripts/roleplayscene-scene-name-state-smoke.mjs`: native undo/redo,
+  preview draft retention, project replacement isolation, audio completion during
+  simulated IME composition, inherited CRLF names and undo, hover Escape, and
+  controlled slow exports during edits or project replacement, in both locales
+  and at desktop/mobile widths.
 
 Browser tests use local fixtures and mocked API/media services. They do not
 certify live VPS authentication, provider calls, screen readers, physical mobile

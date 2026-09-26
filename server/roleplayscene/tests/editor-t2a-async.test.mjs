@@ -27,11 +27,33 @@ class StubElement {
   }
 
   appendChild(child) {
+    child.remove?.();
+    child.parentNode = this;
     this.children.push(child);
     if (this.tagName === 'select' && !this.value && child?.tagName === 'option') {
       this.value = child.value || '';
     }
     return child;
+  }
+
+  remove() {
+    if (!this.parentNode) return;
+    this.parentNode.children = this.parentNode.children.filter(child => child !== this);
+    this.parentNode = null;
+  }
+
+  replaceChildren(...nodes) {
+    this.children.slice().forEach(child => child.remove());
+    nodes.forEach(node => this.appendChild(node));
+  }
+
+  replaceWith(node) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    node.remove();
+    parent.children[parent.children.indexOf(this)] = node;
+    node.parentNode = parent;
+    this.parentNode = null;
   }
 
   append(...nodes) {
@@ -68,6 +90,10 @@ class StubElement {
     this.eventListeners[type].push(handler);
   }
 
+  removeEventListener(type, handler) {
+    this.eventListeners[type] = (this.eventListeners[type] || []).filter(item => item !== handler);
+  }
+
   dispatchEvent(type, event = {}) {
     const handlers = this.eventListeners[type] || [];
     handlers.forEach((handler) => handler({ ...event, target: event.target ?? this }));
@@ -88,6 +114,7 @@ class StubElement {
   }
 
   querySelector(selector) {
+    if (selector.startsWith('.')) return findElement(this, element => element.className.split(/\s+/).includes(selector.slice(1)));
     const focusMatch = String(selector).match(/^\[data-focus-key="(.+)"\]$/);
     if (!focusMatch) return null;
     return findElement(this, (element) => element.dataset?.focusKey === focusMatch[1]);
@@ -96,8 +123,9 @@ class StubElement {
   focus() {}
 }
 
-class StubDocument {
+class StubDocument extends StubElement {
   constructor() {
+    super('#document');
     this.activeElement = null;
   }
 
@@ -197,6 +225,17 @@ function installDomGlobals() {
     revokeObjectURL: () => {},
   };
 }
+
+test('graph tooltip keyboard handlers are cleaned up on redraw and teardown', () => {
+  installDomGlobals();
+  const store = new TestStore(makeProject());
+  const cleanup = renderEditor(store, document.createElement('div'), document.createElement('div'), () => {});
+  assert.equal(document.eventListeners.keydown.length, 1);
+  for (let i = 0; i < 5; i++) store.set({ project: { ...store.get().project } });
+  assert.equal(document.eventListeners.keydown.length, 1, 'redraws do not accumulate document listeners');
+  cleanup();
+  assert.equal(document.eventListeners.keydown.length, 0);
+});
 
 test('dialogue arrows reorder complete entries and reject boundary moves', () => {
   installDomGlobals();

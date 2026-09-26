@@ -153,8 +153,8 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   tooltip.setAttribute('role', 'tooltip');
   tooltip.hidden = true;
   let hideTimer;
-  const hideTooltip = () => { tooltip.hidden = true; };
-  const scheduleHide = () => { hideTimer = setTimeout(hideTooltip, 100); };
+  const hideTooltip = () => { clearTimeout(hideTimer); tooltip.hidden = true; };
+  const scheduleHide = () => { clearTimeout(hideTimer); hideTimer = setTimeout(hideTooltip, 100); };
   tooltip.addEventListener('mouseenter', () => clearTimeout(hideTimer));
   tooltip.addEventListener('mouseleave', scheduleHide);
   const labels = [];
@@ -466,7 +466,6 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
     const activate = () => onSelect?.(scene.id);
     group.addEventListener('click', activate);
     group.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Escape') hideTooltip();
       if (ev.key === 'Enter' || ev.key === ' ') {
         ev.preventDefault();
         activate();
@@ -479,6 +478,10 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   svg.appendChild(nodesGroup);
   hostEl.appendChild(svg);
   hostEl.appendChild(tooltip);
+  const dismissTooltip = event => {
+    if (event.key === 'Escape') hideTooltip();
+  };
+  document.addEventListener('keydown', dismissTooltip, true);
   // SVG labels need real glyph measurement after attachment. Never alter data.
   labels.forEach(({ element, text, width }) => {
     if (typeof element.getComputedTextLength !== 'function') return;
@@ -487,4 +490,9 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
       return element.getComputedTextLength();
     });
   });
+  return () => {
+    clearTimeout(hideTimer);
+    document.removeEventListener('keydown', dismissTooltip, true);
+    tooltip.remove();
+  };
 }

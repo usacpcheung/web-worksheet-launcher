@@ -8,7 +8,10 @@ export class Store {
     this.state = defaultState();
     setActiveLocale(this.state.locale);
     this.listeners = new Set();
+    this.resetEditorDrafts();
   }
+  // Transient authoring state survives preview, but never enters a package.
+  resetEditorDrafts() { this.editorSceneNameDrafts = new Map(); }
   subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   set(partial) {
     if (Object.prototype.hasOwnProperty.call(partial ?? {}, 'locale')) {

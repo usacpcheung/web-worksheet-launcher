@@ -1,6 +1,11 @@
 // Names are presentation metadata. IDs remain the exact keys used by scene flow.
 export const MAX_SCENE_NAME_LENGTH = 80;
 
+// Textareas normalize CRLF and CR when assigning their value.
+export function sceneNameInputValue(value) {
+  return String(value ?? '').replace(/\r\n?/g, '\n');
+}
+
 export function getSceneName(scene) {
   return typeof scene?.name === 'string' && scene.name.trim()
     ? scene.name
@@ -14,7 +19,8 @@ export function getSceneLabel(scene) {
 
 export function canEditSceneName(value, previousName) {
   return typeof value === 'string'
-    && (value === previousName || Array.from(value).length <= MAX_SCENE_NAME_LENGTH);
+    && (sceneNameInputValue(value) === sceneNameInputValue(previousName)
+      || Array.from(value).length <= MAX_SCENE_NAME_LENGTH);
 }
 
 export function fitSceneLabel(text, maxWidth, measure) {
