@@ -909,6 +909,8 @@ button:disabled {
   width: min(100%, 1180px);
   height: 100%;
   min-height: min-content;
+  overflow-x: hidden;
+  overflow-y: auto;
   max-height: none;
   flex-shrink: 0;
 }
@@ -2609,8 +2611,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 }
 .inspector .rps-scene-id-field textarea { background: transparent; color: var(--color-text-muted); }
 .inspector .rps-scene-id-field textarea:not(:focus) { box-shadow: none; }
-.rps-scene-name-error { color: #b91c1c; margin: 0; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
-.rps-scene-name-error[hidden] { display: none; }
+.rps-scene-name-error, .rps-project-title-error { color: #b91c1c; margin: 0; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.rps-scene-name-error[hidden], .rps-project-title-error[hidden] { display: none; }
+.rps-project-title-field { display: grid; gap: 4px; }
+.rps-project-title-hint { color: var(--color-text-muted); font-size: var(--font-size-sm); }
 .rps-destination-detail { margin: 0; color: var(--color-text-muted); font-size: var(--font-size-sm); font-weight: normal; overflow-wrap: anywhere; white-space: pre-wrap; }
 .inspector select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
 .scene-preview__header h3 { overflow-wrap: anywhere; white-space: pre-wrap; }

@@ -1,4 +1,5 @@
 import { canEditSceneName, getSceneName, sceneNameInputValue } from '../scene-name.js';
+import { canEditProjectTitle, projectTitleInputValue } from '../project-title.js';
 import { renderGraph } from './graph.js';
 import { renderInspector } from './inspector.js';
 import { renderScenePreview } from './scene-preview.js';
@@ -50,6 +51,8 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   let speakerDraftContext = null;
   const fallbackNameDrafts = new Map();
   const getNameDrafts = () => store.editorSceneNameDrafts ?? fallbackNameDrafts;
+  const fallbackTitleDraft = { value: undefined };
+  const getTitleDraft = () => store.editorProjectTitleDraft ?? fallbackTitleDraft;
   let cleanupGraph = null;
 
   const unsubscribe = store.subscribe(() => {
@@ -143,9 +146,17 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
 
     const validationResults = validateProject(project);
     const nameSession = getNameDrafts();
+    const titleSession = getTitleDraft();
 
     renderInspector(inspectorHost, project, scene, {
-      onUpdateProjectTitle: updateProjectTitle,
+      projectTitleSession: titleSession,
+      getProjectTitleDraft: () => titleSession.value,
+      onUpdateProjectTitle: (...args) => {
+        if (getTitleDraft() === titleSession) updateProjectTitle(...args);
+      },
+      onCommitProjectTitle: () => {
+        if (!disposed && getTitleDraft() === titleSession) titleSession.value = undefined;
+      },
       sceneNameSession: nameSession,
       getSceneNameDraft: id => nameSession.get(id),
       onUpdateSceneName: (...args) => {
@@ -211,13 +222,21 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     }
   }
 
-  function updateProjectTitle(title) {
+  function updateProjectTitle(title, { composing = false, originalTitle } = {}) {
+    if (disposed) return;
     const value = typeof title === 'string' ? title : '';
+    getTitleDraft().value = value;
+    if (composing) return;
+    const previousTitle = store.get().project.meta?.title;
+    if (!canEditProjectTitle(value, previousTitle) && !canEditProjectTitle(value, originalTitle)) return;
+    const savedTitle = typeof originalTitle === 'string' && projectTitleInputValue(value) === projectTitleInputValue(originalTitle)
+      ? originalTitle : value;
+    if (projectTitleInputValue(previousTitle) === projectTitleInputValue(savedTitle)) return;
     mutateProject(prev => ({
       ...prev,
       meta: {
         ...(prev.meta || {}),
-        title: value,
+        title: savedTitle,
       },
     }));
   }

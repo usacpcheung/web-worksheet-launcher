@@ -1,5 +1,6 @@
 import { getSceneLabel } from '../scene-name.js';
 import { renderSceneNameFields, refreshSceneNameFields } from './scene-name-controls.js';
+import { renderProjectTitleField, refreshProjectTitleField } from './project-title-control.js';
 import { MAX_DIALOGUE_LINES, SceneType, createChoice } from '../model.js';
 import { translate } from '../i18n.js';
 import { renderDialogueBubbleControls, renderSpeechBubbleEditorSection } from './speech-bubble-inspector.js';
@@ -156,20 +157,27 @@ export function renderInspector(hostEl, project, scene, actions) {
   const previous = renderedInspectors.get(hostEl);
   const oldBasics = hostEl.querySelector('.rps-inspector-section--basics');
   const newBasics = next.querySelector('.rps-inspector-section--basics');
+  const oldTitle = hostEl.querySelector('.rps-project-title-field');
+  const newTitle = next.querySelector('.rps-project-title-field');
   const oldChildren = Array.from(hostEl.children);
   const newChildren = Array.from(next.children);
+  const keepTitleField = previous?.titleSession === actions.projectTitleSession && oldTitle && newTitle
+    && oldChildren.indexOf(oldTitle) === newChildren.indexOf(newTitle);
   const keepNameField = scene && previous?.sceneId === scene.id
     && previous.session === actions.sceneNameSession && oldBasics && newBasics
     && oldChildren.indexOf(oldBasics) === newChildren.indexOf(newBasics);
   hostEl.classList.add('inspector');
-  if (keepNameField) {
-    // Keep the name field and all its ancestors attached during store updates.
+  if (keepNameField || keepTitleField) {
+    // Keep text fields and all their ancestors attached during store updates.
     // Moving it out and back would still interrupt IME and native undo.
-    refreshSceneNameFields(oldBasics.querySelector('.rps-scene-identity'), scene, actions);
-    oldBasics.querySelector('.rps-inspector-section__header').replaceWith(newBasics.querySelector('.rps-inspector-section__header'));
-    oldBasics.querySelector('.rps-scene-type-field').replaceWith(newBasics.querySelector('.rps-scene-type-field'));
+    if (keepTitleField) refreshProjectTitleField(oldTitle, project, actions);
+    if (keepNameField) {
+      refreshSceneNameFields(oldBasics.querySelector('.rps-scene-identity'), scene, actions);
+      oldBasics.querySelector('.rps-inspector-section__header').replaceWith(newBasics.querySelector('.rps-inspector-section__header'));
+      oldBasics.querySelector('.rps-scene-type-field').replaceWith(newBasics.querySelector('.rps-scene-type-field'));
+    }
     oldChildren.forEach((child, index) => {
-      if (child === oldBasics) return;
+      if ((keepNameField && child === oldBasics) || (keepTitleField && child === oldTitle)) return;
       if (newChildren[index]) child.replaceWith(newChildren[index]);
       else child.remove();
     });
@@ -177,24 +185,14 @@ export function renderInspector(hostEl, project, scene, actions) {
   } else {
     hostEl.replaceChildren(...newChildren);
   }
-  renderedInspectors.set(hostEl, { sceneId: scene?.id, session: actions.sceneNameSession });
+  renderedInspectors.set(hostEl, { sceneId: scene?.id, session: actions.sceneNameSession, titleSession: actions.projectTitleSession });
 }
 
 function buildInspector(hostEl, project, scene, actions) {
   hostEl.innerHTML = '';
   hostEl.classList.add('inspector');
 
-  const projectTitleInput = document.createElement('input');
-  projectTitleInput.type = 'text';
-  projectTitleInput.value = project.meta?.title ?? '';
-  projectTitleInput.placeholder = translate('inspector.projectTitlePlaceholder');
-  projectTitleInput.maxLength = 120;
-  projectTitleInput.dataset.focusKey = 'project-title';
-  attachComposedValueListener(projectTitleInput, (value) => {
-    actions.onUpdateProjectTitle?.(value);
-  });
-  const projectTitleField = createField(translate('inspector.projectTitleLabel'), projectTitleInput);
-  hostEl.appendChild(projectTitleField);
+  hostEl.appendChild(renderProjectTitleField(project, actions));
 
   if (!scene) {
     const empty = document.createElement('p');

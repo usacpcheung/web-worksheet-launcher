@@ -34,8 +34,8 @@ function fixture({ title, image, music, bubble }) {
 
 const browser = await chromium.launch();
 try {
-  for (const locale of ['en', 'zh-Hant']) for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
-    const context = await browser.newContext({ viewport });
+  for (const locale of ['en', 'zh-Hant']) for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 844, height: 390 }, { width: 320, height: 568 }]) {
+    const context = await browser.newContext({ viewport, hasTouch: viewport.width === 320 });
     try {
       const page = await context.newPage();
       page.setDefaultTimeout(10000);
@@ -103,15 +103,45 @@ try {
         await page.waitForFunction(() => !document.querySelector('.stage--intro'));
         assert.equal(await start.count(), 0, `${label}: keyboard Start enters story`);
       }
-      const longTitle = (locale === 'en' ? 'Averylongunbrokentitle' : '一個很長的故事名稱').repeat(18);
-      await importAndPlay({ title: longTitle, image: 'portrait', music: true, bubble: true });
-      const long = await readLayout();
-      assert.equal(await page.locator('.player-intro-title').textContent(), longTitle);
-      assert.ok(long.title.x >= long.frame.x && long.title.x + long.title.w <= long.frame.x + long.frame.w + 1, 'long title wraps inside frame');
-      assert.ok(long.title.y + long.title.h + 8 <= long.button.y, 'long title cannot overlap Start');
-      await start.scrollIntoViewIfNeeded();
-      await start.click();
-      await page.waitForFunction(() => !document.querySelector('.stage--intro'));
+      const scrollToStart = async () => {
+        const reachable = () => start.evaluate(el => {
+          const r = el.getBoundingClientRect();
+          const frame = el.closest('.player-intro-frame').getBoundingClientRect();
+          return r.top >= frame.top && r.bottom <= Math.min(frame.bottom, innerHeight)
+            && el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+        });
+        const cdp = viewport.width === 320 ? await context.newCDPSession(page) : null;
+        try {
+          for (let attempt = 0; attempt < 20 && !await reachable(); attempt++) {
+            const { frame } = await readLayout();
+            if (cdp) {
+              const y = Math.min(frame.y + frame.h - 20, viewport.height - 20);
+              await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: frame.cx, y }] });
+              for (let step = 1; step <= 8; step++) {
+                await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: frame.cx, y: y - step * 20 }] });
+                await page.waitForTimeout(16);
+              }
+              await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+            } else {
+              await page.mouse.move(frame.cx, frame.cy);
+              await page.mouse.wheel(0, 500);
+            }
+            await page.waitForTimeout(150);
+          }
+          assert.equal(await reachable(), true, 'Start must be reachable by real wheel/touch scrolling before clicking');
+        } finally { await cdp?.detach(); }
+      };
+      for (const longTitle of ['茶'.repeat(40), (locale === 'en' ? 'Averylongunbrokentitle' : '一個很長的故事名稱').repeat(18)]) {
+        await importAndPlay({ title: longTitle, image: 'portrait', music: true, bubble: true });
+        const long = await readLayout();
+        assert.equal(await page.locator('.player-intro-title').textContent(), longTitle);
+        assert.ok(long.title.x >= long.frame.x && long.title.x + long.title.w <= long.frame.x + long.frame.w + 1, 'long title wraps inside frame');
+        assert.ok(long.title.y + long.title.h + 8 <= long.button.y, 'long title cannot overlap Start');
+        await scrollToStart();
+        if (shots) await page.screenshot({ path: `${shots}/intro-scroll-${locale}-${viewport.width}-${Array.from(longTitle).length}.png` });
+        await start.click();
+        await page.waitForFunction(() => !document.querySelector('.stage--intro'));
+      }
       assert.deepEqual(errors, []);
       console.log(`PASS ${locale} ${viewport.width}x${viewport.height}: 12 image/music/bubble combinations, stable title/Start, music popover, keyboard playback and long-title fallback`);
     } finally { await context.close(); }

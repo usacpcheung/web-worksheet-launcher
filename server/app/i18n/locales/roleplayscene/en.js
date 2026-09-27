@@ -251,6 +251,11 @@ export default {
   "inspector": {
     "projectTitleLabel": "Project title",
     "projectTitlePlaceholder": "Untitled Role Play",
+    "projectTitle": {
+      "counter": "{count}/{max} characters",
+      "legacy": "Existing longer title retained. New titles: up to {max} characters.",
+      "tooLong": "Not saved: use up to {max} characters. Saving and exporting keep the last valid title."
+    },
     "emptyState": "No scenes yet. Use “Add Scene” to begin.",
     "sections": {
       "sceneBasics": "Scene basics",
