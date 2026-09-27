@@ -331,11 +331,6 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       introImage.src = startScene.image.objectUrl;
       introImage.alt = translate('player.stageImageAlt', { sceneId: getSceneName(startScene) });
       introFrame.appendChild(introImage);
-    } else {
-      const introStage = document.createElement('div');
-      introStage.className = 'stage-empty';
-      introStage.textContent = translate('player.ready');
-      introFrame.appendChild(introStage);
     }
 
     if (!state.audioGate && introBackgroundSource) {
@@ -359,6 +354,7 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
     const introCta = document.createElement('div');
     introCta.className = 'player-intro-cta';
     const title = document.createElement('h3');
+    title.className = 'player-intro-title';
     title.textContent = project.meta?.title || translate('player.untitled');
     const startBtn = document.createElement('button');
     startBtn.className = 'player-intro-begin';
@@ -376,8 +372,8 @@ export function renderPlayer(store, leftEl, rightEl, showMessage, options = {}) 
       }
       beginRunAt(activeStartScene.id);
     });
-    introCta.append(title, startBtn);
-    introOverlay.appendChild(introCta);
+    introCta.appendChild(startBtn);
+    introOverlay.append(title, introCta);
     introFrame.appendChild(introOverlay);
     stage.appendChild(introFrame);
 
