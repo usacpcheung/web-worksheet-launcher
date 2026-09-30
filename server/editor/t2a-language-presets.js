@@ -2,23 +2,19 @@ export const WORKSHEET_T2A_LANGUAGE_PRESETS = Object.freeze([
   Object.freeze({
     id: 'cantonese',
     options: Object.freeze({
-      voice_id: 'Cantonese_ProfessionalHost（F)',
-      language_boost: 'Chinese,Yue',
+      voice_choice: 'cantonese_narrator_female',
     }),
   }),
   Object.freeze({
     id: 'mandarin',
     options: Object.freeze({
-      voice_id: 'Chinese (Mandarin)_News_Anchor',
-      language_boost: 'Chinese',
+      voice_choice: 'mandarin_narrator_female',
     }),
   }),
   Object.freeze({
     id: 'english',
     options: Object.freeze({
-      voice_id: 'English_compelling_lady1',
-      language_boost: 'English',
-      speed: 0.85,
+      voice_choice: 'english_narrator_female',
     }),
   }),
 ]);

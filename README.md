@@ -20,6 +20,9 @@ The legacy single-question popup widget, parent demo and SDK are retired.
 See [widget retirement scope and deployment gates](docs/widget-removal-step2.md).
 This does not remove product rewrite, transcription, T2A or sign-in support.
 
+See [worksheet editor audio voice choices](docs/editor-voice-choice.md) for request
+mappings, compatibility and rollout checks.
+
 ## Editor/Viewer route assumptions
 
 - Canonical product-style routes are `/editor/` and `/viewer/`.

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
+import { createServerApiClient } from '../app/api/server-api-client.js';
 
 test('modal load-status copies are visual-only and preserve the single shell announcer', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
@@ -86,13 +87,9 @@ const normalizeAudioTracks = (tracks) => {
 const collectAudioTrackAssetIds = (tracks) => normalizeAudioTracks(tracks).map((track) => track.assetId);`,
     },
     {
-      name: 'replace worksheet T2A preset import with deterministic helper',
+      name: 'resolve the real worksheet T2A preset module',
       pattern: /import\s*\{\s*getWorksheetT2ALanguagePresetById\s*\}\s*from\s*['"]\.\/t2a-language-presets\.js['"];\s*/,
-      replacement: `const getWorksheetT2ALanguagePresetById = (id) => ({
-  cantonese: { id: 'cantonese', options: { voice_id: 'Cantonese_ProfessionalHost（F)', language_boost: 'Chinese,Yue' } },
-  mandarin: { id: 'mandarin', options: { voice_id: 'Chinese (Mandarin)_News_Anchor', language_boost: 'Chinese' } },
-  english: { id: 'english', options: { voice_id: 'English_compelling_lady1', language_boost: 'English', speed: 0.85 } },
-}[id] || null);`,
+      replacement: `import { getWorksheetT2ALanguagePresetById } from ${JSON.stringify(new NodeURL('./t2a-language-presets.js', import.meta.url).href)};`,
     },
     {
       name: 'replace shared auth utility imports with local test doubles',
@@ -515,10 +512,67 @@ test('track attachment replaces only its selected language and generated audio f
   assert.equal(removed.includes(first.assetId), true);
   const generated = await session.generateAudioTrack('q1', 'prompt', 'english');
   assert.equal(generated.ok, true);
-  assert.deepEqual(calls[0].options, { voice_id: 'English_compelling_lady1', language_boost: 'English', speed: 0.85 });
+  assert.deepEqual(calls[0].options, { voice_choice: 'english_narrator_female' });
   const tracks = session.state.draft.blocks[0].prompt.audioTracks;
   assert.deepEqual(tracks.map((track) => track.language), ['cantonese', 'english']);
   assert.equal(tracks.find((track) => track.language === 'english').voicePresetId, 'english');
+});
+
+test('protected prompt and option generation send all narrator choices through the real API client', async (t) => {
+  const mod = await loadEditorModule();
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (url, request) => {
+    assert.equal(url, '/api/rewrite-bridge/t2a');
+    assert.equal(request.credentials, 'include');
+    requests.push(JSON.parse(request.body));
+    return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'audio/mpeg' } });
+  });
+  const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: createServerApiClient() });
+  session.state.draft = mod.createDraftRecord({ localId: 'narrator-draft', blocks: [{
+    blockId: 'q1', kind: 'question', prompt: { text: 'Prompt text' },
+    responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', value: 'Option text', label: 'Option text' }] },
+  }] });
+  try {
+    for (const [language, choice] of [['cantonese', 'cantonese_narrator_female'], ['mandarin', 'mandarin_narrator_female'], ['english', 'english_narrator_female']]) {
+      for (const target of ['prompt', 'option']) {
+        const result = await session.replayProtectedAction({ actionId: target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A',
+          payload: { localDraftId: 'narrator-draft', blockId: 'q1', target: target === 'prompt' ? 'question_prompt' : 'option', language, ...(target === 'option' ? { optionId: 'o1' } : {}) } });
+        assert.equal(result.ok, true);
+        assert.deepEqual(requests.at(-1), { text: target === 'prompt' ? 'Prompt text' : 'Option text', format: 'mp3', response_mode: 'binary', voice_choice: choice });
+        const track = session.getAudioTrackTarget('q1', target, target === 'option' ? 'o1' : null).audioTracks.find(item => item.language === language);
+        assert.equal(track.voicePresetId, language);
+        assert.ok(session.state.draft.assets.some(asset => asset.assetId === track.assetId && asset.mimeType === 'audio/mpeg'));
+      }
+    }
+    assert.equal(requests.length, 6);
+  } finally { clearTimeout(session.autosaveTimer); }
+});
+
+test('bridge choice rejection preserves attached prompt and option tracks and assets', async (t) => {
+  const mod = await loadEditorModule();
+  let reject = false;
+  t.mock.method(globalThis, 'fetch', async () => reject
+    ? new Response(JSON.stringify({ error: { code: 'VOICE_CHOICE_UNSUPPORTED', message: 'Choice unavailable' } }), { status: 422, headers: { 'content-type': 'application/json' } })
+    : new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'audio/mpeg' } }));
+  const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: createServerApiClient() });
+  session.state.draft = mod.createDraftRecord({ localId: 'rejection-draft', assets: [], blocks: [{
+    blockId: 'q1', kind: 'question', prompt: { text: 'Prompt text' },
+    responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', value: 'Option text', label: 'Option text' }] },
+  }] });
+  try {
+    for (const target of ['prompt', 'option']) {
+      assert.equal((await session.generateAudioTrack('q1', target, 'english', target === 'option' ? { optionId: 'o1' } : {})).ok, true);
+    }
+    const before = structuredClone(session.state.draft);
+    assert.equal(before.assets.length, 2);
+    reject = true;
+    for (const target of ['prompt', 'option']) {
+      const result = await session.generateAudioTrack('q1', target, 'english', { confirmReplace: true, ...(target === 'option' ? { optionId: 'o1' } : {}) });
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, 'VOICE_CHOICE_UNSUPPORTED');
+      assert.deepEqual(session.state.draft, before);
+    }
+  } finally { clearTimeout(session.autosaveTimer); }
 });
 
 test('generated audio is discarded when prompt or option text changes while the request is in flight', async () => {
