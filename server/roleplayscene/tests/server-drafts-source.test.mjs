@@ -188,7 +188,7 @@ assert.ok(
   'RolePlayScene should launch editor current-scene previews through the real player and return to saved editor context',
 );
 assert.ok(
-  editorSource.includes('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {})')
+  editorSource.includes('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {}, { signal: controller.signal })')
     && editorSource.includes('createAudioFileFromBytes(')
     && editorSource.includes('result.data,')
     && editorSource.includes('createRolePlaySceneT2AAudioFilename(')
@@ -222,7 +222,7 @@ assert.ok(
 assert.ok(
   dialogueT2ASource.indexOf("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))") > -1
     && dialogueT2ASource.indexOf("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))")
-      < dialogueT2ASource.indexOf('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {})')
+      < dialogueT2ASource.indexOf('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {}, { signal: controller.signal })')
     && dialogueT2ASource.includes("showMessage({ textId: 'inspector.dialogue.t2aCanceled' })"),
   'RolePlayScene dialogue T2A should confirm replacement before calling the bridge and cancel without generation',
 );

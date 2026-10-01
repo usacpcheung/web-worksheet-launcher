@@ -82,3 +82,21 @@ retry, keyboard focus, English/Traditional Chinese, and desktop/mobile widths.
 The full-app voice smoke uses synthetic MP3s and mocked APIs. Before release,
 verify all seven choices against the deployed bridge and listen to the real
 output; automated tests do not establish provider availability or voice quality.
+
+## Review hardening
+
+Each session-probe and generation wait has a two-minute deadline. Timeout aborts
+an active generation fetch, releases the line lock and asks for manual retry.
+Changing the target or closing the editor cancels the obsolete request and ignores
+its late result or error. Cancellation does not guarantee the remote provider has
+not processed a request, so there are no automatic retries.
+
+Removing a previously confirmed attachment during generation cancels attachment
+of the late replacement. New playback URLs are allocated before the old URL is
+revoked, so allocation failures preserve the existing recording. Binary transport
+read failures are returned as structured errors by the shared client.
+
+Review tests exercise 401/403, HTML sign-in responses, unsupported choices, server
+errors, offline fetches, empty audio, interrupted response bodies, stalled session
+checks/generation, disposal, manual retries, and line/project replacement while
+requests remain pending.

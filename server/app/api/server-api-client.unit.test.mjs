@@ -1005,3 +1005,16 @@ for (const encoding of [null, 'gzip']) {
     assert.equal(events[0].total,encoding?0:4);
   });
 }
+
+test('audio generation forwards cancellation separately from voice options', async t => {
+  setTestWindow();
+  const controller=new AbortController();let captured;
+  t.mock.method(globalThis,'fetch',(_url,request)=>{
+    captured=request;
+    return new Promise((_resolve,reject)=>request.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));
+  });
+  const run=createServerApiClient().generateAudioFromText('Hello',{voice_choice:'cantonese_male_1'},{signal:controller.signal});
+  assert.equal(captured.signal,controller.signal);
+  assert.deepEqual(JSON.parse(captured.body),{text:'Hello',format:'mp3',response_mode:'binary',voice_choice:'cantonese_male_1'});
+  controller.abort();assert.equal((await run).ok,false);
+});

@@ -357,6 +357,7 @@ export default {
       "t2aCanceled": "已取消生成音訊。",
       "t2aGenerated": "已生成第 {index} 行的音訊。",
       "t2aFailed": "無法生成音訊。",
+      "t2aTimedOut": "音訊請求逾時，原有音訊未有更改。請檢查網絡連線，再按「生成」。",
       "t2aFailedWithDetail": "無法生成音訊：{detail}",
       "t2aLineChanged": "音訊生成已取消，因為這句台詞已被修改。",
       "t2aPreset": {

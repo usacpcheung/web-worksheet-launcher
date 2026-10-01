@@ -357,6 +357,7 @@ export default {
       "t2aCanceled": "Audio generation canceled.",
       "t2aGenerated": "Generated audio for line {index}.",
       "t2aFailed": "Unable to generate audio.",
+      "t2aTimedOut": "Audio request timed out. Existing audio is unchanged. Check your connection, then press Generate again.",
       "t2aFailedWithDetail": "Unable to generate audio: {detail}",
       "t2aLineChanged": "Audio generation was canceled because this dialogue line changed.",
       "t2aPreset": {
