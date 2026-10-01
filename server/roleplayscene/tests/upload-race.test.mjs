@@ -10,6 +10,42 @@ const code = source.slice(source.indexOf('async function uploadCurrentProjectToS
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
 
+test('manager refresh cannot reopen closed recovery or replace a newer modal', async () => {
+  for (const state of ['closed', 'replaced', 'current']) {
+    const response = deferred();
+    const c = vm.createContext({
+      uploadedDrafts: [], uploadedDraftSlotLimit: 3, openingUploadedDraft: null,
+      activeServerModal: null, translate: key => key,
+      loadUploadedRolePlaySceneDrafts: () => response.promise,
+    });
+    c.closeServerModal = reason => {
+      const previous = c.activeServerModal;
+      c.activeServerModal = null;
+      previous?.onClose?.(reason);
+    };
+    c.openServerModal = options => {
+      c.closeServerModal(options.replacementReason || 'replace');
+      c.activeServerModal = options;
+    };
+    vm.runInContext(extract('function renderUploadedDraftManager(', 'function getRolePlayScenePublishedSceneId(')
+      + extract('function showSlotLimitRecoveryModal(', 'async function loadUploadedRolePlaySceneDrafts('), c);
+    const recovery = c.showSlotLimitRecoveryModal();
+    const original = c.activeServerModal;
+    const refresh = original.actions[0].onClick();
+    if (state === 'closed') c.closeServerModal('close');
+    if (state === 'replaced') c.openServerModal({ title: 'New dialog' });
+    const expected = c.activeServerModal;
+    response.resolve({ ok: true });
+    await refresh;
+    if (state === 'current') {
+      assert.notEqual(c.activeServerModal, original);
+      assert.equal(c.activeServerModal.title, 'server.slotRecoveryTitle');
+      c.closeServerModal('close');
+    } else assert.equal(c.activeServerModal, expected, state);
+    assert.equal((await recovery).deleted, false);
+  }
+});
+
 test('real slot recovery settles cancellation/failure and retries only after successful deletion', async () => {
   for (const outcome of ['cancel', 'session', 'server', 'network', 'success', 'replace', 'close']) {
     const h = harness(); let modal, uploads = 0;

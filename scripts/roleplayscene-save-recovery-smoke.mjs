@@ -6,9 +6,16 @@ const base = process.env.VIEWER_SMOKE_URL || 'http://127.0.0.1:8765';
 try {
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   let mode = 'slot', deleted = false, uploads = 0;
+  let heldList = null, holdList = false, listArrived;
+  const listPending = new Promise(resolve => { listArrived = resolve; });
   const draft = { roleplayscene_uploaded_draft_id: 'fixture', title: 'Fixture' };
   await context.route(url => url.pathname.startsWith('/api/'), async route => {
     const path = new URL(route.request().url()).pathname;
+    if (holdList && path.endsWith('/roleplayscene/drafts') && route.request().method() === 'GET') {
+      heldList = route;
+      listArrived();
+      return;
+    }
     if (path.endsWith('/drafts/upload')) {
       uploads++;
       if (mode === 'gateway') return route.fulfill({ status: 502, contentType: 'text/html', body: '<html>Bad Gateway</html>' });
@@ -36,7 +43,23 @@ try {
   await save.click();
   await page.waitForFunction(() => !document.querySelector('#server-save-btn').disabled);
   assert.equal(await page.locator('#server-signin-btn').isHidden(), true);
+  mode = 'slot'; deleted = false;
+  await save.click();
+  holdList = true;
+  await page.locator('.uploaded-drafts-refresh-action').click();
+  await listPending;
+  await page.locator('#server-modal-close').click();
+  await page.waitForFunction(() => !document.querySelector('#server-save-btn').disabled);
+  await save.click();
+  await page.locator('[data-draft-action="delete"]').click();
+  const confirmation = await page.locator('#server-modal-title').textContent();
+  holdList = false;
+  await heldList.fulfill({ json: { ok: true, data: { items: [draft] } } });
+  await page.waitForFunction(() => !document.querySelector('#server-manage-btn').disabled);
+  assert.equal(await page.locator('#server-modal-title').textContent(), confirmation);
+  assert.equal(await page.locator('#server-modal-actions .server-danger-action').count(), 1);
+  await page.locator('#server-modal-close').click();
   assert.deepEqual(errors, []);
-  console.log('PASS: real slot-recovery Delete/Cancel/Close, successful retry and XHR HTML 502 without false sign-in');
+  console.log('PASS: slot-recovery cancellation/retry, HTML 502, and late Refresh preserves newer confirmation');
   await context.close();
 } finally { await browser.close(); }

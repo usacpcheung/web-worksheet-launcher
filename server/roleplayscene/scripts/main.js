@@ -2063,7 +2063,9 @@ function renderUploadedDraftManager({
         className: 'uploaded-drafts-refresh-action',
         onClick: async () => {
           if (openingUploadedDraft) return;
+          const refreshingModal = activeServerModal;
           const result = await loadUploadedRolePlaySceneDrafts({ preflight: true, showManager: false });
+          if (activeServerModal !== refreshingModal) return;
           if (result?.ok) {
             renderUploadedDraftManager({ onDraftDeleted, onDeleteCanceled, onClose, recoveryMode,
               replacementReason: recoveryMode ? 'slot-recovery-refresh' : 'replace' });
