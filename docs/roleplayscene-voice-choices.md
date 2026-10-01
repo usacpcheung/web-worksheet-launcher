@@ -100,3 +100,12 @@ Review tests exercise 401/403, HTML sign-in responses, unsupported choices, serv
 errors, offline fetches, empty audio, interrupted response bodies, stalled session
 checks/generation, disposal, manual retries, and line/project replacement while
 requests remain pending.
+
+Local autosave waits for IndexedDB transaction completion and reports transaction
+aborts as save failures. Pending edits flush on visibility loss, page exit and
+persistence cleanup. The browser warns before leaving while a save is pending or
+has failed; once committed, ordinary navigation needs no autosave warning.
+Server Save reserves its lock before session preflight and retains one serialized
+project snapshot, including metadata, through replace/copy and slot-limit retries.
+Regression coverage includes `scripts/roleplayscene-autosave-smoke.mjs` and
+`server/roleplayscene/tests/upload-race.test.mjs`.

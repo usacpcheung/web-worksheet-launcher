@@ -12,6 +12,7 @@ import {
   prepareProjectImport,
   revokeProjectObjectUrls,
   setupPersistence,
+  serializeProject,
 } from './storage.js';
 import { validateProject } from './editor/validators.js';
 import { renderValidation } from './editor/inspector.js';
@@ -2499,62 +2500,62 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
 
 async function uploadCurrentProjectToServer({ conflictAction = '', preflight = true } = {}) {
   if (isUploadingDraft || openingUploadedDraft) return { ok: false, skipped: true };
-  if (preflight !== false) {
-    const sessionReady = await ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-  }
   isUploadingDraft = true;
   updateServerSessionUi();
   try {
+    const snapshot = serializeProject(store.get().project);
+    if (preflight !== false) {
+      const sessionReady = await ensureServerSessionReady();
+      if (!sessionReady.ok) return sessionReady.result;
+    }
     showMessage({ textId: 'server.uploading' });
-    const { archiveData, payload } = await createProjectArchive(store.get().project);
-    const title = store.get().project?.meta?.title || payload?.manifest?.project?.title || '';
+    const { archiveData, payload } = await createProjectArchive(snapshot);
+    const title = payload?.manifest?.project?.title || '';
     const description = payload?.manifest?.project?.description || '';
-    const result = await apiClient.uploadRolePlaySceneDraftPackage(archiveData, {
-      title,
-      description,
-      conflictAction,
-    });
-    if (!result.ok) {
-      const code = String(result.error?.code || '').toUpperCase();
-      if (code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT') {
-        const choice = await showUploadConflictModal(result.error?.details?.existingDraft);
-        if (choice === 'replace' || choice === 'copy') {
-          isUploadingDraft = false;
-          updateServerSessionUi();
-          return await uploadCurrentProjectToServer({ conflictAction: choice, preflight: false });
+    while (true) {
+      const result = await apiClient.uploadRolePlaySceneDraftPackage(archiveData, {
+        title,
+        description,
+        conflictAction,
+      });
+      if (!result.ok) {
+        const code = String(result.error?.code || '').toUpperCase();
+        if (code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT') {
+          const choice = await showUploadConflictModal(result.error?.details?.existingDraft);
+          if (choice === 'replace' || choice === 'copy') {
+            conflictAction = choice;
+            continue;
+          }
+          showMessage({ textId: 'server.uploadCanceled' });
+          return result;
         }
-        showMessage({ textId: 'server.uploadCanceled' });
+        if (code === 'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED') {
+          const slotLimit = Number(result.error?.details?.slotLimit);
+          if (Number.isFinite(slotLimit) && slotLimit > 0) {
+            uploadedDraftSlotLimit = slotLimit;
+          }
+          uploadedDrafts = Array.isArray(result.error?.details?.uploadedDrafts)
+            ? result.error.details.uploadedDrafts
+            : uploadedDrafts;
+          showMessage({ textId: 'server.slotLimitReached' });
+          const recovery = await showSlotLimitRecoveryModal({ drafts: uploadedDrafts, slotLimit: uploadedDraftSlotLimit });
+          if (recovery?.deleted) {
+            continue;
+          }
+          return result;
+        }
+        showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
         return result;
       }
-      if (code === 'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED') {
-        const slotLimit = Number(result.error?.details?.slotLimit);
-        if (Number.isFinite(slotLimit) && slotLimit > 0) {
-          uploadedDraftSlotLimit = slotLimit;
-        }
-        uploadedDrafts = Array.isArray(result.error?.details?.uploadedDrafts)
-          ? result.error.details.uploadedDrafts
-          : uploadedDrafts;
-        showMessage({ textId: 'server.slotLimitReached' });
-        const recovery = await showSlotLimitRecoveryModal({ drafts: uploadedDrafts, slotLimit: uploadedDraftSlotLimit });
-        if (recovery?.deleted) {
-          isUploadingDraft = false;
-          updateServerSessionUi();
-          return await uploadCurrentProjectToServer({ conflictAction, preflight: false });
-        }
-        return result;
-      }
-      showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
+      const warnings = getUploadWarnings(result.data);
+      showMessage({
+        textId: warnings.length ? 'server.uploadedWithWarnings' : 'server.uploaded',
+        textArgs: { id: result.data?.roleplayscene_uploaded_draft_id || '' },
+        warnings,
+      });
+      await loadUploadedRolePlaySceneDrafts({ preflight: false });
       return result;
     }
-    const warnings = getUploadWarnings(result.data);
-    showMessage({
-      textId: warnings.length ? 'server.uploadedWithWarnings' : 'server.uploaded',
-      textArgs: { id: result.data?.roleplayscene_uploaded_draft_id || '' },
-      warnings,
-    });
-    await loadUploadedRolePlaySceneDrafts({ preflight: false });
-    return result;
   } catch (err) {
     console.error(err);
     showMessage({ textId: 'server.uploadFailed' });
