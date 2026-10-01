@@ -117,7 +117,7 @@ async function parseJsonResponse(response) {
 async function parseJsonResponseFromText({ status, contentType = '', text = '' }) {
   const normalizedContentType = String(contentType || '').toLowerCase();
   if (!normalizedContentType.includes('application/json')) {
-    if (authLikeStatus(status) || normalizedContentType.includes('text/html')) {
+    if (authLikeStatus(status) || (status >= 200 && status < 300 && normalizedContentType.includes('text/html'))) {
       return toStructuredError({
         code: 'AUTH_REQUIRED',
         message: createAuthMessage(),

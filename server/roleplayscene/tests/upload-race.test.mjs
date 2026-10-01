@@ -8,6 +8,43 @@ import { createProject } from '../scripts/model.js';
 const source = await readFile(new URL('../scripts/main.js', import.meta.url), 'utf8');
 const code = source.slice(source.indexOf('async function uploadCurrentProjectToServer('), source.indexOf('async function publishUploadedRolePlaySceneDraft('));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+
+test('real slot recovery settles cancellation/failure and retries only after successful deletion', async () => {
+  for (const outcome of ['cancel', 'session', 'server', 'network', 'success', 'replace', 'close']) {
+    const h = harness(); let modal, uploads = 0;
+    vm.runInContext(extract('function showSlotLimitRecoveryModal(', 'async function loadUploadedRolePlaySceneDrafts(')
+      + extract('async function deleteUploadedRolePlaySceneDraft(', 'if (importConfirmAccept)'), h.context);
+    h.context.renderUploadedDraftManager = options => { modal = options; };
+    h.context.closeServerModal = reason => modal.onClose(reason);
+    h.context.getRolePlaySceneDraftId = () => 'draft';
+    h.context.showDeleteDraftConfirmation = async (_draft, options) => {
+      modal.onClose(options.replacementReason);
+      return outcome === 'cancel' ? null : 'delete';
+    };
+    h.context.apiClient.uploadRolePlaySceneDraftPackage = async () => ++uploads === 1
+      ? { ok: false, error: { code: 'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED' } }
+      : { ok: true, data: {} };
+    h.context.apiClient.deleteRolePlaySceneDraft = async () => {
+      if (outcome === 'network') throw new Error('offline');
+      return { ok: outcome !== 'server' };
+    };
+    h.preflight.resolve({ ok: true }); h.archive.resolve();
+    const pending = h.context.uploadCurrentProjectToServer();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    // A legitimate manager refresh must not cancel recovery.
+    modal.onClose('slot-recovery-refresh');
+    assert.equal(h.context.isUploadingDraft, true);
+    if (outcome === 'replace' || outcome === 'close') modal.onClose(outcome);
+    else {
+      if (outcome === 'session') h.context.ensureServerSessionReady = async () => ({ ok: false });
+      await h.context.deleteUploadedRolePlaySceneDraft({}, modal);
+    }
+    await pending;
+    assert.equal(h.context.isUploadingDraft, false, outcome);
+    assert.equal(uploads, outcome === 'success' ? 2 : 1, outcome);
+  }
+});
 function harness() {
   const calls = [], preflight = deferred(), archive = deferred();
   let project = createProject({ meta: { title: 'A' } });

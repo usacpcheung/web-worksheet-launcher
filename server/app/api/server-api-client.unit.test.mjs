@@ -16,6 +16,33 @@ function setTestWindow(search = '') {
   };
 }
 
+test('XHR ZIP upload distinguishes HTML gateway errors from sign-in responses', async () => {
+  setTestWindow();
+  const previous = globalThis.XMLHttpRequest;
+  try {
+    for (const status of [200, 401, 403, 502, 503]) {
+      globalThis.XMLHttpRequest = class {
+        open() {}
+        setRequestHeader() {}
+        getResponseHeader() { return 'text/html; charset=utf-8'; }
+        send() {
+          this.status = status;
+          this.responseText = '<html>Response</html>';
+          queueMicrotask(() => this.onload());
+        }
+      };
+      const result = await createServerApiClient().uploadRolePlaySceneDraftPackage(new Uint8Array([1]), { title: 'Fixture' });
+      assert.equal(result.ok, false);
+      assert.equal(result.error.status, status);
+      assert.equal(result.error.requiresSignIn, status < 500);
+      assert.equal(result.error.code === 'AUTH_REQUIRED', status < 500);
+    }
+  } finally {
+    if (previous === undefined) delete globalThis.XMLHttpRequest;
+    else globalThis.XMLHttpRequest = previous;
+  }
+});
+
 test('session requests forward cancellation without changing the endpoint', async (t) => {
   setTestWindow();
   const controller = new AbortController();

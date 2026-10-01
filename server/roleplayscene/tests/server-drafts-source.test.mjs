@@ -329,7 +329,7 @@ assert.ok(
 assert.ok(
   mainSource.includes('allowPublish = true')
     && mainSource.includes("if (allowPublish && publishState !== 'current_version_published')")
-    && mainSource.includes('renderUploadedDraftRows(body, drafts, { onDraftDeleted, allowPublish: !recoveryMode })'),
+    && mainSource.includes('renderUploadedDraftRows(body, drafts, { onDraftDeleted, onDeleteCanceled, allowPublish: !recoveryMode })'),
   'slot-limit recovery should hide publish actions so the upload recovery promise can only resolve through delete or cancel',
 );
 assert.ok(
