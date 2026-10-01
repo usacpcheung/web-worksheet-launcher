@@ -1,3 +1,4 @@
+import { voiceChoiceFields, generatedVoiceFields } from './t2a-presets.js';
 import { createProject, createScene, SceneType } from './model.js';
 import { zip, unzip } from './utils/zip.js';
 import { seedIdSequencesFromProject } from './utils/id.js';
@@ -168,7 +169,7 @@ function collectAsset({
   const name = asset.name ?? '';
   const blob = asset.blob ?? null;
   if (!blob) {
-    return { name, type: '', size: 0, path: null };
+    return { ...generatedVoiceFields(asset), name, type: '', size: 0, path: null };
   }
   const sceneSegment = sanitizePathSegment(sceneId, `scene-${sceneIndex + 1}`);
   const baseName = itemIndex == null ? kind : `${kind}-${itemIndex + 1}`;
@@ -192,7 +193,7 @@ function collectAsset({
     mimeType: type,
     byteLength: size,
   });
-  return { name, type, size, path };
+  return { ...generatedVoiceFields(asset), name, type, size, path };
 }
 
 function buildManifest(snapshot) {
@@ -230,6 +231,7 @@ function buildManifest(snapshot) {
         dialogue: dialogue.map((line, lineIndex) => ({
           text: line.text ?? '',
           speakerId: line.speakerId ?? null,
+          ...voiceChoiceFields(line),
           audio: collectAsset({
             asset: line.audio,
             sceneId,
@@ -273,12 +275,12 @@ function restoreAsset(manifestAsset, files, warnings) {
   if (path && files[path]) {
     const type = manifestAsset.type || 'application/octet-stream';
     const blob = new Blob([files[path]], { type });
-    return { name, blob };
+    return { ...generatedVoiceFields(manifestAsset), name, blob };
   }
   if (path && warnings) {
     warnings.push(path);
   }
-  return { name, blob: null };
+  return { ...generatedVoiceFields(manifestAsset), name, blob: null };
 }
 
 function manifestToSerialized(manifest, files, warnings = []) {
@@ -300,6 +302,7 @@ function manifestToSerialized(manifest, files, warnings = []) {
         dialogue: dialogue.map(line => ({
           text: line.text ?? '',
           speakerId: line.speakerId ?? null,
+          ...voiceChoiceFields(line),
           audio: restoreAsset(line.audio, files, warnings),
           bubble: line.bubble ? { ...line.bubble } : undefined,
         })),
@@ -410,8 +413,9 @@ export function serializeProject(project) {
         dialogue: dialogue.map(line => ({
           text: line.text ?? '',
           speakerId: line.speakerId ?? null,
+          ...voiceChoiceFields(line),
           audio: line.audio
-            ? { name: line.audio.name ?? '', blob: line.audio.blob ?? null }
+            ? { ...generatedVoiceFields(line.audio), name: line.audio.name ?? '', blob: line.audio.blob ?? null }
             : null,
           bubble: line.bubble ? { ...line.bubble } : undefined,
         })),
@@ -477,9 +481,11 @@ export function hydrateProject(serialized, { previousProject = null } = {}) {
         return {
           text: line.text ?? '',
           speakerId: line.speakerId ?? null,
+          ...voiceChoiceFields(line),
           audio: line.audio
             ? {
               name: line.audio.name ?? '',
+              ...generatedVoiceFields(line.audio),
               blob: audioBlob,
               objectUrl: audioBlob ? safeCreateObjectURL(audioBlob) : null,
             }

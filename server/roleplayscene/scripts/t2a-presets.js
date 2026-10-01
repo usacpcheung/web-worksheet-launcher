@@ -1,61 +1,44 @@
 export const ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH = 200;
 
 export const ROLEPLAYSCENE_T2A_PRESETS = Object.freeze([
-  Object.freeze({
-    id: 'default_professional_female',
-    labelKey: 'inspector.dialogue.t2aPreset.professionalFemale',
-    slug: 'professional-female',
-    options: Object.freeze({}),
-  }),
-  Object.freeze({
-    id: 'cantonese_playful_man',
-    labelKey: 'inspector.dialogue.t2aPreset.playfulMan',
-    slug: 'playful-man',
-    options: Object.freeze({
-      voice_id: 'Cantonese_PlayfulMan',
-      speed: 1.1,
-      volume: 1,
-      pitch: -1,
-    }),
-  }),
-  Object.freeze({
-    id: 'cantonese_playful_man_pitch_3',
-    labelKey: 'inspector.dialogue.t2aPreset.playfulManHighPitch',
-    slug: 'playful-man-pitch-3',
-    options: Object.freeze({
-      voice_id: 'Cantonese_PlayfulMan',
-      speed: 1.1,
-      volume: 1,
-      pitch: 3,
-    }),
-  }),
-  Object.freeze({
-    id: 'cantonese_cute_girl',
-    labelKey: 'inspector.dialogue.t2aPreset.cuteGirl',
-    slug: 'cute-girl',
-    options: Object.freeze({
-      voice_id: 'Cantonese_CuteGirl',
-      speed: 1.1,
-      volume: 1,
-      pitch: 2,
-    }),
-  }),
-  Object.freeze({
-    id: 'cantonese_gentle_lady',
-    labelKey: 'inspector.dialogue.t2aPreset.gentleLady',
-    slug: 'gentle-lady',
-    options: Object.freeze({
-      voice_id: 'Cantonese_GentleLady',
-      speed: 1.1,
-      volume: 1,
-      pitch: 0,
-    }),
-  }),
-]);
+  ['cantonese_narrator_female', 'professionalFemale', 'professional-female'],
+  ['cantonese_male_1', 'playfulMan', 'playful-man'],
+  ['cantonese_male_2', 'playfulManHighPitch', 'playful-man-pitch-3'],
+  ['cantonese_male_3', 'male3', 'male-3'],
+  ['cantonese_female_1', 'cuteGirl', 'cute-girl'],
+  ['cantonese_female_2', 'gentleLady', 'gentle-lady'],
+  ['cantonese_female_3', 'female3', 'female-3'],
+].map(([id, label, slug]) => Object.freeze({
+  id, labelKey: 'inspector.dialogue.t2aPreset.' + label, slug,
+  options: Object.freeze({ voice_choice: id }),
+})));
 
-export function getRolePlaySceneT2APresetById(presetId) {
-  return ROLEPLAYSCENE_T2A_PRESETS.find((preset) => preset.id === presetId)
-    || ROLEPLAYSCENE_T2A_PRESETS[0];
+const legacyIds = Object.freeze({ default_professional_female: 'cantonese_narrator_female', cantonese_playful_man: 'cantonese_male_1', cantonese_playful_man_pitch_3: 'cantonese_male_2', cantonese_cute_girl: 'cantonese_female_1', cantonese_gentle_lady: 'cantonese_female_2' });
+export function getRolePlaySceneT2APresetById(id) {
+  const resolved = Object.hasOwn(legacyIds, id) ? legacyIds[id] : id;
+  return ROLEPLAYSCENE_T2A_PRESETS.find(preset => preset.id === resolved) || null;
+}
+
+export function getAudioVoicePreset(audio) {
+  if (!audio) return null;
+  return Object.hasOwn(audio, 'generatedVoiceChoice')
+    ? getRolePlaySceneT2APresetById(audio.generatedVoiceChoice)
+    : getRolePlaySceneT2APresetFromAudioName(audio.name);
+}
+
+export function getDialogueVoiceChoice(line, speakers = []) {
+  return line.voiceChoice ?? getAudioVoicePreset(line.audio)?.id
+    ?? speakers.find(speaker => speaker.id === line.speakerId)?.lastVoiceChoice
+    ?? 'cantonese_narrator_female';
+}
+
+// Keep unknown strings so the editor can report them instead of silently using a default.
+export function voiceChoiceFields(value, key = 'voiceChoice') {
+  return value?.[key] == null ? {} : { [key]: String(value[key]) };
+}
+export function generatedVoiceFields(audio) {
+  return audio && Object.hasOwn(audio, 'generatedVoiceChoice')
+    ? { generatedVoiceChoice: typeof audio.generatedVoiceChoice === 'string' ? audio.generatedVoiceChoice : null } : {};
 }
 
 export function createRolePlaySceneT2AAudioFilename(sceneId, index, presetId) {
@@ -66,6 +49,7 @@ export function createRolePlaySceneT2AAudioFilename(sceneId, index, presetId) {
     || 'scene';
   const lineNumber = Math.max(1, Number(index) + 1 || 1);
   const preset = getRolePlaySceneT2APresetById(presetId);
+  if (!preset) throw new Error('Invalid voice choice');
   return `${safeSceneId}-line-${lineNumber}-t2a-${preset.slug}.mp3`;
 }
 

@@ -11,6 +11,7 @@ import {
   createRolePlaySceneT2AAudioFilename,
   getRolePlaySceneT2APresetById,
   getRolePlaySceneT2ATextState,
+  getDialogueVoiceChoice,
 } from '../t2a-presets.js';
 import { newId } from '../utils/id.js';
 
@@ -45,6 +46,8 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     ? options.onPreviewCurrentScene
     : null;
   const dialogueT2AInFlightKeys = new Map();
+  const dialogueAuthFailures = new Set();
+  const lineIdentity = Symbol('generationLine');
   let activeDialoguePreview = null;
   let disposed = false;
   let selectedSpeechBubbleAnchorId = options.initialSelectedSpeechBubbleAnchorId ?? null;
@@ -100,6 +103,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       ...scene,
       backgroundAudio: scene.backgroundAudio ? { ...scene.backgroundAudio } : null,
       dialogue: scene.dialogue.map(line => ({
+        ...line,
         text: line.text,
         speakerId: line.speakerId ?? null,
         audio: line.audio ? { ...line.audio } : null,
@@ -175,6 +179,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       onMoveDialogue: moveDialogue,
       isDialogueOrderLocked: sceneId => Array.from(dialogueT2AInFlightKeys.values()).includes(sceneId),
       onUpdateDialogueText: updateDialogueText,
+      onUpdateDialogueVoice: updateDialogueVoice,
+      needsDialogueSignIn: (sceneId, index) => dialogueAuthFailures.has(getDialogueLine(sceneId, index)?.[lineIdentity]),
+      onSignIn: options.onSignIn,
       onUpdateDialogueSpeaker: updateDialogueSpeaker,
       onStartCreateSpeakerForDialogue: startCreateSpeakerForDialogue,
       onUpdateSpeakerDraftForDialogue: updateSpeakerDraftForDialogue,
@@ -637,17 +644,12 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       const next = old === index ? target : old === target ? index : old;
       speakerDraftContext = { ...speakerDraftContext, index: next, key: getSpeakerDraftKey(sceneId, next) };
     }
-    const presets = Array.from(inspectorHost.querySelectorAll?.('.dialogue-t2a-controls__preset select') || []).map(select => select.value);
-    [presets[index], presets[target]] = [presets[target], presets[index]];
     mutateProject(prev => ({ ...prev, scenes: prev.scenes.map(current => {
       if (current.id !== sceneId) return current;
       const draft = { ...current, dialogue: [...current.dialogue] };
       [draft.dialogue[index], draft.dialogue[target]] = [draft.dialogue[target], draft.dialogue[index]];
       return draft;
     }) }));
-    Array.from(inspectorHost.querySelectorAll?.('.dialogue-t2a-controls__preset select') || []).forEach((select, i) => {
-      if (presets[i]) select.value = presets[i];
-    });
     const focusDirection = target === 0 ? 1 : target === scene.dialogue.length - 1 ? -1 : direction;
     const key = `dialogue-move-${sceneId}-${target}-${focusDirection}`;
     const button = Array.from(inspectorHost.querySelectorAll?.('[data-focus-key]') || []).find(el => el.dataset.focusKey === key);
@@ -671,6 +673,23 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         return draft;
       });
       return { ...prev, scenes };
+    });
+  }
+
+  function updateDialogueVoice(sceneId, index, voiceChoice, rememberSpeaker = true) {
+    if (!getRolePlaySceneT2APresetById(voiceChoice)) return;
+    mutateProject(prev => {
+      const line = getDialogueLine(sceneId, index, prev);
+      if (!line) return prev;
+      const scenes = prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        draft.dialogue[index].voiceChoice = voiceChoice;
+        return draft;
+      });
+      const speakers = (prev.speakers || []).map(speaker => rememberSpeaker && speaker.id === line.speakerId
+        ? { ...speaker, lastVoiceChoice: voiceChoice } : speaker);
+      return { ...prev, scenes, speakers };
     });
   }
 
@@ -793,7 +812,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     }));
   }
 
-  function setDialogueAudio(sceneId, index, file) {
+  function setDialogueAudio(sceneId, index, file, generatedVoiceChoice = null) {
     if (activeDialoguePreview?.key === getDialogueT2AKey(sceneId, index)) {
       stopDialoguePreview();
     }
@@ -810,6 +829,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         } else {
           draft.dialogue[index].audio = {
             name: file.name,
+            generatedVoiceChoice,
             objectUrl: URL.createObjectURL(file),
             blob: file,
           };
@@ -942,15 +962,27 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       showMessage({ textId: 'inspector.dialogue.t2aUnavailable' });
       return;
     }
+    const preset = getRolePlaySceneT2APresetById(presetId ?? getDialogueVoiceChoice(line, store.get().project.speakers));
+    if (!preset) { showMessage({ textId: 'inspector.dialogue.invalidVoice' }); return; }
+    stopDialoguePreview({ refresh: false });
+    const token = line[lineIdentity] ||= {};
+    dialogueAuthFailures.delete(token);
+    const isOriginalLine = () => !disposed && getDialogueLine(sceneId, index)?.[lineIdentity] === token;
+    updateDialogueVoice(sceneId, index, preset.id, false);
     dialogueT2AInFlightKeys.set(key, sceneId);
     update();
     let confirmedAudioSignature = null;
     try {
       const sessionReady = await ensureServerSessionReady();
-      if (disposed) {
+      if (!isOriginalLine()) {
         return;
       }
       if (!sessionReady?.ok) {
+        const failure = sessionReady?.result;
+        if (failure?.status === 'not_ready' || failure?.error?.requiresSignIn || failure?.error?.status === 401) {
+          dialogueAuthFailures.add(token);
+          showMessage({ textId: 'inspector.dialogue.t2aSessionExpired' });
+        }
         return;
       }
       const lineBeforeGenerate = getCurrentT2ALine(sceneId, index, textState.trimmedText);
@@ -965,10 +997,14 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         }
         confirmedAudioSignature = getAudioSignature(lineBeforeGenerate.audio);
       }
-      const preset = getRolePlaySceneT2APresetById(presetId);
       const result = await apiClient.generateAudioFromText(textState.trimmedText, preset.options || {});
       onServerApiResult?.(result);
-      if (disposed) {
+      if (isOriginalLine() && (result?.error?.requiresSignIn || [401, 403].includes(result?.error?.status))) {
+        dialogueAuthFailures.add(token);
+        showMessage({ textId: 'inspector.dialogue.t2aSessionExpired' });
+        return;
+      }
+      if (!isOriginalLine()) {
         return;
       }
       if (!result?.ok || !(result.data instanceof Uint8Array) || result.data.byteLength <= 0) {
@@ -996,7 +1032,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         result.data,
         createRolePlaySceneT2AAudioFilename(safeSceneId, index, preset.id),
       );
-      setDialogueAudio(sceneId, index, generatedFile);
+      setDialogueAudio(sceneId, index, generatedFile, preset.id);
       showMessage({
         textId: 'inspector.dialogue.t2aGenerated',
         textArgs: { index: index + 1 },

@@ -679,6 +679,7 @@ function setMode(next, options = {}) {
       apiClient,
       ensureServerSessionReady,
       onServerApiResult: syncServerSessionFromApiResult,
+      onSignIn: startServerSignIn,
       initialSelectedSceneId: editorSession.selectedSceneId,
       initialLeftView: editorSession.leftView,
       initialSelectedSpeechBubbleAnchorId: editorSession.selectedSpeechBubbleAnchorId,

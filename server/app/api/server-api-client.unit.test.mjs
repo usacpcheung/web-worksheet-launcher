@@ -895,7 +895,7 @@ test('generateAudioFromText leaves catalogue validation to the bridge and never 
   }
 });
 
-test('generateAudioFromText preserves every current RolePlayScene raw preset including its default', async (t) => {
+test('generateAudioFromText forwards every RolePlayScene named choice', async (t) => {
   setTestWindow();
   const bodies = [];
   t.mock.method(globalThis, 'fetch', async (_url, request) => {

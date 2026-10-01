@@ -1819,6 +1819,7 @@ button:disabled {
   min-height: auto;
 }
 .dialogue-line .rps-media-row {
+  grid-template-columns: minmax(0, 1fr);
   padding: var(--space-sm);
   border-radius: var(--radius-md);
   background: #f8fafc;
@@ -1848,8 +1849,13 @@ button:disabled {
   gap: 0;
 }
 .dialogue-line .rps-media-row__actions {
-  justify-content: flex-end;
-  flex-wrap: nowrap;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.dialogue-line .rps-media-row__actions > .audio-info__badge,
+.dialogue-line .rps-media-row__actions > button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .dialogue-line .dialogue-t2a-controls,
 .dialogue-line .dialogue-bubble-controls {

@@ -280,6 +280,7 @@ test('pending audio locks scene reordering even through a stale button handler',
   deferred.resolve({ ok: true, data: new Uint8Array([1, 2, 3]) });
   await waitFor(() => findElement(right, el => el.dataset?.focusKey === 'dialogue-move-scene-1-0-1').disabled === false);
   assert.ok(store.get().project.scenes[0].dialogue[0].audio);
+  assert.equal(store.get().project.scenes[0].dialogue[0].audio.generatedVoiceChoice, 'cantonese_narrator_female');
   assert.equal(store.get().project.scenes[0].dialogue[1].audio, null);
   findElement(right, el => el.dataset?.focusKey === 'dialogue-move-scene-1-0-1').dispatchEvent('click');
   assert.ok(store.get().project.scenes[0].dialogue[1].audio);
@@ -414,9 +415,49 @@ test('T2A late auth failure is reported to the server session owner', async () =
   assert.equal(store.get().project.scenes[0].dialogue[0].audio, null);
   assert.equal(
     messages.some((message) => (
-      message.textId === 'inspector.dialogue.t2aFailedWithDetail'
-      && message.textArgs?.detail === 'Session expired.'
+      message.textId === 'inspector.dialogue.t2aSessionExpired'
     )),
     true,
   );
+});
+
+test('voice selections remember speakers without changing other explicit lines and survive redraw/reordering', () => {
+  installDomGlobals();
+  const p = makeProject();
+  p.speakers = [{id:'a',name:'Alex'}, {id:'b',name:'B'}];
+  p.scenes[0].dialogue = [{text:'One',speakerId:'a'}, {text:'Two',speakerId:'a',voiceChoice:'cantonese_female_1'}, {text:'Three',speakerId:'a'}];
+  const store = new TestStore(p), right = document.createElement('div');
+  renderEditor(store, document.createElement('div'), right, () => {});
+  const select = i => findElement(right, el => el.dataset?.focusKey === `dialogue-t2a-preset-scene-1-${i}`);
+  select(0).value = 'cantonese_male_3'; select(0).dispatchEvent('change');
+  assert.equal(store.get().project.speakers[0].lastVoiceChoice, 'cantonese_male_3');
+  assert.equal(select(0).value, 'cantonese_male_3');
+  assert.equal(select(1).value, 'cantonese_female_1');
+  assert.equal(select(2).value, 'cantonese_male_3');
+  select(2).value = 'cantonese_female_3'; select(2).dispatchEvent('change');
+  store.set({project:{...store.get().project, speakers:store.get().project.speakers.map(s=>({...s,name:'Renamed'}))}});
+  assert.equal(select(0).value, 'cantonese_male_3');
+  assert.equal(select(2).value, 'cantonese_female_3');
+  findElement(right, el=>el.dataset?.focusKey==='dialogue-move-scene-1-2--1').dispatchEvent('click');
+  assert.equal(select(1).value, 'cantonese_female_3');
+  assert.equal(store.get().project.speakers[0].lastVoiceChoice, 'cantonese_female_3');
+  const speaker = findElement(right, el=>el.dataset?.focusKey==='dialogue-speaker-scene-1-1');
+  speaker.value='b'; speaker.dispatchEvent('change');
+  assert.equal(select(1).value,'cantonese_female_3');
+  assert.equal(store.get().project.speakers[1].lastVoiceChoice,undefined);
+});
+
+test('late generation cannot attach to another identical line or replacement project', async () => {
+  for (const replacement of ['delete','project']) {
+    installDomGlobals();
+    const p=makeProject({text:'Same'});p.scenes[0].dialogue.push({...p.scenes[0].dialogue[0]});
+    const store=new TestStore(p), right=document.createElement('div'), deferred=createDeferred();let calls=0;
+    renderEditor(store,document.createElement('div'),right,()=>{}, {ensureServerSessionReady:async()=>({ok:true}),apiClient:{generateAudioFromText:()=>{calls++;return deferred.promise;}}});
+    findButtonByText(right,'Generate audio').dispatchEvent('click');await waitFor(()=>calls===1);
+    if(replacement==='delete') findElement(right,el=>el.dataset?.focusKey==='dialogue-remove-scene-1-0').dispatchEvent('click');
+    else store.set({project:makeProject({text:'Same'})});
+    deferred.resolve({ok:true,data:new Uint8Array([1,2,3])});
+    await waitFor(()=>findButtonByText(right,'Generate audio')?.disabled===false);
+    assert.equal(store.get().project.scenes[0].dialogue[0].audio,null);
+  }
 });

@@ -193,7 +193,7 @@ assert.ok(
     && editorSource.includes('result.data,')
     && editorSource.includes('createRolePlaySceneT2AAudioFilename(')
     && editorSource.includes('safeSceneId, index, preset.id')
-    && editorSource.includes('setDialogueAudio(sceneId, index, generatedFile)')
+    && editorSource.includes('setDialogueAudio(sceneId, index, generatedFile, preset.id)')
     && editorSource.includes("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))"),
   'RolePlayScene editor should generate MP3 bytes through T2A and attach them through the existing dialogue audio path',
 );
@@ -234,7 +234,7 @@ assert.ok(
   'RolePlayScene inspector should render per-line T2A preset controls with text eligibility gating',
 );
 assert.ok(
-  inspectorSource.includes('getRolePlaySceneT2APresetFromAudioName(audioName)')
+  inspectorSource.includes('getAudioVoicePreset(line.audio)')
     && inspectorSource.includes("presetBadge.className = 'audio-info__badge'")
     && inspectorSource.includes("translate('inspector.dialogue.t2aPresetBadge'")
     && inspectorSource.includes('actions.isDialogueAudioPreviewing?.(scene.id, index) === true')

@@ -7,7 +7,9 @@ import { renderDialogueBubbleControls, renderSpeechBubbleEditorSection } from '.
 import {
   ROLEPLAYSCENE_T2A_PRESETS,
   ROLEPLAYSCENE_T2A_TEXT_MAX_LENGTH,
-  getRolePlaySceneT2APresetFromAudioName,
+  getAudioVoicePreset,
+  getDialogueVoiceChoice,
+  getRolePlaySceneT2APresetById,
   getRolePlaySceneT2ATextState,
 } from '../t2a-presets.js';
 
@@ -409,12 +411,12 @@ function buildInspector(hostEl, project, scene, actions) {
     if (line.audio) {
       const audioName = line.audio.name || '';
       audioStatus = translate('inspector.dialogue.audioAttached', { name: audioName });
-      const t2aPreset = getRolePlaySceneT2APresetFromAudioName(audioName);
-      if (t2aPreset) {
+      const t2aPreset = getAudioVoicePreset(line.audio);
+      {
         const presetBadge = document.createElement('span');
         presetBadge.className = 'audio-info__badge';
         presetBadge.textContent = translate('inspector.dialogue.t2aPresetBadge', {
-          preset: translate(t2aPreset.labelKey),
+          preset: t2aPreset ? translate(t2aPreset.labelKey) : translate('inspector.dialogue.customVoice'),
         });
         audioActions.push(presetBadge);
       }
@@ -463,6 +465,16 @@ function buildInspector(hostEl, project, scene, actions) {
       option.textContent = translate(preset.labelKey);
       presetSelect.appendChild(option);
     });
+    const selectedVoice = getDialogueVoiceChoice(line, project.speakers);
+    if (!getRolePlaySceneT2APresetById(selectedVoice)) {
+      const invalidOption = document.createElement('option');
+      invalidOption.value = selectedVoice;
+      invalidOption.textContent = translate('inspector.dialogue.invalidVoice');
+      presetSelect.appendChild(invalidOption);
+    }
+    presetSelect.value = getRolePlaySceneT2APresetById(selectedVoice)?.id || selectedVoice;
+    presetSelect.disabled = isGeneratingAudio;
+    presetSelect.addEventListener('change', () => actions.onUpdateDialogueVoice?.(scene.id, index, presetSelect.value));
     presetLabel.appendChild(presetSelect);
 
     const generateAudio = document.createElement('button');
@@ -473,7 +485,7 @@ function buildInspector(hostEl, project, scene, actions) {
       : line.audio
         ? translate('inspector.dialogue.regenerateAudio')
         : translate('inspector.dialogue.generateAudio');
-    generateAudio.disabled = !t2aState.eligible || isGeneratingAudio;
+    generateAudio.disabled = !t2aState.eligible || isGeneratingAudio || !getRolePlaySceneT2APresetById(selectedVoice);
     generateAudio.addEventListener('click', () => {
       actions.onGenerateDialogueAudio?.(scene.id, index, presetSelect.value);
     });
@@ -488,6 +500,22 @@ function buildInspector(hostEl, project, scene, actions) {
       t2aHint.hidden = true;
     }
 
+    const attachedVoice = getAudioVoicePreset(line.audio);
+    if (attachedVoice && attachedVoice.id !== selectedVoice && t2aState.eligible) {
+      t2aHint.hidden = false;
+      t2aHint.textContent = translate('inspector.dialogue.voiceChanged');
+    }
+    if (actions.needsDialogueSignIn?.(scene.id, index)) {
+      const message = document.createElement('p');
+      message.className = 'hint';
+      message.setAttribute('role', 'status');
+      message.textContent = translate('inspector.dialogue.t2aSessionExpired');
+      const signIn = document.createElement('button');
+      signIn.type = 'button'; applyButtonClass(signIn);
+      signIn.textContent = translate('inspector.dialogue.signIn');
+      signIn.addEventListener('click', () => actions.onSignIn?.());
+      lineParts.body.append(message, signIn);
+    }
     t2aControls.append(presetLabel, generateAudio);
     lineParts.body.append(t2aControls, t2aHint);
 
@@ -496,6 +524,7 @@ function buildInspector(hostEl, project, scene, actions) {
     }
 
     const removeLineBtn = createActionButton(translate('inspector.dialogue.deleteLine'), 'danger');
+    removeLineBtn.dataset.focusKey = `dialogue-remove-${scene.id}-${index}`;
     for (const direction of [-1, 1]) {
       const label = translate(direction < 0 ? 'inspector.dialogue.moveUp' : 'inspector.dialogue.moveDown');
       const move = createActionButton('');
