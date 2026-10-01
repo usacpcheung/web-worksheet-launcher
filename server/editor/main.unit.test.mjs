@@ -3984,6 +3984,26 @@ test('stopPreviewAudio revokes object URL for current preview', async () => {
   }
 });
 
+test('generation cancels pending preview loads for prompt and option audio', async () => {
+  const mod = await loadEditorModule();
+  for (const target of ['prompt', 'option']) {
+    const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: {
+      generateAudioFromText: async () => ({ ok: false, error: { message: 'Unavailable' } }),
+    } });
+    session.state.draft = mod.createDraftRecord({ localId: 'preview', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', label: 'Option', value: 'Option' }] } }] });
+    let finishLoad;
+    session.getLocalAssetRecord = () => new Promise(resolve => { finishLoad = resolve; });
+    session.createObjectUrlForAsset = () => { throw new Error('Cancelled preview must not create an audio URL'); };
+    const playing = session.playAssetAudio('old');
+    const generated = await session.generateAudioTrack('q1', target, 'english', { optionId: 'o1' });
+    assert.equal(generated.ok, false);
+    finishLoad({ binary: new Uint8Array([1, 2, 3]) });
+    assert.equal((await playing).reason, 'superseded');
+    assert.equal(session.previewAudio, null);
+    clearTimeout(session.autosaveTimer);
+  }
+});
+
 test('openAssetImage returns blocked when window.open returns null', async () => {
   const mod = await loadEditorModule();
   const { session } = createSessionWithQuestion(mod);

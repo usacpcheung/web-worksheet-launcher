@@ -1820,6 +1820,7 @@ class EditorDraftSession {
   }
 
   stopPreviewAudio(reason = 'interrupted') {
+    this._previewPlayRequestId += 1;
     this.finalizePreviewAudio(reason);
   }
 
@@ -2290,6 +2291,7 @@ class EditorDraftSession {
     if (!textState.eligible) return { ok: false, reason: textState.hasText ? 'text-too-long' : 'missing-text' };
     const preset = getWorksheetT2ALanguagePresetById(language);
     if (!preset) return { ok: false, reason: 'missing-preset' };
+    this.stopPreviewAudio();
     const existingTrack = getAudioTrack(current.audioTracks, language);
     if (existingTrack && options.confirmReplace !== true) return { ok: false, reason: 'confirm-replace-required', existingAssetId: existingTrack.assetId };
     const expectedSourceTextHash = getAudioSourceTextHash(current.text);
@@ -7058,6 +7060,7 @@ function renderEditorShell(session) {
         const latestBlock = session.state.draft?.blocks?.find((block) => block.blockId === blockId);
         const latestPromptText = worksheetTextToPlain(latestBlock?.prompt);
         if (!getT2ATextEligibility(latestPromptText, PROMPT_TEXT_LIMIT).eligible || promptT2AInFlightBlockIds.has(blockId)) return;
+        session.stopPreviewAudio();
         promptT2AInFlightBlockIds.add(blockId);
         promptTrackGenerationLanguageByBlockId.set(blockId, language);
         restoreLegacyPromptInFlightMarker();
@@ -7547,6 +7550,7 @@ function renderEditorShell(session) {
             const latestOption = latestOptions.find((item) => String(item?.id || '') === optionId) || null;
             const latestOptionText = latestOption?.label ?? latestOption?.value ?? '';
             if (!getT2ATextEligibility(latestOptionText).eligible || optionT2AInFlightKeys.has(optionT2AKey)) return;
+            session.stopPreviewAudio();
             optionT2AInFlightKeys.add(optionT2AKey);
             optionTrackGenerationLanguageByKey.set(optionT2AKey, language);
             restoreLegacyOptionInFlightMarker();

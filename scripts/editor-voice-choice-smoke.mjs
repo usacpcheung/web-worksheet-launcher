@@ -104,15 +104,30 @@ try {
       assert.equal(original.assets.length, 6);
 
       // Cancellation and bridge rejection must leave every existing attachment intact.
+      const startPreview = target => page.evaluate(async target => {
+        const session = window.editorSession, block = session.state.draft.blocks[0];
+        const tracks = target === 'prompt' ? block.prompt.audioTracks : block.responseConfig.options[0].audioTracks;
+        const result = await session.playAssetAudio(tracks.find(track => track.language === 'english').assetId);
+        if (!result.ok) throw new Error('Preview did not start');
+        window.audioBeforeGenerate = session.previewAudio;
+        window.audioBeforeGenerate.loop = true;
+      }, target);
+      const assertPreviewStopped = async () => assert.equal(await page.evaluate(() =>
+        window.audioBeforeGenerate.paused && window.editorSession.previewAudio === null), true,
+      'Generate must stop the existing preview before confirmation');
       let count = requests.length;
+      await startPreview('prompt');
       await clickPromptGenerate('english');
+      await assertPreviewStopped();
       await page.locator('.confirm-modal__actions button').first().click();
       await waitIdle();
       assert.equal(requests.length, count);
       assert.deepEqual(await attachments(), original);
       behavior = 'failure';
       await openOptionMenu('english');
+      await startPreview('option');
       await optionGenerate('english').click();
+      await assertPreviewStopped();
       await confirmReplace();
       await waitIdle();
       assert.equal(requests.length, count + 1);

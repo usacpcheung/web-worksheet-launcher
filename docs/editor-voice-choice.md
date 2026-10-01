@@ -40,6 +40,9 @@ defaults. Output settings, text budgets and timeouts remain configured by the br
 ## Compatibility and scope
 
 MP3 validation, replacement confirmation and generation locks remain in place.
+Pressing a prompt or option Generate action stops the editor's current audio
+preview, including pending preview loads, before confirmation. Cancelling or
+failing generation preserves the saved track so it can be played again.
 A rejected request leaves existing tracks and assets intact. Generation captures
 the active worksheet ID and an opening generation counter; switching or reopening
 worksheets invalidates pending results. After local asset storage finishes, the
