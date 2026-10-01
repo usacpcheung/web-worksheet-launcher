@@ -373,9 +373,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       const scenes = prev.scenes.map(scene => {
         if (scene.id !== sceneId) return scene;
         const draft = cloneScene(scene);
-        if (draft.image?.objectUrl) {
-          URL.revokeObjectURL(draft.image.objectUrl);
-        }
+        const previousUrl = draft.image?.objectUrl;
         if (!file) {
           draft.image = null;
         } else {
@@ -385,6 +383,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
             blob: file,
           };
         }
+        if (previousUrl) URL.revokeObjectURL(previousUrl);
         return draft;
       });
       return { ...prev, scenes };
@@ -407,9 +406,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       const scenes = prev.scenes.map(scene => {
         if (scene.id !== sceneId) return scene;
         const draft = cloneScene(scene);
-        if (draft.backgroundAudio?.objectUrl) {
-          URL.revokeObjectURL(draft.backgroundAudio.objectUrl);
-        }
+        const previousUrl = draft.backgroundAudio?.objectUrl;
         if (!file) {
           draft.backgroundAudio = null;
         } else {
@@ -419,6 +416,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
             blob: file,
           };
         }
+        if (previousUrl) URL.revokeObjectURL(previousUrl);
         return draft;
       });
       return { ...prev, scenes };

@@ -488,6 +488,31 @@ test('failed replacement URL creation must keep the original playback URL usable
   assert.deepEqual(revoked,[]);
 });
 
+test('image and background replacement preserve old URLs on allocation failure and release them after success', () => {
+  for (const [field, accept] of [['image', 'image/*'], ['backgroundAudio', 'audio/*']]) {
+    installDomGlobals();
+    const project = makeProject();
+    project.scenes[0][field] = { name: 'old', objectUrl: 'blob:old' };
+    const store = new TestStore(project), right = document.createElement('div'), events = [];
+    const cleanup = renderEditor(store, document.createElement('div'), right, () => {});
+    const input = () => findElement(right, el => el.type === 'file' && el.accept === accept);
+    const replacement = new File(['media'], 'replacement');
+    globalThis.URL.revokeObjectURL = url => events.push('revoke:' + url);
+    globalThis.URL.createObjectURL = () => { throw new Error('Allocation failed'); };
+    assert.throws(() => input().dispatchEvent('change', { target: { files: [replacement] } }), /Allocation failed/);
+    assert.equal(store.get().project.scenes[0][field].objectUrl, 'blob:old');
+    assert.deepEqual(events, []);
+    globalThis.URL.createObjectURL = () => { events.push('allocate'); return 'blob:new'; };
+    input().dispatchEvent('change', { target: { files: [replacement] } });
+    assert.equal(store.get().project.scenes[0][field].objectUrl, 'blob:new');
+    assert.deepEqual(events, ['allocate', 'revoke:blob:old']);
+    input().dispatchEvent('change', { target: { files: [] } });
+    assert.equal(store.get().project.scenes[0][field], null);
+    assert.deepEqual(events, ['allocate', 'revoke:blob:old', 'revoke:blob:new']);
+    cleanup();
+  }
+});
+
 test('real client handles expiry, HTML login, rejection, offline and interrupted bodies without losing old audio', async t => {
   const scenarios = [
     ['401',()=>new Response('',{status:401}),true],
