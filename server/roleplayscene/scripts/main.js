@@ -1254,10 +1254,13 @@ function getServerErrorMessage(result, fallbackId = 'server.actionFailed') {
   return result?.error?.message || translate(fallbackId);
 }
 
-async function probeServerSessionSilently({ force = false } = {}) {
+async function probeServerSessionSilently({ force = false, timeoutMs = 15000 } = {}) {
   serverSession = { status: 'checking', user: null, error: null };
   updateServerSessionUi();
-  const result = await probeSession({ apiClient, force });
+  const pendingSession = serverSession;
+  const result = await probeSession({ apiClient, force, timeoutMs });
+  // A newer probe, API auth failure or sign-in result owns the current state.
+  if (serverSession !== pendingSession) return result;
   if (result.ok && result.status === 'ready') {
     serverSession = { status: 'ready', user: result.user || null, error: null };
   } else {

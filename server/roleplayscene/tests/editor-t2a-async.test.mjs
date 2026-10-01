@@ -495,6 +495,7 @@ test('real client handles expiry, HTML login, rejection, offline and interrupted
     ['login',()=>new Response('<html>login</html>',{headers:{'content-type':'text/html'}}),true],
     ['unsupported',()=>new Response(JSON.stringify({error:{code:'VOICE_CHOICE_UNSUPPORTED',message:'Unsupported'}}),{status:422,headers:{'content-type':'application/json'}}),false],
     ['server',()=>new Response('Unavailable',{status:503}),false],
+    ...[502,503].map(status=>['HTML '+status,()=>new Response('<html>Gateway unavailable</html>',{status,headers:{'content-type':'text/html'}}),false]),
     ['offline',()=>{throw new TypeError('Failed to fetch');},false],
     ['empty',()=>new Response(new Uint8Array(),{headers:{'content-type':'audio/mpeg'}}),false],
     ['read failure',()=>({ok:true,status:200,headers:new Headers({'content-type':'audio/mpeg'}),arrayBuffer:async()=>{throw new Error('Connection reset');}}),false],

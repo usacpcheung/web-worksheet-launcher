@@ -72,7 +72,7 @@ async function parseJsonResponse(response) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   if (!contentType.includes('application/json')) {
     const bodyText = await response.text();
-    if (authLikeStatus(response.status) || contentType.includes('text/html')) {
+    if (authLikeStatus(response.status) || (response.ok && contentType.includes('text/html'))) {
       return toStructuredError({
         code: 'AUTH_REQUIRED',
         message: createAuthMessage(),
@@ -318,7 +318,7 @@ function createServerApiClient() {
       const contentType = String(response.headers.get('content-type') || '').toLowerCase();
 
       if (!response.ok) {
-        if (authLikeStatus(response.status) || contentType.includes('text/html')) {
+        if (authLikeStatus(response.status)) {
           return toStructuredError({
             code: 'AUTH_REQUIRED',
             message: createAuthMessage(),
