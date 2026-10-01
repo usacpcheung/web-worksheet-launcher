@@ -1220,6 +1220,7 @@ class EditorDraftSession {
     this._loadUploadedDraftsActiveCount = 0;
     this._promptT2AInFlightTargets = new Set();
     this._optionT2AInFlightTargets = new Set();
+    this._audioDraftGeneration = 0;
   }
 
   registerInFlightDraftSave(localDraftId) {
@@ -1544,6 +1545,7 @@ class EditorDraftSession {
   }
 
   async createOrOpenByLocalDraftId(localDraftId, options = {}) {
+    this._audioDraftGeneration += 1;
     const draftId = localDraftId || createLocalId('draft');
     const initialMode = options?.initialMode || DEFAULT_MODE;
     const initialSelectedBlockId = options?.selectedBlockId;
@@ -1630,6 +1632,7 @@ class EditorDraftSession {
 
   async startNewWorksheet() {
     if (this.packageLoad.current) return null;
+    this._audioDraftGeneration += 1;
     const loadToken = this.packageLoad.start('new');
     this.packageLoad.update(loadToken, 'creating');
     try {
@@ -2188,6 +2191,13 @@ class EditorDraftSession {
     const validation = validateMediaFile(file, 'audio');
     if (!validation.ok) return { ok: false, reason: 'validation', message: validation.message };
     const optionId = options.optionId || null;
+    const draftId = this.state.draft.localId;
+    const generation = this._audioDraftGeneration;
+    const isCurrentDraft = () => this.state.draft?.localId === draftId
+      && this._audioDraftGeneration === generation
+      && (!options.expectedDraft || (options.expectedDraft.localId === draftId
+        && options.expectedDraft.generation === generation));
+    if (!isCurrentDraft()) return { ok: false, reason: 'draft-changed' };
     const current = this.getAudioTrackTarget(blockId, target, optionId);
     if (!current) return { ok: false, reason: 'missing-target' };
     if (
@@ -2205,6 +2215,15 @@ class EditorDraftSession {
       return { ok: false, reason: 'confirm-replace-required', existingAssetId: existingTrack.assetId };
     }
     const newAsset = await this.createLocalAssetRecord(file, target === 'prompt' ? 'question_audio' : 'option_audio', 'audio');
+    const latest = isCurrentDraft() && this.getAudioTrackTarget(blockId, target, optionId);
+    const latestTrack = latest && getAudioTrack(latest.audioTracks, language);
+    const staleReason = !isCurrentDraft() ? 'draft-changed' : !latest ? 'missing-target'
+      : getAudioSourceTextHash(latest.text) !== getAudioSourceTextHash(current.text) ? 'source-text-changed'
+        : (latestTrack?.assetId || null) !== (existingTrack?.assetId || null) ? 'track-changed' : null;
+    if (staleReason) {
+      await this.storage.localAssets?.remove?.(newAsset.assetId);
+      return { ok: false, reason: staleReason, error: { message: editorNotification('audioGeneration.sourceTextChangedDuringGeneration') } };
+    }
     const nextTrack = {
       language,
       assetId: newAsset.assetId,
@@ -2274,7 +2293,11 @@ class EditorDraftSession {
     const existingTrack = getAudioTrack(current.audioTracks, language);
     if (existingTrack && options.confirmReplace !== true) return { ok: false, reason: 'confirm-replace-required', existingAssetId: existingTrack.assetId };
     const expectedSourceTextHash = getAudioSourceTextHash(current.text);
+    const expectedDraft = { localId: this.state.draft.localId, generation: this._audioDraftGeneration };
     const audioResult = await this.apiClient.generateAudioFromText(textState.trimmedText, preset.options);
+    if (this.state.draft?.localId !== expectedDraft.localId || this._audioDraftGeneration !== expectedDraft.generation) {
+      return { ok: false, reason: 'draft-changed' };
+    }
     if (!audioResult?.ok) return { ok: false, reason: 'generation-failed', error: audioResult?.error || null };
     const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
     if (!audioBytes) return { ok: false, reason: 'invalid-audio-data' };
@@ -2284,6 +2307,7 @@ class EditorDraftSession {
       confirmReplace: true,
       voicePresetId: language,
       expectedSourceTextHash,
+      expectedDraft,
     });
   }
 
@@ -3365,6 +3389,7 @@ class EditorDraftSession {
       this.packageLoad.update(loadToken, 'opening');
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
+      this._audioDraftGeneration += 1;
       this.state.draft = persisted;
       this.state.selectedBlockId = persisted.blocks[0]?.blockId || null;
       this.state.draftRevision += 1;
@@ -4233,7 +4258,7 @@ class EditorDraftSession {
         if (!result.ok) {
           const message = result.error?.message || editorNotification('audioGeneration.failed');
           this.setRecoveryMessage(message);
-          return { ok: false, status: 'generation_failed', error: { message } };
+          return { ok: false, status: 'generation_failed', error: { ...result.error, message } };
         }
         this.setRecoveryMessage(editorNotification('audioGeneration.promptGenerated'));
         this.pushNotification({ kind: 'success', category: 'editor', source: 'prompt.t2a', text: editorNotification('audioGeneration.promptGenerated') });
@@ -4402,7 +4427,7 @@ class EditorDraftSession {
         if (!result.ok) {
           const message = result.error?.message || editorNotification('audioGeneration.failed');
           this.setRecoveryMessage(message);
-          return { ok: false, status: 'generation_failed', error: { message } };
+          return { ok: false, status: 'generation_failed', error: { ...result.error, message } };
         }
         this.setRecoveryMessage(editorNotification('audioGeneration.optionGenerated'));
         this.pushNotification({

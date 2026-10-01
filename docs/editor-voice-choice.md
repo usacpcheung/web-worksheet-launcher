@@ -39,9 +39,18 @@ defaults. Output settings, text budgets and timeouts remain configured by the br
 
 ## Compatibility and scope
 
-Only the editor's request presets change. MP3 validation, replacement confirmation,
-generation locks, authentication/replay and source-text-change protection retain
-their existing behavior. A rejected request leaves existing tracks and assets intact.
+MP3 validation, replacement confirmation and generation locks remain in place.
+A rejected request leaves existing tracks and assets intact. Generation captures
+the active worksheet ID and an opening generation counter; switching or reopening
+worksheets invalidates pending results. After local asset storage finishes, the
+editor rechecks the worksheet, target, source text and existing track before
+attaching audio. Obsolete generated assets are removed without replacing old tracks.
+
+Authentication failures received after a successful session probe retain their
+structured error and enter the shared sign-in recovery flow. Recovery persists
+the intent only while its original record remains active. The existing restore
+flow validates the target before replay; a failed recovery replay clears the
+pending intent and does not automatically redirect a second time.
 
 Saved `audioTracks[].voicePresetId` remains the track's language ID (or null for
 manually attached audio). The API choice ID is not stored in that field: existing
@@ -62,6 +71,8 @@ node scripts/editor-voice-choice-smoke.mjs
 node scripts/editor-option-audio-smoke.mjs
 node scripts/worksheet-markdown-smoke.mjs
 node scripts/roleplayscene-project-title-smoke.mjs
+node scripts/viewer-voice-smoke.mjs
+node scripts/roleplayscene-voice-smoke.mjs
 ```
 
 Use `scripts/static-server.mjs` on loopback. The browser checks use isolated contexts

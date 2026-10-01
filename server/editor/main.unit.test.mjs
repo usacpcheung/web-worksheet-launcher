@@ -5,6 +5,70 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
 import { createServerApiClient } from '../app/api/server-api-client.js';
+import { SharedAuthGate as RealSharedAuthGate } from '../app/auth/shared-auth-gate.js';
+
+test('audio generation rejects worksheet switches and reopening the same worksheet', async () => {
+  const mod = await loadEditorModule();
+  for (const target of ['prompt', 'option']) for (const sameId of [false, true]) {
+    let finish;
+    const storage = createSessionForTests();
+    const session = new mod.EditorDraftSession(storage, { apiClient: { generateAudioFromText: () => new Promise(resolve => { finish = resolve; }) } });
+    const original = mod.createDraftRecord({ localId: 'original', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Same text' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', value: 'Same option', label: 'Same option' }] } }] });
+    session.state.draft = original;
+    const run = session.generateAudioTrack('q1', target, 'english', { optionId: 'o1' });
+    storage.drafts.get = async () => ({ ...structuredClone(original), localId: sameId ? 'original' : 'copy' });
+    await session.createOrOpenByLocalDraftId(sameId ? 'original' : 'copy');
+    const before = structuredClone(session.state.draft);
+    finish({ ok: true, data: new Uint8Array([1, 2, 3]) });
+    assert.equal((await run).reason, 'draft-changed');
+    assert.deepEqual(session.state.draft, before);
+    clearTimeout(session.autosaveTimer);
+  }
+});
+
+test('audio saved after source edits or target deletion is discarded without replacing existing audio', async () => {
+  const mod = await loadEditorModule();
+  for (const target of ['prompt', 'option']) for (const change of ['text', 'delete', 'switch']) {
+    let finish, started;
+    const entered = new Promise(resolve => { started = resolve; });
+    const removed = [];
+    const storage = createSessionForTests();
+    storage.localAssets = { put: async () => { started(); await new Promise(resolve => { finish = resolve; }); }, remove: async id => removed.push(id) };
+    const session = new mod.EditorDraftSession(storage, { apiClient: { generateAudioFromText: async () => ({ ok: true, data: new Uint8Array([1, 2, 3]) }) } });
+    const track = { language: 'english', assetId: 'old-audio', voicePresetId: 'english' };
+    session.state.draft = mod.createDraftRecord({ localId: 'original', assets: [{ assetId: 'old-audio', kind: 'audio', usage: 'question_audio', path: 'old.mp3', mimeType: 'audio/mpeg' }], blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Original', audioTracks: [track] }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', value: 'Original', label: 'Original', audioTracks: [track] }] } }] });
+    const run = session.generateAudioTrack('q1', target, 'english', { optionId: 'o1', confirmReplace: true });
+    await entered;
+    if (change === 'switch') session.state.draft = mod.createDraftRecord({ localId: 'copy' });
+    else if (change === 'delete') session.state.draft.blocks = [];
+    else if (target === 'prompt') session.state.draft.blocks[0].prompt.text = 'Changed';
+    else session.state.draft.blocks[0].responseConfig.options[0].label = 'Changed';
+    const before = structuredClone(session.state.draft);
+    finish();
+    const result = await run;
+    assert.equal(result.ok, false);
+    assert.deepEqual(session.state.draft, before);
+    assert.equal(removed.length, 1);
+    assert.notEqual(removed[0], 'old-audio');
+    clearTimeout(session.autosaveTimer);
+  }
+});
+
+test('late prompt and option authentication failures reach the real auth recovery gate', async () => {
+  const mod = await loadEditorModule();
+  for (const target of ['prompt', 'option']) {
+    const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: { generateAudioFromText: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401, requiresSignIn: true, message: 'Sign in' } }) } });
+    session.state.draft = mod.createDraftRecord({ localId: 'original', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', label: 'Option', value: 'Option' }] } }] });
+    let pending, redirects = 0;
+    const gate = new RealSharedAuthGate({ resumeFlagKey: 'review', storage: { pendingIntent: { set: value => { pending = value; } }, resumeFlags: { set: () => {} } }, getCurrentLocalId: () => session.state.draft.localId, checkSessionReady: async () => ({ ok: true }), replayIntent: intent => session.replayProtectedAction(intent), redirectToAuth: () => { redirects++; } });
+    const result = await gate.runProtectedAction({ actionId: target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A', recordStore: 'localDrafts', payload: { localDraftId: 'original', blockId: 'q1', target: target === 'prompt' ? 'question_prompt' : 'option', optionId: 'o1', language: 'english' } });
+    assert.equal(result.status, 'redirected');
+    assert.equal(redirects, 1);
+    assert.equal(pending.intentPayload.language, 'english');
+    assert.equal(pending.localId, 'original');
+    clearTimeout(session.autosaveTimer);
+  }
+});
 
 test('modal load-status copies are visual-only and preserve the single shell announcer', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');

@@ -39,6 +39,50 @@ function createWindowStub(href = 'https://example.test/viewer/?auth=1&authReturn
   return { replaceCalls };
 }
 
+test('late auth failure does not redirect or save an intent against a switched record', async () => {
+  createWindowStub();
+  for (const switchDuring of ['replay', 'save']) {
+    const storage = createStorage();
+    let localId = 'original', redirects = 0;
+    const gate = new SharedAuthGate({ storage, resumeFlagKey: 'test',
+      getCurrentLocalId: () => localId, checkSessionReady: async () => ({ ok: true }),
+      replayIntent: async () => {
+        if (switchDuring === 'replay') localId = 'other';
+        return { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } };
+      },
+      persistLocalRecord: async () => { if (switchDuring === 'save') localId = 'other'; },
+      redirectToAuth: () => { redirects++; },
+    });
+    assert.equal((await gate.runProtectedAction({ actionId: 'generate', recordStore: 'localDrafts' })).status, 'intent_invalid');
+    assert.equal(storage.pendingIntent.get(), null);
+    assert.equal(redirects, 0);
+  }
+});
+
+test('non-auth replay failures are returned without redirecting', async () => {
+  const failure = { ok: false, error: { code: 'VOICE_CHOICE_UNSUPPORTED', status: 422 } };
+  const storage = createStorage();
+  const gate = new SharedAuthGate({ storage, resumeFlagKey: 'test', checkSessionReady: async () => ({ ok: true }), replayIntent: async () => failure });
+  assert.equal(await gate.runProtectedAction({ actionId: 'generate', recordStore: 'localDrafts' }), failure);
+  assert.equal(storage.pendingIntent.get(), null);
+});
+
+test('authentication recovery replay failure clears pending intent without a second redirect', async () => {
+  createWindowStub();
+  const storage = createStorage();
+  storage.pendingIntent.set({ actionId: 'generate', recordStore: 'localDrafts', localId: 'original', resumeFlagKey: 'test' });
+  let redirects = 0, calls = 0;
+  const gate = new SharedAuthGate({ storage, resumeFlagKey: 'test', checkSessionReady: async () => ({ ok: true }),
+    replayIntent: async () => { calls++; return { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } }; },
+    redirectToAuth: () => { redirects++; },
+  });
+  assert.equal((await gate.restoreAfterAuthReturn()).status, 'replay_failed');
+  assert.equal(storage.pendingIntent.get(), null);
+  assert.equal((await gate.restoreAfterAuthReturn()).status, 'no_pending_intent');
+  assert.equal(calls, 1);
+  assert.equal(redirects, 0);
+});
+
 test('runProtectedAction persists pending intent and redirects when unauthenticated', async () => {
   const storage = createStorage();
   const redirectCalls = [];
