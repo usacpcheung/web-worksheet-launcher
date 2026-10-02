@@ -109,3 +109,11 @@ Server Save reserves its lock before session preflight and retains one serialize
 project snapshot, including metadata, through replace/copy and slot-limit retries.
 Regression coverage includes `scripts/roleplayscene-autosave-smoke.mjs` and
 `server/roleplayscene/tests/upload-race.test.mjs`.
+
+Sign-in flows own bounded, cancellable session probes, so retrying after a stalled
+probe starts a fresh request. ZIP downloads preserve HTTP 502/503 as server errors
+instead of requesting sign-in. Draft-list responses apply only while their request
+and modal revision remain current; stale responses cannot release a newer lock.
+JSON and ZIP imports reject malformed dialogue text before replacing the project.
+Existing string, missing and null dialogue text remains supported; restored local
+snapshots normalize text to strings defensively.

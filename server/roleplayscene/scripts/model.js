@@ -68,7 +68,7 @@ function normaliseSpeaker(speaker = {}) {
 
 function normaliseDialogueLine(line = {}) {
   return {
-    text: line.text ?? '',
+    text: String(line.text ?? ''),
     ...voiceChoiceFields(line),
     ...(line.voiceChoice == null && getAudioVoicePreset(line.audio) ? { voiceChoice: getAudioVoicePreset(line.audio).id } : {}),
     speakerId: line.speakerId == null || line.speakerId === '' ? null : String(line.speakerId),

@@ -16,6 +16,19 @@ function setTestWindow(search = '') {
   };
 }
 
+test('draft and publication ZIP downloads do not classify HTML gateway errors as sign-in failures', async t => {
+  setTestWindow();
+  const client = createServerApiClient();
+  for (const status of [401, 403, 502, 503]) {
+    t.mock.method(globalThis, 'fetch', async () => new Response('<html>Error</html>', { status, headers: { 'content-type': 'text/html' } }));
+    for (const result of [await client.fetchRolePlaySceneDraftArtifact('fixture'), await client.fetchRolePlayScenePublishedSceneArtifact('fixture')]) {
+      assert.equal(result.error.status, status);
+      assert.equal(result.error.requiresSignIn, status === 401 || status === 403);
+    }
+    t.mock.restoreAll();
+  }
+});
+
 test('XHR ZIP upload distinguishes HTML gateway errors from sign-in responses', async () => {
   setTestWindow();
   const previous = globalThis.XMLHttpRequest;

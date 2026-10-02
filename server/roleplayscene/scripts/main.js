@@ -99,6 +99,8 @@ let persistenceCleanup = () => {};
 let lastMessagePayload = null;
 let activeImportConfirmation = null;
 let activeServerModal = null;
+let serverModalRevision = 0;
+let uploadedDraftsRequestId = 0;
 let activeAuthFlow = null;
 let serverSession = { status: 'checking', user: null, error: null };
 let uploadedDrafts = [];
@@ -1169,6 +1171,7 @@ function openServerModal({ title, bodyRenderer, actions = [], onClose = null, re
     closeServerModal(replacementReason);
   }
   const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  serverModalRevision++;
   activeServerModal = { onClose, previousFocus };
   serverModalTitle.textContent = title;
   serverModalBody.innerHTML = '';
@@ -1187,6 +1190,7 @@ function openServerModal({ title, bodyRenderer, actions = [], onClose = null, re
 
 function closeServerModal(reason = 'close') {
   if (!serverModalOverlay) return;
+  serverModalRevision++;
   const current = activeServerModal;
   activeServerModal = null;
   serverModalOverlay.hidden = true;
@@ -2480,14 +2484,22 @@ function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploa
 }
 
 async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager = false } = {}) {
-  if (preflight) {
-    const sessionReady = await ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-  }
+  if (openingUploadedDraft) return { ok: false, skipped: true };
+  const requestId = ++uploadedDraftsRequestId;
+  const modalRevision = serverModalRevision;
+  const isCurrent = () => requestId === uploadedDraftsRequestId
+    && modalRevision === serverModalRevision && !openingUploadedDraft;
+  const stale = () => ({ ok: false, skipped: true, status: 'stale_response' });
   isLoadingUploadedDrafts = true;
   updateServerSessionUi();
   try {
+    if (preflight) {
+      const sessionReady = await ensureServerSessionReady();
+      if (!isCurrent()) return stale();
+      if (!sessionReady.ok) return sessionReady.result;
+    }
     const result = await apiClient.listRolePlaySceneDrafts();
+    if (!isCurrent()) return stale();
     if (!result.ok) {
       showMessage({ text: getServerErrorMessage(result, 'server.listFailed') });
       return result;
@@ -2501,9 +2513,14 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
       renderUploadedDraftManager();
     }
     return result;
+  } catch (error) {
+    if (!isCurrent()) return stale();
+    throw error;
   } finally {
-    isLoadingUploadedDrafts = false;
-    updateServerSessionUi();
+    if (requestId === uploadedDraftsRequestId) {
+      isLoadingUploadedDrafts = false;
+      updateServerSessionUi();
+    }
   }
 }
 

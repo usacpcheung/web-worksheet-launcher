@@ -231,7 +231,7 @@ function createServerApiClient() {
       } catch (error) {
         return toTransportError(error, { signal, duringRead: true });
       }
-      if (authLikeStatus(response.status) || response.headers.get('content-type')?.includes('text/html')) {
+      if (authLikeStatus(response.status)) {
         return toStructuredError({
           code: 'AUTH_REQUIRED',
           message: createAuthMessage(),

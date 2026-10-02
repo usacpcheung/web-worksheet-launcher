@@ -686,8 +686,21 @@ function validateImportDraftShape(project) {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scenes are missing');
   }
   const errors = validateSceneIdentity(project);
+  for (const [index, scene] of project.scenes.entries()) {
+    if (scene?.dialogue == null) continue;
+    if (!Array.isArray(scene.dialogue)) {
+      errors.push(`scenes[${index}].dialogue must be an array.`);
+      continue;
+    }
+    for (const [lineIndex, line] of scene.dialogue.entries()) {
+      if (!line || typeof line !== 'object' || Array.isArray(line)
+        || (line.text != null && typeof line.text !== 'string')) {
+        errors.push(`scenes[${index}].dialogue[${lineIndex}] must be an object with string text.`);
+      }
+    }
+  }
   if (errors.length) {
-    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scene IDs are invalid', { errors });
+    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project data is invalid', { errors });
   }
   return { errors: [], warnings: [] };
 }
