@@ -2836,7 +2836,8 @@ async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null, 
     deleted = true;
     showMessage({ textId: 'server.deletedDraft' });
     if (typeof onDraftDeleted === 'function') {
-      onDraftDeleted(result);
+      if (deletionModalRevision === serverModalRevision) onDraftDeleted(result);
+      else onDeleteCanceled?.();
       return result;
     }
     const refreshResult = await loadUploadedRolePlaySceneDrafts({ preflight: false });

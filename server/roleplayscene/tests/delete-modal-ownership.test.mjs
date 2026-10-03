@@ -42,3 +42,23 @@ test('deletion refresh preserves newer dialogs before and during refresh, but re
     assert.equal(renders, changedAt === 'none' ? 1 : 0, `${published}/${changedAt}`);
   }
 });
+
+test('late slot-recovery deletion settles without closing a newer dialog or retrying upload', async () => {
+  let finishDelete;
+  const events = [];
+  const c = vm.createContext({
+    openingUploadedDraft: null, serverModalRevision: 0,
+    getRolePlaySceneDraftId: () => 'draft', showDeleteDraftConfirmation: async () => 'delete',
+    ensureServerSessionReady: async () => ({ ok: true }), showMessage() {},
+    apiClient: { deleteRolePlaySceneDraft: () => new Promise(r => { finishDelete = r; }) },
+  });
+  vm.runInContext(extract('async function deleteUploadedRolePlaySceneDraft(', 'if (importConfirmAccept)'), c);
+  const pending = c.deleteUploadedRolePlaySceneDraft({}, {
+    onDraftDeleted: () => events.push('retry'), onDeleteCanceled: () => events.push('cancel'),
+  });
+  await new Promise(r => setImmediate(r));
+  c.serverModalRevision++;
+  finishDelete({ ok: true });
+  await pending;
+  assert.deepEqual(events, ['cancel']);
+});
