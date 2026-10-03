@@ -202,8 +202,10 @@ try {
       await page.waitForFunction(() => !document.querySelector('#file-input').value);
       assert.equal(await page.locator('#import-confirm-overlay').isVisible(), false);
       assert.equal(await field.inputValue(), fullName);
-      // main.js logs the handled import rejection; no other console/runtime errors.
-      assert(errors.every(message => message.includes('Project scene IDs are invalid')));
+      // Shared shape validation reports the handled duplicate-ID rejection.
+      // No unrelated console/runtime errors may accompany it.
+      assert.equal(errors.length, 1, JSON.stringify(errors));
+      assert.match(errors[0], /^ProjectImportError: Project data is invalid\n/, JSON.stringify(errors));
       console.log(`PASS ${locale} ${width}: names, IME, legacy IDs, duplicate labels, wrapping, tooltip, copy, links, reload/export/upload, safe rejection`);
     } finally { await context.close(); }
   }
