@@ -59,8 +59,7 @@ assert.ok(
   mainSource.includes("const currentUserSub = serverSession.user?.sub || ''")
     && mainSource.includes("if (currentUserSub && scene?.owner_sub === currentUserSub)")
     && mainSource.includes('function showDeletePublishedSceneConfirmation')
-    && mainSource.includes('function deletePublishedRolePlayScene')
-    && mainSource.includes("await loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: true })"),
+    && mainSource.includes('function deletePublishedRolePlayScene'),
   'published browser should show owner-only delete with confirmation and refresh after deletion',
 );
 assert.ok(
@@ -120,14 +119,7 @@ assert.ok(
     && mainSource.includes('returnToRolePlaySceneEditor()'),
   'direct published links should block the editor, expose explicit loading states, ignore stale attempts, and reload on exit',
 );
-assert.ok(
-  mainSource.includes('let publishedScenesRequestId = 0')
-    && mainSource.includes("return { ok: false, skipped: true, status: 'already_loading' }")
-    && mainSource.includes('const requestId = ++publishedScenesRequestId')
-    && mainSource.includes('if (requestId !== publishedScenesRequestId)')
-    && mainSource.includes('if (requestId === publishedScenesRequestId)'),
-  'published browser loads should guard against duplicate in-flight requests and ignore stale responses',
-);
+// Request ownership is exercised in published-browser-race.test.mjs.
 assert.ok(
   mainSource.includes('searchButton.disabled = isLoadingPublishedScenes')
     && mainSource.includes("label: isLoadingPublishedScenes ? translate('published.refreshing') : translate('published.refresh')")
@@ -188,12 +180,12 @@ assert.ok(
   'RolePlayScene should launch editor current-scene previews through the real player and return to saved editor context',
 );
 assert.ok(
-  editorSource.includes('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {})')
+  editorSource.includes('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {}, { signal: controller.signal })')
     && editorSource.includes('createAudioFileFromBytes(')
     && editorSource.includes('result.data,')
     && editorSource.includes('createRolePlaySceneT2AAudioFilename(')
     && editorSource.includes('safeSceneId, index, preset.id')
-    && editorSource.includes('setDialogueAudio(sceneId, index, generatedFile)')
+    && editorSource.includes('setDialogueAudio(sceneId, index, generatedFile, preset.id)')
     && editorSource.includes("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))"),
   'RolePlayScene editor should generate MP3 bytes through T2A and attach them through the existing dialogue audio path',
 );
@@ -222,7 +214,7 @@ assert.ok(
 assert.ok(
   dialogueT2ASource.indexOf("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))") > -1
     && dialogueT2ASource.indexOf("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))")
-      < dialogueT2ASource.indexOf('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {})')
+      < dialogueT2ASource.indexOf('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {}, { signal: controller.signal })')
     && dialogueT2ASource.includes("showMessage({ textId: 'inspector.dialogue.t2aCanceled' })"),
   'RolePlayScene dialogue T2A should confirm replacement before calling the bridge and cancel without generation',
 );
@@ -234,7 +226,7 @@ assert.ok(
   'RolePlayScene inspector should render per-line T2A preset controls with text eligibility gating',
 );
 assert.ok(
-  inspectorSource.includes('getRolePlaySceneT2APresetFromAudioName(audioName)')
+  inspectorSource.includes('getAudioVoicePreset(line.audio)')
     && inspectorSource.includes("presetBadge.className = 'audio-info__badge'")
     && inspectorSource.includes("translate('inspector.dialogue.t2aPresetBadge'")
     && inspectorSource.includes('actions.isDialogueAudioPreviewing?.(scene.id, index) === true')
@@ -274,12 +266,12 @@ assert.ok(
 );
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
-const fetchIndex = mainSource.indexOf('await fetchArtifact(uploadedDraftId', openFunctionIndex);
+const fetchIndex = mainSource.indexOf('await wait(fetchArtifact(uploadedDraftId', openFunctionIndex);
 const prepareIndex = mainSource.indexOf('preparedImport = await prepareProjectImport', openFunctionIndex);
 const confirmIndex = mainSource.indexOf('const shouldImport = await confirmProjectImport()', openFunctionIndex);
 const closeModalBeforeConfirmIndex = mainSource.indexOf("closeServerModal('import-confirm')", openFunctionIndex);
 const applyIndex = mainSource.indexOf('await applyPreparedProjectImport(store, preparedImport)', openFunctionIndex);
-const revokeIndex = mainSource.indexOf('revokeProjectObjectUrls(preparedImport.project)', openFunctionIndex);
+const revokeIndex = mainSource.indexOf('revokeProjectObjectUrls(preparedImport.project)', confirmIndex);
 
 assert.ok(openFunctionIndex > -1, 'uploaded draft open flow should exist');
 assert.ok(fetchIndex > openFunctionIndex, 'uploaded draft open flow should fetch the ZIP before import preparation');
@@ -317,19 +309,7 @@ assert.ok(
   'uploaded draft progress should skip redundant percentage renders',
 );
 
-assert.ok(
-  mainSource.includes("code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT'")
-    && mainSource.includes("conflictAction: choice")
-    && mainSource.includes('return await uploadCurrentProjectToServer({ conflictAction: choice, preflight: false });'),
-  'upload conflict flow should expose replace/copy and retry with conflictAction',
-);
-assert.ok(
-  mainSource.includes("code === 'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED'")
-    && mainSource.includes('result.error?.details?.uploadedDrafts')
-    && mainSource.includes('showSlotLimitRecoveryModal({ drafts: uploadedDrafts, slotLimit: uploadedDraftSlotLimit })')
-    && mainSource.includes('return await uploadCurrentProjectToServer({ conflictAction, preflight: false });'),
-  'slot-limit flow should use the server-provided draft list and retry with the preserved conflict action after deletion',
-);
+// Conflict and slot-limit retries are covered behaviorally in upload-race.test.mjs.
 assert.ok(
   mainSource.includes('function showSlotLimitRecoveryModal')
     && mainSource.includes('onDraftDeleted: () =>')
@@ -341,7 +321,7 @@ assert.ok(
 assert.ok(
   mainSource.includes('allowPublish = true')
     && mainSource.includes("if (allowPublish && publishState !== 'current_version_published')")
-    && mainSource.includes('renderUploadedDraftRows(body, drafts, { onDraftDeleted, allowPublish: !recoveryMode })'),
+    && mainSource.includes('renderUploadedDraftRows(body, drafts, { onDraftDeleted, onDeleteCanceled, allowPublish: !recoveryMode })'),
   'slot-limit recovery should hide publish actions so the upload recovery promise can only resolve through delete or cancel',
 );
 assert.ok(

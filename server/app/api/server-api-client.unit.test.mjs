@@ -16,6 +16,46 @@ function setTestWindow(search = '') {
   };
 }
 
+test('draft and publication ZIP downloads do not classify HTML gateway errors as sign-in failures', async t => {
+  setTestWindow();
+  const client = createServerApiClient();
+  for (const status of [401, 403, 502, 503]) {
+    t.mock.method(globalThis, 'fetch', async () => new Response('<html>Error</html>', { status, headers: { 'content-type': 'text/html' } }));
+    for (const result of [await client.fetchRolePlaySceneDraftArtifact('fixture'), await client.fetchRolePlayScenePublishedSceneArtifact('fixture')]) {
+      assert.equal(result.error.status, status);
+      assert.equal(result.error.requiresSignIn, status === 401 || status === 403);
+    }
+    t.mock.restoreAll();
+  }
+});
+
+test('XHR ZIP upload distinguishes HTML gateway errors from sign-in responses', async () => {
+  setTestWindow();
+  const previous = globalThis.XMLHttpRequest;
+  try {
+    for (const status of [200, 401, 403, 502, 503]) {
+      globalThis.XMLHttpRequest = class {
+        open() {}
+        setRequestHeader() {}
+        getResponseHeader() { return 'text/html; charset=utf-8'; }
+        send() {
+          this.status = status;
+          this.responseText = '<html>Response</html>';
+          queueMicrotask(() => this.onload());
+        }
+      };
+      const result = await createServerApiClient().uploadRolePlaySceneDraftPackage(new Uint8Array([1]), { title: 'Fixture' });
+      assert.equal(result.ok, false);
+      assert.equal(result.error.status, status);
+      assert.equal(result.error.requiresSignIn, status < 500);
+      assert.equal(result.error.code === 'AUTH_REQUIRED', status < 500);
+    }
+  } finally {
+    if (previous === undefined) delete globalThis.XMLHttpRequest;
+    else globalThis.XMLHttpRequest = previous;
+  }
+});
+
 test('session requests forward cancellation without changing the endpoint', async (t) => {
   setTestWindow();
   const controller = new AbortController();
@@ -895,7 +935,7 @@ test('generateAudioFromText leaves catalogue validation to the bridge and never 
   }
 });
 
-test('generateAudioFromText preserves every current RolePlayScene raw preset including its default', async (t) => {
+test('generateAudioFromText forwards every RolePlayScene named choice', async (t) => {
   setTestWindow();
   const bodies = [];
   t.mock.method(globalThis, 'fetch', async (_url, request) => {
@@ -1005,3 +1045,16 @@ for (const encoding of [null, 'gzip']) {
     assert.equal(events[0].total,encoding?0:4);
   });
 }
+
+test('audio generation forwards cancellation separately from voice options', async t => {
+  setTestWindow();
+  const controller=new AbortController();let captured;
+  t.mock.method(globalThis,'fetch',(_url,request)=>{
+    captured=request;
+    return new Promise((_resolve,reject)=>request.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));
+  });
+  const run=createServerApiClient().generateAudioFromText('Hello',{voice_choice:'cantonese_male_1'},{signal:controller.signal});
+  assert.equal(captured.signal,controller.signal);
+  assert.deepEqual(JSON.parse(captured.body),{text:'Hello',format:'mp3',response_mode:'binary',voice_choice:'cantonese_male_1'});
+  controller.abort();assert.equal((await run).ok,false);
+});

@@ -59,7 +59,7 @@ function canUseCachedProbe() {
   return Boolean(latestProbeCache && latestProbeCache.expiresAt > nowMs());
 }
 
-async function probeSession({ apiClient, force = false, timeoutMs = null }) {
+async function probeSession({ apiClient, force = false, timeoutMs = null, signal = null }) {
   if (!apiClient || typeof apiClient.getSession !== 'function') {
     throw new Error('probeSession requires apiClient.getSession().');
   }
@@ -69,6 +69,7 @@ async function probeSession({ apiClient, force = false, timeoutMs = null }) {
   if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
     const controller = new AbortController();
     let timer;
+    let abortListener;
     try {
       const timeout = new Promise(resolve => {
         timer = setTimeout(() => {
@@ -76,14 +77,24 @@ async function probeSession({ apiClient, force = false, timeoutMs = null }) {
           controller.abort();
         }, timeoutMs);
       });
+      const aborted = new Promise(resolve => {
+        abortListener = () => {
+          resolve({ ok: false, error: { code: 'SESSION_PROBE_CANCELLED', message: 'Session check cancelled.' } });
+          controller.abort();
+        };
+        if (signal?.aborted) abortListener();
+        else signal?.addEventListener('abort', abortListener, { once: true });
+      });
       return normalizeProbeResult(await Promise.race([
         timeout,
+        aborted,
         apiClient.getSession({ signal: controller.signal }),
       ]));
     } catch (error) {
       return normalizeProbeResult({ error });
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', abortListener);
     }
   }
 
@@ -124,6 +135,7 @@ async function waitForSessionReady({
   intervalMs = 1000,
   timeoutMs = 15000,
   shouldContinue = null,
+  signal = null,
 }) {
   const startedAt = nowMs();
   const timeoutAt = startedAt + Math.max(0, Number(timeoutMs) || 0);
@@ -134,7 +146,7 @@ async function waitForSessionReady({
 
   while (attempts === 0 || nowMs() <= timeoutAt) {
     const elapsedMs = nowMs() - startedAt;
-    if (typeof shouldContinue === 'function' && shouldContinue({ elapsedMs, attempts, lastProbe }) === false) {
+    if (signal?.aborted || (typeof shouldContinue === 'function' && shouldContinue({ elapsedMs, attempts, lastProbe }) === false)) {
       return {
         ok: false,
         status: 'cancelled',
@@ -152,7 +164,8 @@ async function waitForSessionReady({
     }
 
     attempts += 1;
-    lastProbe = await probeSession({ apiClient, force: attempts > 1 });
+    lastProbe = await probeSession({ apiClient, force: attempts > 1,
+      timeoutMs: Math.max(1, timeoutAt - nowMs()), signal });
 
     if (lastProbe.status === 'ready') {
       return {

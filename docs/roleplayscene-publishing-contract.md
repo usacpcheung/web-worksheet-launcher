@@ -55,3 +55,7 @@ No database migration or republishing is required.
 The editor's story title limit and compatibility behavior are documented in
 [RolePlayScene story titles](roleplayscene-story-titles.md). That authoring limit
 does not change published listing metadata or validation of existing packages.
+
+RolePlayScene Cantonese voice authoring and its optional version-1 package fields
+are documented in [voice choices](roleplayscene-voice-choices.md). Published
+packages retain these fields without changing playback or published metadata.

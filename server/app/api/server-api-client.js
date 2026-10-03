@@ -72,7 +72,7 @@ async function parseJsonResponse(response) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   if (!contentType.includes('application/json')) {
     const bodyText = await response.text();
-    if (authLikeStatus(response.status) || contentType.includes('text/html')) {
+    if (authLikeStatus(response.status) || (response.ok && contentType.includes('text/html'))) {
       return toStructuredError({
         code: 'AUTH_REQUIRED',
         message: createAuthMessage(),
@@ -117,7 +117,7 @@ async function parseJsonResponse(response) {
 async function parseJsonResponseFromText({ status, contentType = '', text = '' }) {
   const normalizedContentType = String(contentType || '').toLowerCase();
   if (!normalizedContentType.includes('application/json')) {
-    if (authLikeStatus(status) || normalizedContentType.includes('text/html')) {
+    if (authLikeStatus(status) || (status >= 200 && status < 300 && normalizedContentType.includes('text/html'))) {
       return toStructuredError({
         code: 'AUTH_REQUIRED',
         message: createAuthMessage(),
@@ -231,7 +231,7 @@ function createServerApiClient() {
       } catch (error) {
         return toTransportError(error, { signal, duringRead: true });
       }
-      if (authLikeStatus(response.status) || response.headers.get('content-type')?.includes('text/html')) {
+      if (authLikeStatus(response.status)) {
         return toStructuredError({
           code: 'AUTH_REQUIRED',
           message: createAuthMessage(),
@@ -297,7 +297,7 @@ function createServerApiClient() {
   }
 
   async function requestBinary(path, expectedMime, request = {}) {
-    const { method = 'GET', body = null, headers = {} } = request;
+    const { method = 'GET', body = null, headers = {}, signal = null } = request;
     let response;
     try {
       response = await fetch(`${BRIDGE_API_BASE}${path}`, {
@@ -305,6 +305,7 @@ function createServerApiClient() {
         credentials: 'include',
         headers,
         ...(body ? { body } : {}),
+        ...(signal ? { signal } : {}),
       });
     } catch (error) {
       return toStructuredError({
@@ -313,10 +314,34 @@ function createServerApiClient() {
       });
     }
 
-    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    try {
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
 
-    if (!response.ok) {
-      if (authLikeStatus(response.status) || contentType.includes('text/html')) {
+      if (!response.ok) {
+        if (authLikeStatus(response.status)) {
+          return toStructuredError({
+            code: 'AUTH_REQUIRED',
+            message: createAuthMessage(),
+            status: response.status,
+            requiresSignIn: true,
+          });
+        }
+        const parsedError = await parseErrorBody(response);
+        if (parsedError.kind === 'json') {
+          return toStructuredError({
+            code: parsedError.parsed?.error?.code || 'API_ERROR',
+            message: parsedError.parsed?.error?.message || 'API request failed.',
+            status: response.status,
+          });
+        }
+        return toStructuredError({
+          code: 'API_ERROR',
+          message: 'API request failed.',
+          status: response.status,
+        });
+      }
+
+      if (contentType.includes('text/html')) {
         return toStructuredError({
           code: 'AUTH_REQUIRED',
           message: createAuthMessage(),
@@ -324,47 +349,27 @@ function createServerApiClient() {
           requiresSignIn: true,
         });
       }
-      const parsedError = await parseErrorBody(response);
-      if (parsedError.kind === 'json') {
+
+      if (!contentType.includes(String(expectedMime || '').toLowerCase())) {
         return toStructuredError({
-          code: parsedError.parsed?.error?.code || 'API_ERROR',
-          message: parsedError.parsed?.error?.message || 'API request failed.',
+          code: 'UNEXPECTED_CONTENT_TYPE',
+          message: `Expected ${expectedMime} response but got ${contentType || 'unknown'}.`,
           status: response.status,
         });
       }
-      return toStructuredError({
-        code: 'API_ERROR',
-        message: 'API request failed.',
-        status: response.status,
-      });
-    }
 
-    if (contentType.includes('text/html')) {
-      return toStructuredError({
-        code: 'AUTH_REQUIRED',
-        message: createAuthMessage(),
-        status: response.status,
-        requiresSignIn: true,
-      });
+      const bytes = await response.arrayBuffer();
+      if (!bytes || bytes.byteLength <= 0) {
+        return toStructuredError({
+          code: 'BRIDGE_EMPTY_RESPONSE',
+          message: 'Bridge returned an empty binary response.',
+          status: response.status,
+        });
+      }
+      return { ok: true, data: new Uint8Array(bytes), status: response.status };
+    } catch (error) {
+      return toTransportError(error, { signal, duringRead: true });
     }
-
-    if (!contentType.includes(String(expectedMime || '').toLowerCase())) {
-      return toStructuredError({
-        code: 'UNEXPECTED_CONTENT_TYPE',
-        message: `Expected ${expectedMime} response but got ${contentType || 'unknown'}.`,
-        status: response.status,
-      });
-    }
-
-    const bytes = await response.arrayBuffer();
-    if (!bytes || bytes.byteLength <= 0) {
-      return toStructuredError({
-        code: 'BRIDGE_EMPTY_RESPONSE',
-        message: 'Bridge returned an empty binary response.',
-        status: response.status,
-      });
-    }
-    return { ok: true, data: new Uint8Array(bytes), status: response.status };
   }
 
   async function uploadZip(path, zipBytes, request = {}) {
@@ -770,7 +775,7 @@ function createServerApiClient() {
         return toStructuredError({ code: 'NETWORK_ERROR', message: 'Unable to reach bridge API.' });
       }
     },
-    async generateAudioFromText(text, options = {}) {
+    async generateAudioFromText(text, options = {}, request = {}) {
       const payload = {
         text: String(text),
         format: 'mp3',
@@ -796,6 +801,7 @@ function createServerApiClient() {
       }
       return requestBinary('/t2a', 'audio/mpeg', {
         method: 'POST',
+        signal: request.signal,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),
       });

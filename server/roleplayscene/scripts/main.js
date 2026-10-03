@@ -1,3 +1,4 @@
+import { waitForDraftRequest } from './draft-request.js';
 import { Store } from './state.js';
 import { renderEditor } from './editor/editor.js';
 import { renderPlayer } from './player/player.js';
@@ -12,6 +13,7 @@ import {
   prepareProjectImport,
   revokeProjectObjectUrls,
   setupPersistence,
+  serializeProject,
 } from './storage.js';
 import { validateProject } from './editor/validators.js';
 import { renderValidation } from './editor/inspector.js';
@@ -98,6 +100,8 @@ let persistenceCleanup = () => {};
 let lastMessagePayload = null;
 let activeImportConfirmation = null;
 let activeServerModal = null;
+let serverModalRevision = 0;
+let uploadedDraftsRequestId = 0;
 let activeAuthFlow = null;
 let serverSession = { status: 'checking', user: null, error: null };
 let uploadedDrafts = [];
@@ -679,6 +683,7 @@ function setMode(next, options = {}) {
       apiClient,
       ensureServerSessionReady,
       onServerApiResult: syncServerSessionFromApiResult,
+      onSignIn: startServerSignIn,
       initialSelectedSceneId: editorSession.selectedSceneId,
       initialLeftView: editorSession.leftView,
       initialSelectedSpeechBubbleAnchorId: editorSession.selectedSpeechBubbleAnchorId,
@@ -1161,12 +1166,13 @@ function handleServerModalKeydown(event) {
   }
 }
 
-function openServerModal({ title, bodyRenderer, actions = [], onClose = null }) {
+function openServerModal({ title, bodyRenderer, actions = [], onClose = null, replacementReason = 'replace' }) {
   if (!serverModalOverlay || !serverModalTitle || !serverModalBody) return;
   if (activeServerModal) {
-    closeServerModal('replace');
+    closeServerModal(replacementReason);
   }
   const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  serverModalRevision++;
   activeServerModal = { onClose, previousFocus };
   serverModalTitle.textContent = title;
   serverModalBody.innerHTML = '';
@@ -1185,6 +1191,10 @@ function openServerModal({ title, bodyRenderer, actions = [], onClose = null }) 
 
 function closeServerModal(reason = 'close') {
   if (!serverModalOverlay) return;
+  serverModalRevision++;
+  if (reason !== 'import-confirm' && ['downloading', 'preparing'].includes(openingUploadedDraft?.phase)) {
+    openingUploadedDraft.cancel?.();
+  }
   const current = activeServerModal;
   activeServerModal = null;
   serverModalOverlay.hidden = true;
@@ -1198,7 +1208,7 @@ function closeServerModal(reason = 'close') {
   if (current?.onClose) current.onClose(reason);
 }
 
-function chooseFromServerModal({ title, message, actions }) {
+function chooseFromServerModal({ title, message, actions, replacementReason = 'replace' }) {
   return new Promise((resolve) => {
     let resolved = false;
     const settle = (value) => {
@@ -1208,6 +1218,7 @@ function chooseFromServerModal({ title, message, actions }) {
     };
     openServerModal({
       title,
+      replacementReason,
       bodyRenderer: (body) => {
         const paragraph = document.createElement('p');
         paragraph.textContent = message;
@@ -1253,10 +1264,13 @@ function getServerErrorMessage(result, fallbackId = 'server.actionFailed') {
   return result?.error?.message || translate(fallbackId);
 }
 
-async function probeServerSessionSilently({ force = false } = {}) {
+async function probeServerSessionSilently({ force = false, timeoutMs = 15000 } = {}) {
   serverSession = { status: 'checking', user: null, error: null };
   updateServerSessionUi();
-  const result = await probeSession({ apiClient, force });
+  const pendingSession = serverSession;
+  const result = await probeSession({ apiClient, force, timeoutMs });
+  // A newer probe, API auth failure or sign-in result owns the current state.
+  if (serverSession !== pendingSession) return result;
   if (result.ok && result.status === 'ready') {
     serverSession = { status: 'ready', user: result.user || null, error: null };
   } else {
@@ -1721,9 +1735,10 @@ async function showUploadConflictModal(existingDraft) {
   });
 }
 
-async function showDeleteDraftConfirmation(draft) {
+async function showDeleteDraftConfirmation(draft, { replacementReason = 'replace' } = {}) {
   const title = draft?.title || translate('server.values.untitledDraft');
   return chooseFromServerModal({
+    replacementReason,
     title: translate('server.deleteTitle'),
     message: translate('server.deleteBody', { title }),
     actions: [
@@ -1882,7 +1897,7 @@ function appendDraftWarningBadges(container, draft) {
   container.appendChild(badges);
 }
 
-function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, allowPublish = true } = {}) {
+function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, onDeleteCanceled = null, allowPublish = true } = {}) {
   const list = document.createElement('div');
   list.className = 'server-draft-list';
   if (!drafts.length) {
@@ -1946,7 +1961,7 @@ function renderUploadedDraftRows(container, drafts, { onDraftDeleted = null, all
     const deleteButton = createButton(translate('server.deleteDraft'), 'server-danger-action');
     deleteButton.dataset.draftAction = 'delete';
     deleteButton.disabled = draftOpenInProgress;
-    deleteButton.addEventListener('click', () => deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted }));
+    deleteButton.addEventListener('click', () => deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted, onDeleteCanceled }));
     actions.appendChild(deleteButton);
     row.appendChild(actions);
     list.appendChild(row);
@@ -2025,10 +2040,13 @@ function renderUploadedDraftManager({
   drafts = uploadedDrafts,
   slotLimit = uploadedDraftSlotLimit,
   onDraftDeleted = null,
+  onDeleteCanceled = null,
   onClose = null,
   recoveryMode = false,
+  replacementReason = 'replace',
 } = {}) {
   openServerModal({
+    replacementReason,
     title: recoveryMode ? translate('server.slotRecoveryTitle') : translate('server.manageTitle'),
     bodyRenderer: (body) => {
       if (recoveryMode) {
@@ -2044,7 +2062,7 @@ function renderUploadedDraftManager({
         limit: slotLimit || 3,
       });
       body.appendChild(slotUsage);
-      renderUploadedDraftRows(body, drafts, { onDraftDeleted, allowPublish: !recoveryMode });
+      renderUploadedDraftRows(body, drafts, { onDraftDeleted, onDeleteCanceled, allowPublish: !recoveryMode });
     },
     actions: [
       {
@@ -2053,9 +2071,12 @@ function renderUploadedDraftManager({
         className: 'uploaded-drafts-refresh-action',
         onClick: async () => {
           if (openingUploadedDraft) return;
+          const refreshingModal = activeServerModal;
           const result = await loadUploadedRolePlaySceneDrafts({ preflight: true, showManager: false });
+          if (activeServerModal !== refreshingModal) return;
           if (result?.ok) {
-            renderUploadedDraftManager({ onDraftDeleted, onClose, recoveryMode });
+            renderUploadedDraftManager({ onDraftDeleted, onDeleteCanceled, onClose, recoveryMode,
+              replacementReason: recoveryMode ? 'slot-recovery-refresh' : 'replace' });
           }
         },
       },
@@ -2235,19 +2256,22 @@ async function loadPublishedRolePlaySceneScenes({
   if (showBrowser && !serverModalOverlay?.hidden) {
     renderPublishedBrowserModal();
   }
+  const modalRevision = serverModalRevision;
+  const isCurrent = () => requestId === publishedScenesRequestId && modalRevision === serverModalRevision;
   try {
     if (preflight) {
       const sessionReady = await ensureServerSessionReady();
+      if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
       if (!sessionReady.ok) return sessionReady.result;
     }
-    if (requestId !== publishedScenesRequestId) return { ok: false, skipped: true, status: 'stale_response' };
+    if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
     const offset = append ? Number(publishedScenesNextOffset || publishedScenes.length || 0) : 0;
     const result = await apiClient.listRolePlayScenePublishedScenes({
       ...publishedScenesFilters,
       limit: 20,
       offset,
     });
-    if (requestId !== publishedScenesRequestId) {
+    if (!isCurrent()) {
       return { ok: false, skipped: true, status: 'stale_response' };
     }
     if (!result.ok) {
@@ -2258,15 +2282,15 @@ async function loadPublishedRolePlaySceneScenes({
     publishedScenes = append ? [...publishedScenes, ...incoming] : incoming;
     publishedScenesHasMore = result.data?.hasMore === true;
     publishedScenesNextOffset = Number.isFinite(Number(result.data?.nextOffset)) ? Number(result.data.nextOffset) : null;
-    if (showBrowser) {
-      renderPublishedBrowserModal();
-    }
     return result;
+  } catch (error) {
+    if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
+    throw error;
   } finally {
     if (requestId === publishedScenesRequestId) {
       isLoadingPublishedScenes = false;
       updateServerSessionUi();
-      if (showBrowser && !serverModalOverlay?.hidden) {
+      if (showBrowser && isCurrent()) {
         renderPublishedBrowserModal();
       }
     }
@@ -2429,6 +2453,7 @@ async function deletePublishedRolePlayScene(scene) {
   if (!sceneId) return;
   const choice = await showDeletePublishedSceneConfirmation(scene);
   if (choice !== 'delete') return;
+  const deletionModalRevision = serverModalRevision;
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) return;
   const result = await apiClient.deleteRolePlayScenePublishedScene(sceneId);
@@ -2437,7 +2462,7 @@ async function deletePublishedRolePlayScene(scene) {
     return;
   }
   showMessage({ textId: 'published.deleted' });
-  await loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: true });
+  await loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: deletionModalRevision === serverModalRevision });
 }
 
 function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploadedDraftSlotLimit } = {}) {
@@ -2456,8 +2481,9 @@ function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploa
         closeServerModal('slot-recovery-delete');
         settle({ deleted: true });
       },
+      onDeleteCanceled: () => settle({ deleted: false }),
       onClose: (reason) => {
-        if (reason !== 'slot-recovery-delete' && reason !== 'replace') {
+        if (!['slot-recovery-delete', 'slot-recovery-delete-confirm', 'slot-recovery-refresh'].includes(reason)) {
           settle({ deleted: false });
         }
       },
@@ -2466,14 +2492,22 @@ function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploa
 }
 
 async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager = false } = {}) {
-  if (preflight) {
-    const sessionReady = await ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-  }
+  if (openingUploadedDraft) return { ok: false, skipped: true };
+  const requestId = ++uploadedDraftsRequestId;
+  const modalRevision = serverModalRevision;
+  const isCurrent = () => requestId === uploadedDraftsRequestId
+    && modalRevision === serverModalRevision && !openingUploadedDraft;
+  const stale = () => ({ ok: false, skipped: true, status: 'stale_response' });
   isLoadingUploadedDrafts = true;
   updateServerSessionUi();
   try {
+    if (preflight) {
+      const sessionReady = await ensureServerSessionReady();
+      if (!isCurrent()) return stale();
+      if (!sessionReady.ok) return sessionReady.result;
+    }
     const result = await apiClient.listRolePlaySceneDrafts();
+    if (!isCurrent()) return stale();
     if (!result.ok) {
       showMessage({ text: getServerErrorMessage(result, 'server.listFailed') });
       return result;
@@ -2487,70 +2521,75 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
       renderUploadedDraftManager();
     }
     return result;
+  } catch (error) {
+    if (!isCurrent()) return stale();
+    throw error;
   } finally {
-    isLoadingUploadedDrafts = false;
-    updateServerSessionUi();
+    if (requestId === uploadedDraftsRequestId) {
+      isLoadingUploadedDrafts = false;
+      updateServerSessionUi();
+    }
   }
 }
 
 async function uploadCurrentProjectToServer({ conflictAction = '', preflight = true } = {}) {
   if (isUploadingDraft || openingUploadedDraft) return { ok: false, skipped: true };
-  if (preflight !== false) {
-    const sessionReady = await ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-  }
   isUploadingDraft = true;
   updateServerSessionUi();
   try {
+    const snapshot = serializeProject(store.get().project);
+    if (preflight !== false) {
+      const sessionReady = await ensureServerSessionReady();
+      if (!sessionReady.ok) return sessionReady.result;
+    }
     showMessage({ textId: 'server.uploading' });
-    const { archiveData, payload } = await createProjectArchive(store.get().project);
-    const title = store.get().project?.meta?.title || payload?.manifest?.project?.title || '';
+    const { archiveData, payload } = await createProjectArchive(snapshot);
+    const title = payload?.manifest?.project?.title || '';
     const description = payload?.manifest?.project?.description || '';
-    const result = await apiClient.uploadRolePlaySceneDraftPackage(archiveData, {
-      title,
-      description,
-      conflictAction,
-    });
-    if (!result.ok) {
-      const code = String(result.error?.code || '').toUpperCase();
-      if (code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT') {
-        const choice = await showUploadConflictModal(result.error?.details?.existingDraft);
-        if (choice === 'replace' || choice === 'copy') {
-          isUploadingDraft = false;
-          updateServerSessionUi();
-          return await uploadCurrentProjectToServer({ conflictAction: choice, preflight: false });
+    while (true) {
+      const result = await apiClient.uploadRolePlaySceneDraftPackage(archiveData, {
+        title,
+        description,
+        conflictAction,
+      });
+      if (!result.ok) {
+        const code = String(result.error?.code || '').toUpperCase();
+        if (code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT') {
+          const choice = await showUploadConflictModal(result.error?.details?.existingDraft);
+          if (choice === 'replace' || choice === 'copy') {
+            conflictAction = choice;
+            continue;
+          }
+          showMessage({ textId: 'server.uploadCanceled' });
+          return result;
         }
-        showMessage({ textId: 'server.uploadCanceled' });
+        if (code === 'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED') {
+          const slotLimit = Number(result.error?.details?.slotLimit);
+          if (Number.isFinite(slotLimit) && slotLimit > 0) {
+            uploadedDraftSlotLimit = slotLimit;
+          }
+          uploadedDrafts = Array.isArray(result.error?.details?.uploadedDrafts)
+            ? result.error.details.uploadedDrafts
+            : uploadedDrafts;
+          showMessage({ textId: 'server.slotLimitReached' });
+          const recovery = await showSlotLimitRecoveryModal({ drafts: uploadedDrafts, slotLimit: uploadedDraftSlotLimit });
+          if (recovery?.deleted) {
+            continue;
+          }
+          return result;
+        }
+        showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
         return result;
       }
-      if (code === 'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED') {
-        const slotLimit = Number(result.error?.details?.slotLimit);
-        if (Number.isFinite(slotLimit) && slotLimit > 0) {
-          uploadedDraftSlotLimit = slotLimit;
-        }
-        uploadedDrafts = Array.isArray(result.error?.details?.uploadedDrafts)
-          ? result.error.details.uploadedDrafts
-          : uploadedDrafts;
-        showMessage({ textId: 'server.slotLimitReached' });
-        const recovery = await showSlotLimitRecoveryModal({ drafts: uploadedDrafts, slotLimit: uploadedDraftSlotLimit });
-        if (recovery?.deleted) {
-          isUploadingDraft = false;
-          updateServerSessionUi();
-          return await uploadCurrentProjectToServer({ conflictAction, preflight: false });
-        }
-        return result;
-      }
-      showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
+      const warnings = getUploadWarnings(result.data);
+      showMessage({
+        textId: warnings.length ? 'server.uploadedWithWarnings' : 'server.uploaded',
+        textArgs: { id: result.data?.roleplayscene_uploaded_draft_id || '' },
+        warnings,
+      });
+      await loadUploadedRolePlaySceneDrafts({ preflight: false });
       return result;
     }
-    const warnings = getUploadWarnings(result.data);
-    showMessage({
-      textId: warnings.length ? 'server.uploadedWithWarnings' : 'server.uploaded',
-      textArgs: { id: result.data?.roleplayscene_uploaded_draft_id || '' },
-      warnings,
-    });
-    await loadUploadedRolePlaySceneDrafts({ preflight: false });
-    return result;
   } catch (err) {
     console.error(err);
     showMessage({ textId: 'server.uploadFailed' });
@@ -2629,7 +2668,16 @@ async function publishUploadedRolePlaySceneDraft(draft) {
 async function openUploadedRolePlaySceneDraft(draft, { published = false } = {}) {
   const uploadedDraftId = published ? getRolePlayScenePublishedSceneId(draft) : getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId || openingUploadedDraft) return;
-  const operation = { uploadedDraftId, published, phase: 'downloading', percent: null };
+  const controller = new AbortController();
+  const operation = { uploadedDraftId, published, phase: 'downloading', percent: null, cancel() {
+    controller.abort();
+    if (openingUploadedDraft === operation) {
+      openingUploadedDraft = null;
+      syncUploadedDraftActionAvailability();
+    }
+  } };
+  const isCurrent = () => openingUploadedDraft === operation && !controller.signal.aborted;
+  const wait = request => waitForDraftRequest(request, controller);
   openingUploadedDraft = operation;
   // Invalidate requests started before the copy lock, including responses that
   // arrive after cancellation/success has already released that lock.
@@ -2639,13 +2687,16 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
   let preparedImport = null;
   try {
     if (!(await ensureDiscussionCanBeDiscarded())) return;
-    const sessionReady = await ensureServerSessionReady();
+    if (!isCurrent()) return;
+    const sessionReady = await wait(ensureServerSessionReady());
+    if (!isCurrent()) return;
     if (!sessionReady.ok) return;
     showMessage({ textId: published ? 'published.opening' : 'server.openingDraft' });
     const fetchArtifact = published
       ? apiClient.fetchRolePlayScenePublishedSceneArtifact.bind(apiClient)
       : apiClient.fetchRolePlaySceneDraftArtifact.bind(apiClient);
-    const artifact = await fetchArtifact(uploadedDraftId, {
+    const artifact = await wait(fetchArtifact(uploadedDraftId, {
+      signal: controller.signal,
       onProgress: (progress) => {
         if (openingUploadedDraft !== operation || operation.phase !== 'downloading') return;
         const loaded = Number(progress?.loaded || 0);
@@ -2662,7 +2713,8 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
         openingUploadedDraft.percent = percent;
         syncUploadedDraftActionAvailability();
       },
-    });
+    }));
+    if (!isCurrent()) return;
     if (!artifact.ok) {
       showMessage({ text: getServerErrorMessage(artifact, published ? 'published.openFailed' : 'server.openFailed') });
       return;
@@ -2676,6 +2728,7 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
       artifact.data,
       `${sanitizeFilename(draft?.title, 'roleplayscene-draft')}.zip`,
     ));
+    if (!isCurrent()) { revokeProjectObjectUrls(preparedImport.project); return; }
     if (published) {
       const suffixLength = translate('published.copyTitle', { title: '' }).length;
       preparedImport.project.meta.title = translate('published.copyTitle', {
@@ -2683,6 +2736,7 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
           .slice(0, Math.max(0, 120 - suffixLength)),
       });
     }
+    operation.phase = 'confirming';
     closeServerModal('import-confirm');
     const shouldImport = await confirmProjectImport();
     if (!shouldImport) {
@@ -2723,13 +2777,17 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
     setMode('edit');
     if (published) updatePublishedPlayUi();
   } catch (err) {
+    if (controller.signal.aborted) {
+      if (err?.code === 'DRAFT_TIMEOUT') showMessage({ textId: 'server.openTimedOut' });
+      return;
+    }
     console.error(err);
     if (preparedImport?.project && store.get().project !== preparedImport.project) {
       revokeProjectObjectUrls(preparedImport.project);
     }
     showImportError(err);
   } finally {
-    if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
+    if (openingUploadedDraft === operation) {
       openingUploadedDraft = null;
       syncUploadedDraftActionAvailability();
     }
@@ -2758,26 +2816,38 @@ async function downloadUploadedRolePlaySceneDraft(draft) {
   showMessage({ textId: 'server.downloadedDraft' });
 }
 
-async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null } = {}) {
+async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null, onDeleteCanceled = null } = {}) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId || openingUploadedDraft) return;
-  const choice = await showDeleteDraftConfirmation(draft);
-  if (choice !== 'delete') return;
-  const sessionReady = await ensureServerSessionReady();
-  if (!sessionReady.ok) return;
-  const result = await apiClient.deleteRolePlaySceneDraft(uploadedDraftId);
-  if (!result.ok) {
-    showMessage({ text: getServerErrorMessage(result, 'server.deleteFailed') });
-    return;
-  }
-  showMessage({ textId: 'server.deletedDraft' });
-  if (typeof onDraftDeleted === 'function') {
-    onDraftDeleted(result);
-    return result;
-  }
-  const refreshResult = await loadUploadedRolePlaySceneDrafts({ preflight: false });
-  if (refreshResult?.ok) {
-    renderUploadedDraftManager();
+  let deleted = false;
+  try {
+    const choice = await showDeleteDraftConfirmation(draft, {
+      replacementReason: onDeleteCanceled ? 'slot-recovery-delete-confirm' : 'replace',
+    });
+    if (choice !== 'delete') return;
+    const deletionModalRevision = serverModalRevision;
+    const sessionReady = await ensureServerSessionReady();
+    if (!sessionReady.ok) return;
+    const result = await apiClient.deleteRolePlaySceneDraft(uploadedDraftId);
+    if (!result.ok) {
+      showMessage({ text: getServerErrorMessage(result, 'server.deleteFailed') });
+      return;
+    }
+    deleted = true;
+    showMessage({ textId: 'server.deletedDraft' });
+    if (typeof onDraftDeleted === 'function') {
+      if (deletionModalRevision === serverModalRevision) onDraftDeleted(result);
+      else onDeleteCanceled?.();
+      return result;
+    }
+    const refreshResult = await loadUploadedRolePlaySceneDrafts({ preflight: false });
+    if (refreshResult?.ok && deletionModalRevision === serverModalRevision) {
+      renderUploadedDraftManager();
+    }
+  } catch (error) {
+    showMessage({ text: error?.message || translate('server.deleteFailed') });
+  } finally {
+    if (!deleted) onDeleteCanceled?.();
   }
 }
 

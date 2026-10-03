@@ -1,3 +1,4 @@
+import { waitForDraftRequest } from '../scripts/draft-request.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -10,6 +11,7 @@ function harness() {
   const response = deferred();
   const events = [];
   const context = vm.createContext({
+    AbortController, waitForDraftRequest, serverModalRevision: 0,
     openingUploadedDraft: null, isLoadingPublishedScenes: false, publishedScenesRequestId: 0,
     publishedScenes: [], publishedScenesFilters: {}, publishedScenesNextOffset: 0, publishedScenesHasMore: false,
     serverModalOverlay: { hidden: false }, updateServerSessionUi() { events.push('ui'); },
@@ -21,7 +23,7 @@ function harness() {
   vm.runInContext(source.slice(start, end), context);
   // Execute the production open-flow prefix up to its first UI update.
   const openStart = source.indexOf('async function openUploadedRolePlaySceneDraft(');
-  const prefixEnd = source.indexOf('  syncUploadedDraftActionAvailability();', openStart);
+  const prefixEnd = source.indexOf('\n  syncUploadedDraftActionAvailability();', openStart);
   context.getRolePlayScenePublishedSceneId = () => 'publication';
   context.getRolePlaySceneDraftId = () => 'draft';
   vm.runInContext(source.slice(openStart, prefixEnd) + '\n}', context);
@@ -71,4 +73,21 @@ test('stale completion cannot release a newer list request lock', async () => {
   await latest;
   assert.equal(h.context.publishedScenes[0], 'new');
   assert.equal(h.context.isLoadingPublishedScenes, false);
+});
+
+ test('closing or replacing the browser suppresses late success, failure and rejection', async () => {
+  for (const outcome of ['success', 'failure', 'reject']) {
+    const h = harness();
+    let resolve, reject;
+    h.context.apiClient.listRolePlayScenePublishedScenes = () => new Promise((a,b) => { resolve=a; reject=b; });
+    const pending = h.load();
+    h.context.serverModalRevision++;
+    h.events.length = 0;
+    if (outcome === 'reject') reject(new Error('offline'));
+    else resolve({ ok: outcome === 'success', data: { items: ['stale'] } });
+    assert.equal((await pending).status, 'stale_response');
+    assert.deepEqual(h.events, ['ui']);
+    assert.equal(h.context.isLoadingPublishedScenes, false);
+    assert.equal(h.context.publishedScenes.length, 0);
+  }
 });

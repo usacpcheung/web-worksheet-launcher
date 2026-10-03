@@ -91,7 +91,7 @@ try {
   );
   assert.strictEqual(
     translate('inspector.dialogue.t2aPresetBadge', { preset: '可愛女聲' }),
-    'T2A：可愛女聲',
+    '可愛女聲',
     'Dialogue T2A preset badge should resolve from shared Traditional Chinese locale',
   );
   assert.strictEqual(

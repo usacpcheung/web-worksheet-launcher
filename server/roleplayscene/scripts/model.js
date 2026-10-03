@@ -1,3 +1,4 @@
+import { voiceChoiceFields, generatedVoiceFields, getAudioVoicePreset } from './t2a-presets.js';
 // Schema helpers and factories
 import { newId } from './utils/id.js';
 import { getSceneName } from './scene-name.js';
@@ -61,16 +62,20 @@ function normaliseSpeaker(speaker = {}) {
   return {
     id: String(speaker.id ?? newId('speaker')),
     name: String(speaker.name ?? '').trim(),
+    ...voiceChoiceFields(speaker, 'lastVoiceChoice'),
   };
 }
 
 function normaliseDialogueLine(line = {}) {
   return {
-    text: line.text ?? '',
+    text: String(line.text ?? ''),
+    ...voiceChoiceFields(line),
+    ...(line.voiceChoice == null && getAudioVoicePreset(line.audio) ? { voiceChoice: getAudioVoicePreset(line.audio).id } : {}),
     speakerId: line.speakerId == null || line.speakerId === '' ? null : String(line.speakerId),
     audio: line.audio
       ? {
         name: line.audio.name ?? '',
+        ...generatedVoiceFields(line.audio),
         objectUrl: line.audio.objectUrl ?? null,
         blob: line.audio.blob ?? null,
       }

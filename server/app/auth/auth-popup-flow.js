@@ -53,6 +53,8 @@ function startAuthPopupFlow(options = {}) {
     throw new Error('startAuthPopupFlow requires apiClient.getSession().');
   }
 
+  const probeController = new AbortController();
+  const probeTimeoutMs = Math.max(1, Number(pollTimeoutMs) || AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs);
   let completed = false;
   let cancelled = false;
   let authPopupWindow = null;
@@ -65,6 +67,7 @@ function startAuthPopupFlow(options = {}) {
   });
 
   const cleanup = () => {
+    probeController.abort();
     if (removeMessageListener) {
       removeMessageListener();
       removeMessageListener = null;
@@ -132,7 +135,7 @@ function startAuthPopupFlow(options = {}) {
     onPopupBlocked();
     onStatusMessage('Sign-in popup was blocked.');
     void (async () => {
-      const probeResult = await probeSession({ apiClient, force: true });
+      const probeResult = await probeSession({ apiClient, force: true, timeoutMs: probeTimeoutMs, signal: probeController.signal });
       if (probeResult.ok && probeResult.status === 'ready') {
         await finalize({
           ...probeResult,
@@ -183,7 +186,7 @@ function startAuthPopupFlow(options = {}) {
     if (authFlowId && messageData.authFlowId !== authFlowId) return;
 
     onStatusMessage('Sign-in callback received. Verifying session…');
-    const probeResult = await probeSession({ apiClient, force: true });
+    const probeResult = await probeSession({ apiClient, force: true, timeoutMs: probeTimeoutMs, signal: probeController.signal });
     await finalize({
       ...probeResult,
       attempts: 1,
@@ -235,6 +238,7 @@ function startAuthPopupFlow(options = {}) {
     apiClient,
     intervalMs: pollIntervalMs,
     timeoutMs: pollTimeoutMs,
+    signal: probeController.signal,
     shouldContinue: sharedShouldContinue,
   });
 

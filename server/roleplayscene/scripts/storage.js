@@ -1,3 +1,4 @@
+import { voiceChoiceFields, generatedVoiceFields } from './t2a-presets.js';
 import { createProject, createScene, SceneType } from './model.js';
 import { zip, unzip } from './utils/zip.js';
 import { seedIdSequencesFromProject } from './utils/id.js';
@@ -70,7 +71,9 @@ function withStore(db, mode, fn) {
       const tx = db.transaction(PROJECT_STORE, mode);
       const store = tx.objectStore(PROJECT_STORE);
       const request = fn(store);
-      request.onsuccess = () => resolve(request.result);
+      tx.oncomplete = () => resolve(request.result);
+      tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+      tx.onerror = () => reject(tx.error || new Error('IndexedDB transaction failed'));
       request.onerror = () => reject(request.error || new Error('IndexedDB request failed'));
     } catch (err) {
       reject(err);
@@ -168,7 +171,7 @@ function collectAsset({
   const name = asset.name ?? '';
   const blob = asset.blob ?? null;
   if (!blob) {
-    return { name, type: '', size: 0, path: null };
+    return { ...generatedVoiceFields(asset), name, type: '', size: 0, path: null };
   }
   const sceneSegment = sanitizePathSegment(sceneId, `scene-${sceneIndex + 1}`);
   const baseName = itemIndex == null ? kind : `${kind}-${itemIndex + 1}`;
@@ -192,7 +195,7 @@ function collectAsset({
     mimeType: type,
     byteLength: size,
   });
-  return { name, type, size, path };
+  return { ...generatedVoiceFields(asset), name, type, size, path };
 }
 
 function buildManifest(snapshot) {
@@ -230,6 +233,7 @@ function buildManifest(snapshot) {
         dialogue: dialogue.map((line, lineIndex) => ({
           text: line.text ?? '',
           speakerId: line.speakerId ?? null,
+          ...voiceChoiceFields(line),
           audio: collectAsset({
             asset: line.audio,
             sceneId,
@@ -273,12 +277,12 @@ function restoreAsset(manifestAsset, files, warnings) {
   if (path && files[path]) {
     const type = manifestAsset.type || 'application/octet-stream';
     const blob = new Blob([files[path]], { type });
-    return { name, blob };
+    return { ...generatedVoiceFields(manifestAsset), name, blob };
   }
   if (path && warnings) {
     warnings.push(path);
   }
-  return { name, blob: null };
+  return { ...generatedVoiceFields(manifestAsset), name, blob: null };
 }
 
 function manifestToSerialized(manifest, files, warnings = []) {
@@ -300,6 +304,7 @@ function manifestToSerialized(manifest, files, warnings = []) {
         dialogue: dialogue.map(line => ({
           text: line.text ?? '',
           speakerId: line.speakerId ?? null,
+          ...voiceChoiceFields(line),
           audio: restoreAsset(line.audio, files, warnings),
           bubble: line.bubble ? { ...line.bubble } : undefined,
         })),
@@ -410,8 +415,9 @@ export function serializeProject(project) {
         dialogue: dialogue.map(line => ({
           text: line.text ?? '',
           speakerId: line.speakerId ?? null,
+          ...voiceChoiceFields(line),
           audio: line.audio
-            ? { name: line.audio.name ?? '', blob: line.audio.blob ?? null }
+            ? { ...generatedVoiceFields(line.audio), name: line.audio.name ?? '', blob: line.audio.blob ?? null }
             : null,
           bubble: line.bubble ? { ...line.bubble } : undefined,
         })),
@@ -477,9 +483,11 @@ export function hydrateProject(serialized, { previousProject = null } = {}) {
         return {
           text: line.text ?? '',
           speakerId: line.speakerId ?? null,
+          ...voiceChoiceFields(line),
           audio: line.audio
             ? {
               name: line.audio.name ?? '',
+              ...generatedVoiceFields(line.audio),
               blob: audioBlob,
               objectUrl: audioBlob ? safeCreateObjectURL(audioBlob) : null,
             }
@@ -551,6 +559,10 @@ export async function setupPersistence(store, { showMessage = noop } = {}) {
   let disabled = false;
   let applyingSnapshot = false;
   let debounceHandle = null;
+  let dirty = false;
+  let pendingWrites = 0;
+  let writeFailed = false;
+  let closed = false;
 
   const notify = typeof showMessage === 'function' ? showMessage : noop;
 
@@ -578,7 +590,9 @@ export async function setupPersistence(store, { showMessage = noop } = {}) {
   await loadSnapshot();
 
   async function persistNow() {
-    if (disabled) return;
+    if (disabled || !dirty || closed) return;
+    dirty = false;
+    pendingWrites += 1;
     try {
       const { project } = store.get();
       await writeSnapshot(db, serializeProject(project));
@@ -588,11 +602,23 @@ export async function setupPersistence(store, { showMessage = noop } = {}) {
         notify({ textId: 'persistence.autosaveWriteFailed' });
       }
       disabled = true;
+      writeFailed = true;
+    } finally {
+      pendingWrites -= 1;
     }
   }
 
+  function flush() {
+    clearTimeout(debounceHandle);
+    debounceHandle = null;
+    // Start the transaction synchronously, before page teardown can close the DB.
+    return persistNow();
+  }
+
   function scheduleSave() {
-    if (disabled || applyingSnapshot) return;
+    if (applyingSnapshot || closed) return;
+    dirty = true;
+    if (disabled) return;
     if (debounceHandle) {
       clearTimeout(debounceHandle);
     }
@@ -604,19 +630,37 @@ export async function setupPersistence(store, { showMessage = noop } = {}) {
     }, SAVE_DEBOUNCE_MS);
   }
 
+  let lastProject = store.get().project;
   const unsubscribe = store.subscribe(() => {
+    const project = store.get().project;
+    if (project === lastProject) return;
+    lastProject = project;
     scheduleSave();
   });
+  const onBeforeUnload = event => {
+    flush();
+    if (dirty || pendingWrites || writeFailed) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  };
+  const onVisibilityChange = () => {
+    if (globalThis.document?.visibilityState === 'hidden') flush();
+  };
+  globalThis.window?.addEventListener('beforeunload', onBeforeUnload);
+  globalThis.window?.addEventListener('pagehide', flush);
+  globalThis.document?.addEventListener('visibilitychange', onVisibilityChange);
 
   return () => {
-    if (debounceHandle) {
-      clearTimeout(debounceHandle);
-      debounceHandle = null;
-    }
+    if (closed) return;
+    flush();
+    closed = true;
     unsubscribe();
-    if (db) {
-      db.close();
-    }
+    globalThis.window?.removeEventListener('beforeunload', onBeforeUnload);
+    globalThis.window?.removeEventListener('pagehide', flush);
+    globalThis.document?.removeEventListener('visibilitychange', onVisibilityChange);
+    // close() permits already-started transactions to finish.
+    db.close();
   };
 }
 
@@ -642,8 +686,21 @@ function validateImportDraftShape(project) {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scenes are missing');
   }
   const errors = validateSceneIdentity(project);
+  for (const [index, scene] of project.scenes.entries()) {
+    if (scene?.dialogue == null) continue;
+    if (!Array.isArray(scene.dialogue)) {
+      errors.push(`scenes[${index}].dialogue must be an array.`);
+      continue;
+    }
+    for (const [lineIndex, line] of scene.dialogue.entries()) {
+      if (!line || typeof line !== 'object' || Array.isArray(line)
+        || (line.text != null && typeof line.text !== 'string')) {
+        errors.push(`scenes[${index}].dialogue[${lineIndex}] must be an object with string text.`);
+      }
+    }
+  }
   if (errors.length) {
-    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scene IDs are invalid', { errors });
+    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project data is invalid', { errors });
   }
   return { errors: [], warnings: [] };
 }

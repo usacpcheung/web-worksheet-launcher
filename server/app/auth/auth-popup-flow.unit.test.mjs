@@ -42,6 +42,39 @@ test.beforeEach(() => {
   __resetSessionProbeStateForTests();
 });
 
+test('stalled sign-in probes abort and a subsequent flow starts a fresh request', async () => {
+  for (const popupBlocked of [false, true]) {
+    createWindowStub({ popupBlocked });
+    let calls = 0, signal;
+    const apiClient = {
+      getSessionSignInUrl: () => '/login',
+      getSession: options => {
+        calls++;
+        if (calls > 1) return Promise.resolve({ ok: true, data: { user: { sub: 'ready' } } });
+        signal = options.signal;
+        return new Promise(() => {});
+      },
+    };
+    const options = { apiClient, pollTimeoutMs: 10, hardDeadlineMs: 20 };
+    assert.equal((await startAuthPopupFlow(options).promise).ok, false);
+    assert.equal(signal.aborted, true);
+    assert.equal((await startAuthPopupFlow(options).promise).ok, true);
+    assert.equal(calls, 2);
+  }
+});
+
+test('canceling sign-in aborts its active probe', async () => {
+  createWindowStub();
+  let signal;
+  const flow = startAuthPopupFlow({ apiClient: {
+    getSessionSignInUrl: () => '/login',
+    getSession: options => { signal = options.signal; return new Promise(() => {}); },
+  } });
+  flow.cancel();
+  assert.equal((await flow.promise).cancelled, true);
+  assert.equal(signal.aborted, true);
+});
+
 test('startAuthPopupFlow uses shared default poll settings', () => {
   assert.equal(AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs, 1000);
   assert.equal(AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs, 15000);

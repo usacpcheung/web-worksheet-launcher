@@ -11,8 +11,16 @@ import {
   createRolePlaySceneT2AAudioFilename,
   getRolePlaySceneT2APresetById,
   getRolePlaySceneT2ATextState,
+  getDialogueVoiceChoice,
 } from '../t2a-presets.js';
 import { newId } from '../utils/id.js';
+import { waitForAudioRequest } from './audio-generation-request.js';
+
+function isAudioAuthFailure(result) {
+  const error = result?.error || result;
+  return result?.status === 'not_ready' || error?.requiresSignIn
+    || [401, 403].includes(Number(error?.status)) || error?.code === 'AUTH_REQUIRED';
+}
 
 export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) {
   leftEl.innerHTML = '';
@@ -45,6 +53,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     ? options.onPreviewCurrentScene
     : null;
   const dialogueT2AInFlightKeys = new Map();
+  const dialogueRequests = new Map();
+  const dialogueAuthFailures = new Set();
+  const lineIdentity = Symbol('generationLine');
   let activeDialoguePreview = null;
   let disposed = false;
   let selectedSpeechBubbleAnchorId = options.initialSelectedSpeechBubbleAnchorId ?? null;
@@ -56,12 +67,16 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
   let cleanupGraph = null;
 
   const unsubscribe = store.subscribe(() => {
+    for (const [controller, isCurrent] of dialogueRequests) {
+      if (!isCurrent()) controller.abort();
+    }
     syncSelection();
     update();
   });
 
   function cleanup() {
     disposed = true;
+    for (const controller of dialogueRequests.keys()) controller.abort();
     stopDialoguePreview({ refresh: false });
     cleanupGraph?.();
     unsubscribe();
@@ -100,6 +115,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       ...scene,
       backgroundAudio: scene.backgroundAudio ? { ...scene.backgroundAudio } : null,
       dialogue: scene.dialogue.map(line => ({
+        ...line,
         text: line.text,
         speakerId: line.speakerId ?? null,
         audio: line.audio ? { ...line.audio } : null,
@@ -175,6 +191,9 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       onMoveDialogue: moveDialogue,
       isDialogueOrderLocked: sceneId => Array.from(dialogueT2AInFlightKeys.values()).includes(sceneId),
       onUpdateDialogueText: updateDialogueText,
+      onUpdateDialogueVoice: updateDialogueVoice,
+      needsDialogueSignIn: (sceneId, index) => dialogueAuthFailures.has(getDialogueLine(sceneId, index)?.[lineIdentity]),
+      onSignIn: options.onSignIn,
       onUpdateDialogueSpeaker: updateDialogueSpeaker,
       onStartCreateSpeakerForDialogue: startCreateSpeakerForDialogue,
       onUpdateSpeakerDraftForDialogue: updateSpeakerDraftForDialogue,
@@ -354,9 +373,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       const scenes = prev.scenes.map(scene => {
         if (scene.id !== sceneId) return scene;
         const draft = cloneScene(scene);
-        if (draft.image?.objectUrl) {
-          URL.revokeObjectURL(draft.image.objectUrl);
-        }
+        const previousUrl = draft.image?.objectUrl;
         if (!file) {
           draft.image = null;
         } else {
@@ -366,6 +383,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
             blob: file,
           };
         }
+        if (previousUrl) URL.revokeObjectURL(previousUrl);
         return draft;
       });
       return { ...prev, scenes };
@@ -388,9 +406,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       const scenes = prev.scenes.map(scene => {
         if (scene.id !== sceneId) return scene;
         const draft = cloneScene(scene);
-        if (draft.backgroundAudio?.objectUrl) {
-          URL.revokeObjectURL(draft.backgroundAudio.objectUrl);
-        }
+        const previousUrl = draft.backgroundAudio?.objectUrl;
         if (!file) {
           draft.backgroundAudio = null;
         } else {
@@ -400,6 +416,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
             blob: file,
           };
         }
+        if (previousUrl) URL.revokeObjectURL(previousUrl);
         return draft;
       });
       return { ...prev, scenes };
@@ -637,17 +654,12 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       const next = old === index ? target : old === target ? index : old;
       speakerDraftContext = { ...speakerDraftContext, index: next, key: getSpeakerDraftKey(sceneId, next) };
     }
-    const presets = Array.from(inspectorHost.querySelectorAll?.('.dialogue-t2a-controls__preset select') || []).map(select => select.value);
-    [presets[index], presets[target]] = [presets[target], presets[index]];
     mutateProject(prev => ({ ...prev, scenes: prev.scenes.map(current => {
       if (current.id !== sceneId) return current;
       const draft = { ...current, dialogue: [...current.dialogue] };
       [draft.dialogue[index], draft.dialogue[target]] = [draft.dialogue[target], draft.dialogue[index]];
       return draft;
     }) }));
-    Array.from(inspectorHost.querySelectorAll?.('.dialogue-t2a-controls__preset select') || []).forEach((select, i) => {
-      if (presets[i]) select.value = presets[i];
-    });
     const focusDirection = target === 0 ? 1 : target === scene.dialogue.length - 1 ? -1 : direction;
     const key = `dialogue-move-${sceneId}-${target}-${focusDirection}`;
     const button = Array.from(inspectorHost.querySelectorAll?.('[data-focus-key]') || []).find(el => el.dataset.focusKey === key);
@@ -671,6 +683,23 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         return draft;
       });
       return { ...prev, scenes };
+    });
+  }
+
+  function updateDialogueVoice(sceneId, index, voiceChoice, rememberSpeaker = true) {
+    if (!getRolePlaySceneT2APresetById(voiceChoice)) return;
+    mutateProject(prev => {
+      const line = getDialogueLine(sceneId, index, prev);
+      if (!line) return prev;
+      const scenes = prev.scenes.map(scene => {
+        if (scene.id !== sceneId) return scene;
+        const draft = cloneScene(scene);
+        draft.dialogue[index].voiceChoice = voiceChoice;
+        return draft;
+      });
+      const speakers = (prev.speakers || []).map(speaker => rememberSpeaker && speaker.id === line.speakerId
+        ? { ...speaker, lastVoiceChoice: voiceChoice } : speaker);
+      return { ...prev, scenes, speakers };
     });
   }
 
@@ -793,7 +822,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     }));
   }
 
-  function setDialogueAudio(sceneId, index, file) {
+  function setDialogueAudio(sceneId, index, file, generatedVoiceChoice = null) {
     if (activeDialoguePreview?.key === getDialogueT2AKey(sceneId, index)) {
       stopDialoguePreview();
     }
@@ -802,18 +831,19 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         if (scene.id !== sceneId) return scene;
         const draft = cloneScene(scene);
         if (!draft.dialogue[index]) return draft;
-        if (draft.dialogue[index].audio?.objectUrl) {
-          URL.revokeObjectURL(draft.dialogue[index].audio.objectUrl);
-        }
+        const previousUrl = draft.dialogue[index].audio?.objectUrl;
         if (!file) {
           draft.dialogue[index].audio = null;
         } else {
           draft.dialogue[index].audio = {
             name: file.name,
+            generatedVoiceChoice,
             objectUrl: URL.createObjectURL(file),
             blob: file,
           };
         }
+        // Allocate the replacement before revoking the still-attached audio.
+        if (previousUrl) URL.revokeObjectURL(previousUrl);
         return draft;
       });
       return { ...prev, scenes };
@@ -942,15 +972,32 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       showMessage({ textId: 'inspector.dialogue.t2aUnavailable' });
       return;
     }
+    const preset = getRolePlaySceneT2APresetById(presetId ?? getDialogueVoiceChoice(line, store.get().project.speakers));
+    if (!preset) { showMessage({ textId: 'inspector.dialogue.invalidVoice' }); return; }
+    stopDialoguePreview({ refresh: false });
+    const token = line[lineIdentity] ||= {};
+    dialogueAuthFailures.delete(token);
+    const isOriginalLine = () => !disposed && getDialogueLine(sceneId, index)?.[lineIdentity] === token;
+    updateDialogueVoice(sceneId, index, preset.id, false);
     dialogueT2AInFlightKeys.set(key, sceneId);
     update();
     let confirmedAudioSignature = null;
+    const controller = new AbortController();
+    dialogueRequests.set(controller, isOriginalLine);
+    const wait = operation => waitForAudioRequest(operation, controller, options.audioRequestTimeoutMs);
     try {
-      const sessionReady = await ensureServerSessionReady();
-      if (disposed) {
+      const sessionReady = await wait(ensureServerSessionReady());
+      if (!isOriginalLine()) {
         return;
       }
       if (!sessionReady?.ok) {
+        const failure = sessionReady?.result;
+        if (isAudioAuthFailure(failure)) {
+          dialogueAuthFailures.add(token);
+          showMessage({ textId: 'inspector.dialogue.t2aSessionExpired' });
+        } else {
+          showMessage({ textId: 'inspector.dialogue.t2aFailed' });
+        }
         return;
       }
       const lineBeforeGenerate = getCurrentT2ALine(sceneId, index, textState.trimmedText);
@@ -965,10 +1012,15 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         }
         confirmedAudioSignature = getAudioSignature(lineBeforeGenerate.audio);
       }
-      const preset = getRolePlaySceneT2APresetById(presetId);
-      const result = await apiClient.generateAudioFromText(textState.trimmedText, preset.options || {});
+      const result = await wait(apiClient.generateAudioFromText(textState.trimmedText, preset.options || {}, { signal: controller.signal }));
+      if (!isOriginalLine()) return;
       onServerApiResult?.(result);
-      if (disposed) {
+      if (isAudioAuthFailure(result)) {
+        dialogueAuthFailures.add(token);
+        showMessage({ textId: 'inspector.dialogue.t2aSessionExpired' });
+        return;
+      }
+      if (!isOriginalLine()) {
         return;
       }
       if (!result?.ok || !(result.data instanceof Uint8Array) || result.data.byteLength <= 0) {
@@ -984,6 +1036,10 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         return;
       }
       const currentAudioSignature = getAudioSignature(lineBeforeAttach.audio);
+      if (confirmedAudioSignature && !currentAudioSignature) {
+        showMessage({ textId: 'inspector.dialogue.t2aLineChanged' });
+        return;
+      }
       if (currentAudioSignature && currentAudioSignature !== confirmedAudioSignature) {
         const confirmed = globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio')) ?? false;
         if (!confirmed) {
@@ -996,18 +1052,21 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         result.data,
         createRolePlaySceneT2AAudioFilename(safeSceneId, index, preset.id),
       );
-      setDialogueAudio(sceneId, index, generatedFile);
+      setDialogueAudio(sceneId, index, generatedFile, preset.id);
       showMessage({
         textId: 'inspector.dialogue.t2aGenerated',
         textArgs: { index: index + 1 },
       });
     } catch (error) {
+      if (!isOriginalLine()) return;
       const detail = String(error?.message || '').trim();
       showMessage({
-        textId: detail ? 'inspector.dialogue.t2aFailedWithDetail' : 'inspector.dialogue.t2aFailed',
+        textId: error?.code === 'AUDIO_TIMEOUT' ? 'inspector.dialogue.t2aTimedOut'
+          : detail ? 'inspector.dialogue.t2aFailedWithDetail' : 'inspector.dialogue.t2aFailed',
         textArgs: { detail },
       });
     } finally {
+      dialogueRequests.delete(controller);
       dialogueT2AInFlightKeys.delete(key);
       if (!disposed) {
         update();
