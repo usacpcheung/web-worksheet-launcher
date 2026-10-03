@@ -166,7 +166,7 @@ function runIntroCase(label, scenePatch) {
   const uiHost = new StubElement('div');
   const cleanup = renderPlayer(store, stageHost, uiHost, () => {});
 
-  const emptyStage = findElement(stageHost, el => el.className === 'stage-empty');
+  const emptyStage = findElement(stageHost, el => el.className.includes('player-stage-frame--empty'));
   const imageEl = findElement(stageHost, el => el.tagName === 'img');
   const volumeSlider = findElement(uiHost, el => el.tagName === 'input' && el.type === 'range');
 
@@ -204,10 +204,10 @@ resetAudioSpies();
   const cleanup = renderPlayer(store, stageHost, uiHost, () => {});
 
   const introImage = findElement(stageHost, el => el.tagName === 'img');
-  const emptyStage = findElement(stageHost, el => el.className === 'stage-empty');
+  const emptyStage = findElement(stageHost, el => el.className.includes('player-stage-frame--empty'));
 
   logResult('Start image renders on intro stage when objectUrl exists', Boolean(introImage) && introImage.src === 'start-image.png');
-  logResult('Intro stage-empty placeholder hidden when image exists', !emptyStage);
+  logResult('Intro uses the image frame when playable image exists', !emptyStage);
 
   cleanup();
 }
@@ -223,8 +223,11 @@ resetAudioSpies();
   const uiHost = new StubElement('div');
   const cleanup = renderPlayer(store, stageHost, uiHost, () => {});
 
-  const emptyStage = findElement(stageHost, el => el.className === 'stage-empty');
-  logResult('Intro stage-empty placeholder shown when image missing', Boolean(emptyStage) && emptyStage.textContent === 'Ready to play');
+  const emptyStage = findElement(stageHost, el => el.className.includes('player-stage-frame--empty'));
+  const title = findElement(stageHost, el => el.className === 'player-intro-title');
+  const start = findElement(stageHost, el => el.className === 'player-intro-begin');
+  logResult('Intro without image still exposes its story title and Start action', Boolean(emptyStage) && title?.textContent === 'Legacy Intro Media' && Boolean(start));
+  logResult('No Ready to play placeholder can overlap the centred Start action', !findElement(stageHost, el => el.className === 'stage-empty'));
 
   cleanup();
 }

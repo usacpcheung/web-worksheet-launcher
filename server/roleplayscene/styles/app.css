@@ -862,6 +862,8 @@ button:disabled {
 }
 .layout--play .stage.stage--intro {
   padding: var(--space-lg);
+  align-items: stretch;
+  overflow: auto;
 }
 .stage img { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; }
 .stage-empty { padding: var(--space-lg); color: var(--color-text-muted); }
@@ -900,9 +902,26 @@ button:disabled {
   min-height: min(540px, calc(100vh - 180px));
   background: var(--color-surface-alt);
 }
-.player-intro-frame {
+.player-stage-frame.player-intro-frame {
+  display: grid;
+  align-items: stretch;
+  justify-content: normal;
   width: min(100%, 1180px);
-  max-height: calc(100vh - 150px);
+  height: 100%;
+  min-height: min-content;
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: none;
+  flex-shrink: 0;
+}
+.player-intro-frame > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 .player-intro-frame::after {
   content: '';
@@ -912,38 +931,64 @@ button:disabled {
   pointer-events: none;
 }
 .player-intro-overlay {
-  position: absolute;
-  inset: 0;
+  position: relative;
   z-index: 2;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  /* Equal outer rows centre Start; a tall title may grow the top row safely. */
+  grid-template-rows: minmax(min-content, 1fr) auto minmax(0, 1fr);
+  gap: var(--space-md);
   padding: clamp(0.75rem, 2vw, 1.5rem);
+  min-width: 0;
+  min-height: min-content;
   pointer-events: none;
 }
 .player-intro-overlay > * {
   pointer-events: auto;
 }
 .player-intro-utilities {
-  justify-self: start;
-  align-self: start;
+  position: absolute;
+  left: clamp(0.75rem, 2vw, 1.5rem);
+  top: clamp(0.75rem, 2vw, 1.5rem);
   z-index: 3;
 }
+.player-intro-utilities .theater-utilities-panel {
+  position: absolute;
+  left: 0;
+  top: calc(100% + var(--space-xs));
+  max-height: min(50vh, 30rem);
+}
 .player-intro-cta {
+  grid-row: 2;
   align-self: center;
   justify-self: center;
-  display: grid;
-  justify-items: center;
-  gap: var(--space-md);
+  display: flex;
+  justify-content: center;
   width: min(100%, 32rem);
-  padding: var(--space-md);
+  min-width: 0;
+}
+.player-intro-title {
+  grid-row: 1;
+  align-self: start;
+  justify-self: center;
+  max-width: min(48rem, calc(100% - 14rem));
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
   color: #fff;
   text-align: center;
   text-shadow: 0 2px 18px rgba(15, 23, 42, 0.45);
-}
-.player-intro-cta h3 {
-  margin: 0;
   font-size: clamp(1.5rem, 3vw, 2.5rem);
   line-height: 1.1;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.player-stage-frame--empty .player-intro-title {
+  color: var(--color-text);
+  text-shadow: none;
+}
+.player-intro-frame:not(.player-stage-frame--empty) .player-intro-title {
+  background: rgba(15, 23, 42, 0.82);
 }
 .player-intro-begin {
   display: inline-flex;
@@ -2421,9 +2466,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
     white-space: nowrap;
   }
   @media (max-width: 767px) {
-    .player-intro-cta {
-      align-self: end;
-      padding-bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
+    .player-intro-title {
+      /* Reserve the same utility clearance even when there is no music. */
+      margin-top: 3rem;
+      max-width: 100%;
     }
     .toolbar > .toolbar__server > button {
       display: none;
@@ -2453,14 +2499,22 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
   .layout--play .stage.stage--intro {
     padding: var(--space-sm);
   }
-  .player-intro-frame {
+  .player-stage-frame.player-intro-frame {
     width: 100%;
   }
   .player-intro-overlay {
     padding: var(--space-sm);
   }
-  .player-intro-cta {
-    gap: var(--space-sm);
+  .player-intro-utilities {
+    left: var(--space-sm);
+    top: var(--space-sm);
+  }
+  .player-intro-utilities .theater-utilities-panel {
+    position: fixed;
+    left: var(--space-sm);
+    right: var(--space-sm);
+    top: auto;
+    bottom: calc(var(--space-sm) + var(--theater-mobile-dock-reserve-sheet));
   }
   .player-intro-begin {
     width: min(100%, 22rem);
@@ -2557,8 +2611,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 }
 .inspector .rps-scene-id-field textarea { background: transparent; color: var(--color-text-muted); }
 .inspector .rps-scene-id-field textarea:not(:focus) { box-shadow: none; }
-.rps-scene-name-error { color: #b91c1c; margin: 0; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
-.rps-scene-name-error[hidden] { display: none; }
+.rps-scene-name-error, .rps-project-title-error { color: #b91c1c; margin: 0; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.rps-scene-name-error[hidden], .rps-project-title-error[hidden] { display: none; }
+.rps-project-title-field { display: grid; gap: 4px; }
+.rps-project-title-hint { color: var(--color-text-muted); font-size: var(--font-size-sm); }
 .rps-destination-detail { margin: 0; color: var(--color-text-muted); font-size: var(--font-size-sm); font-weight: normal; overflow-wrap: anywhere; white-space: pre-wrap; }
 .inspector select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
 .scene-preview__header h3 { overflow-wrap: anywhere; white-space: pre-wrap; }

@@ -51,3 +51,7 @@ for an owner must use `owner`.
 Published descriptions continue to appear below package titles. Existing packages
 with no description remain browsable and searchable by title and owner filter.
 No database migration or republishing is required.
+
+The editor's story title limit and compatibility behavior are documented in
+[RolePlayScene story titles](roleplayscene-story-titles.md). That authoring limit
+does not change published listing metadata or validation of existing packages.

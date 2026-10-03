@@ -11,7 +11,10 @@ export class Store {
     this.resetEditorDrafts();
   }
   // Transient authoring state survives preview, but never enters a package.
-  resetEditorDrafts() { this.editorSceneNameDrafts = new Map(); }
+  resetEditorDrafts() {
+    this.editorSceneNameDrafts = new Map();
+    this.editorProjectTitleDraft = { value: undefined };
+  }
   subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   set(partial) {
     if (Object.prototype.hasOwnProperty.call(partial ?? {}, 'locale')) {

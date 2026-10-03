@@ -251,6 +251,11 @@ export default {
   "inspector": {
     "projectTitleLabel": "專案標題",
     "projectTitlePlaceholder": "未命名角色互動",
+    "projectTitle": {
+      "counter": "{count}/{max} 字元",
+      "legacy": "已保留原有的較長標題。新標題最多 {max} 個字元。",
+      "tooLong": "尚未儲存：請縮短至 {max} 個字元以內。儲存及匯出會保留上一個有效標題。"
+    },
     "emptyState": "尚無場景。請使用「新增場景」開始。",
     "sections": {
       "sceneBasics": "場景基本資料",

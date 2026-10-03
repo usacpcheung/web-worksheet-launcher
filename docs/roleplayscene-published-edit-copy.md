@@ -11,8 +11,11 @@ the current local story intact and releases the candidate media URLs. Confirm
 replaces the current local story, just like importing a ZIP; export work you want
 to retain before replacing it. Discussion-discard safeguards still apply.
 
-The copy opens in Edit mode with a localized copy suffix on its title (within the
-120-character title limit). Scene IDs, links, dialogue and packaged media are
+The copy opens in Edit mode with a localized copy suffix on its title (the existing
+copy-generation cap remains 120 UTF-16 code units). This inherited title is
+preserved even when it exceeds the editor's new
+[40-code-point limit for title edits](roleplayscene-story-titles.md).
+Scene IDs, links, dialogue and packaged media are
 preserved. RolePlayScene projects have no server publication identity to detach.
 This operation never uploads, deletes or modifies the original publication.
 Upload and publish remain separate, explicit actions with their existing name
