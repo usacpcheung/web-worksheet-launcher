@@ -34,7 +34,7 @@ function fixture({ title, image, music, bubble }) {
 
 const browser = await chromium.launch();
 try {
-  for (const locale of ['en', 'zh-Hant']) for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 844, height: 390 }, { width: 320, height: 568 }]) {
+  for (const locale of ['en', 'zh-Hant']) for (const viewport of [{ width: 1280, height: 900 }, { width: 1280, height: 360 }, { width: 390, height: 844 }, { width: 844, height: 390 }, { width: 320, height: 568 }]) {
     const context = await browser.newContext({ viewport, hasTouch: viewport.width === 320 });
     try {
       const page = await context.newPage();
@@ -74,7 +74,7 @@ try {
         const layout = await readLayout();
         baseline ??= layout;
         const label = `${locale} ${viewport.width} ${image} music=${music} bubble=${bubble}`;
-        assert.ok(Math.abs(layout.button.cy - layout.frame.cy) < 1, `${label}: Start vertically centred`);
+        if (!(viewport.width === 1280 && viewport.height === 360)) assert.ok(Math.abs(layout.button.cy - layout.frame.cy) < 1, `${label}: Start vertically centred`);
         assert.ok(Math.abs(layout.button.cx - layout.frame.cx) < 1, `${label}: Start horizontally centred`);
         assert.ok(Math.abs(layout.title.y - baseline.title.y) < 1, `${label}: title position stable`);
         assert.ok(Math.abs(layout.button.cy - baseline.button.cy) < 1, `${label}: Start position stable`);
@@ -94,6 +94,14 @@ try {
           assert.equal(await panel.isVisible(), true);
           const box = await panel.boundingBox();
           assert.ok(box.x >= 0 && box.x + box.width <= viewport.width + 1 && box.y >= 0 && box.y + box.height <= viewport.height + 1, `${label}: music panel stays in viewport`);
+          const slider = panel.locator('input[type=range]');
+          await slider.evaluate(el => el.scrollIntoView({ block: 'nearest' }));
+          assert.equal(await slider.evaluate(el => {
+            const r = el.getBoundingClientRect();
+            return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+          }), true, `${label}: lower music control is reachable without ancestor clipping`);
+          await slider.focus();
+          await page.keyboard.press('ArrowLeft');
           await panel.locator('.theater-icon-button').click();
         }
         if (shots && image === 'landscape' && music && !bubble) await page.screenshot({ path: `${shots}/intro-${locale}-${viewport.width}.png` });
