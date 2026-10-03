@@ -770,17 +770,30 @@ function createServerApiClient() {
         return toStructuredError({ code: 'NETWORK_ERROR', message: 'Unable to reach bridge API.' });
       }
     },
-    generateAudioFromText(text, options = {}) {
+    async generateAudioFromText(text, options = {}) {
       const payload = {
         text: String(text),
         format: 'mp3',
         response_mode: 'binary',
       };
-      ['voice_id', 'language_boost', 'speed', 'volume', 'pitch'].forEach((key) => {
-        if (options?.[key] !== undefined && options?.[key] !== null && options?.[key] !== '') {
-          payload[key] = options[key];
+      const voiceControls = ['voice_id', 'language_boost', 'speed', 'volume', 'pitch'];
+      if (Object.hasOwn(options || {}, 'voice_choice')) {
+        if (typeof options.voice_choice !== 'string' || !options.voice_choice.trim()) {
+          return toStructuredError({ code: 'INVALID_INPUT', message: 'voice_choice must be a non-empty string.', status: 400 });
         }
-      });
+        // A named choice owns all voice tuning. Reject even empty overrides.
+        const conflictingField = voiceControls.find((key) => Object.hasOwn(options, key));
+        if (conflictingField) {
+          return toStructuredError({ code: 'INVALID_INPUT', message: `voice_choice cannot be combined with ${conflictingField}.`, status: 400 });
+        }
+        payload.voice_choice = options.voice_choice.trim();
+      } else {
+        voiceControls.forEach((key) => {
+          if (options?.[key] !== undefined && options?.[key] !== null && options?.[key] !== '') {
+            payload[key] = options[key];
+          }
+        });
+      }
       return requestBinary('/t2a', 'audio/mpeg', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

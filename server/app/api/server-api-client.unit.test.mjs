@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServerApiClient } from './server-api-client.js';
+import { ROLEPLAYSCENE_T2A_PRESETS } from '../../roleplayscene/scripts/t2a-presets.js';
 
 function mockJsonResponse(status, payload, headers = { 'content-type': 'application/json; charset=utf-8' }) {
   return new Response(JSON.stringify(payload), { status, headers });
@@ -835,6 +836,77 @@ test('generateAudioFromText includes optional voice and language controls only w
     pitch: 2,
   });
   assert.equal(result.ok, true);
+});
+
+test('generateAudioFromText forwards a named choice with the existing binary request contract', async (t) => {
+  setTestWindow('?apiBase=/untrusted');
+  t.mock.method(globalThis, 'fetch', async (url, request) => {
+    assert.equal(url, '/api/rewrite-bridge/t2a');
+    assert.equal(request.method, 'POST');
+    assert.equal(request.credentials, 'include');
+    assert.deepEqual(request.headers, { 'content-type': 'application/json' });
+    assert.deepEqual(JSON.parse(request.body), {
+      text: 'Hello', format: 'mp3', response_mode: 'binary', voice_choice: 'english_narrator_female',
+    });
+    return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'audio/mpeg' } });
+  });
+  const result = await createServerApiClient().generateAudioFromText('Hello', { voice_choice: ' english_narrator_female ' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(Array.from(result.data), [1, 2, 3]);
+});
+
+test('generateAudioFromText rejects malformed choices and any explicit raw override without fetching', async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => { calls++; throw new Error('Must not fetch'); });
+  const client = createServerApiClient();
+  for (const voice_choice of [undefined, null, '', '   ', 1, false, {}, []]) {
+    const result = await client.generateAudioFromText('Hello', { voice_choice });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'INVALID_INPUT');
+    assert.equal(result.error.status, 400);
+  }
+  for (const field of ['voice_id', 'language_boost', 'speed', 'volume', 'pitch']) {
+    for (const value of [undefined, null, '', 0, 'raw']) {
+      const result = await client.generateAudioFromText('Hello', { voice_choice: 'english_narrator_female', [field]: value });
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, 'INVALID_INPUT');
+      assert.match(result.error.message, new RegExp(field));
+    }
+  }
+  assert.equal(calls, 0);
+});
+
+test('generateAudioFromText leaves catalogue validation to the bridge and never retries with defaults', async (t) => {
+  setTestWindow();
+  const cases = [[400, 'INVALID_INPUT', 'future_voice'], [422, 'VOICE_CHOICE_UNSUPPORTED', 'english_narrator_female']];
+  for (const [status, code, choice] of cases) {
+    let calls = 0;
+    t.mock.method(globalThis, 'fetch', async (_url, request) => {
+      calls++;
+      assert.equal(JSON.parse(request.body).voice_choice, choice);
+      return mockJsonResponse(status, { ok: false, error: { code, message: 'Choice rejected' } });
+    });
+    const result = await createServerApiClient().generateAudioFromText('Hello', { voice_choice: choice });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, code);
+    assert.equal(result.error.status, status);
+    assert.equal(calls, 1);
+    t.mock.restoreAll();
+  }
+});
+
+test('generateAudioFromText preserves every current RolePlayScene raw preset including its default', async (t) => {
+  setTestWindow();
+  const bodies = [];
+  t.mock.method(globalThis, 'fetch', async (_url, request) => {
+    bodies.push(JSON.parse(request.body));
+    return new Response(new Uint8Array([1]), { headers: { 'content-type': 'audio/mpeg' } });
+  });
+  const client = createServerApiClient();
+  for (const preset of ROLEPLAYSCENE_T2A_PRESETS) {
+    assert.equal((await client.generateAudioFromText('Dialogue', preset.options)).ok, true);
+    assert.deepEqual(bodies.at(-1), { text: 'Dialogue', format: 'mp3', response_mode: 'binary', ...preset.options });
+  }
 });
 
 test('generateAudioFromText returns BRIDGE_EMPTY_RESPONSE for zero-byte payload', async () => {

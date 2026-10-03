@@ -115,6 +115,7 @@ class SharedAuthGate {
       return { status: 'invalid_intent' };
     }
 
+    const originalLocalId = this.options.getCurrentLocalId();
     let authState;
     if (typeof this.options.checkSessionReady === 'function') {
       const checkResult = await this.options.checkSessionReady(intent);
@@ -128,8 +129,15 @@ class SharedAuthGate {
     }
 
     if (authState.ready) {
-      await this.options.replayIntent(intent);
-      return { status: 'executed' };
+      const result = await this.options.replayIntent(intent);
+      if (!result || result.ok !== false) return { status: 'executed' };
+      authState = normalizeSessionCheckResult(result);
+      if (!authState.authNotReady) return result;
+      // A late authentication failure uses the normal recovery flow once.
+      // Never persist the old action against a record opened while it ran.
+      if (this.options.getCurrentLocalId() !== originalLocalId || !await this.options.validateIntent(intent)) {
+        return { status: 'intent_invalid' };
+      }
     }
     if (!authState.authNotReady) {
       return { status: 'blocked_session_probe', result: authState.rawResult };
@@ -142,6 +150,7 @@ class SharedAuthGate {
     }
 
     await this.options.persistLocalRecord();
+    if (this.options.getCurrentLocalId() !== localId) return { status: 'intent_invalid' };
 
     const resume = {
       localId,
@@ -260,9 +269,12 @@ class SharedAuthGate {
       return { status: 'intent_invalid' };
     }
 
-    await this.options.replayIntent(intent);
+    const result = await this.options.replayIntent(intent);
     this.clearPending();
     cleanupAuthReturnUrlParams(this.options.returnQueryParams);
+
+    // Do not automatically redirect again if the single recovery replay fails.
+    if (result?.ok === false) return { status: 'replay_failed', result };
 
     return { status: 'replayed' };
   }
