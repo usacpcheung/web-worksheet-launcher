@@ -1,3 +1,5 @@
+import { getSceneLabel } from '../scene-name.js';
+import { renderSceneNameFields, refreshSceneNameFields } from './scene-name-controls.js';
 import { MAX_DIALOGUE_LINES, SceneType, createChoice } from '../model.js';
 import { translate } from '../i18n.js';
 import { renderDialogueBubbleControls, renderSpeechBubbleEditorSection } from './speech-bubble-inspector.js';
@@ -146,7 +148,39 @@ function createLightRow(titleText, className = '') {
   return { row, header, body, actions };
 }
 
+const renderedInspectors = new WeakMap();
+
 export function renderInspector(hostEl, project, scene, actions) {
+  const next = document.createElement('div');
+  buildInspector(next, project, scene, actions);
+  const previous = renderedInspectors.get(hostEl);
+  const oldBasics = hostEl.querySelector('.rps-inspector-section--basics');
+  const newBasics = next.querySelector('.rps-inspector-section--basics');
+  const oldChildren = Array.from(hostEl.children);
+  const newChildren = Array.from(next.children);
+  const keepNameField = scene && previous?.sceneId === scene.id
+    && previous.session === actions.sceneNameSession && oldBasics && newBasics
+    && oldChildren.indexOf(oldBasics) === newChildren.indexOf(newBasics);
+  hostEl.classList.add('inspector');
+  if (keepNameField) {
+    // Keep the name field and all its ancestors attached during store updates.
+    // Moving it out and back would still interrupt IME and native undo.
+    refreshSceneNameFields(oldBasics.querySelector('.rps-scene-identity'), scene, actions);
+    oldBasics.querySelector('.rps-inspector-section__header').replaceWith(newBasics.querySelector('.rps-inspector-section__header'));
+    oldBasics.querySelector('.rps-scene-type-field').replaceWith(newBasics.querySelector('.rps-scene-type-field'));
+    oldChildren.forEach((child, index) => {
+      if (child === oldBasics) return;
+      if (newChildren[index]) child.replaceWith(newChildren[index]);
+      else child.remove();
+    });
+    newChildren.slice(oldChildren.length).forEach(child => hostEl.appendChild(child));
+  } else {
+    hostEl.replaceChildren(...newChildren);
+  }
+  renderedInspectors.set(hostEl, { sceneId: scene?.id, session: actions.sceneNameSession });
+}
+
+function buildInspector(hostEl, project, scene, actions) {
   hostEl.innerHTML = '';
   hostEl.classList.add('inspector');
 
@@ -172,7 +206,7 @@ export function renderInspector(hostEl, project, scene, actions) {
   const header = document.createElement('div');
   header.className = 'inspector-header';
   const sceneHeading = document.createElement('h3');
-  sceneHeading.textContent = scene.id;
+  sceneHeading.textContent = translate('inspector.header.selectedScene');
   header.appendChild(sceneHeading);
 
   const controls = document.createElement('div');
@@ -204,6 +238,7 @@ export function renderInspector(hostEl, project, scene, actions) {
   hostEl.appendChild(header);
 
   const basics = createInspectorSection(translate('inspector.sections.sceneBasics'), 'info', 'rps-inspector-section--basics');
+  basics.body.appendChild(renderSceneNameFields(scene, actions));
   const typeSelect = document.createElement('select');
   typeSelect.dataset.focusKey = `scene-type-${scene.id}`;
   const sceneTypeOptions = [
@@ -221,7 +256,7 @@ export function renderInspector(hostEl, project, scene, actions) {
   typeSelect.addEventListener('change', () => {
     actions.onSetSceneType?.(scene.id, typeSelect.value);
   });
-  basics.body.appendChild(createField(translate('inspector.sceneTypeLabel'), typeSelect));
+  basics.body.appendChild(createField(translate('inspector.sceneTypeLabel'), typeSelect, 'rps-scene-type-field'));
   hostEl.appendChild(basics.section);
 
   const mediaSection = createInspectorSection(translate('inspector.sections.sceneMedia'), 'image', 'rps-inspector-section--media');
@@ -532,7 +567,7 @@ export function renderInspector(hostEl, project, scene, actions) {
     project.scenes.forEach((target) => {
       const option = document.createElement('option');
       option.value = target.id;
-      option.textContent = target.id;
+      option.textContent = getSceneLabel(target);
       select.appendChild(option);
     });
     select.value = choice.nextSceneId || '';
@@ -540,7 +575,7 @@ export function renderInspector(hostEl, project, scene, actions) {
       const value = select.value || null;
       actions.onUpdateChoice?.(scene.id, index, { nextSceneId: value });
     });
-    choiceParts.body.appendChild(createField(translate('inspector.choices.destinationPlaceholder'), select));
+    choiceParts.body.appendChild(createDestinationField(translate('inspector.choices.destinationPlaceholder'), select, project));
 
     const removeBtn = createActionButton(translate('inspector.choices.remove'), 'danger');
     removeBtn.textContent = translate('inspector.choices.remove');
@@ -571,7 +606,7 @@ export function renderInspector(hostEl, project, scene, actions) {
       if (target.id === scene.id) return;
       const option = document.createElement('option');
       option.value = target.id;
-      option.textContent = target.id;
+      option.textContent = getSceneLabel(target);
       autoNextSelect.appendChild(option);
     });
 
@@ -590,7 +625,7 @@ export function renderInspector(hostEl, project, scene, actions) {
       actions.onSetAutoNext?.(scene.id, value);
     });
 
-    const autoNextField = createField(translate('inspector.choices.autoAdvanceLabel'), autoNextSelect);
+    const autoNextField = createDestinationField(translate('inspector.choices.autoAdvanceLabel'), autoNextSelect, project);
     autoNextField.classList.add('choice-auto-next');
 
     if (hasChoices) {
@@ -642,4 +677,16 @@ export function renderValidation(result, host, options = {}) {
     });
     host.appendChild(list);
   }
+}
+
+function createDestinationField(label, select, project) {
+  const field = createField(label, select);
+  const selected = project.scenes.find(scene => scene.id === select.value);
+  if (selected) {
+    const detail = document.createElement('p');
+    detail.className = 'rps-destination-detail';
+    detail.textContent = getSceneLabel(selected);
+    field.appendChild(detail);
+  }
+  return field;
 }

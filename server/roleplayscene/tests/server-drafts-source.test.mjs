@@ -216,8 +216,7 @@ assert.ok(
   'RolePlayScene editor should manage one active edit-mode dialogue audio preview with cleanup and failure messaging',
 );
 assert.ok(
-  editorSource.includes('stopDialoguePreview({ refresh: false });\r\n    unsubscribe();')
-    || editorSource.includes('stopDialoguePreview({ refresh: false });\n    unsubscribe();'),
+  /function cleanup\(\) \{[^}]*?disposed = true;[\s\S]*?stopDialoguePreview\(\{ refresh: false \}\);[\s\S]*?unsubscribe\(\);/.test(editorSource),
   'RolePlayScene editor teardown should stop active dialogue audio previews',
 );
 assert.ok(
@@ -432,11 +431,11 @@ assert.ok(
 
 assert.ok(
   inspectorSource.includes("const sceneHeading = document.createElement('h3')")
-    && inspectorSource.includes('sceneHeading.textContent = scene.id')
+    && inspectorSource.includes('renderSceneNameFields(scene, actions)')
     && inspectorSource.includes("translate('inspector.header.previewCurrentScene')")
     && inspectorSource.includes('actions.onPreviewCurrentScene?.(scene.id)')
     && !inspectorSource.includes('header.innerHTML = `<h3>${scene.id}</h3>`'),
-  'RolePlayScene inspector should render imported scene IDs as text, not HTML, and expose current-scene preview',
+  'RolePlayScene inspector should use the scene-name fields and expose current-scene preview',
 );
 
 assert.ok(

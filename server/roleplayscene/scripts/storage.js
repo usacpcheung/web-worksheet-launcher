@@ -1,6 +1,8 @@
 import { createProject, createScene, SceneType } from './model.js';
 import { zip, unzip } from './utils/zip.js';
 import { seedIdSequencesFromProject } from './utils/id.js';
+import { getSceneName } from './scene-name.js';
+import { validateSceneIdentity } from './scene-identity.js';
 
 const DB_NAME = 'roleplayscene';
 const DB_VERSION = 1;
@@ -207,6 +209,7 @@ function buildManifest(snapshot) {
       const dialogue = Array.isArray(scene.dialogue) ? scene.dialogue : [];
       return {
         id: scene.id,
+        name: getSceneName(scene),
         type: scene.type,
         image: collectAsset({
           asset: scene.image,
@@ -290,6 +293,7 @@ function manifestToSerialized(manifest, files, warnings = []) {
       const dialogue = Array.isArray(scene.dialogue) ? scene.dialogue : [];
       return {
         id: scene.id,
+        name: getSceneName(scene),
         type: scene.type,
         image: restoreAsset(scene.image, files, warnings),
         backgroundAudio: restoreAsset(scene.backgroundAudio, files, warnings),
@@ -397,6 +401,7 @@ export function serializeProject(project) {
       const choices = Array.isArray(scene.choices) ? scene.choices : [];
       return {
         id: scene.id,
+        name: getSceneName(scene),
         type: scene.type,
         image: scene.image ? { name: scene.image.name ?? '', blob: scene.image.blob ?? null } : null,
         backgroundAudio: scene.backgroundAudio
@@ -451,6 +456,7 @@ export function hydrateProject(serialized, { previousProject = null } = {}) {
     const dialogue = Array.isArray(scene.dialogue) ? scene.dialogue : [];
     return {
       id: scene.id,
+      name: getSceneName(scene),
       type: scene.type ?? SceneType.INTERMEDIATE,
       image: scene.image
         ? {
@@ -517,7 +523,7 @@ async function reseedPersistence(project) {
     db = await openDatabase();
     await writeSnapshot(db, snapshot);
   } catch (err) {
-    console.warn('Failed to reseed IndexedDB after manual import/export', err);
+    console.warn('Failed to reseed IndexedDB after manual import', err);
   } finally {
     if (db) db.close();
   }
@@ -556,6 +562,7 @@ export async function setupPersistence(store, { showMessage = noop } = {}) {
         try {
           const hydrated = hydrateProject(snapshot, { previousProject: store.get().project });
           seedIdSequencesFromProject(hydrated);
+          store.resetEditorDrafts?.();
           store.set({ project: hydrated });
         } finally {
           applyingSnapshot = false;
@@ -620,6 +627,7 @@ function serializePlainProjectJson(json) {
   if (!Array.isArray(json.scenes)) {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scenes must be an array');
   }
+  validateImportDraftShape(json);
   const scenes = Array.isArray(json.scenes) ? json.scenes.slice(0, 20) : [];
   return {
     meta: { ...json.meta },
@@ -632,6 +640,10 @@ function serializePlainProjectJson(json) {
 function validateImportDraftShape(project) {
   if (!project || !Array.isArray(project.scenes)) {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scenes are missing');
+  }
+  const errors = validateSceneIdentity(project);
+  if (errors.length) {
+    throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Project scene IDs are invalid', { errors });
   }
   return { errors: [], warnings: [] };
 }
@@ -660,8 +672,8 @@ export async function prepareProjectImport(file) {
     serialized = serializePlainProjectJson(json);
   }
 
+  const validation = validateImportDraftShape(serialized);
   const project = hydrateProject(serialized);
-  const validation = validateImportDraftShape(project);
   return {
     project,
     validation,
@@ -677,6 +689,7 @@ export async function applyPreparedProjectImport(store, preparedImport) {
   const previous = store.get().project;
   revokeProjectObjectUrls(previous);
   seedIdSequencesFromProject(project);
+  store.resetEditorDrafts?.();
   store.set({ project });
   await reseedPersistence(project);
 }
@@ -737,6 +750,7 @@ export async function extractProjectFromArchive(fileOrBytes, options = {}) {
   if (!Array.isArray(manifest.scenes)) {
     throw new ProjectImportError(ImportErrorCode.INVALID_PROJECT, 'Archive project scenes must be an array');
   }
+  validateImportDraftShape(manifest);
   const missingMediaPaths = [];
   const serialized = manifestToSerialized(manifest, files, missingMediaPaths);
   if (!serialized) {
@@ -765,5 +779,6 @@ export async function exportProject(store) {
   a.remove();
   URL.revokeObjectURL(url);
 
-  await reseedPersistence(project);
+  // Export is a snapshot download. Autosave owns the current draft; writing
+  // this captured project here could undo edits made while building the ZIP.
 }

@@ -1,3 +1,4 @@
+import { getSceneLabel } from '../scene-name.js';
 import { computeSceneGraphLayout } from '../editor/graph.js';
 import { SceneType } from '../model.js';
 
@@ -40,14 +41,14 @@ export function buildDiscussionPrintModel(project, discussionSnapshot = {}) {
       const position = layout.positions.get(sceneId) || { row: 9999, column: 9999 };
       return {
         sceneId,
-        title: scene.id,
+        title: getSceneLabel(scene),
         type: scene.type,
         sort: {
           row: position.row,
           column: position.column,
           typeRank: getSceneTypeRank(scene),
         },
-        image: scene.image?.objectUrl ? { src: scene.image.objectUrl, alt: scene.id } : null,
+        image: scene.image?.objectUrl ? { src: scene.image.objectUrl, alt: getSceneLabel(scene) } : null,
         dialogue: (scene.dialogue || [])
           .map(line => ({
             speaker: getSpeakerName(project, line),
@@ -131,7 +132,7 @@ export function buildDiscussionPrintHtml(model, labels = {}, details = {}) {
     .discussion-print-card { break-inside: avoid; page-break-inside: avoid; border: 0.25mm solid #d1d5db; border-radius: 2mm; padding: 3mm; display: grid; gap: 2.5mm; }
     .discussion-print-card header { display: flex; align-items: center; gap: 2mm; border-bottom: 0.25mm solid #e5e7eb; padding-bottom: 2mm; break-after: avoid; }
     .discussion-print-card header span { width: 6mm; height: 6mm; display: inline-grid; place-items: center; border-radius: 999px; background: #eff6ff; color: #1d4ed8; font-weight: 700; font-size: 8pt; }
-    .discussion-print-card h2 { margin: 0; font-size: 12pt; }
+    .discussion-print-card h2 { margin: 0; font-size: 12pt; overflow-wrap: anywhere; white-space: pre-wrap; }
     .discussion-print-card h3 { margin: 0 0 1mm; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.04em; color: #444; break-after: avoid; }
     .discussion-print-grid { display: grid; grid-template-columns: 26mm 1fr 1.45fr; gap: 3mm; align-items: start; }
     .discussion-print-card--no-image .discussion-print-grid { grid-template-columns: 1fr 1.55fr; }

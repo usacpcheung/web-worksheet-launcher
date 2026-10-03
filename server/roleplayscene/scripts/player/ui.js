@@ -1,3 +1,4 @@
+import { getSceneName } from '../scene-name.js';
 import { createVoiceControls, createVoiceStatus } from '../../../viewer/answer-voice-ui.js';
 import { t as sharedTranslate } from '../../../app/i18n/index.js';
 import { unicodeLength, hasPendingRecovery } from '../../../viewer/answer-voice-workflow.js';
@@ -771,7 +772,7 @@ export function renderPlayerUI({
   if (scene.image?.objectUrl) {
     const img = document.createElement('img');
     img.src = scene.image.objectUrl;
-    img.alt = translate('player.stageImageAlt', { sceneId: scene.id });
+    img.alt = translate('player.stageImageAlt', { sceneId: getSceneName(scene) });
     stageFrame.appendChild(img);
   } else {
     const emptyStage = document.createElement('div');

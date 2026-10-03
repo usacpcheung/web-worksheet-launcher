@@ -1,5 +1,6 @@
 // Schema helpers and factories
 import { newId } from './utils/id.js';
+import { getSceneName } from './scene-name.js';
 
 export const SceneType = Object.freeze({
   START: 'start',
@@ -106,6 +107,7 @@ export function createScene(options = {}) {
 
   return {
     id,
+    name: getSceneName({ id, name: options.name }),
     type,
     image: image
       ? {

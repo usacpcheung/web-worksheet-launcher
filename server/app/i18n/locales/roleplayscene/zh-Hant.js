@@ -261,9 +261,15 @@ export default {
       "replace": "替換"
     },
     "header": {
+      "selectedScene": "已選取場景",
       "previewCurrentScene": "預覽目前場景",
       "addScene": "新增場景",
       "deleteScene": "刪除場景"
+    },
+    "sceneName": {
+      "label": "場景名稱",
+      "idLabel": "場景 ID",
+      "tooLong": "尚未儲存。請使用不多於 {max} 個字元，或保留原有名稱。"
     },
     "sceneTypeLabel": "場景類型",
     "sceneTypes": {

@@ -1,3 +1,4 @@
+import { validateSceneIdentity } from '../../roleplayscene/scripts/scene-identity.js';
 import { createStoredZip, decodeUtf8 } from '../../editor/zip-utils.js';
 import { unzipSync } from '../../roleplayscene/scripts/vendor/fflate.module.js';
 
@@ -295,18 +296,7 @@ function validateRolePlaySceneProjectForPlay(project) {
   const speakerIds = new Set((Array.isArray(project.speakers) ? project.speakers : [])
     .map(speaker => speaker?.id)
     .filter(Boolean));
-  const seenSceneIds = new Set();
-  for (const [index, scene] of scenes.entries()) {
-    const sceneId = typeof scene?.id === 'string' ? scene.id.trim() : '';
-    if (!sceneId) {
-      errors.push(`Scene ${index + 1} is missing an ID.`);
-      continue;
-    }
-    if (seenSceneIds.has(sceneId)) {
-      errors.push(`Scene ID "${sceneId}" is duplicated.`);
-    }
-    seenSceneIds.add(sceneId);
-  }
+  errors.push(...validateSceneIdentity(project));
   const startScenes = scenes.filter(scene => scene?.type === 'start');
   if (startScenes.length !== 1) {
     errors.push(`Project must have exactly 1 start scene (found ${startScenes.length}).`);
@@ -392,7 +382,15 @@ function validateRolePlaySceneProjectForPlay(project) {
 
 export function validateRolePlayScenePackageForPublish(zipBytes, options = {}) {
   const validation = validateRolePlayScenePackage(zipBytes, options);
-  if (!validation.ok) return validation;
+  if (!validation.ok) {
+    // Keep the established publish error contract when upload identity checks fail.
+    if (validation.error?.code === 'INVALID_ROLEPLAYSCENE_PROJECT' && validation.error.details?.errors) {
+      return fail('INVALID_ROLEPLAYSCENE_PUBLISH_PACKAGE', 'RolePlayScene package is not valid for publishing.', {
+        ...validation.error.details, warnings: [],
+      });
+    }
+    return validation;
+  }
 
   const errors = [];
   if (validation.metadata.missingMediaCount > 0) {
@@ -488,6 +486,10 @@ export function validateRolePlayScenePackage(zipBytes, options = {}) {
   }
   if (project.scenes.length === 0) {
     return fail('INVALID_ROLEPLAYSCENE_PROJECT', 'Uploaded RolePlayScene project must contain at least one scene.');
+  }
+  const identityErrors = validateSceneIdentity(project);
+  if (identityErrors.length) {
+    return fail('INVALID_ROLEPLAYSCENE_PROJECT', 'Uploaded RolePlayScene scene IDs are invalid.', { errors: identityErrors });
   }
   const startSceneCount = project.scenes.filter(scene => scene?.type === 'start').length;
   if (startSceneCount < 1) {

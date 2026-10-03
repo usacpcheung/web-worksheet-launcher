@@ -92,6 +92,7 @@ try {
       const saved = await persisted();
       assert.equal(saved.title, 'My new version');
       assert.equal(saved.scene.id, 'scene-021');
+      assert.equal(saved.scene.name, 'scene-021', 'saving an old published copy writes the new scene name');
       assert.equal(saved.scene.choices[0].nextSceneId, 'scene-022');
       assert.equal(saved.scene.dialogue[0].text, 'Original dialogue');
       assert.equal(saved.imageBytes, png.length);

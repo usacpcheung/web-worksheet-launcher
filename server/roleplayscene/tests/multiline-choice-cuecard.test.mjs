@@ -26,8 +26,36 @@ class StubElement {
   }
 
   appendChild(child) {
+    child.remove?.();
+    child.parentNode = this;
     this.children.push(child);
     return child;
+  }
+
+  remove() {
+    if (!this.parentNode) return;
+    this.parentNode.children = this.parentNode.children.filter(child => child !== this);
+    this.parentNode = null;
+  }
+
+  replaceChildren(...nodes) {
+    this.children.slice().forEach(child => child.remove());
+    nodes.forEach(node => this.appendChild(node));
+  }
+
+  replaceWith(node) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    node.remove();
+    parent.children[parent.children.indexOf(this)] = node;
+    node.parentNode = parent;
+    this.parentNode = null;
+  }
+
+  querySelector(selector) {
+    return selector.startsWith('.')
+      ? findElement(this, element => element.className.split(/\s+/).includes(selector.slice(1)))
+      : null;
   }
 
   append(...nodes) {

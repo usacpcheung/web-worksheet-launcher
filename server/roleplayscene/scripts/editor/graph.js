@@ -1,3 +1,4 @@
+import { fitSceneLabel, getSceneLabel, getSceneName } from '../scene-name.js';
 import { translate } from '../i18n.js';
 import { SceneType } from '../model.js';
 
@@ -147,6 +148,16 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
   hostEl.innerHTML = '';
   hostEl.classList.add('graph-host');
 
+  const tooltip = document.createElement('div');
+  tooltip.className = 'graph-scene-tooltip';
+  tooltip.setAttribute('role', 'tooltip');
+  tooltip.hidden = true;
+  let hideTimer;
+  const hideTooltip = () => { clearTimeout(hideTimer); tooltip.hidden = true; };
+  const scheduleHide = () => { clearTimeout(hideTimer); hideTimer = setTimeout(hideTooltip, 100); };
+  tooltip.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+  tooltip.addEventListener('mouseleave', scheduleHide);
+  const labels = [];
   const nodes = project.scenes || [];
   if (!nodes.length) {
     const empty = document.createElement('p');
@@ -394,6 +405,23 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
     group.setAttribute('tabindex', '0');
     group.setAttribute('role', 'listitem');
     group.dataset.sceneId = scene.id;
+    group.setAttribute('aria-label', getSceneLabel(scene));
+    const nativeTitle = document.createElementNS(SVG_NS, 'title');
+    nativeTitle.textContent = getSceneLabel(scene);
+    group.appendChild(nativeTitle);
+    const showTooltip = () => {
+      clearTimeout(hideTimer);
+      tooltip.textContent = getSceneLabel(scene);
+      tooltip.hidden = false;
+      const rect = group.getBoundingClientRect();
+      const box = tooltip.getBoundingClientRect();
+      tooltip.style.left = Math.max(12, Math.min(rect.left, window.innerWidth - box.width - 12)) + 'px';
+      tooltip.style.top = Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - box.height - 12)) + 'px';
+    };
+    group.addEventListener('mouseenter', showTooltip);
+    group.addEventListener('mouseleave', scheduleHide);
+    group.addEventListener('focus', showTooltip);
+    group.addEventListener('blur', hideTooltip);
     group.setAttribute('transform', `translate(${x}, ${y})`);
 
     const rect = document.createElementNS(SVG_NS, 'rect');
@@ -408,7 +436,8 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
     title.setAttribute('x', '20');
     title.setAttribute('y', '28');
     title.classList.add('graph-node-title');
-    title.textContent = scene.id;
+    title.textContent = getSceneName(scene);
+    labels.push({ element: title, text: getSceneName(scene), width: scene.image?.objectUrl ? NODE_WIDTH - 110 : NODE_WIDTH - 40 });
 
     const type = document.createElementNS(SVG_NS, 'text');
     type.setAttribute('x', '20');
@@ -448,4 +477,22 @@ export function renderGraph(hostEl, project, selectedId, onSelect) {
 
   svg.appendChild(nodesGroup);
   hostEl.appendChild(svg);
+  hostEl.appendChild(tooltip);
+  const dismissTooltip = event => {
+    if (event.key === 'Escape') hideTooltip();
+  };
+  document.addEventListener('keydown', dismissTooltip, true);
+  // SVG labels need real glyph measurement after attachment. Never alter data.
+  labels.forEach(({ element, text, width }) => {
+    if (typeof element.getComputedTextLength !== 'function') return;
+    element.textContent = fitSceneLabel(text, width, candidate => {
+      element.textContent = candidate;
+      return element.getComputedTextLength();
+    });
+  });
+  return () => {
+    clearTimeout(hideTimer);
+    document.removeEventListener('keydown', dismissTooltip, true);
+    tooltip.remove();
+  };
 }
