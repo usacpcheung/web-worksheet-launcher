@@ -2453,6 +2453,7 @@ async function deletePublishedRolePlayScene(scene) {
   if (!sceneId) return;
   const choice = await showDeletePublishedSceneConfirmation(scene);
   if (choice !== 'delete') return;
+  const deletionModalRevision = serverModalRevision;
   const sessionReady = await ensureServerSessionReady();
   if (!sessionReady.ok) return;
   const result = await apiClient.deleteRolePlayScenePublishedScene(sceneId);
@@ -2461,7 +2462,7 @@ async function deletePublishedRolePlayScene(scene) {
     return;
   }
   showMessage({ textId: 'published.deleted' });
-  await loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: true });
+  await loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: deletionModalRevision === serverModalRevision });
 }
 
 function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploadedDraftSlotLimit } = {}) {
@@ -2824,6 +2825,7 @@ async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null, 
       replacementReason: onDeleteCanceled ? 'slot-recovery-delete-confirm' : 'replace',
     });
     if (choice !== 'delete') return;
+    const deletionModalRevision = serverModalRevision;
     const sessionReady = await ensureServerSessionReady();
     if (!sessionReady.ok) return;
     const result = await apiClient.deleteRolePlaySceneDraft(uploadedDraftId);
@@ -2838,7 +2840,7 @@ async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null, 
       return result;
     }
     const refreshResult = await loadUploadedRolePlaySceneDrafts({ preflight: false });
-    if (refreshResult?.ok) {
+    if (refreshResult?.ok && deletionModalRevision === serverModalRevision) {
       renderUploadedDraftManager();
     }
   } catch (error) {

@@ -13,7 +13,7 @@ const extract = (start, end) => source.slice(source.indexOf(start), source.index
 test('manager refresh cannot reopen closed recovery or replace a newer modal', async () => {
   for (const state of ['closed', 'replaced', 'current']) {
     const response = deferred();
-    const c = vm.createContext({
+    const c = vm.createContext({ serverModalRevision: 0,
       uploadedDrafts: [], uploadedDraftSlotLimit: 3, openingUploadedDraft: null,
       activeServerModal: null, translate: key => key,
       loadUploadedRolePlaySceneDrafts: () => response.promise,
@@ -84,7 +84,7 @@ test('real slot recovery settles cancellation/failure and retries only after suc
 function harness() {
   const calls = [], preflight = deferred(), archive = deferred();
   let project = createProject({ meta: { title: 'A' } });
-  const context = vm.createContext({
+  const context = vm.createContext({ serverModalRevision: 0,
     console, serializeProject, isUploadingDraft: false, openingUploadedDraft: null,
     store: { get: () => ({ project }) },
     ensureServerSessionReady: () => preflight.promise,

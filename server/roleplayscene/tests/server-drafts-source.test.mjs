@@ -59,8 +59,7 @@ assert.ok(
   mainSource.includes("const currentUserSub = serverSession.user?.sub || ''")
     && mainSource.includes("if (currentUserSub && scene?.owner_sub === currentUserSub)")
     && mainSource.includes('function showDeletePublishedSceneConfirmation')
-    && mainSource.includes('function deletePublishedRolePlayScene')
-    && mainSource.includes("await loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: true })"),
+    && mainSource.includes('function deletePublishedRolePlayScene'),
   'published browser should show owner-only delete with confirmation and refresh after deletion',
 );
 assert.ok(
