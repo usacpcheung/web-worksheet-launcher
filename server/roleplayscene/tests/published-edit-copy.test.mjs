@@ -1,3 +1,4 @@
+import { waitForDraftRequest } from '../scripts/draft-request.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -10,6 +11,7 @@ function harness({ confirm = true, failure = false } = {}) {
   let current = original, progress;
   const candidate = { meta: { title: 'Published' }, scenes: [{ id: 'scene-021' }] };
   const context = vm.createContext({
+    AbortController, waitForDraftRequest, serverModalRevision: 0,
     openingUploadedDraft: null, teardown: null, publishedPlay: {}, editorPreview: null, editorSession: {},
     publishedScenesRequestId: 0, isLoadingPublishedScenes: false,
     getRolePlayScenePublishedSceneId: () => 'pub', getRolePlaySceneDraftId: () => 'draft',
@@ -56,4 +58,37 @@ test('cancel and failed download leave the original project intact and release t
     await h.run();
     assert.equal(h.events.filter(([kind]) => kind === 'fetch').length, 2, 'retry is unlocked');
   }
+});
+
+test('cancel releases download lock and ignores late completion before retry', async () => {
+  const h = harness();
+  let resolve, signal;
+  h.context.apiClient.fetchRolePlayScenePublishedSceneArtifact = (id, options) => {
+    signal = options.signal;
+    return new Promise(r => { resolve = r; });
+  };
+  const pending = h.run();
+  await new Promise(r => setImmediate(r));
+  h.context.openingUploadedDraft.cancel();
+  assert.equal(signal.aborted, true);
+  assert.equal(h.context.openingUploadedDraft, null);
+  await pending;
+  resolve({ ok: true, data: new Uint8Array() });
+  await new Promise(r => setImmediate(r));
+  assert.equal(h.current(), h.original);
+  h.context.apiClient.fetchRolePlayScenePublishedSceneArtifact = async () => ({ ok: true, data: new Uint8Array() });
+  await h.run();
+  assert.equal(h.current(), h.candidate);
+});
+
+test('download timeout releases lock without importing and consumes late rejection', async () => {
+  const h = harness();
+  let reject;
+  h.context.waitForDraftRequest = (request, controller) => waitForDraftRequest(request, controller, 10);
+  h.context.apiClient.fetchRolePlayScenePublishedSceneArtifact = () => new Promise((a,b) => { reject=b; });
+  await h.run();
+  assert.equal(h.context.openingUploadedDraft, null);
+  assert.equal(h.current(), h.original);
+  reject(new Error('late offline'));
+  await new Promise(r => setImmediate(r));
 });

@@ -120,14 +120,7 @@ assert.ok(
     && mainSource.includes('returnToRolePlaySceneEditor()'),
   'direct published links should block the editor, expose explicit loading states, ignore stale attempts, and reload on exit',
 );
-assert.ok(
-  mainSource.includes('let publishedScenesRequestId = 0')
-    && mainSource.includes("return { ok: false, skipped: true, status: 'already_loading' }")
-    && mainSource.includes('const requestId = ++publishedScenesRequestId')
-    && mainSource.includes('if (requestId !== publishedScenesRequestId)')
-    && mainSource.includes('if (requestId === publishedScenesRequestId)'),
-  'published browser loads should guard against duplicate in-flight requests and ignore stale responses',
-);
+// Request ownership is exercised in published-browser-race.test.mjs.
 assert.ok(
   mainSource.includes('searchButton.disabled = isLoadingPublishedScenes')
     && mainSource.includes("label: isLoadingPublishedScenes ? translate('published.refreshing') : translate('published.refresh')")
@@ -274,12 +267,12 @@ assert.ok(
 );
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
-const fetchIndex = mainSource.indexOf('await fetchArtifact(uploadedDraftId', openFunctionIndex);
+const fetchIndex = mainSource.indexOf('await wait(fetchArtifact(uploadedDraftId', openFunctionIndex);
 const prepareIndex = mainSource.indexOf('preparedImport = await prepareProjectImport', openFunctionIndex);
 const confirmIndex = mainSource.indexOf('const shouldImport = await confirmProjectImport()', openFunctionIndex);
 const closeModalBeforeConfirmIndex = mainSource.indexOf("closeServerModal('import-confirm')", openFunctionIndex);
 const applyIndex = mainSource.indexOf('await applyPreparedProjectImport(store, preparedImport)', openFunctionIndex);
-const revokeIndex = mainSource.indexOf('revokeProjectObjectUrls(preparedImport.project)', openFunctionIndex);
+const revokeIndex = mainSource.indexOf('revokeProjectObjectUrls(preparedImport.project)', confirmIndex);
 
 assert.ok(openFunctionIndex > -1, 'uploaded draft open flow should exist');
 assert.ok(fetchIndex > openFunctionIndex, 'uploaded draft open flow should fetch the ZIP before import preparation');

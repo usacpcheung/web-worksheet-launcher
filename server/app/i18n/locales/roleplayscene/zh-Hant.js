@@ -76,6 +76,7 @@ export default {
     "deleteFailed": "無法刪除已上傳的 RolePlayScene 草稿。",
     "deletedDraft": "已刪除上傳的 RolePlayScene 草稿。",
     "openDraft": "開啟",
+    "openTimedOut": "下載逾時，請重新開啟草稿再試。",
     "openingDraft": "正在開啟已上傳的 RolePlayScene 草稿...",
     "downloadingDraft": "下載中...",
     "downloadingDraftProgress": "下載中 {percent}%",

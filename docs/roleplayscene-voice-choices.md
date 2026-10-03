@@ -117,3 +117,9 @@ and modal revision remain current; stale responses cannot release a newer lock.
 JSON and ZIP imports reject malformed dialogue text before replacing the project.
 Existing string, missing and null dialogue text remains supported; restored local
 snapshots normalize text to strings defensively.
+
+Published-browser requests retain modal ownership through completion and cleanup.
+Closing or replacing the dialog suppresses late results and errors. Uploaded-draft
+and published-copy downloads have a two-minute deadline and are cancelled when
+their dialog closes; cancellation releases the lock and ignores late completion.
+Timeout messages ask for an explicit retry in both supported languages.

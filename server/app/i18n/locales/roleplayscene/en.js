@@ -76,6 +76,7 @@ export default {
     "deleteFailed": "Unable to delete uploaded RolePlayScene draft.",
     "deletedDraft": "Deleted uploaded RolePlayScene draft.",
     "openDraft": "Open",
+    "openTimedOut": "Download timed out. Please open the draft again to retry.",
     "openingDraft": "Opening uploaded RolePlayScene draft...",
     "downloadingDraft": "Downloading...",
     "downloadingDraftProgress": "Downloading {percent}%",

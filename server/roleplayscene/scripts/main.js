@@ -1,3 +1,4 @@
+import { waitForDraftRequest } from './draft-request.js';
 import { Store } from './state.js';
 import { renderEditor } from './editor/editor.js';
 import { renderPlayer } from './player/player.js';
@@ -1191,6 +1192,9 @@ function openServerModal({ title, bodyRenderer, actions = [], onClose = null, re
 function closeServerModal(reason = 'close') {
   if (!serverModalOverlay) return;
   serverModalRevision++;
+  if (reason !== 'import-confirm' && ['downloading', 'preparing'].includes(openingUploadedDraft?.phase)) {
+    openingUploadedDraft.cancel?.();
+  }
   const current = activeServerModal;
   activeServerModal = null;
   serverModalOverlay.hidden = true;
@@ -2252,19 +2256,22 @@ async function loadPublishedRolePlaySceneScenes({
   if (showBrowser && !serverModalOverlay?.hidden) {
     renderPublishedBrowserModal();
   }
+  const modalRevision = serverModalRevision;
+  const isCurrent = () => requestId === publishedScenesRequestId && modalRevision === serverModalRevision;
   try {
     if (preflight) {
       const sessionReady = await ensureServerSessionReady();
+      if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
       if (!sessionReady.ok) return sessionReady.result;
     }
-    if (requestId !== publishedScenesRequestId) return { ok: false, skipped: true, status: 'stale_response' };
+    if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
     const offset = append ? Number(publishedScenesNextOffset || publishedScenes.length || 0) : 0;
     const result = await apiClient.listRolePlayScenePublishedScenes({
       ...publishedScenesFilters,
       limit: 20,
       offset,
     });
-    if (requestId !== publishedScenesRequestId) {
+    if (!isCurrent()) {
       return { ok: false, skipped: true, status: 'stale_response' };
     }
     if (!result.ok) {
@@ -2275,15 +2282,15 @@ async function loadPublishedRolePlaySceneScenes({
     publishedScenes = append ? [...publishedScenes, ...incoming] : incoming;
     publishedScenesHasMore = result.data?.hasMore === true;
     publishedScenesNextOffset = Number.isFinite(Number(result.data?.nextOffset)) ? Number(result.data.nextOffset) : null;
-    if (showBrowser) {
-      renderPublishedBrowserModal();
-    }
     return result;
+  } catch (error) {
+    if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
+    throw error;
   } finally {
     if (requestId === publishedScenesRequestId) {
       isLoadingPublishedScenes = false;
       updateServerSessionUi();
-      if (showBrowser && !serverModalOverlay?.hidden) {
+      if (showBrowser && isCurrent()) {
         renderPublishedBrowserModal();
       }
     }
@@ -2660,7 +2667,16 @@ async function publishUploadedRolePlaySceneDraft(draft) {
 async function openUploadedRolePlaySceneDraft(draft, { published = false } = {}) {
   const uploadedDraftId = published ? getRolePlayScenePublishedSceneId(draft) : getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId || openingUploadedDraft) return;
-  const operation = { uploadedDraftId, published, phase: 'downloading', percent: null };
+  const controller = new AbortController();
+  const operation = { uploadedDraftId, published, phase: 'downloading', percent: null, cancel() {
+    controller.abort();
+    if (openingUploadedDraft === operation) {
+      openingUploadedDraft = null;
+      syncUploadedDraftActionAvailability();
+    }
+  } };
+  const isCurrent = () => openingUploadedDraft === operation && !controller.signal.aborted;
+  const wait = request => waitForDraftRequest(request, controller);
   openingUploadedDraft = operation;
   // Invalidate requests started before the copy lock, including responses that
   // arrive after cancellation/success has already released that lock.
@@ -2670,13 +2686,16 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
   let preparedImport = null;
   try {
     if (!(await ensureDiscussionCanBeDiscarded())) return;
-    const sessionReady = await ensureServerSessionReady();
+    if (!isCurrent()) return;
+    const sessionReady = await wait(ensureServerSessionReady());
+    if (!isCurrent()) return;
     if (!sessionReady.ok) return;
     showMessage({ textId: published ? 'published.opening' : 'server.openingDraft' });
     const fetchArtifact = published
       ? apiClient.fetchRolePlayScenePublishedSceneArtifact.bind(apiClient)
       : apiClient.fetchRolePlaySceneDraftArtifact.bind(apiClient);
-    const artifact = await fetchArtifact(uploadedDraftId, {
+    const artifact = await wait(fetchArtifact(uploadedDraftId, {
+      signal: controller.signal,
       onProgress: (progress) => {
         if (openingUploadedDraft !== operation || operation.phase !== 'downloading') return;
         const loaded = Number(progress?.loaded || 0);
@@ -2693,7 +2712,8 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
         openingUploadedDraft.percent = percent;
         syncUploadedDraftActionAvailability();
       },
-    });
+    }));
+    if (!isCurrent()) return;
     if (!artifact.ok) {
       showMessage({ text: getServerErrorMessage(artifact, published ? 'published.openFailed' : 'server.openFailed') });
       return;
@@ -2707,6 +2727,7 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
       artifact.data,
       `${sanitizeFilename(draft?.title, 'roleplayscene-draft')}.zip`,
     ));
+    if (!isCurrent()) { revokeProjectObjectUrls(preparedImport.project); return; }
     if (published) {
       const suffixLength = translate('published.copyTitle', { title: '' }).length;
       preparedImport.project.meta.title = translate('published.copyTitle', {
@@ -2714,6 +2735,7 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
           .slice(0, Math.max(0, 120 - suffixLength)),
       });
     }
+    operation.phase = 'confirming';
     closeServerModal('import-confirm');
     const shouldImport = await confirmProjectImport();
     if (!shouldImport) {
@@ -2754,13 +2776,17 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
     setMode('edit');
     if (published) updatePublishedPlayUi();
   } catch (err) {
+    if (controller.signal.aborted) {
+      if (err?.code === 'DRAFT_TIMEOUT') showMessage({ textId: 'server.openTimedOut' });
+      return;
+    }
     console.error(err);
     if (preparedImport?.project && store.get().project !== preparedImport.project) {
       revokeProjectObjectUrls(preparedImport.project);
     }
     showImportError(err);
   } finally {
-    if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
+    if (openingUploadedDraft === operation) {
       openingUploadedDraft = null;
       syncUploadedDraftActionAvailability();
     }
