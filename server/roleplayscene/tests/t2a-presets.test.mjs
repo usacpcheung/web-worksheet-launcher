@@ -29,7 +29,7 @@ test('line, speaker and generated voice metadata survive snapshot and ZIP with a
  assert.equal(accepted.project.scenes[0].dialogue[0].audio.generatedVoiceChoice, 'cantonese_male_1');
  for (const restored of [hydrateProject(serializeProject(project)), hydrateProject(await extractProjectFromArchive(archive))]) {
   const [first, second] = restored.scenes[0].dialogue;
-  assert.equal(getDialogueVoiceChoice(first, restored.speakers), 'cantonese_female_3');
+  assert.equal(getDialogueVoiceChoice(first, restored.speakers), 'cantonese_male_3');
   assert.equal(getAudioVoicePreset(first.audio).id, 'cantonese_male_1');
   assert.deepEqual(new Uint8Array(await first.audio.blob.arrayBuffer()), new Uint8Array([1,2,3]));
   assert.equal(getDialogueVoiceChoice(second, restored.speakers), 'cantonese_male_3');

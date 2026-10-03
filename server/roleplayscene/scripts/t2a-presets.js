@@ -27,8 +27,8 @@ export function getAudioVoicePreset(audio) {
 }
 
 export function getDialogueVoiceChoice(line, speakers = []) {
-  return line.voiceChoice ?? getAudioVoicePreset(line.audio)?.id
-    ?? speakers.find(speaker => speaker.id === line.speakerId)?.lastVoiceChoice
+  return speakers.find(speaker => speaker.id === line.speakerId)?.lastVoiceChoice
+    ?? line.voiceChoice ?? getAudioVoicePreset(line.audio)?.id
     ?? 'cantonese_narrator_female';
 }
 

@@ -189,9 +189,9 @@ try {
       page.on('dialog', dialog => dialog.accept());
       await page.goto(base + '/server/roleplayscene/index.html');
       await page.locator('#file-input').setInputFiles({ name: 'dialogue.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
-        meta: { title: 'Cantonese voice fixture' }, scenes: [
-          { id: 'start', type: 'start', dialogue: [{ text: '你好 Dialogue' }], choices: [{ id: 'next', label: 'Next', nextSceneId: 'end' }] },
-          { id: 'end', type: 'end', dialogue: [], choices: [] },
+        meta: { title: 'Cantonese voice fixture' }, speakers: [{ id: 'alex', name: 'Alex' }], scenes: [
+          { id: 'start', type: 'start', dialogue: [{ text: '你好 Dialogue', speakerId: 'alex' }], choices: [{ id: 'next', label: 'Next', nextSceneId: 'end' }] },
+          { id: 'end', type: 'end', dialogue: [{ text: 'Later', speakerId: 'alex', voiceChoice: 'cantonese_male_1' }], choices: [] },
         ],
       })) });
       await page.locator('#import-confirm-accept').click();
@@ -233,6 +233,15 @@ try {
         });
       }), true, 'voice badge and actions fit the dialogue audio row');
       if (shots) await page.screenshot({ path: `${shots}/roleplay-voice-choices-${locale}-${width}.png`, fullPage: false });
+      // Remembered generation choice overrides a later scene's saved selection,
+      // while the existing recording's label is unchanged on return.
+      await page.locator('.dialogue-t2a-controls__preset select').first().selectOption('cantonese_male_2');
+      assert.equal(await page.locator('.audio-info__badge').innerText(), badge);
+      await page.locator('[data-scene-id="end"]').first().click();
+      assert.equal(await page.locator('.dialogue-t2a-controls__preset select').first().inputValue(), 'cantonese_male_2');
+      await page.locator('[data-scene-id="start"]').first().click();
+      assert.equal(await page.locator('.dialogue-t2a-controls__preset select').first().inputValue(), 'cantonese_male_2');
+      assert.equal(await page.locator('.audio-info__badge').innerText(), badge);
       assert.deepEqual(pageErrors, []);
       // Chromium logs the deliberately injected HTTP rejection as a resource error.
       assert.deepEqual(errors.filter(message => message !== 'Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)'), []);

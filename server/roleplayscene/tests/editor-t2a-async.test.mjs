@@ -422,7 +422,7 @@ test('T2A late auth failure is reported to the server session owner', async () =
   );
 });
 
-test('voice selections remember speakers without changing other explicit lines and survive redraw/reordering', () => {
+test('remembered voices override earlier line selections and survive redraw/reordering', () => {
   installDomGlobals();
   const p = makeProject();
   p.speakers = [{id:'a',name:'Alex'}, {id:'b',name:'B'}];
@@ -433,11 +433,11 @@ test('voice selections remember speakers without changing other explicit lines a
   select(0).value = 'cantonese_male_3'; select(0).dispatchEvent('change');
   assert.equal(store.get().project.speakers[0].lastVoiceChoice, 'cantonese_male_3');
   assert.equal(select(0).value, 'cantonese_male_3');
-  assert.equal(select(1).value, 'cantonese_female_1');
+  assert.equal(select(1).value, 'cantonese_male_3');
   assert.equal(select(2).value, 'cantonese_male_3');
   select(2).value = 'cantonese_female_3'; select(2).dispatchEvent('change');
   store.set({project:{...store.get().project, speakers:store.get().project.speakers.map(s=>({...s,name:'Renamed'}))}});
-  assert.equal(select(0).value, 'cantonese_male_3');
+  assert.equal(select(0).value, 'cantonese_female_3');
   assert.equal(select(2).value, 'cantonese_female_3');
   findElement(right, el=>el.dataset?.focusKey==='dialogue-move-scene-1-2--1').dispatchEvent('click');
   assert.equal(select(1).value, 'cantonese_female_3');

@@ -14,15 +14,16 @@ server-dependent default with an explicit choice.
 
 ## Selection behavior
 
-- An explicit line choice takes precedence over a speaker's remembered choice.
-- An unset line uses an identifiable attached voice, then its speaker's remembered
-  choice, then Narrator. Merely rendering a suggestion does not save a choice or
-  update a speaker preference.
+- A speaker's remembered choice takes precedence for future generation across all
+  scenes, including lines with earlier selections or attached audio. Without a
+  remembered choice, use the line selection, identifiable attached voice, then
+  Narrator. Merely rendering a suggestion does not save a choice.
 - Explicitly choosing a voice saves it on the line and updates that speaker's
   remembered choice. Generation captures its selected choice on the line but does
   not overwrite the speaker's preference merely because it used a suggestion.
-- Existing explicit selections and recordings do not change when a speaker
-  preference changes. Speakers are optional; voices may be shared.
+- Attached recordings and their recorded-voice labels never change when a speaker
+  preference changes. Earlier line selections remain stored as fallbacks for lines
+  without a remembered speaker voice. Speakers are optional; voices may be shared.
 - Speaker identity uses `speaker.id`, so renaming retains the preference.
   Assigning a different speaker does not erase a line selection.
 - Generation stops dialogue preview before confirmation. Cancellation and errors
@@ -39,7 +40,7 @@ These fields are retained by model normalization, IndexedDB snapshots,
 | Location | Field | Meaning |
 | --- | --- | --- |
 | `speakers[]` | `lastVoiceChoice` | Last voice explicitly chosen on a line assigned to this speaker |
-| `scenes[].dialogue[]` | `voiceChoice` | Voice selected for this line's next generation |
+| `scenes[].dialogue[]` | `voiceChoice` | Line selection used when the speaker has no remembered choice |
 | `scenes[].dialogue[].audio` | `generatedVoiceChoice` | Voice used to create this attached audio; null for a new custom upload |
 
 Choice values are stable identifiers, never translated labels. Unknown strings
@@ -57,7 +58,7 @@ notice. A label change alone never alters a recording.
 
 ## Boundaries
 
-No batch generation, permanent speaker inheritance, automatic regeneration,
+No batch generation, automatic regeneration,
 provider controls, Mandarin/English expansion, player redesign, auth callback
 contract change, database migration, merge or VPS deployment is included.
 Existing discussion, music, publishing, worksheets and legacy raw API calls remain
