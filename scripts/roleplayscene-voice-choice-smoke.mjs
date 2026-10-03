@@ -33,17 +33,19 @@ try {
    },locale);
    const voice=(scene,index)=>page.locator(`[data-focus-key="dialogue-t2a-preset-${scene}-${index}"]`);
    await voice('first',0).selectOption('cantonese_male_3');
-   assert.equal(await voice('first',1).inputValue(),'cantonese_female_1');
+   assert.equal(await voice('first',1).inputValue(),'cantonese_male_3');
+   assert.deepEqual(await page.evaluate(()=>window.voiceStore.get().project.scenes[0].dialogue.slice(0,2).map(line=>line.voiceChoice)),['cantonese_male_3','cantonese_female_1']);
    await page.evaluate(()=>window.mountVoiceEditor('later'));
    assert.equal(await voice('later',0).inputValue(),'cantonese_male_3');
    await voice('later',0).selectOption('cantonese_female_3');
    await page.evaluate(()=>window.mountVoiceEditor());
-   assert.equal(await voice('first',0).inputValue(),'cantonese_male_3');
-   assert.equal(await voice('first',1).inputValue(),'cantonese_female_1');
+   assert.equal(await voice('first',0).inputValue(),'cantonese_female_3');
+   assert.equal(await voice('first',1).inputValue(),'cantonese_female_3');
    assert.ok(await page.getByText(locale==='en'?'Custom voice':'自訂聲音',{exact:true}).count());
    await page.locator('[data-focus-key="dialogue-move-first-1--1"]').click();
-   assert.equal(await voice('first',0).inputValue(),'cantonese_female_1');
-   assert.equal(await voice('first',1).inputValue(),'cantonese_male_3');
+   assert.equal(await voice('first',0).inputValue(),'cantonese_female_3');
+   assert.equal(await voice('first',1).inputValue(),'cantonese_female_3');
+   assert.deepEqual(await page.evaluate(()=>window.voiceStore.get().project.scenes[0].dialogue.slice(0,2).map(line=>line.voiceChoice)),['cantonese_female_1','cantonese_male_3']);
    await page.evaluate(async()=>{
     const {serializeProject,hydrateProject,createProjectArchive,extractProjectFromArchive}=await import('/server/roleplayscene/scripts/storage.js');
     const restored=hydrateProject(serializeProject(window.voiceStore.get().project));
@@ -51,7 +53,7 @@ try {
     window.voiceStore.set({project:hydrateProject(await extractProjectFromArchive(archiveData))});
     window.mountVoiceEditor();
    });
-   assert.equal(await voice('first',1).inputValue(),'cantonese_male_3');
+   assert.equal(await voice('first',1).inputValue(),'cantonese_female_3');
    assert.equal(await page.evaluate(()=>window.voiceStore.get().project.speakers[0].lastVoiceChoice),'cantonese_female_3');
    // An expiry must keep selection, expose sign-in, and never auto-retry.
    await page.evaluate(()=>window.voiceFailure=true);
@@ -61,7 +63,8 @@ try {
    await page.getByRole('button',{name:locale==='en'?'Sign in':'登入',exact:true}).click();
    assert.equal(await page.evaluate(()=>window.signIns),1);
    assert.equal(await page.evaluate(()=>window.voiceCalls.length),1);
-   assert.equal(await voice('first',1).inputValue(),'cantonese_male_3');
+   assert.equal(await voice('first',1).inputValue(),'cantonese_female_3');
+   assert.deepEqual(await page.evaluate(()=>window.voiceCalls[0].options),{voice_choice:'cantonese_female_3'});
    // All seven labels stay short; keyboard can reach the selector.
    assert.equal(await voice('first',1).locator('option').count(),7);
    assert.equal(await voice('first',1).evaluate(el=>Array.from(el.options).every(o=>o.text.length<=8)),true);

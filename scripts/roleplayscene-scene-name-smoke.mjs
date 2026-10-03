@@ -14,8 +14,13 @@ try {
     try {
       const page = await context.newPage();
       const errors = [];
+      const importErrors = [];
       page.on('pageerror', e => errors.push(e.message));
-      page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+      page.on('console', m => {
+        if (m.type() !== 'error') return;
+        errors.push(m.text());
+        importErrors.push(m.args()[0].evaluate(error => ({ code: error.code, errors: error.errors })));
+      });
       let uploaded, oldDraftZip;
       await context.route(url => url.pathname.startsWith('/api/'), async route => {
         const path = new URL(route.request().url()).pathname;
@@ -203,7 +208,11 @@ try {
       assert.equal(await page.locator('#import-confirm-overlay').isVisible(), false);
       assert.equal(await field.inputValue(), fullName);
       // main.js logs the handled import rejection; no other console/runtime errors.
-      assert(errors.every(message => message.includes('Project scene IDs are invalid')));
+      assert.equal(errors.length, 1, JSON.stringify(errors));
+      assert.match(errors[0], /^ProjectImportError: Project data is invalid\b/);
+      const [rejection] = await Promise.all(importErrors);
+      assert.equal(rejection.code, 'invalid_project');
+      assert(rejection.errors.some(message => message.includes('duplicated')), JSON.stringify(rejection));
       console.log(`PASS ${locale} ${width}: names, IME, legacy IDs, duplicate labels, wrapping, tooltip, copy, links, reload/export/upload, safe rejection`);
     } finally { await context.close(); }
   }
