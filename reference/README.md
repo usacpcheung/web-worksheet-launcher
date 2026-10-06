@@ -1,28 +1,7 @@
-# Local Reference Directory
+# Local reference directory
 
-Use this folder for local-only material that should help AI-assisted edits but should not be committed to the repository.
+Use this folder for ignored, local-only comparison material such as API exports, experiment drafts and vendor snippets. `.gitignore` ignores its contents except the README and optional scaffold. None of those ignored files were reviewed as repository documentation.
 
-Good candidates:
+Treat local material as reference input, not source of truth. Keep supported contracts in [docs/](../docs/README.md), current runtime in the tracked product/shared modules, and final changes in reviewed commits. Do not add secrets or private credentials here.
 
-- API reference exports
-- Draft or proposed script versions
-- Vendor snippets you need to compare against current repo code
-- Implementation notes tied to an upcoming local experiment
-
-Guidelines:
-
-- Treat files here as reference inputs, not source of truth
-- Keep the canonical contract in `docs/message-contract.md`
-- Keep canonical runtime code in the tracked repo files
-- When a draft becomes real product code, move the final version into the tracked repo and review it normally
-- Avoid placing secrets, tokens, or private credentials here
-
-Suggested naming:
-
-- `api-reference.md`
-- `rewrite-widget.v2.reference.js`
-- `render-flow-notes.md`
-
-Typical AI prompt:
-
-"Compare the tracked widget code with `reference/rewrite-widget.v2.reference.js` and apply the relevant changes to the repo implementation without modifying compatibility rules."
+Suggested prompt: “Compare the current worksheet or RolePlayScene implementation with a local reference file, preserving the active contracts and existing content compatibility.” The old rewrite-widget comparison example is obsolete because that widget and parent SDK are retired.
