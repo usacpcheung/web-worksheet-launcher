@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Historical design decision. Local validators/mappers still use part of its snapshot vocabulary, but the implemented ZIP APIs and database do not implement its proposed relational snapshot/revision system. See the current local-model reference.
+> Maintained replacement: [current local-model boundaries](../../contracts/local-models.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

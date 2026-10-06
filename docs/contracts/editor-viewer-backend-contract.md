@@ -76,7 +76,7 @@ For `GET /published`, editor consumes:
 
 - `data.items` (array)
 - `data.hasMore` (boolean)
-- `data.nextOffset` (number)
+- `data.nextOffset` (number when `hasMore` is true; omitted by the API on the final page and normalized to null by the shared page service)
 
 For each `item` in `data.items`, UI currently reads:
 

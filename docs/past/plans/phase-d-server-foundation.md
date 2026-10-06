@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Historical server foundation checkpoint. Current main includes migrations 001–014, uploaded attempts, RolePlayScene APIs, wired UI and quarantine maintenance; its deferred-work list is no longer current.
+> Maintained replacement: [current server runtime](../../operations/server-runtime.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Unfinalized, superseded implementation plan. Current rewrite uses a 2,000-code-point limit and manual voice retry; prompt audio uses a 500-code-point projection and named voices. Do not implement the old 300/200 limits or replay instructions.
+> Maintained replacement: [current voice/rewrite workflow](../../worksheet/viewer-voice-workflow.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

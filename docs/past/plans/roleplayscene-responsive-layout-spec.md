@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Partially realized proposal, not a current implementation specification. Current CSS uses 1023/900/767/720px rules and still permits narrow playback-toolbar horizontal scrolling. See the current responsive-layout reference; unmet proposal criteria are not certified here.
+> Maintained replacement: [current responsive layout](../../roleplayscene/responsive-layout.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

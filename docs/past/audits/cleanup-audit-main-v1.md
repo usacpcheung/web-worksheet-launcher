@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Completed audit and follow-up record. The named unused wrappers, DOM module and defaults export are absent on current main; historical test counts and deletion proposals are not new work instructions.
+> Maintained replacement: [retirement and verification boundary](../../contracts/widget-retirement.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

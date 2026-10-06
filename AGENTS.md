@@ -51,8 +51,11 @@ Scope: entire repository tree from the project root.
 ## Contract Discipline
 
 - Changes to supported auth callback messages must update
-  `docs/message-contract.md` in the same PR. Preserve origin, message type,
-  source-window and auth-flow correlation validation.
+  `docs/message-contract.md` in the same PR. Preserve the implemented origin,
+  message-type and auth-flow correlation checks and the fresh session probe.
+  The current shared helper does not validate `event.source`; do not describe
+  source-window validation as implemented or restore the retired parent SDK.
+  Any future callback-validation change must document its actual behavior.
 - Legacy `worksheetResult` and launch-query contracts are historical only.
 - Changes to product package/attempt contracts must update their applicable
   contract documentation and preserve existing content compatibility.

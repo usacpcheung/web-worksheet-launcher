@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Implemented early package baseline, superseded by worksheet versions 2/3, multilingual audio tracks and attempt packages. Version-1 input remains supported.
+> Maintained replacement: [current package formats](../../contracts/package-formats.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

@@ -129,6 +129,7 @@ devices or Safari/Firefox behavior.
 
 ## Deployment
 
-Deploy the frontend and API changes together and restart the API process to load
-the shared upload identity validator. No dependency installation, database
+For a release introducing or changing scene identity validation, deploy the frontend
+and API together and restart the API process to load the shared validator. This
+documentation-only PR does not require that runtime rollout. No dependency installation, database
 migration or republishing of existing content is required for this feature.

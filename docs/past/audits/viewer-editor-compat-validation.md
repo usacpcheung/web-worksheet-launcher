@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Dated validation record, not evidence that today’s branch was tested. The described flows remain supported and are covered by current source/tests; use the current testing guide.
+> Maintained replacement: [current testing guide](../../operations/testing.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

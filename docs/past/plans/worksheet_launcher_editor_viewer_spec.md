@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Superseded target specification. Proposed JSON/revision API bodies, ULID IDs, inline URL launch and local-only attempts differ from current main. Current runtime and contracts replace it.
+> Maintained replacement: [current runtime architecture](../../architecture/runtime.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

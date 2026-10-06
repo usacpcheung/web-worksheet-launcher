@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Historical migration inventory. Shared en/zh-Hant dictionaries, interpolation, print labels and RolePlayScene namespace are now implemented. Retain the analysis as history, not a pending translation checklist.
+> Maintained replacement: [current localization](../../operations/localization.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

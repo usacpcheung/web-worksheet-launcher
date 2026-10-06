@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Retired widget/SDK implementation or completed retirement record. The exact legacy assets are absent on current main; shared authentication, rewrite, transcription and audio services remain active. Historical installation/PR/deployment instructions below are not current operational guidance.
+> Maintained replacement: [active retirement boundary](../../contracts/widget-retirement.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

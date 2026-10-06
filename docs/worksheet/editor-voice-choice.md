@@ -93,4 +93,4 @@ The deployed bridge must support the named-choice contract before editor rollout
 An older bridge can ignore the unknown field and generate default Cantonese audio.
 Before deployment, verify a real named-choice request for each language against the
 VPS and listen to the output. Successful raw-control calls alone do not establish
-named-choice support. This code PR does not merge, deploy or change VPS configuration.
+named-choice support. This documentation review does not deploy or change VPS configuration.

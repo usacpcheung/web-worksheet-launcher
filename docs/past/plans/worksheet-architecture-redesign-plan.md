@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Historical target and phased plan. ZIP storage and server features exist, while proposed cache-first loading, lineage tables and some identity shapes are not implemented. This is not an approved current roadmap.
+> Maintained replacement: [current runtime architecture](../../architecture/runtime.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

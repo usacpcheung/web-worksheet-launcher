@@ -39,11 +39,11 @@ Use `npm run migrate` with the deployment's configured environment to apply pend
 
 ## Publish and conflict behavior
 
-Services serialize owner operations with advisory transaction locks. Draft and attempt limits default to three in `config.js`; lists return the limits for UI use. Worksheet conflicts use normalized owner/title/subject; RolePlayScene uses owner/title. The browser offers explicit replace/copy recovery rather than silently replacing content.
+Upload and publish transactions serialize owner operations with advisory transaction locks; this is not a claim that every read/delete path takes that lock. Draft and attempt limits default to three in `config.js`; lists return the limits for UI use. Worksheet conflicts use normalized owner/title/subject; RolePlayScene uses owner/title. The browser offers explicit replace/copy recovery rather than silently replacing content.
 
 A successful publish receives a new UUID and artifact copy. Draft markers prevent publishing the same current uploaded artifact again. Deleting or quarantining a publication does not clear those markers or automatically unlock republishing. A changed draft artifact can produce another publication, subject to active listing conflicts. Owner deletion of a source draft preserves an existing published artifact through the nullable foreign key.
 
-Worksheet replacement with no live linked publication creates a fresh draft row with empty markers; replacement with a live publication preserves the existing draft identity/history. See `PackageService.uploadDraft` and `publishFromDraft`, and the separate RolePlayScene draft service for its flow.
+Worksheet replacement with no live linked publication creates a fresh draft row with empty markers; replacement with a live publication preserves the existing draft identity/history. RolePlayScene instead checks its historical `last_published_artifact_sha256`: it preserves a previously published draft identity/history even after its publication is deleted or quarantined. Uploaded-attempt replacement retains the attempt row UUID while writing a new artifact. See `PackageService.uploadDraft`, `uploadAttempt`, `publishFromDraft` and `RolePlaySceneDraftService.uploadRolePlaySceneDraft`.
 
 ## Filesystem buckets
 

@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Unimplemented target SQL is mixed with an early baseline. Actual migrations use owner_sub, ZIP path/hash metadata, uploaded_attempts and RolePlayScene tables, not these JSONB content/revision/lineage tables.
+> Maintained replacement: [implemented database schema](../../contracts/database-schema.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

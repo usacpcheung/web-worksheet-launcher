@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Retired popup preservation rules and proposed routes. Editor, viewer and RolePlayScene are implemented; the renderer and parent SDK are absent.
+> Maintained replacement: [current routes and server runtime](../../operations/server-runtime.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 

@@ -23,7 +23,7 @@ Each product generates a per-flow `authFlowId` and passes it to the shared opene
 
 The current shared helper does not compare `event.source` to the opened window or validate the message's `source` field. Do not claim it implements the old parent SDK's window-reference check. This reference reports existing behavior; it does not relax repository guidance for future changes or add a runtime fix.
 
-Callback completion is primary. Fallback readiness polling is silent and bounded; a flow owns cancellable probes and completion cleanup. Shared defaults are a 1-second polling interval, a 15-second polling budget and a 60-second hard flow deadline; callers may supply their own continuation/deadline controls. Invalid callbacks do not themselves cancel the fallback. API work still requires its own session/auth checks.
+Callback completion is primary. Background fallback readiness polling is bounded; the helper reports status and pending/terminal results to its callers. A flow owns cancellable probes and completion cleanup. Shared defaults are a 1-second polling interval, a 15-second polling budget and a 60-second hard flow deadline; callers may supply their own continuation/deadline controls. Invalid callbacks do not themselves cancel the fallback. API work still requires its own session/auth checks.
 
 Voice capture and RolePlayScene line generation require a new explicit action after sign-in; they do not start automatically. Existing editor protected-intent recovery is separate and validates the original target before replay. Viewer redirect recovery uses the existing `authReturn`/`authCallback` path described below, not the retired worksheet result protocol.
 
@@ -38,7 +38,7 @@ The editor + viewer runtime now uses these canonical `responseConfig` input type
 
 ### Strict responseConfig inputType acceptance
 
-- Loader/normalization paths accept only canonical `inputType` values: `text`, `number`, `boolean`, `multiple_choice`.
+- Strict schema validation accepts only canonical `inputType` values: `text`, `number`, `boolean`, `multiple_choice`. Editor/viewer normalization defaults missing/null input types to `text` before subsequent validation; that default does not accept explicit legacy aliases.
 - Legacy aliases (`plain_text`, `short_text`, `single_choice`) are not coerced and must fail schema validation.
 - Number-input legacy `step` compatibility normalization is removed; consumers must rely on canonical `numberRules` + `min`/`max` fields only.
 
@@ -77,7 +77,7 @@ The editor + viewer runtime now uses these canonical `responseConfig` input type
 }
 ```
 
-`numberRules` constraints in this phase:
+`numberRules` constraints:
 
 - Only integer/decimal syntax is in scope.
 - Fraction syntax (for example `2/3`) is out of scope and must be rejected.
@@ -90,7 +90,7 @@ The editor + viewer runtime now uses these canonical `responseConfig` input type
 `number` answer-key (`correctAnswer`) validity constraints:
 
 - must be a finite `number`
-- must satisfy `allowSigned` (no negative value when `allowSigned` is `false`)
+- must satisfy `allowedKinds` and `allowSigned` (no negative value when `allowSigned` is `false`)
 - must satisfy `min` and `max` when those bounds are present
 - for decimal values, must not exceed `decimalPlacesAllowed` when `decimalPlacesAllowed` is an integer
 - canonical normalization prunes invalid `correctAnswer` values from persisted `responseConfig`
@@ -140,7 +140,7 @@ Deterministic shuffle seed behavior (viewer):
 
 - seed input is the string: ``${localAttemptId || "attempt"}:${blockId}``
 - options for a given question stay stable for one attempt/session
-- a different attempt id produces a different deterministic order
+- a different attempt ID changes the seed and may produce a different order; distinct seeds are not guaranteed to produce distinct permutations
 - when `shuffleOptions` is `false`, original option order is preserved
 
 ### Answer value shape rules
@@ -162,16 +162,14 @@ When present on question blocks, `correctAnswer` must match the response input s
 - `multiple_choice` with `selectionMode: "single"` → `string` matching an existing `options[*].value`
 - `multiple_choice` with `selectionMode: "multi"` → `string[]` containing unique entries, where each entry matches an existing `options[*].value`
 
-`multiple_choice` mode-switch + pruning/coercion behavior (editor/runtime normalization):
+`multiple_choice` editor identity and contract mapping:
 
-- canonical `selectionMode` is `single` unless explicitly set to `multi`
-- canonical `shuffleOptions` is a boolean
-- if `selectionMode` is `single`, non-string/invalid `correctAnswer` values are removed
-- if `selectionMode` is `multi`, `correctAnswer` is coerced to unique valid `string[]` values (invalid/non-string/duplicate values are pruned)
-- switching `single → multi` converts a valid single `correctAnswer` string to a one-element array
-- switching `multi → single` keeps only the first valid array entry as the single `correctAnswer`; if none are valid, `correctAnswer` is removed
-
-
+- Editor options retain stable `id` values. Editable answer keys use `correctAnswerOptionId` for single selection or `correctAnswerOptionIds` for multiple selection, so changing an option's displayed value does not detach its answer key.
+- `normalizeQuestionResponseConfig` maps those IDs to value-based `correctAnswer` for viewer/contract use. Its `forContract` mode strips option IDs and editor-only answer-key/mapping-warning fields from that compatibility shape; worksheet ZIP serialization is a separate path and is not claimed to strip all authoring metadata.
+- Legacy value-based keys are mapped to existing option IDs. Invalid/non-string/missing IDs are pruned and repeated IDs are deduplicated. Ambiguous legacy values matching multiple options produce an editor warning; this is not a promise that arbitrary duplicate-value payloads satisfy the strict contract validator.
+- Canonical `selectionMode` is `single` unless explicitly `multi`; `shuffleOptions` is converted to a boolean.
+- The editor mode-switch action converts a valid single option ID to a one-element ID array, or keeps the first valid array ID when returning to single selection. It then regenerates the value-based key.
+- Editor normalization prunes invalid keys; strict `validateDraftSchema`/`validateSnapshotSchema`/`validateViewerPayloadSchema` rejects invalid supplied contract keys. Viewer normalization has its own coercion path and must not be described as the editor's complete identity/pruning algorithm.
 
 ### Viewer client-side check eligibility (integration note)
 

@@ -2,6 +2,7 @@
 
 > **Historical archive — reviewed against main `7bb19de` on 2026-10-06.**
 > Superseded navigation index for contracts/scaffolding. The product entry points and server capabilities now exist; use the current documentation index.
+> Maintained replacement: [current documentation index](../../README.md).
 > Start with [current documentation](../../README.md) and [retirement boundary](../../contracts/widget-retirement.md). Original decision text and reported test results below describe their stated historical baseline, not validation run for this review.
 
 
