@@ -1,6 +1,6 @@
 # Worksheet contract modules
 
-This folder contains local contract/compatibility utilities used by editor/viewer for draft → snapshot → viewer → attempt model boundaries described in `docs/adr-phase1-worksheet-model.md`.
+This folder contains local contract/compatibility utilities used by editor/viewer for draft → snapshot → viewer → attempt model boundaries. See the [current local-model reference](../../../docs/contracts/local-models.md). The [Phase 1 ADR](../../../docs/past/phase1/adr-phase1-worksheet-model.md) preserves historical rationale but does not define today’s server API or SQL schema.
 
 Terminology note:
 - The utilities here still use `snapshot`/`worksheetId` naming for compatibility with existing local editor/viewer payload shapes.

@@ -10,7 +10,8 @@ Scope: entire repository tree from the project root.
 - RolePlayScene: `server/roleplayscene/index.html`
 - Shared application services: `server/app/` and `server/api/`
 - Auth callback contract: `docs/message-contract.md`
-- Legacy widget retirement scope: `docs/widget-removal-step2.md`
+- Active widget retirement scope: `docs/contracts/widget-retirement.md`
+- Current documentation index: `docs/README.md`; historical records: `docs/past/`
 
 ## UI Skill Routing
 
