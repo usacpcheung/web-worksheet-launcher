@@ -7,6 +7,7 @@ import { __resetSessionProbeStateForTests } from './session-readiness.js';
 function createWindowStub({ popupBlocked = false } = {}) {
   let listener = null;
   const opened = [];
+  const popup = { closed: false };
 
   globalThis.window = {
     location: {
@@ -15,7 +16,7 @@ function createWindowStub({ popupBlocked = false } = {}) {
     open: (url, name, features) => {
       opened.push({ url, name, features });
       if (popupBlocked) return null;
-      return { closed: false };
+      return popup;
     },
     addEventListener: (type, fn) => {
       if (type === 'message') listener = fn;
@@ -32,8 +33,9 @@ function createWindowStub({ popupBlocked = false } = {}) {
 
   return {
     opened,
+    popup,
     async sendMessage(event) {
-      await globalThis.window.__sendMessage(event);
+      await globalThis.window.__sendMessage({ source: popup, ...event });
     },
   };
 }
@@ -327,4 +329,51 @@ test('startAuthPopupFlow times out when callback is missed and cleans up listene
     data: { type: 'worksheet-launcher-auth-complete', authFlowId: 'never_ready' },
   });
   assert.equal(notReadyStates.length, callCountBeforeLateMessage);
+});
+
+
+test('only the opened popup can trigger callback probes, including after it closes', async () => {
+  for (const authFlowId of ['source-bound-flow', null]) {
+    const win = createWindowStub();
+    let calls = 0;
+    let ready = false;
+    let completed = false;
+    const flow = startAuthPopupFlow({
+      authFlowId,
+      pollIntervalMs: 1000,
+      pollTimeoutMs: 2000,
+      hardDeadlineMs: 3000,
+      apiClient: {
+        getSessionSignInUrl: () => '/login',
+        getSession: async () => {
+          calls += 1;
+          return ready
+            ? { ok: true, data: { user: { sub: 'legitimate-user' } } }
+            : { ok: false, error: { code: 'AUTH_REQUIRED', requiresSignIn: true } };
+        },
+      },
+    });
+    flow.promise.then(() => { completed = true; });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const before = calls;
+      const data = { type: 'worksheet-launcher-auth-complete', ...(authFlowId ? { authFlowId } : {}) };
+      for (const source of [{ closed: false }, null, undefined]) {
+        await win.sendMessage({ origin: 'https://example.test', source, data });
+        assert.equal(calls, before, 'unrelated/missing source must not probe the session');
+        assert.equal(completed, false, 'unrelated source must not finalize the flow');
+      }
+      // The real page posts then closes: its queued callback is still valid.
+      win.popup.closed = true;
+      ready = true;
+      await win.sendMessage({ origin: 'https://example.test', source: win.popup, data });
+      const result = await flow.promise;
+      assert.equal(calls, before + 1, 'legitimate callback performs a fresh probe');
+      assert.equal(result.status, 'ready');
+      assert.equal(result.user.sub, 'legitimate-user');
+    } finally {
+      flow.cancel();
+      await flow.promise;
+    }
+  }
 });
