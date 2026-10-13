@@ -117,6 +117,7 @@ async function main() {
       const name = script.replace(/\.mjs$/, '');
       const screenshots = path.join(output, name);
       await mkdir(screenshots);
+      if (interrupted) break;
       console.log(`START ${script}`);
       const started = Date.now();
       active = launch(process.execPath, [path.join('scripts', script)], {
