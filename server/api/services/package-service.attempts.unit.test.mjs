@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PackageService } from './package-service.js';
@@ -339,4 +342,55 @@ test('unsupported text formats and disguised Markdown attempts reject before dat
     assert.equal(result.error.code, 'INVALID_ATTEMPT_PACKAGE');
     assert.equal(writes, 0);
   }
+});
+
+function loseCommitAcknowledgment(db) {
+  const connect = db.connect.bind(db);
+  db.connect = async () => {
+    const client = await connect();
+    const query = client.query.bind(client);
+    client.query = async (sql, values) => {
+      const result = await query(sql, values);
+      if (sql === 'COMMIT') throw new Error('lost COMMIT acknowledgment');
+      return result;
+    };
+    return client;
+  };
+  return db;
+}
+
+test('uploadAttempt preserves its artifact if COMMIT acknowledgment is lost', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'commit-ack-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const absolutePath = path.join(dir, 'artifact.zip');
+  const service = createService({
+    db: loseCommitAcknowledgment(createAttemptDb()),
+    artifactStore: {
+      readArtifact: async () => createValidAttemptZip(),
+      storeArtifact: async () => {
+        await fs.writeFile(absolutePath, 'committed artifact');
+        return { absolutePath, artifactPath: 'new.zip', artifactSha256: 'new-sha', artifactSizeBytes: 18 };
+      },
+    },
+  });
+  await assert.rejects(service.uploadAttempt({ identity: { sub: 'oidc-sub' }, title: 'A', zipBytes: createValidAttemptZip() }), /lost COMMIT acknowledgment/);
+  assert.equal(await fs.readFile(absolutePath, 'utf8'), 'committed artifact');
+});
+
+test('attempt replacement reports a missing row and removes the unused new artifact', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'attempt-replace-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const absolutePath = path.join(dir, 'new.zip');
+  const db = createAttemptDb({ conflict: { uploaded_attempt_id: 'old', artifact_path: 'old.zip' } });
+  const client = await db.connect();
+  const query = client.query.bind(client);
+  client.query = (sql, values) => sql.includes('UPDATE uploaded_attempts SET') ? { rows: [], rowCount: 0 } : query(sql, values);
+  const service = createService({ db, artifactStore: { storeArtifact: async () => {
+    await fs.writeFile(absolutePath, 'unused');
+    return { absolutePath, artifactPath: 'new.zip', artifactSha256: 'new-sha', artifactSizeBytes: 6 };
+  } } });
+  const result = await service.uploadAttempt({ identity: { sub: 'oidc-sub' }, title: 'A', zipBytes: createValidAttemptZip(), conflictAction: 'replace' });
+  assert.equal(result.error.code, 'ATTEMPT_REPLACE_TARGET_MISSING');
+  assert.equal(db.state.commits, 0);
+  await assert.rejects(fs.stat(absolutePath), { code: 'ENOENT' });
 });

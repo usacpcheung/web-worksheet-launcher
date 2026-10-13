@@ -1,3 +1,4 @@
+import { withRecovery } from './recovery-journal.js';
 import { createStorageApi } from './indexeddb.js';
 import {
   setResumeFlag,
@@ -12,13 +13,14 @@ function createRuntimeStorage() {
   const db = createStorageApi();
 
   return {
-    drafts: {
+    drafts: withRecovery('localDrafts', {
       put: db.putLocalDraft,
       get: db.getLocalDraft,
+      recover: db.recoverLocalDraft,
       list: db.listLocalDrafts,
       remove: db.deleteLocalDraft,
       clear: db.clearLocalDrafts,
-    },
+    }),
     importedWorksheets: {
       put: db.putImportedWorksheet,
       get: db.getImportedWorksheet,
@@ -26,13 +28,14 @@ function createRuntimeStorage() {
       remove: db.deleteImportedWorksheet,
       clear: db.clearImportedWorksheets,
     },
-    attempts: {
+    attempts: withRecovery('localAttempts', {
       put: db.putLocalAttempt,
       get: db.getLocalAttempt,
+      recover: db.recoverLocalAttempt,
       list: db.listLocalAttempts,
       remove: db.deleteLocalAttempt,
       clear: db.clearLocalAttempts,
-    },
+    }),
     localAssets: {
       put: db.putLocalAsset,
       get: db.getLocalAsset,

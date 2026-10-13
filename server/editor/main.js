@@ -1,3 +1,5 @@
+import { installPageRecovery } from '../app/storage/recovery-journal.js';
+import { getNumberCorrectAnswerConfigViolation } from '../app/contracts/number-input-validator.js';
 import { PackageLoadProgress } from '../viewer/package-load-progress.js';
 import { attachBlockDragReorder } from './block-drag-reorder.js';
 import { editorStorage } from './storage/index.js';
@@ -945,18 +947,7 @@ function countDecimalPlaces(value) {
 }
 
 function isValidNumberCorrectAnswerForConfig(value, config) {
-  if (!Number.isFinite(value)) return false;
-  const rules = normalizeNumberRulesConfig(config?.numberRules);
-  if (!rules.allowSigned && value < 0) return false;
-  const isInteger = Number.isInteger(value);
-  const kind = isInteger ? 'integer' : 'decimal';
-  if (!rules.allowedKinds.includes(kind)) return false;
-  if (!isInteger && rules.decimalPlacesAllowed !== null && countDecimalPlaces(value) > rules.decimalPlacesAllowed) {
-    return false;
-  }
-  if (Number.isFinite(config?.min) && value < Number(config.min)) return false;
-  if (Number.isFinite(config?.max) && value > Number(config.max)) return false;
-  return true;
+  return getNumberCorrectAnswerConfigViolation(value, config) === null;
 }
 
 function getNumberQuestionValidationErrors(config, rawValues = {}) {
@@ -1638,6 +1629,7 @@ class EditorDraftSession {
     try {
       const previousDraft = this.state.draft;
       const previousDraftId = previousDraft?.localId || null;
+      this.discardingDraftId = previousDraftId;
       const referencedAssetIds = previousDraft ? Array.from(collectDraftQuestionAssetIds(previousDraft)) : [];
 
       clearTimeout(this.autosaveTimer);
@@ -1685,6 +1677,7 @@ class EditorDraftSession {
       this.persistRestoreMetadata();
       return draft;
     } finally {
+      this.discardingDraftId = null;
       this.packageLoad.finish(loadToken);
     }
   }
@@ -1991,6 +1984,8 @@ class EditorDraftSession {
     const target = this.findBlock(blockId);
     if (!target || target.kind !== 'question') return { ok: false, reason: 'missing-question' };
 
+    const draftId = this.state.draft.localId;
+    const generation = this._audioDraftGeneration;
     const currentRef = getSingleMediaRef(target.prompt?.mediaRefs, usage);
     if (currentRef && options.confirmReplace !== true) {
       return { ok: false, reason: 'confirm-replace-required', existingAssetId: currentRef.assetId };
@@ -2000,6 +1995,14 @@ class EditorDraftSession {
     const replacedAssetIds = priorRefsForUsage.map((ref) => ref.assetId);
 
     const newAsset = await this.createLocalAssetRecord(file, usage, kind);
+
+    const currentTarget = this.findBlock(blockId);
+    if (this.state.draft?.localId !== draftId || this._audioDraftGeneration !== generation
+      || currentTarget?.kind !== 'question'
+      || JSON.stringify(normalizeMediaRefs(currentTarget.prompt?.mediaRefs, usage)) !== JSON.stringify(priorRefsForUsage)) {
+      await this.storage.localAssets?.remove?.(newAsset.assetId);
+      return { ok: false, reason: 'stale-target' };
+    }
 
     this.state.draft.blocks = this.state.draft.blocks.map((block) => {
       if (block.blockId !== blockId || block.kind !== 'question') return block;
@@ -2018,12 +2021,16 @@ class EditorDraftSession {
     filtered.push(newAsset);
     this.state.draft.assets = filtered;
 
-    if (this.storage.localAssets?.remove && replacedAssetIds.length > 0) {
-      await Promise.all(replacedAssetIds.map((id) => this.storage.localAssets.remove(id)));
-    }
-
+    // Schedule persistence before asynchronous cleanup can outlive the target.
     this.clearMediaFeedback();
     this.touchDraft();
+    if (this.storage.localAssets?.remove && replacedAssetIds.length > 0) {
+      await Promise.all(replacedAssetIds.map(async id => {
+        try { await this.storage.localAssets.remove(id); }
+        catch (error) { console.warn('Unable to remove replaced local media.', error); }
+      }));
+    }
+
     return { ok: true, assetId: newAsset.assetId, replacedAssetId: replacedAssetIds[0] || null };
   }
 
@@ -3102,12 +3109,22 @@ class EditorDraftSession {
     });
   }
 
+  createRecoveryRecord() {
+    if (!this.state.draft || this.state.draft.localId === this.discardingDraftId) return null;
+    return cloneDraftForPersistence({ ...this.state.draft, metadata: {
+      ...this.state.draft.metadata, localId: this.state.draft.localId,
+      origin: this.state.draft.metadata?.origin || 'local_created', updatedAt: nowIso(),
+    } });
+  }
+
   async autosave() {
-    if (!this.state.draft) return null;
+    if (!this.state.draft || this.state.draft.localId === this.discardingDraftId) return null;
 
     const revisionAtSaveStart = this.state.draftRevision;
     const draftIdAtSaveStart = this.state.draft.localId || null;
     const generationAtSaveStart = this.autosaveGeneration;
+    const draftGenerationAtSaveStart = this._audioDraftGeneration;
+    const draftAtSaveStart = cloneDraftForPersistence(this.state.draft);
     const updatedAt = nowIso();
     let saveCountRegistered = false;
     let snapshotToPersist = null;
@@ -3124,11 +3141,11 @@ class EditorDraftSession {
       contractValidation = validateDraftSchema(normalizedDraft);
 
       snapshotToPersist = cloneDraftForPersistence({
-        ...this.state.draft,
+        ...draftAtSaveStart,
         metadata: {
-          ...this.state.draft.metadata,
-          localId: this.state.draft.localId,
-          origin: this.state.draft.metadata?.origin || 'local_created',
+          ...draftAtSaveStart.metadata,
+          localId: draftAtSaveStart.localId,
+          origin: draftAtSaveStart.metadata?.origin || 'local_created',
           updatedAt,
         },
         contractDraft: normalizedDraft,
@@ -3157,9 +3174,11 @@ class EditorDraftSession {
       }
 
       const shouldApplySaveStatus =
-        this.state.draft?.localId === persisted.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
+        this._audioDraftGeneration === draftGenerationAtSaveStart
+        && this.state.draft?.localId === persisted.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
 
-      if (this.state.draft?.localId === persisted.localId && this.state.draftRevision === revisionAtSaveStart) {
+      if (this._audioDraftGeneration === draftGenerationAtSaveStart
+        && this.state.draft?.localId === persisted.localId && this.state.draftRevision === revisionAtSaveStart) {
         this.state.draft = persisted;
       }
 
@@ -3199,6 +3218,7 @@ class EditorDraftSession {
       return persisted;
     } catch (error) {
       const shouldApplyErrorStatus =
+        this._audioDraftGeneration === draftGenerationAtSaveStart &&
         snapshotToPersist &&
         this.state.draft?.localId === snapshotToPersist.metadata?.localId &&
         revisionAtSaveStart > this.state.lastSavedRevision;
@@ -3501,15 +3521,15 @@ class EditorDraftSession {
     }
   }
 
-  async buildCurrentDraftPackageZipBytes() {
-    if (!this.state.draft) {
+  async buildCurrentDraftPackageZipBytes(draft = cloneDraftForPersistence(this.state.draft)) {
+    if (!draft) {
       throw new Error(editorNotification('export.noActiveDraft'));
     }
-    if (collectLegacyAudioTargets(this.state.draft.blocks).length > 0) {
+    if (collectLegacyAudioTargets(draft.blocks).length > 0) {
       throw new Error('Legacy audio must be migrated before preview, export, or upload.');
     }
     const assets = new Map();
-    const draftAssets = normalizeDraftAssets(this.state.draft.assets);
+    const draftAssets = normalizeDraftAssets(draft.assets);
     for (const asset of draftAssets) {
       if (!this.storage.localAssets?.get) continue;
       const stored = await this.storage.localAssets.get(asset.assetId);
@@ -3518,10 +3538,10 @@ class EditorDraftSession {
       }
     }
     const packagedDraft = {
-      ...this.state.draft,
+      ...draft,
       assets: draftAssets,
       metadata: {
-        ...this.state.draft.metadata,
+        ...draft.metadata,
         modelVersion: 'package-compatible-v2',
       },
     };
@@ -3707,6 +3727,7 @@ class EditorDraftSession {
         error: { message: editorNotification('uploadDraft.alreadyInProgress') },
       };
     }
+    this.uploadController = new AbortController();
     this.state.isUploadingDraft = true;
     this.state.uploadDraftProgress = null;
     this.pushNotification({
@@ -3718,17 +3739,19 @@ class EditorDraftSession {
     });
     this.notifyStateChange();
     try {
+      const uploadDraft = cloneDraftForPersistence(this.state.draft);
       if (options.preflight !== false) {
         const sessionReady = await this.ensureServerSessionReady();
         if (!sessionReady.ok) return sessionReady.result;
       }
-      const zipBytes = await this.buildCurrentDraftPackageZipBytes();
+      const zipBytes = await this.buildCurrentDraftPackageZipBytes(uploadDraft);
       let lastProgressRenderKey = null;
       const result = await this.apiClient.uploadDraftPackage(zipBytes, {
-        title: this.state.draft?.title || '',
-        subject: this.state.draft?.metadata?.subject || '',
+        title: uploadDraft?.title || '',
+        subject: uploadDraft?.metadata?.subject || '',
         conflictAction: options.conflictAction || '',
       }, {
+        signal: this.uploadController.signal,
         onProgress: (progress) => {
           const loaded = Number(progress?.loaded || 0);
           const total = Number(progress?.total || 0);
@@ -3774,7 +3797,7 @@ class EditorDraftSession {
         source: 'upload.status',
         text: editorNotification('uploadDraft.uploaded', { id: result.data.uploaded_draft_id }),
       });
-      const refreshResult = await this.loadUploadedDrafts({ preflight: false });
+      const refreshResult = await this.loadUploadedDrafts({ preflight: false, signal: this.uploadController.signal });
       if (refreshResult?.ok) {
         const uploadedDraftId = String(result.data?.uploaded_draft_id || '').trim();
         const refreshedItems = Array.isArray(refreshResult?.data?.items) ? refreshResult.data.items : [];
@@ -3798,6 +3821,7 @@ class EditorDraftSession {
       this.notifyStateChange();
       return result;
     } finally {
+      this.uploadController = null;
       this.state.isUploadingDraft = false;
       this.state.uploadDraftProgress = null;
       this.notifyStateChange();
@@ -3865,7 +3889,7 @@ class EditorDraftSession {
 
   async loadUploadedDrafts(options = {}) {
     const shouldPreflight = options.preflight !== false;
-    const inflightKey = shouldPreflight
+    const inflightKey = options.signal ? '_loadUploadedDraftsCancelablePromise' : shouldPreflight
       ? '_loadUploadedDraftsWithPreflightPromise'
       : '_loadUploadedDraftsWithoutPreflightPromise';
     if (this[inflightKey]) {
@@ -3884,7 +3908,7 @@ class EditorDraftSession {
       this.notifyStateChange();
 
       try {
-        const result = await this.apiClient.listUploadedDrafts();
+        const result = await this.apiClient.listUploadedDrafts({ signal: options.signal });
         if (!result.ok) {
           this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDrafts.refresh', text: result.error.message });
           this.notifyStateChange();
@@ -5827,6 +5851,12 @@ function renderEditorShell(session) {
   const exportBtn = document.createElement('button');
   exportBtn.type = 'button';
   exportBtn.textContent = t('editor.actions.exportPackage');
+  const cancelUploadBtn = document.createElement('button');
+  cancelUploadBtn.type = 'button';
+  cancelUploadBtn.dataset.uploadCancel = 'editor';
+  cancelUploadBtn.textContent = t('common.actions.cancel');
+  cancelUploadBtn.addEventListener('click', () => session.uploadController?.abort());
+
   const syncDraftBtn = document.createElement('button');
   syncDraftBtn.type = 'button';
   syncDraftBtn.textContent = t('editor.server.uploadDraft');
@@ -8065,6 +8095,7 @@ function renderEditorShell(session) {
     } else {
       syncDraftBtn.textContent = t('editor.server.uploadDraft');
     }
+    cancelUploadBtn.hidden = !isUploadingDraft;
     syncDraftBtn.disabled = !serverReady || isUploadingDraft || isUploadDraftFlowActive;
     browsePublishedBtn.disabled = !serverReady;
     manageUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? t('common.actions.refreshing') : t('editor.uploadedDraft.manage');
@@ -8513,6 +8544,7 @@ function renderEditorShell(session) {
     serverSessionStatus,
     signInBtn,
     syncDraftBtn,
+    cancelUploadBtn,
     manageUploadedDraftsBtn,
     browsePublishedBtn
   );
@@ -8659,6 +8691,8 @@ async function bootstrapEditor() {
 
   window.editorSession = session;
 }
+
+installPageRecovery('localDrafts', () => globalThis.window?.editorSession);
 
 bootstrapEditor().catch((error) => {
   console.error('Failed to bootstrap editor', error);

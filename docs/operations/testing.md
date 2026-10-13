@@ -41,9 +41,19 @@ The ordinary static server defaults to `http://127.0.0.1:8765`. Read each script
 | RolePlayScene identity/title/layout | `roleplayscene-scene-name-smoke.mjs`, `roleplayscene-scene-name-state-smoke.mjs`, `roleplayscene-project-title-smoke.mjs`, `roleplayscene-intro-layout-smoke.mjs` |
 | RolePlayScene ordering/audio/discussion | `roleplayscene-dialogue-order-smoke.mjs`, `roleplayscene-voice-choice-smoke.mjs`, `roleplayscene-voice-smoke.mjs`, `roleplayscene-music-navigation-smoke.mjs` |
 
-The table inventories all 26 current smoke scripts; it does not claim they were run for this documentation review. `npm test` does not run them. Check shared consumers too: worksheet package/audio helpers serve the viewer/API, and viewer voice processing also serves RolePlayScene discussion.
+The table inventories the 26 retained-product smoke scripts. `review-fixes-smoke.mjs` additionally forces unfinished IndexedDB writes across reload and exercises upload cancellation in all three products, post-upload refresh cancellation in editor/RolePlayScene, both locales and desktop/narrow layouts. It also simulates concurrent IndexedDB saves, deletes and clears between recovery reads and writes, including equal timestamps. `npm test` does not run them. Check shared consumers too: worksheet package/audio helpers serve the viewer/API, and viewer voice processing also serves RolePlayScene discussion.
 
 Browser fixtures use isolated storage and synthetic/mocked auth, API and audio where documented by each script. Never point synthetic/destructive fixtures at production learner records. Verify both supported locales, desktop/narrow layouts, keyboard focus and browser errors for affected UI.
+
+## Transaction and concurrency regression fixture
+
+With `REVIEW_TEST_DATABASE_URL` set to a disposable PostgreSQL database, run:
+
+```bash
+node scripts/review-fixes-postgres.mjs
+```
+
+The script creates a unique temporary schema, applies all repository migrations, and uses temporary artifact files. It simulates a real database commit followed by loss of its acknowledgment, replacement/delete lock contention, and six simultaneous uploads against the three-slot limit. It drops its schema and removes its files afterward. Do not point it at production. Node service tests separately inject acknowledgment loss into all five artifact-producing operations and check missing-row replacement cleanup.
 
 ## Deployment acceptance
 

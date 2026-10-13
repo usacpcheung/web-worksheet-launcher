@@ -84,7 +84,7 @@ test('real slot recovery settles cancellation/failure and retries only after suc
 function harness() {
   const calls = [], preflight = deferred(), archive = deferred();
   let project = createProject({ meta: { title: 'A' } });
-  const context = vm.createContext({ serverModalRevision: 0,
+  const context = vm.createContext({ AbortController, uploadController: null, serverModalRevision: 0,
     console, serializeProject, isUploadingDraft: false, openingUploadedDraft: null,
     store: { get: () => ({ project }) },
     ensureServerSessionReady: () => preflight.promise,
@@ -144,4 +144,18 @@ test('preflight failure, network rejection and conflict cancellation release the
     await h.context.uploadCurrentProjectToServer();
     assert.equal(h.context.isUploadingDraft, false);
   }
+});
+
+test('cancel also reaches the post-upload list refresh and preserves the saved result', async () => {
+  const h = harness(); let entered;
+  const refreshing = new Promise(resolve => { entered = resolve; });
+  h.context.loadUploadedRolePlaySceneDrafts = ({ signal }) => new Promise(resolve => {
+    entered(); signal.addEventListener('abort', () => resolve({ ok: false, error: { code: 'ABORTED' } }), { once: true });
+  });
+  h.preflight.resolve({ ok: true }); h.archive.resolve();
+  const upload = h.context.uploadCurrentProjectToServer();
+  await refreshing; h.context.uploadController.abort();
+  assert.equal((await upload).ok, true);
+  assert.equal(h.context.isUploadingDraft, false);
+  assert.equal(h.context.uploadController, null);
 });

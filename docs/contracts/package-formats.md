@@ -43,6 +43,10 @@ The embedded worksheet includes title/subject/owner, blocks, and compatibility I
 
 Resume restores from embedded content, never from a newer external worksheet. Restore creates new local identities and supports answer/check review without requiring the old local records. Recovery transcripts and raw recorded audio are excluded; packaged worksheet media remains included. Explicit upload uses the private `/attempts/upload` API with owner slots and conflict recovery, not automatic sync.
 
+The API and both attempt readers share the package/worksheet boundary in `server/app/contracts/attempt-package-validator.js`: the embedded worksheet must contain at least one block, with supported text formats and the appropriate Markdown package version. Empty worksheets are rejected before a ZIP is stored or a server slot is consumed. Uploads retain their strict attempt envelope, status, answers-object and checking-ID requirements. Browser imports retain historical envelope defaults and answer coercion, including numeric strings; their downstream viewer validation still applies. Legacy IDs/block kinds and optional missing media retain their existing compatibility paths. This shared boundary is not a replacement for the full viewer payload validator.
+
+Editor export snapshots the draft, including its asset references, before asynchronous media reads. Editor uploads capture that snapshot before session preflight; viewer uploads capture listing metadata before asynchronous package media reads. Upload listing metadata stays with its package, so opening or editing another draft cannot mix its content with the original operation.
+
 ## RolePlayScene ZIP
 
 ```text

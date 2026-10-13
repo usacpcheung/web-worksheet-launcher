@@ -1129,3 +1129,54 @@ test('publishing enforces the spoken 500 limit without restricting content or im
     }
   }
 });
+
+function loseCommitAcknowledgment(db) {
+  const connect = db.connect.bind(db);
+  db.connect = async () => {
+    const client = await connect();
+    const query = client.query.bind(client);
+    client.query = async (sql, values) => {
+      const result = await query(sql, values);
+      if (sql === 'COMMIT') throw new Error('lost COMMIT acknowledgment');
+      return result;
+    };
+    return client;
+  };
+  return db;
+}
+
+test('uploadDraft preserves its artifact if COMMIT acknowledgment is lost', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'commit-ack-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const absolutePath = path.join(dir, 'artifact.zip');
+  const service = createService({
+    db: loseCommitAcknowledgment(createFakeDb()),
+    artifactStore: {
+      readArtifact: async () => createValidWorksheetZip(),
+      storeArtifact: async () => {
+        await fs.writeFile(absolutePath, 'committed artifact');
+        return { absolutePath, artifactPath: 'new.zip', artifactSha256: 'new-sha', artifactSizeBytes: 18 };
+      },
+    },
+  });
+  await assert.rejects(service.uploadDraft({ identity: { sub: 'oidc-sub' }, title: 'T', zipBytes: createValidWorksheetZip() }), /lost COMMIT acknowledgment/);
+  assert.equal(await fs.readFile(absolutePath, 'utf8'), 'committed artifact');
+});
+
+test('publishFromDraft preserves its artifact if COMMIT acknowledgment is lost', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'commit-ack-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const absolutePath = path.join(dir, 'artifact.zip');
+  const service = createService({
+    db: loseCommitAcknowledgment(createFakeDb()),
+    artifactStore: {
+      readArtifact: async () => createValidWorksheetZip(),
+      storeArtifact: async () => {
+        await fs.writeFile(absolutePath, 'committed artifact');
+        return { absolutePath, artifactPath: 'new.zip', artifactSha256: 'new-sha', artifactSizeBytes: 18 };
+      },
+    },
+  });
+  await assert.rejects(service.publishFromDraft({ identity: { sub: 'oidc-sub' }, uploadedDraftId: 'u' }), /lost COMMIT acknowledgment/);
+  assert.equal(await fs.readFile(absolutePath, 'utf8'), 'committed artifact');
+});

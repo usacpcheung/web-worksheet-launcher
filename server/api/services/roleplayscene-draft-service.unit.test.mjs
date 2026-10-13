@@ -1217,3 +1217,54 @@ test('deleteOwnPublishedRolePlayScene returns not found for non-owner rows', asy
   assert.equal(result.statusCode, 404);
   assert.equal(result.error.code, 'ROLEPLAYSCENE_PUBLISHED_SCENE_NOT_FOUND');
 });
+
+function loseCommitAcknowledgment(db) {
+  const connect = db.connect.bind(db);
+  db.connect = async () => {
+    const client = await connect();
+    const query = client.query.bind(client);
+    client.query = async (sql, values) => {
+      const result = await query(sql, values);
+      if (sql === 'COMMIT') throw new Error('lost COMMIT acknowledgment');
+      return result;
+    };
+    return client;
+  };
+  return db;
+}
+
+test('uploadRolePlaySceneDraft preserves its artifact if COMMIT acknowledgment is lost', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'commit-ack-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const absolutePath = path.join(dir, 'artifact.zip');
+  const service = createService({
+    db: loseCommitAcknowledgment(createFakeDb()),
+    artifactStore: {
+      readArtifact: async () => createPublishableRolePlaySceneZip(),
+      storeArtifact: async () => {
+        await fs.writeFile(absolutePath, 'committed artifact');
+        return { absolutePath, artifactPath: 'new.zip', artifactSha256: 'new-sha', artifactSizeBytes: 18 };
+      },
+    },
+  });
+  await assert.rejects(service.uploadRolePlaySceneDraft({ identity, zipBytes: createRolePlaySceneZip() }), /lost COMMIT acknowledgment/);
+  assert.equal(await fs.readFile(absolutePath, 'utf8'), 'committed artifact');
+});
+
+test('publishRolePlaySceneFromDraft preserves its artifact if COMMIT acknowledgment is lost', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'commit-ack-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const absolutePath = path.join(dir, 'artifact.zip');
+  const service = createService({
+    db: loseCommitAcknowledgment(createPublishDb()),
+    artifactStore: {
+      readArtifact: async () => createPublishableRolePlaySceneZip(),
+      storeArtifact: async () => {
+        await fs.writeFile(absolutePath, 'committed artifact');
+        return { absolutePath, artifactPath: 'new.zip', artifactSha256: 'new-sha', artifactSizeBytes: 18 };
+      },
+    },
+  });
+  await assert.rejects(service.publishRolePlaySceneFromDraft({ identity, uploadedDraftId: '550e8400-e29b-41d4-a716-446655440000' }), /lost COMMIT acknowledgment/);
+  assert.equal(await fs.readFile(absolutePath, 'utf8'), 'committed artifact');
+});

@@ -75,7 +75,7 @@ try {
         const response = page.waitForResponse(response => response.request().method() === 'POST' && response.url().includes('/roleplayscene/drafts/upload'));
         await page.locator('#server-save-btn').click();
         await response;
-        await page.waitForFunction(() => !document.querySelector('#server-save-btn').disabled);
+        await page.waitForFunction(() => document.querySelector('#server-save-btn').getAttribute('aria-busy') === 'false');
         const files = unzipSync(new Uint8Array(uploaded));
         return JSON.parse(new TextDecoder().decode(files['content/project.json']));
       };

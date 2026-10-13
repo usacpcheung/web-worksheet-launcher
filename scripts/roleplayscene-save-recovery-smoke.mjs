@@ -36,12 +36,12 @@ try {
     if (action === 'cancel') await page.locator('#server-modal-actions button').last().click();
     else if (action === 'close') await page.locator('#server-modal-close').click();
     else await page.locator('#server-modal-actions .server-danger-action').click();
-    await page.waitForFunction(() => !document.querySelector('#server-save-btn').disabled);
+    await page.waitForFunction(() => document.querySelector('#server-save-btn').getAttribute('aria-busy') === 'false');
     assert.equal(uploads, action === 'cancel' ? 1 : action === 'close' ? 2 : 4);
   }
   mode = 'gateway';
   await save.click();
-  await page.waitForFunction(() => !document.querySelector('#server-save-btn').disabled);
+  await page.waitForFunction(() => document.querySelector('#server-save-btn').getAttribute('aria-busy') === 'false');
   assert.equal(await page.locator('#server-signin-btn').isHidden(), true);
   mode = 'slot'; deleted = false;
   await save.click();
@@ -49,7 +49,7 @@ try {
   await page.locator('.uploaded-drafts-refresh-action').click();
   await listPending;
   await page.locator('#server-modal-close').click();
-  await page.waitForFunction(() => !document.querySelector('#server-save-btn').disabled);
+  await page.waitForFunction(() => document.querySelector('#server-save-btn').getAttribute('aria-busy') === 'false');
   await save.click();
   await page.locator('[data-draft-action="delete"]').click();
   const confirmation = await page.locator('#server-modal-title').textContent();

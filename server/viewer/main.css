@@ -2303,3 +2303,4 @@ input[type='text']::placeholder {
   .question-card__rewrite-row { display: grid; grid-template-columns: 1.3fr 1fr .8fr; width: 100%; }
   .question-card__rewrite-row .icon-nav-btn { min-width: 0; padding-inline: 8px; }
 }
+[data-upload-cancel][hidden] { display: none !important; }

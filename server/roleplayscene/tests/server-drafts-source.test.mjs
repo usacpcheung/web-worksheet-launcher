@@ -23,7 +23,7 @@ const bootstrapFunctionEndIndex = mainSource.indexOf('\nbootstrap();', bootstrap
 const bootstrapSource = mainSource.slice(bootstrapFunctionIndex, bootstrapFunctionEndIndex);
 
 assert.ok(
-  mainSource.includes('apiClient.listRolePlaySceneDrafts()'),
+  mainSource.includes('apiClient.listRolePlaySceneDrafts({ signal })'),
   'RolePlayScene should list uploaded drafts through the PR5 API client method',
 );
 assert.ok(
@@ -299,7 +299,7 @@ assert.ok(
   mainSource.includes('if (!uploadedDraftId || openingUploadedDraft) return;')
     && mainSource.includes('disabled: Boolean(openingUploadedDraft)')
     && mainSource.includes("className: 'uploaded-drafts-refresh-action'")
-    && mainSource.includes("serverSaveButton.disabled = isUploadingDraft || Boolean(openingUploadedDraft)")
+    && mainSource.includes("serverSaveButton.disabled = Boolean(openingUploadedDraft)")
     && mainSource.includes("serverManageButton.disabled = isLoadingUploadedDrafts || Boolean(openingUploadedDraft)")
     && mainSource.includes("button.disabled = draftOpenInProgress\n        || (action === 'publish'"),
   'uploaded draft manager should serialize opens and keep draft, refresh, save, and manage actions locked across modal re-renders',

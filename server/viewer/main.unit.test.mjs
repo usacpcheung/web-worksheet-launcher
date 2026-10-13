@@ -51,7 +51,7 @@ test('active voice operation blocks submission, releases on cancel, and cannot m
 
 async function loadViewerModule(overrides = {}) {
   const filePath = path.resolve('server/viewer/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/attempt-package-validator.js'", JSON.stringify(new NodeURL('../app/contracts/attempt-package-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
   const bagName = `__viewerTestBag_${Math.random().toString(16).slice(2)}`;
 
   globalThis[bagName] = {
@@ -6656,4 +6656,21 @@ test('print keeps leading Markdown whitespace and therefore matches viewer forma
   const report = await mod.buildWorksheetPrintReportModel({ viewerPayload: { title: 'T', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: '  ## Literal heading', format: 'limited-markdown-v1' }, responseConfig: { inputType: 'text' } }] }, answers: {} });
   assert.equal(report.questions[0].promptText, '  ## Literal heading');
   assert.ok(mod.buildWorksheetPrintReportHtml(report).includes('<p>  ## Literal heading</p>'));
+});
+
+test('attempt upload metadata stays with its package while asynchronous media is prepared', async () => {
+  const mod = await loadViewerModule(); let received;
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set: () => {} } }, { apiClient: {
+    uploadAttemptPackage: async (_bytes, metadata) => { received = metadata; return { ok: true, data: {} }; },
+  } });
+  session.state.localAttemptId = 'original';
+  session.state.viewerPayload = { title: 'Original', subject: 'Original subject', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => {
+    session.state.viewerPayload = { title: 'Replacement', subject: 'Replacement subject', blocks: [] };
+    return { bytes: new Uint8Array([1]) };
+  };
+  assert.equal((await session.uploadCurrentAttemptPackage()).ok, true);
+  assert.equal(received.title, 'Original');
+  assert.equal(received.subject, 'Original subject');
 });
