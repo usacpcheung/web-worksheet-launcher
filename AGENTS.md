@@ -10,7 +10,8 @@ Scope: entire repository tree from the project root.
 - RolePlayScene: `server/roleplayscene/index.html`
 - Shared application services: `server/app/` and `server/api/`
 - Auth callback contract: `docs/message-contract.md`
-- Legacy widget retirement scope: `docs/widget-removal-step2.md`
+- Active widget retirement scope: `docs/contracts/widget-retirement.md`
+- Current documentation index: `docs/README.md`; historical records: `docs/past/`
 
 ## UI Skill Routing
 
@@ -50,8 +51,11 @@ Scope: entire repository tree from the project root.
 ## Contract Discipline
 
 - Changes to supported auth callback messages must update
-  `docs/message-contract.md` in the same PR. Preserve origin, message type,
-  source-window and auth-flow correlation validation.
+  `docs/message-contract.md` in the same PR. Preserve the implemented origin,
+  message-type, source-window and auth-flow correlation checks and the fresh
+  session probe. Match `event.source` to the opened popup, including tokenless
+  flows, and accept its queued callback after it closes. Keep payload `source`
+  as context metadata. Do not restore the retired parent SDK.
 - Legacy `worksheetResult` and launch-query contracts are historical only.
 - Changes to product package/attempt contracts must update their applicable
   contract documentation and preserve existing content compatibility.
