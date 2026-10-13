@@ -1,0 +1,139 @@
+name: Regression
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Run Node regressions and CI runner tests
+        run: |
+          mkdir -p artifacts/node
+          npm test 2>&1 | tee artifacts/node/tests.log
+          npm run test:ci-runner 2>&1 | tee artifacts/node/ci-runner.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: node-diagnostics
+          path: artifacts/node/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  browser:
+    name: Browser smoke (${{ matrix.shard }}/3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Install matching Chromium and system libraries
+        run: npx playwright install --with-deps chromium
+      - name: Run browser regressions
+        run: npm run test:browser -- --shard=${{ matrix.shard }}/3
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: browser-diagnostics-${{ matrix.shard }}
+          path: artifacts/browser/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  postgres:
+    name: PostgreSQL regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: fixture-only
+          POSTGRES_DB: worksheet_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d worksheet_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Run migration, commit-loss and concurrency fixtures
+        env:
+          REVIEW_TEST_DATABASE_URL: postgresql://postgres:fixture-only@127.0.0.1:5432/worksheet_ci
+        run: |
+          mkdir -p artifacts/postgres
+          npm run test:postgres 2>&1 | tee artifacts/postgres/tests.log
+      - name: Capture database diagnostics
+        if: always()
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          mkdir -p artifacts/postgres
+          docker logs "$POSTGRES_CONTAINER" > artifacts/postgres/service.log 2>&1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: postgres-diagnostics
+          path: artifacts/postgres/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  regression:
+    name: Regression gate
+    if: always()
+    needs: [node, browser, postgres]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every suite to pass
+        env:
+          NODE_RESULT: ${{ needs.node.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+          POSTGRES_RESULT: ${{ needs.postgres.result }}
+        run: |
+          test "$NODE_RESULT" = success
+          test "$BROWSER_RESULT" = success
+          test "$POSTGRES_RESULT" = success

@@ -1,6 +1,16 @@
 # Testing the current products
 
-Reviewed against main `7bb19de` on 2026-10-06. Test commands come from `package.json` and tracked `scripts/*-smoke.mjs`, not historical PR test counts.
+Test commands come from `package.json`, the [regression workflow](../../.github/workflows/regression.yml), and tracked `scripts/*-smoke.mjs`, not historical PR test counts. CI setup was added against main `7b22cad` after PR #304.
+
+## Automated pull request checks
+
+The `Regression` GitHub Actions workflow runs on every pull request, pushes to `main`, and manual dispatch. It uses Ubuntu 24.04, Node 24, `npm ci`, the Chromium build matching the locked Playwright version, and a disposable PostgreSQL 17 service. It requires no repository secrets or production services. Pull requests use the ordinary `pull_request` event with a read-only token; checkout does not persist credentials.
+
+Jobs run the complete Node suite, CI runner behavior tests, all discovered `scripts/*-smoke.mjs` across three browser shards, and the PostgreSQL fixture below. New smoke scripts with that suffix are included automatically. No path filters skip documentation-only PRs. A newer run for the same PR/branch cancels an older run.
+
+The final **Regression gate** passes only when Node, all browser shards and PostgreSQL succeed; failures, cancellations and skipped suites cannot pass the gate. After validating the workflow on GitHub, configure `Regression gate` as a required status check in the `main` branch ruleset/protection settings. Adding a workflow file alone does not enforce branch protection. Keep this check name stable. If merge queue is enabled later, also add the `merge_group` workflow event before requiring it in that queue.
+
+Each run uploads diagnostics retained for seven days: Node output, PostgreSQL fixture/server logs, and browser per-script logs, `summary.json` and screenshots produced by the individual scripts. Browser logs include Playwright API diagnostics (`DEBUG=pw:api`). These are synthetic test artifacts; they do not include a production session. Screenshots are script-defined checkpoints, not guaranteed captures at the instant of every failure. Download the corresponding artifact from the workflow run to investigate.
 
 ## Node checks
 
@@ -8,11 +18,32 @@ Reviewed against main `7bb19de` on 2026-10-06. Test commands come from `package.
 npm test
 ```
 
-This runs `node --test "server/**/*.test.mjs"`. Use a Node version supporting that quoted test glob (the historical Node 24 runs do); on older Node versions, `node --test` uses native discovery. Tests include API/ownership/package/storage, local contracts, auth, text, audio and product behavior. Some RolePlayScene files use top-level assertions and still execute through the test runner.
+Use Node 24 and run `npm ci` first. `npm test` runs `node --test "server/**/*.test.mjs"`. Tests include API/ownership/package/storage, local contracts, auth, text, audio and product behavior. Some RolePlayScene files use top-level assertions and still execute through the test runner. `npm run test:ci-runner` separately verifies shard coverage, child failure reporting and timeout cleanup.
 
 For a documentation-only edit, validate scope, relative links, consistency and skill references. Run existing tests that actually read changed documentation: `node --test server/app/login/popup.unit.test.mjs` reads the stable `docs/message-contract.md` path. Do not claim a new browser/provider run merely because an archived document reports one.
 
 ## Browser smoke setup
+
+To reproduce the full CI browser suite locally:
+
+```bash
+npm ci
+npx playwright install --with-deps chromium
+npm run test:browser
+```
+
+The runner starts and checks its own static server on an available loopback port, gives each script a separate Node/browser process, then stops the server. It overrides `VIEWER_SMOKE_URL` and `ROLEPLAYSCENE_URL` to use this local fixture. No manually started server is needed. It continues after a script failure to collect other results and exits nonzero if any script fails, times out, or the run is interrupted.
+
+For one failed script or a CI shard:
+
+```bash
+npm run test:browser -- review-fixes-smoke.mjs
+npm run test:browser -- --shard=2/3
+```
+
+Diagnostics go to a new `artifacts/browser/run-*` directory each time, avoiding stale screenshots/results; `artifacts/` is ignored by Git. Set `SMOKE_ARTIFACT_DIR` to choose a different output root. The per-script deadline defaults to five minutes; `SMOKE_TIMEOUT_MS` overrides it for local debugging. Timed-out process groups, including browser descendants on Linux, are terminated. The workflow also has job-level timeouts.
+
+To run a script directly without the runner:
 
 ```bash
 npm run pw:install
@@ -50,10 +81,28 @@ Browser fixtures use isolated storage and synthetic/mocked auth, API and audio w
 With `REVIEW_TEST_DATABASE_URL` set to a disposable PostgreSQL database, run:
 
 ```bash
-node scripts/review-fixes-postgres.mjs
+npm run test:postgres
 ```
 
 The script creates a unique temporary schema, applies all repository migrations, and uses temporary artifact files. It simulates a real database commit followed by loss of its acknowledgment, replacement/delete lock contention, and six simultaneous uploads against the three-slot limit. It drops its schema and removes its files afterward. Do not point it at production. Node service tests separately inject acknowledgment loss into all five artifact-producing operations and check missing-row replacement cleanup.
+
+For a disposable local database matching CI (Docker required):
+
+```bash
+docker run --rm -d --name worksheet-ci-postgres \
+  --tmpfs /var/lib/postgresql/data \
+  -e POSTGRES_PASSWORD=fixture-only -e POSTGRES_DB=worksheet_ci \
+  -p 127.0.0.1:55432:5432 postgres:17-alpine
+```
+
+Wait until `docker exec worksheet-ci-postgres pg_isready -U postgres -d worksheet_ci` reports accepting connections, then run:
+
+```bash
+REVIEW_TEST_DATABASE_URL=postgresql://postgres:fixture-only@127.0.0.1:55432/worksheet_ci npm run test:postgres
+docker stop worksheet-ci-postgres
+```
+
+Stop the container after failed runs too; forced termination may skip fixture cleanup, but removing the disposable container discards its database.
 
 ## Deployment acceptance
 
