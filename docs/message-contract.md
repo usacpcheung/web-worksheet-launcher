@@ -57,6 +57,7 @@ Popup callback message shape:
 Validation requirements in opener (editor/viewer):
 
 - Must enforce `event.origin === window.location.origin`.
+- Must enforce `event.source === authPopupWindow`, using the window returned by the sign-in popup call. A queued message remains valid after that popup closes.
 - Must enforce `event.data.type === "worksheet-launcher-auth-complete"`.
 - Must enforce `event.data.authFlowId === activeAuthFlowId` for the currently active popup flow.
 - Must ignore malformed or unexpected message payloads.
