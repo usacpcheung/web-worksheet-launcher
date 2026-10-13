@@ -32,6 +32,9 @@ try {
         await page.locator('#file-input').setInputFiles({ name: 'fixture.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
         await page.locator('#import-confirm-accept').click();
         await page.locator('#import-confirm-overlay').waitFor({ state: 'hidden' });
+        // Import remounts the editor after persisting the project. Waiting only
+        // for the dialog can capture the input from the intermediate render.
+        await page.waitForFunction(() => document.querySelector('#file-input').value === '');
       };
       const snapshot = () => page.evaluate(() => new Promise((resolve, reject) => {
         const request = indexedDB.open('roleplayscene');
