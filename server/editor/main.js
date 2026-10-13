@@ -1629,6 +1629,7 @@ class EditorDraftSession {
     try {
       const previousDraft = this.state.draft;
       const previousDraftId = previousDraft?.localId || null;
+      this.discardingDraftId = previousDraftId;
       const referencedAssetIds = previousDraft ? Array.from(collectDraftQuestionAssetIds(previousDraft)) : [];
 
       clearTimeout(this.autosaveTimer);
@@ -1676,6 +1677,7 @@ class EditorDraftSession {
       this.persistRestoreMetadata();
       return draft;
     } finally {
+      this.discardingDraftId = null;
       this.packageLoad.finish(loadToken);
     }
   }
@@ -2019,12 +2021,16 @@ class EditorDraftSession {
     filtered.push(newAsset);
     this.state.draft.assets = filtered;
 
-    if (this.storage.localAssets?.remove && replacedAssetIds.length > 0) {
-      await Promise.all(replacedAssetIds.map((id) => this.storage.localAssets.remove(id)));
-    }
-
+    // Schedule persistence before asynchronous cleanup can outlive the target.
     this.clearMediaFeedback();
     this.touchDraft();
+    if (this.storage.localAssets?.remove && replacedAssetIds.length > 0) {
+      await Promise.all(replacedAssetIds.map(async id => {
+        try { await this.storage.localAssets.remove(id); }
+        catch (error) { console.warn('Unable to remove replaced local media.', error); }
+      }));
+    }
+
     return { ok: true, assetId: newAsset.assetId, replacedAssetId: replacedAssetIds[0] || null };
   }
 
@@ -3104,7 +3110,7 @@ class EditorDraftSession {
   }
 
   createRecoveryRecord() {
-    if (!this.state.draft) return null;
+    if (!this.state.draft || this.state.draft.localId === this.discardingDraftId) return null;
     return cloneDraftForPersistence({ ...this.state.draft, metadata: {
       ...this.state.draft.metadata, localId: this.state.draft.localId,
       origin: this.state.draft.metadata?.origin || 'local_created', updatedAt: nowIso(),
@@ -3112,11 +3118,12 @@ class EditorDraftSession {
   }
 
   async autosave() {
-    if (!this.state.draft) return null;
+    if (!this.state.draft || this.state.draft.localId === this.discardingDraftId) return null;
 
     const revisionAtSaveStart = this.state.draftRevision;
     const draftIdAtSaveStart = this.state.draft.localId || null;
     const generationAtSaveStart = this.autosaveGeneration;
+    const draftGenerationAtSaveStart = this._audioDraftGeneration;
     const draftAtSaveStart = cloneDraftForPersistence(this.state.draft);
     const updatedAt = nowIso();
     let saveCountRegistered = false;
@@ -3167,9 +3174,11 @@ class EditorDraftSession {
       }
 
       const shouldApplySaveStatus =
-        this.state.draft?.localId === persisted.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
+        this._audioDraftGeneration === draftGenerationAtSaveStart
+        && this.state.draft?.localId === persisted.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
 
-      if (this.state.draft?.localId === persisted.localId && this.state.draftRevision === revisionAtSaveStart) {
+      if (this._audioDraftGeneration === draftGenerationAtSaveStart
+        && this.state.draft?.localId === persisted.localId && this.state.draftRevision === revisionAtSaveStart) {
         this.state.draft = persisted;
       }
 
@@ -3209,6 +3218,7 @@ class EditorDraftSession {
       return persisted;
     } catch (error) {
       const shouldApplyErrorStatus =
+        this._audioDraftGeneration === draftGenerationAtSaveStart &&
         snapshotToPersist &&
         this.state.draft?.localId === snapshotToPersist.metadata?.localId &&
         revisionAtSaveStart > this.state.lastSavedRevision;
@@ -3729,11 +3739,11 @@ class EditorDraftSession {
     });
     this.notifyStateChange();
     try {
+      const uploadDraft = cloneDraftForPersistence(this.state.draft);
       if (options.preflight !== false) {
         const sessionReady = await this.ensureServerSessionReady();
         if (!sessionReady.ok) return sessionReady.result;
       }
-      const uploadDraft = cloneDraftForPersistence(this.state.draft);
       const zipBytes = await this.buildCurrentDraftPackageZipBytes(uploadDraft);
       let lastProgressRenderKey = null;
       const result = await this.apiClient.uploadDraftPackage(zipBytes, {
@@ -3787,7 +3797,7 @@ class EditorDraftSession {
         source: 'upload.status',
         text: editorNotification('uploadDraft.uploaded', { id: result.data.uploaded_draft_id }),
       });
-      const refreshResult = await this.loadUploadedDrafts({ preflight: false });
+      const refreshResult = await this.loadUploadedDrafts({ preflight: false, signal: this.uploadController.signal });
       if (refreshResult?.ok) {
         const uploadedDraftId = String(result.data?.uploaded_draft_id || '').trim();
         const refreshedItems = Array.isArray(refreshResult?.data?.items) ? refreshResult.data.items : [];
@@ -3879,7 +3889,7 @@ class EditorDraftSession {
 
   async loadUploadedDrafts(options = {}) {
     const shouldPreflight = options.preflight !== false;
-    const inflightKey = shouldPreflight
+    const inflightKey = options.signal ? '_loadUploadedDraftsCancelablePromise' : shouldPreflight
       ? '_loadUploadedDraftsWithPreflightPromise'
       : '_loadUploadedDraftsWithoutPreflightPromise';
     if (this[inflightKey]) {
@@ -3898,7 +3908,7 @@ class EditorDraftSession {
       this.notifyStateChange();
 
       try {
-        const result = await this.apiClient.listUploadedDrafts();
+        const result = await this.apiClient.listUploadedDrafts({ signal: options.signal });
         if (!result.ok) {
           this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDrafts.refresh', text: result.error.message });
           this.notifyStateChange();

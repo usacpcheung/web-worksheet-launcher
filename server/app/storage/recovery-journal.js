@@ -30,14 +30,29 @@ export function withRecovery(store, api) {
   return {
     ...api,
     async get(id) {
-      const pending = readRecovery(store, id);
       let saved;
-      try { saved = await api.get(id); } catch (error) { if (!pending) throw error; }
+      let readError;
+      try { saved = await api.get(id); } catch (error) { readError = error; }
+      // A save or deletion can invalidate the journal while the read is pending.
+      const pending = readRecovery(store, id);
+      if (readError) {
+        if (pending) return pending; // No reliable comparison base: retain recovery.
+        throw readError;
+      }
       if (!pending || time(saved) > time(pending) || matches(saved, pending)) {
         if (pending) clearRecovery(store, id, saved);
         return saved;
       }
-      try { await api.put(pending); clearRecovery(store, id, pending); }
+      try {
+        const isCurrent = () => matches(readRecovery(store, id), pending);
+        // Production adapters compare and restore in one read/write transaction.
+        const recovered = api.recover
+          ? await api.recover(pending, saved, isCurrent)
+          : await api.put(pending);
+        // A failed compare means another save/delete won, even at equal timestamps.
+        if (isCurrent()) clearRecovery(store, id);
+        return recovered;
+      }
       catch { /* Keep the journal and allow the user to recover/export their work. */ }
       return pending;
     },
@@ -64,7 +79,11 @@ export function installPageRecovery(store, getSession, target = globalThis.windo
     const session = getSession();
     if (!session?.state?.autosavePending && !session?.inFlightSaveCount) return true;
     let journaled = false;
-    try { journaled = writeRecovery(store, session.createRecoveryRecord()); } catch {}
+    try {
+      const record = session.createRecoveryRecord();
+      if (!record) return true; // No active record, or it is being explicitly discarded.
+      journaled = writeRecovery(store, record);
+    } catch {}
     clearTimeout(session.autosaveTimer);
     session.autosaveTimer = null;
     session.autosave().catch(() => {}); // The session retains its save-error UI.

@@ -6657,3 +6657,20 @@ test('print keeps leading Markdown whitespace and therefore matches viewer forma
   assert.equal(report.questions[0].promptText, '  ## Literal heading');
   assert.ok(mod.buildWorksheetPrintReportHtml(report).includes('<p>  ## Literal heading</p>'));
 });
+
+test('attempt upload metadata stays with its package while asynchronous media is prepared', async () => {
+  const mod = await loadViewerModule(); let received;
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set: () => {} } }, { apiClient: {
+    uploadAttemptPackage: async (_bytes, metadata) => { received = metadata; return { ok: true, data: {} }; },
+  } });
+  session.state.localAttemptId = 'original';
+  session.state.viewerPayload = { title: 'Original', subject: 'Original subject', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => {
+    session.state.viewerPayload = { title: 'Replacement', subject: 'Replacement subject', blocks: [] };
+    return { bytes: new Uint8Array([1]) };
+  };
+  assert.equal((await session.uploadCurrentAttemptPackage()).ok, true);
+  assert.equal(received.title, 'Original');
+  assert.equal(received.subject, 'Original subject');
+});

@@ -1078,3 +1078,20 @@ test('XHR stalled upload times out, aborts, and ignores late completion; explici
   xhr.status=200;xhr.responseText='{"ok":true,"data":{}}';await xhr.onload();
   const controller=new AbortController();const pending=client.uploadDraftPackage(new Uint8Array([1]),{},{signal:controller.signal});controller.abort();assert.equal((await pending).error.code,'ABORTED');assert.equal(aborts,2);
 });
+
+test('draft list refreshes bound stalled headers and bodies and honor cancellation', async t => {
+  setTestWindow();
+  const client = createServerApiClient({ listTimeoutMs: 10 });
+  for (const method of ['listUploadedDrafts', 'listRolePlaySceneDrafts']) {
+    let signal;
+    t.mock.method(globalThis, 'fetch', (_url, options) => { signal = options.signal; return new Promise(() => {}); });
+    assert.equal((await client[method]()).error.code, 'REQUEST_TIMEOUT');
+    assert.equal(signal.aborted, true);
+    t.mock.method(globalThis, 'fetch', async () => new Response(new ReadableStream({ start() {} }), { headers: { 'content-type': 'application/json' } }));
+    assert.equal((await client[method]()).error.code, 'REQUEST_TIMEOUT');
+    const controller = new AbortController();
+    const request = client[method]({ signal: controller.signal });
+    controller.abort();
+    assert.equal((await request).error.code, 'ABORTED');
+  }
+});

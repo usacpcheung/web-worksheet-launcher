@@ -3750,13 +3750,13 @@ class ViewerAttemptSession {
 
     try {
       await this.flushLocalStateForAuthRedirect();
-      const packageResult = await this.buildUploadedAttemptPackage();
       const uploadTitle = String(this.state.viewerPayload?.title || 'Untitled worksheet');
       const uploadSubject = firstNonBlankString(
         this.state.sourceSubject,
         this.state.viewerPayload?.subject,
         this.state.viewerPayload?.metadata?.subject
       );
+      const packageResult = await this.buildUploadedAttemptPackage();
       const uploadResult = await this.apiClient.uploadAttemptPackage(packageResult.bytes, {
         title: uploadTitle,
         subject: uploadSubject,

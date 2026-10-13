@@ -54,3 +54,44 @@ test('successful record deletion removes recovery so it cannot resurrect a delet
   storage(t);writeRecovery('localDrafts',record('deleted'));
   const api=withRecovery('localDrafts',{remove:async()=>{}});await api.remove('draft');assert.equal(readRecovery('localDrafts','draft'),null);
 });
+
+test('a recovery read must not overwrite a save completed while its database read was pending', async t => {
+  storage(t);
+  let saved = record('old', 1), finishRead;
+  const api = withRecovery('localDrafts', {
+    get: () => new Promise(resolve => { const snapshot = saved; finishRead = () => resolve(snapshot); }),
+    put: async value => { saved = value; return value; },
+  });
+  writeRecovery('localDrafts', record('journal', 2));
+  const reading = api.get('draft');
+  await api.put(record('latest save', 3));
+  finishRead(); await reading;
+  assert.equal(saved.title, 'latest save');
+});
+
+test('a pending recovery read cannot resurrect a record removed in the meantime', async t => {
+  storage(t);
+  let saved = record('old', 1), finishRead;
+  const api = withRecovery('localDrafts', {
+    get: () => new Promise(resolve => { const snapshot = saved; finishRead = () => resolve(snapshot); }),
+    put: async value => { saved = value; return value; },
+    remove: async () => { saved = null; },
+  });
+  writeRecovery('localDrafts', record('journal', 2));
+  const reading = api.get('draft');
+  await api.remove('draft');
+  finishRead(); await reading;
+  assert.equal(saved, null);
+});
+
+test('a failed initial read cannot consume recovery using an unknown comparison base', async t => {
+  storage(t); writeRecovery('localDrafts', record('latest edits', 2));
+  let recoverCalls = 0;
+  const api = withRecovery('localDrafts', {
+    get: async () => { throw Error('temporary read failure'); },
+    recover: async () => { recoverCalls++; return record('old', 1); },
+  });
+  assert.equal((await api.get('draft')).title, 'latest edits');
+  assert.equal(recoverCalls, 0);
+  assert.equal(readRecovery('localDrafts', 'draft').title, 'latest edits');
+});

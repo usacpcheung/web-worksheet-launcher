@@ -158,7 +158,7 @@ async function parseJsonResponseFromText({ status, contentType = '', text = '' }
   });
 }
 
-function createServerApiClient({ uploadTimeoutMs = 120000 } = {}) {
+function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000 } = {}) {
   const publicApiBase = DEFAULT_PUBLIC_API_BASE;
 
   function buildUrl(path, query = null) {
@@ -183,6 +183,33 @@ function createServerApiClient({ uploadTimeoutMs = 120000 } = {}) {
       url.searchParams.set(key, String(value));
     });
     return `${url.pathname}${url.search}`;
+  }
+
+  function requestList(path, { signal = null } = {}) {
+    const controller = new AbortController();
+    const timeoutMs = Number.isFinite(listTimeoutMs) && listTimeoutMs > 0 ? listTimeoutMs : 15000;
+    return new Promise(resolve => {
+      let settled = false;
+      let timer;
+      const finish = result => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', cancel);
+        resolve(result);
+      };
+      const cancel = () => {
+        finish(toStructuredError({ code: 'ABORTED', message: 'List refresh was canceled. Any completed upload remains saved.' }));
+        controller.abort();
+      };
+      if (signal?.aborted) { cancel(); return; }
+      signal?.addEventListener('abort', cancel, { once: true });
+      timer = setTimeout(() => {
+        finish(toStructuredError({ code: 'REQUEST_TIMEOUT', message: 'List refresh timed out. Refresh again to see uploaded items.' }));
+        controller.abort();
+      }, timeoutMs);
+      requestJson(path, { signal: controller.signal }).then(finish);
+    });
   }
 
   async function requestJson(path, request = {}) {
@@ -460,8 +487,8 @@ function createServerApiClient({ uploadTimeoutMs = 120000 } = {}) {
     getSession(options = {}) {
       return requestJson('/session', { signal: options.signal });
     },
-    listUploadedDrafts() {
-      return requestJson('/drafts');
+    listUploadedDrafts(options = {}) {
+      return requestList('/drafts', options);
     },
     uploadDraftPackage(zipBytes, metadata = {}, options = {}) {
       return uploadZip('/drafts/upload', zipBytes, {
@@ -480,8 +507,8 @@ function createServerApiClient({ uploadTimeoutMs = 120000 } = {}) {
     deleteUploadedDraft(uploadedDraftId) {
       return requestJson(`/drafts/${uploadedDraftId}`, { method: 'DELETE' });
     },
-    listRolePlaySceneDrafts() {
-      return requestJson('/roleplayscene/drafts');
+    listRolePlaySceneDrafts(options = {}) {
+      return requestList('/roleplayscene/drafts', options);
     },
     uploadRolePlaySceneDraftPackage(zipBytes, metadata = {}, options = {}) {
       return uploadZip('/roleplayscene/drafts/upload', zipBytes, {

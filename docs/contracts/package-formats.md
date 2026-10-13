@@ -45,7 +45,7 @@ Resume restores from embedded content, never from a newer external worksheet. Re
 
 The API and both attempt readers share the package/worksheet boundary in `server/app/contracts/attempt-package-validator.js`: the embedded worksheet must contain at least one block, with supported text formats and the appropriate Markdown package version. Empty worksheets are rejected before a ZIP is stored or a server slot is consumed. Uploads retain their strict attempt envelope, status, answers-object and checking-ID requirements. Browser imports retain historical envelope defaults and answer coercion, including numeric strings; their downstream viewer validation still applies. Legacy IDs/block kinds and optional missing media retain their existing compatibility paths. This shared boundary is not a replacement for the full viewer payload validator.
 
-Editor export snapshots the draft, including its asset references, before asynchronous media reads. Upload listing metadata comes from that same snapshot, so opening or editing another draft cannot mix its content with the original operation.
+Editor export snapshots the draft, including its asset references, before asynchronous media reads. Editor uploads capture that snapshot before session preflight; viewer uploads capture listing metadata before asynchronous package media reads. Upload listing metadata stays with its package, so opening or editing another draft cannot mix its content with the original operation.
 
 ## RolePlayScene ZIP
 

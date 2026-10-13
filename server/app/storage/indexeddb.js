@@ -140,6 +140,31 @@ async function getRecord(storeName, localId) {
   return runTransaction(storeName, 'readonly', (store) => promisifyRequest(store.get(localId)));
 }
 
+async function recoverRecord(storeName, record, expected, isCurrent) {
+  const normalized = normalizeRecord(record);
+  const pending = { ...normalized, localId: normalized.metadata.localId };
+  let recovered;
+  let failure;
+  try {
+    await runTransaction(storeName, 'readwrite', store => {
+      const request = store.get(pending.localId);
+      request.onsuccess = () => {
+        try {
+          recovered = request.result;
+          // A newer write or deletion must win over this stale recovery read.
+          if (!isCurrent() || JSON.stringify(recovered) !== JSON.stringify(expected)) return;
+          store.put(pending);
+          recovered = pending;
+        } catch (error) {
+          failure = error;
+          store.transaction.abort();
+        }
+      };
+    });
+  } catch (error) { throw failure || error; }
+  return recovered;
+}
+
 async function deleteRecord(storeName, localId) {
   await runTransaction(storeName, 'readwrite', (store) => {
     store.delete(localId);
@@ -160,6 +185,7 @@ function createStorageApi() {
   return {
     putLocalDraft: (record) => putRecord(STORE_NAMES.localDrafts, record),
     getLocalDraft: (localId) => getRecord(STORE_NAMES.localDrafts, localId),
+    recoverLocalDraft: (record, expected, isCurrent) => recoverRecord(STORE_NAMES.localDrafts, record, expected, isCurrent),
     listLocalDrafts: () => listRecords(STORE_NAMES.localDrafts),
     deleteLocalDraft: (localId) => deleteRecord(STORE_NAMES.localDrafts, localId),
 
@@ -170,6 +196,7 @@ function createStorageApi() {
 
     putLocalAttempt: (record) => putRecord(STORE_NAMES.localAttempts, record),
     getLocalAttempt: (localId) => getRecord(STORE_NAMES.localAttempts, localId),
+    recoverLocalAttempt: (record, expected, isCurrent) => recoverRecord(STORE_NAMES.localAttempts, record, expected, isCurrent),
     listLocalAttempts: () => listRecords(STORE_NAMES.localAttempts),
     deleteLocalAttempt: (localId) => deleteRecord(STORE_NAMES.localAttempts, localId),
 

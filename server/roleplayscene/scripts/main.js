@@ -2493,7 +2493,7 @@ function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploa
   });
 }
 
-async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager = false } = {}) {
+async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager = false, signal = null } = {}) {
   if (openingUploadedDraft) return { ok: false, skipped: true };
   const requestId = ++uploadedDraftsRequestId;
   const modalRevision = serverModalRevision;
@@ -2508,7 +2508,7 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
       if (!isCurrent()) return stale();
       if (!sessionReady.ok) return sessionReady.result;
     }
-    const result = await apiClient.listRolePlaySceneDrafts();
+    const result = await apiClient.listRolePlaySceneDrafts({ signal });
     if (!isCurrent()) return stale();
     if (!result.ok) {
       showMessage({ text: getServerErrorMessage(result, 'server.listFailed') });
@@ -2590,7 +2590,7 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
         textArgs: { id: result.data?.roleplayscene_uploaded_draft_id || '' },
         warnings,
       });
-      await loadUploadedRolePlaySceneDrafts({ preflight: false });
+      await loadUploadedRolePlaySceneDrafts({ preflight: false, signal: uploadController.signal });
       return result;
     }
   } catch (err) {

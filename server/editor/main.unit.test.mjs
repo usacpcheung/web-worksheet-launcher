@@ -5765,3 +5765,98 @@ test('decimal-only questions retain whole-valued decimal answer keys', async () 
   session.state.draft=mod.createDraftRecord({blocks:[{blockId:'q',kind:'question',prompt:{text:'Q'},responseConfig:{inputType:'number',numberRules:{allowedKinds:['decimal'],allowSigned:true}}}]});
   session.updateQuestionCorrectAnswerNumber('q','1.0');assert.equal(session.state.draft.blocks[0].responseConfig.correctAnswer,1);clearTimeout(session.autosaveTimer);
 });
+
+test('cancel settles a stalled post-upload refresh without changing a successful upload into failure', async () => {
+  const mod = await loadEditorModule();
+  let entered;
+  const refreshing = new Promise(resolve => { entered = resolve; });
+  const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: {
+    uploadDraftPackage: async () => ({ ok: true, data: { uploaded_draft_id: 'saved' } }),
+    listUploadedDrafts: ({ signal }) => new Promise(resolve => {
+      entered(); signal.addEventListener('abort', () => resolve({ ok: false, error: { code: 'ABORTED', message: 'Refresh canceled' } }), { once: true });
+    }),
+  } });
+  session.state.draft = mod.createDraftRecord({ title: 'Original' });
+  const upload = session.uploadCurrentDraftToServer({ preflight: false });
+  await refreshing; session.uploadController.abort();
+  assert.equal((await upload).ok, true);
+  assert.equal(session.state.lastUploadedDraft.uploaded_draft_id, 'saved');
+  assert.equal(session.state.isUploadingDraft, false);
+  assert.equal(session.state.isLoadingUploadedDrafts, false);
+});
+
+test('upload snapshots the selected draft before session preflight yields', async () => {
+  const mod = await loadEditorModule();
+  let release, received;
+  const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: {
+    uploadDraftPackage: async (_bytes, metadata) => { received = metadata; return { ok: true, data: { uploaded_draft_id: 'saved' } }; },
+    listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
+  } });
+  session.ensureServerSessionReady = () => new Promise(resolve => { release = resolve; });
+  session.state.draft = mod.createDraftRecord({ title: 'Original' });
+  const upload = session.uploadCurrentDraftToServer();
+  session.state.draft = mod.createDraftRecord({ title: 'Replacement' });
+  release({ ok: true }); await upload;
+  assert.equal(received.title, 'Original');
+  assert.equal(globalThis.__lastCreateWorksheetPackageCall.draft.title, 'Original');
+});
+
+test('replaced media schedules persistence before cleanup and never dirties a later draft', async () => {
+  const mod = await loadEditorModule();
+  for (const failCleanup of [false, true]) {
+    const storage = createSessionForTests(); let release, entered;
+    const cleaning = new Promise(resolve => { entered = resolve; });
+    storage.localAssets = { put: async value => value, remove: async () => {
+      entered(); await new Promise(resolve => { release = resolve; });
+      if (failCleanup) throw Error('storage unavailable');
+    } };
+    const session = new mod.EditorDraftSession(storage);
+    session.state.draft = mod.createDraftRecord({ localId: 'original', assets: [{ assetId: 'old', kind: 'image', usage: 'question_image', path: 'old.png' }], blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Q', mediaRefs: [{ assetId: 'old', usage: 'question_image' }] }, responseConfig: { inputType: 'text' } }] });
+    const attaching = session.attachQuestionMedia('q', 'question_image', { name: 'new.png', type: 'image/png', size: 1, arrayBuffer: async () => new Uint8Array([1]).buffer }, { confirmReplace: true });
+    await cleaning;
+    assert.equal(session.state.autosavePending, true);
+    clearTimeout(session.autosaveTimer);
+    session.state.draft = mod.createDraftRecord({ localId: 'replacement' });
+    session.state.draftRevision = 10;
+    release(); assert.equal((await attaching).ok, true);
+    assert.equal(session.state.draftRevision, 10);
+  }
+});
+
+test('new worksheet cleanup cannot journal or autosave the explicitly discarded draft', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests(); let release, entered, writes = 0;
+  const cleaning = new Promise(resolve => { entered = resolve; });
+  storage.drafts.put = async value => { writes++; return value; };
+  storage.drafts.remove = async () => {};
+  storage.localAssets = { remove: async () => { entered(); await new Promise(resolve => { release = resolve; }); } };
+  const session = new mod.EditorDraftSession(storage);
+  session.state.draft = mod.createDraftRecord({ localId: 'discarded', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Q', mediaRefs: [{ assetId: 'image', usage: 'question_image' }] }, responseConfig: { inputType: 'text' } }] });
+  const replacing = session.startNewWorksheet(); await cleaning;
+  assert.equal(session.createRecoveryRecord(), null);
+  assert.equal(await session.autosave(), null);
+  assert.equal(writes, 0);
+  release(); await replacing;
+  assert.notEqual(session.createRecoveryRecord().localId, 'discarded');
+  clearTimeout(session.autosaveTimer);
+});
+
+test('a late autosave cannot mark a reopened draft revision as saved', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests(); let release, entered;
+  const writing = new Promise(resolve => { entered = resolve; });
+  const initial = mod.createDraftRecord({ localId: 'same-id', title: 'Saved before reopening' });
+  storage.drafts.get = async () => structuredClone(initial);
+  storage.drafts.put = async record => { entered(); await new Promise(resolve => { release = resolve; }); return record; };
+  const session = new mod.EditorDraftSession(storage);
+  session.state.draft = initial;
+  session.state.draftRevision = 10;
+  const saving = session.autosave(); await writing;
+  await session.createOrOpenByLocalDraftId('same-id');
+  session.updateTitle('New edits after reopening');
+  release(); await saving;
+  assert.equal(session.state.lastSavedRevision, 1);
+  assert.equal(session.state.autosavePending, true);
+  assert.equal(session.state.draft.title, 'New edits after reopening');
+  clearTimeout(session.autosaveTimer);
+});

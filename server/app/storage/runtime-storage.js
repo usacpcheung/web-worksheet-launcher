@@ -16,6 +16,7 @@ function createRuntimeStorage() {
     drafts: withRecovery('localDrafts', {
       put: db.putLocalDraft,
       get: db.getLocalDraft,
+      recover: db.recoverLocalDraft,
       list: db.listLocalDrafts,
       remove: db.deleteLocalDraft,
       clear: db.clearLocalDrafts,
@@ -30,6 +31,7 @@ function createRuntimeStorage() {
     attempts: withRecovery('localAttempts', {
       put: db.putLocalAttempt,
       get: db.getLocalAttempt,
+      recover: db.recoverLocalAttempt,
       list: db.listLocalAttempts,
       remove: db.deleteLocalAttempt,
       clear: db.clearLocalAttempts,

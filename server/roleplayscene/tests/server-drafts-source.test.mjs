@@ -23,7 +23,7 @@ const bootstrapFunctionEndIndex = mainSource.indexOf('\nbootstrap();', bootstrap
 const bootstrapSource = mainSource.slice(bootstrapFunctionIndex, bootstrapFunctionEndIndex);
 
 assert.ok(
-  mainSource.includes('apiClient.listRolePlaySceneDrafts()'),
+  mainSource.includes('apiClient.listRolePlaySceneDrafts({ signal })'),
   'RolePlayScene should list uploaded drafts through the PR5 API client method',
 );
 assert.ok(
