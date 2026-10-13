@@ -91,7 +91,7 @@ test('modal load-status copies are visual-only and preserve the single shell ann
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
@@ -1730,7 +1730,7 @@ test('stage3: protected actions column no longer includes legacy rewrite/t2a stu
   const source = (await fs.readFile(path.resolve('server/editor/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes("rewriteBtn.textContent = 'Rewrite (Sign-in required)'"), false);
   assert.equal(source.includes("t2aBtn.textContent = 'T2A (Sign-in required)'"), false);
-  assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    manageUploadedDraftsBtn,\n    browsePublishedBtn\n  );'), true);
+  assert.equal(source.includes('protectedActionsColumn.append(\n    serverSessionStatus,\n    signInBtn,\n    syncDraftBtn,\n    cancelUploadBtn,\n    manageUploadedDraftsBtn,\n    browsePublishedBtn\n  );'), true);
 });
 
 test('editor source keeps detail status row visible and uses friendly block/saved labels', async () => {
@@ -5736,4 +5736,32 @@ test('prompt audio sends displayed list numbers and counts the final Unicode tex
   assert.equal((await session.generateAudioTrack(id, 'prompt', 'cantonese')).reason, 'text-too-long');
   assert.equal(sent, null);
   clearTimeout(session.autosaveTimer);
+});
+
+test('image attachment discards late writes after draft switch, reopening, target removal or replacement', async () => {
+  const mod=await loadEditorModule();
+  for (const change of ['switch','reopen','remove','replace']) {
+    let release,enter;const entered=new Promise(r=>enter=r);const removed=[];const storage=createSessionForTests();
+    storage.localAssets={put:async()=>{enter();await new Promise(r=>release=r);},remove:async id=>removed.push(id)};
+    const session=new mod.EditorDraftSession(storage);
+    const original=mod.createDraftRecord({localId:'A',blocks:[{blockId:'q',kind:'question',prompt:{text:'Q'},responseConfig:{inputType:'text'}}]});session.state.draft=original;
+    const pending=session.attachQuestionMedia('q','question_image',{name:'a.png',type:'image/png',size:3,arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer});
+    await entered;
+    if(change==='switch'||change==='reopen') { storage.drafts.get=async()=>({...structuredClone(original),localId:change==='switch'?'B':'A'});await session.createOrOpenByLocalDraftId(change==='switch'?'B':'A'); }
+    else if(change==='remove') session.state.draft.blocks=[];
+    else session.state.draft.blocks[0].prompt.mediaRefs=[{usage:'question_image',assetId:'newer'}];
+    const before=structuredClone(session.state.draft);release();assert.equal((await pending).reason,'stale-target');assert.deepEqual(session.state.draft,before);assert.equal(removed.length,1);clearTimeout(session.autosaveTimer);
+  }
+});
+test('export captures worksheet and metadata before asynchronous asset reads', async () => {
+  const mod=await loadEditorModule();let release,enter;const entered=new Promise(r=>enter=r);const storage=createSessionForTests();
+  storage.localAssets={get:async()=>{enter();await new Promise(r=>release=r);return {binary:new Uint8Array([1])};}};
+  const session=new mod.EditorDraftSession(storage);session.state.draft=mod.createDraftRecord({title:'Original',assets:[{assetId:'a',kind:'image',usage:'question_image',path:'media/a'}]});
+  const pending=session.buildCurrentDraftPackageZipBytes();await entered;session.state.draft=mod.createDraftRecord({title:'Replacement'});release();await pending;
+  assert.equal(globalThis.__lastCreateWorksheetPackageCall.draft.title,'Original');assert.equal(globalThis.__lastCreateWorksheetPackageCall.assets.has('a'),true);
+});
+test('decimal-only questions retain whole-valued decimal answer keys', async () => {
+  const mod=await loadEditorModule();const session=new mod.EditorDraftSession(createSessionForTests());
+  session.state.draft=mod.createDraftRecord({blocks:[{blockId:'q',kind:'question',prompt:{text:'Q'},responseConfig:{inputType:'number',numberRules:{allowedKinds:['decimal'],allowSigned:true}}}]});
+  session.updateQuestionCorrectAnswerNumber('q','1.0');assert.equal(session.state.draft.blocks[0].responseConfig.correctAnswer,1);clearTimeout(session.autosaveTimer);
 });

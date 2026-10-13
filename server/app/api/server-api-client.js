@@ -158,7 +158,7 @@ async function parseJsonResponseFromText({ status, contentType = '', text = '' }
   });
 }
 
-function createServerApiClient() {
+function createServerApiClient({ uploadTimeoutMs = 120000 } = {}) {
   const publicApiBase = DEFAULT_PUBLIC_API_BASE;
 
   function buildUrl(path, query = null) {
@@ -254,6 +254,9 @@ function createServerApiClient() {
     }
 
     const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    if (contentType.includes('text/html')) {
+      return toStructuredError({ code: 'AUTH_REQUIRED', message: createAuthMessage(), status: response.status, requiresSignIn: true });
+    }
     if (!contentType.includes('application/zip')) {
       return toStructuredError({
         code: 'UNEXPECTED_CONTENT_TYPE',
@@ -375,107 +378,68 @@ function createServerApiClient() {
   async function uploadZip(path, zipBytes, request = {}) {
     const { query = null, onProgress = null, signal = null } = request;
     const targetUrl = buildUrl(path, query);
-    const shouldUseXhr = typeof XMLHttpRequest === 'function';
-
-    if (!shouldUseXhr) {
-      let response;
-      try {
-        response = await fetch(targetUrl, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'content-type': 'application/zip' },
-          body: zipBytes,
-          ...(signal ? { signal } : {}),
-        });
-      } catch (error) {
-        return toStructuredError({
-          code: 'NETWORK_ERROR',
-          message: `Unable to reach server API. ${error?.message || String(error)}`,
-        });
-      }
-      return parseJsonResponse(response);
-    }
-
+    const timeoutMs = Number.isFinite(uploadTimeoutMs) && uploadTimeoutMs > 0 ? uploadTimeoutMs : 120000;
     return new Promise((resolve) => {
       let settled = false;
-      const xhr = new XMLHttpRequest();
-      const cleanupAbortListener = () => {
-        if (signal && typeof signal.removeEventListener === 'function' && abortHandler) {
-          signal.removeEventListener('abort', abortHandler);
-        }
-      };
+      let abortTransport = () => {};
+      let timer;
       const finish = (result) => {
         if (settled) return;
         settled = true;
-        cleanupAbortListener();
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', cancel);
         resolve(result);
       };
-      const abortHandler = () => {
-        try {
-          xhr.abort();
-        } catch {}
-      };
+      const canceled = () => toStructuredError({ code: 'ABORTED', message: 'Upload was canceled. Refresh uploaded items before retrying; the server may already have received it.' });
+      const cancel = () => { finish(canceled()); abortTransport(); };
+      if (signal?.aborted) { finish(canceled()); return; }
+      signal?.addEventListener('abort', cancel, { once: true });
+      timer = setTimeout(() => {
+        finish(toStructuredError({ code: 'UPLOAD_TIMEOUT', message: 'Upload timed out. Refresh uploaded items before retrying; the server may already have received it.' }));
+        abortTransport();
+      }, timeoutMs);
 
-      xhr.open('POST', targetUrl, true);
-      xhr.withCredentials = true;
-      xhr.responseType = 'text';
-      xhr.setRequestHeader('content-type', 'application/zip');
-
-      if (typeof onProgress === 'function' && xhr.upload) {
-        xhr.upload.onprogress = (event) => {
-          onProgress({
-            loaded: Number(event?.loaded || 0),
-            total: Number(event?.total || 0),
-            lengthComputable: Boolean(event?.lengthComputable),
-          });
-        };
-      }
-
-      xhr.onerror = () => {
-        finish(toStructuredError({
-          code: 'NETWORK_ERROR',
-          message: 'Unable to reach server API. Network request failed.',
-        }));
-      };
-
-      xhr.onabort = () => {
-        finish(toStructuredError({
-          code: 'NETWORK_ERROR',
-          message: 'Unable to reach server API. Upload was canceled before completion.',
-        }));
-      };
-
-      xhr.onload = async () => {
-        const contentType = xhr.getResponseHeader('content-type') || '';
-        const parsed = await parseJsonResponseFromText({
-          status: Number(xhr.status || 0),
-          contentType,
-          text: xhr.responseText || '',
-        });
-        finish(parsed);
-      };
-
-      if (signal && typeof signal.addEventListener === 'function') {
-        if (signal.aborted) {
-          abortHandler();
-          finish(toStructuredError({
-            code: 'NETWORK_ERROR',
-            message: 'Unable to reach server API. Upload was canceled before completion.',
-          }));
-          return;
-        } else {
-          signal.addEventListener('abort', abortHandler, { once: true });
-        }
+      if (typeof XMLHttpRequest !== 'function') {
+        const controller = new AbortController();
+        abortTransport = () => controller.abort();
+        // The deadline covers response body consumption as well as headers.
+        (async () => {
+          try {
+            const response = await fetch(targetUrl, {
+              method: 'POST', credentials: 'include',
+              headers: { 'content-type': 'application/zip' }, body: zipBytes, signal: controller.signal,
+            });
+            finish(await parseJsonResponse(response));
+          } catch (error) {
+            finish(toTransportError(error, { signal: controller.signal, duringRead: true }));
+          }
+        })();
+        return;
       }
 
       try {
+        const xhr = new XMLHttpRequest();
+        abortTransport = () => { try { xhr.abort(); } catch {} };
+        xhr.open('POST', targetUrl, true);
+        xhr.withCredentials = true;
+        xhr.responseType = 'text';
+        xhr.timeout = timeoutMs;
+        xhr.setRequestHeader('content-type', 'application/zip');
+        if (typeof onProgress === 'function' && xhr.upload) {
+          xhr.upload.onprogress = event => {
+            if (!settled) onProgress({ loaded: Number(event?.loaded || 0), total: Number(event?.total || 0), lengthComputable: Boolean(event?.lengthComputable) });
+          };
+        }
+        xhr.onerror = () => finish(toStructuredError({ code: 'NETWORK_ERROR', message: 'Unable to reach server API. Network request failed.' }));
+        xhr.onabort = () => finish(canceled());
+        xhr.ontimeout = () => finish(toStructuredError({ code: 'UPLOAD_TIMEOUT', message: 'Upload timed out. Refresh uploaded items before retrying; the server may already have received it.' }));
+        xhr.onload = async () => {
+          try {
+            finish(await parseJsonResponseFromText({ status: Number(xhr.status || 0), contentType: xhr.getResponseHeader('content-type') || '', text: xhr.responseText || '' }));
+          } catch (error) { finish(toTransportError(error, { duringRead: true })); }
+        };
         xhr.send(zipBytes);
-      } catch (error) {
-        finish(toStructuredError({
-          code: 'NETWORK_ERROR',
-          message: `Unable to reach server API. ${error?.message || String(error)}`,
-        }));
-      }
+      } catch (error) { finish(toTransportError(error, { signal })); }
     });
   }
 
@@ -531,9 +495,7 @@ function createServerApiClient() {
       });
     },
     fetchRolePlaySceneDraftArtifact(uploadedDraftId, options = {}) {
-      return requestZip(`/roleplayscene/drafts/${uploadedDraftId}/artifact`, {
-        onProgress: options.onProgress,
-      });
+      return requestZip(`/roleplayscene/drafts/${uploadedDraftId}/artifact`, options);
     },
     deleteRolePlaySceneDraft(uploadedDraftId) {
       return requestJson(`/roleplayscene/drafts/${uploadedDraftId}`, { method: 'DELETE' });

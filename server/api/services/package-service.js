@@ -1,8 +1,9 @@
+import { assertAttemptPackage } from '../../app/contracts/attempt-package-validator.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { parseWorksheetPackage, rewriteWorksheetPackageTitle } from '../../editor/worksheet-package.js';
 import { parseStoredZip, decodeUtf8 } from '../../editor/zip-utils.js';
-import { assertWorksheetTextFormats, hasMarkdown, promptTextState, PROMPT_TEXT_LIMIT } from '../../app/worksheet-text.js';
+import { promptTextState, PROMPT_TEXT_LIMIT } from '../../app/worksheet-text.js';
 
 function normalizeText(value, fallback = '') {
   const normalized = String(value || '').trim();
@@ -44,34 +45,9 @@ function validateUploadedAttemptPackage(zipBytes) {
     const attempt = files.get('content/attempt.json');
     if (!manifest || !worksheet || !attempt) throw new Error('Missing required files.');
     const manifestJson = JSON.parse(decodeUtf8(manifest));
-    if (manifestJson?.format !== 'worksheet-attempt-package') throw new Error('Unsupported manifest format.');
-    if (![1, 2].includes(manifestJson?.packageVersion)) throw new Error('Unsupported manifest packageVersion.');
-    if (manifestJson?.schemaVersion !== undefined && manifestJson?.schemaVersion !== 1) {
-      throw new Error('Unsupported manifest schemaVersion.');
-    }
     const worksheetJson = JSON.parse(decodeUtf8(worksheet));
-    assertWorksheetTextFormats(worksheetJson.blocks);
-    if (hasMarkdown(worksheetJson.blocks) && manifestJson.packageVersion !== 2) throw new Error('Markdown requires attempt package version 2.');
     const attemptJson = JSON.parse(decodeUtf8(attempt));
-    if (attemptJson?.schemaVersion !== 1 || attemptJson?.kind !== 'worksheet-attempt') throw new Error('Unsupported attempt schema.');
-    if (!['in_progress', 'submitted', 'checked'].includes(attemptJson?.status)) throw new Error('Invalid attempt status.');
-    if (typeof attemptJson.answers !== 'object' || Array.isArray(attemptJson.answers) || !attemptJson.answers) throw new Error('answers must be an object.');
-    if ((attemptJson.status === 'submitted' || attemptJson.status === 'checked') && !attemptJson.submittedAt) throw new Error('submittedAt required.');
-    const blockIds = new Set(
-      (Array.isArray(worksheetJson?.blocks) ? worksheetJson.blocks : [])
-        .map((block) => {
-          if (!block || typeof block !== 'object') return null;
-          const blockId = typeof block.blockId === 'string' ? block.blockId.trim() : '';
-          if (blockId) return blockId;
-          const legacyId = typeof block.id === 'string' ? block.id.trim() : '';
-          return legacyId || null;
-        })
-        .filter(Boolean)
-    );
-    const checkingItems = attemptJson?.checking?.items;
-    if (checkingItems && typeof checkingItems === 'object') {
-      for (const key of Object.keys(checkingItems)) if (!blockIds.has(key)) throw new Error(`checking item references unknown blockId: ${key}`);
-    }
+    assertAttemptPackage(manifestJson, worksheetJson, attemptJson);
     return { ok: true, attempt: attemptJson };
   } catch (error) {
     return { ok: false, error: { code: 'INVALID_ATTEMPT_PACKAGE', message: 'Uploaded attempt package is invalid or corrupted.', details: { reason: error?.message || 'validation failed' } } };
@@ -301,6 +277,7 @@ export class PackageService {
 
     const client = await this.db.connect();
     let artifact = null;
+    let commitAttempted = false;
     const cleanupArtifactPathsAfterCommit = [];
     const action = normalizeUploadConflictAction(conflictAction);
     const normalizedTitle = normalizeText(title, 'Untitled draft');
@@ -354,6 +331,7 @@ export class PackageService {
             artifact,
             uploadedDraftId: replacementId,
           });
+          commitAttempted = true;
           await client.query('COMMIT');
           for (const artifactPath of cleanupArtifactPathsAfterCommit) {
             await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
@@ -400,6 +378,7 @@ export class PackageService {
           };
         }
         cleanupArtifactPathsAfterCommit.push(conflict.artifact_path);
+        commitAttempted = true;
         await client.query('COMMIT');
         for (const artifactPath of cleanupArtifactPathsAfterCommit) {
           await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
@@ -463,12 +442,15 @@ export class PackageService {
         ]
       );
 
+      commitAttempted = true;
+
       await client.query('COMMIT');
       artifact = null;
       return { ok: true, statusCode: 201, data: row.rows[0] };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
-      await deleteArtifactIfPresent(artifact);
+      // A rejected COMMIT can have succeeded on the server. Never unlink its artifact.
+      if (!commitAttempted) await deleteArtifactIfPresent(artifact);
       throw error;
     } finally {
       client.release();
@@ -565,7 +547,19 @@ export class PackageService {
     return result.rowCount ? result.rows[0] : null;
   }
   async deleteOwnAttempt({ identity, uploadedAttemptId }) {
-    const deleted = await this.db.query('DELETE FROM uploaded_attempts WHERE uploaded_attempt_id = $1 AND owner_sub = $2 RETURNING uploaded_attempt_id, artifact_path', [uploadedAttemptId, identity.sub]);
+    const client = await this.db.connect();
+    let deleted;
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
+      deleted = await client.query('DELETE FROM uploaded_attempts WHERE uploaded_attempt_id = $1 AND owner_sub = $2 RETURNING uploaded_attempt_id, artifact_path', [uploadedAttemptId, identity.sub]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
     if (!deleted.rowCount) return { ok: false, statusCode: 404, error: { code: 'UPLOADED_ATTEMPT_NOT_FOUND', message: 'Uploaded attempt was not found for this owner.' } };
     await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath: deleted.rows[0].artifact_path });
     return { ok: true, statusCode: 200, data: { uploaded_attempt_id: deleted.rows[0].uploaded_attempt_id, deleted: true } };
@@ -578,6 +572,7 @@ export class PackageService {
     const normalizedSubject = normalizeText(subject, '');
     const client = await this.db.connect();
     let artifact = null;
+    let commitAttempted = false;
     let uploadedAttemptId = null;
     const cleanupArtifactPathsAfterCommit = [];
     try {
@@ -621,7 +616,13 @@ export class PackageService {
           artifactId: crypto.randomUUID(),
           bytes: zipBytes,
         });
-        await client.query(`UPDATE uploaded_attempts SET owner_email=$3, owner_name=$4, title=$5, subject=$6, status=$7, submitted_at=$8, checked_at=$9, artifact_path=$10, artifact_sha256=$11, artifact_size_bytes=$12, updated_at=now() WHERE uploaded_attempt_id=$1 AND owner_sub=$2`, [conflict.uploaded_attempt_id, identity.sub, identity.email, identity.name, normalizedTitle, normalizedSubject, attempt.status, attempt.submittedAt || null, attempt.checking?.checkedAt || null, artifact.artifactPath, artifact.artifactSha256, artifact.artifactSizeBytes]);
+        const updated = await client.query(`UPDATE uploaded_attempts SET owner_email=$3, owner_name=$4, title=$5, subject=$6, status=$7, submitted_at=$8, checked_at=$9, artifact_path=$10, artifact_sha256=$11, artifact_size_bytes=$12, updated_at=now() WHERE uploaded_attempt_id=$1 AND owner_sub=$2 RETURNING uploaded_attempt_id`, [conflict.uploaded_attempt_id, identity.sub, identity.email, identity.name, normalizedTitle, normalizedSubject, attempt.status, attempt.submittedAt || null, attempt.checking?.checkedAt || null, artifact.artifactPath, artifact.artifactSha256, artifact.artifactSizeBytes]);
+        if (updated.rowCount !== 1) {
+          await client.query('ROLLBACK');
+          await deleteArtifactIfPresent(artifact);
+          artifact = null;
+          return { ok: false, statusCode: 409, error: { code: 'ATTEMPT_REPLACE_TARGET_MISSING', message: 'The attempt to replace no longer exists. Refresh the uploaded attempts before retrying.' } };
+        }
         cleanupArtifactPathsAfterCommit.push(conflict.artifact_path);
       } else {
         const finalTitle = conflict && action === 'copy'
@@ -631,13 +632,14 @@ export class PackageService {
         artifact = await this.artifactStore.storeArtifact({ ownerSub: identity.sub, bucket: 'attempts', artifactId: uploadedAttemptId, bytes: zipBytes });
         await client.query(`INSERT INTO uploaded_attempts(uploaded_attempt_id,owner_sub,owner_email,owner_name,title,subject,status,submitted_at,checked_at,artifact_path,artifact_sha256,artifact_size_bytes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [uploadedAttemptId, identity.sub, identity.email, identity.name, finalTitle, normalizedSubject, attempt.status, attempt.submittedAt || null, attempt.checking?.checkedAt || null, artifact.artifactPath, artifact.artifactSha256, artifact.artifactSizeBytes]);
       }
+      commitAttempted = true;
       await client.query('COMMIT');
       for (const artifactPath of cleanupArtifactPathsAfterCommit) {
         await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
       }
       artifact = null;
       return { ok: true, statusCode: conflict && action === 'replace' ? 200 : 201, data: { uploaded_attempt_id: uploadedAttemptId } };
-    } catch (e) { await client.query('ROLLBACK').catch(() => {}); await deleteArtifactIfPresent(artifact); throw e; } finally { client.release(); }
+    } catch (e) { await client.query('ROLLBACK').catch(() => {}); if (!commitAttempted) await deleteArtifactIfPresent(artifact); throw e; } finally { client.release(); }
   }
 
   async deleteOwnPublishedPackage({ identity, publishedPackageId }) {
@@ -689,6 +691,7 @@ export class PackageService {
   async publishFromDraft({ identity, uploadedDraftId, title = '', subject = '' }) {
     const client = await this.db.connect();
     let artifact = null;
+    let commitAttempted = false;
 
     try {
       await client.query('BEGIN');
@@ -824,12 +827,15 @@ export class PackageService {
         [draft.uploaded_draft_id, draft.artifact_sha256, identity.sub]
       );
 
+      commitAttempted = true;
+
       await client.query('COMMIT');
       artifact = null;
       return { ok: true, statusCode: 201, data: publishedRes.rows[0] };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
-      await deleteArtifactIfPresent(artifact);
+      // A rejected COMMIT can have succeeded on the server. Never unlink its artifact.
+      if (!commitAttempted) await deleteArtifactIfPresent(artifact);
       throw error;
     } finally {
       client.release();

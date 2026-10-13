@@ -71,6 +71,7 @@ assert.equal(await field().evaluate(e=>e.readOnly&&!e.disabled),true);
 for(const locale of ['en','zh-Hant']) {
  for(const width of [1280,390]) {
   await page.evaluate(async locale=>{
+   await window.viewerSession.autosave(); // Flush navigation before installing the next fixture.
    localStorage.setItem('worksheetLauncher.locale',locale);
    const {viewerStorage}=await import('/server/viewer/storage/index.js');
    const attempt=await viewerStorage.attempts.get('voice-smoke');

@@ -1,3 +1,5 @@
+import { assertAttemptPackage } from '../app/contracts/attempt-package-validator.js';
+import { installPageRecovery } from '../app/storage/recovery-journal.js';
 import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.js';
 import { setWorksheetText, renderWorksheetText, WORKSHEET_TEXT_CSS, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown } from '../app/worksheet-text.js';
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
@@ -731,6 +733,7 @@ function parseUploadedAttemptPackage(zipBytes) {
   assertWorksheetTextFormats(worksheet.blocks);
   if (hasMarkdown(worksheet.blocks) && manifest.packageVersion !== 2) throw new Error('Markdown requires attempt package version 2.');
   const attempt = JSON.parse(decodeUtf8(attemptEntry));
+  assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope: true });
   const assets = [];
   const assetManifest = Array.isArray(manifest?.assets) ? manifest.assets : [];
   assetManifest.forEach((asset) => {
@@ -791,6 +794,7 @@ function parseLocalAttemptPackage(zipBytes) {
     assertWorksheetTextFormats(worksheet.blocks);
     if (hasMarkdown(worksheet.blocks) && manifest.packageVersion !== 2) throw new Error('Markdown requires attempt package version 2.');
     attempt = JSON.parse(decodeUtf8(attemptEntry));
+    assertAttemptPackage(manifest, worksheet, attempt, { allowLegacyEnvelope: true });
   } catch {
     throw new Error(t('viewer.notifications.localAttemptImport.invalidPackage'));
   }
@@ -3172,13 +3176,8 @@ class ViewerAttemptSession {
     }, AUTOSAVE_MS);
   }
 
-  async autosave() {
-    if (!this.state.localAttemptId || !this.state.viewerPayload) {
-      return null;
-    }
-
-    const revisionAtSaveStart = this.state.attemptRevision;
-    const updatedAt = nowIso();
+  createRecoveryRecord(updatedAt = nowIso()) {
+    if (!this.state.localAttemptId || !this.state.viewerPayload) return null;
     const persistedSubject = firstNonBlankString(
       this.state.sourceSubject,
       this.state.viewerPayload?.subject,
@@ -3254,6 +3253,18 @@ class ViewerAttemptSession {
       attemptRecord.restoredAttemptCheckResult = this.state.restoredAttemptCheckResult;
     }
 
+    return attemptRecord;
+  }
+
+  async autosave() {
+    if (!this.state.localAttemptId || !this.state.viewerPayload) {
+      return null;
+    }
+
+    const revisionAtSaveStart = this.state.attemptRevision;
+    const updatedAt = nowIso();
+    const attemptRecord = this.createRecoveryRecord(updatedAt);
+
     this.inFlightSaveCount += 1;
     this.state.autosavePending = true;
     this.notifyStateChange();
@@ -3265,8 +3276,8 @@ class ViewerAttemptSession {
       if (shouldApplySaveStatus) {
         this.state.lastSavedRevision = revisionAtSaveStart;
         this.state.lastSavedAt = persisted?.metadata?.updatedAt || updatedAt;
-        this.state.sourceSubject = persistedSubject;
-        this.state.sourceOwner = persistedOwner;
+        this.state.sourceSubject = attemptRecord.subject;
+        this.state.sourceOwner = attemptRecord.owner;
         this.state.lastSaveError = null;
         this.persistResumeMetadata();
         this.notifyStateChange();
@@ -3725,6 +3736,7 @@ class ViewerAttemptSession {
       return { ok: false, status: 'stale_intent', error: { message } };
     }
 
+    this.uploadController = new AbortController();
     this.state.isUploadingAttemptPackage = true;
     this.state.uploadAttemptConflictContext = null;
     this.state.uploadAttemptRecoveryHint = null;
@@ -3750,6 +3762,7 @@ class ViewerAttemptSession {
         subject: uploadSubject,
         conflictAction: options.conflictAction || 'fail_on_conflict',
       }, {
+        signal: this.uploadController.signal,
         onProgress: (progress) => {
           this.state.uploadAttemptProgress = {
             loaded: Number(progress?.loaded || 0),
@@ -3822,6 +3835,7 @@ class ViewerAttemptSession {
       this.notifyStateChange();
       return { ok: false, status: 'upload_failed_unexpected', error: { code: 'NETWORK_ERROR', message: this.state.serverActionMessage } };
     } finally {
+      this.uploadController = null;
       this.state.isUploadingAttemptPackage = false;
       this.state.uploadAttemptProgress = null;
       this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
@@ -5525,6 +5539,15 @@ function renderViewerShell(session) {
   infoBtn.title = t('viewer.details.openTechnicalDetailsTitle');
   infoBtn.innerHTML = createViewerIcon('info');
 
+  const cancelUploadBtn = document.createElement('button');
+  cancelUploadBtn.type = 'button';
+  cancelUploadBtn.className = 'viewer-header-icon-btn';
+  cancelUploadBtn.dataset.uploadCancel = 'viewer';
+  cancelUploadBtn.setAttribute('aria-label', t('common.actions.cancel'));
+  cancelUploadBtn.title = t('common.actions.cancel');
+  cancelUploadBtn.innerHTML = createViewerIcon('stop');
+  cancelUploadBtn.addEventListener('click', () => session.uploadController?.abort());
+
   const uploadAttemptBtn = document.createElement('button');
   uploadAttemptBtn.type = 'button';
   uploadAttemptBtn.className = 'viewer-header-icon-btn';
@@ -5551,7 +5574,7 @@ function renderViewerShell(session) {
       renderViewerShell(session);
     },
   });
-  headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, exportAttemptBtn, printReportBtn);
+  headerActions.append(languageSelector, infoBtn, uploadAttemptBtn, cancelUploadBtn, exportAttemptBtn, printReportBtn);
 
   const detailsModal = document.createElement('div');
   detailsModal.className = 'viewer-details-modal';
@@ -6689,6 +6712,7 @@ function renderViewerShell(session) {
     checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
     printReportBtn.hidden = !printAvailable;
     printReportBtn.disabled = session.state.isFinalizing || !printAvailable;
+    cancelUploadBtn.hidden = !session.state.isUploadingAttemptPackage;
     uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
     exportAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
     prevBtn.disabled = currentBlockIndex === 0;
@@ -7808,6 +7832,8 @@ async function bootstrapViewer() {
   renderViewerShell(session);
   window.viewerSession = session;
 }
+
+installPageRecovery('localAttempts', () => globalThis.window?.viewerSession);
 
 bootstrapViewer().catch((error) => {
   console.error('Failed to bootstrap viewer', error);

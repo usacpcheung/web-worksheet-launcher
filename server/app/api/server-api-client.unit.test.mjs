@@ -649,8 +649,8 @@ test('uploadDraftPackage does not send when AbortSignal is already aborted', asy
 
   assert.equal(sendCalled, false);
   assert.equal(result.ok, false);
-  assert.equal(result.error.code, 'NETWORK_ERROR');
-  assert.equal(result.error.message, 'Unable to reach server API. Upload was canceled before completion.');
+  assert.equal(result.error.code, 'ABORTED');
+  assert.match(result.error.message, /canceled.*Refresh uploaded items/);
 
   globalThis.XMLHttpRequest = previousXhr;
 });
@@ -1057,4 +1057,24 @@ test('audio generation forwards cancellation separately from voice options', asy
   assert.equal(captured.signal,controller.signal);
   assert.deepEqual(JSON.parse(captured.body),{text:'Hello',format:'mp3',response_mode:'binary',voice_choice:'cantonese_male_1'});
   controller.abort();assert.equal((await run).ok,false);
+});
+
+test('ZIP login HTML requests sign-in and scene draft downloads forward AbortSignal', async t => {
+  setTestWindow();const client=createServerApiClient();const controller=new AbortController();
+  t.mock.method(globalThis,'fetch',async(url,options)=>{assert.equal(options.signal,controller.signal);return new Response('<html>Login</html>',{headers:{'content-type':'text/html'}});});
+  const result=await client.fetchRolePlaySceneDraftArtifact('fixture',{signal:controller.signal});assert.equal(result.error.code,'AUTH_REQUIRED');assert.equal(result.error.requiresSignIn,true);
+});
+test('upload fetch fallback bounds stalled body reads and returns structured interrupted-body errors', async t => {
+  setTestWindow();t.mock.property(globalThis,'XMLHttpRequest',undefined);
+  t.mock.method(globalThis,'fetch',async()=>new Response(new ReadableStream({start(c){c.error(Error('reset'));}}),{headers:{'content-type':'application/json'}}));
+  assert.equal((await createServerApiClient().uploadDraftPackage(new Uint8Array([1]))).error.code,'NETWORK_ERROR');
+  t.mock.method(globalThis,'fetch',async()=>new Response(new ReadableStream({start(){}}),{headers:{'content-type':'application/json'}}));
+  assert.equal((await createServerApiClient({uploadTimeoutMs:10}).uploadDraftPackage(new Uint8Array([1]))).error.code,'UPLOAD_TIMEOUT');
+});
+test('XHR stalled upload times out, aborts, and ignores late completion; explicit cancellation also settles', async t => {
+  setTestWindow();let xhr;let aborts=0;
+  t.mock.property(globalThis,'XMLHttpRequest',class {constructor(){xhr=this;}open(){}setRequestHeader(){}send(){}abort(){aborts++;this.onabort?.();}getResponseHeader(){return 'application/json';}});
+  const client=createServerApiClient({uploadTimeoutMs:10});assert.equal((await client.uploadDraftPackage(new Uint8Array([1]))).error.code,'UPLOAD_TIMEOUT');assert.equal(aborts,1);
+  xhr.status=200;xhr.responseText='{"ok":true,"data":{}}';await xhr.onload();
+  const controller=new AbortController();const pending=client.uploadDraftPackage(new Uint8Array([1]),{},{signal:controller.signal});controller.abort();assert.equal((await pending).error.code,'ABORTED');assert.equal(aborts,2);
 });

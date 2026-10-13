@@ -279,6 +279,7 @@ export class RolePlaySceneDraftService {
 
     const client = await this.db.connect();
     let artifact = null;
+    let commitAttempted = false;
     const cleanupArtifactPathsAfterCommit = [];
     const action = normalizeUploadConflictAction(conflictAction);
     const normalizedTitle = normalizeText(title, validation.metadata.title || 'Untitled RolePlayScene');
@@ -340,6 +341,7 @@ export class RolePlaySceneDraftService {
             validation,
             uploadedDraftId: replacementId,
           });
+          commitAttempted = true;
           await client.query('COMMIT');
           for (const artifactPath of cleanupArtifactPathsAfterCommit) {
             await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
@@ -422,6 +424,7 @@ export class RolePlaySceneDraftService {
           };
         }
         cleanupArtifactPathsAfterCommit.push(conflict.artifact_path);
+        commitAttempted = true;
         await client.query('COMMIT');
         for (const artifactPath of cleanupArtifactPathsAfterCommit) {
           await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
@@ -488,6 +491,8 @@ export class RolePlaySceneDraftService {
         uploadedDraftId,
       });
 
+      commitAttempted = true;
+
       await client.query('COMMIT');
       artifact = null;
       return {
@@ -500,7 +505,8 @@ export class RolePlaySceneDraftService {
       };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
-      await deleteArtifactIfPresent(artifact);
+      // COMMIT acknowledgment loss does not prove rollback. Preserve the file.
+      if (!commitAttempted) await deleteArtifactIfPresent(artifact);
       throw error;
     } finally {
       client.release();
@@ -520,6 +526,7 @@ export class RolePlaySceneDraftService {
   async publishRolePlaySceneFromDraft({ identity, uploadedDraftId, title = '', description }) {
     const client = await this.db.connect();
     let artifact = null;
+    let commitAttempted = false;
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
@@ -679,12 +686,15 @@ export class RolePlaySceneDraftService {
         [draft.roleplayscene_uploaded_draft_id, draft.artifact_sha256, identity.sub]
       );
 
+      commitAttempted = true;
+
       await client.query('COMMIT');
       artifact = null;
       return { ok: true, statusCode: 201, data: publishedRes.rows[0] };
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
-      await deleteArtifactIfPresent(artifact);
+      // A rejected COMMIT can have succeeded on the server. Never unlink its artifact.
+      if (!commitAttempted) await deleteArtifactIfPresent(artifact);
       throw error;
     } finally {
       client.release();

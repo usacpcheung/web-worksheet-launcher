@@ -170,7 +170,7 @@ try {
       const uploadResponse = page.waitForResponse(response => response.request().method() === 'POST' && response.url().includes('/roleplayscene/drafts/upload'));
       await page.locator('#server-save-btn').click();
       await uploadResponse;
-      await page.waitForFunction(() => !document.querySelector('#server-save-btn').disabled);
+      await page.waitForFunction(() => document.querySelector('#server-save-btn').getAttribute('aria-busy') === 'false');
       assert(uploaded, 'server save posted the new package');
       const uploadEntries = unzipSync(new Uint8Array(uploaded));
       assert.equal(JSON.parse(new TextDecoder().decode(uploadEntries['content/project.json'])).scenes[0].name, fullName);

@@ -84,7 +84,7 @@ test('real slot recovery settles cancellation/failure and retries only after suc
 function harness() {
   const calls = [], preflight = deferred(), archive = deferred();
   let project = createProject({ meta: { title: 'A' } });
-  const context = vm.createContext({ serverModalRevision: 0,
+  const context = vm.createContext({ AbortController, uploadController: null, serverModalRevision: 0,
     console, serializeProject, isUploadingDraft: false, openingUploadedDraft: null,
     store: { get: () => ({ project }) },
     ensureServerSessionReady: () => preflight.promise,

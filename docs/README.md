@@ -1,6 +1,6 @@
 # Documentation index
 
-Current references were reviewed against `main` commit `7bb19de276a6553ea4266e6158dae48f25a4cc6b` on 2026-10-06. They describe checked-in implementation, not proof of a live VPS deployment or a new product roadmap. The authentication callback contract and contributor rules were subsequently reconciled with [PR #303](https://github.com/usacpcheung/web-worksheet-launcher/pull/303), merged at `dac9f687` on 2026-10-13. Start new development from the latest `main` and recheck affected code when behavior changes.
+Current references were reviewed against `main` commit `7bb19de276a6553ea4266e6158dae48f25a4cc6b` on 2026-10-06. They describe checked-in implementation, not proof of a live VPS deployment or a new product roadmap. The authentication callback contract and contributor rules were subsequently reconciled with [PR #303](https://github.com/usacpcheung/web-worksheet-launcher/pull/303), merged at `dac9f687` on 2026-10-13. Transaction/network recovery, reload journals and attempt validation are documented in the linked runtime, local-model and package references alongside their implementation changes. Start new development from the latest `main` and recheck affected code when behavior changes.
 
 ## Where to find the authoritative reference
 

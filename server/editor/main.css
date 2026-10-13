@@ -2002,3 +2002,4 @@ textarea.control {
   box-shadow: none;
   cursor: default;
 }
+[data-upload-cancel][hidden] { display: none !important; }

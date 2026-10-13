@@ -6,6 +6,8 @@ Reviewed against main `7bb19de` on 2026-10-06. Code authorities: `server/editor/
 
 Worksheet IndexedDB is `worksheetLauncherStorage`, version 2, with `localDrafts`, `importedWorksheets`, `localAttempts` and `localAssets`. Records use `localId`; required metadata includes `localId`, `origin`, `updatedAt`. Binary assets are kept in `localAssets`. Small restore/resume/preference flags use localStorage/sessionStorage helpers, rather than replacing IndexedDB payloads.
 
+Editor/viewer autosave remains debounced. When a page hides or unloads with pending edits, `server/app/storage/recovery-journal.js` synchronously journals the current record in per-tab sessionStorage under `worksheetLauncher:pending:` and starts an immediate IndexedDB save. On reload, the storage adapter restores a newer pending record before returning it; it clears the journal only after persistence succeeds. Equal timestamps with different content preserve the pending record. Asset binaries stay in IndexedDB. If sessionStorage is unavailable or full, the unload handler requests the browser's unsaved-work confirmation. This protects ordinary reload/navigation, not an OS/browser process termination without lifecycle events or recovery after closing the tab.
+
 Editor draft and viewer attempt IDs are client-generated prefix plus `crypto.randomUUID()` when available, with random/time fallback. They are not the old specification's `ld_<ulid>`/`la_<ulid>` contract. API draft, publication and uploaded-attempt UUIDs are separate identities and do not overwrite local record IDs.
 
 RolePlayScene uses its own `roleplayscene` IndexedDB, version 1, `project` store, key `snapshot`, for one active local story. Autosave waits for transaction completion and reports failures. Discussion state/recovery uses sessionStorage; it is not part of saved story packages.
@@ -34,3 +36,5 @@ Uploaded/local attempt ZIP restore uses its embedded worksheet and creates new i
 ## Text and response compatibility
 
 Supported question input types are `text`, `number`, `boolean`, `multiple_choice`. Deprecated aliases are rejected, not guessed. Markdown uses explicit text-format markers and a shared safe renderer; loading old packages does not migrate them merely for viewing. Local editable conversion and legacy audio migration are explicit compatibility paths, not abandoned code. See the [message/response contract](../message-contract.md) and [limited Markdown](../worksheet/worksheet-limited-markdown.md).
+
+Numeric answer keys use the shared number validator. A decimal-only question may retain a whole-valued decimal answer such as `1.0` (stored as numeric `1`); learner input formatting still follows the configured rules. Delayed question-image attachment checks the original draft generation, question and media references before applying. If the target changed, the newly stored unused asset is removed.

@@ -114,6 +114,7 @@ const ImportConfirmationKind = Object.freeze({
 });
 let isLoadingUploadedDrafts = false;
 let isUploadingDraft = false;
+let uploadController = null;
 const publishingDraftIds = new Set();
 let isPublishingDraftFlow = false;
 let openingUploadedDraft = null;
@@ -486,7 +487,7 @@ function updateToolbarText() {
   }
   if (serverSaveButton) {
     serverSaveButton.textContent = isUploadingDraft
-      ? translate('server.saving')
+      ? translate('server.cancelUpload')
       : translate('server.save');
   }
   if (serverManageButton) {
@@ -843,8 +844,9 @@ function updateServerSessionUi() {
     serverSignInButton.hidden = serverSession.status === 'ready';
   }
   if (serverSaveButton) {
-    serverSaveButton.disabled = isUploadingDraft || Boolean(openingUploadedDraft);
-    serverSaveButton.textContent = isUploadingDraft ? translate('server.saving') : translate('server.save');
+    serverSaveButton.disabled = Boolean(openingUploadedDraft);
+    serverSaveButton.setAttribute('aria-busy', String(isUploadingDraft));
+    serverSaveButton.textContent = isUploadingDraft ? translate('server.cancelUpload') : translate('server.save');
   }
   if (serverManageButton) {
     serverManageButton.disabled = isLoadingUploadedDrafts || Boolean(openingUploadedDraft);
@@ -2009,7 +2011,7 @@ function syncUploadedDraftActionAvailability() {
       : translate('published.editCopy');
     button.setAttribute('aria-busy', String(Boolean(active)));
   });
-  if (serverSaveButton) serverSaveButton.disabled = isUploadingDraft || draftOpenInProgress;
+  if (serverSaveButton) serverSaveButton.disabled = draftOpenInProgress;
   if (serverManageButton) serverManageButton.disabled = isLoadingUploadedDrafts || draftOpenInProgress;
   const refreshButton = serverModalActions?.querySelector('.uploaded-drafts-refresh-action');
   if (refreshButton) refreshButton.disabled = draftOpenInProgress;
@@ -2534,6 +2536,7 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
 
 async function uploadCurrentProjectToServer({ conflictAction = '', preflight = true } = {}) {
   if (isUploadingDraft || openingUploadedDraft) return { ok: false, skipped: true };
+  uploadController = new AbortController();
   isUploadingDraft = true;
   updateServerSessionUi();
   try {
@@ -2551,7 +2554,7 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
         title,
         description,
         conflictAction,
-      });
+      }, { signal: uploadController.signal });
       if (!result.ok) {
         const code = String(result.error?.code || '').toUpperCase();
         if (code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT') {
@@ -2595,6 +2598,7 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
     showMessage({ textId: 'server.uploadFailed' });
     return { ok: false, error: { message: err?.message || String(err) } };
   } finally {
+    uploadController = null;
     isUploadingDraft = false;
     updateServerSessionUi();
   }
@@ -2966,6 +2970,7 @@ btnNewStory?.addEventListener('click', async () => {
 });
 serverSignInButton?.addEventListener('click', () => startServerSignIn());
 serverSaveButton?.addEventListener('click', () => {
+  if (isUploadingDraft) { uploadController?.abort(); return; }
   uploadCurrentProjectToServer().catch((err) => {
     console.error(err);
     showMessage({ textId: 'server.uploadFailed' });
