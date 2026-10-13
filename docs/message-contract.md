@@ -1,6 +1,6 @@
 # Active message, response and viewer launch contracts
 
-Reviewed against main `7bb19de` on 2026-10-06. Runtime sources: `server/app/auth/auth-popup-flow.js`, `session-readiness.js`, `server/app/login/popup.html`, and the editor/viewer/RolePlayScene callers. Local response validators and viewer bootstrap are also checked below.
+Reviewed against main `7bb19de` on 2026-10-06; authentication source-window behavior rechecked after [PR #303](https://github.com/usacpcheung/web-worksheet-launcher/pull/303) on main `dac9f687` on 2026-10-13. Runtime sources: `server/app/auth/auth-popup-flow.js`, `session-readiness.js`, `server/app/login/popup.html`, and the editor/viewer/RolePlayScene callers. Local response validators and viewer bootstrap are also checked below.
 
 The parent SDK, widget renderer, `w`/`rid`/`returnOrigin` query and `worksheetResult` protocol are retired. Their original combined contract is preserved in [past/phase1/message-contract.md](past/phase1/message-contract.md). See the [active retirement boundary](contracts/widget-retirement.md). The shared login popup is a different, supported feature.
 
@@ -19,9 +19,9 @@ The same-origin browser page `/worksheet_launcher/app/login/popup.html` establis
 `source` may be `editor`, `viewer`, or `generic`.
 RolePlayScene also supplies `source: "roleplayscene"`; the popup echoes its supplied source without enumerated validation. `source` is context metadata, not an authentication decision.
 
-Each product generates a per-flow `authFlowId` and passes it to the shared opener helper. That helper ignores messages with a different origin, non-record data, a different type, or a mismatched flow token. A valid callback triggers a fresh session probe; the message itself does not establish readiness. The popup posts only after its own bounded readiness check, using `window.opener.postMessage(payload, window.location.origin)`.
+Each product generates a per-flow `authFlowId` and passes it to the shared opener helper. That helper ignores messages with a different origin, a source window other than the opened popup, non-record data, a different type, or a mismatched flow token. A valid callback triggers a fresh session probe; the message itself does not establish readiness. The popup posts only after its own bounded readiness check, using `window.opener.postMessage(payload, window.location.origin)`.
 
-The current shared helper does not compare `event.source` to the opened window or validate the message's `source` field. Do not claim it implements the old parent SDK's window-reference check. This reference reports existing behavior; it does not relax repository guidance for future changes or add a runtime fix.
+The shared helper requires `event.source === authPopupWindow`, using the window returned by the sign-in popup call. This check also applies when no flow token was supplied. A queued message from that popup remains valid after it closes; the helper does not require `authPopupWindow.closed` to be false. The payload's `source` field remains context metadata and is not validated as an authentication claim.
 
 Callback completion is primary. Background fallback readiness polling is bounded; the helper reports status and pending/terminal results to its callers. A flow owns cancellable probes and completion cleanup. Shared defaults are a 1-second polling interval, a 15-second polling budget and a 60-second hard flow deadline; callers may supply their own continuation/deadline controls. Invalid callbacks do not themselves cancel the fallback. API work still requires its own session/auth checks.
 

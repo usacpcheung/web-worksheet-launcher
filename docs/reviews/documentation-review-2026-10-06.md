@@ -117,3 +117,10 @@ Rechecked the published PR head `a0656cff70804850bf35817e09cd8f13b4b100fd` again
 Confirmed the existing classification remains appropriate: legacy widget assets/helpers are absent, early target SQL/revision/cache proposals are not current implementation contracts, current package readers preserve supported compatibility, and the responsive proposal is only partly realized. No additional active document was archived and no archived proposal was promoted to a requirement. Current documentation remains centralized through [docs/README.md](../README.md).
 
 Second-pass validation passed: all 58 Markdown files and 504 local links/anchors; coverage for all 47 originals; archive-body preservation; unchanged UI skills/font README/license texts; `git diff --check`; and `node --test server/app/login/popup.unit.test.mjs`. The complete PR diff against main contains Markdown paths only. Runtime, configuration, migrations, dependencies, assets and test files remain unchanged. Full application/browser/provider/deployment verification was not run for this documentation-only pass.
+
+
+## Authentication fix reconciliation — 2026-10-13
+
+The absent `event.source` check recorded in the two dated reviews above was subsequently fixed by separate [PR #303](https://github.com/usacpcheung/web-worksheet-launcher/pull/303), merged to main at `dac9f687fc2f37cd790f6475581a1d0bf989ac0c`. Those observations describe the October 6 baseline, not current behavior. The maintained [message contract](../message-contract.md), [documentation index](../README.md) and [contributor rules](../../AGENTS.md) now require callbacks from the opened popup. Tokenless flows use the same source check; queued callbacks remain valid after popup closure. Payload `source` remains context metadata.
+
+PR #302 incorporates that main commit so its diff against main remains documentation-only. The separate runtime fix passed 992 Node tests, an independent read-only patch review, and a real-browser WindowProxy test for an unrelated sender and a legitimate post-then-close callback. Deployed OIDC was not tested. The original historical contract under `past/` remains unchanged.

@@ -179,6 +179,7 @@ function startAuthPopupFlow(options = {}) {
   const messageListener = async (event) => {
     if (completed || cancelled) return;
     if (!event || event.origin !== expectedOrigin) return;
+    if (event.source !== authPopupWindow) return;
 
     const messageData = normalizeMessageData(event.data);
     if (!messageData) return;
