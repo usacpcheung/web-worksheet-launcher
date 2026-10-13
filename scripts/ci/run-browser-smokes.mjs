@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { closeSync, openSync, writeSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -134,6 +134,10 @@ async function main() {
       active = null;
       results.push({ script, ...result, seconds: (Date.now() - started) / 1000 });
       console.log(`${result.code === 0 && !result.timedOut ? 'PASS' : 'FAIL'} ${script}${result.timedOut ? ' (timeout)' : ''}`);
+      if (result.code !== 0 || result.timedOut) {
+        const log = await readFile(path.join(output, `${name}.log`), 'utf8');
+        console.error(log.trimEnd().split('\n').slice(-40).map(line => line.slice(0, 1000)).join('\n'));
+      }
       await saveSummary();
     }
   } finally {

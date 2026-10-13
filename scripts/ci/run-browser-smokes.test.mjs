@@ -87,4 +87,5 @@ test('CLI continues after failures, records timeouts and returns nonzero with di
   assert.equal(summary.results[2].timedOut, true);
   assert.match(await readFile(path.join(output, 'a-smoke.log'), 'utf8'), /fixture assertion failed/);
   assert.match(await readFile(path.join(output, 'b-smoke.log'), 'utf8'), /ran after failed fixture/);
+  assert.match(await readFile(path.join(dir, 'runner.log'), 'utf8'), /fixture assertion failed/);
 });
