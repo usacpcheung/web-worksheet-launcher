@@ -44,6 +44,9 @@ try {
         await page.locator('#file-input').setInputFiles({ name: 'fixture.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fixture(title))) });
         await page.locator('#import-confirm-accept').click();
         await page.locator('#import-confirm-overlay').waitFor({ state: 'hidden' });
+        // The dialog closes before IndexedDB persistence and the final editor
+        // mount finish. Capture native input identity only after import settles.
+        await page.waitForFunction(() => document.querySelector('#file-input').value === '');
       };
       const snapshot = () => page.evaluate(() => new Promise((resolve, reject) => {
         const request = indexedDB.open('roleplayscene');

@@ -55,7 +55,7 @@ The external session endpoint is `/api/worksheet-launcher/v1/session`, never `/a
 - [Worksheet and attempt ZIP formats](docs/contracts/package-formats.md)
 - [Worksheet voice generation](docs/worksheet/editor-voice-choice.md)
 - [RolePlayScene voice generation](docs/roleplayscene/roleplayscene-voice-choices.md)
-- [Testing guide](docs/operations/testing.md): `npm test` and browser smoke scripts are separate.
+- [Testing guide](docs/operations/testing.md): automated PR checks and local Node, browser and PostgreSQL regression commands.
 - [Published artifact maintenance](docs/operations/published-artifact-maintenance.md): audit, quarantine, restore and delayed purge.
 - [Test-data cleanup](docs/operations/testing-data-cleanup.md): a different, destructive test-identity cleanup tool.
 

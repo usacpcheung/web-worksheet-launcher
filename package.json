@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "node --test \"server/**/*.test.mjs\"",
+    "test:ci-runner": "node --test scripts/ci/*.test.mjs",
+    "test:browser": "node scripts/ci/run-browser-smokes.mjs",
+    "test:postgres": "node scripts/review-fixes-postgres.mjs",
     "migrate": "node server/api/db/migrate.js",
     "artifacts:maintain": "node server/api/maintenance/artifacts.js",
     "start:api": "node server/api/server.js",
