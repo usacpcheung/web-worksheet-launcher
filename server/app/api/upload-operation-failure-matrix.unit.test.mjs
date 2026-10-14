@@ -28,9 +28,12 @@ const cases = [
   { name: 'stalled response body', event: 'body-stall', recover: true },
   { name: 'interrupted response body', event: 'body-reset', recover: true },
   { name: 'malformed success JSON', status: 200, text: '{', recover: true },
+  { name: 'unexpected plain-text success', status: 200, text: 'truncated reply', type: 'text/plain', recover: true },
   { name: 'gateway HTML error', status: 502, text: '<html>Bad gateway</html>', type: 'text/html', recover: true },
   { name: 'server JSON error', status: 500, text: '{"ok":false,"error":{"code":"INTERNAL_ERROR"}}', recover: true },
   { name: 'sign-in required', status: 401, text: '{"ok":false}' },
+  { name: 'malformed authentication error', status: 401, text: '{' },
+  { name: 'malformed forbidden error', status: 403, text: '{' },
   { name: 'forbidden HTML', status: 403, text: '<html>Forbidden</html>', type: 'text/html' },
   { name: 'conflict', status: 409, text: '{"ok":false,"error":{"code":"UPLOAD_OPERATION_MISMATCH"}}' },
   { name: 'oversize malformed error', status: 413, text: '{' },
@@ -100,8 +103,41 @@ for (const [method, kind] of methods) for (const transport of ['fetch', 'XHR']) 
     assert.equal(result.ok, !!(fixture.success || fixture.recover));
     assert.equal(result.recovered === true, !!fixture.recover);
     assert.equal(result.operationId, normalizedId);
+    if (fixture.status === 401 || fixture.status === 403) {
+      assert.equal(result.error.requiresSignIn, true);
+      assert.equal(result.error.code, 'AUTH_REQUIRED');
+    }
     assert.equal(posts, 1);
     assert.equal(reads, fixture.recover ? 1 : 0);
+  });
+}
+
+for (const status of [401, 403, 409, 413, 429, 200, 503]) for (const event of ['error', 'timeout', 'deadline']) {
+  test(`XHR retains HTTP ${status} after headers then ${event}`, async t => {
+    setup(t);
+    let reads = 0;
+    globalThis.XMLHttpRequest = class {
+      open() {}
+      setRequestHeader() {}
+      abort() { this.status = 0; this.onabort?.(); }
+      send() {
+        this.readyState = 2; this.status = status; this.onreadystatechange();
+        if (event === 'deadline') return;
+        this.readyState = 4; this.status = 0; this.onreadystatechange();
+        if (event === 'error') this.onerror();
+        else this.ontimeout();
+      }
+    };
+    t.after(() => { globalThis.XMLHttpRequest = undefined; });
+    t.mock.method(globalThis, 'fetch', async () => { reads++; return json(completed('worksheet-draft')); });
+    const result = await createServerApiClient({ uploadTimeoutMs: 15 }).uploadDraftPackage(bytes, {}, { operationId: id });
+    const rejected = status >= 400 && status < 500;
+    assert.equal(result.ok, !rejected);
+    assert.equal(reads, rejected ? 0 : 1);
+    if (rejected) {
+      assert.equal(result.error.status, status);
+      assert.equal(result.error.requiresSignIn, status === 401 || status === 403);
+    } else assert.equal(result.recovered, true);
   });
 }
 

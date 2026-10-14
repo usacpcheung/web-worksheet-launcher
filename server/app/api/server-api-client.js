@@ -75,7 +75,7 @@ function isUncertainRequestFailure(result) {
   const status = result.error?.status;
   // An explicit rejection/auth failure must not be replaced by an old receipt.
   return !result.ok && !result.error?.requiresSignIn && !(status >= 400 && status < 500)
-    && (['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'REQUEST_TIMEOUT', 'INVALID_JSON_RESPONSE'].includes(result.error?.code)
+    && (['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'REQUEST_TIMEOUT', 'INVALID_JSON_RESPONSE', 'UNEXPECTED_NON_JSON_RESPONSE'].includes(result.error?.code)
       || status >= 500);
 }
 
@@ -119,9 +119,10 @@ async function parseJsonResponse(response) {
   } catch (error) {
     if (error?.name !== 'SyntaxError') throw error;
     return toStructuredError({
-      code: 'INVALID_JSON_RESPONSE',
-      message: 'Server returned malformed JSON.',
+      code: authLikeStatus(response.status) ? 'AUTH_REQUIRED' : 'INVALID_JSON_RESPONSE',
+      message: authLikeStatus(response.status) ? createAuthMessage() : 'Server returned malformed JSON.',
       status: response.status,
+      requiresSignIn: authLikeStatus(response.status),
     });
   }
 
@@ -163,9 +164,10 @@ async function parseJsonResponseFromText({ status, contentType = '', text = '' }
     parsed = JSON.parse(String(text || ''));
   } catch {
     return toStructuredError({
-      code: 'INVALID_JSON_RESPONSE',
-      message: 'Server returned malformed JSON.',
+      code: authLikeStatus(status) ? 'AUTH_REQUIRED' : 'INVALID_JSON_RESPONSE',
+      message: authLikeStatus(status) ? createAuthMessage() : 'Server returned malformed JSON.',
       status,
+      requiresSignIn: authLikeStatus(status),
     });
   }
 
@@ -518,11 +520,12 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
         resolve(result);
       };
       const canceled = () => toStructuredError({ code: 'ABORTED', message: 'Upload was canceled. Refresh uploaded items before retrying; the server may already have received it.' });
+      const timedOut = () => toStructuredError({ code: 'UPLOAD_TIMEOUT', status: responseStatus, requiresSignIn: authLikeStatus(responseStatus), message: 'Upload timed out. Refresh uploaded items before retrying; the server may already have received it.' });
       const cancel = () => { finish(canceled()); abortTransport(); };
       if (signal?.aborted) { finish(canceled()); return; }
       signal?.addEventListener('abort', cancel, { once: true });
       timer = setTimeout(() => {
-        finish(toStructuredError({ code: 'UPLOAD_TIMEOUT', status: responseStatus, requiresSignIn: authLikeStatus(responseStatus), message: 'Upload timed out. Refresh uploaded items before retrying; the server may already have received it.' }));
+        finish(timedOut());
         abortTransport();
       }, timeoutMs);
 
@@ -554,21 +557,26 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
         xhr.timeout = timeoutMs;
         xhr.setRequestHeader('content-type', 'application/zip');
         if (operationId) xhr.setRequestHeader('idempotency-key', operationId);
+        xhr.onreadystatechange = () => {
+          // XHR resets status to 0 on timeout/network error. Retain headers
+          // already received so an explicit 4xx cannot become recoverable.
+          if (!settled && xhr.readyState >= 2 && xhr.status > 0) responseStatus = Number(xhr.status);
+        };
         if (typeof onProgress === 'function' && xhr.upload) {
           xhr.upload.onprogress = event => {
             if (!settled) onProgress({ loaded: Number(event?.loaded || 0), total: Number(event?.total || 0), lengthComputable: Boolean(event?.lengthComputable) });
           };
         }
-        xhr.onerror = () => finish(toStructuredError({ code: 'NETWORK_ERROR', message: 'Unable to reach server API. Network request failed.' }));
+        xhr.onerror = () => finish(toStructuredError({ code: 'NETWORK_ERROR', status: responseStatus, requiresSignIn: authLikeStatus(responseStatus), message: 'Unable to reach server API. Network request failed.' }));
         xhr.onabort = () => finish(canceled());
-        xhr.ontimeout = () => finish(toStructuredError({ code: 'UPLOAD_TIMEOUT', message: 'Upload timed out. Refresh uploaded items before retrying; the server may already have received it.' }));
+        xhr.ontimeout = () => finish(timedOut());
         xhr.onload = async () => {
           try {
             finish(await parseJsonResponseFromText({ status: Number(xhr.status || 0), contentType: xhr.getResponseHeader('content-type') || '', text: xhr.responseText || '' }));
-          } catch (error) { finish(toTransportError(error, { duringRead: true })); }
+          } catch (error) { finish(toTransportError(error, { duringRead: true, status: responseStatus })); }
         };
         xhr.send(zipBytes);
-      } catch (error) { finish(toTransportError(error, { signal })); }
+      } catch (error) { finish(toTransportError(error, { signal, status: responseStatus })); }
     });
   }
 

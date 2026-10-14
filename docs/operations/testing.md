@@ -76,6 +76,8 @@ The table inventories the 26 retained-product smoke scripts. `review-fixes-smoke
 
 `upload-operation-smoke.mjs` covers real browser XHR response loss for all three upload APIs, immediate and late-commit status recovery, URL-encoded metadata fingerprints, bounded unknown status without a POST resend, and cancellation during lookup. The runner discovers it automatically alongside the existing 27 scripts.
 
+`upload-http-errors-smoke.mjs` adds a real local HTTP server that flushes response headers before stalling or disconnecting the body. It checks 401/403/409/413/429 rejections, uncertain 200/503 responses and non-JSON replies in Chromium, including the XHR status reset after headers. Together these bring the automatically discovered browser suite to 29 scripts.
+
 Browser fixtures use isolated storage and synthetic/mocked auth, API and audio where documented by each script. Never point synthetic/destructive fixtures at production learner records. Verify both supported locales, desktop/narrow layouts, keyboard focus and browser errors for affected UI.
 
 ## Transaction and concurrency regression fixture
