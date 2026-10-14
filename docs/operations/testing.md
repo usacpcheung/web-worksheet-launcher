@@ -74,6 +74,8 @@ The ordinary static server defaults to `http://127.0.0.1:8765`. Read each script
 
 The table inventories the 26 retained-product smoke scripts. `review-fixes-smoke.mjs` additionally forces unfinished IndexedDB writes across reload and exercises upload cancellation in all three products, post-upload refresh cancellation in editor/RolePlayScene, both locales and desktop/narrow layouts. It also simulates concurrent IndexedDB saves, deletes and clears between recovery reads and writes, including equal timestamps. `npm test` does not run them. Check shared consumers too: worksheet package/audio helpers serve the viewer/API, and viewer voice processing also serves RolePlayScene discussion.
 
+`upload-operation-smoke.mjs` covers real browser XHR response loss for all three upload APIs, successful status recovery, unknown status without a POST resend, and cancellation during lookup. The runner discovers it automatically alongside the existing 27 scripts.
+
 Browser fixtures use isolated storage and synthetic/mocked auth, API and audio where documented by each script. Never point synthetic/destructive fixtures at production learner records. Verify both supported locales, desktop/narrow layouts, keyboard focus and browser errors for affected UI.
 
 ## Transaction and concurrency regression fixture
@@ -85,6 +87,8 @@ npm run test:postgres
 ```
 
 The script creates a unique temporary schema, applies all repository migrations, and uses temporary artifact files. It simulates a real database commit followed by loss of its acknowledgment, replacement/delete lock contention, and six simultaneous uploads against the three-slot limit. It drops its schema and removes its files afterward. Do not point it at production. Node service tests separately inject acknowledgment loss into all five artifact-producing operations and check missing-row replacement cleanup.
+
+Its upload-operation fixtures also run six concurrent identical requests for each upload type, verify one row/file and stable replay, reject changed bytes/metadata/kinds, check owner isolation, replay copies and replacements (including published drafts), preserve receipts after deletion, verify that uncommitted receipts remain unknown, recover a lost commit reply, and roll back resource/file changes when receipt insertion fails.
 
 For a disposable local database matching CI (Docker required):
 

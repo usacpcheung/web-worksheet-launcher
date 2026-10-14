@@ -1,3 +1,4 @@
+import { createUploadOperation, replayUploadOperation, recordUploadOperation, getUploadOperation } from './upload-operation.js';
 import { assertAttemptPackage } from '../../app/contracts/attempt-package-validator.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -265,7 +266,11 @@ export class PackageService {
     return `${baseTitle} (${crypto.randomUUID().slice(0, 8)})`;
   }
 
-  async uploadDraft({ identity, title, subject, zipBytes, conflictAction = 'fail_on_conflict' }) {
+  getUploadOperation(identity, operationId) {
+    return getUploadOperation(this.db, identity, operationId);
+  }
+
+  async uploadDraft({ identity, title, subject, zipBytes, conflictAction = 'fail_on_conflict', operationId = null }) {
     const packageValidation = validateUploadedWorksheetPackage(zipBytes);
     if (!packageValidation.ok) {
       return {
@@ -275,17 +280,23 @@ export class PackageService {
       };
     }
 
-    const client = await this.db.connect();
     let artifact = null;
     let commitAttempted = false;
     const cleanupArtifactPathsAfterCommit = [];
     const action = normalizeUploadConflictAction(conflictAction);
     const normalizedTitle = normalizeText(title, 'Untitled draft');
     const normalizedSubject = normalizeText(subject, '');
+    const operation = createUploadOperation({ operationId, kind: 'worksheet-draft', metadata: [title, subject, conflictAction], zipBytes });
+    const client = await this.db.connect();
 
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
+      const replay = await replayUploadOperation(client, identity, operation);
+      if (replay) {
+        await client.query('ROLLBACK');
+        return replay;
+      }
       const conflict = await this.findUploadConflict({
         client,
         identity,
@@ -331,13 +342,14 @@ export class PackageService {
             artifact,
             uploadedDraftId: replacementId,
           });
+          const result = await recordUploadOperation(client, identity, operation, { ok: true, statusCode: 201, data: { ...row, replaced_uploaded_draft_id: conflict.uploaded_draft_id } });
           commitAttempted = true;
           await client.query('COMMIT');
           for (const artifactPath of cleanupArtifactPathsAfterCommit) {
             await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
           }
           artifact = null;
-          return { ok: true, statusCode: 201, data: { ...row, replaced_uploaded_draft_id: conflict.uploaded_draft_id } };
+          return result;
         }
 
         const updated = await client.query(
@@ -378,13 +390,14 @@ export class PackageService {
           };
         }
         cleanupArtifactPathsAfterCommit.push(conflict.artifact_path);
+        const result = await recordUploadOperation(client, identity, operation, { ok: true, statusCode: 200, data: { ...updated.rows[0], replaced_uploaded_draft_id: conflict.uploaded_draft_id } });
         commitAttempted = true;
         await client.query('COMMIT');
         for (const artifactPath of cleanupArtifactPathsAfterCommit) {
           await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
         }
         artifact = null;
-        return { ok: true, statusCode: 200, data: { ...updated.rows[0], replaced_uploaded_draft_id: conflict.uploaded_draft_id } };
+        return result;
       }
 
       const countRes = await client.query('SELECT COUNT(*)::int AS count FROM uploaded_drafts WHERE owner_sub = $1', [
@@ -442,11 +455,12 @@ export class PackageService {
         ]
       );
 
+      const result = await recordUploadOperation(client, identity, operation, { ok: true, statusCode: 201, data: row.rows[0] });
       commitAttempted = true;
 
       await client.query('COMMIT');
       artifact = null;
-      return { ok: true, statusCode: 201, data: row.rows[0] };
+      return result;
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       // A rejected COMMIT can have succeeded on the server. Never unlink its artifact.
@@ -564,12 +578,13 @@ export class PackageService {
     await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath: deleted.rows[0].artifact_path });
     return { ok: true, statusCode: 200, data: { uploaded_attempt_id: deleted.rows[0].uploaded_attempt_id, deleted: true } };
   }
-  async uploadAttempt({ identity, title, subject, zipBytes, conflictAction = 'fail_on_conflict' }) {
+  async uploadAttempt({ identity, title, subject, zipBytes, conflictAction = 'fail_on_conflict', operationId = null }) {
     const validation = validateUploadedAttemptPackage(zipBytes);
     if (!validation.ok) return { ok: false, statusCode: 400, error: validation.error };
     const action = normalizeUploadConflictAction(conflictAction);
     const normalizedTitle = normalizeText(title, 'Untitled attempt');
     const normalizedSubject = normalizeText(subject, '');
+    const operation = createUploadOperation({ operationId, kind: 'worksheet-attempt', metadata: [title, subject, conflictAction], zipBytes });
     const client = await this.db.connect();
     let artifact = null;
     let commitAttempted = false;
@@ -578,6 +593,11 @@ export class PackageService {
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
+      const replay = await replayUploadOperation(client, identity, operation);
+      if (replay) {
+        await client.query('ROLLBACK');
+        return replay;
+      }
       const conflict = await this.findAttemptConflict({
         client,
         identity,
@@ -632,13 +652,14 @@ export class PackageService {
         artifact = await this.artifactStore.storeArtifact({ ownerSub: identity.sub, bucket: 'attempts', artifactId: uploadedAttemptId, bytes: zipBytes });
         await client.query(`INSERT INTO uploaded_attempts(uploaded_attempt_id,owner_sub,owner_email,owner_name,title,subject,status,submitted_at,checked_at,artifact_path,artifact_sha256,artifact_size_bytes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [uploadedAttemptId, identity.sub, identity.email, identity.name, finalTitle, normalizedSubject, attempt.status, attempt.submittedAt || null, attempt.checking?.checkedAt || null, artifact.artifactPath, artifact.artifactSha256, artifact.artifactSizeBytes]);
       }
+      const result = await recordUploadOperation(client, identity, operation, { ok: true, statusCode: conflict && action === 'replace' ? 200 : 201, data: { uploaded_attempt_id: uploadedAttemptId } });
       commitAttempted = true;
       await client.query('COMMIT');
       for (const artifactPath of cleanupArtifactPathsAfterCommit) {
         await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
       }
       artifact = null;
-      return { ok: true, statusCode: conflict && action === 'replace' ? 200 : 201, data: { uploaded_attempt_id: uploadedAttemptId } };
+      return result;
     } catch (e) { await client.query('ROLLBACK').catch(() => {}); if (!commitAttempted) await deleteArtifactIfPresent(artifact); throw e; } finally { client.release(); }
   }
 

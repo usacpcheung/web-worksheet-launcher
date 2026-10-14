@@ -1,4 +1,5 @@
 import { DEFAULT_PUBLISHED_PACKAGE_LIMIT } from './published-packages-service.js';
+import { hashUploadRequest } from './upload-operation-contract.js';
 
 const DEFAULT_PUBLIC_API_BASE = '/api/worksheet-launcher/v1';
 const BRIDGE_API_BASE = '/api/rewrite-bridge';
@@ -158,7 +159,7 @@ async function parseJsonResponseFromText({ status, contentType = '', text = '' }
   });
 }
 
-function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000 } = {}) {
+function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000, operationLookupTimeoutMs = 5000 } = {}) {
   const publicApiBase = DEFAULT_PUBLIC_API_BASE;
 
   function buildUrl(path, query = null) {
@@ -185,9 +186,9 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     return `${url.pathname}${url.search}`;
   }
 
-  function requestList(path, { signal = null } = {}) {
+  function requestWithDeadline(path, { signal = null, deadlineMs = listTimeoutMs, label = 'List refresh', cache } = {}) {
     const controller = new AbortController();
-    const timeoutMs = Number.isFinite(listTimeoutMs) && listTimeoutMs > 0 ? listTimeoutMs : 15000;
+    const timeoutMs = Number.isFinite(deadlineMs) && deadlineMs > 0 ? deadlineMs : 15000;
     return new Promise(resolve => {
       let settled = false;
       let timer;
@@ -199,21 +200,21 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
         resolve(result);
       };
       const cancel = () => {
-        finish(toStructuredError({ code: 'ABORTED', message: 'List refresh was canceled. Any completed upload remains saved.' }));
+        finish(toStructuredError({ code: 'ABORTED', message: `${label} was canceled. Any completed upload remains saved.` }));
         controller.abort();
       };
       if (signal?.aborted) { cancel(); return; }
       signal?.addEventListener('abort', cancel, { once: true });
       timer = setTimeout(() => {
-        finish(toStructuredError({ code: 'REQUEST_TIMEOUT', message: 'List refresh timed out. Refresh again to see uploaded items.' }));
+        finish(toStructuredError({ code: 'REQUEST_TIMEOUT', message: `${label} timed out. Refresh again to see uploaded items.` }));
         controller.abort();
       }, timeoutMs);
-      requestJson(path, { signal: controller.signal }).then(finish);
+      requestJson(path, { signal: controller.signal, cache }).then(finish);
     });
   }
 
   async function requestJson(path, request = {}) {
-    const { method = 'GET', query = null, body = null, headers = {}, signal = null } = request;
+    const { method = 'GET', query = null, body = null, headers = {}, signal = null, cache } = request;
     let response;
     try {
       response = await fetch(buildUrl(path, query), {
@@ -224,6 +225,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
           ...headers,
         },
         ...(signal ? { signal } : {}),
+        ...(cache ? { cache } : {}),
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
     } catch (error) {
@@ -402,8 +404,57 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     }
   }
 
+  function getUploadOperation(operationId, { signal = null } = {}) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId || '')) {
+      return Promise.resolve(toStructuredError({ code: 'INVALID_UPLOAD_OPERATION_ID', message: 'Upload operation ID must be a UUID.' }));
+    }
+    return requestWithDeadline(`/upload-operations/${operationId.toLowerCase()}`, {
+      signal, deadlineMs: operationLookupTimeoutMs, label: 'Upload status lookup', cache: 'no-store',
+    });
+  }
+
   async function uploadZip(path, zipBytes, request = {}) {
-    const { query = null, onProgress = null, signal = null } = request;
+    const operationId = request.operationId ?? globalThis.crypto?.randomUUID?.();
+    if (operationId != null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId)) {
+      return toStructuredError({ code: 'INVALID_UPLOAD_OPERATION_ID', message: 'Upload operation ID must be a UUID.' });
+    }
+    const id = operationId?.toLowerCase();
+    const expectedKind = {
+      '/drafts/upload': 'worksheet-draft', '/attempts/upload': 'worksheet-attempt',
+      '/roleplayscene/drafts/upload': 'roleplayscene-draft',
+    }[path];
+    const query = request.query || {};
+    // Snapshot before hashing so caller mutations cannot change the sent bytes.
+    const body = ArrayBuffer.isView(zipBytes)
+      ? new Uint8Array(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength).slice()
+      : zipBytes instanceof ArrayBuffer ? zipBytes.slice(0) : zipBytes;
+    let requestHash = null;
+    if (id) {
+      requestHash = await hashUploadRequest(expectedKind, [query.title, query.subject ?? query.description, query.conflictAction], body).catch(() => null);
+    }
+    const result = await uploadZipOnce(path, body, { ...request, operationId: id });
+    if (!id) return result; // Older/non-secure browser contexts keep the legacy transport.
+    const uncertain = !result.ok && (
+      ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'INVALID_JSON_RESPONSE'].includes(result.error?.code)
+      || result.error?.status >= 500
+    );
+    if (uncertain && requestHash && !request.signal?.aborted) {
+      const status = await getUploadOperation(id, { signal: request.signal });
+      if (request.signal?.aborted) {
+        return { ...toStructuredError({ code: 'ABORTED', message: 'Upload status lookup was canceled. The server may already have saved the upload.' }), operationId: id };
+      }
+      const receipt = status.data;
+      if (!request.signal?.aborted && status.ok && receipt?.state === 'completed'
+        && receipt.operationId === id && receipt.kind === expectedKind && receipt.requestSha256 === requestHash && receipt.result?.ok === true) {
+        return { ok: true, data: receipt.result.data, status: receipt.result.statusCode, operationId: id, recovered: true };
+      }
+    }
+    // Never resend automatically: older servers may ignore Idempotency-Key.
+    return { ...result, operationId: id };
+  }
+
+  async function uploadZipOnce(path, zipBytes, request = {}) {
+    const { query = null, onProgress = null, signal = null, operationId = null } = request;
     const targetUrl = buildUrl(path, query);
     const timeoutMs = Number.isFinite(uploadTimeoutMs) && uploadTimeoutMs > 0 ? uploadTimeoutMs : 120000;
     return new Promise((resolve) => {
@@ -434,7 +485,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
           try {
             const response = await fetch(targetUrl, {
               method: 'POST', credentials: 'include',
-              headers: { 'content-type': 'application/zip' }, body: zipBytes, signal: controller.signal,
+              headers: { 'content-type': 'application/zip', ...(operationId ? { 'idempotency-key': operationId } : {}) }, body: zipBytes, signal: controller.signal,
             });
             finish(await parseJsonResponse(response));
           } catch (error) {
@@ -452,6 +503,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
         xhr.responseType = 'text';
         xhr.timeout = timeoutMs;
         xhr.setRequestHeader('content-type', 'application/zip');
+        if (operationId) xhr.setRequestHeader('idempotency-key', operationId);
         if (typeof onProgress === 'function' && xhr.upload) {
           xhr.upload.onprogress = event => {
             if (!settled) onProgress({ loaded: Number(event?.loaded || 0), total: Number(event?.total || 0), lengthComputable: Boolean(event?.lengthComputable) });
@@ -488,10 +540,14 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       return requestJson('/session', { signal: options.signal });
     },
     listUploadedDrafts(options = {}) {
-      return requestList('/drafts', options);
+      return requestWithDeadline('/drafts', options);
+    },
+    getUploadOperation(operationId, options = {}) {
+      return getUploadOperation(operationId, options);
     },
     uploadDraftPackage(zipBytes, metadata = {}, options = {}) {
       return uploadZip('/drafts/upload', zipBytes, {
+        operationId: options.operationId,
         query: {
           title: metadata.title || '',
           subject: metadata.subject || '',
@@ -508,10 +564,11 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       return requestJson(`/drafts/${uploadedDraftId}`, { method: 'DELETE' });
     },
     listRolePlaySceneDrafts(options = {}) {
-      return requestList('/roleplayscene/drafts', options);
+      return requestWithDeadline('/roleplayscene/drafts', options);
     },
     uploadRolePlaySceneDraftPackage(zipBytes, metadata = {}, options = {}) {
       return uploadZip('/roleplayscene/drafts/upload', zipBytes, {
+        operationId: options.operationId,
         query: {
           title: metadata.title || '',
           description: metadata.description || '',
@@ -563,6 +620,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     },
     uploadAttemptPackage(zipBytes, metadata = {}, options = {}) {
       return uploadZip('/attempts/upload', zipBytes, {
+        operationId: options.operationId,
         query: {
           title: metadata.title || '',
           subject: metadata.subject || '',

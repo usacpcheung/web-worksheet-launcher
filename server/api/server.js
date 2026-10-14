@@ -99,6 +99,28 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
 
       const identity = requireAuthenticatedIdentity(req, config.authHeaders, config.trustedProxy);
 
+      let operationId;
+      if (req.method === 'POST' && [
+        '/api/v1/drafts/upload', '/api/v1/attempts/upload', '/api/v1/roleplayscene/drafts/upload',
+      ].includes(url.pathname) && req.headers['idempotency-key'] !== undefined) {
+        const validated = assertUuid(req.headers['idempotency-key'], {
+          code: 'INVALID_UPLOAD_OPERATION_ID', message: 'Idempotency-Key must be a UUID.',
+        });
+        if (!validated.ok) return json(res, 400, fail(validated.error.code, validated.error.message));
+        operationId = validated.value.toLowerCase();
+      }
+
+      if (req.method === 'GET' && segments.length === 4
+        && segments.slice(0, 3).join('/') === 'api/v1/upload-operations') {
+        res.setHeader('cache-control', 'private, no-store');
+        const validated = assertUuid(segments[3], {
+          code: 'INVALID_UPLOAD_OPERATION_ID', message: 'Upload operation ID must be a UUID.',
+        });
+        if (!validated.ok) return json(res, 400, fail(validated.error.code, validated.error.message));
+        const result = await service.getUploadOperation(identity, validated.value.toLowerCase());
+        return json(res, 200, ok(result));
+      }
+
       if (req.method === 'GET' && url.pathname === '/api/v1/session') {
         return json(
           res,
@@ -132,6 +154,7 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
         const subject = url.searchParams.get('subject') || '';
         const result = await service.uploadDraft({
           identity,
+          ...(operationId ? { operationId } : {}),
           title,
           subject,
           zipBytes,
@@ -167,6 +190,7 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
         }
         const result = await rolePlaySceneDraftService.uploadRolePlaySceneDraft({
           identity,
+          ...(operationId ? { operationId } : {}),
           title: url.searchParams.get('title') || '',
           description: url.searchParams.get('description') || '',
           zipBytes,
@@ -355,6 +379,7 @@ export function createRequestHandler({ service, rolePlaySceneDraftService, artif
           throw error;
         }
         const result = await service.uploadAttempt({
+          ...(operationId ? { operationId } : {}),
           identity, zipBytes, title: url.searchParams.get('title') || '', subject: url.searchParams.get('subject') || '', conflictAction: url.searchParams.get('conflictAction') || '',
         });
         if (!result.ok) return json(res, result.statusCode, fail(result.error.code, result.error.message, result.error.details));

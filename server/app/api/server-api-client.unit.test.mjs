@@ -1069,14 +1069,15 @@ test('upload fetch fallback bounds stalled body reads and returns structured int
   t.mock.method(globalThis,'fetch',async()=>new Response(new ReadableStream({start(c){c.error(Error('reset'));}}),{headers:{'content-type':'application/json'}}));
   assert.equal((await createServerApiClient().uploadDraftPackage(new Uint8Array([1]))).error.code,'NETWORK_ERROR');
   t.mock.method(globalThis,'fetch',async()=>new Response(new ReadableStream({start(){}}),{headers:{'content-type':'application/json'}}));
-  assert.equal((await createServerApiClient({uploadTimeoutMs:10}).uploadDraftPackage(new Uint8Array([1]))).error.code,'UPLOAD_TIMEOUT');
+  assert.equal((await createServerApiClient({uploadTimeoutMs:10,operationLookupTimeoutMs:10}).uploadDraftPackage(new Uint8Array([1]))).error.code,'UPLOAD_TIMEOUT');
 });
 test('XHR stalled upload times out, aborts, and ignores late completion; explicit cancellation also settles', async t => {
-  setTestWindow();let xhr;let aborts=0;
-  t.mock.property(globalThis,'XMLHttpRequest',class {constructor(){xhr=this;}open(){}setRequestHeader(){}send(){}abort(){aborts++;this.onabort?.();}getResponseHeader(){return 'application/json';}});
+  setTestWindow();let xhr;let aborts=0;let onSend=()=>{};
+  t.mock.property(globalThis,'XMLHttpRequest',class {constructor(){xhr=this;}open(){}setRequestHeader(){}send(){onSend();}abort(){aborts++;this.onabort?.();}getResponseHeader(){return 'application/json';}});
   const client=createServerApiClient({uploadTimeoutMs:10});assert.equal((await client.uploadDraftPackage(new Uint8Array([1]))).error.code,'UPLOAD_TIMEOUT');assert.equal(aborts,1);
   xhr.status=200;xhr.responseText='{"ok":true,"data":{}}';await xhr.onload();
-  const controller=new AbortController();const pending=client.uploadDraftPackage(new Uint8Array([1]),{},{signal:controller.signal});controller.abort();assert.equal((await pending).error.code,'ABORTED');assert.equal(aborts,2);
+  const sent=new Promise(resolve=>{onSend=resolve;});
+  const controller=new AbortController();const pending=client.uploadDraftPackage(new Uint8Array([1]),{},{signal:controller.signal});await sent;controller.abort();assert.equal((await pending).error.code,'ABORTED');assert.equal(aborts,2);
 });
 
 test('draft list refreshes bound stalled headers and bodies and honor cancellation', async t => {
