@@ -331,9 +331,20 @@ export class PackageService {
              RETURNING uploaded_draft_id, artifact_path`,
             [conflict.uploaded_draft_id, identity.sub]
           );
-          if (deleted.rowCount > 0) {
-            cleanupArtifactPathsAfterCommit.push(deleted.rows[0].artifact_path);
+          if (deleted.rowCount === 0) {
+            await client.query('ROLLBACK');
+            await deleteArtifactIfPresent(artifact);
+            artifact = null;
+            return {
+              ok: false,
+              statusCode: 409,
+              error: {
+                code: 'DRAFT_REPLACE_TARGET_MISSING',
+                message: 'The uploaded draft to replace no longer exists. Please retry.',
+              },
+            };
           }
+          cleanupArtifactPathsAfterCommit.push(deleted.rows[0].artifact_path);
           const row = await this.createUploadedDraftRow({
             client,
             identity,

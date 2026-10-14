@@ -15,6 +15,39 @@ const json = data => new Response(JSON.stringify({ ok: true, data }), { headers:
 const hashes = Object.fromEntries(await Promise.all(['worksheet-draft', 'worksheet-attempt', 'roleplayscene-draft'].map(async kind => [kind, await hashUploadRequest(kind, ['', '', ''], new Uint8Array([1]))])));
 const receipt = kind => ({ operationId: id, kind, requestSha256: hashes[kind], state: 'completed', result: { ok: true, statusCode: 201, data: { saved: 'original', upload_operation_id: id } } });
 
+test('recovery waits for an in-flight transaction and tolerates a transient status failure', async t => {
+  setup(t);
+  let posts = 0;
+  let reads = 0;
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    if (options.method === 'POST') { posts++; throw Error('connection reset before commit'); }
+    reads++;
+    if (reads === 1) return json({ operationId: id, state: 'unknown' });
+    if (reads === 2) return new Response('Gateway unavailable', { status: 503 });
+    return json(receipt('worksheet-draft'));
+  });
+  const result = await createServerApiClient({ operationLookupTimeoutMs: 2000 }).uploadDraftPackage(new Uint8Array([1]), {}, { operationId: id });
+  assert.equal(result.recovered, true);
+  assert.equal(posts, 1);
+  assert.equal(reads, 3);
+});
+
+test('recovery fingerprints the actual URL metadata, including repaired lone UTF-16 surrogates', async t => {
+  setup(t);
+  let requestSha256;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (options.method === 'POST') {
+      const query = new URL(url, window.location.origin).searchParams;
+      requestSha256 = createUploadOperation({ operationId: id, kind: 'worksheet-draft',
+        metadata: [query.get('title'), query.get('subject'), query.get('conflictAction')], zipBytes: options.body }).requestHash;
+      throw Error('lost response');
+    }
+    return json({ ...receipt('worksheet-draft'), requestSha256 });
+  });
+  const result = await createServerApiClient().uploadDraftPackage(new Uint8Array([1]), { title: 'Pasted \ud800 text & + 工作紙' }, { operationId: id });
+  assert.equal(result.recovered, true);
+});
+
 test('browser and server fingerprints agree on exact Unicode metadata, bytes and conflict action', async () => {
   for (const kind of Object.keys(hashes)) {
     const metadata = [' 工作紙 & + ', 'Subject\n描述', ' COPY '];

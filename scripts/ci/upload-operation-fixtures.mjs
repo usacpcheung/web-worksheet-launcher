@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { PackageService } from '../../server/api/services/package-service.js';
 import { RolePlaySceneDraftService } from '../../server/api/services/roleplayscene-draft-service.js';
 import { createStoredZip, parseStoredZip } from '../../server/editor/zip-utils.js';
+import { verifyLateCommitOverHttp } from './upload-operation-http-fixtures.mjs';
 
 const zipped = entries => Buffer.from(createStoredZip(entries.map(([path, data]) => ({ path, data: JSON.stringify(data) }))));
 const worksheetZip = zipped([
@@ -133,7 +134,74 @@ export async function verifyUploadOperations({ db, store, config, attemptZip, st
     assert.deepEqual(await fs.readdir(path.join(storageRoot, spec.bucket, failed.identity.sub)), []);
     assert.equal((await upload(failed)).ok, true, 'rolled-back operation can be retried');
 
+    // Failed replacements must restore both the old row and its original ZIP.
+    const beforeFailure = (await db.query(`SELECT * FROM ${spec.table} WHERE owner_sub=$1`, [failed.identity.sub])).rows[0];
+    const beforeBytes = await store.readArtifact(beforeFailure.artifact_path);
+    const failedReplace = { ...failed, operationId: randomUUID(), conflictAction: 'replace', zipBytes: changedZip };
+    await assert.rejects(new spec.Service({ db: failingDb, artifactStore: store, config })[spec.method](failedReplace), /receipt storage unavailable/);
+    assert.deepEqual((await db.query(`SELECT * FROM ${spec.table} WHERE owner_sub=$1`, [failed.identity.sub])).rows[0], beforeFailure);
+    assert.deepEqual(await store.readArtifact(beforeFailure.artifact_path), beforeBytes);
+    assert.equal((await fs.readdir(path.join(storageRoot, spec.bucket, failed.identity.sub))).length, 1);
+    assert.equal((await worksheet.getUploadOperation(failed.identity, failedReplace.operationId)).state, 'unknown');
+
+    // Different requests racing for one key must produce exactly one winner.
+    const racing = { ...input, identity: { sub: `mismatch-race-${spec.kind}` }, operationId: randomUUID() };
+    const winners = await Promise.all([upload(racing), upload({ ...racing, title: 'Changed request' })]);
+    assert.equal(winners.filter(result => result.ok).length, 1);
+    assert.equal(winners.find(result => !result.ok).error.code, 'UPLOAD_OPERATION_MISMATCH');
+    assert.equal((await db.query(`SELECT 1 FROM ${spec.table} WHERE owner_sub=$1`, [racing.identity.sub])).rowCount, 1);
+    assert.equal((await fs.readdir(path.join(storageRoot, spec.bucket, racing.identity.sub))).length, 1);
+
+    // Replay succeeds even with full slots; rejected and invalid operations leave no receipt.
+    const full = { ...input, identity: { sub: `full-${spec.kind}` }, operationId: randomUUID() };
+    const original = await upload(full);
+    assert.equal(original.ok, true);
+    for (let i = 0; i < 2; i++) assert.equal((await upload({ ...full, operationId: randomUUID() })).ok, true);
+    assert.deepEqual(canonical(await upload(full)), canonical(original));
+    const overflow = { ...full, operationId: randomUUID() };
+    assert.equal((await upload(overflow)).statusCode, 409);
+    assert.equal((await worksheet.getUploadOperation(full.identity, overflow.operationId)).state, 'unknown');
+    const invalid = { ...full, operationId: randomUUID(), zipBytes: Buffer.from('invalid ZIP') };
+    assert.equal((await upload(invalid)).statusCode, 400);
+    assert.equal((await worksheet.getUploadOperation(full.identity, invalid.operationId)).state, 'unknown');
+    assert.equal((await db.query('SELECT 1 FROM upload_operations WHERE owner_sub=$1', [full.identity.sub])).rowCount, 3);
+    await verifyLateCommitOverHttp({ db, store, config, spec });
+
     if (spec.kind !== 'worksheet-attempt') {
+      // Delete can win while a draft replacement is writing its new ZIP. The
+      // replacement must not recreate a draft after the delete already succeeded.
+      const deletedInput = { ...input, identity: { sub: `delete-race-${spec.kind}` }, operationId: randomUUID() };
+      const toDelete = await upload(deletedInput);
+      assert.equal(toDelete.ok, true);
+      let enteredWrite;
+      let finishWrite;
+      const written = new Promise(resolve => { enteredWrite = resolve; });
+      const resume = new Promise(resolve => { finishWrite = resolve; });
+      const pausedStore = Object.create(store);
+      pausedStore.storeArtifact = async args => {
+        const artifact = await store.storeArtifact(args);
+        enteredWrite();
+        await resume;
+        return artifact;
+      };
+      const replacingInput = { ...deletedInput, operationId: randomUUID(), conflictAction: 'replace' };
+      const replacing = new spec.Service({ db, artifactStore: pausedStore, config })[spec.method](replacingInput);
+      let replacedAfterDelete;
+      try {
+        await Promise.race([written, replacing.then(result => { throw Error(`Replacement exited before write pause: ${JSON.stringify(result)}`); })]);
+        const deletion = spec.kind === 'worksheet-draft'
+          ? await worksheet.deleteOwnDraft({ identity: deletedInput.identity, uploadedDraftId: toDelete.data[spec.id] })
+          : await scene.deleteOwnRolePlaySceneDraft({ identity: deletedInput.identity, uploadedDraftId: toDelete.data[spec.id] });
+        assert.equal(deletion.ok, true);
+      } finally {
+        finishWrite();
+        replacedAfterDelete = await replacing;
+      }
+      assert.equal(replacedAfterDelete.statusCode, 409, 'a deleted replacement target cannot be recreated');
+      assert.equal((await db.query(`SELECT 1 FROM ${spec.table} WHERE owner_sub=$1`, [deletedInput.identity.sub])).rowCount, 0);
+      assert.deepEqual(await fs.readdir(path.join(storageRoot, spec.bucket, deletedInput.identity.sub)), []);
+      assert.equal((await worksheet.getUploadOperation(deletedInput.identity, replacingInput.operationId)).state, 'unknown');
+
       const publishedInput = { ...input, identity: { sub: `published-${spec.kind}` }, operationId: randomUUID() };
       const draft = await upload(publishedInput);
       assert.equal(draft.ok, true);

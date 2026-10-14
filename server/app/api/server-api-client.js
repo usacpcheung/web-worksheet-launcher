@@ -57,15 +57,39 @@ function toStructuredError({ code, message, status = null, requiresSignIn = fals
   };
 }
 
-function toTransportError(error, { signal = null, duringRead = false } = {}) {
+function toTransportError(error, { signal = null, duringRead = false, status = null } = {}) {
   const aborted = signal?.aborted || error?.name === 'AbortError';
   return toStructuredError({
     code: aborted ? 'ABORTED' : 'NETWORK_ERROR',
+    status,
+    requiresSignIn: !aborted && authLikeStatus(status),
     message: aborted
       ? 'Server API request was cancelled.'
       : duringRead
         ? `Connection was interrupted while reading server data. ${error?.message || String(error)}`
         : `Unable to reach server API. ${error?.message || String(error)}`,
+  });
+}
+
+function isUncertainRequestFailure(result) {
+  const status = result.error?.status;
+  // An explicit rejection/auth failure must not be replaced by an old receipt.
+  return !result.ok && !result.error?.requiresSignIn && !(status >= 400 && status < 500)
+    && (['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'REQUEST_TIMEOUT', 'INVALID_JSON_RESPONSE'].includes(result.error?.code)
+      || status >= 500);
+}
+
+function waitForRecoveryPoll(delayMs, signal) {
+  return new Promise(resolve => {
+    let timer;
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    if (signal?.aborted) { finish(); return; }
+    signal?.addEventListener('abort', finish, { once: true });
+    timer = setTimeout(finish, delayMs);
   });
 }
 
@@ -161,6 +185,8 @@ async function parseJsonResponseFromText({ status, contentType = '', text = '' }
 
 function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000, operationLookupTimeoutMs = 5000 } = {}) {
   const publicApiBase = DEFAULT_PUBLIC_API_BASE;
+  const operationLookupDeadlineMs = Number.isFinite(operationLookupTimeoutMs) && operationLookupTimeoutMs > 0
+    ? operationLookupTimeoutMs : 5000;
 
   function buildUrl(path, query = null) {
     const normalizedPath = String(path || '').startsWith('/') ? String(path) : `/${path}`;
@@ -234,7 +260,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     try {
       return await parseJsonResponse(response);
     } catch (error) {
-      return toTransportError(error, { signal, duringRead: true });
+      return toTransportError(error, { signal, duringRead: true, status: response.status });
     }
   }
 
@@ -404,13 +430,39 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     }
   }
 
-  function getUploadOperation(operationId, { signal = null } = {}) {
+  function getUploadOperation(operationId, { signal = null } = {}, deadlineMs = operationLookupDeadlineMs) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId || '')) {
       return Promise.resolve(toStructuredError({ code: 'INVALID_UPLOAD_OPERATION_ID', message: 'Upload operation ID must be a UUID.' }));
     }
     return requestWithDeadline(`/upload-operations/${operationId.toLowerCase()}`, {
-      signal, deadlineMs: operationLookupTimeoutMs, label: 'Upload status lookup', cache: 'no-store',
+      signal, deadlineMs, label: 'Upload status lookup', cache: 'no-store',
     });
+  }
+
+  async function recoverUploadOperation(id, kind, requestHash, signal) {
+    const deadline = performance.now() + operationLookupDeadlineMs;
+    let interval = 250;
+    while (!signal?.aborted) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) return null;
+      const status = await getUploadOperation(id, { signal }, remaining);
+      if (signal?.aborted || performance.now() >= deadline) return null;
+      const receipt = status.data;
+      if (status.ok) {
+        if (receipt?.operationId !== id) return null;
+        if (receipt.state === 'completed') {
+          return receipt.kind === kind && receipt.requestSha256 === requestHash && receipt.result?.ok === true
+            ? receipt.result : null;
+        }
+        if (receipt.state !== 'unknown') return null;
+      } else if (!isUncertainRequestFailure(status)) {
+        return null; // Auth, unsupported endpoint and other permanent failures.
+      }
+      // A receipt remains invisible until COMMIT; polling never resends the ZIP.
+      await waitForRecoveryPoll(Math.min(interval, Math.max(0, deadline - performance.now())), signal);
+      interval = Math.min(interval * 2, 1000);
+    }
+    return null;
   }
 
   async function uploadZip(path, zipBytes, request = {}) {
@@ -423,7 +475,9 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       '/drafts/upload': 'worksheet-draft', '/attempts/upload': 'worksheet-attempt',
       '/roleplayscene/drafts/upload': 'roleplayscene-draft',
     }[path];
-    const query = request.query || {};
+    // Hash precisely what URLSearchParams sends (including UTF-16 repair), and
+    // freeze query values before awaiting hashing just as we snapshot ZIP bytes.
+    const query = Object.fromEntries(new URL(buildUrl(path, request.query), window.location.origin).searchParams);
     // Snapshot before hashing so caller mutations cannot change the sent bytes.
     const body = ArrayBuffer.isView(zipBytes)
       ? new Uint8Array(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength).slice()
@@ -432,21 +486,15 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     if (id) {
       requestHash = await hashUploadRequest(expectedKind, [query.title, query.subject ?? query.description, query.conflictAction], body).catch(() => null);
     }
-    const result = await uploadZipOnce(path, body, { ...request, operationId: id });
+    const result = await uploadZipOnce(path, body, { ...request, query, operationId: id });
     if (!id) return result; // Older/non-secure browser contexts keep the legacy transport.
-    const uncertain = !result.ok && (
-      ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'INVALID_JSON_RESPONSE'].includes(result.error?.code)
-      || result.error?.status >= 500
-    );
-    if (uncertain && requestHash && !request.signal?.aborted) {
-      const status = await getUploadOperation(id, { signal: request.signal });
+    if (isUncertainRequestFailure(result) && requestHash && !request.signal?.aborted) {
+      const recovered = await recoverUploadOperation(id, expectedKind, requestHash, request.signal);
       if (request.signal?.aborted) {
         return { ...toStructuredError({ code: 'ABORTED', message: 'Upload status lookup was canceled. The server may already have saved the upload.' }), operationId: id };
       }
-      const receipt = status.data;
-      if (!request.signal?.aborted && status.ok && receipt?.state === 'completed'
-        && receipt.operationId === id && receipt.kind === expectedKind && receipt.requestSha256 === requestHash && receipt.result?.ok === true) {
-        return { ok: true, data: receipt.result.data, status: receipt.result.statusCode, operationId: id, recovered: true };
+      if (recovered) {
+        return { ok: true, data: recovered.data, status: recovered.statusCode, operationId: id, recovered: true };
       }
     }
     // Never resend automatically: older servers may ignore Idempotency-Key.
@@ -461,6 +509,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       let settled = false;
       let abortTransport = () => {};
       let timer;
+      let responseStatus = null;
       const finish = (result) => {
         if (settled) return;
         settled = true;
@@ -473,7 +522,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       if (signal?.aborted) { finish(canceled()); return; }
       signal?.addEventListener('abort', cancel, { once: true });
       timer = setTimeout(() => {
-        finish(toStructuredError({ code: 'UPLOAD_TIMEOUT', message: 'Upload timed out. Refresh uploaded items before retrying; the server may already have received it.' }));
+        finish(toStructuredError({ code: 'UPLOAD_TIMEOUT', status: responseStatus, requiresSignIn: authLikeStatus(responseStatus), message: 'Upload timed out. Refresh uploaded items before retrying; the server may already have received it.' }));
         abortTransport();
       }, timeoutMs);
 
@@ -487,9 +536,10 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
               method: 'POST', credentials: 'include',
               headers: { 'content-type': 'application/zip', ...(operationId ? { 'idempotency-key': operationId } : {}) }, body: zipBytes, signal: controller.signal,
             });
+            responseStatus = response.status;
             finish(await parseJsonResponse(response));
           } catch (error) {
-            finish(toTransportError(error, { signal: controller.signal, duringRead: true }));
+            finish(toTransportError(error, { signal: controller.signal, duringRead: true, status: responseStatus }));
           }
         })();
         return;
