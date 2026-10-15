@@ -464,7 +464,7 @@ export default {
         "draftSlotLimitReached": "Draft slot limit reached.",
         "listRefreshFailed": "Unable to refresh uploaded drafts.",
         "listRefreshed": "Uploaded drafts refreshed.",
-        "networkFailure": "Upload failed before completion. Your local draft is still safe. Please retry when the network is stable.",
+        "networkFailure": "The upload outcome could not be confirmed. The server may already have saved it. Your local draft is still safe. Refresh the server list and check for the uploaded item before uploading again.",
         "openedAsLocalCopy": "Opened uploaded draft {id} as a new local draft copy.",
         "publishAlreadyInProgress": "Publish already in progress for uploaded draft {id}.",
         "publishedRefreshSucceeded": "Uploaded drafts refreshed.",
@@ -744,6 +744,7 @@ export default {
     },
     "notifications": {
       "auth": {
+        "unableToVerifySignIn": "Unable to verify sign-in status right now. Please try again.",
         "completeSignInPopup": "Complete sign-in in the popup. Session will refresh automatically.",
         "sessionExpired": "Session expired. Please log in again.",
         "signedOut": "You are currently signed out. Log in to use server features.",
@@ -767,9 +768,9 @@ export default {
       "uploadAttempt": {
         "alreadyInProgress": "Upload already in progress.",
         "authRequired": "Sign-in is required before saving attempts to server.",
-        "conflict": "An uploaded attempt with the same worksheet name and subject already exists. Attempt replacement/copy management is available from the uploaded attempts manager.",
+        "conflict": "An uploaded attempt with the same worksheet name and subject already exists. Choose whether to replace it, save a copy, or cancel.",
         "invalidPackage": "The attempt package format is invalid. Your local attempt is still safe. Please refresh and retry.",
-        "networkFailure": "Upload failed before completion. Your local attempt is still safe. Please retry when the network is stable.",
+        "networkFailure": "The upload outcome could not be confirmed. The server may already have saved it. Your local attempt is still safe. Refresh the server list and check for the uploaded item before uploading again.",
         "noActiveAttempt": "No active local attempt is available for upload.",
         "preparing": "Preparing upload...",
         "progressPercent": "Uploading attempt... {percent}%",

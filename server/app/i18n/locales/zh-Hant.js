@@ -464,7 +464,7 @@ export default {
         "draftSlotLimitReached": "草稿空位已達上限。",
         "listRefreshFailed": "無法重新整理已上載草稿。",
         "listRefreshed": "已重新整理已上載草稿。",
-        "networkFailure": "上載未完成。你的本機草稿仍然安全。請在網絡穩定後再試。",
+        "networkFailure": "未能確認上載結果，伺服器可能已儲存。你的本機草稿仍然安全。再次上載前，請重新整理伺服器清單並檢查是否已有該項目。",
         "openedAsLocalCopy": "已將上載草稿 {id} 開啟為新的本機草稿副本。",
         "publishAlreadyInProgress": "已上載草稿 {id} 正在發布中。",
         "publishedRefreshSucceeded": "已重新整理已上載草稿。",
@@ -744,6 +744,7 @@ export default {
     },
     "notifications": {
       "auth": {
+        "unableToVerifySignIn": "暫時未能確認登入狀態。請稍後再試。",
         "completeSignInPopup": "請在彈出視窗完成登入。工作階段會自動重新整理。",
         "sessionExpired": "工作階段已過期。請重新登入。",
         "signedOut": "你目前已登出。請登入以使用伺服器功能。",
@@ -767,9 +768,9 @@ export default {
       "uploadAttempt": {
         "alreadyInProgress": "上載正在進行中。",
         "authRequired": "儲存作答記錄到伺服器前需要先登入。",
-        "conflict": "已有相同工作紙名稱和科目的已上載作答記錄。可在已上載作答記錄管理器處理取代或副本。",
+        "conflict": "伺服器已有相同工作紙名稱及科目的作答記錄。請選擇取代、另存副本或取消。",
         "invalidPackage": "作答記錄套件格式無效。你的本機作答記錄仍然安全。請重新整理後再試。",
-        "networkFailure": "上載未完成。你的本機作答記錄仍然安全。請在網絡穩定後再試。",
+        "networkFailure": "未能確認上載結果，伺服器可能已儲存。你的本機作答記錄仍然安全。再次上載前，請重新整理伺服器清單並檢查是否已有該項目。",
         "noActiveAttempt": "沒有可上載的本機作答記錄。",
         "preparing": "正在準備上載...",
         "progressPercent": "正在上載作答記錄... {percent}%",

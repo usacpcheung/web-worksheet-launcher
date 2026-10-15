@@ -3788,7 +3788,7 @@ class EditorDraftSession {
             this.state.uploadedDraftSlotLimit = slotLimit;
           }
         }
-        const isTransportFailure = String(result?.error?.code || '') === 'NETWORK_ERROR';
+        const isTransportFailure = ['NETWORK_ERROR', 'UPLOAD_TIMEOUT'].includes(String(result?.error?.code || '').toUpperCase());
         const isSlotLimit = String(result?.error?.code || '').toUpperCase() === 'DRAFT_SLOT_LIMIT_REACHED';
         const errorText = isTransportFailure
           ? editorNotification('uploadDraft.networkFailure')
