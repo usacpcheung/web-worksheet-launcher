@@ -74,6 +74,8 @@ Paths below are relative to the API base; use the browser base for clients or `/
 | GET | `/roleplayscene/published/:publishedSceneId` | Published scene metadata. |
 | GET / DELETE | `/roleplayscene/published/:publishedSceneId/artifact` / `/roleplayscene/published/:publishedSceneId` | ZIP download / owner delete. |
 
+The viewer handles attempt name conflicts and slot limits as upload outcomes after authentication, including copy/replace selection and deletion followed by an explicit retry. A non-auth upload error must not produce a sign-in warning. Failed session probes report that sign-in status could not be verified; actual authentication failures retain the shared sign-in recovery path.
+
 Upload content type is `application/zip`; publish body is JSON, not the revision/content JSON proposed in old specifications. IDs in detail/publish routes are UUID-validated. Successful JSON responses use `{ok: true, data: ...}`; errors use `{ok: false, error: {code, message, details?}}`. Artifacts return ZIP bytes with length information. Unknown nested subroutes return not-found errors; they are not additional API capabilities.
 
 Worksheet `q` searches title, subject, owner email or owner name; separate `title`, `subject` and `owner` filters combine with AND. Worksheet `owner` search matches owner email/name, not `owner_sub`. UI display can fall back to the subject ID without extending backend search semantics. RolePlayScene `q` searches title/description and `owner` separately searches email/name. See [worksheet contract](../contracts/editor-viewer-backend-contract.md) and [scene contract](../roleplayscene/roleplayscene-publishing-contract.md).
@@ -93,6 +95,10 @@ Use the [testing guide](testing.md), [artifact maintenance](published-artifact-m
 The shared browser client's ZIP upload deadline is 120 seconds, covering transport and response-body reading for both XMLHttpRequest and fetch fallback. `createServerApiClient({ uploadTimeoutMs })` permits an explicit positive override. Editor/viewer expose Cancel during uploads; RolePlayScene changes its server Save button to Cancel. Cancellation returns `ABORTED`, and deadline expiry returns `UPLOAD_TIMEOUT`, releasing the upload state. The transport deadline starts when the ZIP request starts, after package preparation/preflight. Cancellation during preparation marks the request canceled before it can be sent; it does not interrupt ZIP construction itself.
 
 Worksheet and RolePlayScene draft-list refreshes have a separate 15-second deadline covering headers and body reading (`listTimeoutMs` override). Their post-upload refreshes use the upload flow’s abort signal. Cancel during refresh stops the refresh and releases the busy state while retaining the successful upload result.
+
+Worksheet and attempt network/timeout messages explicitly report an unconfirmed outcome: the server may already have saved the upload. Refresh the server list and check for the item before uploading again. These messages do not assert that the server rolled back.
+
+Editor and viewer display localized cancellation feedback in English and Traditional Chinese, warning that the server may already have saved the upload and directing users to check the server list before uploading again. Cancel stops waiting; it does not undo a server commit.
 
 A canceled or timed-out request may already have reached the server. The client can recover a committed upload using its operation receipt, as described below; it does not automatically resend an uncertain upload. If the outcome remains unknown, refresh uploaded items before starting another upload. ZIP downloads receiving a successful HTML response enter sign-in recovery (`AUTH_REQUIRED`); non-success gateway errors retain their HTTP failure classification. RolePlayScene draft downloads forward the caller's abort signal, and fetch upload body-read failures return structured transport errors.
 

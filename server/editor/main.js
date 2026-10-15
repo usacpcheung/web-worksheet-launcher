@@ -3788,13 +3788,16 @@ class EditorDraftSession {
             this.state.uploadedDraftSlotLimit = slotLimit;
           }
         }
-        const isTransportFailure = String(result?.error?.code || '') === 'NETWORK_ERROR';
+        const isTransportFailure = ['NETWORK_ERROR', 'UPLOAD_TIMEOUT'].includes(String(result?.error?.code || '').toUpperCase());
         const isSlotLimit = String(result?.error?.code || '').toUpperCase() === 'DRAFT_SLOT_LIMIT_REACHED';
-        const errorText = isTransportFailure
-          ? editorNotification('uploadDraft.networkFailure')
-          : isSlotLimit
-            ? editorNotification('uploadDraft.draftSlotLimitReached')
-            : result.error.message;
+        const isCanceled = String(result?.error?.code || '').toUpperCase() === 'ABORTED';
+        const errorText = isCanceled
+          ? editorNotification('uploadDraft.canceled')
+          : isTransportFailure
+            ? editorNotification('uploadDraft.networkFailure')
+            : isSlotLimit
+              ? editorNotification('uploadDraft.draftSlotLimitReached')
+              : result.error.message;
         this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: errorText });
         this.notifyStateChange();
         return result;

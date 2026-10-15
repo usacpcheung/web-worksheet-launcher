@@ -296,7 +296,10 @@ function getViewerUploadAttemptMessage(errorCode, uploadResult = {}) {
       return t('viewer.notifications.uploadAttempt.invalidPackage');
     case 'AUTH_REQUIRED':
       return t('viewer.notifications.uploadAttempt.authRequired');
+    case 'ABORTED':
+      return t('viewer.notifications.uploadAttempt.canceled');
     case 'NETWORK_ERROR':
+    case 'UPLOAD_TIMEOUT':
       return t('viewer.notifications.uploadAttempt.networkFailure');
     default:
       return uploadResult?.error?.message || 'Attempt upload failed.';
@@ -6751,13 +6754,15 @@ function renderViewerShell(session) {
   });
 
   uploadAttemptBtn.addEventListener('click', async () => {
-    const protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
+    let protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
     if (protectedActionResult?.status === 'redirected') {
       return;
     }
-    if (protectedActionResult?.status !== 'executed') {
+    // The auth gate returns non-auth application failures unchanged. They
+    // already have upload feedback and may need conflict/slot recovery below.
+    if (protectedActionResult?.status !== 'executed' && protectedActionResult?.ok !== false) {
       const blockedMessage = protectedActionResult?.status === 'blocked_session_probe'
-        ? getViewerAuthNotification('sessionExpired')
+        ? getViewerAuthNotification('unableToVerifySignIn')
         : t('viewer.notifications.uploadAttempt.signInRequired');
       session.pushNotification({
         kind: 'warn',
@@ -6767,15 +6772,15 @@ function renderViewerShell(session) {
       renderUI();
       return;
     }
-    if (session.state.uploadAttemptConflictContext) {
+    if (protectedActionResult?.error?.code === 'ATTEMPT_NAME_CONFLICT' && session.state.uploadAttemptConflictContext) {
       const choice = await showAttemptUploadConflictModal(session.state.uploadAttemptConflictContext);
       if (choice === 'replace' || choice === 'copy') {
-        await session.retryAttemptUploadFromConflict(choice);
+        protectedActionResult = await session.retryAttemptUploadFromConflict(choice);
       } else {
         session.clearAttemptUploadConflictPrompt();
       }
     }
-    if (session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
+    if (protectedActionResult?.error?.code === 'ATTEMPT_SLOT_LIMIT_REACHED' && session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
       const slotRecoveryHint = { ...session.state.uploadAttemptRecoveryHint };
       await session.listUploadedAttempts();
       const slotRecovery = await showAttemptSlotFullModal(session, {
