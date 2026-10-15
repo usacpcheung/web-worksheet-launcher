@@ -12,6 +12,8 @@ Editor draft and viewer attempt IDs are client-generated prefix plus `crypto.ran
 
 RolePlayScene uses its own `roleplayscene` IndexedDB, version 1, `project` store, key `snapshot`, for one active local story. Autosave waits for transaction completion and reports failures. Discussion state/recovery uses sessionStorage; it is not part of saved story packages.
 
+When reopening an editor draft, its displayed last-save time comes from the persisted `metadata.updatedAt`, not the current time. A saved legacy record with no usable timestamp displays “Save time unavailable”; a new unsaved draft displays “Not yet saved.” Failed saves retain the previous successful timestamp. Successful saves replace restored timestamps even after a backward clock correction; draft generation, revision and save-invocation order prevent an older completion from replacing newer save status. Pending/unsaved revisions are distinguished from saved revisions. Save-time text and viewer attempt-state/detail labels follow the selected English or Traditional Chinese locale; stored status codes and IDs do not change.
+
 ## Compatibility modules
 
 The validators/mappers in `server/app/contracts/` retain these model boundaries:

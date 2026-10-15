@@ -116,7 +116,19 @@ export default {
       "uploadingDraftPackageProgress": "正在上載草稿套件... {percent}%（{loaded} / {total}）",
       "uploadingDraftPackageLoaded": "正在上載草稿套件... {loaded}"
     },
+    "saveTime": {
+      "never": "尚未儲存",
+      "unknown": "儲存時間不詳",
+      "now": "剛剛",
+      "future": "{time}（時間在未來）",
+      "seconds": "{count} 秒前",
+      "minute": "{count} 分鐘前",
+      "minutes": "{count} 分鐘前",
+      "hour": "{count} 小時前",
+      "hours": "{count} 小時前"
+    },
     "saveState": {
+      "unsaved": "尚未儲存的變更",
       "error": "儲存錯誤",
       "saving": "儲存中...",
       "savedWithWarnings": "已儲存（有警告）",
@@ -712,6 +724,8 @@ export default {
       }
     },
     "details": {
+      "localAttemptId": "本機作答 ID",
+      "importedWorksheetId": "已匯入工作紙 ID",
       "copyFieldAriaLabel": "複製欄位",
       "openTechnicalDetailsAriaLabel": "開啟詳細資料與列印設定",
       "openTechnicalDetailsTitle": "詳細資料與列印設定",
@@ -866,6 +880,9 @@ export default {
       "blockProgressAriaLabel": "區塊進度"
     },
     "status": {
+      "inProgress": "作答中",
+      "completed": "已完成",
+      "unknown": "狀態不詳",
       "finalizedAt": "已提交{time}",
       "finalizing": "正在完成提交...",
       "savedAt": "已儲存{time}",

@@ -7,6 +7,54 @@ import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-he
 import { createServerApiClient } from '../app/api/server-api-client.js';
 import { SharedAuthGate as RealSharedAuthGate } from '../app/auth/shared-auth-gate.js';
 
+test('opening persisted drafts restores their save time without leaking previous draft status', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  const savedAt = '2026-10-14T12:34:56.000Z';
+  storage.drafts.get = async id => ({ ...mod.createDraftRecord({ localId: id }), metadata: id === 'legacy' ? {} : { updatedAt: savedAt } });
+  await session.createOrOpenByLocalDraftId('saved');
+  assert.equal(session.state.lastSavedAt, savedAt);
+  await session.createOrOpenByLocalDraftId('legacy');
+  assert.equal(session.state.lastSavedAt, null);
+  session.state.lastSavedAt = savedAt;
+  await session.createOrOpenByLocalDraftId(null);
+  assert.equal(session.state.lastSavedAt, null);
+  clearTimeout(session.autosaveTimer);
+});
+
+test('saving a reopened draft replaces a future timestamp after clock correction', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  storage.drafts.get = async () => ({ ...mod.createDraftRecord({ localId: 'clock-correction' }), metadata: { updatedAt: '2099-01-01T00:00:00.000Z' } });
+  await session.createOrOpenByLocalDraftId('clock-correction');
+  clearTimeout(session.autosaveTimer);
+  const saved = await session.autosave();
+  assert.equal(session.state.lastSavedAt, saved.metadata.updatedAt);
+  assert.notEqual(session.state.lastSavedAt, '2099-01-01T00:00:00.000Z');
+});
+
+test('same-revision saves completing out of order retain the newer save status', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  await session.createOrOpenByLocalDraftId('same-revision');
+  clearTimeout(session.autosaveTimer);
+  const pending = [];
+  storage.drafts.put = value => new Promise(resolve => pending.push({ value, resolve }));
+  const first = session.autosave();
+  while (pending.length < 1) await new Promise(resolve => setImmediate(resolve));
+  const second = session.autosave();
+  while (pending.length < 2) await new Promise(resolve => setImmediate(resolve));
+  pending[1].resolve(pending[1].value);
+  const newer = await second;
+  pending[0].resolve(pending[0].value);
+  await first;
+  assert.equal(session.state.draft, newer);
+  assert.equal(session.state.lastSavedAt, newer.metadata.updatedAt);
+});
+
 test('audio generation rejects worksheet switches and reopening the same worksheet', async () => {
   const mod = await loadEditorModule();
   for (const target of ['prompt', 'option']) for (const sameId of [false, true]) {
@@ -1736,8 +1784,23 @@ test('stage3: protected actions column no longer includes legacy rewrite/t2a stu
 test('editor source keeps detail status row visible and uses friendly block/saved labels', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
 
-  assert.equal(source.includes("if (elapsedMs < 0) return `${lastSavedAt} (in the future)`;"), true);
-  assert.equal(source.includes("if (elapsedMs < 0) return 'just now';"), false);
+  const { t, setLocale } = await import('../app/i18n/index.js');
+  const start = source.indexOf('  function formatLastSavedLabel(');
+  const end = source.indexOf('  function emitServerNotification', start);
+  const session = { state: { lastSavedRevision: 0 } };
+  const format = new Function('t', 'session', 'isNonEmptyString', source.slice(start, end) + '; return formatLastSavedLabel;')(t, session, value => typeof value === 'string' && value.trim().length > 0);
+  for (const locale of ['en', 'zh-Hant']) {
+    setLocale(locale, { persist: false });
+    assert.equal(format(null), t('editor.saveTime.never'));
+    session.state.lastSavedRevision = 1;
+    assert.equal(format(null), t('editor.saveTime.unknown'));
+    assert.equal(format(new Date().toISOString()), t('editor.saveTime.now'));
+    const future = new Date(Date.now() + 60000).toISOString();
+    assert.equal(format(future), t('editor.saveTime.future', { time: future }));
+    assert.equal(format(new Date(Date.now() - 120000).toISOString()), t('editor.saveTime.minutes', { count: 2 }));
+    session.state.lastSavedRevision = 0;
+  }
+  setLocale('en', { persist: false });
   assert.equal(source.includes('blockBadge.textContent = getBlockKindLabel(block.kind);'), true);
   assert.equal(source.includes('rightPanel.append(statusRow);'), true);
 });

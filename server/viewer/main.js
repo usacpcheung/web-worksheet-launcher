@@ -934,14 +934,14 @@ function computeViewerPayloadFingerprint(payload) {
 
 function buildTechnicalDetailsRows(state = {}) {
   const rows = [
-    ['Local attempt ID', state.localAttemptId || 'n/a'],
+    [t('viewer.details.localAttemptId'), state.localAttemptId || 'n/a'],
   ];
 
   if (state.sourceLocalDraftId) {
-    rows.push(['Local draft ID', state.sourceLocalDraftId]);
+    rows.push([t('editor.labels.localDraftId'), state.sourceLocalDraftId]);
   }
   if (state.sourceImportedWorksheetId) {
-    rows.push(['Imported worksheet ID', state.sourceImportedWorksheetId]);
+    rows.push([t('viewer.details.importedWorksheetId'), state.sourceImportedWorksheetId]);
   }
 
   return rows;
@@ -2356,7 +2356,7 @@ function resolveImportedWorksheetPayload(importedRecord) {
         snapshotId: `${importedRecord.localId}:imported-local`,
         snapshotVersion: 1,
         title: worksheet.title || 'Imported worksheet',
-        subject: worksheet.subject || importedRecord.subject || importedRecord.metadata?.subject || '',
+        subject: firstNonBlankString(worksheet.subject, worksheet.metadata?.subject, importedRecord.subject, importedRecord.metadata?.subject),
         owner: worksheet.owner || importedRecord.owner || importedRecord.metadata?.owner || '',
         owner_email: worksheet.owner_email || importedRecord.owner_email || importedRecord.metadata?.owner_email || '',
         owner_name: worksheet.owner_name || importedRecord.owner_name || importedRecord.metadata?.owner_name || '',
@@ -2900,7 +2900,7 @@ class ViewerAttemptSession {
         sourceType: 'imported_worksheet',
         sourceImportedWorksheetId: importedWorksheetId,
         payload: resolveImportedWorksheetPayload(importedRecord),
-        sourceSubject: importedRecord?.worksheet?.subject || importedRecord?.subject || '',
+        sourceSubject: firstNonBlankString(importedRecord?.worksheet?.subject, importedRecord?.worksheet?.metadata?.subject, importedRecord?.subject, importedRecord?.metadata?.subject),
         sourceOwner: importedRecord?.worksheet?.owner || importedRecord?.owner || '',
       };
     }
@@ -6717,9 +6717,10 @@ function renderViewerShell(session) {
     exportAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
-    const normalizedAttemptStatus = session.state.status
-      ? String(session.state.status).replace(/_/g, '-')
-      : 'n/a';
+    const normalizedAttemptStatus = t({
+      in_progress: 'viewer.status.inProgress',
+      completed: 'viewer.status.completed',
+    }[session.state.status] || 'viewer.status.unknown');
     const summaryParts = [];
     if (studentName) {
       summaryParts.push(t('viewer.summary.student', { name: studentName }));

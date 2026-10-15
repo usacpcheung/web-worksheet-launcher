@@ -6,6 +6,59 @@ import path from 'node:path';
 import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
 import { createStoredZip, parseStoredZip, decodeUtf8, crc32 } from '../editor/zip-utils.js';
 import { PackageService } from '../api/services/package-service.js';
+import { createWorksheetPackageFromDraft, parseWorksheetPackage } from '../editor/worksheet-package.js';
+
+test('editor package subject survives viewer import and attempt ZIP', async () => {
+  const mod = await loadViewerModule();
+  const subject = 'QA bilingual preservation 科學';
+  const editorPackage = createWorksheetPackageFromDraft({ localId: 'draft_subject', title: 'Subject round trip', metadata: { subject }, blocks: [{ blockId: 'q1', kind: 'question', position: 0, prompt: { text: 'Question' }, responseConfig: { inputType: 'text' } }] });
+  const parsed = parseWorksheetPackage(editorPackage.bytes);
+  const record = { localId: 'imported_subject', worksheet: parsed.worksheet };
+  const payload = mod.resolveImportedWorksheetPayload(record);
+  assert.equal(payload.subject, subject);
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get() {}, set() {} } });
+  const attempt = session.createLocalAttemptState(payload, 'imported_worksheet');
+  session.applyAttemptState(attempt);
+  session.state.answers = { q1: { value: 'Answer 答案' } };
+  const pkg = await session.buildUploadedAttemptPackage();
+  const files = parseStoredZip(pkg.bytes);
+  const worksheet = JSON.parse(decodeUtf8(files.get('content/worksheet.json')));
+  assert.equal(worksheet.subject, subject);
+  assert.equal(worksheet.metadata.subject, subject);
+  assert.equal(JSON.parse(decodeUtf8(files.get('content/attempt.json'))).answers.q1.value, 'Answer 答案');
+  let savedZip, inserted;
+  const client = { release() {}, async query(sql, params) {
+    if (sql.includes('INSERT INTO uploaded_attempts')) { inserted = params; return { rows: [], rowCount: 1 }; }
+    if (sql.includes('COUNT(*)')) return { rows: [{ count: 0 }], rowCount: 1 };
+    return { rows: [], rowCount: 0 };
+  } };
+  const service = new PackageService({ db: { connect: async () => client }, config: { attemptSlotLimit: 3 }, artifactStore: {
+    async storeArtifact(input) { savedZip = input.bytes; return { artifactPath: 'attempt.zip', absolutePath: '/tmp/attempt.zip', artifactSha256: 'fixture', artifactSizeBytes: input.bytes.length }; },
+  } });
+  const result = await service.uploadAttempt({ identity: { sub: 'qa-subject' }, title: payload.title, subject: payload.subject, zipBytes: pkg.bytes });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.ok(inserted.includes(subject), 'server listing persists the same subject');
+  assert.equal(JSON.parse(decodeUtf8(parseStoredZip(savedZip).get('content/worksheet.json'))).metadata.subject, subject);
+
+});
+
+test('imported subject precedence retains legacy records and skips blank fields', async () => {
+  const mod = await loadViewerModule();
+  for (const [top, nested, recordSubject, recordMetadata, expected] of [
+    ['Legacy', 'Nested', 'Record', 'Metadata', 'Legacy'],
+    ['', 'Nested', 'Record', 'Metadata', 'Nested'],
+    ['   ', '  ', 'Record', 'Metadata', 'Record'],
+    [undefined, undefined, undefined, 'Metadata', 'Metadata'],
+    [undefined, undefined, undefined, undefined, ''],
+  ]) {
+    const record = { localId: 'imported_subject', subject: recordSubject, metadata: { subject: recordMetadata }, worksheet: { title: 'Fixture', subject: top, metadata: { subject: nested }, blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Question' }, responseConfig: { inputType: 'text' } }] } };
+    assert.equal(mod.resolveImportedWorksheetPayload(record).subject, expected);
+    const session = new mod.ViewerAttemptSession({ importedWorksheets: { get: async () => record }, resumeFlags: { get() {}, set() {} } });
+    const loaded = await session.loadViewerPayloadFromSources(new URLSearchParams({ importedWorksheetId: record.localId }));
+    assert.equal(loaded.sourceSubject, expected);
+    assert.equal(loaded.payload.subject, expected);
+  }
+});
 
 test('voice recovery persists locally, resumes, is excluded from packages and clears on submission', async () => {
   const mod = await loadViewerModule();
@@ -3264,9 +3317,9 @@ test('buildTechnicalDetailsRows only shows current session ids', async () => {
   });
 
   assert.deepEqual(rows, [
-    ['Local attempt ID', 'attempt_1'],
-    ['Local draft ID', 'draft_11'],
-    ['Imported worksheet ID', 'imported_7'],
+    ['viewer.details.localAttemptId', 'attempt_1'],
+    ['editor.labels.localDraftId', 'draft_11'],
+    ['viewer.details.importedWorksheetId', 'imported_7'],
   ]);
 });
 
@@ -3277,7 +3330,7 @@ test('buildTechnicalDetailsRows omits source ids that do not apply', async () =>
   });
 
   assert.deepEqual(rows, [
-    ['Local attempt ID', 'attempt_2'],
+    ['viewer.details.localAttemptId', 'attempt_2'],
   ]);
 });
 

@@ -47,6 +47,10 @@ The API and both attempt readers share the package/worksheet boundary in `server
 
 Editor export snapshots the draft, including its asset references, before asynchronous media reads. Editor uploads capture that snapshot before session preflight; viewer uploads capture listing metadata before asynchronous package media reads. Upload listing metadata stays with its package, so opening or editing another draft cannot mix its content with the original operation.
 
+### Worksheet subject preservation
+
+Current editor packages store the subject in `content/worksheet.json` under `metadata.subject`. For imported editable worksheets, the viewer uses the first nonblank value from `worksheet.subject`, `worksheet.metadata.subject`, the legacy import record's `subject`, then that record's `metadata.subject`. Explicit top-level subjects retain precedence for compatibility. Missing subjects remain empty. This subject propagates into the local attempt, exported attempt worksheet/manifest and server-upload listing metadata; reopening an imported worksheet uses the same precedence. No package version changes are required. This prevents future loss but cannot reconstruct metadata already erased from an older attempt.
+
 ## RolePlayScene ZIP
 
 ```text

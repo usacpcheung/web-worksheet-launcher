@@ -116,7 +116,19 @@ export default {
       "uploadingDraftPackageProgress": "Uploading draft package... {percent}% ({loaded} / {total})",
       "uploadingDraftPackageLoaded": "Uploading draft package... {loaded}"
     },
+    "saveTime": {
+      "never": "Not yet saved",
+      "unknown": "Save time unavailable",
+      "now": "just now",
+      "future": "{time} (in the future)",
+      "seconds": "{count} seconds ago",
+      "minute": "{count} minute ago",
+      "minutes": "{count} minutes ago",
+      "hour": "{count} hour ago",
+      "hours": "{count} hours ago"
+    },
     "saveState": {
+      "unsaved": "Unsaved changes",
       "error": "Save error",
       "saving": "Saving...",
       "savedWithWarnings": "Saved (warnings)",
@@ -712,6 +724,8 @@ export default {
       }
     },
     "details": {
+      "localAttemptId": "Local attempt ID",
+      "importedWorksheetId": "Imported worksheet ID",
       "copyFieldAriaLabel": "Copy field",
       "openTechnicalDetailsAriaLabel": "Open details and print settings",
       "openTechnicalDetailsTitle": "Details and print settings",
@@ -866,6 +880,9 @@ export default {
       "blockProgressAriaLabel": "Block progress"
     },
     "status": {
+      "inProgress": "In progress",
+      "completed": "Completed",
+      "unknown": "Unknown",
       "finalizedAt": "Finalized{time}",
       "finalizing": "Finalizing submission...",
       "savedAt": "Saved{time}",
