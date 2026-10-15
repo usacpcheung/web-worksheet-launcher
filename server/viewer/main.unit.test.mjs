@@ -5525,7 +5525,7 @@ test('uploadCurrentAttemptPackage sends sourceSubject when viewerPayload subject
   assert.equal(uploadedMetadata.subject, 'ICT');
 });
 
-for (const errorCode of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT']) test(`uploadCurrentAttemptPackage leaves local attempt state safe on network failure (${errorCode})`, async () => {
+for (const errorCode of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED']) test(`uploadCurrentAttemptPackage leaves local attempt state safe on network failure (${errorCode})`, async () => {
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({
     resumeFlags: { get: () => null, set: () => {} },
@@ -5547,7 +5547,7 @@ for (const errorCode of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT']) test(`uploadCurrent
   assert.equal(JSON.stringify(session.state.answers), answersBefore);
   assert.equal(
     session.state.serverActionMessage,
-    'viewer.notifications.uploadAttempt.networkFailure'
+    `viewer.notifications.uploadAttempt.${errorCode === 'ABORTED' ? 'canceled' : 'networkFailure'}`
   );
 });
 

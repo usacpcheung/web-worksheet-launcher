@@ -296,6 +296,8 @@ function getViewerUploadAttemptMessage(errorCode, uploadResult = {}) {
       return t('viewer.notifications.uploadAttempt.invalidPackage');
     case 'AUTH_REQUIRED':
       return t('viewer.notifications.uploadAttempt.authRequired');
+    case 'ABORTED':
+      return t('viewer.notifications.uploadAttempt.canceled');
     case 'NETWORK_ERROR':
     case 'UPLOAD_TIMEOUT':
       return t('viewer.notifications.uploadAttempt.networkFailure');
