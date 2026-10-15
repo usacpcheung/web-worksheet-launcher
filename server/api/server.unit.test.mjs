@@ -134,6 +134,44 @@ async function withServer({
 
 const authHeaders = { 'x-oidc-sub': 'user-sub' };
 
+test('upload operation IDs are validated and forwarded on all three upload routes', async () => {
+  const seen = [];
+  const upload = async input => { seen.push(input); return { ok: true, statusCode: 201, data: {} }; };
+  await withServer({ service: { uploadDraft: upload, uploadAttempt: upload }, rolePlaySceneDraftService: { uploadRolePlaySceneDraft: upload } }, async base => {
+    for (const route of ['drafts', 'attempts', 'roleplayscene/drafts']) {
+      const url = `${base}/api/v1/${route}/upload`;
+      const headers = { ...authHeaders, 'content-type': 'application/zip', 'idempotency-key': 'ABCDEF12-1111-4111-8111-111111111111' };
+      assert.equal((await fetch(url, { method: 'POST', headers, body: 'zip' })).status, 201);
+      assert.equal(seen.at(-1).operationId, 'abcdef12-1111-4111-8111-111111111111');
+      const invalid = await fetch(url, { method: 'POST', headers: { ...headers, 'idempotency-key': 'bad' }, body: 'zip' });
+      assert.equal(invalid.status, 400);
+      assert.equal((await invalid.json()).error.code, 'INVALID_UPLOAD_OPERATION_ID');
+    }
+    assert.equal(seen.length, 3);
+  });
+});
+
+test('operation status requires authentication, scopes lookup to the current owner and cannot be cached', async () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const calls = [];
+  await withServer({ service: { async getUploadOperation(identity, operationId) {
+    calls.push({ identity, operationId });
+    return { operationId, state: 'unknown' };
+  } } }, async base => {
+    const url = `${base}/api/v1/upload-operations/${id}`;
+    assert.equal((await fetch(url)).status, 401);
+    assert.equal((await fetch(`${base}/api/v1/upload-operations/bad`, { headers: authHeaders })).status, 400);
+    assert.equal((await fetch(`${url}/extra`, { headers: authHeaders })).status, 404);
+    const response = await fetch(url, { headers: authHeaders });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'private, no-store');
+    assert.deepEqual((await response.json()).data, { operationId: id, state: 'unknown' });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].identity.sub, 'user-sub');
+    assert.equal(calls[0].operationId, id);
+  });
+});
+
 test('GET /healthz remains unauthenticated', async () => {
   await withServer(
     {

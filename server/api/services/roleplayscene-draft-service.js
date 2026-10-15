@@ -1,3 +1,4 @@
+import { createUploadOperation, replayUploadOperation, recordUploadOperation } from './upload-operation.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import {
@@ -267,6 +268,7 @@ export class RolePlaySceneDraftService {
     description,
     zipBytes,
     conflictAction = 'fail_on_conflict',
+    operationId = null,
   }) {
     const validation = validateRolePlayScenePackage(zipBytes, this.packageValidationOptions);
     if (!validation.ok) {
@@ -277,17 +279,23 @@ export class RolePlaySceneDraftService {
       };
     }
 
-    const client = await this.db.connect();
     let artifact = null;
     let commitAttempted = false;
     const cleanupArtifactPathsAfterCommit = [];
     const action = normalizeUploadConflictAction(conflictAction);
     const normalizedTitle = normalizeText(title, validation.metadata.title || 'Untitled RolePlayScene');
     const normalizedDescription = normalizeText(description, validation.metadata.description || '');
+    const operation = createUploadOperation({ operationId, kind: 'roleplayscene-draft', metadata: [title, description, conflictAction], zipBytes });
+    const client = await this.db.connect();
 
     try {
       await client.query('BEGIN');
       await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [identity.sub]);
+      const replay = await replayUploadOperation(client, identity, operation);
+      if (replay) {
+        await client.query('ROLLBACK');
+        return replay;
+      }
       const conflict = await this.findUploadConflict({ client, identity, title: normalizedTitle });
 
       if (conflict && action === 'fail_on_conflict') {
@@ -341,13 +349,7 @@ export class RolePlaySceneDraftService {
             validation,
             uploadedDraftId: replacementId,
           });
-          commitAttempted = true;
-          await client.query('COMMIT');
-          for (const artifactPath of cleanupArtifactPathsAfterCommit) {
-            await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
-          }
-          artifact = null;
-          return {
+          const result = await recordUploadOperation(client, identity, operation, {
             ok: true,
             statusCode: 201,
             data: {
@@ -355,7 +357,14 @@ export class RolePlaySceneDraftService {
               replaced_roleplayscene_uploaded_draft_id: conflict.roleplayscene_uploaded_draft_id,
               warnings: validation.warnings,
             },
-          };
+          });
+          commitAttempted = true;
+          await client.query('COMMIT');
+          for (const artifactPath of cleanupArtifactPathsAfterCommit) {
+            await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
+          }
+          artifact = null;
+          return result;
         }
 
         const updated = await client.query(
@@ -424,13 +433,7 @@ export class RolePlaySceneDraftService {
           };
         }
         cleanupArtifactPathsAfterCommit.push(conflict.artifact_path);
-        commitAttempted = true;
-        await client.query('COMMIT');
-        for (const artifactPath of cleanupArtifactPathsAfterCommit) {
-          await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
-        }
-        artifact = null;
-        return {
+        const result = await recordUploadOperation(client, identity, operation, {
           ok: true,
           statusCode: 200,
           data: {
@@ -438,7 +441,14 @@ export class RolePlaySceneDraftService {
             replaced_roleplayscene_uploaded_draft_id: conflict.roleplayscene_uploaded_draft_id,
             warnings: validation.warnings,
           },
-        };
+        });
+        commitAttempted = true;
+        await client.query('COMMIT');
+        for (const artifactPath of cleanupArtifactPathsAfterCommit) {
+          await deleteArtifactBestEffort({ artifactStore: this.artifactStore, artifactPath });
+        }
+        artifact = null;
+        return result;
       }
 
       const countRes = await client.query(
@@ -491,18 +501,19 @@ export class RolePlaySceneDraftService {
         uploadedDraftId,
       });
 
-      commitAttempted = true;
-
-      await client.query('COMMIT');
-      artifact = null;
-      return {
+      const result = await recordUploadOperation(client, identity, operation, {
         ok: true,
         statusCode: 201,
         data: {
           ...row,
           warnings: storedValidation.warnings,
         },
-      };
+      });
+      commitAttempted = true;
+
+      await client.query('COMMIT');
+      artifact = null;
+      return result;
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       // COMMIT acknowledgment loss does not prove rollback. Preserve the file.

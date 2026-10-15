@@ -8,6 +8,7 @@ import { Pool } from 'pg';
 import { PackageService } from '../server/api/services/package-service.js';
 import { PackageArtifactStore } from '../server/api/storage/package-artifact-store.js';
 import { createStoredZip } from '../server/editor/zip-utils.js';
+import { verifyUploadOperations } from './ci/upload-operation-fixtures.mjs';
 
 const connectionString = process.env.REVIEW_TEST_DATABASE_URL;
 assert.ok(connectionString, 'Set REVIEW_TEST_DATABASE_URL to a disposable PostgreSQL database.');
@@ -85,6 +86,7 @@ try {
   assert.equal(concurrent.filter(result => result.ok).length, 3);
   assert.deepEqual(concurrent.filter(result => !result.ok).map(result => result.error.code), Array(3).fill('ATTEMPT_SLOT_LIMIT_REACHED'));
   console.log('PASS: six concurrent uploads respect the three-slot limit');
+  await verifyUploadOperations({ db, store, config, attemptZip: zip, storageRoot });
 } finally {
   await db.end();
   await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);

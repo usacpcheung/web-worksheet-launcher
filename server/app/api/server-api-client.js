@@ -1,4 +1,5 @@
 import { DEFAULT_PUBLISHED_PACKAGE_LIMIT } from './published-packages-service.js';
+import { hashUploadRequest } from './upload-operation-contract.js';
 
 const DEFAULT_PUBLIC_API_BASE = '/api/worksheet-launcher/v1';
 const BRIDGE_API_BASE = '/api/rewrite-bridge';
@@ -56,15 +57,39 @@ function toStructuredError({ code, message, status = null, requiresSignIn = fals
   };
 }
 
-function toTransportError(error, { signal = null, duringRead = false } = {}) {
+function toTransportError(error, { signal = null, duringRead = false, status = null } = {}) {
   const aborted = signal?.aborted || error?.name === 'AbortError';
   return toStructuredError({
     code: aborted ? 'ABORTED' : 'NETWORK_ERROR',
+    status,
+    requiresSignIn: !aborted && authLikeStatus(status),
     message: aborted
       ? 'Server API request was cancelled.'
       : duringRead
         ? `Connection was interrupted while reading server data. ${error?.message || String(error)}`
         : `Unable to reach server API. ${error?.message || String(error)}`,
+  });
+}
+
+function isUncertainRequestFailure(result) {
+  const status = result.error?.status;
+  // An explicit rejection/auth failure must not be replaced by an old receipt.
+  return !result.ok && !result.error?.requiresSignIn && !(status >= 400 && status < 500)
+    && (['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'REQUEST_TIMEOUT', 'INVALID_JSON_RESPONSE', 'UNEXPECTED_NON_JSON_RESPONSE'].includes(result.error?.code)
+      || status >= 500);
+}
+
+function waitForRecoveryPoll(delayMs, signal) {
+  return new Promise(resolve => {
+    let timer;
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    if (signal?.aborted) { finish(); return; }
+    signal?.addEventListener('abort', finish, { once: true });
+    timer = setTimeout(finish, delayMs);
   });
 }
 
@@ -94,9 +119,10 @@ async function parseJsonResponse(response) {
   } catch (error) {
     if (error?.name !== 'SyntaxError') throw error;
     return toStructuredError({
-      code: 'INVALID_JSON_RESPONSE',
-      message: 'Server returned malformed JSON.',
+      code: authLikeStatus(response.status) ? 'AUTH_REQUIRED' : 'INVALID_JSON_RESPONSE',
+      message: authLikeStatus(response.status) ? createAuthMessage() : 'Server returned malformed JSON.',
       status: response.status,
+      requiresSignIn: authLikeStatus(response.status),
     });
   }
 
@@ -138,9 +164,10 @@ async function parseJsonResponseFromText({ status, contentType = '', text = '' }
     parsed = JSON.parse(String(text || ''));
   } catch {
     return toStructuredError({
-      code: 'INVALID_JSON_RESPONSE',
-      message: 'Server returned malformed JSON.',
+      code: authLikeStatus(status) ? 'AUTH_REQUIRED' : 'INVALID_JSON_RESPONSE',
+      message: authLikeStatus(status) ? createAuthMessage() : 'Server returned malformed JSON.',
       status,
+      requiresSignIn: authLikeStatus(status),
     });
   }
 
@@ -158,8 +185,10 @@ async function parseJsonResponseFromText({ status, contentType = '', text = '' }
   });
 }
 
-function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000 } = {}) {
+function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000, operationLookupTimeoutMs = 5000 } = {}) {
   const publicApiBase = DEFAULT_PUBLIC_API_BASE;
+  const operationLookupDeadlineMs = Number.isFinite(operationLookupTimeoutMs) && operationLookupTimeoutMs > 0
+    ? operationLookupTimeoutMs : 5000;
 
   function buildUrl(path, query = null) {
     const normalizedPath = String(path || '').startsWith('/') ? String(path) : `/${path}`;
@@ -185,9 +214,9 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     return `${url.pathname}${url.search}`;
   }
 
-  function requestList(path, { signal = null } = {}) {
+  function requestWithDeadline(path, { signal = null, deadlineMs = listTimeoutMs, label = 'List refresh', cache } = {}) {
     const controller = new AbortController();
-    const timeoutMs = Number.isFinite(listTimeoutMs) && listTimeoutMs > 0 ? listTimeoutMs : 15000;
+    const timeoutMs = Number.isFinite(deadlineMs) && deadlineMs > 0 ? deadlineMs : 15000;
     return new Promise(resolve => {
       let settled = false;
       let timer;
@@ -199,21 +228,21 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
         resolve(result);
       };
       const cancel = () => {
-        finish(toStructuredError({ code: 'ABORTED', message: 'List refresh was canceled. Any completed upload remains saved.' }));
+        finish(toStructuredError({ code: 'ABORTED', message: `${label} was canceled. Any completed upload remains saved.` }));
         controller.abort();
       };
       if (signal?.aborted) { cancel(); return; }
       signal?.addEventListener('abort', cancel, { once: true });
       timer = setTimeout(() => {
-        finish(toStructuredError({ code: 'REQUEST_TIMEOUT', message: 'List refresh timed out. Refresh again to see uploaded items.' }));
+        finish(toStructuredError({ code: 'REQUEST_TIMEOUT', message: `${label} timed out. Refresh again to see uploaded items.` }));
         controller.abort();
       }, timeoutMs);
-      requestJson(path, { signal: controller.signal }).then(finish);
+      requestJson(path, { signal: controller.signal, cache }).then(finish);
     });
   }
 
   async function requestJson(path, request = {}) {
-    const { method = 'GET', query = null, body = null, headers = {}, signal = null } = request;
+    const { method = 'GET', query = null, body = null, headers = {}, signal = null, cache } = request;
     let response;
     try {
       response = await fetch(buildUrl(path, query), {
@@ -224,6 +253,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
           ...headers,
         },
         ...(signal ? { signal } : {}),
+        ...(cache ? { cache } : {}),
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
     } catch (error) {
@@ -232,7 +262,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     try {
       return await parseJsonResponse(response);
     } catch (error) {
-      return toTransportError(error, { signal, duringRead: true });
+      return toTransportError(error, { signal, duringRead: true, status: response.status });
     }
   }
 
@@ -402,14 +432,86 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     }
   }
 
+  function getUploadOperation(operationId, { signal = null } = {}, deadlineMs = operationLookupDeadlineMs) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId || '')) {
+      return Promise.resolve(toStructuredError({ code: 'INVALID_UPLOAD_OPERATION_ID', message: 'Upload operation ID must be a UUID.' }));
+    }
+    return requestWithDeadline(`/upload-operations/${operationId.toLowerCase()}`, {
+      signal, deadlineMs, label: 'Upload status lookup', cache: 'no-store',
+    });
+  }
+
+  async function recoverUploadOperation(id, kind, requestHash, signal) {
+    const deadline = performance.now() + operationLookupDeadlineMs;
+    let interval = 250;
+    while (!signal?.aborted) {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) return null;
+      const status = await getUploadOperation(id, { signal }, remaining);
+      if (signal?.aborted || performance.now() >= deadline) return null;
+      const receipt = status.data;
+      if (status.ok) {
+        if (receipt?.operationId !== id) return null;
+        if (receipt.state === 'completed') {
+          return receipt.kind === kind && receipt.requestSha256 === requestHash && receipt.result?.ok === true
+            ? receipt.result : null;
+        }
+        if (receipt.state !== 'unknown') return null;
+      } else if (!isUncertainRequestFailure(status)) {
+        return null; // Auth, unsupported endpoint and other permanent failures.
+      }
+      // A receipt remains invisible until COMMIT; polling never resends the ZIP.
+      await waitForRecoveryPoll(Math.min(interval, Math.max(0, deadline - performance.now())), signal);
+      interval = Math.min(interval * 2, 1000);
+    }
+    return null;
+  }
+
   async function uploadZip(path, zipBytes, request = {}) {
-    const { query = null, onProgress = null, signal = null } = request;
+    const operationId = request.operationId ?? globalThis.crypto?.randomUUID?.();
+    if (operationId != null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operationId)) {
+      return toStructuredError({ code: 'INVALID_UPLOAD_OPERATION_ID', message: 'Upload operation ID must be a UUID.' });
+    }
+    const id = operationId?.toLowerCase();
+    const expectedKind = {
+      '/drafts/upload': 'worksheet-draft', '/attempts/upload': 'worksheet-attempt',
+      '/roleplayscene/drafts/upload': 'roleplayscene-draft',
+    }[path];
+    // Hash precisely what URLSearchParams sends (including UTF-16 repair), and
+    // freeze query values before awaiting hashing just as we snapshot ZIP bytes.
+    const query = Object.fromEntries(new URL(buildUrl(path, request.query), window.location.origin).searchParams);
+    // Snapshot before hashing so caller mutations cannot change the sent bytes.
+    const body = ArrayBuffer.isView(zipBytes)
+      ? new Uint8Array(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength).slice()
+      : zipBytes instanceof ArrayBuffer ? zipBytes.slice(0) : zipBytes;
+    let requestHash = null;
+    if (id) {
+      requestHash = await hashUploadRequest(expectedKind, [query.title, query.subject ?? query.description, query.conflictAction], body).catch(() => null);
+    }
+    const result = await uploadZipOnce(path, body, { ...request, query, operationId: id });
+    if (!id) return result; // Older/non-secure browser contexts keep the legacy transport.
+    if (isUncertainRequestFailure(result) && requestHash && !request.signal?.aborted) {
+      const recovered = await recoverUploadOperation(id, expectedKind, requestHash, request.signal);
+      if (request.signal?.aborted) {
+        return { ...toStructuredError({ code: 'ABORTED', message: 'Upload status lookup was canceled. The server may already have saved the upload.' }), operationId: id };
+      }
+      if (recovered) {
+        return { ok: true, data: recovered.data, status: recovered.statusCode, operationId: id, recovered: true };
+      }
+    }
+    // Never resend automatically: older servers may ignore Idempotency-Key.
+    return { ...result, operationId: id };
+  }
+
+  async function uploadZipOnce(path, zipBytes, request = {}) {
+    const { query = null, onProgress = null, signal = null, operationId = null } = request;
     const targetUrl = buildUrl(path, query);
     const timeoutMs = Number.isFinite(uploadTimeoutMs) && uploadTimeoutMs > 0 ? uploadTimeoutMs : 120000;
     return new Promise((resolve) => {
       let settled = false;
       let abortTransport = () => {};
       let timer;
+      let responseStatus = null;
       const finish = (result) => {
         if (settled) return;
         settled = true;
@@ -418,11 +520,12 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
         resolve(result);
       };
       const canceled = () => toStructuredError({ code: 'ABORTED', message: 'Upload was canceled. Refresh uploaded items before retrying; the server may already have received it.' });
+      const timedOut = () => toStructuredError({ code: 'UPLOAD_TIMEOUT', status: responseStatus, requiresSignIn: authLikeStatus(responseStatus), message: 'Upload timed out. Refresh uploaded items before retrying; the server may already have received it.' });
       const cancel = () => { finish(canceled()); abortTransport(); };
       if (signal?.aborted) { finish(canceled()); return; }
       signal?.addEventListener('abort', cancel, { once: true });
       timer = setTimeout(() => {
-        finish(toStructuredError({ code: 'UPLOAD_TIMEOUT', message: 'Upload timed out. Refresh uploaded items before retrying; the server may already have received it.' }));
+        finish(timedOut());
         abortTransport();
       }, timeoutMs);
 
@@ -434,11 +537,12 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
           try {
             const response = await fetch(targetUrl, {
               method: 'POST', credentials: 'include',
-              headers: { 'content-type': 'application/zip' }, body: zipBytes, signal: controller.signal,
+              headers: { 'content-type': 'application/zip', ...(operationId ? { 'idempotency-key': operationId } : {}) }, body: zipBytes, signal: controller.signal,
             });
+            responseStatus = response.status;
             finish(await parseJsonResponse(response));
           } catch (error) {
-            finish(toTransportError(error, { signal: controller.signal, duringRead: true }));
+            finish(toTransportError(error, { signal: controller.signal, duringRead: true, status: responseStatus }));
           }
         })();
         return;
@@ -452,21 +556,27 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
         xhr.responseType = 'text';
         xhr.timeout = timeoutMs;
         xhr.setRequestHeader('content-type', 'application/zip');
+        if (operationId) xhr.setRequestHeader('idempotency-key', operationId);
+        xhr.onreadystatechange = () => {
+          // XHR resets status to 0 on timeout/network error. Retain headers
+          // already received so an explicit 4xx cannot become recoverable.
+          if (!settled && xhr.readyState >= 2 && xhr.status > 0) responseStatus = Number(xhr.status);
+        };
         if (typeof onProgress === 'function' && xhr.upload) {
           xhr.upload.onprogress = event => {
             if (!settled) onProgress({ loaded: Number(event?.loaded || 0), total: Number(event?.total || 0), lengthComputable: Boolean(event?.lengthComputable) });
           };
         }
-        xhr.onerror = () => finish(toStructuredError({ code: 'NETWORK_ERROR', message: 'Unable to reach server API. Network request failed.' }));
+        xhr.onerror = () => finish(toStructuredError({ code: 'NETWORK_ERROR', status: responseStatus, requiresSignIn: authLikeStatus(responseStatus), message: 'Unable to reach server API. Network request failed.' }));
         xhr.onabort = () => finish(canceled());
-        xhr.ontimeout = () => finish(toStructuredError({ code: 'UPLOAD_TIMEOUT', message: 'Upload timed out. Refresh uploaded items before retrying; the server may already have received it.' }));
+        xhr.ontimeout = () => finish(timedOut());
         xhr.onload = async () => {
           try {
             finish(await parseJsonResponseFromText({ status: Number(xhr.status || 0), contentType: xhr.getResponseHeader('content-type') || '', text: xhr.responseText || '' }));
-          } catch (error) { finish(toTransportError(error, { duringRead: true })); }
+          } catch (error) { finish(toTransportError(error, { duringRead: true, status: responseStatus })); }
         };
         xhr.send(zipBytes);
-      } catch (error) { finish(toTransportError(error, { signal })); }
+      } catch (error) { finish(toTransportError(error, { signal, status: responseStatus })); }
     });
   }
 
@@ -488,10 +598,14 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       return requestJson('/session', { signal: options.signal });
     },
     listUploadedDrafts(options = {}) {
-      return requestList('/drafts', options);
+      return requestWithDeadline('/drafts', options);
+    },
+    getUploadOperation(operationId, options = {}) {
+      return getUploadOperation(operationId, options);
     },
     uploadDraftPackage(zipBytes, metadata = {}, options = {}) {
       return uploadZip('/drafts/upload', zipBytes, {
+        operationId: options.operationId,
         query: {
           title: metadata.title || '',
           subject: metadata.subject || '',
@@ -508,10 +622,11 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       return requestJson(`/drafts/${uploadedDraftId}`, { method: 'DELETE' });
     },
     listRolePlaySceneDrafts(options = {}) {
-      return requestList('/roleplayscene/drafts', options);
+      return requestWithDeadline('/roleplayscene/drafts', options);
     },
     uploadRolePlaySceneDraftPackage(zipBytes, metadata = {}, options = {}) {
       return uploadZip('/roleplayscene/drafts/upload', zipBytes, {
+        operationId: options.operationId,
         query: {
           title: metadata.title || '',
           description: metadata.description || '',
@@ -563,6 +678,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     },
     uploadAttemptPackage(zipBytes, metadata = {}, options = {}) {
       return uploadZip('/attempts/upload', zipBytes, {
+        operationId: options.operationId,
         query: {
           title: metadata.title || '',
           subject: metadata.subject || '',

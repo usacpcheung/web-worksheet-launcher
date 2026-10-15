@@ -74,6 +74,10 @@ The ordinary static server defaults to `http://127.0.0.1:8765`. Read each script
 
 The table inventories the 26 retained-product smoke scripts. `review-fixes-smoke.mjs` additionally forces unfinished IndexedDB writes across reload and exercises upload cancellation in all three products, post-upload refresh cancellation in editor/RolePlayScene, both locales and desktop/narrow layouts. It also simulates concurrent IndexedDB saves, deletes and clears between recovery reads and writes, including equal timestamps. `npm test` does not run them. Check shared consumers too: worksheet package/audio helpers serve the viewer/API, and viewer voice processing also serves RolePlayScene discussion.
 
+`upload-operation-smoke.mjs` covers real browser XHR response loss for all three upload APIs, immediate and late-commit status recovery, URL-encoded metadata fingerprints, bounded unknown status without a POST resend, and cancellation during lookup. The runner discovers it automatically alongside the existing 27 scripts.
+
+`upload-http-errors-smoke.mjs` adds a real local HTTP server that flushes response headers before stalling or disconnecting the body. It checks 401/403/409/413/429 rejections, uncertain 200/503 responses and non-JSON replies in Chromium, including the XHR status reset after headers. Together these bring the automatically discovered browser suite to 29 scripts.
+
 Browser fixtures use isolated storage and synthetic/mocked auth, API and audio where documented by each script. Never point synthetic/destructive fixtures at production learner records. Verify both supported locales, desktop/narrow layouts, keyboard focus and browser errors for affected UI.
 
 ## Transaction and concurrency regression fixture
@@ -85,6 +89,8 @@ npm run test:postgres
 ```
 
 The script creates a unique temporary schema, applies all repository migrations, and uses temporary artifact files. It simulates a real database commit followed by loss of its acknowledgment, replacement/delete lock contention, and six simultaneous uploads against the three-slot limit. It drops its schema and removes its files afterward. Do not point it at production. Node service tests separately inject acknowledgment loss into all five artifact-producing operations and check missing-row replacement cleanup.
+
+Its upload-operation fixtures also run six concurrent identical requests for each upload type, verify one row/file and stable replay, reject changed bytes/metadata/kinds, check owner isolation, replay copies and replacements (including published drafts), preserve receipts after deletion, verify that uncommitted receipts remain unknown, recover a lost commit reply, and roll back resource/file changes when receipt insertion fails. They also race different payloads for one key, replay with full slots, reject malformed packages without receipts, preserve the original row/ZIP after a replacement receipt failure, and delete a draft while its replacement ZIP is being written. A real HTTP fixture joins the shared fetch client, API routing, PostgreSQL and filesystem: the POST socket closes before commit, the first status read is unknown, and a later poll recovers the committed receipt without resending the ZIP.
 
 For a disposable local database matching CI (Docker required):
 
@@ -109,3 +115,9 @@ Stop the container after failed runs too; forced termination may skip fixture cl
 Local tests do not certify live OIDC/proxy configuration, database installation, paid provider support, real microphones, physical iPad/mobile behavior, screen readers or every browser. Deployment acceptance should cover real HTTPS sign-in, draft save/restore, publish/load, attempts/review, audio playback/voice and RolePlayScene branches/music/discussion. Record exact releases and use test copies. Live provider calls and deployment are separate actions from local validation.
 
 The [archived audits](../past/README.md) preserve historical results and limitations; current counts and readiness must come from a new run on the branch being reviewed.
+
+## Upload-recovery simulation coverage
+
+`server/app/api/upload-operation-failure-matrix.unit.test.mjs` exercises all three upload APIs through fetch and XHR. It covers normal success, connection resets, stalled headers/bodies, interrupted bodies, malformed JSON, gateway/server errors, authentication, conflicts, size/rate-limit rejections and login HTML. Additional cases cover a shared polling deadline, cancellation during backoff, unsupported status endpoints, missing crypto capabilities, uppercase UUIDs, and Blob/ArrayBuffer/offset-view inputs. `upload-operation-recovery.unit.test.mjs` checks delayed commit visibility, transient status errors, exact metadata/byte matching, caller mutation and mismatched receipts.
+
+These are isolated automated simulations. They do not validate production Apache/OIDC configuration, a live deployment's migration state, Safari/Firefox behavior, physical disk or host failure, or recovery after a page reload. Commits later than the recovery budget can remain unknown; receipt retention, durable retry UI, publishing idempotency, server cancellation and orphan reconciliation retain the boundaries described in the [runtime reference](server-runtime.md#upload-operation-ids-and-recovery).

@@ -1,6 +1,6 @@
 # Implemented database and artifact schema
 
-Reviewed against main `7bb19de` on 2026-10-06. The executable schema authority is the SQL under `server/api/db/migrations/`, applied by `server/api/db/migrate.js`. This reference describes those files; it does not assert which migrations a deployment has run.
+Baseline reviewed against main `7bb19de` on 2026-10-06; updated through migration 015 on 2026-10-14. The executable schema authority is the SQL under `server/api/db/migrations/`, applied by `server/api/db/migrate.js`. This reference describes those files; it does not assert which migrations a deployment has run.
 
 ## Tables
 
@@ -13,6 +13,7 @@ Reviewed against main `7bb19de` on 2026-10-06. The executable schema authority i
 | `roleplayscene_uploaded_drafts` | `roleplayscene_uploaded_draft_id` UUID; `owner_sub` | Title/description, package version, artifact metadata, scene/media/missing-media/warning counts and historical publish hash/time. |
 | `roleplayscene_published_scenes` | `roleplayscene_published_scene_id` UUID; nullable `source_roleplayscene_uploaded_draft_id` | Published story listing and artifact/count metadata. Source deletion sets the foreign key to NULL. |
 | `published_artifact_quarantine` | `quarantine_id` UUID; original published ID/path | Publication/orphan kind, saved row metadata, move/restore/purge state, operator/reason, timestamps, retention and last error. |
+| `upload_operations` | Composite primary key `(owner_sub, operation_id)` | Upload kind, request SHA-256, successful JSON response and completion timestamp. Receipt and resource commit atomically; receipts survive resource deletion. |
 
 Ownership is the OIDC subject `owner_sub`; email/name are display metadata, not ownership keys. Content, media and learner answers live in ZIP artifacts, not relational JSONB worksheet/attempt content columns. Quarantine uses saved row JSON metadata for restoration, not a replacement content store.
 
@@ -34,8 +35,11 @@ Ownership is the OIDC subject `owner_sub`; email/name are display metadata, not 
 | 012 | RolePlayScene uploaded-draft publish markers. |
 | 013 | RolePlayScene publications, source lookup and normalized owner/title uniqueness. |
 | 014 | Administrative publication/orphan quarantine and state/retention indexes. |
+| 015 | Owner-scoped upload operation receipts for duplicate-request replay and status lookup. |
 
 Use `npm run migrate` with the deployment's configured environment to apply pending migrations. Never apply the SQL in [the archived target schema](../past/plans/worksheet_launcher_db_schema.md) as an installation recipe.
+
+The upload-operation primary key supports exact owner/UUID lookups. There is no foreign key to an uploaded item: retaining a receipt after deletion prevents a delayed retry from recreating it. There is no automatic receipt expiration. See the [operation protocol and rollout requirements](../operations/server-runtime.md#upload-operation-ids-and-recovery) before changing retention or retry behavior.
 
 ## Publish and conflict behavior
 
