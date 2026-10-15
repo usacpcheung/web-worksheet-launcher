@@ -53,6 +53,10 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Font provenance and license](../server/app/fonts/README.md)
 - [Local reference workspace](../reference/README.md)
 
+## Proposed work
+
+- [Shared upload-result classification](plans/upload-result-handling.md) — planning draft based on main after PR #308; not implemented behavior.
+
 ## History and maintenance policy
 
 [past/](past/README.md) contains superseded plans, retired widget instructions, early phase checkpoints and dated audits. Archive status concerns documentation authority; it never means an input format or product capability can be removed. Historical commands, branch names, test counts and acceptance criteria are evidence about their stated baseline only.
