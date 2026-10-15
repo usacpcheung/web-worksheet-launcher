@@ -1,3 +1,4 @@
+import { classifyUploadResult, classifyProtectedUploadResult } from '../app/api/upload-result.js';
 import { assertAttemptPackage } from '../app/contracts/attempt-package-validator.js';
 import { installPageRecovery } from '../app/storage/recovery-journal.js';
 import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.js';
@@ -286,20 +287,21 @@ function getViewerAuthNotification(key, params = {}) {
   return t(`viewer.notifications.auth.${key}`, params);
 }
 
-function getViewerUploadAttemptMessage(errorCode, uploadResult = {}) {
-  switch (String(errorCode || '').toUpperCase()) {
-    case 'ATTEMPT_NAME_CONFLICT':
+function getViewerUploadAttemptMessage(outcome) {
+  const uploadResult = outcome.result;
+  if (outcome.code === 'INVALID_ATTEMPT_PACKAGE') return t('viewer.notifications.uploadAttempt.invalidPackage');
+  switch (outcome.kind) {
+    case 'conflict':
       return t('viewer.notifications.uploadAttempt.conflict');
-    case 'ATTEMPT_SLOT_LIMIT_REACHED':
+    case 'slot_limit':
       return formatAttemptSlotLimitMessage(uploadResult?.error?.details?.slotLimit);
-    case 'INVALID_ATTEMPT_PACKAGE':
-      return t('viewer.notifications.uploadAttempt.invalidPackage');
-    case 'AUTH_REQUIRED':
-      return t('viewer.notifications.uploadAttempt.authRequired');
-    case 'ABORTED':
+    case 'auth_required':
+      return outcome.code === 'AUTH_REQUIRED'
+        ? t('viewer.notifications.uploadAttempt.authRequired')
+        : uploadResult?.error?.message || 'Attempt upload failed.';
+    case 'canceled':
       return t('viewer.notifications.uploadAttempt.canceled');
-    case 'NETWORK_ERROR':
-    case 'UPLOAD_TIMEOUT':
+    case 'uncertain':
       return t('viewer.notifications.uploadAttempt.networkFailure');
     default:
       return uploadResult?.error?.message || 'Attempt upload failed.';
@@ -3782,16 +3784,16 @@ class ViewerAttemptSession {
         },
       });
 
-      if (!uploadResult?.ok) {
-        const errorCode = String(uploadResult?.error?.code || '').toUpperCase();
-        let message = getViewerUploadAttemptMessage(errorCode, uploadResult);
-        if (errorCode === 'ATTEMPT_NAME_CONFLICT') {
+      const outcome = classifyUploadResult(uploadResult, 'worksheet-attempt');
+      if (outcome.kind !== 'success') {
+        const message = getViewerUploadAttemptMessage(outcome);
+        if (outcome.kind === 'conflict') {
           this.state.uploadAttemptConflictContext = {
             title: uploadTitle,
             subject: uploadSubject,
             existingAttempt: uploadResult?.error?.details?.existingAttempt || null,
           };
-        } else if (errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED') {
+        } else if (outcome.kind === 'slot_limit') {
           const requestedConflictAction = options.conflictAction === 'replace'
             ? 'replace'
             : options.conflictAction === 'copy'
@@ -3807,7 +3809,7 @@ class ViewerAttemptSession {
         this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
         this.state.serverActionMessage = message;
         this.pushNotification({
-          kind: errorCode === 'ATTEMPT_NAME_CONFLICT' || errorCode === 'ATTEMPT_SLOT_LIMIT_REACHED' ? 'warn' : 'error',
+          kind: outcome.kind === 'conflict' || outcome.kind === 'slot_limit' ? 'warn' : 'error',
           text: message,
           ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
         });
@@ -6755,13 +6757,14 @@ function renderViewerShell(session) {
 
   uploadAttemptBtn.addEventListener('click', async () => {
     let protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
-    if (protectedActionResult?.status === 'redirected') {
+    const gateOutcome = classifyProtectedUploadResult(protectedActionResult, 'worksheet-attempt');
+    if (gateOutcome.kind === 'redirected') {
       return;
     }
     // The auth gate returns non-auth application failures unchanged. They
     // already have upload feedback and may need conflict/slot recovery below.
-    if (protectedActionResult?.status !== 'executed' && protectedActionResult?.ok !== false) {
-      const blockedMessage = protectedActionResult?.status === 'blocked_session_probe'
+    if (gateOutcome.kind === 'blocked') {
+      const blockedMessage = gateOutcome.reason === 'blocked_session_probe'
         ? getViewerAuthNotification('unableToVerifySignIn')
         : t('viewer.notifications.uploadAttempt.signInRequired');
       session.pushNotification({
@@ -6772,7 +6775,7 @@ function renderViewerShell(session) {
       renderUI();
       return;
     }
-    if (protectedActionResult?.error?.code === 'ATTEMPT_NAME_CONFLICT' && session.state.uploadAttemptConflictContext) {
+    if (classifyUploadResult(protectedActionResult, 'worksheet-attempt').kind === 'conflict' && session.state.uploadAttemptConflictContext) {
       const choice = await showAttemptUploadConflictModal(session.state.uploadAttemptConflictContext);
       if (choice === 'replace' || choice === 'copy') {
         protectedActionResult = await session.retryAttemptUploadFromConflict(choice);
@@ -6780,7 +6783,7 @@ function renderViewerShell(session) {
         session.clearAttemptUploadConflictPrompt();
       }
     }
-    if (protectedActionResult?.error?.code === 'ATTEMPT_SLOT_LIMIT_REACHED' && session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
+    if (classifyUploadResult(protectedActionResult, 'worksheet-attempt').kind === 'slot_limit' && session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
       const slotRecoveryHint = { ...session.state.uploadAttemptRecoveryHint };
       await session.listUploadedAttempts();
       const slotRecovery = await showAttemptSlotFullModal(session, {

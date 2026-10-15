@@ -223,7 +223,7 @@ async function loadViewerModule(overrides = {}) {
     window: overrides.window || {},
   };
 
-  const rewrittenSource = rewriteModuleSourceForTests(source, [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
     {
       name: 'replace viewerStorage import with test bag binding',
       pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];/,
@@ -6726,4 +6726,28 @@ test('attempt upload metadata stays with its package while asynchronous media is
   assert.equal((await session.uploadCurrentAttemptPackage()).ok, true);
   assert.equal(received.title, 'Original');
   assert.equal(received.subject, 'Original subject');
+});
+
+for (const [error, expected] of [
+  [{ code: 'AUTH_REQUIRED', message: 'raw auth' }, 'viewer.notifications.uploadAttempt.authRequired'],
+  [{ code: 'NETWORK_ERROR', status: 401, requiresSignIn: true, message: 'raw network' }, 'viewer.notifications.uploadAttempt.networkFailure'],
+  [{ code: 'UPLOAD_TIMEOUT', status: 403, message: 'raw timeout' }, 'viewer.notifications.uploadAttempt.networkFailure'],
+  [{ code: 'ABORTED', requiresSignIn: true, message: 'raw cancel' }, 'viewer.notifications.uploadAttempt.canceled'],
+  [{ code: 'INVALID_ATTEMPT_PACKAGE', requiresSignIn: true, message: 'raw invalid' }, 'viewer.notifications.uploadAttempt.invalidPackage'],
+  [{ code: 'UNKNOWN', status: 401, message: 'Preserve server explanation' }, 'Preserve server explanation'],
+]) test(`upload classification preserves viewer feedback for ${error.code} with auth metadata`, async () => {
+  const mod = await loadViewerModule();
+  const result = { ok: false, operationId: 'keep-operation', error };
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } }, {
+    apiClient: { uploadAttemptPackage: async () => result },
+  });
+  session.state.localAttemptId = 'classification';
+  session.state.viewerPayload = { title: 'Sheet', blocks: [] };
+  session.state.answers = { q1: { value: 'Keep answer' } };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
+  assert.equal(await session.uploadCurrentAttemptPackage(), result);
+  assert.equal(session.state.serverActionMessage, expected);
+  assert.equal(session.state.answers.q1.value, 'Keep answer');
+  assert.equal(session.state.isUploadingAttemptPackage, false);
 });

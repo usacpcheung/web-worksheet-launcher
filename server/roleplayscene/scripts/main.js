@@ -1,3 +1,4 @@
+import { classifyUploadResult } from '../../app/api/upload-result.js';
 import { waitForDraftRequest } from './draft-request.js';
 import { Store } from './state.js';
 import { renderEditor } from './editor/editor.js';
@@ -2555,9 +2556,9 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
         description,
         conflictAction,
       }, { signal: uploadController.signal });
-      if (!result.ok) {
-        const code = String(result.error?.code || '').toUpperCase();
-        if (code === 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT') {
+      const outcome = classifyUploadResult(result, 'roleplayscene-draft');
+      if (outcome.kind !== 'success') {
+        if (outcome.kind === 'conflict') {
           const choice = await showUploadConflictModal(result.error?.details?.existingDraft);
           if (choice === 'replace' || choice === 'copy') {
             conflictAction = choice;
@@ -2566,7 +2567,7 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
           showMessage({ textId: 'server.uploadCanceled' });
           return result;
         }
-        if (code === 'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED') {
+        if (outcome.kind === 'slot_limit') {
           const slotLimit = Number(result.error?.details?.slotLimit);
           if (Number.isFinite(slotLimit) && slotLimit > 0) {
             uploadedDraftSlotLimit = slotLimit;

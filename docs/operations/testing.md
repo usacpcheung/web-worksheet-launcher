@@ -22,6 +22,19 @@ Use Node 24 and run `npm ci` first. `npm test` runs `node --test "server/**/*.te
 
 For a documentation-only edit, validate scope, relative links, consistency and skill references. Run existing tests that actually read changed documentation: `node --test server/app/login/popup.unit.test.mjs` reads the stable `docs/message-contract.md` path. Do not claim a new browser/provider run merely because an archived document reports one.
 
+## Upload-result regression coverage
+
+`server/app/api/upload-result.test.mjs` checks resource-specific result
+classification, original-result preservation, malformed inputs, authentication
+metadata on transport failures, and the auth-gate envelope boundary. Editor,
+viewer and RolePlayScene caller tests load the real shared classifier. Keep
+`editor-upload-result-smoke.mjs`, `attempt-upload-recovery-ui-smoke.mjs`,
+`upload-cancellation-ui-smoke.mjs`,
+`upload-operation-smoke.mjs`, `upload-http-errors-smoke.mjs` and RolePlayScene
+save/recovery checks when changing this boundary. These use isolated fixtures;
+they do not establish real VPS or identity-provider acceptance. Cross-application
+refactors require the full Node and retained browser suites.
+
 ## Browser smoke setup
 
 To reproduce the full CI browser suite locally:

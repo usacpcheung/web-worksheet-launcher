@@ -1,3 +1,4 @@
+import { classifyUploadResult } from '../app/api/upload-result.js';
 import { installPageRecovery } from '../app/storage/recovery-journal.js';
 import { getNumberCorrectAnswerConfigViolation } from '../app/contracts/number-input-validator.js';
 import { PackageLoadProgress } from '../viewer/package-load-progress.js';
@@ -3781,21 +3782,19 @@ class EditorDraftSession {
           this.notifyStateChange();
         },
       });
-      if (!result.ok) {
-        if (String(result?.error?.code || '').toUpperCase() === 'DRAFT_SLOT_LIMIT_REACHED') {
+      const outcome = classifyUploadResult(result, 'worksheet-draft');
+      if (outcome.kind !== 'success') {
+        if (outcome.kind === 'slot_limit') {
           const slotLimit = Number(result?.error?.details?.slotLimit);
           if (Number.isFinite(slotLimit) && slotLimit > 0) {
             this.state.uploadedDraftSlotLimit = slotLimit;
           }
         }
-        const isTransportFailure = ['NETWORK_ERROR', 'UPLOAD_TIMEOUT'].includes(String(result?.error?.code || '').toUpperCase());
-        const isSlotLimit = String(result?.error?.code || '').toUpperCase() === 'DRAFT_SLOT_LIMIT_REACHED';
-        const isCanceled = String(result?.error?.code || '').toUpperCase() === 'ABORTED';
-        const errorText = isCanceled
+        const errorText = outcome.kind === 'canceled'
           ? editorNotification('uploadDraft.canceled')
-          : isTransportFailure
+          : outcome.kind === 'uncertain'
             ? editorNotification('uploadDraft.networkFailure')
-            : isSlotLimit
+            : outcome.kind === 'slot_limit'
               ? editorNotification('uploadDraft.draftSlotLimitReached')
               : result.error.message;
         this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: errorText });
@@ -8501,11 +8500,11 @@ function renderEditorShell(session) {
         updateSummary();
         return session.uploadCurrentDraftToServer({ preflight: false });
       });
-      if (!result?.ok && result?.error?.code === 'DRAFT_NAME_CONFLICT') {
+      if (classifyUploadResult(result, 'worksheet-draft').kind === 'conflict') {
         const choice = await showUploadConflictModal({ existingDraft: result.error.details?.existingDraft });
         if (choice.action === 'replace' || choice.action === 'copy') {
           const retry = await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
-          if (!retry?.ok && retry?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
+          if (classifyUploadResult(retry, 'worksheet-draft').kind === 'slot_limit') {
             const slotChoice = await showSlotFullModal({ uploadedDrafts: retry.error.details?.uploadedDrafts });
             if (slotChoice.deleted) {
               // Keep slot-limit recovery in one continuous upload flow.
@@ -8513,7 +8512,7 @@ function renderEditorShell(session) {
             }
           }
         }
-      } else if (!result?.ok && result?.error?.code === 'DRAFT_SLOT_LIMIT_REACHED') {
+      } else if (classifyUploadResult(result, 'worksheet-draft').kind === 'slot_limit') {
         const slotChoice = await showSlotFullModal({ uploadedDrafts: result.error.details?.uploadedDrafts });
         if (slotChoice.deleted) {
           // Keep slot-limit recovery in one continuous upload flow.
