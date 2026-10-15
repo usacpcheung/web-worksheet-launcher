@@ -1195,6 +1195,8 @@ class EditorDraftSession {
 
     this.autosaveTimer = null;
     this.inFlightSaveCount = 0;
+    this.saveSequence = 0;
+    this.lastAppliedSaveSequence = 0;
     this.autosaveGeneration = 0;
     this.deletedDraftIds = new Set();
     this.inFlightSaveCountsByDraftId = new Map();
@@ -3124,6 +3126,7 @@ class EditorDraftSession {
   async autosave() {
     if (!this.state.draft || this.state.draft.localId === this.discardingDraftId) return null;
 
+    const saveSequence = ++this.saveSequence;
     const revisionAtSaveStart = this.state.draftRevision;
     const draftIdAtSaveStart = this.state.draft.localId || null;
     const generationAtSaveStart = this.autosaveGeneration;
@@ -3179,23 +3182,25 @@ class EditorDraftSession {
 
       const shouldApplySaveStatus =
         this._audioDraftGeneration === draftGenerationAtSaveStart
-        && this.state.draft?.localId === persisted.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
+        && this.state.draft?.localId === persisted.localId
+        && revisionAtSaveStart >= this.state.lastSavedRevision
+        && saveSequence > this.lastAppliedSaveSequence;
 
-      if (this._audioDraftGeneration === draftGenerationAtSaveStart
-        && this.state.draft?.localId === persisted.localId && this.state.draftRevision === revisionAtSaveStart) {
+      if (shouldApplySaveStatus && this.state.draftRevision === revisionAtSaveStart) {
         this.state.draft = persisted;
       }
 
       if (shouldApplySaveStatus) {
+        this.lastAppliedSaveSequence = saveSequence;
         const wasNeverSavedBefore = this.state.lastSavedRevision === 0;
         this.state.lastSavedRevision = revisionAtSaveStart;
         this.state.lastPersistenceError = null;
         this.state.lastSavedLocalValidationIssueCount = validation.errors.length;
         this.state.lastContractValidationIssueCount = contractValidation.errors.length;
 
-        if (!this.state.lastSavedAt || this.state.lastSavedAt < updatedAt) {
-          this.state.lastSavedAt = updatedAt;
-        }
+        // Order completed saves by invocation, not wall-clock time: the clock
+        // may have been corrected since the persisted draft was last saved.
+        this.state.lastSavedAt = updatedAt;
 
         const shouldSuppressPristineWarning = this.state.isPristineDraft && wasNeverSavedBefore;
         const shouldSuppressTransientQuestionWarning =

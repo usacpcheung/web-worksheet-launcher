@@ -23,6 +23,38 @@ test('opening persisted drafts restores their save time without leaking previous
   clearTimeout(session.autosaveTimer);
 });
 
+test('saving a reopened draft replaces a future timestamp after clock correction', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  storage.drafts.get = async () => ({ ...mod.createDraftRecord({ localId: 'clock-correction' }), metadata: { updatedAt: '2099-01-01T00:00:00.000Z' } });
+  await session.createOrOpenByLocalDraftId('clock-correction');
+  clearTimeout(session.autosaveTimer);
+  const saved = await session.autosave();
+  assert.equal(session.state.lastSavedAt, saved.metadata.updatedAt);
+  assert.notEqual(session.state.lastSavedAt, '2099-01-01T00:00:00.000Z');
+});
+
+test('same-revision saves completing out of order retain the newer save status', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  await session.createOrOpenByLocalDraftId('same-revision');
+  clearTimeout(session.autosaveTimer);
+  const pending = [];
+  storage.drafts.put = value => new Promise(resolve => pending.push({ value, resolve }));
+  const first = session.autosave();
+  while (pending.length < 1) await new Promise(resolve => setImmediate(resolve));
+  const second = session.autosave();
+  while (pending.length < 2) await new Promise(resolve => setImmediate(resolve));
+  pending[1].resolve(pending[1].value);
+  const newer = await second;
+  pending[0].resolve(pending[0].value);
+  await first;
+  assert.equal(session.state.draft, newer);
+  assert.equal(session.state.lastSavedAt, newer.metadata.updatedAt);
+});
+
 test('audio generation rejects worksheet switches and reopening the same worksheet', async () => {
   const mod = await loadEditorModule();
   for (const target of ['prompt', 'option']) for (const sameId of [false, true]) {
