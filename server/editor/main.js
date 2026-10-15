@@ -779,6 +779,7 @@ function getEditorSaveStateLabel(saveState) {
   const keyByState = {
     error: 'editor.saveState.error',
     saving: 'editor.saveState.saving',
+    unsaved: 'editor.saveState.unsaved',
     warning: 'editor.saveState.savedWithWarnings',
     saved: 'editor.saveState.saved',
   };
@@ -1609,6 +1610,9 @@ class EditorDraftSession {
 
     this.state.draftRevision = 1;
     this.state.lastSavedRevision = existing ? 1 : 0;
+    const savedAt = existing?.metadata?.updatedAt;
+    this.state.lastSavedAt = isNonEmptyString(savedAt) && Number.isFinite(Date.parse(savedAt)) ? savedAt : null;
+    this.state.lastPersistenceError = null;
     const conversion = upgradeEditableBlocks(this.state.draft.blocks);
     if (conversion.changed) {
       this.state.draft = { ...this.state.draft, blocks: conversion.blocks };
@@ -5171,18 +5175,20 @@ function renderEditorShell(session) {
   }
 
   function formatLastSavedLabel(lastSavedAt) {
-    if (!isNonEmptyString(lastSavedAt)) return 'Not yet saved';
+    if (!isNonEmptyString(lastSavedAt)) {
+      return t(session.state.lastSavedRevision > 0 ? 'editor.saveTime.unknown' : 'editor.saveTime.never');
+    }
     const savedTime = new Date(lastSavedAt).getTime();
-    if (!Number.isFinite(savedTime)) return lastSavedAt;
+    if (!Number.isFinite(savedTime)) return t('editor.saveTime.unknown');
     const elapsedMs = Date.now() - savedTime;
-    if (elapsedMs < 0) return `${lastSavedAt} (in the future)`;
-    const elapsedSeconds = Math.floor(elapsedMs / 1000);
-    if (elapsedSeconds < 10) return 'just now';
-    if (elapsedSeconds < 60) return `${elapsedSeconds} seconds ago`;
-    const elapsedMinutes = Math.floor(elapsedSeconds / 60);
-    if (elapsedMinutes < 60) return `${elapsedMinutes} minute${elapsedMinutes === 1 ? '' : 's'} ago`;
-    const elapsedHours = Math.floor(elapsedMinutes / 60);
-    if (elapsedHours < 24) return `${elapsedHours} hour${elapsedHours === 1 ? '' : 's'} ago`;
+    if (elapsedMs < 0) return t('editor.saveTime.future', { time: lastSavedAt });
+    const seconds = Math.floor(elapsedMs / 1000);
+    if (seconds < 10) return t('editor.saveTime.now');
+    if (seconds < 60) return t('editor.saveTime.seconds', { count: seconds });
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return t(minutes === 1 ? 'editor.saveTime.minute' : 'editor.saveTime.minutes', { count: minutes });
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return t(hours === 1 ? 'editor.saveTime.hour' : 'editor.saveTime.hours', { count: hours });
     return lastSavedAt;
   }
 
@@ -7970,9 +7976,11 @@ function renderEditorShell(session) {
       ? 'error'
       : session.state.autosavePending
         ? 'saving'
-        : session.state.lastValidationWarning
-          ? 'warning'
-        : 'saved';
+        : session.state.draftRevision > session.state.lastSavedRevision
+          ? 'unsaved'
+          : session.state.lastValidationWarning
+            ? 'warning'
+            : 'saved';
     const isSaved = saveState === 'saved';
     saveStateEl.innerHTML = `<span class="editor-pill ${isSaved ? 'editor-pill--ok' : 'editor-pill--warn'}">${createEditorIcon('check')}${getEditorSaveStateLabel(saveState)}</span>`;
     saveStateEl.title = session.state.lastPersistenceError || session.state.lastValidationWarning || '';

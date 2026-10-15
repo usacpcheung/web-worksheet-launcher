@@ -7,6 +7,22 @@ import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-he
 import { createServerApiClient } from '../app/api/server-api-client.js';
 import { SharedAuthGate as RealSharedAuthGate } from '../app/auth/shared-auth-gate.js';
 
+test('opening persisted drafts restores their save time without leaking previous draft status', async () => {
+  const mod = await loadEditorModule();
+  const storage = createSessionForTests();
+  const session = new mod.EditorDraftSession(storage);
+  const savedAt = '2026-10-14T12:34:56.000Z';
+  storage.drafts.get = async id => ({ ...mod.createDraftRecord({ localId: id }), metadata: id === 'legacy' ? {} : { updatedAt: savedAt } });
+  await session.createOrOpenByLocalDraftId('saved');
+  assert.equal(session.state.lastSavedAt, savedAt);
+  await session.createOrOpenByLocalDraftId('legacy');
+  assert.equal(session.state.lastSavedAt, null);
+  session.state.lastSavedAt = savedAt;
+  await session.createOrOpenByLocalDraftId(null);
+  assert.equal(session.state.lastSavedAt, null);
+  clearTimeout(session.autosaveTimer);
+});
+
 test('audio generation rejects worksheet switches and reopening the same worksheet', async () => {
   const mod = await loadEditorModule();
   for (const target of ['prompt', 'option']) for (const sameId of [false, true]) {
@@ -1736,8 +1752,23 @@ test('stage3: protected actions column no longer includes legacy rewrite/t2a stu
 test('editor source keeps detail status row visible and uses friendly block/saved labels', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
 
-  assert.equal(source.includes("if (elapsedMs < 0) return `${lastSavedAt} (in the future)`;"), true);
-  assert.equal(source.includes("if (elapsedMs < 0) return 'just now';"), false);
+  const { t, setLocale } = await import('../app/i18n/index.js');
+  const start = source.indexOf('  function formatLastSavedLabel(');
+  const end = source.indexOf('  function emitServerNotification', start);
+  const session = { state: { lastSavedRevision: 0 } };
+  const format = new Function('t', 'session', 'isNonEmptyString', source.slice(start, end) + '; return formatLastSavedLabel;')(t, session, value => typeof value === 'string' && value.trim().length > 0);
+  for (const locale of ['en', 'zh-Hant']) {
+    setLocale(locale, { persist: false });
+    assert.equal(format(null), t('editor.saveTime.never'));
+    session.state.lastSavedRevision = 1;
+    assert.equal(format(null), t('editor.saveTime.unknown'));
+    assert.equal(format(new Date().toISOString()), t('editor.saveTime.now'));
+    const future = new Date(Date.now() + 60000).toISOString();
+    assert.equal(format(future), t('editor.saveTime.future', { time: future }));
+    assert.equal(format(new Date(Date.now() - 120000).toISOString()), t('editor.saveTime.minutes', { count: 2 }));
+    session.state.lastSavedRevision = 0;
+  }
+  setLocale('en', { persist: false });
   assert.equal(source.includes('blockBadge.textContent = getBlockKindLabel(block.kind);'), true);
   assert.equal(source.includes('rightPanel.append(statusRow);'), true);
 });
