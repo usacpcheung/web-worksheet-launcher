@@ -1,3 +1,4 @@
+import { getApiErrorMessage } from '../../app/api/error-presentation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -13,14 +14,14 @@ function harness(apiClient) {
     assert.equal(options.timeoutMs, 15000);
     return probeSession({ ...options, timeoutMs: 10 });
   };
-  return new Function('apiClient', 'probeSession', 'showMessage', `
+  return new Function('apiClient', 'probeSession', 'showMessage', 'getApiErrorMessage', `
     let serverSession;
     const updateServerSessionUi = () => {};
     const translate = id => id;
     ${wiring}
     return { ensureServerSessionReady, probeServerSessionSilently,
       state: () => serverSession, setState: state => { serverSession = state; } };
-  `)(apiClient, boundedProbe, notice => notices.push(notice));
+  `)(apiClient, boundedProbe, notice => notices.push(notice), getApiErrorMessage);
 }
 
 test('real preflight aborts a stalled fetch and manual retry starts a fresh request', async t => {

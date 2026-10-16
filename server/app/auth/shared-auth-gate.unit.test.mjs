@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { setLocale, t } from '../i18n/index.js';
 import { SharedAuthGate } from './shared-auth-gate.js';
 
 function createStorage() {
@@ -749,4 +750,24 @@ for (const stage of ['probe', 'restore', 'ui', 'validate', 'replay']) test(`supe
   assert.equal((await gate.restoreAfterAuthReturn()).status,'intent_superseded');
   assert.equal(storage.pendingIntent.get(),newer);
   assert.equal(replays,stage === 'replay' ? 1 : 0);
+});
+
+
+test('auth recovery messages follow the selected locale without redirecting or changing diagnostics', async () => {
+  for (const locale of ['en', 'zh-Hant']) {
+    setLocale(locale, { persist: false });
+    try {
+      const notices = [];
+      const storage = createStorage();
+      const gate = new SharedAuthGate({ storage, resumeFlagKey: 'test',
+        getCurrentLocalId: () => null, checkSessionReady: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED' } }),
+        onRecoveryMessage: text => notices.push(text),
+        redirectToAuth: () => assert.fail('missing local record must not redirect'),
+      });
+      assert.equal((await gate.runProtectedAction({ actionId: 'generate', recordStore: 'localDrafts' })).status, 'blocked_no_local_id');
+      assert.equal(notices.at(-1), t('apiErrors.noRecord'));
+      if (locale === 'zh-Hant') assert.match(notices.at(-1), /[\u3400-\u9fff]/);
+      assert.equal(storage.pendingIntent.get(), null);
+    } finally { setLocale('en', { persist: false }); }
+  }
 });

@@ -1,3 +1,4 @@
+import { getApiErrorMessage } from '../../app/api/error-presentation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -19,6 +20,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 function harness(overrides = {}) {
   const state = { dialogs: [], requests: [], managers: 0, conflicts: 0 };
   const context = vm.createContext({
+    getApiErrorMessage,
     openingUploadedDraft: null, isPublishingDraftFlow: false,
     publishingDraftIds: new Set(), activeServerModal: null,
     getRolePlaySceneDraftId: draft => draft.id,
@@ -134,5 +136,25 @@ test('session failure, request failure, and refresh failure all release the guar
     else await h.run();
     assert.equal(h.context.isPublishingDraftFlow, false);
     assert.equal(h.context.publishingDraftIds.size, 0);
+  }
+});
+
+test('publish preflight and thrown API failures use localized presentation and do not retry', async () => {
+  const failure = { ok: false, error: { code: 'AUTH_REQUIRED', message: 'Raw upstream detail' } };
+  for (const scenario of ['session', 'request']) {
+    const notices = [];
+    let requests = 0;
+    const h = harness({
+      showMessage: notice => notices.push(notice),
+      ensureServerSessionReady: async () => scenario === 'session' ? { ok: false, result: failure } : { ok: true },
+      apiClient: { async publishRolePlaySceneFromUploadedDraft() {
+        requests++;
+        throw new Error('Raw upstream detail');
+      } },
+    });
+    await h.run();
+    assert.equal(requests, scenario === 'session' ? 0 : 1);
+    assert.equal(notices.at(-1).text, getApiErrorMessage(scenario === 'session' ? failure : {}, scenario === 'session' ? 'session' : 'publish'));
+    assert.equal(h.context.isPublishingDraftFlow, false);
   }
 });

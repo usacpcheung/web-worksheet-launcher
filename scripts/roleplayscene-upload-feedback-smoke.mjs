@@ -30,9 +30,9 @@ try {
    if (!await save.isVisible()) await page.locator('#toolbar-more-btn').click();
    await save.click();
    await page.waitForFunction(()=>document.querySelector('#server-save-btn').getAttribute('aria-busy')==='false');
-   const expected = await page.evaluate(async locale => (await import(`/server/app/i18n/locales/roleplayscene/${locale}.js`)).default.server,locale);
-   assert.equal(await page.locator('.app-messages__text').textContent(),expected.uploadWaitCanceled);
-   assert.match(expected.uploadWaitCanceled,locale==='en'?/server may already have saved/:/伺服器可能已儲存/);
+   const expected = await page.evaluate(async locale => (await import(`/server/app/i18n/locales/${locale}.js`)).default.apiErrors,locale);
+   assert.equal(await page.locator('.app-messages__text').textContent(),expected.uploadCanceled);
+   assert.match(expected.uploadCanceled,locale==='en'?/server may already have saved/:/伺服器可能已儲存/);
    const count=lookups;release();await page.waitForTimeout(350);
    assert.equal(lookups,count);assert.equal(posts,1);
    mode='uncertain';

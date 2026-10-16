@@ -1,3 +1,4 @@
+import { getApiErrorMessage } from '../../../app/api/error-presentation.js';
 import { canEditSceneName, getSceneName, sceneNameInputValue } from '../scene-name.js';
 import { canEditProjectTitle, projectTitleInputValue } from '../project-title.js';
 import { renderGraph } from './graph.js';
@@ -1024,11 +1025,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         return;
       }
       if (!result?.ok || !(result.data instanceof Uint8Array) || result.data.byteLength <= 0) {
-        const detail = String(result?.error?.message || '').trim();
-        showMessage({
-          textId: detail ? 'inspector.dialogue.t2aFailedWithDetail' : 'inspector.dialogue.t2aFailed',
-          textArgs: { detail },
-        });
+        showMessage({ text: getApiErrorMessage(result, 'audio', 'bridge') });
         return;
       }
       const lineBeforeAttach = getCurrentT2ALine(sceneId, index, textState.trimmedText);

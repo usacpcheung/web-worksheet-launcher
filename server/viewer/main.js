@@ -1,3 +1,4 @@
+import { getApiErrorMessage, getApiErrorDiagnostic, resolveErrorPresentation, createErrorDetails } from '../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult, classifyProtectedUploadResult } from '../app/api/upload-result.js';
 import { assertAttemptPackage } from '../app/contracts/attempt-package-validator.js';
@@ -41,8 +42,6 @@ const VIEWER_SERVER_SESSION_STATES = Object.freeze({
   CHECKING: 'checking',
   LOGGED_IN: 'logged_in',
 });
-const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';
-const SIGNED_OUT_MESSAGE = 'You are currently signed out. Log in to use server features.';
 const AUTH_RETURN_PARAM = 'authReturn';
 const VIEWER_AUTH_CALLBACK_PARAM = 'authCallback';
 const AUTH_CALLBACK_RETRY_BASE_MS = 1000;
@@ -276,37 +275,12 @@ function formatUploadProgressText(progress = {}) {
   return t('viewer.notifications.uploadAttempt.preparing');
 }
 
-function formatAttemptSlotLimitMessage(slotLimit) {
-  const normalizedLimit = Number(slotLimit);
-  if (Number.isInteger(normalizedLimit) && normalizedLimit > 0) {
-    return t('viewer.notifications.uploadAttempt.slotLimitReached', { limit: normalizedLimit });
-  }
-  return t('viewer.notifications.uploadAttempt.slotLimitReachedUnknown');
-}
-
 function getViewerAuthNotification(key, params = {}) {
   return t(`viewer.notifications.auth.${key}`, params);
 }
 
 function getViewerUploadAttemptMessage(outcome) {
-  const uploadResult = outcome.result;
-  if (outcome.code === 'INVALID_ATTEMPT_PACKAGE') return t('viewer.notifications.uploadAttempt.invalidPackage');
-  switch (outcome.kind) {
-    case 'conflict':
-      return t('viewer.notifications.uploadAttempt.conflict');
-    case 'slot_limit':
-      return formatAttemptSlotLimitMessage(uploadResult?.error?.details?.slotLimit);
-    case 'auth_required':
-      return outcome.code === 'AUTH_REQUIRED'
-        ? t('viewer.notifications.uploadAttempt.authRequired')
-        : uploadResult?.error?.message || 'Attempt upload failed.';
-    case 'canceled':
-      return t('viewer.notifications.uploadAttempt.canceled');
-    case 'uncertain':
-      return t('viewer.notifications.uploadAttempt.networkFailure');
-    default:
-      return uploadResult?.error?.message || 'Attempt upload failed.';
-  }
+  return getApiErrorMessage(outcome.result, 'upload');
 }
 
 function sanitizeFilenameSegment(value, fallback = 'worksheet') {
@@ -690,6 +664,7 @@ function renderNotificationCard(notification, className = 'notification-toast') 
   text.className = `${className}__text`;
   text.textContent = String(notification?.text || '');
   card.appendChild(text);
+  if (notification?.diagnostic) card.appendChild(createErrorDetails({ error: notification.diagnostic }, { source: notification.diagnostic.source }));
   return card;
 }
 
@@ -2585,6 +2560,7 @@ class ViewerAttemptSession {
     const createdAt = Date.now();
     const entry = {
       id: createLocalId('viewer_notice'),
+      ...(notification.diagnostic ? { diagnostic: notification.diagnostic } : {}),
       text,
       kind: this.normalizeNotificationKind(notification?.kind),
       source: typeof notification?.source === 'string' && notification.source
@@ -2748,22 +2724,25 @@ class ViewerAttemptSession {
         const errorCode = String(result?.error?.code || '').trim().toUpperCase();
         if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND') {
           throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
-            userMessage: 'The requested published package was not found.',
-            technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+            userMessage: t('apiErrors.notFound'),
+            technicalMessage: getApiErrorDiagnostic(result, { operation: 'open' }),
+            cause: result,
           });
         }
         if (result?.error?.requiresSignIn) {
           throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_AUTH_REQUIRED, {
-            userMessage: 'Sign in to open this worksheet.',
-            technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+            userMessage: t('apiErrors.authRequired'),
+            technicalMessage: getApiErrorDiagnostic(result, { operation: 'open' }),
+            cause: result,
             requiresSignIn: true,
             recoveryKind: 'published_package_auth',
             publishedPackageId,
           });
         }
         throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
-          userMessage: 'The requested published package could not be opened right now.',
-          technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+          userMessage: t('apiErrors.openFailed'),
+          technicalMessage: getApiErrorDiagnostic(result, { operation: 'open' }),
+          cause: result,
         });
       }
       return this.state;
@@ -3831,6 +3810,7 @@ class ViewerAttemptSession {
         this.pushNotification({
           kind: outcome.kind === 'conflict' || outcome.kind === 'slot_limit' ? 'warn' : 'error',
           text: message,
+          diagnostic: resolveErrorPresentation(uploadResult, { operation: 'upload' }).diagnostic,
           ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
         });
         this.notifyStateChange();
@@ -3905,7 +3885,7 @@ class ViewerAttemptSession {
     try {
       const result = await this.apiClient.listUploadedAttempts();
       if (!result?.ok) {
-        this.state.uploadedAttemptsError = result?.error?.message || 'Unable to load uploaded attempts.';
+        this.state.uploadedAttemptsError = getApiErrorMessage(result, 'list');
         return result;
       }
       const rows = normalizeUploadedAttemptRows(
@@ -3922,7 +3902,7 @@ class ViewerAttemptSession {
       }
       return result;
     } catch (error) {
-      this.state.uploadedAttemptsError = error?.message || 'Unable to load uploaded attempts.';
+      this.state.uploadedAttemptsError = getApiErrorMessage(error, 'list');
       return { ok: false, error: { code: 'NETWORK_ERROR', message: this.state.uploadedAttemptsError } };
     } finally {
       this.state.isLoadingUploadedAttempts = false;
@@ -3940,7 +3920,7 @@ class ViewerAttemptSession {
     try {
       const result = await this.apiClient.deleteUploadedAttempt(uploadedAttemptId);
       if (!result?.ok) {
-        this.state.serverActionMessage = result?.error?.message || t('viewer.notifications.uploadedAttempt.deleteFailed');
+        this.state.serverActionMessage = getApiErrorMessage(result, 'delete');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -3975,7 +3955,7 @@ class ViewerAttemptSession {
     try {
       const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData } : await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
       if (!artifact?.ok) {
-        this.state.serverActionMessage = artifact?.error?.message || t('viewer.notifications.uploadedAttempt.downloadFailed');
+        this.state.serverActionMessage = getApiErrorMessage(artifact, 'download');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -3986,7 +3966,7 @@ class ViewerAttemptSession {
       const bytes = ensureUint8Array(artifact?.data);
       if (!bytes) {
         const result = { ok: false, error: { code: 'INVALID_ARTIFACT', message: t('viewer.notifications.uploadedAttempt.artifactEmpty') } };
-        this.state.serverActionMessage = result.error.message;
+        this.state.serverActionMessage = t('viewer.notifications.uploadedAttempt.artifactEmpty');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -4176,7 +4156,7 @@ class ViewerAttemptSession {
     try {
       const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData } : await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
       if (!artifact?.ok) {
-        this.state.serverActionMessage = artifact?.error?.message || t('viewer.notifications.uploadedAttempt.resumeFailed');
+        this.state.serverActionMessage = getApiErrorMessage(artifact, 'open');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -4353,7 +4333,7 @@ class ViewerAttemptSession {
             finalizeFlow();
             return;
           }
-          const fallbackMessage = result?.result?.error?.message || this.state.serverSession?.error || getViewerAuthNotification('sessionNotReadyAfterSignIn');
+          const fallbackMessage = getApiErrorMessage(result, 'session');
           this.state.serverActionMessage = fallbackMessage;
           this.notifyStateChange();
           finalizeFlow();
@@ -4380,7 +4360,7 @@ class ViewerAttemptSession {
           finalizeFlow();
           return;
         }
-        this.state.serverActionMessage = result?.error?.message || this.state.serverActionMessage;
+        this.state.serverActionMessage = getApiErrorMessage(result, 'session');
         this.notifyStateChange();
         finalizeFlow();
         this._authAutoLoadInFlightByFlowId.delete(authFlowId);
@@ -4399,11 +4379,12 @@ class ViewerAttemptSession {
     return this.probeServerSessionSilently({ force: true });
   }
 
-  transitionServerSessionToLoggedOut(message = SESSION_EXPIRED_MESSAGE) {
-    const resolvedMessage = String(message || '').trim() || SESSION_EXPIRED_MESSAGE;
+  transitionServerSessionToLoggedOut(reason = 'expired') {
+    const resolvedMessage = t(reason === 'expired' ? 'apiErrors.sessionExpired' : 'apiErrors.signedOut');
     this.state.serverSession = {
       status: VIEWER_SERVER_SESSION_STATES.LOGGED_OUT,
       user: null,
+      reason,
       error: resolvedMessage,
     };
     this.state.serverActionMessage = resolvedMessage;
@@ -4414,10 +4395,10 @@ class ViewerAttemptSession {
     const result = await probeSession({ apiClient: this.apiClient, force });
     if (!isCurrent()) return result;
     if (result.status !== 'ready') {
-      const message = result.error?.message || 'Sign-in is required before using server features.';
+      const message = getApiErrorMessage(result, 'session');
       if (isAuthSessionError(result.error)) {
         const loggedInBefore = this.state.serverSessionEverReady === true;
-        this.transitionServerSessionToLoggedOut(loggedInBefore ? SESSION_EXPIRED_MESSAGE : SIGNED_OUT_MESSAGE);
+        this.transitionServerSessionToLoggedOut(loggedInBefore ? 'expired' : 'signed_out');
       } else {
         this.state.serverSession = {
           status: VIEWER_SERVER_SESSION_STATES.CHECKING,
@@ -4439,15 +4420,15 @@ class ViewerAttemptSession {
     return result;
   }
 
-  async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.', { isCurrent = () => true } = {}) {
+  async ensureServerSessionReady(_legacyMessage = undefined, { isCurrent = () => true } = {}) {
     const result = await this.probeServerSessionSilently({ force: true, isCurrent });
     if (!isCurrent()) return { ok: false, result };
     if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
       return { ok: true, result };
     }
-    const message = result.error?.message || notReadyMessage;
+    const message = getApiErrorMessage(result, 'session');
     if (result.status === 'not_ready' && isAuthSessionError(result.error)) {
-      this.transitionServerSessionToLoggedOut(SESSION_EXPIRED_MESSAGE);
+      this.transitionServerSessionToLoggedOut();
     } else {
       this.state.serverSession = {
         status: VIEWER_SERVER_SESSION_STATES.CHECKING,
@@ -4508,8 +4489,8 @@ class ViewerAttemptSession {
     });
     this.state.isLoadingPublishedPackages = false;
     if (!result.ok) {
-      this.state.serverActionMessage = result.error.message;
-      this.state.publishedListError = result.error.message;
+      this.state.serverActionMessage = getApiErrorMessage(result, 'list');
+      this.state.publishedListError = getApiErrorMessage(result, 'list');
       this.notifyStateChange();
       return result;
     }
@@ -4550,7 +4531,7 @@ class ViewerAttemptSession {
         onProgress: progress => this.packageLoad.update(progressToken, 'downloading', progress),
       });
       if (!artifact.ok) {
-        this.state.serverActionMessage = artifact.error.message;
+        this.state.serverActionMessage = getApiErrorMessage(artifact, 'download');
         this.notifyStateChange();
         return artifact;
       }
@@ -5073,7 +5054,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
             await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true });
             session.state.serverActionMessage = null;
           } else {
-            session.state.serverActionMessage = readiness?.error?.message || getViewerAuthNotification('sessionNotReadyAfterSignIn');
+            session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
           }
           session.notifyStateChange();
           await renderRows();
@@ -5091,7 +5072,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
         }
         signInInFlight = false;
         if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
-          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.state.serverActionMessage = getApiErrorMessage(result, 'session');
           session.notifyStateChange();
           renderRows();
         } else {
@@ -5391,9 +5372,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         try {
           const readiness = await session.preflightPublishedSession();
           if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
-            session.state.serverActionMessage = readiness?.result?.error?.message
-              || session.state.serverSession?.error
-              || getViewerAuthNotification('sessionNotReadyAfterSignIn');
+            session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
             session.notifyStateChange();
             renderRows();
             return;
@@ -5416,7 +5395,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         }
         signInInFlight = false;
         if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
-          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.state.serverActionMessage = getApiErrorMessage(result, 'session');
           session.notifyStateChange();
           renderRows();
         } else {
@@ -7325,9 +7304,7 @@ function renderViewerStartPanel(session, options = {}) {
         try {
           const readiness = await session.preflightPublishedSession();
           if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
-            session.state.serverActionMessage = readiness?.result?.error?.message
-              || session.state.serverSession?.error
-            || getViewerAuthNotification('sessionNotReadyAfterSignIn');
+            session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
             session.notifyStateChange();
             renderServerControls();
             return;
@@ -7353,7 +7330,7 @@ function renderViewerStartPanel(session, options = {}) {
           return;
         }
         if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
-          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.state.serverActionMessage = getApiErrorMessage(result, 'session');
           session.notifyStateChange();
           renderServerControls();
         }
@@ -7380,10 +7357,10 @@ function renderViewerStartPanel(session, options = {}) {
       defaultSessionMessage = t('viewer.start.serverSession.ready', { user: userLabel });
     } else if (isChecking) {
       defaultSessionMessage = t('viewer.start.serverSession.checking');
-    } else if (session.state.serverSession?.error === SESSION_EXPIRED_MESSAGE) {
-      defaultSessionMessage = SESSION_EXPIRED_MESSAGE;
+    } else if (session.state.serverSession?.reason === 'expired') {
+      defaultSessionMessage = t('apiErrors.sessionExpired');
     } else {
-      defaultSessionMessage = t('viewer.start.serverSession.loggedOut', { reason: SIGNED_OUT_MESSAGE });
+      defaultSessionMessage = t('viewer.start.serverSession.loggedOut', { reason: t('apiErrors.signedOut') });
     }
     sessionStatus.textContent = defaultSessionMessage;
     manageAttemptsBtn.hidden = false;
@@ -7578,7 +7555,7 @@ async function bootstrapViewer() {
     window.viewerSession = session;
   };
 
-  const handlePublishedPackageOpenResult = async (publishedPackageId, result, originalError) => {
+  const handlePublishedPackageOpenResult = async (result) => {
     if (result?.ok) {
       completePublishedPackageOpen();
       return true;
@@ -7587,16 +7564,18 @@ async function bootstrapViewer() {
     const errorCode = String(result?.error?.code || '').trim().toUpperCase();
     if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND') {
       renderViewerFatalError(new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
-        userMessage: 'The requested published package was not found.',
-        technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+        userMessage: t('apiErrors.notFound'),
+        technicalMessage: getApiErrorDiagnostic(result, { operation: 'open' }),
+        cause: result,
       }));
       return true;
     }
 
     if (!result?.error?.requiresSignIn) {
       renderViewerFatalError(new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
-        userMessage: 'The requested published package could not be opened right now.',
-        technicalMessage: result?.error?.message || originalError?.technicalMessage || `Unable to open publishedPackageId=${publishedPackageId}.`,
+        userMessage: t('apiErrors.openFailed'),
+        technicalMessage: getApiErrorDiagnostic(result, { operation: 'open' }),
+        cause: result,
       }));
       return true;
     }
@@ -7620,24 +7599,24 @@ async function bootstrapViewer() {
         const updatePanel = (statusText, inFlight = true) => {
           renderPublishedPackageAuthRecovery(error, { statusText, inFlight });
         };
-        updatePanel('Opening sign-in...', true);
+        updatePanel(t('apiErrors.popupOpening'), true);
         session.beginServerSignIn({
           onPopupBlocked: ({ finalizeFlow }) => {
             popupBlockedHandled = true;
             finalizeFlow();
-            updatePanel('Sign-in popup was blocked. Allow popups for this site, then try again.', false);
+            updatePanel(t('apiErrors.popupBlockedHelp'), false);
           },
           onStatusMessage: ({ message }) => {
-            updatePanel(message || 'Waiting for sign-in confirmation...', true);
+            updatePanel(message || t('apiErrors.popupPending'), true);
           },
           onSessionReady: async ({ finalizeFlow }) => {
             try {
               showPublishedPackageLoading(session);
               finalizeFlow();
               const result = await session.startFromPublishedPackage(publishedPackageId);
-              const handled = await handlePublishedPackageOpenResult(publishedPackageId, result, error);
+              const handled = await handlePublishedPackageOpenResult(result);
               if (!handled) {
-                updatePanel('Sign-in is still required. Please try again.', false);
+                updatePanel(t('apiErrors.authRequired'), false);
               }
             } catch (retryError) {
               renderViewerFatalError(retryError);
@@ -7645,15 +7624,15 @@ async function bootstrapViewer() {
           },
           onSessionNotReady: ({ result, finalizeFlow }) => {
             if (result?.final === false && result?.waitingForCallback === true) {
-              updatePanel('Still waiting for sign-in confirmation from the popup...', true);
+              updatePanel(t('apiErrors.popupPending'), true);
               return;
             }
             finalizeFlow();
-            updatePanel(result?.error?.message || 'Sign-in did not complete. Try again to open this worksheet.', false);
+            updatePanel(getApiErrorMessage(result, 'session'), false);
           },
         });
         if (!session._authPopupWindow && !popupBlockedHandled) {
-          updatePanel(session.state.serverActionMessage || 'Unable to open sign-in popup. Please try again.', false);
+          updatePanel(session.state.serverActionMessage || t('apiErrors.popupOpenFailed'), false);
         }
       },
       onGoToStart: async () => {
@@ -7699,22 +7678,22 @@ async function bootstrapViewer() {
 
     const renderCallbackPanel = (overrideMessage = '') => {
       const fallbackStatusMessage = callbackState.inFlight
-        ? 'Checking sign-in status and restoring your previous action…'
+        ? t('apiErrors.recoveryChecking')
         : callbackState.lastStatus === 'replayed'
-          ? 'Session recovered successfully.'
+          ? t('apiErrors.recoverySuccess')
           : callbackState.lastStatus === 'not_authenticated'
-            ? 'Sign-in is still pending. You can continue sign-in or retry.'
+            ? t('apiErrors.recoveryPending')
             : callbackState.lastStatus === 'blocked_session_probe'
-              ? 'Temporary session-check issue. We will retry automatically.'
-              : 'Waiting to recover your previous protected action.';
+              ? t('apiErrors.recoveryRetrying')
+              : t('apiErrors.recoveryWaiting');
       const progressText = callbackState.timedOut
-        ? `Automatic retries paused after ${Math.round(AUTH_CALLBACK_RETRY_BUDGET_MS / 1000)} seconds.`
+        ? t('apiErrors.recoveryPaused', { seconds: Math.round(AUTH_CALLBACK_RETRY_BUDGET_MS / 1000) })
         : callbackState.signInPopupInFlight
-          ? 'Waiting for sign-in confirmation from popup…'
+          ? t('apiErrors.popupPending')
         : callbackState.inFlight
-          ? 'Recovery attempt in progress…'
+          ? t('apiErrors.recoveryInProgress')
           : callbackState.nextRetryDelayMs > 0
-            ? `Next automatic retry in ${Math.max(1, Math.ceil(callbackState.nextRetryDelayMs / 1000))} seconds.`
+            ? t('apiErrors.recoveryNextRetry', { seconds: Math.max(1, Math.ceil(callbackState.nextRetryDelayMs / 1000)) })
             : '';
       renderViewerAuthCallbackPanel(session, {
         statusText: fallbackStatusMessage,
@@ -7736,12 +7715,12 @@ async function bootstrapViewer() {
           callbackState.timedOut = false;
           callbackState.nextRetryDelayMs = 0;
           callbackState.signInPopupInFlight = true;
-          callbackState.lastMessage = 'Opening sign-in popup…';
+          callbackState.lastMessage = t('apiErrors.popupOpening');
           renderCallbackPanel();
           session.beginServerSignIn({
             onPopupBlocked: () => {
               callbackState.signInPopupInFlight = false;
-              callbackState.lastMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+              callbackState.lastMessage = t('apiErrors.popupBlockedHelp');
               renderCallbackPanel();
             },
             onStatusMessage: ({ message }) => {
@@ -7753,19 +7732,19 @@ async function bootstrapViewer() {
               callbackState.timedOut = false;
               callbackState.startedAtMs = Date.now();
               callbackState.attemptCount = 0;
-              callbackState.lastMessage = 'Sign-in completed. Retrying recovery…';
+              callbackState.lastMessage = t('apiErrors.recoveryAfterSignIn');
               renderCallbackPanel();
               finalizeFlow();
               await attemptRecovery({ manual: true });
             },
             onSessionNotReady: ({ result, finalizeFlow }) => {
               if (result?.final === false && result?.waitingForCallback === true) {
-                callbackState.lastMessage = 'Still waiting for sign-in confirmation from the popup…';
+                callbackState.lastMessage = t('apiErrors.popupPending');
                 renderCallbackPanel();
                 return;
               }
               callbackState.signInPopupInFlight = false;
-              callbackState.lastMessage = result?.error?.message || 'Sign-in did not complete. Retry to continue.';
+              callbackState.lastMessage = getApiErrorMessage(result, 'session');
               finalizeFlow();
               renderCallbackPanel();
             },
@@ -7773,7 +7752,7 @@ async function bootstrapViewer() {
           if (!session._authPopupWindow) {
             callbackState.signInPopupInFlight = false;
             if (!callbackState.lastMessage) {
-              callbackState.lastMessage = 'Unable to open sign-in popup. Please retry or cancel recovery.';
+              callbackState.lastMessage = t('apiErrors.popupOpenFailed');
             }
             renderCallbackPanel();
           }
@@ -7787,7 +7766,7 @@ async function bootstrapViewer() {
           callbackState.stopped = true;
           authGate.clearPending();
           cleanupViewerAuthCallbackUrlParams();
-          session.setRecoveryMessage('Sign-in recovery was cancelled. You can resume manually from start.');
+          session.setRecoveryMessage(t('apiErrors.recoveryCanceled'));
           await renderStartPanelFromResumeFlag(session.state.recoveryMessage);
         },
       });
@@ -7823,7 +7802,7 @@ async function bootstrapViewer() {
           if (elapsedMs >= AUTH_CALLBACK_RETRY_BUDGET_MS) {
             callbackState.timedOut = true;
             callbackState.lastMessage = session.state.recoveryMessage
-              || 'Automatic retries timed out. You can retry now or continue sign-in.';
+              || t('apiErrors.recoveryTimedOut');
             return;
           }
           callbackState.timedOut = false;

@@ -24,12 +24,12 @@ try {
       await page.goto(`${base}/server/editor/`);
       await page.waitForFunction(() => window.editorSession?.state.serverSession.status === 'ready');
       await page.locator('details').filter({ has: page.locator('[data-upload-cancel="editor"]') }).locator('summary').click();
-      const keys = ['editor.server.uploadDraft', 'common.actions.cancel', 'editor.modal.uploadConflict.saveAsNewCopy', 'editor.modal.uploadConflict.replaceUploadedDraft', 'editor.notifications.uploadDraft.conflict'];
+      const keys = ['editor.server.uploadDraft', 'common.actions.cancel', 'editor.modal.uploadConflict.saveAsNewCopy', 'editor.modal.uploadConflict.replaceUploadedDraft', 'apiErrors.conflict'];
       const labels = await page.evaluate(async keys => {
         const { t } = await import('/server/app/i18n/index.js');
         return keys.map(key => t(key));
       }, keys);
-      assert.match(labels[4], locale === 'en' ? /Choose whether to replace/ : /請選擇取代/);
+      assert.match(labels[4], locale === 'en' ? /Review the available choices/ : /選項/);
       const upload = page.getByRole('button', { name: labels[0], exact: true });
       for (const action of ['cancel', 'replace', 'copy']) {
         posts = []; mode = 'conflict';

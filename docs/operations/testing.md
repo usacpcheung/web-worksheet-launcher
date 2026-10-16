@@ -142,3 +142,10 @@ These are isolated automated simulations. They do not validate production Apache
 The lifecycle browser fixture also replaces the viewer attempt during held session preflight, both with the same ID and a different ID, then releases successful, 503 and 401 responses. It asserts zero stale upload POSTs and preservation of the replacement message in both locales. Shared auth-gate tests cover invalidation during preflight, late authentication failure and local persistence, with no stale pending intent or redirect.
 
 `auth-intent-isolation-smoke.mjs` opens two real browser tabs sharing an origin, writes independent login intents, reloads both, and verifies replay cleanup in one tab preserves the other. Storage unit tests cover legacy auth-return adoption and cancellation tombstones; gate tests replace the pending action at each asynchronous recovery boundary. Viewer unit tests delay autosave/submission across same-ID reopening, including failures, and verify fresh answers still flush before login and replacement submission state survives.
+
+
+### API-error localization
+
+`server/app/api/error-presentation.test.mjs` checks locale parity, code/source/operation mapping, validated parameters, unknown-code fallbacks, safe diagnostics, locale changes and unchanged input results. Product tests retain upload ownership, auth, conflict, local-content and retry assertions while checking shared error presentation. RolePlayScene publishing tests cover failed preflight and thrown API errors without a retry.
+
+`scripts/api-error-presentation-ui-smoke.mjs` injects an unknown API error containing raw English, HTML-like text and a secret marker into all three apps, in both locales at desktop/narrow widths. It checks localized feedback, absence of raw details, one POST, no browser errors and the viewer's clickable technical disclosure. The retained upload cancellation/recovery/result and audio smoke scripts cover known codes and shared consumers. These mock responses; they do not validate live bridge/OIDC configuration or perform real sign-out/sign-in.

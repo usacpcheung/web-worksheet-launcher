@@ -2304,3 +2304,12 @@ input[type='text']::placeholder {
   .question-card__rewrite-row .icon-nav-btn { min-width: 0; padding-inline: 8px; }
 }
 [data-upload-cancel][hidden] { display: none !important; }
+
+/* Error disclosures are interactive inside otherwise pass-through toasts. */
+.notification-toast details {
+  pointer-events: auto;
+}
+.notification-toast details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

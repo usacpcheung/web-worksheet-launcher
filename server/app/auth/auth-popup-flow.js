@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.js';
 import { probeSession, waitForSessionReady } from './session-readiness.js';
 
 const AUTH_POPUP_FLOW_DEFAULTS = {
@@ -133,7 +134,7 @@ function startAuthPopupFlow(options = {}) {
 
   if (!authPopupWindow) {
     onPopupBlocked();
-    onStatusMessage('Sign-in popup was blocked.');
+    onStatusMessage(t('apiErrors.popupBlocked'));
     void (async () => {
       const probeResult = await probeSession({ apiClient, force: true, timeoutMs: probeTimeoutMs, signal: probeController.signal });
       if (probeResult.ok && probeResult.status === 'ready') {
@@ -174,7 +175,7 @@ function startAuthPopupFlow(options = {}) {
     };
   }
 
-  onStatusMessage('Complete sign-in in the popup. Session will refresh automatically.');
+  onStatusMessage(t('apiErrors.popupPending'));
 
   const messageListener = async (event) => {
     if (completed || cancelled) return;
@@ -186,7 +187,7 @@ function startAuthPopupFlow(options = {}) {
     if (messageData.type !== expectedMessageType) return;
     if (authFlowId && messageData.authFlowId !== authFlowId) return;
 
-    onStatusMessage('Sign-in callback received. Verifying session…');
+    onStatusMessage(t('apiErrors.popupVerifying'));
     const probeResult = await probeSession({ apiClient, force: true, timeoutMs: probeTimeoutMs, signal: probeController.signal });
     await finalize({
       ...probeResult,
@@ -215,7 +216,7 @@ function startAuthPopupFlow(options = {}) {
   if (normalizedHardDeadlineMs > 0) {
     hardDeadlineTimer = setTimeout(() => {
       if (completed || cancelled) return;
-      onStatusMessage('Sign-in is still pending and exceeded the maximum wait window.');
+      onStatusMessage(t('apiErrors.popupDeadline'));
       void finalize({
         ok: false,
         status: 'not_ready',
@@ -266,7 +267,7 @@ function startAuthPopupFlow(options = {}) {
 
       const isTimedOutAuthNotReady = result.timedOut && result.status === 'not_ready';
       if (isTimedOutAuthNotReady && canWaitForCallback) {
-        onStatusMessage('Sign-in check timed out, still waiting for popup callback…');
+        onStatusMessage(t('apiErrors.popupWaiting'));
         await invokeCallbackSafely(
           onSessionNotReady,
           { ...result, waitingForCallback: true, final: false },

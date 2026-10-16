@@ -49,9 +49,9 @@ try {
         const { t } = await import('/server/app/i18n/index.js');
         const { createServerApiClient } = await import('/server/app/api/server-api-client.js');
         window.viewerSession.apiClient = createServerApiClient({ operationLookupTimeoutMs: 100 });
-        return Object.fromEntries(['viewer.upload.saveAttemptAriaLabel', 'common.actions.cancel', 'common.actions.saveAsCopy', 'common.actions.delete', 'viewer.attemptConflict.replaceServerAttempt', 'viewer.notifications.uploadAttempt.signInRequired', 'viewer.notifications.uploadAttempt.saved', 'viewer.notifications.uploadAttempt.invalidPackage', 'viewer.notifications.uploadAttempt.networkFailure'].map(key => [key, t(key)]));
+        return Object.fromEntries(['viewer.upload.saveAttemptAriaLabel', 'common.actions.cancel', 'common.actions.saveAsCopy', 'common.actions.delete', 'viewer.attemptConflict.replaceServerAttempt', 'viewer.notifications.uploadAttempt.signInRequired', 'viewer.notifications.uploadAttempt.saved', 'apiErrors.invalidPackage', 'apiErrors.uploadUncertain'].map(key => [key, t(key)]));
       });
-      assert.match(labels['viewer.notifications.uploadAttempt.networkFailure'], locale === 'en' ? /server may already have saved/ : /伺服器可能已儲存/);
+      assert.match(labels['apiErrors.uploadUncertain'], locale === 'en' ? /server may already have saved/ : /伺服器可能已儲存/);
       const save = page.getByRole('button', { name: labels['viewer.upload.saveAttemptAriaLabel'], exact: true });
       const dialog = () => page.getByRole('dialog');
       const noFalseAuth = async () => assert.equal(await page.evaluate(text => window.viewerSession.state.notifications.some(n => n.text === text), labels['viewer.notifications.uploadAttempt.signInRequired']), false);
@@ -90,7 +90,7 @@ try {
       for (const scenario of ['invalid', 'network']) {
         mode = scenario; posts = []; lookups = 0;
         await save.click();
-        const message = labels[scenario === 'invalid' ? 'viewer.notifications.uploadAttempt.invalidPackage' : 'viewer.notifications.uploadAttempt.networkFailure'];
+        const message = labels[scenario === 'invalid' ? 'apiErrors.invalidPackage' : 'apiErrors.uploadUncertain'];
         await page.waitForFunction(text => window.viewerSession.state.serverActionMessage === text && !window.viewerSession.state.isUploadingAttemptPackage, message);
         await noFalseAuth();
         assert.equal(await dialog().count(), 0);
