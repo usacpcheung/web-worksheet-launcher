@@ -12,6 +12,7 @@ export class Store {
   }
   // Transient authoring state survives preview, but never enters a package.
   resetEditorDrafts() {
+    this.projectGeneration = (this.projectGeneration || 0) + 1;
     this.editorSceneNameDrafts = new Map();
     this.editorProjectTitleDraft = { value: undefined };
   }

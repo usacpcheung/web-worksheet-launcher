@@ -1,3 +1,4 @@
+import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult, classifyProtectedUploadResult } from '../app/api/upload-result.js';
 import { assertAttemptPackage } from '../app/contracts/attempt-package-validator.js';
 import { installPageRecovery } from '../app/storage/recovery-journal.js';
@@ -2429,6 +2430,7 @@ class ViewerAttemptSession {
       },
       serverActionMessage: null,
       isUploadingAttemptPackage: false,
+      isUploadAttemptFlowActive: false,
       uploadAttemptProgress: null,
       uploadAttemptConflictContext: null,
       uploadAttemptRecoveryHint: null,
@@ -3025,6 +3027,7 @@ class ViewerAttemptSession {
   }
 
   applyAttemptState(attemptRecord, options = {}) {
+    this._uploadContextGeneration = (this._uploadContextGeneration || 0) + 1;
     this.voice.teardown();
     this.state.voiceApplied = null;
     this.state.voiceRecovery = attemptRecord.status === 'completed' ? {} : normalizeVoiceRecovery(
@@ -3741,7 +3744,13 @@ class ViewerAttemptSession {
       return { ok: false, status: 'stale_intent', error: { message } };
     }
 
-    this.uploadController = new AbortController();
+    const attemptId = this.state.localAttemptId;
+    const generation = this._uploadContextGeneration;
+    const contextIsCurrent = () => this.state.localAttemptId === attemptId && this._uploadContextGeneration === generation;
+    this.uploadOperations ??= new UploadOperationSlot();
+    const operation = this.uploadOperations.begin(contextIsCurrent);
+    if (!operation) return { ok: false, skipped: true, status: 'upload_in_progress' };
+    this.uploadController = operation.controller;
     this.state.isUploadingAttemptPackage = true;
     this.state.uploadAttemptConflictContext = null;
     this.state.uploadAttemptRecoveryHint = null;
@@ -3755,20 +3764,23 @@ class ViewerAttemptSession {
 
     try {
       await this.flushLocalStateForAuthRedirect();
+      if (!operation.canPublish()) return staleUploadResult();
       const uploadTitle = String(this.state.viewerPayload?.title || 'Untitled worksheet');
       const uploadSubject = firstNonBlankString(
         this.state.sourceSubject,
         this.state.viewerPayload?.subject,
         this.state.viewerPayload?.metadata?.subject
       );
-      const packageResult = await this.buildUploadedAttemptPackage();
-      const uploadResult = await this.apiClient.uploadAttemptPackage(packageResult.bytes, {
+      const packageResult = operation.signal.aborted ? null : await this.buildUploadedAttemptPackage();
+      if (!operation.canPublish()) return staleUploadResult();
+      const uploadResult = operation.signal.aborted ? canceledUploadResult() : await this.apiClient.uploadAttemptPackage(packageResult.bytes, {
         title: uploadTitle,
         subject: uploadSubject,
         conflictAction: options.conflictAction || 'fail_on_conflict',
       }, {
-        signal: this.uploadController.signal,
+        signal: operation.signal,
         onProgress: (progress) => {
+          if (!operation.canProgress()) return;
           this.state.uploadAttemptProgress = {
             loaded: Number(progress?.loaded || 0),
             total: Number(progress?.total || 0),
@@ -3784,6 +3796,7 @@ class ViewerAttemptSession {
         },
       });
 
+      if (!operation.canPublish()) return uploadResult;
       const outcome = classifyUploadResult(uploadResult, 'worksheet-attempt');
       if (outcome.kind !== 'success') {
         const message = getViewerUploadAttemptMessage(outcome);
@@ -3829,6 +3842,7 @@ class ViewerAttemptSession {
       this.notifyStateChange();
       return uploadResult;
     } catch (error) {
+      if (!operation.canPublish()) return staleUploadResult();
       console.error('[viewer] Attempt package upload failed unexpectedly.', error);
       this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
       this.state.serverActionMessage = t('viewer.notifications.uploadAttempt.networkFailure');
@@ -3840,11 +3854,13 @@ class ViewerAttemptSession {
       this.notifyStateChange();
       return { ok: false, status: 'upload_failed_unexpected', error: { code: 'NETWORK_ERROR', message: this.state.serverActionMessage } };
     } finally {
-      this.uploadController = null;
-      this.state.isUploadingAttemptPackage = false;
-      this.state.uploadAttemptProgress = null;
-      this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
-      this.notifyStateChange();
+      if (operation.finish()) {
+        this.uploadController = null;
+        this.state.isUploadingAttemptPackage = false;
+        this.state.uploadAttemptProgress = null;
+        this.clearNotificationsBySource(VIEWER_NOTIFICATION_UPLOAD_SOURCE);
+        this.notifyStateChange();
+      }
     }
   }
 
@@ -6718,7 +6734,7 @@ function renderViewerShell(session) {
     printReportBtn.hidden = !printAvailable;
     printReportBtn.disabled = session.state.isFinalizing || !printAvailable;
     cancelUploadBtn.hidden = !session.state.isUploadingAttemptPackage;
-    uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
+    uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage || session.state.isUploadAttemptFlowActive;
     exportAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
     prevBtn.disabled = currentBlockIndex === 0;
     nextBtn.disabled = currentBlockIndex >= orderedBlocks.length - 1;
@@ -6756,48 +6772,66 @@ function renderViewerShell(session) {
   });
 
   uploadAttemptBtn.addEventListener('click', async () => {
-    let protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
-    const gateOutcome = classifyProtectedUploadResult(protectedActionResult, 'worksheet-attempt');
-    if (gateOutcome.kind === 'redirected') {
-      return;
-    }
-    // The auth gate returns non-auth application failures unchanged. They
-    // already have upload feedback and may need conflict/slot recovery below.
-    if (gateOutcome.kind === 'blocked') {
-      const blockedMessage = gateOutcome.reason === 'blocked_session_probe'
-        ? getViewerAuthNotification('unableToVerifySignIn')
-        : t('viewer.notifications.uploadAttempt.signInRequired');
-      session.pushNotification({
-        kind: 'warn',
-        text: blockedMessage,
-        ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
-      });
-      renderUI();
-      return;
-    }
-    if (classifyUploadResult(protectedActionResult, 'worksheet-attempt').kind === 'conflict' && session.state.uploadAttemptConflictContext) {
-      const choice = await showAttemptUploadConflictModal(session.state.uploadAttemptConflictContext);
-      if (choice === 'replace' || choice === 'copy') {
-        protectedActionResult = await session.retryAttemptUploadFromConflict(choice);
-      } else {
-        session.clearAttemptUploadConflictPrompt();
-      }
-    }
-    if (classifyUploadResult(protectedActionResult, 'worksheet-attempt').kind === 'slot_limit' && session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
-      const slotRecoveryHint = { ...session.state.uploadAttemptRecoveryHint };
-      await session.listUploadedAttempts();
-      const slotRecovery = await showAttemptSlotFullModal(session, {
-        uploadedAttempts: session.state.uploadedAttempts,
-      });
-      if (slotRecovery?.deleted) {
-        // Keep slot-limit recovery behavior aligned with editor draft upload flow:
-        // after deleting one server row to free space, retry upload immediately.
-        await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);
-      } else {
-        session.state.serverActionMessage = t('viewer.serverAttempts.manageRecommendation');
-      }
-    }
+    if (session.state.isUploadAttemptFlowActive || session.state.isUploadingAttemptPackage) return;
+    const attemptId = session.state.localAttemptId;
+    const generation = session._uploadContextGeneration;
+    session.uploadFlows ??= new UploadOperationSlot();
+    const flow = session.uploadFlows.begin(() => session.state.localAttemptId === attemptId && session._uploadContextGeneration === generation);
+    if (!flow) return;
+    session.state.isUploadAttemptFlowActive = true;
     renderUI();
+    try {
+      let protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
+      if (!flow.canPublish()) return;
+      const gateOutcome = classifyProtectedUploadResult(protectedActionResult, 'worksheet-attempt');
+      if (gateOutcome.kind === 'redirected') {
+        return;
+      }
+      // The auth gate returns non-auth application failures unchanged. They
+      // already have upload feedback and may need conflict/slot recovery below.
+      if (gateOutcome.kind === 'blocked') {
+        const blockedMessage = gateOutcome.reason === 'blocked_session_probe'
+          ? getViewerAuthNotification('unableToVerifySignIn')
+          : t('viewer.notifications.uploadAttempt.signInRequired');
+        session.pushNotification({
+          kind: 'warn',
+          text: blockedMessage,
+          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
+        });
+        renderUI();
+        return;
+      }
+      if (classifyUploadResult(protectedActionResult, 'worksheet-attempt').kind === 'conflict' && session.state.uploadAttemptConflictContext) {
+        const choice = await showAttemptUploadConflictModal(session.state.uploadAttemptConflictContext);
+        if (!flow.canPublish()) return;
+        if (choice === 'replace' || choice === 'copy') {
+          protectedActionResult = await session.retryAttemptUploadFromConflict(choice);
+        } else {
+          session.clearAttemptUploadConflictPrompt();
+        }
+      }
+      if (!flow.canPublish()) return;
+      if (classifyUploadResult(protectedActionResult, 'worksheet-attempt').kind === 'slot_limit' && session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
+        const slotRecoveryHint = { ...session.state.uploadAttemptRecoveryHint };
+        await session.listUploadedAttempts();
+        if (!flow.canPublish()) return;
+        const slotRecovery = await showAttemptSlotFullModal(session, {
+          uploadedAttempts: session.state.uploadedAttempts,
+        });
+        if (!flow.canPublish()) return;
+        if (slotRecovery?.deleted) {
+          // Keep slot-limit recovery behavior aligned with editor draft upload flow:
+          // after deleting one server row to free space, retry upload immediately.
+          await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);
+        } else {
+          session.state.serverActionMessage = t('viewer.serverAttempts.manageRecommendation');
+        }
+      }
+      renderUI();
+    } finally {
+      if (flow.finish()) session.state.isUploadAttemptFlowActive = false;
+      renderUI();
+    }
   });
 
   printReportBtn.addEventListener('click', async () => {

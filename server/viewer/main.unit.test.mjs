@@ -223,7 +223,7 @@ async function loadViewerModule(overrides = {}) {
     window: overrides.window || {},
   };
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
     {
       name: 'replace viewerStorage import with test bag binding',
       pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];/,
@@ -6749,5 +6749,29 @@ for (const [error, expected] of [
   assert.equal(await session.uploadCurrentAttemptPackage(), result);
   assert.equal(session.state.serverActionMessage, expected);
   assert.equal(session.state.answers.q1.value, 'Keep answer');
+  assert.equal(session.state.isUploadingAttemptPackage, false);
+});
+
+for (const action of ['cancel', 'switch']) test(`attempt ${action} during package preparation cannot upload or affect a new attempt`, async () => {
+  const mod = await loadViewerModule();
+  let release, entered;
+  const ready = new Promise(resolve => { entered = resolve; });
+  let posts = 0;
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } }, {
+    apiClient: { uploadAttemptPackage: async () => { posts++; return { ok: true, data: {} }; } },
+  });
+  session.state.localAttemptId = 'original';
+  session.state.viewerPayload = { title: 'Original', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => { entered(); return new Promise(resolve => { release = resolve; }); };
+  const upload = session.uploadCurrentAttemptPackage();
+  await ready;
+  if (action === 'cancel') session.uploadController.abort();
+  else { session.state.localAttemptId = 'new'; session.state.serverActionMessage = 'New attempt owns this'; }
+  release({ bytes: new Uint8Array([1]) });
+  const result = await upload;
+  assert.equal(posts, 0);
+  if (action === 'cancel') assert.equal(result.error.code, 'ABORTED');
+  else { assert.equal(result.status, 'stale_upload'); assert.equal(session.state.serverActionMessage, 'New attempt owns this'); }
   assert.equal(session.state.isUploadingAttemptPackage, false);
 });

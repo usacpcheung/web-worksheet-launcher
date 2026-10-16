@@ -1,3 +1,4 @@
+import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult } from '../../app/api/upload-result.js';
 import { waitForDraftRequest } from './draft-request.js';
 import { Store } from './state.js';
@@ -116,6 +117,7 @@ const ImportConfirmationKind = Object.freeze({
 let isLoadingUploadedDrafts = false;
 let isUploadingDraft = false;
 let uploadController = null;
+const uploadOperations = new UploadOperationSlot();
 const publishingDraftIds = new Set();
 let isPublishingDraftFlow = false;
 let openingUploadedDraft = null;
@@ -2537,7 +2539,10 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
 
 async function uploadCurrentProjectToServer({ conflictAction = '', preflight = true } = {}) {
   if (isUploadingDraft || openingUploadedDraft) return { ok: false, skipped: true };
-  uploadController = new AbortController();
+  const generation = store.projectGeneration;
+  const operation = uploadOperations.begin(() => store.projectGeneration === generation);
+  if (!operation) return { ok: false, skipped: true };
+  uploadController = operation.controller;
   isUploadingDraft = true;
   updateServerSessionUi();
   try {
@@ -2546,20 +2551,24 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
       const sessionReady = await ensureServerSessionReady();
       if (!sessionReady.ok) return sessionReady.result;
     }
+    if (!operation.canPublish()) return staleUploadResult();
     showMessage({ textId: 'server.uploading' });
     const { archiveData, payload } = await createProjectArchive(snapshot);
     const title = payload?.manifest?.project?.title || '';
     const description = payload?.manifest?.project?.description || '';
     while (true) {
-      const result = await apiClient.uploadRolePlaySceneDraftPackage(archiveData, {
+      if (!operation.canPublish()) return staleUploadResult();
+      const result = operation.signal.aborted ? canceledUploadResult() : await apiClient.uploadRolePlaySceneDraftPackage(archiveData, {
         title,
         description,
         conflictAction,
-      }, { signal: uploadController.signal });
+      }, { signal: operation.signal });
+      if (!operation.canPublish()) return result;
       const outcome = classifyUploadResult(result, 'roleplayscene-draft');
       if (outcome.kind !== 'success') {
         if (outcome.kind === 'conflict') {
           const choice = await showUploadConflictModal(result.error?.details?.existingDraft);
+          if (!operation.canPublish()) return staleUploadResult();
           if (choice === 'replace' || choice === 'copy') {
             conflictAction = choice;
             continue;
@@ -2591,17 +2600,20 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
         textArgs: { id: result.data?.roleplayscene_uploaded_draft_id || '' },
         warnings,
       });
-      await loadUploadedRolePlaySceneDrafts({ preflight: false, signal: uploadController.signal });
+      await loadUploadedRolePlaySceneDrafts({ preflight: false, signal: operation.signal });
       return result;
     }
   } catch (err) {
+    if (!operation.canPublish()) return staleUploadResult();
     console.error(err);
     showMessage({ textId: 'server.uploadFailed' });
     return { ok: false, error: { message: err?.message || String(err) } };
   } finally {
-    uploadController = null;
-    isUploadingDraft = false;
-    updateServerSessionUi();
+    if (operation.finish()) {
+      uploadController = null;
+      isUploadingDraft = false;
+      updateServerSessionUi();
+    }
   }
 }
 
