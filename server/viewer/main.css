@@ -2313,3 +2313,8 @@ input[type='text']::placeholder {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.viewer-auth-feedback {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

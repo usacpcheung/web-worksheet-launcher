@@ -695,7 +695,35 @@ function ensureViewerToastContainer() {
   return container;
 }
 
+// Keep authentication guidance separate from upload/list operation feedback.
+function createViewerAuthFeedback() {
+  const node = document.createElement('p');
+  node.className = 'muted viewer-auth-feedback';
+  node.setAttribute('role', 'status');
+  node.setAttribute('aria-live', 'polite');
+  node.setAttribute('aria-atomic', 'true');
+  node.hidden = true;
+  return node;
+}
+
+function renderViewerAuthFeedback(session) {
+  if (typeof document === 'undefined' || !document.querySelectorAll) return;
+  const regions = Array.from(document.querySelectorAll('.viewer-auth-feedback'));
+  // A modal is appended after the underlying page. Announce in the active
+  // surface only, rather than duplicating feedback behind the modal.
+  const active = regions.at(-1);
+  const feedback = session.state.authFeedback;
+  const text = feedback ? t(feedback.key, feedback.params || {}) : '';
+  for (const region of regions) {
+    const visible = region === active && Boolean(text);
+    const nextText = visible ? text : '';
+    if (region.textContent !== nextText) region.textContent = nextText;
+    region.hidden = !visible;
+  }
+}
+
 function renderViewerNotifications(session) {
+  renderViewerAuthFeedback(session);
   const container = ensureViewerToastContainer();
   if (!container) return;
   session.pruneExpiredNotifications();
@@ -2431,6 +2459,7 @@ class ViewerAttemptSession {
         error: null,
       },
       serverActionMessage: null,
+      authFeedback: null,
       isUploadingAttemptPackage: false,
       isUploadAttemptFlowActive: false,
       uploadAttemptProgress: null,
@@ -2518,6 +2547,7 @@ class ViewerAttemptSession {
     if (typeof this.onStateChange === 'function') {
       this.onStateChange(this.state);
     }
+    renderViewerAuthFeedback(this);
   }
 
   normalizeNotificationKind(kind) {
@@ -4312,6 +4342,16 @@ class ViewerAttemptSession {
     const authFlowId = createLocalId('auth_flow');
     this._activeAuthFlowId = authFlowId;
     const isCurrent = () => this._activeAuthFlowId === authFlowId;
+    this.state.authFeedback = null;
+    const setFeedback = (phase, key, params = {}) => {
+      if (!isCurrent()) return;
+      this.state.authFeedback = key ? { authFlowId, phase, key, params } : null;
+      this.notifyStateChange();
+    };
+    const reportAuthFailure = result => {
+      const { key, params } = resolveErrorPresentation(result, { operation: 'session' });
+      setFeedback('failure', key, params);
+    };
     // Invalidate the old callbacks before cancellation can invoke them.
     previousFlow?.cancel?.();
     this._authPopupFlow = null;
@@ -4319,9 +4359,13 @@ class ViewerAttemptSession {
 
     const finalizeFlow = () => {
       if (!isCurrent()) return;
+      if (!['blocked', 'deadline', 'failure'].includes(this.state.authFeedback?.phase)) {
+        this.state.authFeedback = null;
+      }
       this._activeAuthFlowId = null;
       this._authPopupWindow = null;
       this._authPopupFlow = null;
+      this.notifyStateChange();
     };
 
     const flow = startAuthPopupFlow({
@@ -4333,6 +4377,7 @@ class ViewerAttemptSession {
       shouldContinue: isCurrent,
       onPopupBlocked: () => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        setFeedback('blocked', 'apiErrors.popupBlocked');
         if (onPopupBlockedOverride) {
           onPopupBlockedOverride({ authFlowId, finalizeFlow });
           return;
@@ -4342,6 +4387,8 @@ class ViewerAttemptSession {
       },
       onStatusMessage: (message, status) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        const key = { blocked: 'popupBlocked', pending: 'popupPending', verifying: 'popupVerifying', waiting: 'popupWaiting', deadline: 'popupDeadline' }[status];
+        if (key) setFeedback(status, `apiErrors.${key}`);
         if (onStatusMessageOverride) {
           onStatusMessageOverride({ message, status, authFlowId, finalizeFlow });
           return;
@@ -4353,8 +4400,9 @@ class ViewerAttemptSession {
       },
       onSessionReady: async (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        setFeedback('verifying', 'apiErrors.popupVerifying');
         if (onSessionReadyOverride) {
-          await onSessionReadyOverride({ result, authFlowId, finalizeFlow, isCurrent });
+          await onSessionReadyOverride({ result, authFlowId, finalizeFlow, isCurrent, reportAuthFailure });
           return;
         }
         if (this._authAutoLoadInFlightByFlowId.has(authFlowId)) return;
@@ -4372,6 +4420,7 @@ class ViewerAttemptSession {
             finalizeFlow();
             return;
           }
+          reportAuthFailure(result);
           const fallbackMessage = getApiErrorMessage(result, 'session');
           this.state.serverActionMessage = fallbackMessage;
           this.notifyStateChange();
@@ -4382,6 +4431,13 @@ class ViewerAttemptSession {
       },
       onSessionNotReady: (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        if (result?.cancelled || ['SESSION_WAIT_CANCELLED', 'AUTH_POPUP_FLOW_CANCELLED'].includes(result?.error?.code)) {
+          setFeedback('cancelled', null);
+        } else if (result?.final === false && result?.waitingForCallback === true) {
+          setFeedback('waiting', 'apiErrors.popupWaiting');
+        } else {
+          reportAuthFailure(result);
+        }
         if (onSessionNotReadyOverride) {
           onSessionNotReadyOverride({ result, authFlowId, finalizeFlow, isCurrent });
           return;
@@ -4881,6 +4937,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
     if (overlay.querySelector('.viewer-attempts-modal')) {
       overlay.remove();
+      renderViewerAuthFeedback(session);
     }
   });
   const host = document.body || getViewerOverlayHost();
@@ -4929,7 +4986,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   closeBtn.className = 'confirm-modal__btn';
   closeBtn.textContent = t('common.actions.close');
   actions.append(signInBtn, refreshBtn, closeBtn);
-  dialog.append(heading, description, slotRecoveryBanner, sessionLine, slotUsageLine, list, actions);
+  dialog.append(heading, description, slotRecoveryBanner, sessionLine, createViewerAuthFeedback(), slotUsageLine, list, actions);
   overlay.append(dialog);
   host.appendChild(overlay);
 
@@ -4939,6 +4996,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     if (closing) return;
     closing = true;
     overlay.remove();
+    renderViewerAuthFeedback(session);
     session.state.isManagingUploadedAttempts = false;
     session.notifyStateChange();
     if (previousActive && typeof previousActive.focus === 'function') {
@@ -4948,6 +5006,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
 
   const renderRows = async () => {
     if (closing) return;
+    renderViewerAuthFeedback(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
@@ -4961,7 +5020,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
         });
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
-    signInBtn.textContent = signInInFlight ? 'Signing in…' : t('common.actions.signIn');
+    signInBtn.textContent = signInInFlight ? t('common.actions.signingIn') : t('common.actions.signIn');
     refreshBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingUploadedAttempts;
     list.innerHTML = '';
     if (!isLoggedIn) {
@@ -5100,7 +5159,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           renderRows();
         }
       },
-      onSessionReady: async ({ finalizeFlow, isCurrent }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent, reportAuthFailure }) => {
         try {
           const readiness = await session.probeServerSessionSilently({ force: true, isCurrent });
           if (!isCurrent()) return;
@@ -5111,6 +5170,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
             if (!isCurrent()) return;
             session.state.serverActionMessage = null;
           } else {
+            reportAuthFailure(readiness);
             session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
           }
           session.notifyStateChange();
@@ -5174,6 +5234,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
     if (overlay.querySelector('.viewer-published-browse-modal')) {
       overlay.remove();
+      renderViewerAuthFeedback(session);
     }
   });
   const host = document.body || getViewerOverlayHost();
@@ -5233,7 +5294,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   closeBtn.className = 'confirm-modal__btn';
   closeBtn.textContent = t('common.actions.close');
   actions.append(signInBtn, loadMoreBtn, refreshBtn, closeBtn);
-  dialog.append(heading, filterRow, list, actions);
+  dialog.append(heading, createViewerAuthFeedback(), filterRow, list, actions);
   overlay.append(dialog);
   host.appendChild(overlay);
 
@@ -5269,6 +5330,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       searchDebounceTimer = null;
     }
     overlay.remove();
+    renderViewerAuthFeedback(session);
     if (previousActive && typeof previousActive.focus === 'function') {
       previousActive.focus();
     }
@@ -5276,6 +5338,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
 
   const renderRows = () => {
     if (closing) return;
+    renderViewerAuthFeedback(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
@@ -5426,11 +5489,12 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           renderRows();
         }
       },
-      onSessionReady: async ({ finalizeFlow, isCurrent }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent, reportAuthFailure }) => {
         try {
           const readiness = await session.preflightPublishedSession({ isCurrent });
           if (!isCurrent()) return;
           if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+            reportAuthFailure(readiness);
             session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
             session.notifyStateChange();
             renderRows();
@@ -6955,7 +7019,7 @@ function renderViewerShell(session) {
   }
   header.append(headerTop, answerSummary, resumeWarning);
   blockSection.append(blockHeading, stepper, blockList, crossQuestionStatus.root);
-  shell.append(header, blockSection);
+  shell.append(header, createViewerAuthFeedback(), blockSection);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(shell, detailsModal);
@@ -7360,11 +7424,12 @@ function renderViewerStartPanel(session, options = {}) {
           renderServerControls();
         }
       },
-      onSessionReady: async ({ finalizeFlow, isCurrent }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent, reportAuthFailure }) => {
         try {
           const readiness = await session.preflightPublishedSession({ isCurrent });
           if (!isCurrent()) return;
           if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
+            reportAuthFailure(readiness);
             session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
             session.notifyStateChange();
             renderServerControls();
@@ -7459,6 +7524,7 @@ function renderViewerStartPanel(session, options = {}) {
     attemptsSection,
     worksheetsSection,
     sessionStatus,
+    createViewerAuthFeedback(),
     packageFileInput,
     attemptPackageFileInput,
     errorMessage

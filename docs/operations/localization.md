@@ -38,3 +38,18 @@ The resolver does not change API responses, bridge English diagnostics, request/
 To add a new error meaning, register its stable code in the resolver, choose its applicable source, add matching keys/placeholders in both dictionaries, and test the real UI caller. Adding dictionary text alone cannot recognize a new code. Unknown errors remain localized while that mapping is absent. Do not alter auth or retry decisions based on translated text.
 
 This is not a complete translation of every product string. Authored content, raw API/log diagnostics, local import/export/storage validation details, successful-import/upload validation warning details, the shared login HTML and remaining legacy fixed-English controls are outside this change. Keep those separate from API error presentation; never translate arbitrary server sentences using a phrase-replacement table.
+
+### Viewer sign-in feedback
+
+The viewer keeps popup guidance in `authFeedback` (translation key and parameters),
+separate from upload/list `serverActionMessage` text. The start panel, active
+worksheet and both server dialogs render it in a plain-text, polite status region.
+Only the foremost region announces the current message. Keys are translated at
+render time, and the attempt-manager busy button uses `common.actions.signingIn`.
+
+Each sign-in flow owns its feedback. Superseded callbacks cannot overwrite the
+current flow; successful completion and cancellation clear progress. Blocked-popup
+and terminal failure guidance remains visible until a new sign-in flow begins.
+The `viewer-auth-feedback-ui-smoke.mjs` browser regression checks rendered status
+text in both locales and viewport widths, alongside the popup status and ownership
+smokes. These isolated fixtures do not replace live sign-in acceptance testing.

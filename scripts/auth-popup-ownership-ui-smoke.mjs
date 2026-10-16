@@ -32,11 +32,12 @@ try {
    session.beginServerSignIn();
    const newer=session._authPopupFlow, newerId=session._activeAuthFlowId;
    const before=app==='editor'?session.state.notifications.filter(n=>n.source?.startsWith('auth.')).map(n=>n.text):session.state.serverActionMessage;
+   const authFeedbackBefore=JSON.stringify(session.state.authFeedback);
    const rows=app==='editor'?session.state.uploadedDrafts:session.state.publishedPackages;
    release(ok ? {ok:true,status:'ready',data:{items:[{title:'STALE_ROW'}]}} : {ok:false,error:{code:'NETWORK_ERROR'}});
    await old.promise;
    const after=app==='editor'?session.state.notifications.filter(n=>n.source?.startsWith('auth.')).map(n=>n.text):session.state.serverActionMessage;
-   const result={app,phase,ok,feedbackPreserved:JSON.stringify(before)===JSON.stringify(after),rowsPreserved:JSON.stringify(rows)===JSON.stringify(app==='editor'?session.state.uploadedDrafts:session.state.publishedPackages),newFlowHandleRetained:session._authPopupFlow===newer,newFlowIdRetained:session._activeAuthFlowId===newerId,flowHandleIsNull:session._authPopupFlow===null};
+   const result={app,phase,ok,feedbackPreserved:JSON.stringify(before)===JSON.stringify(after) && authFeedbackBefore===JSON.stringify(session.state.authFeedback),rowsPreserved:JSON.stringify(rows)===JSON.stringify(app==='editor'?session.state.uploadedDrafts:session.state.publishedPackages),newFlowHandleRetained:session._authPopupFlow===newer,newFlowIdRetained:session._activeAuthFlowId===newerId,flowHandleIsNull:session._authPopupFlow===null};
    newer.cancel();
    return result;
   },{app,phase,ok});

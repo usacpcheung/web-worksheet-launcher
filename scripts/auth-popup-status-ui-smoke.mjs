@@ -27,6 +27,10 @@ try {
    session.beginServerSignIn();
    const expected=t(app==='editor' ? 'editor.notifications.auth.completeSignInPopup' : 'apiErrors.popupPending');
    const observed=app==='editor'?session.state.notifications.map(n=>n.text):[session.state.serverActionMessage];
+   if(app==='viewer') {
+    const region=document.querySelector('.viewer-auth-feedback:not([hidden])');
+    if(!region || region.textContent!==expected || !region.getBoundingClientRect().height) throw Error('active worksheet must visibly render pending guidance');
+   }
    session._authPopupFlow?.cancel();
    if(app==='viewer') {
     let forwarded;
