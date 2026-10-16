@@ -5194,7 +5194,7 @@ test('bootstrapViewer validateIntent uses action-aware viewer rewrite payload ch
 
 test('bootstrapViewer configures SharedAuthGate with live session probe check', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('checkSessionReady: async () => session.ensureServerSessionReady(),'), true);
+  assert.equal(source.includes('checkSessionReady: async (_intent, options) => session.ensureServerSessionReady(undefined, options),'), true);
   assert.equal(source.includes("returnQueryParams: { [VIEWER_AUTH_CALLBACK_PARAM]: '1' },"), true);
   assert.equal(source.includes("isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1'"), false);
 });
@@ -6774,4 +6774,23 @@ for (const action of ['cancel', 'switch']) test(`attempt ${action} during packag
   if (action === 'cancel') assert.equal(result.error.code, 'ABORTED');
   else { assert.equal(result.status, 'stale_upload'); assert.equal(session.state.serverActionMessage, 'New attempt owns this'); }
   assert.equal(session.state.isUploadingAttemptPackage, false);
+});
+
+
+test('upload preflight ownership tracks ID and generation without serializing the guard', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
+  session.state.localAttemptId = 'same';
+  session._uploadContextGeneration = 1;
+  let guard, intent;
+  session.authGate = { runProtectedAction: async (value, options) => { intent = value; guard = options.isCurrent; } };
+  await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
+  assert.equal(guard(), true);
+  assert.deepEqual(intent.payload, { localAttemptId: 'same' });
+  session._uploadContextGeneration++;
+  assert.equal(guard(), false);
+  await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
+  assert.equal(guard(), true);
+  session.state.localAttemptId = 'different';
+  assert.equal(guard(), false);
 });

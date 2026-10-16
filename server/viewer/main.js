@@ -4261,11 +4261,15 @@ class ViewerAttemptSession {
       localAttemptId: this.state.localAttemptId || null,
     };
 
+    const generation = this._uploadContextGeneration;
+    const isCurrent = actionId === 'uploadAttemptPackageAfterLogin'
+      ? () => this.state.localAttemptId === payload.localAttemptId && this._uploadContextGeneration === generation
+      : () => true;
     return this.authGate.runProtectedAction({
       actionId,
       recordStore: 'localAttempts',
       payload,
-    });
+    }, { isCurrent });
   }
 
   beginServerSignIn(signInOptions = {}) {
@@ -4399,8 +4403,9 @@ class ViewerAttemptSession {
     this.notifyStateChange();
   }
 
-  async probeServerSessionSilently({ force = false } = {}) {
+  async probeServerSessionSilently({ force = false, isCurrent = () => true } = {}) {
     const result = await probeSession({ apiClient: this.apiClient, force });
+    if (!isCurrent()) return result;
     if (result.status !== 'ready') {
       const message = result.error?.message || 'Sign-in is required before using server features.';
       if (isAuthSessionError(result.error)) {
@@ -4427,8 +4432,9 @@ class ViewerAttemptSession {
     return result;
   }
 
-  async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.') {
-    const result = await this.probeServerSessionSilently({ force: true });
+  async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.', { isCurrent = () => true } = {}) {
+    const result = await this.probeServerSessionSilently({ force: true, isCurrent });
+    if (!isCurrent()) return { ok: false, result };
     if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
       return { ok: true, result };
     }
@@ -7485,7 +7491,7 @@ async function bootstrapViewer() {
     appArea: 'viewer',
     resumeFlagKey: RESUME_FLAG_KEY,
     storage: session.storage,
-    checkSessionReady: async () => session.ensureServerSessionReady(),
+    checkSessionReady: async (_intent, options) => session.ensureServerSessionReady(undefined, options),
     getCurrentLocalId: () => session.state.localAttemptId || null,
     getCurrentUiState: () => session.getUiRestoreState(),
     persistLocalRecord: () => session.flushLocalStateForAuthRedirect(),

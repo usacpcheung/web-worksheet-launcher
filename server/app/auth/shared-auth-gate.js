@@ -110,15 +110,17 @@ class SharedAuthGate {
     }
   }
 
-  async runProtectedAction(intent) {
+  async runProtectedAction(intent, { isCurrent = () => true } = {}) {
     if (!intent || !intent.actionId || !intent.recordStore) {
       return { status: 'invalid_intent' };
     }
 
+    // Runtime-only ownership guard; never serialize it into a pending intent.
+    if (!isCurrent()) return { status: 'intent_invalid' };
     const originalLocalId = this.options.getCurrentLocalId();
     let authState;
     if (typeof this.options.checkSessionReady === 'function') {
-      const checkResult = await this.options.checkSessionReady(intent);
+      const checkResult = await this.options.checkSessionReady(intent, { isCurrent });
       authState = normalizeSessionCheckResult(checkResult);
     } else {
       authState = {
@@ -128,8 +130,10 @@ class SharedAuthGate {
       };
     }
 
+    if (!isCurrent()) return { status: 'intent_invalid' };
     if (authState.ready) {
       const result = await this.options.replayIntent(intent);
+      if (!isCurrent()) return { status: 'intent_invalid' };
       if (!result || result.ok !== false) return { status: 'executed' };
       authState = normalizeSessionCheckResult(result);
       if (!authState.authNotReady) return result;
@@ -139,6 +143,7 @@ class SharedAuthGate {
         return { status: 'intent_invalid' };
       }
     }
+    if (!isCurrent()) return { status: 'intent_invalid' };
     if (!authState.authNotReady) {
       return { status: 'blocked_session_probe', result: authState.rawResult };
     }
@@ -150,7 +155,7 @@ class SharedAuthGate {
     }
 
     await this.options.persistLocalRecord();
-    if (this.options.getCurrentLocalId() !== localId) return { status: 'intent_invalid' };
+    if (!isCurrent() || this.options.getCurrentLocalId() !== localId) return { status: 'intent_invalid' };
 
     const resume = {
       localId,

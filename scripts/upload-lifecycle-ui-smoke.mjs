@@ -8,12 +8,14 @@ try {
     try {
       const page = await context.newPage(), errors = [];
       page.on('pageerror', error => errors.push(error.message));
-      let holdSession = false, releaseSession, probes = 0, posts = 0, mode = 'conflict';
+      let holdSession = false, releaseSession, probes = 0, posts = 0, mode = 'conflict', sessionMode = 'ready';
       await page.addInitScript(locale => localStorage.setItem('worksheetLauncher.locale', locale), locale);
       await page.route(url => url.pathname.startsWith('/api/'), async route => {
         const url = new URL(route.request().url());
         if (url.pathname.endsWith('/session')) {
           if (holdSession) { probes++; await new Promise(resolve => { releaseSession = resolve; }); }
+          if (sessionMode === 'network') return route.fulfill({ status: 503, json: { ok: false, error: { code: 'NETWORK_ERROR', message: 'Old session failure' } } });
+          if (sessionMode === 'logged_out') return route.fulfill({ status: 401, json: { ok: false, error: { code: 'AUTH_REQUIRED', message: 'Old sign-in failure' } } });
           return route.fulfill({ json: { ok: true, data: { ready: true, user: { sub: 'fixture' } } } });
         }
         if (route.request().method() === 'POST') {
@@ -68,6 +70,32 @@ try {
       await page.waitForFunction(app => !window[`${app}Session`].state[app === 'editor' ? 'isUploadDraftFlowActive' : 'isUploadAttemptFlowActive'], app);
       assert.equal(posts, 2, 'one fresh upload after cancellation');
       assert.equal(await button.isEnabled(), true);
+      if (app === 'viewer') for (const replacement of ['same-id', 'different-id']) for (const response of ['ready', 'network', 'logged_out']) {
+        holdSession = true; releaseSession = null;
+        await button.click();
+        for (let i = 0; !releaseSession && i < 100; i++) await page.waitForTimeout(20);
+        assert.ok(releaseSession);
+        const beforePosts = posts;
+        await page.evaluate(async replacement => {
+          const session = window.viewerSession;
+          // Use the same state replacement entry point as resume/import, with
+          // a complete in-memory fixture rather than a missing source package.
+          const localId = replacement === 'different-id' ? `${session.state.localAttemptId}-next` : session.state.localAttemptId;
+          const previousGeneration = session._uploadContextGeneration;
+          session.applyAttemptState({ localId, localAttemptId: localId,
+            viewerPayload: session.state.viewerPayload, answers: session.state.answers,
+            status: session.state.status, startedAt: session.state.startedAt,
+          });
+          if (session._uploadContextGeneration === previousGeneration) throw new Error('Fixture failed to replace active attempt');
+          session.state.serverActionMessage = 'Replacement owns this message';
+        }, replacement);
+        sessionMode = response; holdSession = false; releaseSession();
+        await page.waitForFunction(() => !window.viewerSession.state.isUploadAttemptFlowActive);
+        assert.equal(posts, beforePosts, `${replacement}: stale preflight must not upload`);
+        assert.equal(await page.evaluate(() => window.viewerSession.state.serverActionMessage), 'Replacement owns this message');
+        assert.equal(await button.isEnabled(), true);
+        sessionMode = 'ready';
+      }
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }

@@ -138,3 +138,5 @@ These are isolated automated simulations. They do not validate production Apache
 ### Upload lifecycle regressions
 
 `upload-operation-lifecycle.test.mjs` tests exclusive ownership, abort reservation, stale progress and cleanup. Product unit tests cover cancellation or record replacement during preparation and stale editor feedback. `scripts/upload-lifecycle-ui-smoke.mjs` exercises repeated clicks during session preflight and conflict dialogs, then a fresh upload after cancellation, in English and Traditional Chinese at desktop and narrow widths. The existing cancellation, recovery and upload-result smoke scripts cover the shared consumers.
+
+The lifecycle browser fixture also replaces the viewer attempt during held session preflight, both with the same ID and a different ID, then releases successful, 503 and 401 responses. It asserts zero stale upload POSTs and preservation of the replacement message in both locales. Shared auth-gate tests cover invalidation during preflight, late authentication failure and local persistence, with no stale pending intent or redirect.
