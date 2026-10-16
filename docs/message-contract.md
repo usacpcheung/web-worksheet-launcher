@@ -27,6 +27,8 @@ Callback completion is primary. Background fallback readiness polling is bounded
 
 The helper's in-process UI callback is `onStatusMessage(message, status)`: `message` is localized display text; `status` is one of `blocked`, `pending`, `verifying`, `waiting`, or `deadline`. Consumers must branch on the stable status, never compare translated sentences. The viewer forwards both values to its override callbacks. This does not change the popup's `postMessage` payload or callback validation.
 
+Editor/viewer popup completion work is scoped to its originating flow. Starting a new popup invalidates the previous callbacks before cancellation; old cleanup cannot clear the new popup handle. Session probes and post-sign-in list refreshes check ownership before applying results. Viewer asynchronous UI overrides receive an `isCurrent()` guard alongside `finalizeFlow`; they must recheck it after awaits before changing feedback or starting further work. List loading state is released only by the request that owns it (or by the editor's active-request count).
+
 Voice capture and RolePlayScene line generation require a new explicit action after sign-in; they do not start automatically. Existing editor protected-intent recovery is separate and validates the original target before replay. Viewer redirect recovery uses the existing `authReturn`/`authCallback` path described below, not the retired worksheet result protocol.
 
 ## Editor/Viewer response schema normalization (local draft/snapshot/viewer payloads)

@@ -6860,3 +6860,43 @@ for (const outcome of ['success', 'failure']) test(`old submission ${outcome} ca
  assert.equal(session.state.lastFinalizeError,'Replacement status');
  assert.equal(session.state.isFinalizing,true);
 });
+
+for (const ok of [true, false]) test('superseded popup session probe cannot change session state: ' + ok, async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
+  let release, current = true;
+  session.apiClient.getSession = () => new Promise(resolve => { release = resolve; });
+  const probe = session.probeServerSessionSilently({ force: true, isCurrent: () => current });
+  current = false;
+  const newer = { status: 'ready', user: { sub: 'newer' }, error: null };
+  session.state.serverSession = newer;
+  release(ok ? { ok: true, data: { user: { sub: 'older' } } } : { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } });
+  await probe;
+  assert.equal(session.state.serverSession, newer);
+});
+
+for (const kind of ['attempts', 'published']) for (const ok of [true, false]) test(`superseded ${kind} list cannot change rows or clear newer loading state: ${ok}`, async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
+  session.state.serverSession = { status: 'logged_in' };
+  const replies = [];
+  const apiMethod = kind === 'attempts' ? 'listUploadedAttempts' : 'listPublishedPackages';
+  const stateKey = kind === 'attempts' ? 'uploadedAttempts' : 'publishedPackages';
+  const busyKey = kind === 'attempts' ? 'isLoadingUploadedAttempts' : 'isLoadingPublishedPackages';
+  session.apiClient[apiMethod] = () => new Promise(resolve => replies.push(resolve));
+  const run = options => kind === 'attempts' ? session.listUploadedAttempts(options) : session.browsePublishedPackages('', { preflight: false, ...options });
+  let current = true;
+  const older = run({ isCurrent: () => current });
+  current = false;
+  const newer = run({ isCurrent: () => true });
+  session.state[stateKey] = [{ title: 'keep' }];
+  session.state.serverActionMessage = 'new feedback';
+  replies[0](ok ? { ok: true, data: { items: [{ title: 'stale' }] } } : { ok: false, error: { code: 'FORBIDDEN' } });
+  await older;
+  assert.deepEqual(session.state[stateKey], [{ title: 'keep' }]);
+  assert.equal(session.state[busyKey], true);
+  assert.equal(session.state.serverActionMessage, 'new feedback');
+  replies[1]({ ok: true, data: { items: [] } });
+  await newer;
+  assert.equal(session.state[busyKey], false);
+});

@@ -3898,7 +3898,11 @@ class ViewerAttemptSession {
     this.notifyStateChange();
   }
 
-  async listUploadedAttempts() {
+  async listUploadedAttempts({ isCurrent = () => true } = {}) {
+    if (!isCurrent()) return { ok: false, status: 'superseded' };
+    const requestToken = {};
+    this._uploadedAttemptsRequest = requestToken;
+    const ownsRequest = () => this._uploadedAttemptsRequest === requestToken;
     const sessionState = this.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     if (sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
       this.state.isLoadingUploadedAttempts = false;
@@ -3911,6 +3915,7 @@ class ViewerAttemptSession {
     this.notifyStateChange();
     try {
       const result = await this.apiClient.listUploadedAttempts();
+      if (!isCurrent() || !ownsRequest()) return result;
       if (!result?.ok) {
         this.state.uploadedAttemptsError = getApiErrorMessage(result, 'list');
         return result;
@@ -3929,11 +3934,14 @@ class ViewerAttemptSession {
       }
       return result;
     } catch (error) {
-      this.state.uploadedAttemptsError = getApiErrorMessage(error, 'list');
-      return { ok: false, error: { code: 'NETWORK_ERROR', message: this.state.uploadedAttemptsError } };
+      const message = getApiErrorMessage(error, 'list');
+      if (isCurrent() && ownsRequest()) this.state.uploadedAttemptsError = message;
+      return { ok: false, error: { code: 'NETWORK_ERROR', message } };
     } finally {
-      this.state.isLoadingUploadedAttempts = false;
-      this.notifyStateChange();
+      if (ownsRequest()) {
+        this.state.isLoadingUploadedAttempts = false;
+        this.notifyStateChange();
+      }
     }
   }
 
@@ -4300,27 +4308,29 @@ class ViewerAttemptSession {
       ? signInOptions.onSessionNotReady
       : null;
 
-    if (this._authPopupFlow?.cancel) {
-      this._authPopupFlow.cancel();
-    }
+    const previousFlow = this._authPopupFlow;
     const authFlowId = createLocalId('auth_flow');
     this._activeAuthFlowId = authFlowId;
+    const isCurrent = () => this._activeAuthFlowId === authFlowId;
+    // Invalidate the old callbacks before cancellation can invoke them.
+    previousFlow?.cancel?.();
+    this._authPopupFlow = null;
+    this._authPopupWindow = null;
 
     const finalizeFlow = () => {
-      if (this._activeAuthFlowId === authFlowId) {
-        this._activeAuthFlowId = null;
-      }
+      if (!isCurrent()) return;
+      this._activeAuthFlowId = null;
       this._authPopupWindow = null;
       this._authPopupFlow = null;
     };
 
-    this._authPopupFlow = startAuthPopupFlow({
+    const flow = startAuthPopupFlow({
       apiClient: this.apiClient,
       source: 'viewer',
       authFlowId,
       pollIntervalMs: AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs,
       pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
-      shouldContinue: () => this._activeAuthFlowId === authFlowId,
+      shouldContinue: isCurrent,
       onPopupBlocked: () => {
         if (this._activeAuthFlowId !== authFlowId) return;
         if (onPopupBlockedOverride) {
@@ -4344,7 +4354,7 @@ class ViewerAttemptSession {
       onSessionReady: async (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
         if (onSessionReadyOverride) {
-          await onSessionReadyOverride({ result, authFlowId, finalizeFlow });
+          await onSessionReadyOverride({ result, authFlowId, finalizeFlow, isCurrent });
           return;
         }
         if (this._authAutoLoadInFlightByFlowId.has(authFlowId)) return;
@@ -4352,9 +4362,11 @@ class ViewerAttemptSession {
         try {
           this.state.serverActionMessage = getViewerAuthNotification('signInRefreshing');
           this.notifyStateChange();
-          const result = await this.preflightPublishedSession();
+          const result = await this.preflightPublishedSession({ isCurrent });
+          if (!isCurrent()) return;
           if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
-            await this.browsePublishedPackages(this.state.publishedFilters || {}, { preflight: false, reset: true });
+            await this.browsePublishedPackages(this.state.publishedFilters || {}, { preflight: false, reset: true, isCurrent });
+            if (!isCurrent()) return;
             this.state.serverActionMessage = null;
             this.notifyStateChange();
             finalizeFlow();
@@ -4371,7 +4383,7 @@ class ViewerAttemptSession {
       onSessionNotReady: (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
         if (onSessionNotReadyOverride) {
-          onSessionNotReadyOverride({ result, authFlowId, finalizeFlow });
+          onSessionNotReadyOverride({ result, authFlowId, finalizeFlow, isCurrent });
           return;
         }
         if (result?.final === false && result?.waitingForCallback === true) {
@@ -4393,7 +4405,13 @@ class ViewerAttemptSession {
         this._authAutoLoadInFlightByFlowId.delete(authFlowId);
       },
     });
-    this._authPopupWindow = this._authPopupFlow?.popupWindow || null;
+    // A blocked-popup override may finalize synchronously during startup.
+    if (isCurrent()) {
+      this._authPopupFlow = flow;
+      this._authPopupWindow = flow?.popupWindow || null;
+    } else {
+      flow?.cancel?.();
+    }
   }
 
   async refreshServerSession() {
@@ -4468,11 +4486,17 @@ class ViewerAttemptSession {
     return { ok: false, result };
   }
 
-  async preflightPublishedSession() {
-    return this.ensureServerSessionReady();
+  async preflightPublishedSession(options = {}) {
+    return this.ensureServerSessionReady(undefined, options);
   }
 
   async browsePublishedPackages(query = '', options = {}) {
+    const isCurrent = options.isCurrent || (() => true);
+    if (!isCurrent()) return { ok: false, status: 'superseded' };
+    const requestToken = {};
+    this._publishedBrowseRequest = requestToken;
+    this.state.isLoadingPublishedPackages = false;
+    const ownsRequest = () => this._publishedBrowseRequest === requestToken;
     const requestedFilters = typeof query === 'object' && query !== null
       ? query
       : { title: query, subject: '', owner: '' };
@@ -4496,7 +4520,8 @@ class ViewerAttemptSession {
     this.notifyStateChange();
 
     if (options.preflight !== false) {
-      const sessionReady = await this.preflightPublishedSession();
+      const sessionReady = await this.preflightPublishedSession({ isCurrent });
+      if (!isCurrent() || !ownsRequest()) return sessionReady.result;
       if (!sessionReady.ok) return sessionReady.result;
     }
     this.state.isLoadingPublishedPackages = true;
@@ -4514,7 +4539,9 @@ class ViewerAttemptSession {
       filters,
       pagination,
     });
+    if (!ownsRequest()) return result;
     this.state.isLoadingPublishedPackages = false;
+    if (!isCurrent()) { this.notifyStateChange(); return result; }
     if (!result.ok) {
       this.state.serverActionMessage = getApiErrorMessage(result, 'list');
       this.state.publishedListError = getApiErrorMessage(result, 'list');
@@ -5073,12 +5100,15 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           renderRows();
         }
       },
-      onSessionReady: async ({ finalizeFlow }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent }) => {
         try {
-          const readiness = await session.probeServerSessionSilently({ force: true });
+          const readiness = await session.probeServerSessionSilently({ force: true, isCurrent });
+          if (!isCurrent()) return;
           if (readiness.status === 'ready') {
-            await session.listUploadedAttempts();
-            await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true });
+            await session.listUploadedAttempts({ isCurrent });
+            if (!isCurrent()) return;
+            await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true, isCurrent });
+            if (!isCurrent()) return;
             session.state.serverActionMessage = null;
           } else {
             session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
@@ -5373,6 +5403,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       subject: subjectFilterInput.value,
       owner: ownerFilterInput.value,
     }, options);
+    if (options.isCurrent && !options.isCurrent()) return;
     renderRows();
   };
 
@@ -5395,16 +5426,18 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           renderRows();
         }
       },
-      onSessionReady: async ({ finalizeFlow }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent }) => {
         try {
-          const readiness = await session.preflightPublishedSession();
+          const readiness = await session.preflightPublishedSession({ isCurrent });
+          if (!isCurrent()) return;
           if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
             session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
             session.notifyStateChange();
             renderRows();
             return;
           }
-          await refreshBrowse({ preflight: false, reset: true });
+          await refreshBrowse({ preflight: false, reset: true, isCurrent });
+          if (!isCurrent()) return;
           session.state.serverActionMessage = null;
           session.notifyStateChange();
           renderRows();
@@ -7327,16 +7360,18 @@ function renderViewerStartPanel(session, options = {}) {
           renderServerControls();
         }
       },
-      onSessionReady: async ({ finalizeFlow }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent }) => {
         try {
-          const readiness = await session.preflightPublishedSession();
+          const readiness = await session.preflightPublishedSession({ isCurrent });
+          if (!isCurrent()) return;
           if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
             session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
             session.notifyStateChange();
             renderServerControls();
             return;
           }
-          await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true });
+          await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true, isCurrent });
+          if (!isCurrent()) return;
           session.state.serverActionMessage = null;
           session.notifyStateChange();
           renderServerControls();
@@ -7636,17 +7671,20 @@ async function bootstrapViewer() {
           onStatusMessage: ({ message }) => {
             updatePanel(message || t('apiErrors.popupPending'), true);
           },
-          onSessionReady: async ({ finalizeFlow }) => {
+          onSessionReady: async ({ finalizeFlow, isCurrent }) => {
             try {
               showPublishedPackageLoading(session);
-              finalizeFlow();
               const result = await session.startFromPublishedPackage(publishedPackageId);
+              if (!isCurrent()) return;
               const handled = await handlePublishedPackageOpenResult(result);
+              if (!isCurrent()) return;
               if (!handled) {
                 updatePanel(t('apiErrors.authRequired'), false);
               }
             } catch (retryError) {
-              renderViewerFatalError(retryError);
+              if (isCurrent()) renderViewerFatalError(retryError);
+            } finally {
+              finalizeFlow();
             }
           },
           onSessionNotReady: ({ result, finalizeFlow }) => {

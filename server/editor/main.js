@@ -3558,30 +3558,33 @@ class EditorDraftSession {
   }
 
   beginServerSignIn() {
-    if (this._authPopupFlow?.cancel) {
-      this._authPopupFlow.cancel();
-    }
+    const previousFlow = this._authPopupFlow;
     this.clearNotificationsBySource('auth.popup');
     this.clearNotificationsBySource('auth.status');
     const authFlowId = createLocalId('auth_flow');
     this._activeAuthFlowId = authFlowId;
+    const isCurrent = () => this._activeAuthFlowId === authFlowId;
+    // Invalidate the old callbacks before cancellation can invoke them.
+    previousFlow?.cancel?.();
+    this._authPopupFlow = null;
+    this._authPopupWindow = null;
 
     const finalizeFlow = () => {
-      if (this._activeAuthFlowId === authFlowId) {
-        this._activeAuthFlowId = null;
-      }
+      if (!isCurrent()) return;
+      this._activeAuthFlowId = null;
       this._authPopupWindow = null;
       this._authPopupFlow = null;
     };
 
-    this._authPopupFlow = startAuthPopupFlow({
+    const flow = startAuthPopupFlow({
       apiClient: this.apiClient,
       source: 'editor',
       authFlowId,
       pollIntervalMs: AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs,
       pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
-      shouldContinue: () => this._activeAuthFlowId === authFlowId,
+      shouldContinue: isCurrent,
       onPopupBlocked: () => {
+        if (!isCurrent()) return;
         this.pushNotification({
           kind: 'error',
           category: 'server',
@@ -3613,9 +3616,11 @@ class EditorDraftSession {
           logActivity: false,
         });
         this.notifyStateChange();
-        const result = await this.probeServerSessionSilently({ force: true });
+        const result = await this.probeServerSessionSilently({ force: true, isCurrent });
+        if (!isCurrent()) return;
         if (result.ok && this.state.serverSession.status === 'ready') {
-          await this.loadUploadedDrafts({ preflight: false });
+          await this.loadUploadedDrafts({ preflight: false, isCurrent });
+          if (!isCurrent()) return;
           this.clearNotificationsBySource('auth.status');
           this.notifyStateChange();
           finalizeFlow();
@@ -3665,7 +3670,13 @@ class EditorDraftSession {
         finalizeFlow();
       },
     });
-    this._authPopupWindow = this._authPopupFlow?.popupWindow || null;
+    // A blocked-popup override may finalize synchronously during startup.
+    if (isCurrent()) {
+      this._authPopupFlow = flow;
+      this._authPopupWindow = flow?.popupWindow || null;
+    } else {
+      flow?.cancel?.();
+    }
   }
 
   async refreshServerSession() {
@@ -3678,8 +3689,9 @@ class EditorDraftSession {
     return this.probeServerSessionSilently({ force: true });
   }
 
-  async probeServerSessionSilently({ force = false, timeoutMs = null } = {}) {
+  async probeServerSessionSilently({ force = false, timeoutMs = null, isCurrent = () => true } = {}) {
     const result = await probeSession({ apiClient: this.apiClient, force, timeoutMs });
+    if (!isCurrent()) return result;
     if (result.status !== 'ready') {
       this.state.serverSession = {
         status: result.status === 'error' ? 'error' : 'not_ready',
@@ -3899,11 +3911,13 @@ class EditorDraftSession {
   }
 
   async loadUploadedDrafts(options = {}) {
+    const isCurrent = options.isCurrent || (() => true);
+    if (!isCurrent()) return { ok: false, status: 'superseded' };
     const shouldPreflight = options.preflight !== false;
     const inflightKey = options.signal ? '_loadUploadedDraftsCancelablePromise' : shouldPreflight
       ? '_loadUploadedDraftsWithPreflightPromise'
       : '_loadUploadedDraftsWithoutPreflightPromise';
-    if (this[inflightKey]) {
+    if (!options.isCurrent && this[inflightKey]) {
       return this[inflightKey];
     }
 
@@ -3920,6 +3934,7 @@ class EditorDraftSession {
 
       try {
         const result = await this.apiClient.listUploadedDrafts({ signal: options.signal });
+        if (!isCurrent()) return result;
         if (!result.ok) {
           this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDrafts.refresh', text: getApiErrorMessage(result, 'list') });
           this.notifyStateChange();
@@ -3945,7 +3960,7 @@ class EditorDraftSession {
         this.notifyStateChange();
       }
     })();
-    this[inflightKey] = loadPromise;
+    if (!options.isCurrent) this[inflightKey] = loadPromise;
     try {
       return await loadPromise;
     } finally {

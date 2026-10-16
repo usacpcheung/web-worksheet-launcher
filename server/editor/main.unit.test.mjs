@@ -5971,3 +5971,39 @@ test('draft replacement suppresses late upload feedback and progress', async () 
   assert.equal(session.state.lastUploadedDraft, null);
   assert.equal(session.state.isUploadingDraft, false);
 });
+
+for (const ok of [true, false]) test('superseded popup session probe cannot change session state: ' + ok, async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  let release, current = true;
+  session.apiClient.getSession = () => new Promise(resolve => { release = resolve; });
+  const probe = session.probeServerSessionSilently({ force: true, isCurrent: () => current });
+  current = false;
+  const newer = { status: 'ready', user: { sub: 'newer' }, error: null };
+  session.state.serverSession = newer;
+  release(ok ? { ok: true, data: { user: { sub: 'older' } } } : { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } });
+  await probe;
+  assert.equal(session.state.serverSession, newer);
+});
+
+for (const ok of [true, false]) test('popup draft refresh does not reuse stale work or publish its results: ' + ok, async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  const replies = [];
+  let current = true;
+  session.apiClient.listUploadedDrafts = () => new Promise(resolve => replies.push(resolve));
+  const older = session.loadUploadedDrafts({ preflight: false, isCurrent: () => current });
+  current = false;
+  const newer = session.loadUploadedDrafts({ preflight: false, isCurrent: () => true });
+  assert.equal(replies.length, 2);
+  session.state.uploadedDrafts = [{ title: 'keep' }];
+  replies[0](ok ? { ok: true, data: { items: [{ title: 'stale' }] } } : { ok: false, error: { code: 'FORBIDDEN' } });
+  await older;
+  assert.deepEqual(session.state.uploadedDrafts, [{ title: 'keep' }]);
+  assert.equal(session.state.isLoadingUploadedDrafts, true);
+  assert.equal(session.state.notifications.some(n => n.source === 'uploadedDrafts.refresh' && n.kind === 'warn'), false);
+  replies[1]({ ok: true, data: { items: [{ title: 'new' }] } });
+  await newer;
+  assert.deepEqual(session.state.uploadedDrafts, [{ title: 'new' }]);
+  assert.equal(session.state.isLoadingUploadedDrafts, false);
+});
