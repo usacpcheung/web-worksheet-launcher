@@ -40,5 +40,24 @@ try {
   assert.equal(result.delivered,true, `${app}/${locale}/${width}: pending guidance must be delivered`);
   await context.close();
  }
- console.log('PASS: real editor/viewer popup guidance and viewer override metadata in both languages and viewport widths');
+ for (const locale of ['en', 'zh-Hant']) for (const width of [1280, 390]) {
+  const context = await browser.newContext({ viewport: { width, height: 900 } });
+  try {
+   const page = await context.newPage();
+   let holdSession = false;
+   await page.addInitScript(locale => localStorage.setItem('worksheetLauncher.locale', locale), locale);
+   await page.route(url => url.pathname.startsWith('/api/'), route => {
+    if (holdSession && new URL(route.request().url()).pathname.endsWith('/session')) return;
+    return route.fulfill({ json: { ok: true, data: { ready: false } } });
+   });
+   await page.goto(`${base}/server/roleplayscene/`);
+   await page.evaluate(() => { window.open = () => null; });
+   holdSession = true;
+   await page.locator('#server-signin-btn').dispatchEvent('click');
+   const expected = await page.evaluate(async () => (await import('/server/app/i18n/index.js')).t('roleplayscene.server.popupBlocked'));
+   assert.equal(await page.locator('#app-messages .app-messages__text').textContent(), expected);
+   assert.equal(await page.locator('#app-messages').isVisible(), true);
+  } finally { await context.close(); }
+ }
+ console.log('PASS: real editor/viewer popup guidance, viewer override metadata and RolePlayScene blocked-popup guidance in both languages and viewport widths');
 }finally{await browser?.close();}

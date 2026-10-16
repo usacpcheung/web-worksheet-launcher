@@ -1325,7 +1325,9 @@ function startServerSignIn() {
       showMessage({ textId: 'server.popupBlocked' });
       if (directLaunch.active) setDirectLaunchState('authentication-required');
     },
-    onStatusMessage: () => {
+    onStatusMessage: (_message, status) => {
+      // onPopupBlocked already supplies actionable guidance; no popup is pending.
+      if (status === 'blocked') return;
       showMessage({ textId: 'server.signInPending' });
       if (directLaunch.active && !popupWasBlocked) setDirectLaunchState('authentication-pending');
     },
