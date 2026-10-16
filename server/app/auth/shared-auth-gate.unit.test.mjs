@@ -730,3 +730,23 @@ for (const stage of ['ready_probe', 'logged_out_probe', 'failed_probe', 'late_au
     assert.equal(redirects, 0);
   });
 }
+
+for (const stage of ['probe', 'restore', 'ui', 'validate', 'replay']) test(`superseded recovery at ${stage} preserves newer pending intent`, async () => {
+  createWindowStub();
+  const storage = createStorage();
+  const old = {localId:'A',resumeFlagKey:'test',actionId:'upload',intentPayload:{localAttemptId:'A'}};
+  const newer = {...old,localId:'B',intentPayload:{localAttemptId:'B'}};
+  storage.pendingIntent.set(old);
+  let replays = 0;
+  const replace = phase => { if (phase === stage) storage.pendingIntent.set(newer); };
+  const gate = new SharedAuthGate({ storage, resumeFlagKey:'test',
+    checkSessionReady: async()=>{replace('probe');return {ok:true}},
+    restoreByLocalId: async()=>{replace('restore');return true},
+    restoreUiState: async()=>{replace('ui')},
+    validateIntent: async()=>{replace('validate');return true},
+    replayIntent: async()=>{replays++;replace('replay');return {ok:true}},
+  });
+  assert.equal((await gate.restoreAfterAuthReturn()).status,'intent_superseded');
+  assert.equal(storage.pendingIntent.get(),newer);
+  assert.equal(replays,stage === 'replay' ? 1 : 0);
+});

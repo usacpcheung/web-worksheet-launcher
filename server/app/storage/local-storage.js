@@ -62,19 +62,32 @@ function clearResumeFlag(flagKey) {
   writeJson(STORAGE_KEYS.resumeFlags, currentFlags);
 }
 
+// Pending actions belong to the tab that navigates through authentication.
+// Resume flags remain shared for the existing start-panel resume behavior.
 function setPendingIntent(intentMetadata) {
-  writeJson(STORAGE_KEYS.pendingIntent, {
+  sessionStorage.setItem(STORAGE_KEYS.pendingIntent, JSON.stringify({
     ...intentMetadata,
+    intentId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`,
     updatedAt: intentMetadata?.updatedAt || new Date().toISOString(),
-  });
+  }));
 }
 
 function getPendingIntent() {
-  return readJson(STORAGE_KEYS.pendingIntent);
+  const current = sessionStorage.getItem(STORAGE_KEYS.pendingIntent);
+  if (current !== null) return safeParse(current);
+  // Import the legacy singleton once, preserving in-progress login returns.
+  // New writes never touch this origin-wide key.
+  if (new URL(globalThis.location?.href || 'http://localhost/').searchParams.get('authReturn') !== '1') return null;
+  const legacy = localStorage.getItem(STORAGE_KEYS.pendingIntent);
+  if (legacy === null) return null;
+  sessionStorage.setItem(STORAGE_KEYS.pendingIntent, legacy);
+  localStorage.removeItem(STORAGE_KEYS.pendingIntent);
+  return safeParse(legacy);
 }
 
 function clearPendingIntent() {
-  localStorage.removeItem(STORAGE_KEYS.pendingIntent);
+  // A tombstone prevents a later legacy record from being adopted after cancel.
+  sessionStorage.setItem(STORAGE_KEYS.pendingIntent, 'null');
 }
 
 

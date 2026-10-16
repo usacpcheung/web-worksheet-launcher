@@ -6794,3 +6794,58 @@ test('upload preflight ownership tracks ID and generation without serializing th
   session.state.localAttemptId = 'different';
   assert.equal(guard(), false);
 });
+
+test('old save after same-ID reopen must not suppress auth flush', async () => {
+ const mod = await loadViewerModule();
+ let release, writes = [];
+ const session = new mod.ViewerAttemptSession({ attempts: { put: async record => {
+   writes.push(structuredClone(record));
+   if (writes.length === 1) await new Promise(resolve => { release = resolve; });
+   return record;
+ } }, resumeFlags: { get() {}, set() {} } });
+ const record = { localAttemptId: 'same', status: 'in_progress', viewerPayload: { worksheetId: 'w', snapshotId: 's', blocks: [{ blockId: 'q1', kind: 'question', responseConfig: { inputType: 'text' } }] }, answers: {} };
+ session.applyAttemptState(record);
+ session.setAnswer('q1', 'old answer'); clearTimeout(session.autosaveTimer);
+ const oldSave = session.autosave();
+ session.applyAttemptState(record);
+ session.setAnswer('q1', 'new answer'); clearTimeout(session.autosaveTimer);
+ release(); await oldSave;
+ await session.flushLocalStateForAuthRedirect();
+
+ assert.equal(writes.at(-1).answers.q1.value, 'new answer');
+});
+
+
+test('failed old autosave cannot set an error on a reopened attempt', async () => {
+ const mod = await loadViewerModule();
+ let rejectSave;
+ const session = new mod.ViewerAttemptSession({ attempts: { put: () => new Promise((_, reject) => { rejectSave = reject; }) }, resumeFlags: { get() {}, set() {} } });
+ const record = { localAttemptId: 'same', status: 'in_progress', viewerPayload: { blocks: [] }, answers: {} };
+ session.applyAttemptState(record);
+ session.state.attemptRevision = 5;
+ const oldSave = session.autosave();
+ session.applyAttemptState(record);
+ rejectSave(new Error('old write failed'));
+ await assert.rejects(oldSave, /old write failed/);
+ assert.equal(session.state.lastSaveError, null);
+ assert.equal(session.state.lastSavedRevision, 1);
+});
+
+
+for (const outcome of ['success', 'failure']) test(`old submission ${outcome} cannot change a replacement attempt`, async () => {
+ const mod = await loadViewerModule();
+ let resolveSave, rejectSave;
+ const session = new mod.ViewerAttemptSession({ attempts: { put: () => new Promise((resolve,reject) => { resolveSave=resolve; rejectSave=reject; }) }, resumeFlags: { get() {}, set() {} } });
+ const record = { localAttemptId:'same', status:'in_progress', viewerPayload:{blocks:[]}, answers:{} };
+ session.applyAttemptState(record);
+ const oldFinalize = session.completeLocalAttempt();
+ session.applyAttemptState({...record,status:'completed',completedAt:'replacement-completion'});
+ session.state.lastFinalizeError = 'Replacement status';
+ session.state.isFinalizing = true;
+ if (outcome === 'success') resolveSave({}); else rejectSave(new Error('old failure'));
+ await oldFinalize;
+ assert.equal(session.state.status,'completed');
+ assert.equal(session.state.completedAt,'replacement-completion');
+ assert.equal(session.state.lastFinalizeError,'Replacement status');
+ assert.equal(session.state.isFinalizing,true);
+});

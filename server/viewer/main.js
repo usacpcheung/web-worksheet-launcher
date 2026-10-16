@@ -3127,6 +3127,9 @@ class ViewerAttemptSession {
       return null;
     }
 
+    const attemptId = this.state.localAttemptId;
+    const generation = this._uploadContextGeneration;
+    const isCurrent = () => this.state.localAttemptId === attemptId && this._uploadContextGeneration === generation;
     this.voice.teardown();
     const recoveryBeforeFinalize = this.state.voiceRecovery;
     this.state.voiceRecovery = {};
@@ -3145,9 +3148,10 @@ class ViewerAttemptSession {
 
     try {
       const persisted = await this.autosave();
-      this.state.lastFinalizeError = null;
+      if (isCurrent()) this.state.lastFinalizeError = null;
       return persisted;
     } catch (error) {
+      if (!isCurrent()) return null;
       this.state.status = 'in_progress';
       this.state.completedAt = null;
       this.state.submittedAt = null;
@@ -3158,8 +3162,10 @@ class ViewerAttemptSession {
       this.notifyStateChange();
       return null;
     } finally {
-      this.state.isFinalizing = false;
-      this.notifyStateChange();
+      if (isCurrent()) {
+        this.state.isFinalizing = false;
+        this.notifyStateChange();
+      }
     }
   }
 
@@ -3270,6 +3276,7 @@ class ViewerAttemptSession {
     }
 
     const revisionAtSaveStart = this.state.attemptRevision;
+    const generationAtSaveStart = this._uploadContextGeneration;
     const updatedAt = nowIso();
     const attemptRecord = this.createRecoveryRecord(updatedAt);
 
@@ -3280,7 +3287,7 @@ class ViewerAttemptSession {
     try {
       const persisted = await this.storage.attempts.put(attemptRecord);
       const shouldApplySaveStatus =
-        this.state.localAttemptId === attemptRecord.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
+        this._uploadContextGeneration === generationAtSaveStart && this.state.localAttemptId === attemptRecord.localId && revisionAtSaveStart >= this.state.lastSavedRevision;
       if (shouldApplySaveStatus) {
         this.state.lastSavedRevision = revisionAtSaveStart;
         this.state.lastSavedAt = persisted?.metadata?.updatedAt || updatedAt;
@@ -3293,7 +3300,7 @@ class ViewerAttemptSession {
       return persisted;
     } catch (error) {
       const shouldApplyErrorStatus =
-        this.state.localAttemptId === attemptRecord.localId && revisionAtSaveStart > this.state.lastSavedRevision;
+        this._uploadContextGeneration === generationAtSaveStart && this.state.localAttemptId === attemptRecord.localId && revisionAtSaveStart > this.state.lastSavedRevision;
       if (shouldApplyErrorStatus) {
         this.state.lastSaveError = error?.message || String(error);
         this.notifyStateChange();
