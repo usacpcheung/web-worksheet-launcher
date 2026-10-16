@@ -53,3 +53,7 @@ and terminal failure guidance remains visible until a new sign-in flow begins.
 The `viewer-auth-feedback-ui-smoke.mjs` browser regression checks rendered status
 text in both locales and viewport widths, alongside the popup status and ownership
 smokes. These isolated fixtures do not replace live sign-in acceptance testing.
+
+A failed follow-up session probe leaves sign-in retry available. Dialogs clear
+and render their busy state after the owning callback finishes; a settled probe
+error does not count as an active session check when disabling sign-in controls.

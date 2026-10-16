@@ -5009,7 +5009,9 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     renderViewerAuthFeedback(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
-    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    // A settled probe error must not disable the user's sign-in retry.
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING
+      && !session.state.serverSession?.error;
     const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || t('common.values.unknown');
     sessionLine.textContent = isLoggedIn
       ? t('viewer.start.serverSession.ready', { user: userLabel })
@@ -5176,8 +5178,11 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
           session.notifyStateChange();
           await renderRows();
         } finally {
-          signInInFlight = false;
-          finalizeFlow();
+          if (isCurrent()) {
+            signInInFlight = false;
+            renderRows();
+            finalizeFlow();
+          }
         }
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
@@ -5341,7 +5346,9 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
     renderViewerAuthFeedback(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
-    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    // A settled probe error must not disable the user's sign-in retry.
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING
+      && !session.state.serverSession?.error;
     const activeFilters = session.state.publishedFilters || {};
     if (document.activeElement !== titleFilterInput) titleFilterInput.value = String(activeFilters.title || '');
     if (document.activeElement !== subjectFilterInput) subjectFilterInput.value = String(activeFilters.subject || '');
@@ -5506,8 +5513,11 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
           session.notifyStateChange();
           renderRows();
         } finally {
-          signInInFlight = false;
-          finalizeFlow();
+          if (isCurrent()) {
+            signInInFlight = false;
+            renderRows();
+            finalizeFlow();
+          }
         }
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
@@ -7477,7 +7487,9 @@ function renderViewerStartPanel(session, options = {}) {
     renderViewerNotifications(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
-    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    // A settled probe error must not disable the user's sign-in retry.
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING
+      && !session.state.serverSession?.error;
     const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || t('common.values.unknown');
     let defaultSessionMessage = '';
     if (isLoggedIn) {

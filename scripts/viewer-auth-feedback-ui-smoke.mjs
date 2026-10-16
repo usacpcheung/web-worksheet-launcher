@@ -69,6 +69,24 @@ try {
         if (surface === 'attempts') assert.equal(await modal.getByRole('button', { name: labels['common.actions.signingIn'], exact: true }).isDisabled(), true);
         await page.evaluate(() => window.qaSession._authPopupFlow.cancel());
         assert.equal(await page.locator('.viewer-auth-feedback:not([hidden])').count(), 0);
+        // Popup success can race with a failed follow-up session verification.
+        // The terminal guidance must remain visible and allow an immediate retry.
+        await click(modal, 'common.actions.signIn');
+        await page.evaluate(async () => {
+          const session = window.qaSession;
+          let probes = 0;
+          session.apiClient.getSession = async () => ++probes === 1
+            ? { ok: true, data: { ready: true, user: { sub: 'fixture' } } }
+            : { ok: false, error: { code: 'NETWORK_ERROR' } };
+          const completion = session._authPopupFlow.promise;
+          const event = new Event('message');
+          Object.assign(event, { origin: location.origin, source: session._authPopupWindow,
+            data: { type: 'worksheet-launcher-auth-complete', authFlowId: session._activeAuthFlowId } });
+          window.dispatchEvent(event);
+          await completion;
+        });
+        await checkFeedback(modal, 'apiErrors.network');
+        assert.equal(await modal.getByRole('button', { name: labels['common.actions.signIn'], exact: true }).isEnabled(), true);
         await page.evaluate(() => { window.open = () => null; });
         await click(modal, 'common.actions.signIn');
         await checkFeedback(modal, 'apiErrors.popupBlocked');
@@ -94,6 +112,10 @@ try {
         if (ok) assert.equal(await page.locator('.viewer-auth-feedback:not([hidden])').count(), 0);
         else await checkFeedback(start, 'apiErrors.network');
       }
+      await page.evaluate(() => window.qaSession.probeServerSessionSilently({ force: true }));
+      await click(start, 'viewer.start.loginToManageServerAttempts');
+      await checkFeedback(start, 'apiErrors.popupPending');
+      await page.evaluate(() => window.qaSession._authPopupFlow.cancel());
       console.log(`PASS viewer start/attempts/published visible feedback, cancellation, blocked, success/failure: ${locale}/${width}`);
     } finally { await context.close(); }
   }
