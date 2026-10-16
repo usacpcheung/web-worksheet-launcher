@@ -459,6 +459,7 @@ export default {
         "savedLocalDraft": "已儲存本機草稿。"
       },
       "uploadDraft": {
+        "conflict": "伺服器已有相同工作紙名稱及科目的草稿。請選擇取代、另存副本或取消。",
         "alreadyInProgress": "上載正在進行中。",
         "draftIdRequired": "需要已上載草稿 ID。",
         "draftSlotLimitReached": "草稿空位已達上限。",

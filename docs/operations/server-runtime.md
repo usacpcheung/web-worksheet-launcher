@@ -92,11 +92,30 @@ Use the [testing guide](testing.md), [artifact maintenance](published-artifact-m
 
 ## Upload failures, cancellation and transaction uncertainty
 
+`server/app/api/upload-result.js` owns pure upload-result classification for
+worksheet drafts, attempts and RolePlayScene drafts. It preserves the original
+result and distinguishes success, resource-specific conflicts/slot limits,
+cancellation, uncertain transport outcomes, authentication failures and other
+failures. Only explicit `ok: true` is success; malformed results cannot trigger
+conflict recovery. Authentication metadata is retained separately from the
+presentation category (a timeout can still carry HTTP 401). Existing auth
+handlers remain responsible for sign-in recovery.
+
+The viewer uses a separate protected-action adapter for auth-gate envelopes:
+executed/redirected/blocked results are not raw upload results, while non-auth
+upload failures pass through to their existing dialogs. Each application still
+owns messages, dialogs, busy state and user-selected retries. RolePlayScene's
+general server-error formatter also serves non-upload operations and remains
+unchanged. This extraction does not add automatic retries or change wire formats.
+
+
 The shared browser client's ZIP upload deadline is 120 seconds, covering transport and response-body reading for both XMLHttpRequest and fetch fallback. `createServerApiClient({ uploadTimeoutMs })` permits an explicit positive override. Editor/viewer expose Cancel during uploads; RolePlayScene changes its server Save button to Cancel. Cancellation returns `ABORTED`, and deadline expiry returns `UPLOAD_TIMEOUT`, releasing the upload state. The transport deadline starts when the ZIP request starts, after package preparation/preflight. Cancellation during preparation marks the request canceled before it can be sent; it does not interrupt ZIP construction itself.
 
 Worksheet and RolePlayScene draft-list refreshes have a separate 15-second deadline covering headers and body reading (`listTimeoutMs` override). Their post-upload refreshes use the upload flow’s abort signal. Cancel during refresh stops the refresh and releases the busy state while retaining the successful upload result.
 
 Worksheet and attempt network/timeout messages explicitly report an unconfirmed outcome: the server may already have saved the upload. Refresh the server list and check for the item before uploading again. These messages do not assert that the server rolled back.
+
+Editor name-conflict notifications use English or Traditional Chinese application text, rather than the raw server message, and direct users to Replace, Copy or Cancel in the existing dialog.
 
 Editor and viewer display localized cancellation feedback in English and Traditional Chinese, warning that the server may already have saved the upload and directing users to check the server list before uploading again. Cancel stops waiting; it does not undo a server commit.
 

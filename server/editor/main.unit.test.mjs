@@ -141,7 +141,7 @@ async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
@@ -1233,7 +1233,7 @@ test('uploadCurrentDraftToServer blocks duplicate upload triggers while request 
   assert.equal(uploadCallCount, 1);
 });
 
-for (const errorCode of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED']) test(`uploadCurrentDraftToServer shows retry-safe message for transport failures (${errorCode})`, async () => {
+for (const [errorCode, messageKey] of [['NETWORK_ERROR', 'networkFailure'], ['UPLOAD_TIMEOUT', 'networkFailure'], ['ABORTED', 'canceled'], ['DRAFT_NAME_CONFLICT', 'conflict']]) test(`uploadCurrentDraftToServer localizes upload outcomes (${errorCode})`, async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests(), {
     apiClient: {
@@ -1255,7 +1255,7 @@ for (const errorCode of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED']) test(`up
   assert.equal(result.ok, false);
   assert.equal(
     session.state.serverActionMessage,
-    `editor.notifications.uploadDraft.${errorCode === 'ABORTED' ? 'canceled' : 'networkFailure'}`
+    `editor.notifications.uploadDraft.${messageKey}`
   );
 });
 
