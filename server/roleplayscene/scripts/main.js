@@ -2591,7 +2591,12 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
           }
           return result;
         }
-        showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
+        if (outcome.kind === 'canceled' || outcome.kind === 'uncertain') {
+          syncServerSessionFromApiResult(result);
+          showMessage({ textId: outcome.kind === 'canceled' ? 'server.uploadWaitCanceled' : 'server.uploadUncertain' });
+        } else {
+          showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
+        }
         return result;
       }
       const warnings = getUploadWarnings(result.data);

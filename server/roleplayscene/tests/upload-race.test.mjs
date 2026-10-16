@@ -92,7 +92,7 @@ function harness() {
     ensureServerSessionReady: () => preflight.promise,
     createProjectArchive: async snapshot => { await archive.promise; return { archiveData: snapshot, payload: { manifest: { project: { title: snapshot.meta.title } } } }; },
     apiClient: { uploadRolePlaySceneDraftPackage: async (bytes, metadata) => { calls.push({ bytes, metadata }); return { ok: true, data: {} }; } },
-    updateServerSessionUi() {}, showMessage() {}, getUploadWarnings: () => [],
+    updateServerSessionUi() {}, syncServerSessionFromApiResult() {}, showMessage() {}, getUploadWarnings: () => [],
     loadUploadedRolePlaySceneDrafts: async () => {}, getServerErrorMessage: () => 'failed',
     uploadedDrafts: [], uploadedDraftSlotLimit: 5,
   });
@@ -165,13 +165,18 @@ test('cancel also reaches the post-upload list refresh and preserves the saved r
 for (const code of ['AUTH_REQUIRED', 'NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED', 'UNKNOWN']) {
   test(`shared classification preserves RolePlayScene ${code} without retrying`, async () => {
     const h = harness();
-    let posts = 0, observed;
+    let posts = 0, observed, message, synchronized;
+    h.context.showMessage = value => { message = value; };
+    h.context.syncServerSessionFromApiResult = value => { synchronized = value; };
     const result = { ok: false, operationId: 'keep-operation', error: { code, message: 'Original server feedback' } };
     h.context.apiClient.uploadRolePlaySceneDraftPackage = async () => { posts++; return result; };
     h.context.getServerErrorMessage = value => { observed = value; return value.error.message; };
     h.preflight.resolve({ ok: true }); h.archive.resolve();
     assert.equal(await h.context.uploadCurrentProjectToServer(), result);
-    assert.equal(observed, result);
+    if (['ABORTED', 'NETWORK_ERROR', 'UPLOAD_TIMEOUT'].includes(code)) {
+      assert.equal(synchronized, result);
+      assert.equal(message.textId, code === 'ABORTED' ? 'server.uploadWaitCanceled' : 'server.uploadUncertain');
+    } else assert.equal(observed, result);
     assert.equal(posts, 1);
     assert.equal(h.context.isUploadingDraft, false);
     assert.equal(h.context.uploadController, null);

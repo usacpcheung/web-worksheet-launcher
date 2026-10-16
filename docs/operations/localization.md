@@ -13,3 +13,5 @@ Use `textContent` for plain user/translated text. Worksheet formatted content mu
 Worksheet Chinese typography uses local Noto Sans HK subsets, restricted to CJK/punctuation, and does not change RolePlayScene fonts. See the [font reference](../../server/app/fonts/README.md).
 
 For future UI changes, check both languages, desktop/narrow layouts, long labels and keyboard focus with the affected existing smoke scripts. Unit localization tests check keys/fallbacks but do not establish visual fit or complete translation coverage. See [testing](testing.md).
+
+RolePlayScene upload cancellation and uncertain outcomes now use localized UI warnings that preserve the possibility of an already-saved server upload. Conflict-dialog cancellation remains separate. The original API result and other raw-message fallbacks are unchanged; this is not comprehensive API-error localization.

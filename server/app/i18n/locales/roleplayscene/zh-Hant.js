@@ -55,6 +55,8 @@ export default {
     "uploading": "正在將 RolePlayScene 草稿儲存到伺服器...",
     "uploaded": "已將 RolePlayScene 草稿儲存到伺服器。ID：{id}",
     "uploadedWithWarnings": "已將 RolePlayScene 草稿儲存到伺服器，但有警告。ID：{id}",
+    "uploadWaitCanceled": "已取消等候上載結果，伺服器可能已儲存。再次上載前，請重新整理伺服器清單並檢查是否已有該項目。",
+    "uploadUncertain": "未能確認上載結果，伺服器可能已儲存。你的本機故事仍然安全。再次上載前，請重新整理伺服器清單並檢查是否已有該項目。",
     "uploadFailed": "儲存到伺服器失敗。",
     "uploadCanceled": "已取消儲存到伺服器。",
     "actionFailed": "伺服器操作失敗。",
