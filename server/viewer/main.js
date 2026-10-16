@@ -653,19 +653,33 @@ function createLanguageSelector({ onChange, variant = 'inline' } = {}) {
   return wrapper;
 }
 
-function renderNotificationCard(notification, className = 'notification-toast') {
+function updateNotificationCard(card, notification) {
   const kind = String(notification?.kind || 'info').toLowerCase();
-  const card = document.createElement('article');
-  card.className = `${className} ${className}--${kind}`;
+  card.className = `notification-toast notification-toast--${kind}`;
   card.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   card.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
-
-  const text = document.createElement('div');
-  text.className = `${className}__text`;
-  text.textContent = String(notification?.text || '');
-  card.appendChild(text);
-  if (notification?.diagnostic) card.appendChild(createErrorDetails({ error: notification.diagnostic }, { source: notification.diagnostic.source }));
-  return card;
+  let text = card.querySelector('.notification-toast__text');
+  if (!text) {
+    text = document.createElement('div');
+    text.className = 'notification-toast__text';
+    card.appendChild(text);
+  }
+  const message = String(notification?.text || '');
+  if (text.textContent !== message) text.textContent = message;
+  const details = card.querySelector('details');
+  if (notification?.diagnostic) {
+    const result = { error: notification.diagnostic };
+    const options = { source: notification.diagnostic.source };
+    if (!details) card.appendChild(createErrorDetails(result, options));
+    else {
+      const summary = details.querySelector('summary');
+      const body = details.querySelector('pre');
+      const label = t('apiErrors.details');
+      const diagnostic = getApiErrorDiagnostic(result, options);
+      if (summary.textContent !== label) summary.textContent = label;
+      if (body.textContent !== diagnostic) body.textContent = diagnostic;
+    }
+  } else details?.remove();
 }
 
 function ensureViewerToastContainer() {
@@ -688,9 +702,22 @@ function renderViewerNotifications(session) {
   const notifications = Array.isArray(session.state.notifications)
     ? session.state.notifications.slice(-4)
     : [];
-  container.innerHTML = '';
-  notifications.forEach((notification) => {
-    container.appendChild(renderNotificationCard(notification, 'notification-toast'));
+  const byId = new Map(Array.from(container.children, card => [card.dataset.notificationId, card]));
+  const visibleIds = new Set(notifications.map(notification => notification.id));
+  for (const [id, card] of byId) {
+    if (!visibleIds.has(id)) card.remove();
+  }
+  notifications.forEach((notification, index) => {
+    let card = byId.get(notification.id);
+    if (!card) {
+      card = document.createElement('article');
+      card.dataset.notificationId = notification.id;
+    }
+    updateNotificationCard(card, notification);
+    // Do not detach unchanged cards: that closes disclosures and drops focus.
+    if (container.children[index] !== card) {
+      container.insertBefore(card, container.children[index] || null);
+    }
   });
 }
 

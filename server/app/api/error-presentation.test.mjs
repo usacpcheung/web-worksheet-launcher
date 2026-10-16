@@ -107,3 +107,18 @@ test('malformed diagnostics and prototype-like keys cannot break error presentat
     assert.deepEqual(presentation.params, {});
   }
 });
+
+
+test('retained HTTP rejection wins over cancellation and transport symptoms in every operation', () => {
+  for (const code of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'REQUEST_TIMEOUT', 'ABORTED']) {
+    for (const [status, key] of [[401, 'authRequired'], [403, 'authRequired'], [413, 'uploadTooLarge'], [429, 'rateLimited']]) {
+      for (const operation of ['upload', 'download', 'audio', 'list']) {
+        const result = Object.freeze({ error: Object.freeze({ code, status }) });
+        assert.equal(resolveErrorPresentation(result, { operation }).key, `apiErrors.${key}`);
+      }
+    }
+  }
+  assert.equal(resolveErrorPresentation({ error: { code: 'NETWORK_ERROR', status: 409 } }, { operation: 'upload' }).key, 'apiErrors.uploadFailed');
+  assert.equal(resolveErrorPresentation({ error: { code: 'ABORTED' } }, { operation: 'upload' }).key, 'apiErrors.uploadCanceled');
+  assert.equal(resolveErrorPresentation({ error: { code: 'NETWORK_ERROR', status: 503 } }, { operation: 'upload' }).key, 'apiErrors.uploadUncertain');
+});

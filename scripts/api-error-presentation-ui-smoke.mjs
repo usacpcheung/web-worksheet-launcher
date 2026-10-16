@@ -54,11 +54,41 @@ try {
     await summary.press('Enter');
     assert.equal(await details.evaluate(element => element.open), true);
     assert.equal(await details.evaluate(element => element.scrollWidth <= element.clientWidth + 1), true, 'details wrap at narrow widths');
+    await summary.focus();
+    await page.evaluate(async () => {
+      window.reviewDisclosure = document.querySelector('.notification-toast details');
+      await window.viewerSession.autosave();
+      window.viewerSession.pushNotification({ text: 'Another notification', kind: 'info', source: 'review.extra' });
+      window.viewerSession.clearNotificationsBySource('review.extra');
+    });
+    assert.equal(await details.evaluate(element => element === window.reviewDisclosure && element.open), true);
+    assert.equal(await summary.evaluate(element => element === document.activeElement), true);
+    await page.evaluate(() => {
+      const notice = window.viewerSession.state.notifications.find(item => item.diagnostic);
+      notice.text = 'Updated fixture message';
+      notice.diagnostic.status = 429;
+      window.viewerSession.notifyStateChange();
+    });
+    assert.equal(await details.evaluate(element => element === window.reviewDisclosure && element.open), true);
+    assert.equal(await summary.evaluate(element => element === document.activeElement), true);
+    assert.match(await details.locator('pre').textContent(), /status: 429/);
+    assert.equal(await page.getByText('Updated fixture message', { exact: true }).count(), 1);
+
+
    }
    if (process.env.VIEWER_SMOKE_SCREENSHOTS) {
     await mkdir(process.env.VIEWER_SMOKE_SCREENSHOTS, { recursive: true });
     await page.screenshot({ path: path.join(process.env.VIEWER_SMOKE_SCREENSHOTS, `${app}-${locale}.png`) });
    }
+   if (app === 'viewer') {
+    await page.evaluate(() => {
+      for (const notice of window.viewerSession.state.notifications) notice.expiresAt = Date.now() - 1;
+      window.viewerSession.notifyStateChange();
+    });
+    assert.equal(await page.locator('.notification-toast').count(), 0);
+    assert.equal(await page.evaluate(() => window.reviewDisclosure.isConnected), false);
+   }
+
   } finally {await context.close()}
  }
  console.log('PASS: localized unknown API errors in all apps, both languages and narrow layouts; safe details, one POST');
