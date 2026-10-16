@@ -4,8 +4,8 @@ import { chromium } from 'playwright';
 const base = process.env.VIEWER_SMOKE_URL || 'http://127.0.0.1:8765';
 const browser = await chromium.launch();
 try {
-  for (const locale of ['en', 'zh-Hant']) {
-    const context = await browser.newContext({ viewport: { width: locale === 'en' ? 1280 : 390, height: 900 } });
+  for (const locale of ['en', 'zh-Hant']) for (const width of [1280, 390]) {
+    const context = await browser.newContext({ viewport: { width, height: 900 } });
     try {
       const page = await context.newPage();
       const errors = [];
@@ -26,7 +26,7 @@ try {
         if (req.method() === 'POST' && url.pathname.endsWith('/attempts/upload')) {
           const action = url.searchParams.get('conflictAction');
           posts.push(action);
-          if (mode === 'auth') return reply(401, { ok: false, error: { code: 'AUTH_REQUIRED', message: 'Expired session' } });
+          if (mode.startsWith('auth-')) return reply(Number(mode.split('-')[1]), { ok: false, error: { code: 'NETWORK_ERROR', message: 'Expired session' } });
           if (mode === 'network') return route.abort('failed');
           if (mode === 'invalid') return reply(400, { ok: false, error: { code: 'INVALID_ATTEMPT_PACKAGE', message: 'Invalid fixture' } });
           if ((mode === 'slot' && deletes === 0) || (mode === 'copy-slot' && action === 'copy' && deletes === 0)) return reply(409, { ok: false, error: { code: 'ATTEMPT_SLOT_LIMIT_REACHED', details: { slotLimit: 3 } } });
@@ -110,15 +110,35 @@ try {
       });
       assert.equal(posts.length, 0);
       assert.equal(await page.evaluate(() => window.authRedirects.length), 0);
-      mode = 'auth'; posts = [];
-      await page.evaluate(() => window.viewerSession.refreshServerSession());
-      await save.click();
-      await page.waitForFunction(() => window.authRedirects.length === 1);
-      assert.equal(posts.length, 1);
-      assert.equal(await dialog().count(), 0);
-      assert.equal(await page.evaluate(() => window.viewerSession.state.answers.q1.value), 'Preserve answer');
+      for (const status of [401, 403]) {
+        mode = `auth-${status}`; posts = []; lookups = 0;
+        await page.evaluate(() => window.viewerSession.refreshServerSession());
+        await save.click();
+        await page.waitForFunction(() => !window.viewerSession.state.isUploadAttemptFlowActive && !window.viewerSession.state.isUploadingAttemptPackage);
+        assert.equal(posts.length, 1);
+        assert.equal(lookups, 0);
+        assert.equal(await page.evaluate(() => window.authRedirects.length), 0);
+        assert.equal(await page.evaluate(() => window.viewerSession.authGate.options.storage.pendingIntent.get()), null);
+        assert.equal(await dialog().count(), 0);
+        assert.equal(await page.evaluate(() => window.viewerSession.state.answers.q1.value), 'Preserve answer');
+        const message = await page.evaluate(async () => (await import('/server/app/api/error-presentation.js')).getApiErrorMessage({error:{status:401,code:'NETWORK_ERROR'}}, 'upload'));
+        assert.ok((await page.locator('body').innerText()).includes(message));
+        // A later sign-in callback must not resurrect the rejected upload.
+        await page.evaluate(async () => {
+          history.replaceState({}, '', `${location.pathname}${location.search}&authReturn=1`);
+          const result = await window.viewerSession.authGate.restoreAfterAuthReturn();
+          if (result.status !== 'no_pending_intent') throw new Error(result.status);
+        });
+        assert.equal(posts.length, 1);
+        // Only another explicit Save may send again, and repeated 403 stays bounded.
+        await page.evaluate(() => window.viewerSession.refreshServerSession());
+        await save.click();
+        await page.waitForFunction(() => !window.viewerSession.state.isUploadAttemptFlowActive);
+        assert.equal(posts.length, 2);
+        assert.equal(await page.evaluate(() => window.authRedirects.length), 0);
+      }
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }
-  console.log('PASS: attempt conflict cancel/copy/replace, slot deletion/retry, chained copy-slot retry, and non-auth upload errors in both locales');
+  console.log('PASS: attempt conflicts, slot recovery, network errors and explicit-only retry after 401/403 in both locales and viewport widths');
 } finally { await browser.close(); }

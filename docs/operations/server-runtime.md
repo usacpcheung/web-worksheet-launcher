@@ -74,7 +74,7 @@ Paths below are relative to the API base; use the browser base for clients or `/
 | GET | `/roleplayscene/published/:publishedSceneId` | Published scene metadata. |
 | GET / DELETE | `/roleplayscene/published/:publishedSceneId/artifact` / `/roleplayscene/published/:publishedSceneId` | ZIP download / owner delete. |
 
-The viewer handles attempt name conflicts and slot limits as upload outcomes after authentication, including copy/replace selection and deletion followed by an explicit retry. A non-auth upload error must not produce a sign-in warning. Failed session probes report that sign-in status could not be verified; actual authentication failures retain the shared sign-in recovery path.
+The viewer handles attempt name conflicts and slot limits as upload outcomes after authentication, including copy/replace selection and deletion followed by an explicit retry. A non-auth upload error must not produce a sign-in warning. Failed session probes report that sign-in status could not be verified; authentication failure during viewer preflight retains the shared sign-in recovery path. Once the upload action has run, a `401/403` returns localized guidance without queuing a login replay or redirecting automatically. After signing in, the user must click Save again. Editor and RolePlayScene also require an explicit retry after upload rejection. A viewer upload queued before any POST may resume once after sign-in; a failed recovery replay clears its intent and cannot redirect again. Voice/rewrite recovery retains its existing behavior.
 
 Upload content type is `application/zip`; publish body is JSON, not the revision/content JSON proposed in old specifications. IDs in detail/publish routes are UUID-validated. Successful JSON responses use `{ok: true, data: ...}`; errors use `{ok: false, error: {code, message, details?}}`. Artifacts return ZIP bytes with length information. Unknown nested subroutes return not-found errors; they are not additional API capabilities.
 
@@ -102,8 +102,8 @@ presentation category (a timeout can still carry HTTP 401). Existing auth
 handlers remain responsible for sign-in recovery.
 
 The viewer uses a separate protected-action adapter for auth-gate envelopes:
-executed/redirected/blocked results are not raw upload results, while non-auth
-upload failures pass through to their existing dialogs. Each application still
+executed/redirected/blocked results are not raw upload results, while attempted
+upload failures (including authentication rejection) pass through to their existing dialogs. Each application still
 owns messages, dialogs, busy state and user-selected retries. RolePlayScene's
 general server-error formatter also serves non-upload operations and remains
 unchanged. This extraction does not add automatic retries or change wire formats.

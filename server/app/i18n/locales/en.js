@@ -43,6 +43,7 @@ export default {
     "slotsWithLimit": "All {limit} server storage slots are in use. Manage existing items before uploading another.",
     "notFound": "This item is no longer available. Refresh the server list.",
     "invalidPackage": "This package is invalid or unsupported. Check the file and export it again if needed.",
+    "packageLimits": "This package exceeds supported resource limits. Reduce its contents or media size and export it again.",
     "invalidRequest": "The request is invalid. Refresh the page and check the selected item.",
     "promptTooLong": "The prompt exceeds the supported text length. Shorten it before continuing.",
     "promptLimit": "The prompt must be within {max} spoken-text characters. Shorten it before continuing.",

@@ -771,3 +771,52 @@ test('auth recovery messages follow the selected locale without redirecting or c
     } finally { setLocale('en', { persist: false }); }
   }
 });
+
+for (const status of [401, 403]) for (const code of ['AUTH_REQUIRED', 'NETWORK_ERROR']) {
+  test(`upload failure ${status}/${code} requires explicit retry without a pending auth replay`, async () => {
+    createWindowStub();
+    const storage = createStorage();
+    let calls = 0, redirects = 0, saves = 0;
+    const failure = { ok: false, error: { status, code } };
+    const gate = new SharedAuthGate({ storage, resumeFlagKey: 'test',
+      checkSessionReady: async () => ({ ok: true }), getCurrentLocalId: () => 'original',
+      replayIntent: async () => { calls++; return failure; },
+      persistLocalRecord: async () => { saves++; },
+      redirectToAuth: () => { redirects++; },
+    });
+    const intent = { actionId: 'upload', recordStore: 'localAttempts' };
+    assert.equal(await gate.runProtectedAction(intent, { recoverAfterActionFailure: false }), failure);
+    assert.equal(calls, 1);
+    assert.equal(redirects, 0);
+    assert.equal(saves, 0);
+    assert.equal(storage.pendingIntent.get(), null);
+    assert.equal((await gate.restoreAfterAuthReturn()).status, 'no_pending_intent');
+    assert.equal(calls, 1);
+    await gate.runProtectedAction(intent, { recoverAfterActionFailure: false });
+    assert.equal(calls, 2, 'a new explicit action is permitted');
+    assert.equal(redirects, 0);
+  });
+}
+
+test('upload preflight sign-in resumes once, and rejected replay cannot redirect again', async () => {
+  createWindowStub();
+  const storage = createStorage();
+  let ready = false, calls = 0, redirects = 0;
+  const failure = { ok: false, error: { status: 403, code: 'FORBIDDEN' } };
+  const gate = new SharedAuthGate({ storage, resumeFlagKey: 'test',
+    checkSessionReady: async () => ready ? { ok: true } : { ok: false, error: { status: 401 } },
+    getCurrentLocalId: () => 'original',
+    replayIntent: async () => { calls++; return failure; },
+    redirectToAuth: () => { redirects++; },
+  });
+  assert.equal((await gate.runProtectedAction({ actionId: 'upload', recordStore: 'localAttempts' },
+    { recoverAfterActionFailure: false })).status, 'redirected');
+  assert.equal(calls, 0);
+  ready = true;
+  assert.equal((await gate.restoreAfterAuthReturn()).status, 'replay_failed');
+  assert.equal(calls, 1);
+  assert.equal(redirects, 1);
+  assert.equal(storage.pendingIntent.get(), null);
+  assert.equal((await gate.restoreAfterAuthReturn()).status, 'no_pending_intent');
+  assert.equal(calls, 1);
+});

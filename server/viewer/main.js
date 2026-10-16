@@ -4283,7 +4283,7 @@ class ViewerAttemptSession {
       actionId,
       recordStore: 'localAttempts',
       payload,
-    }, { isCurrent });
+    }, { isCurrent, recoverAfterActionFailure: actionId !== 'uploadAttemptPackageAfterLogin' });
   }
 
   beginServerSignIn(signInOptions = {}) {
@@ -6806,7 +6806,7 @@ function renderViewerShell(session) {
       if (gateOutcome.kind === 'redirected') {
         return;
       }
-      // The auth gate returns non-auth application failures unchanged. They
+      // The auth gate returns attempted upload failures unchanged. They
       // already have upload feedback and may need conflict/slot recovery below.
       if (gateOutcome.kind === 'blocked') {
         const blockedMessage = gateOutcome.reason === 'blocked_session_probe'

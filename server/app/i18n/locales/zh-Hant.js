@@ -43,6 +43,7 @@ export default {
     "slotsWithLimit": "伺服器的 {limit} 個儲存名額已用盡。請先管理現有項目，再上載其他項目。",
     "notFound": "此項目已無法使用。請重新整理伺服器清單。",
     "invalidPackage": "此套件無效或不受支援。請檢查檔案，並視需要重新匯出。",
+    "packageLimits": "此套件超出支援的資源限制。請減少內容或媒體大小，然後重新匯出。",
     "invalidRequest": "要求無效。請重新整理頁面並檢查所選項目。",
     "promptTooLong": "提示文字超出支援的長度。請先縮短文字，再繼續操作。",
     "promptLimit": "提示文字不得超過 {max} 個朗讀文字字元。請先縮短文字，再繼續操作。",

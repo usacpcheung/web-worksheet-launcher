@@ -122,3 +122,23 @@ test('retained HTTP rejection wins over cancellation and transport symptoms in e
   assert.equal(resolveErrorPresentation({ error: { code: 'ABORTED' } }, { operation: 'upload' }).key, 'apiErrors.uploadCanceled');
   assert.equal(resolveErrorPresentation({ error: { code: 'NETWORK_ERROR', status: 503 } }, { operation: 'upload' }).key, 'apiErrors.uploadUncertain');
 });
+
+for (const code of ['INVALID_ROLEPLAYSCENE_PACKAGE_ZIP', 'INVALID_ROLEPLAYSCENE_MANIFEST',
+  'INVALID_ROLEPLAYSCENE_MANIFEST_JSON', 'INVALID_ROLEPLAYSCENE_PROJECT_JSON',
+  'INVALID_ROLEPLAYSCENE_PROJECT', 'INVALID_ROLEPLAYSCENE_PUBLISH_PACKAGE',
+  'UNSUPPORTED_ROLEPLAYSCENE_PACKAGE_FORMAT', 'UNSUPPORTED_ROLEPLAYSCENE_PACKAGE_VERSION',
+  'ROLEPLAYSCENE_PACKAGE_MISSING_MANIFEST', 'ROLEPLAYSCENE_PACKAGE_MISSING_PROJECT',
+  'ROLEPLAYSCENE_PACKAGE_RESOURCE_LIMIT_EXCEEDED']) {
+  test(`RolePlayScene service rejection ${code} has localized actionable guidance`, () => {
+    const key = code.endsWith('RESOURCE_LIMIT_EXCEEDED') ? 'packageLimits' : 'invalidPackage';
+    const result = { ok: false, error: { code, status: 400, message: 'PRIVATE_RAW_MESSAGE' } };
+    for (const operation of ['upload', 'publish']) for (const locale of ['en', 'zh-Hant']) {
+      setLocale(locale, { persist: false });
+      try {
+        assert.equal(resolveErrorPresentation(result, { operation }).key, `apiErrors.${key}`);
+        assert.equal(getApiErrorMessage(result, operation), (locale === 'en' ? en : zh).apiErrors[key]);
+        assert.equal(resolveErrorPresentation(result, { operation, source: 'bridge' }).key, `apiErrors.${operation}Failed`);
+      } finally { setLocale('en', { persist: false }); }
+    }
+  });
+}

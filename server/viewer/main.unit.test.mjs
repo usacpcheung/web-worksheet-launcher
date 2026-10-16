@@ -6789,10 +6789,11 @@ test('upload preflight ownership tracks ID and generation without serializing th
   const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
   session.state.localAttemptId = 'same';
   session._uploadContextGeneration = 1;
-  let guard, intent;
-  session.authGate = { runProtectedAction: async (value, options) => { intent = value; guard = options.isCurrent; } };
+  let guard, intent, recoverAfterActionFailure;
+  session.authGate = { runProtectedAction: async (value, options) => { intent = value; guard = options.isCurrent; recoverAfterActionFailure = options.recoverAfterActionFailure; } };
   await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
   assert.equal(guard(), true);
+  assert.equal(recoverAfterActionFailure, false);
   assert.deepEqual(intent.payload, { localAttemptId: 'same' });
   session._uploadContextGeneration++;
   assert.equal(guard(), false);
@@ -6800,6 +6801,8 @@ test('upload preflight ownership tracks ID and generation without serializing th
   assert.equal(guard(), true);
   session.state.localAttemptId = 'different';
   assert.equal(guard(), false);
+  await session.triggerProtectedAction('viewerRewrite');
+  assert.equal(recoverAfterActionFailure, true);
 });
 
 test('old save after same-ID reopen must not suppress auth flush', async () => {

@@ -111,7 +111,7 @@ class SharedAuthGate {
     }
   }
 
-  async runProtectedAction(intent, { isCurrent = () => true } = {}) {
+  async runProtectedAction(intent, { isCurrent = () => true, recoverAfterActionFailure = true } = {}) {
     if (!intent || !intent.actionId || !intent.recordStore) {
       return { status: 'invalid_intent' };
     }
@@ -136,6 +136,9 @@ class SharedAuthGate {
       const result = await this.options.replayIntent(intent);
       if (!isCurrent()) return { status: 'intent_invalid' };
       if (!result || result.ok !== false) return { status: 'executed' };
+      // Uploads require another explicit Save after an attempted action fails.
+      // Preflight sign-in recovery below remains available before execution.
+      if (!recoverAfterActionFailure) return result;
       authState = normalizeSessionCheckResult(result);
       if (!authState.authNotReady) return result;
       // A late authentication failure uses the normal recovery flow once.
