@@ -115,6 +115,8 @@ Worksheet and RolePlayScene draft-list refreshes have a separate 15-second deadl
 
 Worksheet and attempt network/timeout messages explicitly report an unconfirmed outcome: the server may already have saved the upload. Refresh the server list and check for the item before uploading again. These messages do not assert that the server rolled back.
 
+Editor name-conflict notifications use English or Traditional Chinese application text, rather than the raw server message, and direct users to Replace, Copy or Cancel in the existing dialog.
+
 Editor and viewer display localized cancellation feedback in English and Traditional Chinese, warning that the server may already have saved the upload and directing users to check the server list before uploading again. Cancel stops waiting; it does not undo a server commit.
 
 A canceled or timed-out request may already have reached the server. The client can recover a committed upload using its operation receipt, as described below; it does not automatically resend an uncertain upload. If the outcome remains unknown, refresh uploaded items before starting another upload. ZIP downloads receiving a successful HTML response enter sign-in recovery (`AUTH_REQUIRED`); non-success gateway errors retain their HTTP failure classification. RolePlayScene draft downloads forward the caller's abort signal, and fetch upload body-read failures return structured transport errors.

@@ -1233,7 +1233,7 @@ test('uploadCurrentDraftToServer blocks duplicate upload triggers while request 
   assert.equal(uploadCallCount, 1);
 });
 
-for (const errorCode of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED']) test(`uploadCurrentDraftToServer shows retry-safe message for transport failures (${errorCode})`, async () => {
+for (const [errorCode, messageKey] of [['NETWORK_ERROR', 'networkFailure'], ['UPLOAD_TIMEOUT', 'networkFailure'], ['ABORTED', 'canceled'], ['DRAFT_NAME_CONFLICT', 'conflict']]) test(`uploadCurrentDraftToServer localizes upload outcomes (${errorCode})`, async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests(), {
     apiClient: {
@@ -1255,7 +1255,7 @@ for (const errorCode of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED']) test(`up
   assert.equal(result.ok, false);
   assert.equal(
     session.state.serverActionMessage,
-    `editor.notifications.uploadDraft.${errorCode === 'ABORTED' ? 'canceled' : 'networkFailure'}`
+    `editor.notifications.uploadDraft.${messageKey}`
   );
 });
 

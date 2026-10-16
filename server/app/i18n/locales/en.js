@@ -459,6 +459,7 @@ export default {
         "savedLocalDraft": "Saved local draft."
       },
       "uploadDraft": {
+        "conflict": "An uploaded draft with the same worksheet name and subject already exists. Choose whether to replace it, save a copy, or cancel.",
         "alreadyInProgress": "Upload already in progress.",
         "draftIdRequired": "Uploaded draft ID is required.",
         "draftSlotLimitReached": "Draft slot limit reached.",

@@ -3790,13 +3790,15 @@ class EditorDraftSession {
             this.state.uploadedDraftSlotLimit = slotLimit;
           }
         }
-        const errorText = outcome.kind === 'canceled'
-          ? editorNotification('uploadDraft.canceled')
-          : outcome.kind === 'uncertain'
-            ? editorNotification('uploadDraft.networkFailure')
-            : outcome.kind === 'slot_limit'
-              ? editorNotification('uploadDraft.draftSlotLimitReached')
-              : result.error.message;
+        const errorText = outcome.kind === 'conflict'
+          ? editorNotification('uploadDraft.conflict')
+          : outcome.kind === 'canceled'
+            ? editorNotification('uploadDraft.canceled')
+            : outcome.kind === 'uncertain'
+              ? editorNotification('uploadDraft.networkFailure')
+              : outcome.kind === 'slot_limit'
+                ? editorNotification('uploadDraft.draftSlotLimitReached')
+                : result.error.message;
         this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: errorText });
         this.notifyStateChange();
         return result;
