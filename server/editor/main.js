@@ -3590,9 +3590,9 @@ class EditorDraftSession {
         });
         this.notifyStateChange();
       },
-      onStatusMessage: (message) => {
+      onStatusMessage: (message, status) => {
         if (this._activeAuthFlowId !== authFlowId) return;
-        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+        if (status === 'pending') {
           this.pushNotification({
             kind: 'info',
             category: 'server',

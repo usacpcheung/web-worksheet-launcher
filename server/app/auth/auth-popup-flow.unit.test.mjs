@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { setLocale, t } from '../i18n/index.js';
 import { startAuthPopupFlow, AUTH_POPUP_FLOW_DEFAULTS } from './auth-popup-flow.js';
 import { __resetSessionProbeStateForTests } from './session-readiness.js';
 
@@ -375,5 +376,38 @@ test('only the opened popup can trigger callback probes, including after it clos
       flow.cancel();
       await flow.promise;
     }
+  }
+});
+
+for (const locale of ['en', 'zh-Hant']) test(`popup status identifiers are independent of ${locale} wording`, async () => {
+  setLocale(locale, { persist: false });
+  let flow;
+  try {
+    const win = createWindowStub();
+    const events = [];
+    let ready = false;
+    const apiClient = {
+      getSessionSignInUrl: () => '/login',
+      getSession: async () => ready
+        ? { ok: true, data: { ready: true, user: { sub: 'fixture' } } }
+        : { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } },
+    };
+    flow = startAuthPopupFlow({ apiClient, hardDeadlineMs: 0,
+      onStatusMessage: (message, status) => events.push({ message, status }),
+    });
+    assert.deepEqual(events, [{ message: t('apiErrors.popupPending'), status: 'pending' }]);
+    ready = true;
+    await win.sendMessage({ origin: 'https://example.test', data: { type: AUTH_POPUP_FLOW_DEFAULTS.messageType } });
+    assert.equal((await flow.promise).ok, true);
+    assert.deepEqual(events.at(-1), { message: t('apiErrors.popupVerifying'), status: 'verifying' });
+    createWindowStub({ popupBlocked: true });
+    flow = startAuthPopupFlow({ apiClient,
+      onStatusMessage: (message, status) => events.push({ message, status }),
+    });
+    await flow.promise;
+    assert.deepEqual(events.at(-1), { message: t('apiErrors.popupBlocked'), status: 'blocked' });
+  } finally {
+    flow?.cancel();
+    setLocale('en', { persist: false });
   }
 });

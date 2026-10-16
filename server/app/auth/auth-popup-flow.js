@@ -134,7 +134,7 @@ function startAuthPopupFlow(options = {}) {
 
   if (!authPopupWindow) {
     onPopupBlocked();
-    onStatusMessage(t('apiErrors.popupBlocked'));
+    onStatusMessage(t('apiErrors.popupBlocked'), 'blocked');
     void (async () => {
       const probeResult = await probeSession({ apiClient, force: true, timeoutMs: probeTimeoutMs, signal: probeController.signal });
       if (probeResult.ok && probeResult.status === 'ready') {
@@ -175,7 +175,7 @@ function startAuthPopupFlow(options = {}) {
     };
   }
 
-  onStatusMessage(t('apiErrors.popupPending'));
+  onStatusMessage(t('apiErrors.popupPending'), 'pending');
 
   const messageListener = async (event) => {
     if (completed || cancelled) return;
@@ -187,7 +187,7 @@ function startAuthPopupFlow(options = {}) {
     if (messageData.type !== expectedMessageType) return;
     if (authFlowId && messageData.authFlowId !== authFlowId) return;
 
-    onStatusMessage(t('apiErrors.popupVerifying'));
+    onStatusMessage(t('apiErrors.popupVerifying'), 'verifying');
     const probeResult = await probeSession({ apiClient, force: true, timeoutMs: probeTimeoutMs, signal: probeController.signal });
     await finalize({
       ...probeResult,
@@ -216,7 +216,7 @@ function startAuthPopupFlow(options = {}) {
   if (normalizedHardDeadlineMs > 0) {
     hardDeadlineTimer = setTimeout(() => {
       if (completed || cancelled) return;
-      onStatusMessage(t('apiErrors.popupDeadline'));
+      onStatusMessage(t('apiErrors.popupDeadline'), 'deadline');
       void finalize({
         ok: false,
         status: 'not_ready',
@@ -267,7 +267,7 @@ function startAuthPopupFlow(options = {}) {
 
       const isTimedOutAuthNotReady = result.timedOut && result.status === 'not_ready';
       if (isTimedOutAuthNotReady && canWaitForCallback) {
-        onStatusMessage(t('apiErrors.popupWaiting'));
+        onStatusMessage(t('apiErrors.popupWaiting'), 'waiting');
         await invokeCallbackSafely(
           onSessionNotReady,
           { ...result, waitingForCallback: true, final: false },

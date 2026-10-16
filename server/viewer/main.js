@@ -4330,13 +4330,13 @@ class ViewerAttemptSession {
         this.state.serverActionMessage = getViewerAuthNotification('signInPopupBlocked');
         this.notifyStateChange();
       },
-      onStatusMessage: (message) => {
+      onStatusMessage: (message, status) => {
         if (this._activeAuthFlowId !== authFlowId) return;
         if (onStatusMessageOverride) {
-          onStatusMessageOverride({ message, authFlowId, finalizeFlow });
+          onStatusMessageOverride({ message, status, authFlowId, finalizeFlow });
           return;
         }
-        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+        if (status === 'pending') {
           this.state.serverActionMessage = message;
           this.notifyStateChange();
         }
@@ -5066,8 +5066,8 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
         renderRows();
         finalizeFlow();
       },
-      onStatusMessage: ({ message }) => {
-        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+      onStatusMessage: ({ message, status }) => {
+        if (status === 'pending') {
           session.state.serverActionMessage = message;
           session.notifyStateChange();
           renderRows();
@@ -5388,8 +5388,8 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         renderRows();
         finalizeFlow();
       },
-      onStatusMessage: ({ message }) => {
-        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+      onStatusMessage: ({ message, status }) => {
+        if (status === 'pending') {
           session.state.serverActionMessage = message;
           session.notifyStateChange();
           renderRows();
@@ -7320,8 +7320,8 @@ function renderViewerStartPanel(session, options = {}) {
         renderServerControls();
         finalizeFlow();
       },
-      onStatusMessage: ({ message }) => {
-        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+      onStatusMessage: ({ message, status }) => {
+        if (status === 'pending') {
           session.state.serverActionMessage = message;
           session.notifyStateChange();
           renderServerControls();

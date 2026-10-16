@@ -1,3 +1,4 @@
+import { t } from '../app/i18n/index.js';
 import { getApiErrorMessage } from '../app/api/error-presentation.js';
 import { URL as NodeURL } from 'node:url';
 import test from 'node:test';
@@ -156,7 +157,7 @@ async function loadViewerModule(overrides = {}) {
         options.onSessionNotReady?.({ ok: false, status: 'not_ready', error: { message: 'blocked' } });
         return { popupWindow: null, cancel: () => true, promise: Promise.resolve({ ok: false }) };
       }
-      options.onStatusMessage?.('Complete sign-in in the popup. Session will refresh automatically.');
+      options.onStatusMessage?.(t('apiErrors.popupPending'), 'pending');
       const timer = setTimeout(async () => {
         const result = await globalThis[bagName].probeSession({ apiClient: options.apiClient, force: true });
         if (result.ok) {
