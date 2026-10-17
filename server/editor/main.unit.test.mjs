@@ -6007,3 +6007,30 @@ for (const ok of [true, false]) test('popup draft refresh does not reuse stale w
   assert.deepEqual(session.state.uploadedDrafts, [{ title: 'new' }]);
   assert.equal(session.state.isLoadingUploadedDrafts, false);
 });
+
+test('upload flow retains prepared bytes and metadata across retries, rejects stale flow and captures fresh edits next time', async () => {
+  const mod = await loadEditorModule();
+  const calls = [];
+  const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: {
+    uploadDraftPackage: async (bytes, metadata) => { calls.push({ bytes: [...bytes], ...metadata }); return { ok: false, error: { code: 'DRAFT_NAME_CONFLICT' } }; },
+  } });
+  session.state.draft = mod.createDraftRecord({ title: 'Original' });
+  session.state.draft.metadata.subject = 'Original subject';
+  let builds = 0, current = true;
+  session.buildCurrentDraftPackageZipBytes = async draft => { builds++; return new TextEncoder().encode(draft.title); };
+  session._uploadPackageFlow = { canPublish: () => current };
+  await session.uploadCurrentDraftToServer({ preflight: false });
+  session.state.draft.title = 'Edited'; session.state.draft.metadata.subject = 'Edited subject';
+  await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: 'copy' });
+  await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: 'copy' });
+  assert.equal(builds, 1);
+  assert.ok(calls.every(call => call.title === 'Original' && call.subject === 'Original subject'));
+  assert.deepEqual(calls[0].bytes, calls[2].bytes);
+  current = false;
+  assert.equal((await session.uploadCurrentDraftToServer({ preflight: false })).status, 'stale_upload');
+  assert.equal(calls.length, 3);
+  session._uploadPackageFlow = null;
+  await session.uploadCurrentDraftToServer({ preflight: false });
+  assert.equal(builds, 2);
+  assert.equal(calls[3].title, 'Edited');
+});

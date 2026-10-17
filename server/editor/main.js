@@ -3745,6 +3745,8 @@ class EditorDraftSession {
         error: { message: editorNotification('uploadDraft.alreadyInProgress') },
       };
     }
+    const packageFlow = this._uploadPackageFlow;
+    if (packageFlow && !packageFlow.canPublish()) return { ok: false, skipped: true, status: 'stale_upload' };
     const draftId = this.state.draft?.localId;
     const generation = this._audioDraftGeneration;
     const contextIsCurrent = () => this.state.draft?.localId === draftId && this._audioDraftGeneration === generation;
@@ -3763,16 +3765,27 @@ class EditorDraftSession {
     });
     this.notifyStateChange();
     try {
-      const uploadDraft = cloneDraftForPersistence(this.state.draft);
+      // Retain content across user-approved conflict/slot retries, not across
+      // separate Save actions. The API client still assigns each request its ID.
+      let prepared = packageFlow?.preparedPackage;
+      const uploadDraft = prepared ? null : cloneDraftForPersistence(this.state.draft);
       if (options.preflight !== false) {
         const sessionReady = await this.ensureServerSessionReady();
         if (!sessionReady.ok) return sessionReady.result;
       }
-      const zipBytes = operation.signal.aborted ? null : await this.buildCurrentDraftPackageZipBytes(uploadDraft);
+      if (!prepared && !operation.signal.aborted) {
+        prepared = {
+          bytes: await this.buildCurrentDraftPackageZipBytes(uploadDraft),
+          title: uploadDraft?.title || '',
+          subject: uploadDraft?.metadata?.subject || '',
+        };
+        if (packageFlow?.canPublish()) packageFlow.preparedPackage = prepared;
+      }
+      if (packageFlow && !packageFlow.canPublish()) return { ok: false, skipped: true, status: 'stale_upload' };
       let lastProgressRenderKey = null;
-      const result = operation.signal.aborted ? canceledUploadResult() : await this.apiClient.uploadDraftPackage(zipBytes, {
-        title: uploadDraft?.title || '',
-        subject: uploadDraft?.metadata?.subject || '',
+      const result = operation.signal.aborted ? canceledUploadResult() : await this.apiClient.uploadDraftPackage(prepared.bytes, {
+        title: prepared.title,
+        subject: prepared.subject,
         conflictAction: options.conflictAction || '',
       }, {
         signal: operation.signal,
@@ -8504,6 +8517,7 @@ function renderEditorShell(session) {
     session.uploadFlows ??= new UploadOperationSlot();
     const flow = session.uploadFlows.begin(() => session.state.draft?.localId === draftId && session._audioDraftGeneration === generation);
     if (!flow) return;
+    session._uploadPackageFlow = flow;
     session.state.isUploadDraftFlowActive = true;
     updateSummary();
     try {
@@ -8533,6 +8547,8 @@ function renderEditorShell(session) {
         }
       }
     } finally {
+      flow.preparedPackage = null;
+      if (session._uploadPackageFlow === flow) session._uploadPackageFlow = null;
       if (flow.finish()) {
         session.state.isUploadDraftFlowActive = false;
       }
