@@ -16,6 +16,7 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Implemented PostgreSQL schema](contracts/database-schema.md)
 - [Authentication messages, response schema and viewer launch](message-contract.md)
 - [Worksheet published browsing and slot handling](contracts/editor-viewer-backend-contract.md)
+- [Package snapshots within an upload flow](contracts/upload-snapshots.md)
 - [Retired widget boundary](contracts/widget-retirement.md)
 
 ## Worksheet editor and viewer
