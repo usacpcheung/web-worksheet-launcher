@@ -1,3 +1,4 @@
+import { runUploadRecoveryFlow } from '../app/api/upload-recovery-flow.js';
 import { getApiErrorMessage } from '../app/api/error-presentation.js';
 import { UploadOperationSlot, canceledUploadResult } from '../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult } from '../app/api/upload-result.js';
@@ -8523,29 +8524,17 @@ function renderEditorShell(session) {
     try {
       const ready = await session.ensureServerSessionReady();
       if (!ready.ok || !flow.canPublish()) return;
-      const result = await session.uploadCurrentDraftToServer({ preflight: false });
-      if (!flow.canPublish()) return;
-      if (classifyUploadResult(result, 'worksheet-draft').kind === 'conflict') {
-        const choice = await showUploadConflictModal({ existingDraft: result.error.details?.existingDraft });
-        if (!flow.canPublish()) return;
-        if (choice.action === 'replace' || choice.action === 'copy') {
-          const retry = await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
-          if (!flow.canPublish()) return;
-          if (classifyUploadResult(retry, 'worksheet-draft').kind === 'slot_limit') {
-            const slotChoice = await showSlotFullModal({ uploadedDrafts: retry.error.details?.uploadedDrafts });
-            if (flow.canPublish() && slotChoice.deleted) {
-              // Keep slot-limit recovery in one continuous upload flow.
-              await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
-            }
-          }
-        }
-      } else if (classifyUploadResult(result, 'worksheet-draft').kind === 'slot_limit') {
-        const slotChoice = await showSlotFullModal({ uploadedDrafts: result.error.details?.uploadedDrafts });
-        if (flow.canPublish() && slotChoice.deleted) {
-          // Keep slot-limit recovery in one continuous upload flow.
-          await session.uploadCurrentDraftToServer({ preflight: false });
-        }
-      }
+      await runUploadRecoveryFlow({
+        resource: 'worksheet-draft',
+        isCurrent: () => flow.canPublish(),
+        signal: flow.signal,
+        submit: conflictAction => session.uploadCurrentDraftToServer({ preflight: false, conflictAction }),
+        chooseConflict: async result => {
+          const choice = await showUploadConflictModal({ existingDraft: result.error?.details?.existingDraft });
+          return choice.action;
+        },
+        recoverSlots: result => showSlotFullModal({ uploadedDrafts: result.error?.details?.uploadedDrafts }),
+      });
     } finally {
       flow.preparedPackage = null;
       if (session._uploadPackageFlow === flow) session._uploadPackageFlow = null;

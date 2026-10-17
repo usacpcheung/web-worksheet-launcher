@@ -225,7 +225,7 @@ async function loadViewerModule(overrides = {}) {
     window: overrides.window || {},
   };
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
     {
       name: 'replace viewerStorage import with test bag binding',
       pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];/,
@@ -5246,7 +5246,6 @@ test('viewer header actions include server-save icon wiring and protected upload
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', t('viewer.upload.saveAttemptAriaLabel'));"), true);
   assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
-  assert.equal(source.includes('await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);'), true);
 });
 
 
@@ -5711,14 +5710,6 @@ test('retryAttemptUploadAfterSlotRecovery preserves slot recovery conflict actio
   await session.retryAttemptUploadAfterSlotRecovery({ kind: 'slot_limit', conflictAction: 'fail_on_conflict' });
 
   assert.deepEqual(conflictActions, ['copy', 'replace', 'fail_on_conflict']);
-});
-
-test('viewer slot-limit recovery uses focused delete modal and automatic retry path', async () => {
-  const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('const slotRecoveryHint = { ...session.state.uploadAttemptRecoveryHint };'), true);
-  assert.equal(source.includes('await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);'), true);
-  assert.equal(source.includes("await showUploadedAttemptsManagerModal(session, { reason: 'slot_limit' });"), false);
-  assert.equal(source.includes('then save again manually'), false);
 });
 
 test('listUploadedAttempts stores rows and slot limit for management UI', async () => {

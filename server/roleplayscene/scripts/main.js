@@ -1,6 +1,6 @@
+import { runUploadRecoveryFlow } from '../../app/api/upload-recovery-flow.js';
 import { getApiErrorMessage } from '../../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../../app/api/upload-operation-lifecycle.js';
-import { classifyUploadResult } from '../../app/api/upload-result.js';
 import { waitForDraftRequest } from './draft-request.js';
 import { Store } from './state.js';
 import { renderEditor } from './editor/editor.js';
@@ -2563,53 +2563,48 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
     const { archiveData, payload } = await createProjectArchive(snapshot);
     const title = payload?.manifest?.project?.title || '';
     const description = payload?.manifest?.project?.description || '';
-    while (true) {
-      if (!operation.canPublish()) return staleUploadResult();
-      const result = operation.signal.aborted ? canceledUploadResult() : await apiClient.uploadRolePlaySceneDraftPackage(archiveData, {
-        title,
-        description,
-        conflictAction,
-      }, { signal: operation.signal });
-      if (!operation.canPublish()) return result;
-      const outcome = classifyUploadResult(result, 'roleplayscene-draft');
-      if (outcome.kind !== 'success') {
-        if (outcome.kind === 'conflict') {
-          const choice = await showUploadConflictModal(result.error?.details?.existingDraft);
-          if (!operation.canPublish()) return staleUploadResult();
-          if (choice === 'replace' || choice === 'copy') {
-            conflictAction = choice;
-            continue;
-          }
-          showMessage({ textId: 'server.uploadCanceled' });
-          return result;
-        }
-        if (outcome.kind === 'slot_limit') {
-          const slotLimit = Number(result.error?.details?.slotLimit);
-          if (Number.isFinite(slotLimit) && slotLimit > 0) {
-            uploadedDraftSlotLimit = slotLimit;
-          }
-          uploadedDrafts = Array.isArray(result.error?.details?.uploadedDrafts)
-            ? result.error.details.uploadedDrafts
-            : uploadedDrafts;
-          showMessage({ textId: 'server.slotLimitReached' });
-          const recovery = await showSlotLimitRecoveryModal({ drafts: uploadedDrafts, slotLimit: uploadedDraftSlotLimit });
-          if (recovery?.deleted) {
-            continue;
-          }
-          return result;
-        }
-        showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
-        return result;
-      }
-      const warnings = getUploadWarnings(result.data);
-      showMessage({
-        textId: warnings.length ? 'server.uploadedWithWarnings' : 'server.uploaded',
-        textArgs: { id: result.data?.roleplayscene_uploaded_draft_id || '' },
-        warnings,
-      });
-      await loadUploadedRolePlaySceneDrafts({ preflight: false, signal: operation.signal });
+    const recovery = await runUploadRecoveryFlow({
+      resource: 'roleplayscene-draft',
+      conflictAction,
+      isCurrent: () => operation.canPublish(),
+      signal: operation.signal,
+      submit: action => apiClient.uploadRolePlaySceneDraftPackage(archiveData, {
+        title, description, conflictAction: action,
+      }, { signal: operation.signal }),
+      chooseConflict: async result => {
+        const choice = await showUploadConflictModal(result.error?.details?.existingDraft);
+        if (operation.canPublish() && choice !== 'replace' && choice !== 'copy') showMessage({ textId: 'server.uploadCanceled' });
+        return choice;
+      },
+      recoverSlots: result => {
+        const slotLimit = Number(result.error?.details?.slotLimit);
+        if (Number.isFinite(slotLimit) && slotLimit > 0) uploadedDraftSlotLimit = slotLimit;
+        uploadedDrafts = Array.isArray(result.error?.details?.uploadedDrafts)
+          ? result.error.details.uploadedDrafts : uploadedDrafts;
+        showMessage({ textId: 'server.slotLimitReached' });
+        return showSlotLimitRecoveryModal({ drafts: uploadedDrafts, slotLimit: uploadedDraftSlotLimit });
+      },
+    });
+    if (recovery.status === 'stale') return staleUploadResult();
+    if (recovery.status === 'canceled') {
+      if (!operation.signal.aborted) return recovery.result;
+      const canceled = canceledUploadResult();
+      showMessage({ text: getServerErrorMessage(canceled, 'server.uploadFailed') });
+      return canceled;
+    }
+    const result = recovery.result;
+    if (!result.ok) {
+      showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
       return result;
     }
+    const warnings = getUploadWarnings(result.data);
+    showMessage({
+      textId: warnings.length ? 'server.uploadedWithWarnings' : 'server.uploaded',
+      textArgs: { id: result.data?.roleplayscene_uploaded_draft_id || '' },
+      warnings,
+    });
+    await loadUploadedRolePlaySceneDrafts({ preflight: false, signal: operation.signal });
+    return result;
   } catch (err) {
     if (!operation.canPublish()) return staleUploadResult();
     console.error(err);
