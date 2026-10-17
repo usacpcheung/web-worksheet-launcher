@@ -1,3 +1,4 @@
+import { runUploadRecoveryFlow } from '../app/api/upload-recovery-flow.js';
 import { getApiErrorMessage, getApiErrorDiagnostic, resolveErrorPresentation, createErrorDetails } from '../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult, classifyProtectedUploadResult } from '../app/api/upload-result.js';
@@ -6921,7 +6922,7 @@ function renderViewerShell(session) {
     session.state.isUploadAttemptFlowActive = true;
     renderUI();
     try {
-      let protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
+      const protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
       if (!flow.canPublish()) return;
       const gateOutcome = classifyProtectedUploadResult(protectedActionResult, 'worksheet-attempt');
       if (gateOutcome.kind === 'redirected') {
@@ -6941,32 +6942,32 @@ function renderViewerShell(session) {
         renderUI();
         return;
       }
-      if (classifyUploadResult(protectedActionResult, 'worksheet-attempt').kind === 'conflict' && session.state.uploadAttemptConflictContext) {
-        const choice = await showAttemptUploadConflictModal(session.state.uploadAttemptConflictContext);
-        if (!flow.canPublish()) return;
-        if (choice === 'replace' || choice === 'copy') {
-          protectedActionResult = await session.retryAttemptUploadFromConflict(choice);
-        } else {
-          session.clearAttemptUploadConflictPrompt();
-        }
-      }
-      if (!flow.canPublish()) return;
-      if (classifyUploadResult(protectedActionResult, 'worksheet-attempt').kind === 'slot_limit' && session.state.uploadAttemptRecoveryHint?.kind === 'slot_limit') {
-        const slotRecoveryHint = { ...session.state.uploadAttemptRecoveryHint };
-        await session.listUploadedAttempts();
-        if (!flow.canPublish()) return;
-        const slotRecovery = await showAttemptSlotFullModal(session, {
-          uploadedAttempts: session.state.uploadedAttempts,
-        });
-        if (!flow.canPublish()) return;
-        if (slotRecovery?.deleted) {
-          // Keep slot-limit recovery behavior aligned with editor draft upload flow:
-          // after deleting one server row to free space, retry upload immediately.
-          await session.retryAttemptUploadAfterSlotRecovery(slotRecoveryHint);
-        } else {
-          session.state.serverActionMessage = t('viewer.serverAttempts.manageRecommendation');
-        }
-      }
+      await runUploadRecoveryFlow({
+        resource: 'worksheet-attempt',
+        initialResult: protectedActionResult,
+        isCurrent: () => flow.canPublish(),
+        signal: flow.signal,
+        submit: conflictAction => session.retryAttemptUploadAfterSlotRecovery({ conflictAction }),
+        chooseConflict: async () => {
+          if (!session.state.uploadAttemptConflictContext) return 'cancel';
+          const choice = await showAttemptUploadConflictModal(session.state.uploadAttemptConflictContext);
+          if (flow.canPublish() && choice !== 'copy' && choice !== 'replace') session.clearAttemptUploadConflictPrompt();
+          return choice;
+        },
+        recoverSlots: async () => {
+          const listed = await session.listUploadedAttempts({ isCurrent: () => flow.canPublish() });
+          if (!flow.canPublish()) return { deleted: false };
+          if (!listed?.ok) {
+            session.pushNotification({ kind: 'error', text: getApiErrorMessage(listed, 'list'), ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS });
+            return { deleted: false };
+          }
+          const recovery = await showAttemptSlotFullModal(session, { uploadedAttempts: session.state.uploadedAttempts });
+          if (flow.canPublish() && !recovery?.deleted) {
+            session.state.serverActionMessage = t('viewer.serverAttempts.manageRecommendation');
+          }
+          return recovery;
+        },
+      });
       renderUI();
     } finally {
       flow.preparedPackage = null;

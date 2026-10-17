@@ -35,9 +35,10 @@ must never identify changed bytes or request metadata.
 
 ## Unchanged policies
 
-This change does not unify recovery sequencing, dialogs, package formats,
-authentication, slot limits, publication rules or replacement identities.
-Editor/viewer keep their bounded recovery sequence; RolePlayScene keeps its loop.
+Dialogs, package formats, authentication, slot limits, publication rules and
+replacement identities remain app-specific. All three apps now use the
+[shared recovery coordinator](upload-recovery.md) for repeated, user-authorized
+conflict and slot recovery.
 Local autosave remains independent of the retained upload package. List-refresh
 failure does not invalidate a successful upload.
 
