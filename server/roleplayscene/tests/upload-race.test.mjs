@@ -1,3 +1,4 @@
+import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult } from '../../app/api/upload-result.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -85,13 +86,13 @@ test('real slot recovery settles cancellation/failure and retries only after suc
 function harness() {
   const calls = [], preflight = deferred(), archive = deferred();
   let project = createProject({ meta: { title: 'A' } });
-  const context = vm.createContext({ classifyUploadResult, AbortController, uploadController: null, serverModalRevision: 0,
+  const context = vm.createContext({ classifyUploadResult, staleUploadResult, canceledUploadResult, uploadOperations: new UploadOperationSlot(), AbortController, uploadController: null, serverModalRevision: 0,
     console, serializeProject, isUploadingDraft: false, openingUploadedDraft: null,
     store: { get: () => ({ project }) },
     ensureServerSessionReady: () => preflight.promise,
     createProjectArchive: async snapshot => { await archive.promise; return { archiveData: snapshot, payload: { manifest: { project: { title: snapshot.meta.title } } } }; },
     apiClient: { uploadRolePlaySceneDraftPackage: async (bytes, metadata) => { calls.push({ bytes, metadata }); return { ok: true, data: {} }; } },
-    updateServerSessionUi() {}, showMessage() {}, getUploadWarnings: () => [],
+    updateServerSessionUi() {}, syncServerSessionFromApiResult() {}, showMessage() {}, getUploadWarnings: () => [],
     loadUploadedRolePlaySceneDrafts: async () => {}, getServerErrorMessage: () => 'failed',
     uploadedDrafts: [], uploadedDraftSlotLimit: 5,
   });
@@ -164,15 +165,49 @@ test('cancel also reaches the post-upload list refresh and preserves the saved r
 for (const code of ['AUTH_REQUIRED', 'NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED', 'UNKNOWN']) {
   test(`shared classification preserves RolePlayScene ${code} without retrying`, async () => {
     const h = harness();
-    let posts = 0, observed;
+    let posts = 0, observed, message, synchronized;
+    h.context.showMessage = value => { message = value; };
+    h.context.syncServerSessionFromApiResult = value => { synchronized = value; };
     const result = { ok: false, operationId: 'keep-operation', error: { code, message: 'Original server feedback' } };
     h.context.apiClient.uploadRolePlaySceneDraftPackage = async () => { posts++; return result; };
     h.context.getServerErrorMessage = value => { observed = value; return value.error.message; };
     h.preflight.resolve({ ok: true }); h.archive.resolve();
     assert.equal(await h.context.uploadCurrentProjectToServer(), result);
-    assert.equal(observed, result);
+    if (['ABORTED', 'NETWORK_ERROR', 'UPLOAD_TIMEOUT'].includes(code)) {
+      assert.equal(synchronized, result);
+      assert.equal(message.textId, code === 'ABORTED' ? 'server.uploadWaitCanceled' : 'server.uploadUncertain');
+    } else assert.equal(observed, result);
     assert.equal(posts, 1);
     assert.equal(h.context.isUploadingDraft, false);
     assert.equal(h.context.uploadController, null);
   });
 }
+
+for (const action of ['cancel', 'switch']) test(`scene ${action} during archive creation never sends the old upload`, async () => {
+  const h = harness(); h.preflight.resolve({ ok: true });
+  const upload = h.context.uploadCurrentProjectToServer();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  if (action === 'cancel') h.context.uploadController.abort();
+  else h.context.store.projectGeneration = 1;
+  h.archive.resolve();
+  const result = await upload;
+  assert.equal(h.calls.length, 0);
+  assert.equal(action === 'cancel' ? result.error.code : result.status, action === 'cancel' ? 'ABORTED' : 'stale_upload');
+  assert.equal(h.context.isUploadingDraft, false);
+});
+
+test('closing an old conflict dialog cannot publish cancellation on a replacement project', async () => {
+  const h = harness();
+  const messages = [];
+  h.context.showMessage = message => messages.push(message.textId);
+  h.context.apiClient.uploadRolePlaySceneDraftPackage = async () => ({ ok: false, error: { code: 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT' } });
+  h.context.showUploadConflictModal = async () => {
+    h.context.store.projectGeneration = 1;
+    messages.length = 0;
+    return null;
+  };
+  h.preflight.resolve({ ok: true }); h.archive.resolve();
+  assert.equal((await h.context.uploadCurrentProjectToServer()).status, 'stale_upload');
+  assert.deepEqual(messages, []);
+  assert.equal(h.context.isUploadingDraft, false);
+});

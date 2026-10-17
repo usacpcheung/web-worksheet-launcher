@@ -141,7 +141,7 @@ async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
@@ -1818,11 +1818,8 @@ test('editor server menu buttons stay disabled when session is not ready and pre
   assert.equal(source.includes('if (button?.disabled) return null;'), true);
   assert.equal(source.includes('const sessionReady = await session.ensureServerSessionReady();'), true);
   assert.equal(source.includes('if (session.state.isUploadDraftFlowActive || session.state.isUploadingDraft) return;'), true);
-  assert.equal(source.includes('let uploadFlowStarted = false;'), true);
   assert.equal(source.includes('session.state.isUploadDraftFlowActive = true;'), true);
-  assert.equal(source.includes('uploadFlowStarted = true;'), true);
   assert.equal(source.includes('session.state.isUploadDraftFlowActive = false;'), true);
-  assert.equal(source.includes('return session.uploadCurrentDraftToServer({ preflight: false });'), true);
   assert.equal(source.includes('await guardServerMenuAction(manageUploadedDraftsBtn, async () => {'), true);
   assert.equal(css.includes('.action-column button:hover:not(:disabled),'), true);
   assert.equal(css.includes('.action-column button:disabled,'), true);
@@ -5922,4 +5919,54 @@ test('a late autosave cannot mark a reopened draft revision as saved', async () 
   assert.equal(session.state.autosavePending, true);
   assert.equal(session.state.draft.title, 'New edits after reopening');
   clearTimeout(session.autosaveTimer);
+});
+
+for (const stage of ['preflight', 'package']) test(`upload cancel during ${stage} never starts transport`, async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  let release, entered;
+  const ready = new Promise(resolve => { entered = resolve; });
+  const pending = new Promise(resolve => { release = resolve; });
+  session.ensureServerSessionReady = async () => {
+    if (stage === 'preflight') { entered(); await pending; }
+    return { ok: true };
+  };
+  session.buildCurrentDraftPackageZipBytes = async () => {
+    if (stage === 'package') { entered(); await pending; }
+    return new Uint8Array([1]);
+  };
+  let posts = 0;
+  session.apiClient.uploadDraftPackage = async () => { posts++; return { ok: true, data: {} }; };
+  const upload = session.uploadCurrentDraftToServer();
+  await ready;
+  session.uploadController.abort();
+  release();
+  assert.equal((await upload).error.code, 'ABORTED');
+  assert.equal(posts, 0);
+  assert.equal(session.state.isUploadingDraft, false);
+  assert.equal(session.uploadController, null);
+});
+
+test('draft replacement suppresses late upload feedback and progress', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  let release, entered, progress;
+  const ready = new Promise(resolve => { entered = resolve; });
+  session.buildCurrentDraftPackageZipBytes = async () => new Uint8Array([1]);
+  session.apiClient.uploadDraftPackage = async (_bytes, _meta, options) => {
+    progress = options.onProgress; entered();
+    return new Promise(resolve => { release = resolve; });
+  };
+  const upload = session.uploadCurrentDraftToServer({ preflight: false });
+  await ready;
+  session._audioDraftGeneration++;
+  session.state.serverActionMessage = 'New draft owns this';
+  progress({ loaded: 1, total: 2, lengthComputable: true });
+  const result = { ok: true, data: { uploaded_draft_id: 'old' } };
+  release(result);
+  assert.equal(await upload, result);
+  progress({ loaded: 2, total: 2, lengthComputable: true });
+  assert.equal(session.state.serverActionMessage, 'New draft owns this');
+  assert.equal(session.state.lastUploadedDraft, null);
+  assert.equal(session.state.isUploadingDraft, false);
 });

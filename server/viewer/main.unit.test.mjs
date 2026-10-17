@@ -223,7 +223,7 @@ async function loadViewerModule(overrides = {}) {
     window: overrides.window || {},
   };
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
     {
       name: 'replace viewerStorage import with test bag binding',
       pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];/,
@@ -5194,7 +5194,7 @@ test('bootstrapViewer validateIntent uses action-aware viewer rewrite payload ch
 
 test('bootstrapViewer configures SharedAuthGate with live session probe check', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('checkSessionReady: async () => session.ensureServerSessionReady(),'), true);
+  assert.equal(source.includes('checkSessionReady: async (_intent, options) => session.ensureServerSessionReady(undefined, options),'), true);
   assert.equal(source.includes("returnQueryParams: { [VIEWER_AUTH_CALLBACK_PARAM]: '1' },"), true);
   assert.equal(source.includes("isAuthenticated: () => new URL(window.location.href).searchParams.get('auth') === '1'"), false);
 });
@@ -6750,4 +6750,102 @@ for (const [error, expected] of [
   assert.equal(session.state.serverActionMessage, expected);
   assert.equal(session.state.answers.q1.value, 'Keep answer');
   assert.equal(session.state.isUploadingAttemptPackage, false);
+});
+
+for (const action of ['cancel', 'switch']) test(`attempt ${action} during package preparation cannot upload or affect a new attempt`, async () => {
+  const mod = await loadViewerModule();
+  let release, entered;
+  const ready = new Promise(resolve => { entered = resolve; });
+  let posts = 0;
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } }, {
+    apiClient: { uploadAttemptPackage: async () => { posts++; return { ok: true, data: {} }; } },
+  });
+  session.state.localAttemptId = 'original';
+  session.state.viewerPayload = { title: 'Original', blocks: [] };
+  session.flushLocalStateForAuthRedirect = async () => {};
+  session.buildUploadedAttemptPackage = async () => { entered(); return new Promise(resolve => { release = resolve; }); };
+  const upload = session.uploadCurrentAttemptPackage();
+  await ready;
+  if (action === 'cancel') session.uploadController.abort();
+  else { session.state.localAttemptId = 'new'; session.state.serverActionMessage = 'New attempt owns this'; }
+  release({ bytes: new Uint8Array([1]) });
+  const result = await upload;
+  assert.equal(posts, 0);
+  if (action === 'cancel') assert.equal(result.error.code, 'ABORTED');
+  else { assert.equal(result.status, 'stale_upload'); assert.equal(session.state.serverActionMessage, 'New attempt owns this'); }
+  assert.equal(session.state.isUploadingAttemptPackage, false);
+});
+
+
+test('upload preflight ownership tracks ID and generation without serializing the guard', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
+  session.state.localAttemptId = 'same';
+  session._uploadContextGeneration = 1;
+  let guard, intent;
+  session.authGate = { runProtectedAction: async (value, options) => { intent = value; guard = options.isCurrent; } };
+  await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
+  assert.equal(guard(), true);
+  assert.deepEqual(intent.payload, { localAttemptId: 'same' });
+  session._uploadContextGeneration++;
+  assert.equal(guard(), false);
+  await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
+  assert.equal(guard(), true);
+  session.state.localAttemptId = 'different';
+  assert.equal(guard(), false);
+});
+
+test('old save after same-ID reopen must not suppress auth flush', async () => {
+ const mod = await loadViewerModule();
+ let release, writes = [];
+ const session = new mod.ViewerAttemptSession({ attempts: { put: async record => {
+   writes.push(structuredClone(record));
+   if (writes.length === 1) await new Promise(resolve => { release = resolve; });
+   return record;
+ } }, resumeFlags: { get() {}, set() {} } });
+ const record = { localAttemptId: 'same', status: 'in_progress', viewerPayload: { worksheetId: 'w', snapshotId: 's', blocks: [{ blockId: 'q1', kind: 'question', responseConfig: { inputType: 'text' } }] }, answers: {} };
+ session.applyAttemptState(record);
+ session.setAnswer('q1', 'old answer'); clearTimeout(session.autosaveTimer);
+ const oldSave = session.autosave();
+ session.applyAttemptState(record);
+ session.setAnswer('q1', 'new answer'); clearTimeout(session.autosaveTimer);
+ release(); await oldSave;
+ await session.flushLocalStateForAuthRedirect();
+
+ assert.equal(writes.at(-1).answers.q1.value, 'new answer');
+});
+
+
+test('failed old autosave cannot set an error on a reopened attempt', async () => {
+ const mod = await loadViewerModule();
+ let rejectSave;
+ const session = new mod.ViewerAttemptSession({ attempts: { put: () => new Promise((_, reject) => { rejectSave = reject; }) }, resumeFlags: { get() {}, set() {} } });
+ const record = { localAttemptId: 'same', status: 'in_progress', viewerPayload: { blocks: [] }, answers: {} };
+ session.applyAttemptState(record);
+ session.state.attemptRevision = 5;
+ const oldSave = session.autosave();
+ session.applyAttemptState(record);
+ rejectSave(new Error('old write failed'));
+ await assert.rejects(oldSave, /old write failed/);
+ assert.equal(session.state.lastSaveError, null);
+ assert.equal(session.state.lastSavedRevision, 1);
+});
+
+
+for (const outcome of ['success', 'failure']) test(`old submission ${outcome} cannot change a replacement attempt`, async () => {
+ const mod = await loadViewerModule();
+ let resolveSave, rejectSave;
+ const session = new mod.ViewerAttemptSession({ attempts: { put: () => new Promise((resolve,reject) => { resolveSave=resolve; rejectSave=reject; }) }, resumeFlags: { get() {}, set() {} } });
+ const record = { localAttemptId:'same', status:'in_progress', viewerPayload:{blocks:[]}, answers:{} };
+ session.applyAttemptState(record);
+ const oldFinalize = session.completeLocalAttempt();
+ session.applyAttemptState({...record,status:'completed',completedAt:'replacement-completion'});
+ session.state.lastFinalizeError = 'Replacement status';
+ session.state.isFinalizing = true;
+ if (outcome === 'success') resolveSave({}); else rejectSave(new Error('old failure'));
+ await oldFinalize;
+ assert.equal(session.state.status,'completed');
+ assert.equal(session.state.completedAt,'replacement-completion');
+ assert.equal(session.state.lastFinalizeError,'Replacement status');
+ assert.equal(session.state.isFinalizing,true);
 });

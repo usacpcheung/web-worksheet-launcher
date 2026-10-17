@@ -703,3 +703,50 @@ test('runProtectedAction blocks without redirect when checkSessionReady reports 
   assert.equal(replayed, false);
   assert.equal(storage.pendingIntent.get(), null);
 });
+
+for (const stage of ['ready_probe', 'logged_out_probe', 'failed_probe', 'late_auth', 'persist']) {
+  test(`runtime ownership stops stale upload at ${stage} without persisting or redirecting`, async () => {
+    createWindowStub();
+    const storage = createStorage();
+    let current = true, replays = 0, saves = 0, redirects = 0;
+    const authFailure = { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } };
+    const gate = new SharedAuthGate({ storage, resumeFlagKey: 'test',
+      getCurrentLocalId: () => 'same-id',
+      checkSessionReady: async () => {
+        if (stage.endsWith('_probe')) current = false;
+        return stage === 'logged_out_probe' || stage === 'persist' ? authFailure
+          : stage === 'failed_probe' ? { ok: false, error: { code: 'NETWORK_ERROR' } } : { ok: true };
+      },
+      replayIntent: async () => { replays++; current = false; return authFailure; },
+      persistLocalRecord: async () => { saves++; current = false; },
+      redirectToAuth: () => { redirects++; },
+    });
+    const result = await gate.runProtectedAction({ actionId: 'upload', recordStore: 'localAttempts' }, { isCurrent: () => current });
+    assert.equal(result.status, 'intent_invalid');
+    assert.equal(replays, stage === 'late_auth' ? 1 : 0);
+    assert.equal(saves, stage === 'persist' ? 1 : 0);
+    assert.equal(storage.pendingIntent.get(), null);
+    assert.equal(storage.resumeFlags.get('test'), null);
+    assert.equal(redirects, 0);
+  });
+}
+
+for (const stage of ['probe', 'restore', 'ui', 'validate', 'replay']) test(`superseded recovery at ${stage} preserves newer pending intent`, async () => {
+  createWindowStub();
+  const storage = createStorage();
+  const old = {localId:'A',resumeFlagKey:'test',actionId:'upload',intentPayload:{localAttemptId:'A'}};
+  const newer = {...old,localId:'B',intentPayload:{localAttemptId:'B'}};
+  storage.pendingIntent.set(old);
+  let replays = 0;
+  const replace = phase => { if (phase === stage) storage.pendingIntent.set(newer); };
+  const gate = new SharedAuthGate({ storage, resumeFlagKey:'test',
+    checkSessionReady: async()=>{replace('probe');return {ok:true}},
+    restoreByLocalId: async()=>{replace('restore');return true},
+    restoreUiState: async()=>{replace('ui')},
+    validateIntent: async()=>{replace('validate');return true},
+    replayIntent: async()=>{replays++;replace('replay');return {ok:true}},
+  });
+  assert.equal((await gate.restoreAfterAuthReturn()).status,'intent_superseded');
+  assert.equal(storage.pendingIntent.get(),newer);
+  assert.equal(replays,stage === 'replay' ? 1 : 0);
+});

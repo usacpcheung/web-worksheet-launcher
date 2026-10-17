@@ -110,15 +110,17 @@ class SharedAuthGate {
     }
   }
 
-  async runProtectedAction(intent) {
+  async runProtectedAction(intent, { isCurrent = () => true } = {}) {
     if (!intent || !intent.actionId || !intent.recordStore) {
       return { status: 'invalid_intent' };
     }
 
+    // Runtime-only ownership guard; never serialize it into a pending intent.
+    if (!isCurrent()) return { status: 'intent_invalid' };
     const originalLocalId = this.options.getCurrentLocalId();
     let authState;
     if (typeof this.options.checkSessionReady === 'function') {
-      const checkResult = await this.options.checkSessionReady(intent);
+      const checkResult = await this.options.checkSessionReady(intent, { isCurrent });
       authState = normalizeSessionCheckResult(checkResult);
     } else {
       authState = {
@@ -128,8 +130,10 @@ class SharedAuthGate {
       };
     }
 
+    if (!isCurrent()) return { status: 'intent_invalid' };
     if (authState.ready) {
       const result = await this.options.replayIntent(intent);
+      if (!isCurrent()) return { status: 'intent_invalid' };
       if (!result || result.ok !== false) return { status: 'executed' };
       authState = normalizeSessionCheckResult(result);
       if (!authState.authNotReady) return result;
@@ -139,6 +143,7 @@ class SharedAuthGate {
         return { status: 'intent_invalid' };
       }
     }
+    if (!isCurrent()) return { status: 'intent_invalid' };
     if (!authState.authNotReady) {
       return { status: 'blocked_session_probe', result: authState.rawResult };
     }
@@ -150,7 +155,7 @@ class SharedAuthGate {
     }
 
     await this.options.persistLocalRecord();
-    if (this.options.getCurrentLocalId() !== localId) return { status: 'intent_invalid' };
+    if (!isCurrent() || this.options.getCurrentLocalId() !== localId) return { status: 'intent_invalid' };
 
     const resume = {
       localId,
@@ -195,6 +200,9 @@ class SharedAuthGate {
       return { status: 'no_pending_intent' };
     }
 
+    const ownsPending = () => JSON.stringify(this.options.storage.pendingIntent.get()) === JSON.stringify(pendingIntent);
+    const superseded = () => ({ status: 'intent_superseded' });
+
     let authState;
     if (typeof this.options.checkSessionReady === 'function') {
       try {
@@ -222,6 +230,7 @@ class SharedAuthGate {
         rawResult: null,
       };
     }
+    if (!ownsPending()) return superseded();
     if (!authState.ready) {
       if (!authState.authNotReady) {
         this.options.onRecoveryMessage('Unable to verify sign-in due to a temporary session check issue. Please retry when the connection is stable.');
@@ -229,7 +238,7 @@ class SharedAuthGate {
       }
       this.options.onRecoveryMessage('You are not signed in yet. Please complete sign-in and try again.');
       if (!preservePendingOnAuthNotReady) {
-        this.clearPending();
+        this.clearPending(pendingIntent);
       }
       if (!preserveUrlOnAuthNotReady) {
         cleanupAuthReturnUrlParams(this.options.returnQueryParams);
@@ -240,20 +249,23 @@ class SharedAuthGate {
     const localId = pendingIntent.localId || resumeMetadata?.localId || null;
     if (!localId) {
       this.options.onRecoveryMessage('Sign-in restore metadata was missing a local record reference. Your local data is still available.');
-      this.clearPending();
+      this.clearPending(pendingIntent);
       cleanupAuthReturnUrlParams(this.options.returnQueryParams);
       return { status: 'missing_local_id' };
     }
 
     const restored = await this.options.restoreByLocalId(localId);
+    if (!ownsPending()) return superseded();
     if (!restored) {
       this.options.onRecoveryMessage('Unable to reload your local record after sign-in. No data was deleted.');
-      this.clearPending();
+      this.clearPending(pendingIntent);
       cleanupAuthReturnUrlParams(this.options.returnQueryParams);
       return { status: 'restore_failed' };
     }
 
     await this.options.restoreUiState(pendingIntent.resumeUi || resumeMetadata?.ui || {});
+
+    if (!ownsPending()) return superseded();
 
     const intent = {
       actionId: pendingIntent.actionId,
@@ -262,15 +274,17 @@ class SharedAuthGate {
     };
 
     const stillValid = await this.options.validateIntent(intent);
+    if (!ownsPending()) return superseded();
     if (!stillValid) {
       this.options.onRecoveryMessage('We restored your local data, but the original protected action is no longer valid.');
-      this.clearPending();
+      this.clearPending(pendingIntent);
       cleanupAuthReturnUrlParams(this.options.returnQueryParams);
       return { status: 'intent_invalid' };
     }
 
     const result = await this.options.replayIntent(intent);
-    this.clearPending();
+    if (!ownsPending()) return superseded();
+    this.clearPending(pendingIntent);
     cleanupAuthReturnUrlParams(this.options.returnQueryParams);
 
     // Do not automatically redirect again if the single recovery replay fails.
@@ -279,7 +293,8 @@ class SharedAuthGate {
     return { status: 'replayed' };
   }
 
-  clearPending() {
+  clearPending(expected) {
+    if (expected && JSON.stringify(this.options.storage.pendingIntent.get()) !== JSON.stringify(expected)) return;
     this.options.storage.pendingIntent.clear();
   }
 }

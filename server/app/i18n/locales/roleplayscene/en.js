@@ -55,6 +55,8 @@ export default {
     "uploading": "Saving RolePlayScene draft to server...",
     "uploaded": "Saved RolePlayScene draft to server. ID: {id}",
     "uploadedWithWarnings": "Saved RolePlayScene draft to server with warnings. ID: {id}",
+    "uploadWaitCanceled": "Canceled waiting for the upload result. The server may already have saved it. Refresh the server list and check for the uploaded item before uploading again.",
+    "uploadUncertain": "The upload outcome could not be confirmed. The server may already have saved it. Your local story is still safe. Refresh the server list and check for the uploaded item before uploading again.",
     "uploadFailed": "Save to server failed.",
     "uploadCanceled": "Server save canceled.",
     "actionFailed": "Server action failed.",

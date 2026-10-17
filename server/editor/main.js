@@ -1,3 +1,4 @@
+import { UploadOperationSlot, canceledUploadResult } from '../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult } from '../app/api/upload-result.js';
 import { installPageRecovery } from '../app/storage/recovery-journal.js';
 import { getNumberCorrectAnswerConfigViolation } from '../app/contracts/number-input-validator.js';
@@ -3737,7 +3738,13 @@ class EditorDraftSession {
         error: { message: editorNotification('uploadDraft.alreadyInProgress') },
       };
     }
-    this.uploadController = new AbortController();
+    const draftId = this.state.draft?.localId;
+    const generation = this._audioDraftGeneration;
+    const contextIsCurrent = () => this.state.draft?.localId === draftId && this._audioDraftGeneration === generation;
+    this.uploadOperations ??= new UploadOperationSlot();
+    const operation = this.uploadOperations.begin(contextIsCurrent);
+    if (!operation) return { ok: false, skipped: true, status: 'upload_in_progress' };
+    this.uploadController = operation.controller;
     this.state.isUploadingDraft = true;
     this.state.uploadDraftProgress = null;
     this.pushNotification({
@@ -3754,15 +3761,16 @@ class EditorDraftSession {
         const sessionReady = await this.ensureServerSessionReady();
         if (!sessionReady.ok) return sessionReady.result;
       }
-      const zipBytes = await this.buildCurrentDraftPackageZipBytes(uploadDraft);
+      const zipBytes = operation.signal.aborted ? null : await this.buildCurrentDraftPackageZipBytes(uploadDraft);
       let lastProgressRenderKey = null;
-      const result = await this.apiClient.uploadDraftPackage(zipBytes, {
+      const result = operation.signal.aborted ? canceledUploadResult() : await this.apiClient.uploadDraftPackage(zipBytes, {
         title: uploadDraft?.title || '',
         subject: uploadDraft?.metadata?.subject || '',
         conflictAction: options.conflictAction || '',
       }, {
-        signal: this.uploadController.signal,
+        signal: operation.signal,
         onProgress: (progress) => {
+          if (!operation.canProgress()) return;
           const loaded = Number(progress?.loaded || 0);
           const total = Number(progress?.total || 0);
           const lengthComputable = Boolean(progress?.lengthComputable) && total > 0;
@@ -3782,6 +3790,7 @@ class EditorDraftSession {
           this.notifyStateChange();
         },
       });
+      if (!operation.canPublish()) return result;
       const outcome = classifyUploadResult(result, 'worksheet-draft');
       if (outcome.kind !== 'success') {
         if (outcome.kind === 'slot_limit') {
@@ -3810,7 +3819,8 @@ class EditorDraftSession {
         source: 'upload.status',
         text: editorNotification('uploadDraft.uploaded', { id: result.data.uploaded_draft_id }),
       });
-      const refreshResult = await this.loadUploadedDrafts({ preflight: false, signal: this.uploadController.signal });
+      const refreshResult = await this.loadUploadedDrafts({ preflight: false, signal: operation.signal });
+      if (!operation.canPublish()) return result;
       if (refreshResult?.ok) {
         const uploadedDraftId = String(result.data?.uploaded_draft_id || '').trim();
         const refreshedItems = Array.isArray(refreshResult?.data?.items) ? refreshResult.data.items : [];
@@ -3834,10 +3844,12 @@ class EditorDraftSession {
       this.notifyStateChange();
       return result;
     } finally {
-      this.uploadController = null;
-      this.state.isUploadingDraft = false;
-      this.state.uploadDraftProgress = null;
-      this.notifyStateChange();
+      if (operation.finish()) {
+        this.uploadController = null;
+        this.state.isUploadingDraft = false;
+        this.state.uploadDraftProgress = null;
+        this.notifyStateChange();
+      }
     }
   }
 
@@ -8494,21 +8506,28 @@ function renderEditorShell(session) {
   });
   syncDraftBtn.addEventListener('click', async () => {
     if (session.state.isUploadDraftFlowActive || session.state.isUploadingDraft) return;
-    let uploadFlowStarted = false;
+    if (syncDraftBtn.disabled) return;
+    const draftId = session.state.draft?.localId;
+    const generation = session._audioDraftGeneration;
+    session.uploadFlows ??= new UploadOperationSlot();
+    const flow = session.uploadFlows.begin(() => session.state.draft?.localId === draftId && session._audioDraftGeneration === generation);
+    if (!flow) return;
+    session.state.isUploadDraftFlowActive = true;
+    updateSummary();
     try {
-      const result = await guardServerMenuAction(syncDraftBtn, () => {
-        session.state.isUploadDraftFlowActive = true;
-        uploadFlowStarted = true;
-        updateSummary();
-        return session.uploadCurrentDraftToServer({ preflight: false });
-      });
+      const ready = await session.ensureServerSessionReady();
+      if (!ready.ok || !flow.canPublish()) return;
+      const result = await session.uploadCurrentDraftToServer({ preflight: false });
+      if (!flow.canPublish()) return;
       if (classifyUploadResult(result, 'worksheet-draft').kind === 'conflict') {
         const choice = await showUploadConflictModal({ existingDraft: result.error.details?.existingDraft });
+        if (!flow.canPublish()) return;
         if (choice.action === 'replace' || choice.action === 'copy') {
           const retry = await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
+          if (!flow.canPublish()) return;
           if (classifyUploadResult(retry, 'worksheet-draft').kind === 'slot_limit') {
             const slotChoice = await showSlotFullModal({ uploadedDrafts: retry.error.details?.uploadedDrafts });
-            if (slotChoice.deleted) {
+            if (flow.canPublish() && slotChoice.deleted) {
               // Keep slot-limit recovery in one continuous upload flow.
               await session.uploadCurrentDraftToServer({ preflight: false, conflictAction: choice.action });
             }
@@ -8516,13 +8535,13 @@ function renderEditorShell(session) {
         }
       } else if (classifyUploadResult(result, 'worksheet-draft').kind === 'slot_limit') {
         const slotChoice = await showSlotFullModal({ uploadedDrafts: result.error.details?.uploadedDrafts });
-        if (slotChoice.deleted) {
+        if (flow.canPublish() && slotChoice.deleted) {
           // Keep slot-limit recovery in one continuous upload flow.
           await session.uploadCurrentDraftToServer({ preflight: false });
         }
       }
     } finally {
-      if (uploadFlowStarted) {
+      if (flow.finish()) {
         session.state.isUploadDraftFlowActive = false;
       }
       updateSummary();
