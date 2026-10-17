@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { resolveErrorPresentation } from './error-presentation.js';
 import { createServerApiClient } from './server-api-client.js';
 import { createUploadOperation } from '../../api/services/upload-operation.js';
 
@@ -40,8 +41,9 @@ const cases = [
   { name: 'rate limit', status: 429, text: '{"ok":false}' },
   { name: 'login redirect HTML', status: 200, text: '<html>Sign in</html>', type: 'text/html' },
 ];
-for (const status of [401, 409, 413]) for (const stalled of [false, true]) {
-  test(`fetch keeps HTTP ${status} authoritative when its error body ${stalled ? 'stalls' : 'disconnects'}`, async t => {
+const rejectionKey = status => ({ 401: 'authRequired', 403: 'authRequired', 413: 'uploadTooLarge', 429: 'rateLimited' }[status] || 'uploadFailed');
+for (const [method] of methods) for (const status of [401, 403, 409, 413, 429]) for (const stalled of [false, true]) {
+  test(`fetch/${method} keeps HTTP ${status} authoritative when its error body ${stalled ? 'stalls' : 'disconnects'}`, async t => {
     setup(t);
     let calls = 0;
     t.mock.method(globalThis, 'fetch', async (_url, request) => {
@@ -51,10 +53,11 @@ for (const status of [401, 409, 413]) for (const stalled of [false, true]) {
         status, headers: { 'content-type': 'application/json' },
       });
     });
-    const result = await createServerApiClient({ uploadTimeoutMs: 15 }).uploadDraftPackage(bytes, {}, { operationId: id });
+    const result = await createServerApiClient({ uploadTimeoutMs: 15 })[method](bytes, {}, { operationId: id });
     assert.equal(result.ok, false);
     assert.equal(result.error.status, status);
-    assert.equal(result.error.requiresSignIn, status === 401);
+    assert.equal(result.error.requiresSignIn, status === 401 || status === 403);
+    assert.equal(resolveErrorPresentation(result, { operation: 'upload' }).key, `apiErrors.${rejectionKey(status)}`);
     assert.equal(calls, 1);
   });
 }
@@ -112,15 +115,16 @@ for (const [method, kind] of methods) for (const transport of ['fetch', 'XHR']) 
   });
 }
 
-for (const status of [401, 403, 409, 413, 429, 200, 503]) for (const event of ['error', 'timeout', 'deadline']) {
-  test(`XHR retains HTTP ${status} after headers then ${event}`, async t => {
+for (const [method, kind] of methods) for (const status of [401, 403, 409, 413, 429, 200, 503]) for (const event of ['error', 'timeout', 'deadline']) {
+  test(`XHR/${method} retains HTTP ${status} after headers then ${event}`, async t => {
     setup(t);
-    let reads = 0;
+    let reads = 0, posts = 0;
     globalThis.XMLHttpRequest = class {
       open() {}
       setRequestHeader() {}
       abort() { this.status = 0; this.onabort?.(); }
       send() {
+        posts++;
         this.readyState = 2; this.status = status; this.onreadystatechange();
         if (event === 'deadline') return;
         this.readyState = 4; this.status = 0; this.onreadystatechange();
@@ -129,13 +133,15 @@ for (const status of [401, 403, 409, 413, 429, 200, 503]) for (const event of ['
       }
     };
     t.after(() => { globalThis.XMLHttpRequest = undefined; });
-    t.mock.method(globalThis, 'fetch', async () => { reads++; return json(completed('worksheet-draft')); });
-    const result = await createServerApiClient({ uploadTimeoutMs: 15 }).uploadDraftPackage(bytes, {}, { operationId: id });
+    t.mock.method(globalThis, 'fetch', async () => { reads++; return json(completed(kind)); });
+    const result = await createServerApiClient({ uploadTimeoutMs: 15 })[method](bytes, {}, { operationId: id });
+    assert.equal(posts, 1);
     const rejected = status >= 400 && status < 500;
     assert.equal(result.ok, !rejected);
     assert.equal(reads, rejected ? 0 : 1);
     if (rejected) {
       assert.equal(result.error.status, status);
+      assert.equal(resolveErrorPresentation(result, { operation: 'upload' }).key, `apiErrors.${rejectionKey(status)}`);
       assert.equal(result.error.requiresSignIn, status === 401 || status === 403);
     } else assert.equal(result.recovered, true);
   });

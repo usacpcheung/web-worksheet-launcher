@@ -1,3 +1,4 @@
+import { getApiErrorMessage } from '../app/api/error-presentation.js';
 import { UploadOperationSlot, canceledUploadResult } from '../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult } from '../app/api/upload-result.js';
 import { installPageRecovery } from '../app/storage/recovery-journal.js';
@@ -140,10 +141,6 @@ function editorNotification(key, params = {}) {
 
 function getProtectedActionErrorMessage(result, fallbackText = editorNotification('audioGeneration.startFailed')) {
   const status = String(result?.status || '').trim();
-  const detail = String(result?.error?.message || result?.result?.error?.message || '').trim();
-  if (detail) {
-    return detail;
-  }
   if (status === 'blocked_no_local_id') {
     return editorNotification('recovery.noActiveDraft');
   }
@@ -153,6 +150,7 @@ function getProtectedActionErrorMessage(result, fallbackText = editorNotificatio
   if (status === 'invalid_context' || status === 'invalid_intent' || status === 'intent_invalid') {
     return editorNotification('recovery.contextChanged');
   }
+  if (result?.error || result?.result?.error) return getApiErrorMessage(result, 'audio', 'bridge');
   return fallbackText;
 }
 
@@ -3560,30 +3558,33 @@ class EditorDraftSession {
   }
 
   beginServerSignIn() {
-    if (this._authPopupFlow?.cancel) {
-      this._authPopupFlow.cancel();
-    }
+    const previousFlow = this._authPopupFlow;
     this.clearNotificationsBySource('auth.popup');
     this.clearNotificationsBySource('auth.status');
     const authFlowId = createLocalId('auth_flow');
     this._activeAuthFlowId = authFlowId;
+    const isCurrent = () => this._activeAuthFlowId === authFlowId;
+    // Invalidate the old callbacks before cancellation can invoke them.
+    previousFlow?.cancel?.();
+    this._authPopupFlow = null;
+    this._authPopupWindow = null;
 
     const finalizeFlow = () => {
-      if (this._activeAuthFlowId === authFlowId) {
-        this._activeAuthFlowId = null;
-      }
+      if (!isCurrent()) return;
+      this._activeAuthFlowId = null;
       this._authPopupWindow = null;
       this._authPopupFlow = null;
     };
 
-    this._authPopupFlow = startAuthPopupFlow({
+    const flow = startAuthPopupFlow({
       apiClient: this.apiClient,
       source: 'editor',
       authFlowId,
       pollIntervalMs: AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs,
       pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
-      shouldContinue: () => this._activeAuthFlowId === authFlowId,
+      shouldContinue: isCurrent,
       onPopupBlocked: () => {
+        if (!isCurrent()) return;
         this.pushNotification({
           kind: 'error',
           category: 'server',
@@ -3592,9 +3593,9 @@ class EditorDraftSession {
         });
         this.notifyStateChange();
       },
-      onStatusMessage: (message) => {
+      onStatusMessage: (message, status) => {
         if (this._activeAuthFlowId !== authFlowId) return;
-        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+        if (status === 'pending') {
           this.pushNotification({
             kind: 'info',
             category: 'server',
@@ -3615,9 +3616,11 @@ class EditorDraftSession {
           logActivity: false,
         });
         this.notifyStateChange();
-        const result = await this.probeServerSessionSilently({ force: true });
+        const result = await this.probeServerSessionSilently({ force: true, isCurrent });
+        if (!isCurrent()) return;
         if (result.ok && this.state.serverSession.status === 'ready') {
-          await this.loadUploadedDrafts({ preflight: false });
+          await this.loadUploadedDrafts({ preflight: false, isCurrent });
+          if (!isCurrent()) return;
           this.clearNotificationsBySource('auth.status');
           this.notifyStateChange();
           finalizeFlow();
@@ -3627,7 +3630,7 @@ class EditorDraftSession {
           kind: 'error',
           category: 'server',
           source: 'auth.status',
-          text: result.error?.message || editorNotification('auth.sessionNotReadyAfterSignIn'),
+          text: getApiErrorMessage(result, 'session'),
         });
         this.notifyStateChange();
         finalizeFlow();
@@ -3655,19 +3658,25 @@ class EditorDraftSession {
           finalizeFlow();
           return;
         }
-        if (result?.error?.message) {
+        if (result?.error || result?.result?.error) {
           this.pushNotification({
             kind: 'error',
             category: 'server',
             source: 'auth.status',
-            text: result.error.message,
+            text: getApiErrorMessage(result, 'session'),
           });
         }
         this.notifyStateChange();
         finalizeFlow();
       },
     });
-    this._authPopupWindow = this._authPopupFlow?.popupWindow || null;
+    // A blocked-popup override may finalize synchronously during startup.
+    if (isCurrent()) {
+      this._authPopupFlow = flow;
+      this._authPopupWindow = flow?.popupWindow || null;
+    } else {
+      flow?.cancel?.();
+    }
   }
 
   async refreshServerSession() {
@@ -3680,16 +3689,14 @@ class EditorDraftSession {
     return this.probeServerSessionSilently({ force: true });
   }
 
-  async probeServerSessionSilently({ force = false, timeoutMs = null } = {}) {
+  async probeServerSessionSilently({ force = false, timeoutMs = null, isCurrent = () => true } = {}) {
     const result = await probeSession({ apiClient: this.apiClient, force, timeoutMs });
-    if (result.error?.code === 'SESSION_PROBE_TIMEOUT') {
-      result.error.message = t('editor.packageLoad.sessionTimeout');
-    }
+    if (!isCurrent()) return result;
     if (result.status !== 'ready') {
       this.state.serverSession = {
         status: result.status === 'error' ? 'error' : 'not_ready',
         user: null,
-        error: result.error?.message || 'Sign-in is required before using server features.',
+        error: getApiErrorMessage(result, 'session'),
       };
       this.notifyStateChange();
       return result;
@@ -3703,7 +3710,7 @@ class EditorDraftSession {
     return result;
   }
 
-  async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.', options = {}) {
+  async ensureServerSessionReady(_legacyMessage = undefined, options = {}) {
     const result = await this.probeServerSessionSilently({ force: true, timeoutMs: options.timeoutMs });
     if (result.ok && this.state.serverSession.status === 'ready') {
       return { ok: true, result };
@@ -3719,7 +3726,7 @@ class EditorDraftSession {
     );
     const authMessage = isExplicitAuthFailure
       ? editorNotification('auth.sessionExpired')
-      : (result.error?.message || notReadyMessage);
+      : getApiErrorMessage(result, 'session');
     this.pushNotification({
       kind: isExplicitAuthFailure ? 'warn' : 'error',
       category: 'server',
@@ -3799,15 +3806,7 @@ class EditorDraftSession {
             this.state.uploadedDraftSlotLimit = slotLimit;
           }
         }
-        const errorText = outcome.kind === 'conflict'
-          ? editorNotification('uploadDraft.conflict')
-          : outcome.kind === 'canceled'
-            ? editorNotification('uploadDraft.canceled')
-            : outcome.kind === 'uncertain'
-              ? editorNotification('uploadDraft.networkFailure')
-              : outcome.kind === 'slot_limit'
-                ? editorNotification('uploadDraft.draftSlotLimitReached')
-                : result.error.message;
+        const errorText = getApiErrorMessage(result, 'upload');
         this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: errorText });
         this.notifyStateChange();
         return result;
@@ -3838,7 +3837,7 @@ class EditorDraftSession {
           kind: 'warn',
           category: 'server',
           source: 'upload.refresh',
-          text: refreshResult?.error?.message || editorNotification('uploadDraft.listRefreshFailed'),
+          text: getApiErrorMessage(refreshResult, 'list'),
         });
       }
       this.notifyStateChange();
@@ -3876,8 +3875,7 @@ class EditorDraftSession {
         subject: metadata.subject || '',
       });
       if (!publishResult.ok) {
-        if (publishResult.error?.code === 'PROMPT_TOO_LONG') publishResult.error.message = t('formatting.promptTooLong', { max: PROMPT_TEXT_LIMIT });
-        this.pushNotification({ kind: 'error', category: 'server', source: 'publish.status', text: publishResult.error.message });
+        this.pushNotification({ kind: 'error', category: 'server', source: 'publish.status', text: getApiErrorMessage(publishResult, 'publish') });
         this.notifyStateChange();
         return publishResult;
       }
@@ -3901,7 +3899,7 @@ class EditorDraftSession {
           kind: 'warn',
           category: 'server',
           source: 'publish.refresh',
-          text: refreshResult?.error?.message || editorNotification('uploadDraft.listRefreshFailed'),
+          text: getApiErrorMessage(refreshResult, 'list'),
         });
       }
       this.notifyStateChange();
@@ -3913,11 +3911,13 @@ class EditorDraftSession {
   }
 
   async loadUploadedDrafts(options = {}) {
+    const isCurrent = options.isCurrent || (() => true);
+    if (!isCurrent()) return { ok: false, status: 'superseded' };
     const shouldPreflight = options.preflight !== false;
     const inflightKey = options.signal ? '_loadUploadedDraftsCancelablePromise' : shouldPreflight
       ? '_loadUploadedDraftsWithPreflightPromise'
       : '_loadUploadedDraftsWithoutPreflightPromise';
-    if (this[inflightKey]) {
+    if (!options.isCurrent && this[inflightKey]) {
       return this[inflightKey];
     }
 
@@ -3934,8 +3934,9 @@ class EditorDraftSession {
 
       try {
         const result = await this.apiClient.listUploadedDrafts({ signal: options.signal });
+        if (!isCurrent()) return result;
         if (!result.ok) {
-          this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDrafts.refresh', text: result.error.message });
+          this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDrafts.refresh', text: getApiErrorMessage(result, 'list') });
           this.notifyStateChange();
           return result;
         }
@@ -3959,7 +3960,7 @@ class EditorDraftSession {
         this.notifyStateChange();
       }
     })();
-    this[inflightKey] = loadPromise;
+    if (!options.isCurrent) this[inflightKey] = loadPromise;
     try {
       return await loadPromise;
     } finally {
@@ -3979,7 +3980,7 @@ class EditorDraftSession {
       timer = setTimeout(() => {
         timedOut = true;
         controller.abort();
-        rejectTimeout(new Error(t('editor.packageLoad.timeout')));
+        rejectTimeout(Object.assign(new Error(t('editor.packageLoad.timeout')), { code: 'DOWNLOAD_TIMEOUT' }));
       }, this.packageDownloadIdleMs);
     };
     resetTimer();
@@ -4011,7 +4012,7 @@ class EditorDraftSession {
       const artifact = await this.downloadWorksheetArtifact(loadToken,
         options => this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId, options));
       if (!artifact.ok) {
-        this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.open', text: artifact.error.message });
+        this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.open', text: getApiErrorMessage(artifact, 'open') });
         this.notifyStateChange();
         return artifact;
       }
@@ -4055,7 +4056,7 @@ class EditorDraftSession {
       const artifact = await this.downloadWorksheetArtifact(loadToken,
         options => this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, options));
       if (!artifact.ok) {
-        this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.open', text: artifact.error.message });
+        this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.open', text: getApiErrorMessage(artifact, 'open') });
         this.notifyStateChange();
         return artifact;
       }
@@ -4087,7 +4088,7 @@ class EditorDraftSession {
     if (!sessionReady.ok) return sessionReady.result;
     const result = await this.apiClient.deleteUploadedDraft(uploadedDraftId);
     if (!result.ok) {
-      this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.delete', text: result.error.message });
+      this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.delete', text: getApiErrorMessage(result, 'delete') });
       this.notifyStateChange();
       return result;
     }
@@ -4097,7 +4098,7 @@ class EditorDraftSession {
     if (refreshResult && refreshResult.ok) {
       this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete.refresh', text: editorNotification('uploadDraft.listRefreshed') });
     } else if (refreshResult && !refreshResult.ok) {
-      const refreshMessage = refreshResult.error?.message || editorNotification('uploadDraft.uploadedDraftsRefreshFailed');
+      const refreshMessage = getApiErrorMessage(refreshResult, 'list');
       this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDraft.delete.refresh', text: refreshMessage });
     }
     this.notifyStateChange();
@@ -4116,7 +4117,7 @@ class EditorDraftSession {
     if (!sessionReady.ok) return sessionReady.result;
     const result = await this.apiClient.deletePublishedPackage(normalizedPublishedPackageId);
     if (!result.ok) {
-      this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.delete', text: result.error.message });
+      this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.delete', text: getApiErrorMessage(result, 'delete') });
       this.notifyStateChange();
       return result;
     }
@@ -4307,7 +4308,7 @@ class EditorDraftSession {
       if (isAudioTrackLanguage(payload.language)) {
         const result = await this.generateAudioTrack(blockId, 'prompt', payload.language, { confirmReplace: true });
         if (!result.ok) {
-          const message = result.error?.message || editorNotification('audioGeneration.failed');
+          const message = result.reason === 'generation-failed' ? getApiErrorMessage(result, 'audio', 'bridge') : (result.error?.message || editorNotification('audioGeneration.failed'));
           this.setRecoveryMessage(message);
           return { ok: false, status: 'generation_failed', error: { ...result.error, message } };
         }
@@ -4318,10 +4319,7 @@ class EditorDraftSession {
       }
       const audioResult = await this.apiClient.generateAudioFromText(promptText);
       if (!audioResult?.ok) {
-        const detail = String(audioResult?.error?.message || '').trim();
-        const message = detail
-          ? editorNotification('audioGeneration.failedWithDetail', { detail })
-          : editorNotification('audioGeneration.failed');
+        const message = getApiErrorMessage(audioResult, 'audio', 'bridge');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -4476,7 +4474,7 @@ class EditorDraftSession {
       if (isAudioTrackLanguage(payload.language)) {
         const result = await this.generateAudioTrack(blockId, 'option', payload.language, { optionId, confirmReplace: true });
         if (!result.ok) {
-          const message = result.error?.message || editorNotification('audioGeneration.failed');
+          const message = result.reason === 'generation-failed' ? getApiErrorMessage(result, 'audio', 'bridge') : (result.error?.message || editorNotification('audioGeneration.failed'));
           this.setRecoveryMessage(message);
           return { ok: false, status: 'generation_failed', error: { ...result.error, message } };
         }
@@ -4493,10 +4491,7 @@ class EditorDraftSession {
       }
       const audioResult = await this.apiClient.generateAudioFromText(optionText);
       if (!audioResult?.ok) {
-        const detail = String(audioResult?.error?.message || '').trim();
-        const message = detail
-          ? editorNotification('audioGeneration.failedWithDetail', { detail })
-          : editorNotification('audioGeneration.failed');
+        const message = getApiErrorMessage(audioResult, 'audio', 'bridge');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -5566,7 +5561,7 @@ function renderEditorShell(session) {
     const append = options.append === true;
     const sessionReady = await session.ensureServerSessionReady();
     if (!sessionReady.ok) {
-      const notReadyMessage = session.state.serverActionMessage || 'Sign in for server features, then retry this action.';
+      const notReadyMessage = session.state.serverActionMessage || t('apiErrors.authRequired');
       browsePublishedState = {
         ...browsePublishedState,
         loading: false,
@@ -5602,14 +5597,14 @@ function renderEditorShell(session) {
       browsePublishedState = {
         ...browsePublishedState,
         loading: false,
-        error: result.error.message,
+        error: getApiErrorMessage(result, 'list'),
         hasMore: false,
         nextOffset: null,
       };
       emitPublishedBrowseNotification({
         kind: 'error',
         source: 'browse.published.search',
-        text: result.error.message,
+        text: getApiErrorMessage(result, 'list'),
       });
       renderPublishedBrowserModal();
       return;
@@ -5739,7 +5734,7 @@ function renderEditorShell(session) {
           if (!confirmed || session.packageLoad.current) return;
           const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);
           renderPublishedBrowserModal();
-          const reopenResult = await reopenPromise.catch((error) => ({ ok: false, error: { message: error.message } }));
+          const reopenResult = await reopenPromise.catch((error) => ({ ok: false, error }));
           if (reopenResult?.ok) {
             emitPublishedBrowseNotification({
               kind: 'success',
@@ -5753,7 +5748,7 @@ function renderEditorShell(session) {
               error: null,
             };
           } else {
-            const openError = reopenResult?.error?.message || session.state.serverActionMessage || editorNotification('browsePublished.failedOpenPublishedPackage');
+            const openError = getApiErrorMessage(reopenResult, 'open');
             browsePublishedState = {
               ...browsePublishedState,
               error: openError,
@@ -7041,10 +7036,7 @@ function renderEditorShell(session) {
           session.notifyStateChange();
         }
       } catch (error) {
-        const detail = String(error?.message || '').trim();
-        const text = detail
-          ? editorNotification('audioGeneration.failedWithDetail', { detail })
-          : editorNotification('audioGeneration.failed');
+        const text = getApiErrorMessage(error, 'audio', 'bridge');
         session.pushNotification({
           kind: 'error',
           category: 'editor',
@@ -7143,7 +7135,7 @@ function renderEditorShell(session) {
             language,
           });
           if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
-            session.setMediaFeedback(result?.error?.message || editorNotification('audioGeneration.failed'));
+            session.setMediaFeedback(result?.reason === 'generation-failed' ? getApiErrorMessage(result, 'audio', 'bridge') : (result?.error?.message || editorNotification('audioGeneration.failed')));
           }
         } finally {
           promptT2AInFlightBlockIds.delete(blockId);
@@ -7634,7 +7626,7 @@ function renderEditorShell(session) {
                 language,
               });
               if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
-                session.setMediaFeedback(result?.error?.message || editorNotification('audioGeneration.failed'));
+                session.setMediaFeedback(result?.reason === 'generation-failed' ? getApiErrorMessage(result, 'audio', 'bridge') : (result?.error?.message || editorNotification('audioGeneration.failed')));
               }
             } finally {
               optionT2AInFlightKeys.delete(optionT2AKey);

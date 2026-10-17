@@ -1,3 +1,4 @@
+import { getApiErrorMessage } from '../app/api/error-presentation.js';
 import { URL as NodeURL } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -141,7 +142,7 @@ async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
@@ -223,7 +224,7 @@ const startAuthPopupFlow = (options = {}) => {
     options.onSessionNotReady?.({ ok: false, status: 'not_ready', error: { message: 'blocked' } });
     return { popupWindow: null, cancel: () => true, promise: Promise.resolve({ ok: false }) };
   }
-  options.onStatusMessage?.('Complete sign-in in the popup. Session will refresh automatically.');
+  options.onStatusMessage?.(t('apiErrors.popupPending'), 'pending');
   const timer = setTimeout(async () => {
     const result = await probeSession({ apiClient: options.apiClient, force: true });
     if (result.ok) {
@@ -454,7 +455,7 @@ for (const source of ['uploaded', 'published']) {
       return new Promise(resolve => { finish = resolve; });
     };
     const load = source === 'uploaded' ? session.reopenUploadedDraftAsLocalCopy('one') : session.reopenPublishedPackageAsLocalCopy('one');
-    await assert.rejects(load);
+    await assert.rejects(load, { code: 'DOWNLOAD_TIMEOUT' });
     assert.equal(signal.aborted, true);
     assert.equal(session.packageLoad.current, null);
     progress({ loaded: 100, total: 100, lengthComputable: true });
@@ -1129,7 +1130,7 @@ test('editor upload preflight surfaces transient server/non-auth errors without 
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'Server returned an unexpected non-JSON response.');
+  assert.equal(session.state.serverActionMessage, getApiErrorMessage({ error: { code: 'UNEXPECTED_NON_JSON_RESPONSE', status: 502 } }, 'session'));
 });
 
 test('uploadCurrentDraftToServer emits ordered notifications for progress, success, and refresh result', async () => {
@@ -1233,7 +1234,7 @@ test('uploadCurrentDraftToServer blocks duplicate upload triggers while request 
   assert.equal(uploadCallCount, 1);
 });
 
-for (const [errorCode, messageKey] of [['NETWORK_ERROR', 'networkFailure'], ['UPLOAD_TIMEOUT', 'networkFailure'], ['ABORTED', 'canceled'], ['DRAFT_NAME_CONFLICT', 'conflict']]) test(`uploadCurrentDraftToServer localizes upload outcomes (${errorCode})`, async () => {
+for (const errorCode of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED', 'DRAFT_NAME_CONFLICT']) test(`uploadCurrentDraftToServer localizes upload outcomes (${errorCode})`, async () => {
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests(), {
     apiClient: {
@@ -1255,7 +1256,7 @@ for (const [errorCode, messageKey] of [['NETWORK_ERROR', 'networkFailure'], ['UP
   assert.equal(result.ok, false);
   assert.equal(
     session.state.serverActionMessage,
-    `editor.notifications.uploadDraft.${messageKey}`
+    getApiErrorMessage(result, 'upload')
   );
 });
 
@@ -1282,7 +1283,7 @@ test('uploadCurrentDraftToServer emits refresh warning when uploaded drafts refr
       source: 'upload.refresh',
       kind: 'warn',
       category: 'server',
-      text: 'Unable to refresh uploaded drafts.',
+      text: getApiErrorMessage({}, 'list'),
     },
   ]);
 });
@@ -1716,7 +1717,7 @@ test('publishUploadedDraftToServer emits refresh warning when uploaded drafts re
       source: 'publish.refresh',
       kind: 'warn',
       category: 'server',
-      text: 'Unable to refresh uploaded drafts.',
+      text: getApiErrorMessage({}, 'list'),
     },
   ]);
 });
@@ -1746,7 +1747,7 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes('browsePublishedDialogOpen = false;'), true);
   assert.equal(source.includes('} else if (reopenResult?.canceled) {'), true);
   assert.equal(source.includes('error: null,'), true);
-  assert.equal(source.includes("const openError = reopenResult?.error?.message || session.state.serverActionMessage || editorNotification('browsePublished.failedOpenPublishedPackage');"), true);
+  assert.equal(source.includes("const openError = getApiErrorMessage(reopenResult, 'open');"), true);
   assert.equal(source.includes('emitPublishedBrowseNotification({'), true);
   assert.equal(source.includes("await runPublishedSearch({ append: true });"), true);
   assert.equal(source.includes("summary.textContent = t('common.sections.details');"), true);
@@ -4993,7 +4994,7 @@ test('loadUploadedDrafts preserves terminal refresh warnings after request compl
 
   const result = await session.loadUploadedDrafts({ preflight: false });
   assert.equal(result.ok, false);
-  assert.equal(session.state.serverActionMessage, 'Unable to refresh uploaded drafts.');
+  assert.equal(session.state.serverActionMessage, getApiErrorMessage({}, 'list'));
 
   const refreshNotifications = session.state.notifications
     .filter((item) => item.source === 'uploadedDrafts.refresh')
@@ -5003,14 +5004,14 @@ test('loadUploadedDrafts preserves terminal refresh warnings after request compl
       source: 'uploadedDrafts.refresh',
       kind: 'warn',
       category: 'server',
-      text: 'Unable to refresh uploaded drafts.',
+      text: getApiErrorMessage({}, 'list'),
     },
   ]);
   const refreshActivityTexts = session.state.activityLog
     .filter((item) => item.source === 'uploadedDrafts.refresh')
     .map((item) => item.text);
   assert.equal(refreshActivityTexts.includes('Refreshing…'), false);
-  assert.equal(refreshActivityTexts.includes('Unable to refresh uploaded drafts.'), true);
+  assert.equal(refreshActivityTexts.includes(getApiErrorMessage({}, 'list')), true);
 });
 
 test('deleteUploadedDraft preserves success message when refresh fails', async () => {
@@ -5028,7 +5029,7 @@ test('deleteUploadedDraft preserves success message when refresh fails', async (
 
   assert.equal(result.ok, true);
   assert.equal(result.refreshResult.ok, false);
-  assert.equal(session.state.serverActionMessage, 'Unable to refresh uploaded drafts.');
+  assert.equal(session.state.serverActionMessage, getApiErrorMessage({}, 'list'));
   assert.equal(
     session.state.notifications.some((item) => item.text === 'editor.notifications.uploadDraft.uploadedDraftDeleted'),
     true
@@ -5047,7 +5048,7 @@ test('deleteUploadedDraft preserves success message when refresh fails', async (
       source: 'uploadedDraft.delete.refresh',
       kind: 'warn',
       category: 'server',
-      text: 'Unable to refresh uploaded drafts.',
+      text: getApiErrorMessage({}, 'list'),
     },
   ]);
 });
@@ -5400,7 +5401,7 @@ test('editor replayEditorPromptT2AIntent returns plain-language errors for inval
     target: 'question_prompt',
   });
   assert.equal(generationFailure.ok, false);
-  assert.equal(generationFailure.error.message, 'editor.notifications.audioGeneration.failed');
+  assert.equal(generationFailure.error.message, getApiErrorMessage({}, 'audio', 'bridge'));
   const promptRecoveryNotification = session.state.notifications
     .find((item) => item.source === 'prompt.t2a' && item.kind === 'error');
   assert.equal(Boolean(promptRecoveryNotification), true);
@@ -5501,7 +5502,7 @@ test('editor replayEditorOptionT2AIntent returns plain-language errors for inval
     target: 'option',
   });
   assert.equal(generationFailure.ok, false);
-  assert.equal(generationFailure.error.message, 'editor.notifications.audioGeneration.failed');
+  assert.equal(generationFailure.error.message, getApiErrorMessage({}, 'audio', 'bridge'));
   const optionRecoveryNotification = session.state.notifications
     .find((item) => item.source === 'option.t2a' && item.kind === 'error');
   assert.equal(Boolean(optionRecoveryNotification), true);
@@ -5673,11 +5674,11 @@ test('stage3: api failure keeps existing prompt/option audio refs unchanged and 
   );
   assert.equal(JSON.parse(before).blocks[0].prompt.mediaRefs[0].assetId, 'asset_prompt_existing');
   assert.equal(
-    session.state.notifications.some((item) => item.text === 'editor.notifications.audioGeneration.failed'),
+    session.state.notifications.some((item) => item.text === getApiErrorMessage({}, 'audio', 'bridge')),
     true
   );
   assert.equal(
-    session.state.notifications.filter((item) => item.text === 'editor.notifications.audioGeneration.failed').length >= 2,
+    session.state.notifications.filter((item) => item.text === getApiErrorMessage({}, 'audio', 'bridge')).length >= 2,
     true
   );
 });
@@ -5969,4 +5970,40 @@ test('draft replacement suppresses late upload feedback and progress', async () 
   assert.equal(session.state.serverActionMessage, 'New draft owns this');
   assert.equal(session.state.lastUploadedDraft, null);
   assert.equal(session.state.isUploadingDraft, false);
+});
+
+for (const ok of [true, false]) test('superseded popup session probe cannot change session state: ' + ok, async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  let release, current = true;
+  session.apiClient.getSession = () => new Promise(resolve => { release = resolve; });
+  const probe = session.probeServerSessionSilently({ force: true, isCurrent: () => current });
+  current = false;
+  const newer = { status: 'ready', user: { sub: 'newer' }, error: null };
+  session.state.serverSession = newer;
+  release(ok ? { ok: true, data: { user: { sub: 'older' } } } : { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } });
+  await probe;
+  assert.equal(session.state.serverSession, newer);
+});
+
+for (const ok of [true, false]) test('popup draft refresh does not reuse stale work or publish its results: ' + ok, async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  const replies = [];
+  let current = true;
+  session.apiClient.listUploadedDrafts = () => new Promise(resolve => replies.push(resolve));
+  const older = session.loadUploadedDrafts({ preflight: false, isCurrent: () => current });
+  current = false;
+  const newer = session.loadUploadedDrafts({ preflight: false, isCurrent: () => true });
+  assert.equal(replies.length, 2);
+  session.state.uploadedDrafts = [{ title: 'keep' }];
+  replies[0](ok ? { ok: true, data: { items: [{ title: 'stale' }] } } : { ok: false, error: { code: 'FORBIDDEN' } });
+  await older;
+  assert.deepEqual(session.state.uploadedDrafts, [{ title: 'keep' }]);
+  assert.equal(session.state.isLoadingUploadedDrafts, true);
+  assert.equal(session.state.notifications.some(n => n.source === 'uploadedDrafts.refresh' && n.kind === 'warn'), false);
+  replies[1]({ ok: true, data: { items: [{ title: 'new' }] } });
+  await newer;
+  assert.deepEqual(session.state.uploadedDrafts, [{ title: 'new' }]);
+  assert.equal(session.state.isLoadingUploadedDrafts, false);
 });

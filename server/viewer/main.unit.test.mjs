@@ -1,3 +1,5 @@
+import { t } from '../app/i18n/index.js';
+import { getApiErrorMessage } from '../app/api/error-presentation.js';
 import { URL as NodeURL } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -155,7 +157,7 @@ async function loadViewerModule(overrides = {}) {
         options.onSessionNotReady?.({ ok: false, status: 'not_ready', error: { message: 'blocked' } });
         return { popupWindow: null, cancel: () => true, promise: Promise.resolve({ ok: false }) };
       }
-      options.onStatusMessage?.('Complete sign-in in the popup. Session will refresh automatically.');
+      options.onStatusMessage?.(t('apiErrors.popupPending'), 'pending');
       const timer = setTimeout(async () => {
         const result = await globalThis[bagName].probeSession({ apiClient: options.apiClient, force: true });
         if (result.ok) {
@@ -223,7 +225,7 @@ async function loadViewerModule(overrides = {}) {
     window: overrides.window || {},
   };
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
     {
       name: 'replace viewerStorage import with test bag binding',
       pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];/,
@@ -1122,7 +1124,8 @@ test('viewer browse action runs silent session preflight and blocks when session
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'Session expired. Please log in again.');
+  assert.equal(session.state.serverActionMessage, 'apiErrors.sessionExpired');
+  assert.equal(session.state.serverSession.reason, 'expired');
 });
 
 test('viewer browse preflight transitions to expired-session copy for invalid session responses', async () => {
@@ -1153,7 +1156,8 @@ test('viewer browse preflight transitions to expired-session copy for invalid se
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'Session expired. Please log in again.');
+  assert.equal(session.state.serverActionMessage, 'apiErrors.sessionExpired');
+  assert.equal(session.state.serverSession.reason, 'expired');
 });
 
 
@@ -1725,8 +1729,6 @@ test('viewer start panel includes logged_out/checking/logged_in server-state ren
   assert.equal(source.includes("createViewerStartSectionHeader({ icon: 'worksheet', title: t('viewer.start.worksheets') })"), true);
   assert.equal(source.includes("manageAttemptsBtn.textContent = isLoggedIn"), true);
   assert.equal(source.includes("browsePublishedBtn.textContent = isLoggedIn"), true);
-  assert.equal(source.includes("const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';"), true);
-  assert.equal(source.includes("const SIGNED_OUT_MESSAGE = 'You are currently signed out. Log in to use server features.';"), true);
 });
 
 test('normalizeViewerBlock preserves correctAnswer for gradeable question types', async () => {
@@ -3890,10 +3892,10 @@ test('renderViewerStartPanel renders one session-related message line without du
     },
   });
 
-  const duplicateText = 'Session expired. Please log in again.';
+  const duplicateText = 'apiErrors.sessionExpired';
   const session = {
     state: {
-      serverSession: { status: 'logged_out', error: duplicateText },
+      serverSession: { status: 'logged_out', reason: 'expired', error: duplicateText },
       isLoadingPublishedPackages: false,
       publishedHasMore: false,
       publishedFilters: { title: '', subject: '', owner: '' },
@@ -4224,7 +4226,7 @@ test('direct published package sign-in recovery keeps popup-blocked failures ret
 
   const panel = appRoot.children[appRoot.children.length - 1];
   assert.ok(findNodeByText(panel, 'viewer.boot.signInAndOpenWorksheet'));
-  assert.ok(findNodeByText(panel, 'Sign-in popup was blocked. Allow popups for this site, then try again.'));
+  assert.ok(findNodeByText(panel, 'apiErrors.popupBlockedHelp'));
 });
 
 test('direct published package not-found still renders fatal panel', { concurrency: false }, async () => {
@@ -4260,7 +4262,13 @@ test('direct published package not-found still renders fatal panel', { concurren
 
   await assert.rejects(
     () => mod.bootstrapViewer(),
-    (error) => error?.code === mod.VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND
+    (error) => {
+      assert.equal(error.code, mod.VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND);
+      assert.equal(error.cause.error.message, 'Package missing.');
+      assert.ok(!error.technicalMessage.includes('Package missing.'));
+      assert.match(error.technicalMessage, /PUBLISHED_PACKAGE_NOT_FOUND/);
+      return true;
+    }
   );
   mod.renderViewerFatalError(new mod.ViewerBootError(mod.VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
     userMessage: 'The requested published package was not found.',
@@ -5547,7 +5555,7 @@ for (const errorCode of ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED']) test(`up
   assert.equal(JSON.stringify(session.state.answers), answersBefore);
   assert.equal(
     session.state.serverActionMessage,
-    `viewer.notifications.uploadAttempt.${errorCode === 'ABORTED' ? 'canceled' : 'networkFailure'}`
+    getApiErrorMessage(result, 'upload')
   );
 });
 
@@ -5569,7 +5577,7 @@ test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_NAME_CONFLICT mess
   assert.equal(result.ok, false);
   assert.equal(
     session.state.serverActionMessage,
-    'viewer.notifications.uploadAttempt.conflict'
+    getApiErrorMessage(result, 'upload')
   );
 });
 
@@ -5596,7 +5604,7 @@ test('uploadCurrentAttemptPackage surfaces structured ATTEMPT_SLOT_LIMIT_REACHED
 
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
-  assert.equal(session.state.serverActionMessage, 'viewer.notifications.uploadAttempt.slotLimitReached');
+  assert.equal(session.state.serverActionMessage, getApiErrorMessage(result, 'upload'));
   assert.equal(session.state.uploadAttemptRecoveryHint?.conflictAction, 'fail_on_conflict');
 });
 
@@ -5642,7 +5650,7 @@ test('uploadCurrentAttemptPackage slot-limit message falls back when slotLimit d
 
   const result = await session.uploadCurrentAttemptPackage();
   assert.equal(result.ok, false);
-  assert.equal(session.state.serverActionMessage, 'viewer.notifications.uploadAttempt.slotLimitReachedUnknown');
+  assert.equal(session.state.serverActionMessage, getApiErrorMessage(result, 'upload'));
 });
 
 test('uploadCurrentAttemptPackage sets conflict context for replace/copy recovery UI', async () => {
@@ -6143,10 +6151,10 @@ test('resumeUploadedAttempt surfaces API fetch failure through serverActionMessa
 
   const result = await session.resumeUploadedAttempt({ uploaded_attempt_id: 'a1' });
   assert.equal(result.ok, false);
-  assert.equal(session.state.serverActionMessage, 'artifact missing');
+  assert.equal(session.state.serverActionMessage, getApiErrorMessage({}, 'open'));
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0].kind, 'error');
-  assert.equal(notifications[0].text, 'artifact missing');
+  assert.equal(notifications[0].text, getApiErrorMessage({}, 'open'));
 });
 
 test('downloadUploadedAttempt surfaces API errors through serverActionMessage', async () => {
@@ -6160,7 +6168,7 @@ test('downloadUploadedAttempt surfaces API errors through serverActionMessage', 
   });
   const result = await session.downloadUploadedAttempt({ uploaded_attempt_id: 'attempt_a', title: 'Sheet A' });
   assert.equal(result.ok, false);
-  assert.equal(session.state.serverActionMessage, 'artifact missing');
+  assert.equal(session.state.serverActionMessage, getApiErrorMessage({}, 'download'));
 });
 
 test('downloadUploadedAttempt defers object URL revocation to avoid browser race', async () => {
@@ -6728,13 +6736,13 @@ test('attempt upload metadata stays with its package while asynchronous media is
   assert.equal(received.subject, 'Original subject');
 });
 
-for (const [error, expected] of [
-  [{ code: 'AUTH_REQUIRED', message: 'raw auth' }, 'viewer.notifications.uploadAttempt.authRequired'],
-  [{ code: 'NETWORK_ERROR', status: 401, requiresSignIn: true, message: 'raw network' }, 'viewer.notifications.uploadAttempt.networkFailure'],
-  [{ code: 'UPLOAD_TIMEOUT', status: 403, message: 'raw timeout' }, 'viewer.notifications.uploadAttempt.networkFailure'],
-  [{ code: 'ABORTED', requiresSignIn: true, message: 'raw cancel' }, 'viewer.notifications.uploadAttempt.canceled'],
-  [{ code: 'INVALID_ATTEMPT_PACKAGE', requiresSignIn: true, message: 'raw invalid' }, 'viewer.notifications.uploadAttempt.invalidPackage'],
-  [{ code: 'UNKNOWN', status: 401, message: 'Preserve server explanation' }, 'Preserve server explanation'],
+for (const error of [
+  { code: 'AUTH_REQUIRED', message: 'raw auth' },
+  { code: 'NETWORK_ERROR', status: 401, requiresSignIn: true, message: 'raw network' },
+  { code: 'UPLOAD_TIMEOUT', status: 403, message: 'raw timeout' },
+  { code: 'ABORTED', requiresSignIn: true, message: 'raw cancel' },
+  { code: 'INVALID_ATTEMPT_PACKAGE', requiresSignIn: true, message: 'raw invalid' },
+  { code: 'UNKNOWN', status: 401, message: 'Preserve server explanation' },
 ]) test(`upload classification preserves viewer feedback for ${error.code} with auth metadata`, async () => {
   const mod = await loadViewerModule();
   const result = { ok: false, operationId: 'keep-operation', error };
@@ -6747,7 +6755,7 @@ for (const [error, expected] of [
   session.flushLocalStateForAuthRedirect = async () => {};
   session.buildUploadedAttemptPackage = async () => ({ bytes: new Uint8Array([0x50, 0x4b]) });
   assert.equal(await session.uploadCurrentAttemptPackage(), result);
-  assert.equal(session.state.serverActionMessage, expected);
+  assert.equal(session.state.serverActionMessage, getApiErrorMessage(result, 'upload'));
   assert.equal(session.state.answers.q1.value, 'Keep answer');
   assert.equal(session.state.isUploadingAttemptPackage, false);
 });
@@ -6782,10 +6790,11 @@ test('upload preflight ownership tracks ID and generation without serializing th
   const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
   session.state.localAttemptId = 'same';
   session._uploadContextGeneration = 1;
-  let guard, intent;
-  session.authGate = { runProtectedAction: async (value, options) => { intent = value; guard = options.isCurrent; } };
+  let guard, intent, recoverAfterActionFailure;
+  session.authGate = { runProtectedAction: async (value, options) => { intent = value; guard = options.isCurrent; recoverAfterActionFailure = options.recoverAfterActionFailure; } };
   await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
   assert.equal(guard(), true);
+  assert.equal(recoverAfterActionFailure, false);
   assert.deepEqual(intent.payload, { localAttemptId: 'same' });
   session._uploadContextGeneration++;
   assert.equal(guard(), false);
@@ -6793,6 +6802,8 @@ test('upload preflight ownership tracks ID and generation without serializing th
   assert.equal(guard(), true);
   session.state.localAttemptId = 'different';
   assert.equal(guard(), false);
+  await session.triggerProtectedAction('viewerRewrite');
+  assert.equal(recoverAfterActionFailure, true);
 });
 
 test('old save after same-ID reopen must not suppress auth flush', async () => {
@@ -6848,4 +6859,44 @@ for (const outcome of ['success', 'failure']) test(`old submission ${outcome} ca
  assert.equal(session.state.completedAt,'replacement-completion');
  assert.equal(session.state.lastFinalizeError,'Replacement status');
  assert.equal(session.state.isFinalizing,true);
+});
+
+for (const ok of [true, false]) test('superseded popup session probe cannot change session state: ' + ok, async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
+  let release, current = true;
+  session.apiClient.getSession = () => new Promise(resolve => { release = resolve; });
+  const probe = session.probeServerSessionSilently({ force: true, isCurrent: () => current });
+  current = false;
+  const newer = { status: 'ready', user: { sub: 'newer' }, error: null };
+  session.state.serverSession = newer;
+  release(ok ? { ok: true, data: { user: { sub: 'older' } } } : { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } });
+  await probe;
+  assert.equal(session.state.serverSession, newer);
+});
+
+for (const kind of ['attempts', 'published']) for (const ok of [true, false]) test(`superseded ${kind} list cannot change rows or clear newer loading state: ${ok}`, async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
+  session.state.serverSession = { status: 'logged_in' };
+  const replies = [];
+  const apiMethod = kind === 'attempts' ? 'listUploadedAttempts' : 'listPublishedPackages';
+  const stateKey = kind === 'attempts' ? 'uploadedAttempts' : 'publishedPackages';
+  const busyKey = kind === 'attempts' ? 'isLoadingUploadedAttempts' : 'isLoadingPublishedPackages';
+  session.apiClient[apiMethod] = () => new Promise(resolve => replies.push(resolve));
+  const run = options => kind === 'attempts' ? session.listUploadedAttempts(options) : session.browsePublishedPackages('', { preflight: false, ...options });
+  let current = true;
+  const older = run({ isCurrent: () => current });
+  current = false;
+  const newer = run({ isCurrent: () => true });
+  session.state[stateKey] = [{ title: 'keep' }];
+  session.state.serverActionMessage = 'new feedback';
+  replies[0](ok ? { ok: true, data: { items: [{ title: 'stale' }] } } : { ok: false, error: { code: 'FORBIDDEN' } });
+  await older;
+  assert.deepEqual(session.state[stateKey], [{ title: 'keep' }]);
+  assert.equal(session.state[busyKey], true);
+  assert.equal(session.state.serverActionMessage, 'new feedback');
+  replies[1]({ ok: true, data: { items: [] } });
+  await newer;
+  assert.equal(session.state[busyKey], false);
 });

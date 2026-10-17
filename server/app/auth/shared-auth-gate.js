@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.js';
 const AUTH_RETURN_PARAM = 'authReturn';
 
 function nowIso() {
@@ -110,7 +111,7 @@ class SharedAuthGate {
     }
   }
 
-  async runProtectedAction(intent, { isCurrent = () => true } = {}) {
+  async runProtectedAction(intent, { isCurrent = () => true, recoverAfterActionFailure = true } = {}) {
     if (!intent || !intent.actionId || !intent.recordStore) {
       return { status: 'invalid_intent' };
     }
@@ -135,6 +136,9 @@ class SharedAuthGate {
       const result = await this.options.replayIntent(intent);
       if (!isCurrent()) return { status: 'intent_invalid' };
       if (!result || result.ok !== false) return { status: 'executed' };
+      // Uploads require another explicit Save after an attempted action fails.
+      // Preflight sign-in recovery below remains available before execution.
+      if (!recoverAfterActionFailure) return result;
       authState = normalizeSessionCheckResult(result);
       if (!authState.authNotReady) return result;
       // A late authentication failure uses the normal recovery flow once.
@@ -150,7 +154,7 @@ class SharedAuthGate {
 
     const localId = this.options.getCurrentLocalId();
     if (!localId) {
-      this.options.onRecoveryMessage('Unable to start sign-in recovery because no local record is active.');
+      this.options.onRecoveryMessage(t('apiErrors.noRecord'));
       return { status: 'blocked_no_local_id' };
     }
 
@@ -233,10 +237,10 @@ class SharedAuthGate {
     if (!ownsPending()) return superseded();
     if (!authState.ready) {
       if (!authState.authNotReady) {
-        this.options.onRecoveryMessage('Unable to verify sign-in due to a temporary session check issue. Please retry when the connection is stable.');
+        this.options.onRecoveryMessage(t('apiErrors.sessionFailed'));
         return { status: 'blocked_session_probe', result: authState.rawResult };
       }
-      this.options.onRecoveryMessage('You are not signed in yet. Please complete sign-in and try again.');
+      this.options.onRecoveryMessage(t('apiErrors.authRequired'));
       if (!preservePendingOnAuthNotReady) {
         this.clearPending(pendingIntent);
       }
@@ -248,7 +252,7 @@ class SharedAuthGate {
 
     const localId = pendingIntent.localId || resumeMetadata?.localId || null;
     if (!localId) {
-      this.options.onRecoveryMessage('Sign-in restore metadata was missing a local record reference. Your local data is still available.');
+      this.options.onRecoveryMessage(t('apiErrors.restoreMissing'));
       this.clearPending(pendingIntent);
       cleanupAuthReturnUrlParams(this.options.returnQueryParams);
       return { status: 'missing_local_id' };
@@ -257,7 +261,7 @@ class SharedAuthGate {
     const restored = await this.options.restoreByLocalId(localId);
     if (!ownsPending()) return superseded();
     if (!restored) {
-      this.options.onRecoveryMessage('Unable to reload your local record after sign-in. No data was deleted.');
+      this.options.onRecoveryMessage(t('apiErrors.restoreFailed'));
       this.clearPending(pendingIntent);
       cleanupAuthReturnUrlParams(this.options.returnQueryParams);
       return { status: 'restore_failed' };
@@ -276,7 +280,7 @@ class SharedAuthGate {
     const stillValid = await this.options.validateIntent(intent);
     if (!ownsPending()) return superseded();
     if (!stillValid) {
-      this.options.onRecoveryMessage('We restored your local data, but the original protected action is no longer valid.');
+      this.options.onRecoveryMessage(t('apiErrors.staleIntent'));
       this.clearPending(pendingIntent);
       cleanupAuthReturnUrlParams(this.options.returnQueryParams);
       return { status: 'intent_invalid' };

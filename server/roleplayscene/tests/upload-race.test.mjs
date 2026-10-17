@@ -1,3 +1,4 @@
+import { getApiErrorMessage } from '../../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult } from '../../app/api/upload-result.js';
 import test from 'node:test';
@@ -86,7 +87,7 @@ test('real slot recovery settles cancellation/failure and retries only after suc
 function harness() {
   const calls = [], preflight = deferred(), archive = deferred();
   let project = createProject({ meta: { title: 'A' } });
-  const context = vm.createContext({ classifyUploadResult, staleUploadResult, canceledUploadResult, uploadOperations: new UploadOperationSlot(), AbortController, uploadController: null, serverModalRevision: 0,
+  const context = vm.createContext({ getApiErrorMessage, classifyUploadResult, staleUploadResult, canceledUploadResult, uploadOperations: new UploadOperationSlot(), AbortController, uploadController: null, serverModalRevision: 0,
     console, serializeProject, isUploadingDraft: false, openingUploadedDraft: null,
     store: { get: () => ({ project }) },
     ensureServerSessionReady: () => preflight.promise,
@@ -165,18 +166,13 @@ test('cancel also reaches the post-upload list refresh and preserves the saved r
 for (const code of ['AUTH_REQUIRED', 'NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'ABORTED', 'UNKNOWN']) {
   test(`shared classification preserves RolePlayScene ${code} without retrying`, async () => {
     const h = harness();
-    let posts = 0, observed, message, synchronized;
-    h.context.showMessage = value => { message = value; };
-    h.context.syncServerSessionFromApiResult = value => { synchronized = value; };
+    let posts = 0, observed;
     const result = { ok: false, operationId: 'keep-operation', error: { code, message: 'Original server feedback' } };
     h.context.apiClient.uploadRolePlaySceneDraftPackage = async () => { posts++; return result; };
     h.context.getServerErrorMessage = value => { observed = value; return value.error.message; };
     h.preflight.resolve({ ok: true }); h.archive.resolve();
     assert.equal(await h.context.uploadCurrentProjectToServer(), result);
-    if (['ABORTED', 'NETWORK_ERROR', 'UPLOAD_TIMEOUT'].includes(code)) {
-      assert.equal(synchronized, result);
-      assert.equal(message.textId, code === 'ABORTED' ? 'server.uploadWaitCanceled' : 'server.uploadUncertain');
-    } else assert.equal(observed, result);
+    assert.equal(observed, result);
     assert.equal(posts, 1);
     assert.equal(h.context.isUploadingDraft, false);
     assert.equal(h.context.uploadController, null);

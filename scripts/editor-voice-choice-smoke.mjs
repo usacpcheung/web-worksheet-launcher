@@ -132,7 +132,11 @@ try {
       await waitIdle();
       assert.equal(requests.length, count + 1);
       assert.deepEqual(await attachments(), original);
-      assert.equal(await page.evaluate(() => window.editorSession.state.notifications.some(item => item.text.includes('Synthetic choice rejection'))), true);
+      assert.equal(await page.evaluate(async () => {
+        const { t } = await import('/server/app/i18n/index.js');
+        return window.editorSession.state.notifications.some(item => item.text === t('apiErrors.voiceUnsupported'));
+      }), true);
+      assert.equal(await page.getByText('Synthetic choice rejection', { exact: true }).count(), 0);
       await closeOptionMenu();
 
       // A real in-flight response may not overwrite audio after the source changes.

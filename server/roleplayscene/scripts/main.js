@@ -1,3 +1,4 @@
+import { getApiErrorMessage } from '../../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult } from '../../app/api/upload-result.js';
 import { waitForDraftRequest } from './draft-request.js';
@@ -1258,7 +1259,7 @@ function syncServerSessionFromApiResult(result) {
   serverSession = {
     status: 'not_ready',
     user: null,
-    error: result.error?.message || translate('server.signInRequired'),
+    error: getApiErrorMessage(result, 'session'),
   };
   updateServerSessionUi();
   return true;
@@ -1266,7 +1267,11 @@ function syncServerSessionFromApiResult(result) {
 
 function getServerErrorMessage(result, fallbackId = 'server.actionFailed') {
   syncServerSessionFromApiResult(result);
-  return result?.error?.message || translate(fallbackId);
+  const operation = { 'server.uploadFailed': 'upload', 'server.publishFailed': 'publish',
+    'server.listFailed': 'list', 'published.listFailed': 'list', 'server.openFailed': 'open',
+    'published.openFailed': 'open', 'server.downloadFailed': 'download', 'published.downloadFailed': 'download',
+    'server.deleteFailed': 'delete', 'published.deleteFailed': 'delete' }[fallbackId] || 'action';
+  return getApiErrorMessage(result, operation);
 }
 
 async function probeServerSessionSilently({ force = false, timeoutMs = 15000 } = {}) {
@@ -1282,7 +1287,7 @@ async function probeServerSessionSilently({ force = false, timeoutMs = 15000 } =
     serverSession = {
       status: result.status === 'error' ? 'error' : 'not_ready',
       user: null,
-      error: result.error?.message || translate('server.signInRequired'),
+      error: getApiErrorMessage(result, 'session'),
     };
   }
   updateServerSessionUi();
@@ -1320,7 +1325,9 @@ function startServerSignIn() {
       showMessage({ textId: 'server.popupBlocked' });
       if (directLaunch.active) setDirectLaunchState('authentication-required');
     },
-    onStatusMessage: () => {
+    onStatusMessage: (_message, status) => {
+      // onPopupBlocked already supplies actionable guidance; no popup is pending.
+      if (status === 'blocked') return;
       showMessage({ textId: 'server.signInPending' });
       if (directLaunch.active && !popupWasBlocked) setDirectLaunchState('authentication-pending');
     },
@@ -1340,7 +1347,7 @@ function startServerSignIn() {
         showMessage({ textId: 'server.signInPending' });
         return;
       }
-      serverSession = { status: 'not_ready', user: null, error: result?.error?.message || translate('server.signInRequired') };
+      serverSession = { status: 'not_ready', user: null, error: getApiErrorMessage(result, 'session') };
       updateServerSessionUi();
       showMessage({ text: serverSession.error });
       if (directLaunch.active) setDirectLaunchState('authentication-required');
@@ -2591,12 +2598,7 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
           }
           return result;
         }
-        if (outcome.kind === 'canceled' || outcome.kind === 'uncertain') {
-          syncServerSessionFromApiResult(result);
-          showMessage({ textId: outcome.kind === 'canceled' ? 'server.uploadWaitCanceled' : 'server.uploadUncertain' });
-        } else {
-          showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
-        }
+        showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
         return result;
       }
       const warnings = getUploadWarnings(result.data);
@@ -2648,12 +2650,12 @@ async function publishUploadedRolePlaySceneDraft(draft) {
       try {
         const sessionReady = await ensureServerSessionReady();
         if (!sessionReady.ok) {
-          showMessage({ text: sessionReady.result?.error?.message || translate('server.signInRequired') });
+          showMessage({ text: getApiErrorMessage(sessionReady.result, 'session') });
           return;
         }
         result = await apiClient.publishRolePlaySceneFromUploadedDraft(uploadedDraftId, { title: attemptedTitle, description: attemptedDescription });
       } catch (err) {
-        showMessage({ text: err?.message || translate('server.publishFailed') });
+        showMessage({ text: getApiErrorMessage(err, 'publish') });
         return;
       } finally {
         publishingDraftIds.delete(uploadedDraftId);
@@ -2867,7 +2869,7 @@ async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null, 
       renderUploadedDraftManager();
     }
   } catch (error) {
-    showMessage({ text: error?.message || translate('server.deleteFailed') });
+    showMessage({ text: getApiErrorMessage(error, 'delete') });
   } finally {
     if (!deleted) onDeleteCanceled?.();
   }
@@ -3119,7 +3121,7 @@ async function bootstrap() {
   }
   probeServerSessionSilently().catch((err) => {
     console.error('Failed to probe server session', err);
-    serverSession = { status: 'error', user: null, error: err?.message || String(err) };
+    serverSession = { status: 'error', user: null, error: getApiErrorMessage(err, 'session') };
     updateServerSessionUi();
   });
   const recovery = readPlaySessionRecovery();

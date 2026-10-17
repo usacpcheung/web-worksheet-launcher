@@ -49,7 +49,7 @@ try {
         // Invoke the real upload method, then cancel through the rendered control.
         const upload = app === 'editor' ? session.uploadCurrentDraftToServer() : session.uploadCurrentAttemptPackage();
         upload.then(result => { window.cancelTestResult = result; window.cancelTestDone = true; });
-        return t(`${app}.notifications.${app === 'editor' ? 'uploadDraft' : 'uploadAttempt'}.canceled`);
+        return t('apiErrors.uploadCanceled');
       }, app);
       assert.match(expected, locale === 'en' ? /server may already have saved/ : /伺服器可能已儲存/);
       for (let i = 0; !releaseLookup && i < 100; i++) await page.waitForTimeout(50);

@@ -1,3 +1,4 @@
+import { getApiErrorMessage, getApiErrorDiagnostic, resolveErrorPresentation, createErrorDetails } from '../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult, classifyProtectedUploadResult } from '../app/api/upload-result.js';
 import { assertAttemptPackage } from '../app/contracts/attempt-package-validator.js';
@@ -41,8 +42,6 @@ const VIEWER_SERVER_SESSION_STATES = Object.freeze({
   CHECKING: 'checking',
   LOGGED_IN: 'logged_in',
 });
-const SESSION_EXPIRED_MESSAGE = 'Session expired. Please log in again.';
-const SIGNED_OUT_MESSAGE = 'You are currently signed out. Log in to use server features.';
 const AUTH_RETURN_PARAM = 'authReturn';
 const VIEWER_AUTH_CALLBACK_PARAM = 'authCallback';
 const AUTH_CALLBACK_RETRY_BASE_MS = 1000;
@@ -276,37 +275,12 @@ function formatUploadProgressText(progress = {}) {
   return t('viewer.notifications.uploadAttempt.preparing');
 }
 
-function formatAttemptSlotLimitMessage(slotLimit) {
-  const normalizedLimit = Number(slotLimit);
-  if (Number.isInteger(normalizedLimit) && normalizedLimit > 0) {
-    return t('viewer.notifications.uploadAttempt.slotLimitReached', { limit: normalizedLimit });
-  }
-  return t('viewer.notifications.uploadAttempt.slotLimitReachedUnknown');
-}
-
 function getViewerAuthNotification(key, params = {}) {
   return t(`viewer.notifications.auth.${key}`, params);
 }
 
 function getViewerUploadAttemptMessage(outcome) {
-  const uploadResult = outcome.result;
-  if (outcome.code === 'INVALID_ATTEMPT_PACKAGE') return t('viewer.notifications.uploadAttempt.invalidPackage');
-  switch (outcome.kind) {
-    case 'conflict':
-      return t('viewer.notifications.uploadAttempt.conflict');
-    case 'slot_limit':
-      return formatAttemptSlotLimitMessage(uploadResult?.error?.details?.slotLimit);
-    case 'auth_required':
-      return outcome.code === 'AUTH_REQUIRED'
-        ? t('viewer.notifications.uploadAttempt.authRequired')
-        : uploadResult?.error?.message || 'Attempt upload failed.';
-    case 'canceled':
-      return t('viewer.notifications.uploadAttempt.canceled');
-    case 'uncertain':
-      return t('viewer.notifications.uploadAttempt.networkFailure');
-    default:
-      return uploadResult?.error?.message || 'Attempt upload failed.';
-  }
+  return getApiErrorMessage(outcome.result, 'upload');
 }
 
 function sanitizeFilenameSegment(value, fallback = 'worksheet') {
@@ -679,18 +653,33 @@ function createLanguageSelector({ onChange, variant = 'inline' } = {}) {
   return wrapper;
 }
 
-function renderNotificationCard(notification, className = 'notification-toast') {
+function updateNotificationCard(card, notification) {
   const kind = String(notification?.kind || 'info').toLowerCase();
-  const card = document.createElement('article');
-  card.className = `${className} ${className}--${kind}`;
+  card.className = `notification-toast notification-toast--${kind}`;
   card.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   card.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
-
-  const text = document.createElement('div');
-  text.className = `${className}__text`;
-  text.textContent = String(notification?.text || '');
-  card.appendChild(text);
-  return card;
+  let text = card.querySelector('.notification-toast__text');
+  if (!text) {
+    text = document.createElement('div');
+    text.className = 'notification-toast__text';
+    card.appendChild(text);
+  }
+  const message = String(notification?.text || '');
+  if (text.textContent !== message) text.textContent = message;
+  const details = card.querySelector('details');
+  if (notification?.diagnostic) {
+    const result = { error: notification.diagnostic };
+    const options = { source: notification.diagnostic.source };
+    if (!details) card.appendChild(createErrorDetails(result, options));
+    else {
+      const summary = details.querySelector('summary');
+      const body = details.querySelector('pre');
+      const label = t('apiErrors.details');
+      const diagnostic = getApiErrorDiagnostic(result, options);
+      if (summary.textContent !== label) summary.textContent = label;
+      if (body.textContent !== diagnostic) body.textContent = diagnostic;
+    }
+  } else details?.remove();
 }
 
 function ensureViewerToastContainer() {
@@ -706,16 +695,57 @@ function ensureViewerToastContainer() {
   return container;
 }
 
+// Keep authentication guidance separate from upload/list operation feedback.
+function createViewerAuthFeedback() {
+  const node = document.createElement('p');
+  node.className = 'muted viewer-auth-feedback';
+  node.setAttribute('role', 'status');
+  node.setAttribute('aria-live', 'polite');
+  node.setAttribute('aria-atomic', 'true');
+  node.hidden = true;
+  return node;
+}
+
+function renderViewerAuthFeedback(session) {
+  if (typeof document === 'undefined' || !document.querySelectorAll) return;
+  const regions = Array.from(document.querySelectorAll('.viewer-auth-feedback'));
+  // A modal is appended after the underlying page. Announce in the active
+  // surface only, rather than duplicating feedback behind the modal.
+  const active = regions.at(-1);
+  const feedback = session.state.authFeedback;
+  const text = feedback ? t(feedback.key, feedback.params || {}) : '';
+  for (const region of regions) {
+    const visible = region === active && Boolean(text);
+    const nextText = visible ? text : '';
+    if (region.textContent !== nextText) region.textContent = nextText;
+    region.hidden = !visible;
+  }
+}
+
 function renderViewerNotifications(session) {
+  renderViewerAuthFeedback(session);
   const container = ensureViewerToastContainer();
   if (!container) return;
   session.pruneExpiredNotifications();
   const notifications = Array.isArray(session.state.notifications)
     ? session.state.notifications.slice(-4)
     : [];
-  container.innerHTML = '';
-  notifications.forEach((notification) => {
-    container.appendChild(renderNotificationCard(notification, 'notification-toast'));
+  const byId = new Map(Array.from(container.children, card => [card.dataset.notificationId, card]));
+  const visibleIds = new Set(notifications.map(notification => notification.id));
+  for (const [id, card] of byId) {
+    if (!visibleIds.has(id)) card.remove();
+  }
+  notifications.forEach((notification, index) => {
+    let card = byId.get(notification.id);
+    if (!card) {
+      card = document.createElement('article');
+      card.dataset.notificationId = notification.id;
+    }
+    updateNotificationCard(card, notification);
+    // Do not detach unchanged cards: that closes disclosures and drops focus.
+    if (container.children[index] !== card) {
+      container.insertBefore(card, container.children[index] || null);
+    }
   });
 }
 
@@ -2429,6 +2459,7 @@ class ViewerAttemptSession {
         error: null,
       },
       serverActionMessage: null,
+      authFeedback: null,
       isUploadingAttemptPackage: false,
       isUploadAttemptFlowActive: false,
       uploadAttemptProgress: null,
@@ -2516,6 +2547,7 @@ class ViewerAttemptSession {
     if (typeof this.onStateChange === 'function') {
       this.onStateChange(this.state);
     }
+    renderViewerAuthFeedback(this);
   }
 
   normalizeNotificationKind(kind) {
@@ -2585,6 +2617,7 @@ class ViewerAttemptSession {
     const createdAt = Date.now();
     const entry = {
       id: createLocalId('viewer_notice'),
+      ...(notification.diagnostic ? { diagnostic: notification.diagnostic } : {}),
       text,
       kind: this.normalizeNotificationKind(notification?.kind),
       source: typeof notification?.source === 'string' && notification.source
@@ -2748,22 +2781,25 @@ class ViewerAttemptSession {
         const errorCode = String(result?.error?.code || '').trim().toUpperCase();
         if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND') {
           throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
-            userMessage: 'The requested published package was not found.',
-            technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+            userMessage: t('apiErrors.notFound'),
+            technicalMessage: getApiErrorDiagnostic(result, { operation: 'open' }),
+            cause: result,
           });
         }
         if (result?.error?.requiresSignIn) {
           throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_AUTH_REQUIRED, {
-            userMessage: 'Sign in to open this worksheet.',
-            technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+            userMessage: t('apiErrors.authRequired'),
+            technicalMessage: getApiErrorDiagnostic(result, { operation: 'open' }),
+            cause: result,
             requiresSignIn: true,
             recoveryKind: 'published_package_auth',
             publishedPackageId,
           });
         }
         throw new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
-          userMessage: 'The requested published package could not be opened right now.',
-          technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+          userMessage: t('apiErrors.openFailed'),
+          technicalMessage: getApiErrorDiagnostic(result, { operation: 'open' }),
+          cause: result,
         });
       }
       return this.state;
@@ -3831,6 +3867,7 @@ class ViewerAttemptSession {
         this.pushNotification({
           kind: outcome.kind === 'conflict' || outcome.kind === 'slot_limit' ? 'warn' : 'error',
           text: message,
+          diagnostic: resolveErrorPresentation(uploadResult, { operation: 'upload' }).diagnostic,
           ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
         });
         this.notifyStateChange();
@@ -3891,7 +3928,11 @@ class ViewerAttemptSession {
     this.notifyStateChange();
   }
 
-  async listUploadedAttempts() {
+  async listUploadedAttempts({ isCurrent = () => true } = {}) {
+    if (!isCurrent()) return { ok: false, status: 'superseded' };
+    const requestToken = {};
+    this._uploadedAttemptsRequest = requestToken;
+    const ownsRequest = () => this._uploadedAttemptsRequest === requestToken;
     const sessionState = this.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     if (sessionState !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
       this.state.isLoadingUploadedAttempts = false;
@@ -3904,8 +3945,9 @@ class ViewerAttemptSession {
     this.notifyStateChange();
     try {
       const result = await this.apiClient.listUploadedAttempts();
+      if (!isCurrent() || !ownsRequest()) return result;
       if (!result?.ok) {
-        this.state.uploadedAttemptsError = result?.error?.message || 'Unable to load uploaded attempts.';
+        this.state.uploadedAttemptsError = getApiErrorMessage(result, 'list');
         return result;
       }
       const rows = normalizeUploadedAttemptRows(
@@ -3922,11 +3964,14 @@ class ViewerAttemptSession {
       }
       return result;
     } catch (error) {
-      this.state.uploadedAttemptsError = error?.message || 'Unable to load uploaded attempts.';
-      return { ok: false, error: { code: 'NETWORK_ERROR', message: this.state.uploadedAttemptsError } };
+      const message = getApiErrorMessage(error, 'list');
+      if (isCurrent() && ownsRequest()) this.state.uploadedAttemptsError = message;
+      return { ok: false, error: { code: 'NETWORK_ERROR', message } };
     } finally {
-      this.state.isLoadingUploadedAttempts = false;
-      this.notifyStateChange();
+      if (ownsRequest()) {
+        this.state.isLoadingUploadedAttempts = false;
+        this.notifyStateChange();
+      }
     }
   }
 
@@ -3940,7 +3985,7 @@ class ViewerAttemptSession {
     try {
       const result = await this.apiClient.deleteUploadedAttempt(uploadedAttemptId);
       if (!result?.ok) {
-        this.state.serverActionMessage = result?.error?.message || t('viewer.notifications.uploadedAttempt.deleteFailed');
+        this.state.serverActionMessage = getApiErrorMessage(result, 'delete');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -3975,7 +4020,7 @@ class ViewerAttemptSession {
     try {
       const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData } : await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
       if (!artifact?.ok) {
-        this.state.serverActionMessage = artifact?.error?.message || t('viewer.notifications.uploadedAttempt.downloadFailed');
+        this.state.serverActionMessage = getApiErrorMessage(artifact, 'download');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -3986,7 +4031,7 @@ class ViewerAttemptSession {
       const bytes = ensureUint8Array(artifact?.data);
       if (!bytes) {
         const result = { ok: false, error: { code: 'INVALID_ARTIFACT', message: t('viewer.notifications.uploadedAttempt.artifactEmpty') } };
-        this.state.serverActionMessage = result.error.message;
+        this.state.serverActionMessage = t('viewer.notifications.uploadedAttempt.artifactEmpty');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -4176,7 +4221,7 @@ class ViewerAttemptSession {
     try {
       const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData } : await this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId);
       if (!artifact?.ok) {
-        this.state.serverActionMessage = artifact?.error?.message || t('viewer.notifications.uploadedAttempt.resumeFailed');
+        this.state.serverActionMessage = getApiErrorMessage(artifact, 'open');
         this.pushNotification({
           kind: 'error',
           text: this.state.serverActionMessage,
@@ -4276,7 +4321,7 @@ class ViewerAttemptSession {
       actionId,
       recordStore: 'localAttempts',
       payload,
-    }, { isCurrent });
+    }, { isCurrent, recoverAfterActionFailure: actionId !== 'uploadAttemptPackageAfterLogin' });
   }
 
   beginServerSignIn(signInOptions = {}) {
@@ -4293,29 +4338,46 @@ class ViewerAttemptSession {
       ? signInOptions.onSessionNotReady
       : null;
 
-    if (this._authPopupFlow?.cancel) {
-      this._authPopupFlow.cancel();
-    }
+    const previousFlow = this._authPopupFlow;
     const authFlowId = createLocalId('auth_flow');
     this._activeAuthFlowId = authFlowId;
+    const isCurrent = () => this._activeAuthFlowId === authFlowId;
+    this.state.authFeedback = null;
+    const setFeedback = (phase, key, params = {}) => {
+      if (!isCurrent()) return;
+      this.state.authFeedback = key ? { authFlowId, phase, key, params } : null;
+      this.notifyStateChange();
+    };
+    const reportAuthFailure = result => {
+      const { key, params } = resolveErrorPresentation(result, { operation: 'session' });
+      setFeedback('failure', key, params);
+    };
+    // Invalidate the old callbacks before cancellation can invoke them.
+    previousFlow?.cancel?.();
+    this._authPopupFlow = null;
+    this._authPopupWindow = null;
 
     const finalizeFlow = () => {
-      if (this._activeAuthFlowId === authFlowId) {
-        this._activeAuthFlowId = null;
+      if (!isCurrent()) return;
+      if (!['blocked', 'deadline', 'failure'].includes(this.state.authFeedback?.phase)) {
+        this.state.authFeedback = null;
       }
+      this._activeAuthFlowId = null;
       this._authPopupWindow = null;
       this._authPopupFlow = null;
+      this.notifyStateChange();
     };
 
-    this._authPopupFlow = startAuthPopupFlow({
+    const flow = startAuthPopupFlow({
       apiClient: this.apiClient,
       source: 'viewer',
       authFlowId,
       pollIntervalMs: AUTH_POPUP_FLOW_DEFAULTS.pollIntervalMs,
       pollTimeoutMs: AUTH_POPUP_FLOW_DEFAULTS.pollTimeoutMs,
-      shouldContinue: () => this._activeAuthFlowId === authFlowId,
+      shouldContinue: isCurrent,
       onPopupBlocked: () => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        setFeedback('blocked', 'apiErrors.popupBlocked');
         if (onPopupBlockedOverride) {
           onPopupBlockedOverride({ authFlowId, finalizeFlow });
           return;
@@ -4323,21 +4385,24 @@ class ViewerAttemptSession {
         this.state.serverActionMessage = getViewerAuthNotification('signInPopupBlocked');
         this.notifyStateChange();
       },
-      onStatusMessage: (message) => {
+      onStatusMessage: (message, status) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        const key = { blocked: 'popupBlocked', pending: 'popupPending', verifying: 'popupVerifying', waiting: 'popupWaiting', deadline: 'popupDeadline' }[status];
+        if (key) setFeedback(status, `apiErrors.${key}`);
         if (onStatusMessageOverride) {
-          onStatusMessageOverride({ message, authFlowId, finalizeFlow });
+          onStatusMessageOverride({ message, status, authFlowId, finalizeFlow });
           return;
         }
-        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+        if (status === 'pending') {
           this.state.serverActionMessage = message;
           this.notifyStateChange();
         }
       },
       onSessionReady: async (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        setFeedback('verifying', 'apiErrors.popupVerifying');
         if (onSessionReadyOverride) {
-          await onSessionReadyOverride({ result, authFlowId, finalizeFlow });
+          await onSessionReadyOverride({ result, authFlowId, finalizeFlow, isCurrent, reportAuthFailure });
           return;
         }
         if (this._authAutoLoadInFlightByFlowId.has(authFlowId)) return;
@@ -4345,15 +4410,18 @@ class ViewerAttemptSession {
         try {
           this.state.serverActionMessage = getViewerAuthNotification('signInRefreshing');
           this.notifyStateChange();
-          const result = await this.preflightPublishedSession();
+          const result = await this.preflightPublishedSession({ isCurrent });
+          if (!isCurrent()) return;
           if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
-            await this.browsePublishedPackages(this.state.publishedFilters || {}, { preflight: false, reset: true });
+            await this.browsePublishedPackages(this.state.publishedFilters || {}, { preflight: false, reset: true, isCurrent });
+            if (!isCurrent()) return;
             this.state.serverActionMessage = null;
             this.notifyStateChange();
             finalizeFlow();
             return;
           }
-          const fallbackMessage = result?.result?.error?.message || this.state.serverSession?.error || getViewerAuthNotification('sessionNotReadyAfterSignIn');
+          reportAuthFailure(result);
+          const fallbackMessage = getApiErrorMessage(result, 'session');
           this.state.serverActionMessage = fallbackMessage;
           this.notifyStateChange();
           finalizeFlow();
@@ -4363,8 +4431,15 @@ class ViewerAttemptSession {
       },
       onSessionNotReady: (result) => {
         if (this._activeAuthFlowId !== authFlowId) return;
+        if (result?.cancelled || ['SESSION_WAIT_CANCELLED', 'AUTH_POPUP_FLOW_CANCELLED'].includes(result?.error?.code)) {
+          setFeedback('cancelled', null);
+        } else if (result?.final === false && result?.waitingForCallback === true) {
+          setFeedback('waiting', 'apiErrors.popupWaiting');
+        } else {
+          reportAuthFailure(result);
+        }
         if (onSessionNotReadyOverride) {
-          onSessionNotReadyOverride({ result, authFlowId, finalizeFlow });
+          onSessionNotReadyOverride({ result, authFlowId, finalizeFlow, isCurrent });
           return;
         }
         if (result?.final === false && result?.waitingForCallback === true) {
@@ -4380,13 +4455,19 @@ class ViewerAttemptSession {
           finalizeFlow();
           return;
         }
-        this.state.serverActionMessage = result?.error?.message || this.state.serverActionMessage;
+        this.state.serverActionMessage = getApiErrorMessage(result, 'session');
         this.notifyStateChange();
         finalizeFlow();
         this._authAutoLoadInFlightByFlowId.delete(authFlowId);
       },
     });
-    this._authPopupWindow = this._authPopupFlow?.popupWindow || null;
+    // A blocked-popup override may finalize synchronously during startup.
+    if (isCurrent()) {
+      this._authPopupFlow = flow;
+      this._authPopupWindow = flow?.popupWindow || null;
+    } else {
+      flow?.cancel?.();
+    }
   }
 
   async refreshServerSession() {
@@ -4399,11 +4480,12 @@ class ViewerAttemptSession {
     return this.probeServerSessionSilently({ force: true });
   }
 
-  transitionServerSessionToLoggedOut(message = SESSION_EXPIRED_MESSAGE) {
-    const resolvedMessage = String(message || '').trim() || SESSION_EXPIRED_MESSAGE;
+  transitionServerSessionToLoggedOut(reason = 'expired') {
+    const resolvedMessage = t(reason === 'expired' ? 'apiErrors.sessionExpired' : 'apiErrors.signedOut');
     this.state.serverSession = {
       status: VIEWER_SERVER_SESSION_STATES.LOGGED_OUT,
       user: null,
+      reason,
       error: resolvedMessage,
     };
     this.state.serverActionMessage = resolvedMessage;
@@ -4414,10 +4496,10 @@ class ViewerAttemptSession {
     const result = await probeSession({ apiClient: this.apiClient, force });
     if (!isCurrent()) return result;
     if (result.status !== 'ready') {
-      const message = result.error?.message || 'Sign-in is required before using server features.';
+      const message = getApiErrorMessage(result, 'session');
       if (isAuthSessionError(result.error)) {
         const loggedInBefore = this.state.serverSessionEverReady === true;
-        this.transitionServerSessionToLoggedOut(loggedInBefore ? SESSION_EXPIRED_MESSAGE : SIGNED_OUT_MESSAGE);
+        this.transitionServerSessionToLoggedOut(loggedInBefore ? 'expired' : 'signed_out');
       } else {
         this.state.serverSession = {
           status: VIEWER_SERVER_SESSION_STATES.CHECKING,
@@ -4439,15 +4521,15 @@ class ViewerAttemptSession {
     return result;
   }
 
-  async ensureServerSessionReady(notReadyMessage = 'Sign-in is required before using server features.', { isCurrent = () => true } = {}) {
+  async ensureServerSessionReady(_legacyMessage = undefined, { isCurrent = () => true } = {}) {
     const result = await this.probeServerSessionSilently({ force: true, isCurrent });
     if (!isCurrent()) return { ok: false, result };
     if (result.ok && this.state.serverSession.status === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
       return { ok: true, result };
     }
-    const message = result.error?.message || notReadyMessage;
+    const message = getApiErrorMessage(result, 'session');
     if (result.status === 'not_ready' && isAuthSessionError(result.error)) {
-      this.transitionServerSessionToLoggedOut(SESSION_EXPIRED_MESSAGE);
+      this.transitionServerSessionToLoggedOut();
     } else {
       this.state.serverSession = {
         status: VIEWER_SERVER_SESSION_STATES.CHECKING,
@@ -4460,11 +4542,17 @@ class ViewerAttemptSession {
     return { ok: false, result };
   }
 
-  async preflightPublishedSession() {
-    return this.ensureServerSessionReady();
+  async preflightPublishedSession(options = {}) {
+    return this.ensureServerSessionReady(undefined, options);
   }
 
   async browsePublishedPackages(query = '', options = {}) {
+    const isCurrent = options.isCurrent || (() => true);
+    if (!isCurrent()) return { ok: false, status: 'superseded' };
+    const requestToken = {};
+    this._publishedBrowseRequest = requestToken;
+    this.state.isLoadingPublishedPackages = false;
+    const ownsRequest = () => this._publishedBrowseRequest === requestToken;
     const requestedFilters = typeof query === 'object' && query !== null
       ? query
       : { title: query, subject: '', owner: '' };
@@ -4488,7 +4576,8 @@ class ViewerAttemptSession {
     this.notifyStateChange();
 
     if (options.preflight !== false) {
-      const sessionReady = await this.preflightPublishedSession();
+      const sessionReady = await this.preflightPublishedSession({ isCurrent });
+      if (!isCurrent() || !ownsRequest()) return sessionReady.result;
       if (!sessionReady.ok) return sessionReady.result;
     }
     this.state.isLoadingPublishedPackages = true;
@@ -4506,10 +4595,12 @@ class ViewerAttemptSession {
       filters,
       pagination,
     });
+    if (!ownsRequest()) return result;
     this.state.isLoadingPublishedPackages = false;
+    if (!isCurrent()) { this.notifyStateChange(); return result; }
     if (!result.ok) {
-      this.state.serverActionMessage = result.error.message;
-      this.state.publishedListError = result.error.message;
+      this.state.serverActionMessage = getApiErrorMessage(result, 'list');
+      this.state.publishedListError = getApiErrorMessage(result, 'list');
       this.notifyStateChange();
       return result;
     }
@@ -4550,7 +4641,7 @@ class ViewerAttemptSession {
         onProgress: progress => this.packageLoad.update(progressToken, 'downloading', progress),
       });
       if (!artifact.ok) {
-        this.state.serverActionMessage = artifact.error.message;
+        this.state.serverActionMessage = getApiErrorMessage(artifact, 'download');
         this.notifyStateChange();
         return artifact;
       }
@@ -4846,6 +4937,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
     if (overlay.querySelector('.viewer-attempts-modal')) {
       overlay.remove();
+      renderViewerAuthFeedback(session);
     }
   });
   const host = document.body || getViewerOverlayHost();
@@ -4894,7 +4986,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
   closeBtn.className = 'confirm-modal__btn';
   closeBtn.textContent = t('common.actions.close');
   actions.append(signInBtn, refreshBtn, closeBtn);
-  dialog.append(heading, description, slotRecoveryBanner, sessionLine, slotUsageLine, list, actions);
+  dialog.append(heading, description, slotRecoveryBanner, sessionLine, createViewerAuthFeedback(), slotUsageLine, list, actions);
   overlay.append(dialog);
   host.appendChild(overlay);
 
@@ -4904,6 +4996,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
     if (closing) return;
     closing = true;
     overlay.remove();
+    renderViewerAuthFeedback(session);
     session.state.isManagingUploadedAttempts = false;
     session.notifyStateChange();
     if (previousActive && typeof previousActive.focus === 'function') {
@@ -4913,9 +5006,12 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
 
   const renderRows = async () => {
     if (closing) return;
+    renderViewerAuthFeedback(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
-    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    // A settled probe error must not disable the user's sign-in retry.
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING
+      && !session.state.serverSession?.error;
     const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || t('common.values.unknown');
     sessionLine.textContent = isLoggedIn
       ? t('viewer.start.serverSession.ready', { user: userLabel })
@@ -4926,7 +5022,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
         });
     signInBtn.hidden = isLoggedIn;
     signInBtn.disabled = isChecking || signInInFlight;
-    signInBtn.textContent = signInInFlight ? 'Signing in…' : t('common.actions.signIn');
+    signInBtn.textContent = signInInFlight ? t('common.actions.signingIn') : t('common.actions.signIn');
     refreshBtn.disabled = !isLoggedIn || isChecking || session.state.isLoadingUploadedAttempts;
     list.innerHTML = '';
     if (!isLoggedIn) {
@@ -5058,28 +5154,35 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
         renderRows();
         finalizeFlow();
       },
-      onStatusMessage: ({ message }) => {
-        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+      onStatusMessage: ({ message, status }) => {
+        if (status === 'pending') {
           session.state.serverActionMessage = message;
           session.notifyStateChange();
           renderRows();
         }
       },
-      onSessionReady: async ({ finalizeFlow }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent, reportAuthFailure }) => {
         try {
-          const readiness = await session.probeServerSessionSilently({ force: true });
+          const readiness = await session.probeServerSessionSilently({ force: true, isCurrent });
+          if (!isCurrent()) return;
           if (readiness.status === 'ready') {
-            await session.listUploadedAttempts();
-            await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true });
+            await session.listUploadedAttempts({ isCurrent });
+            if (!isCurrent()) return;
+            await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true, isCurrent });
+            if (!isCurrent()) return;
             session.state.serverActionMessage = null;
           } else {
-            session.state.serverActionMessage = readiness?.error?.message || getViewerAuthNotification('sessionNotReadyAfterSignIn');
+            reportAuthFailure(readiness);
+            session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
           }
           session.notifyStateChange();
           await renderRows();
         } finally {
-          signInInFlight = false;
-          finalizeFlow();
+          if (isCurrent()) {
+            signInInFlight = false;
+            renderRows();
+            finalizeFlow();
+          }
         }
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
@@ -5091,7 +5194,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
         }
         signInInFlight = false;
         if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
-          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.state.serverActionMessage = getApiErrorMessage(result, 'session');
           session.notifyStateChange();
           renderRows();
         } else {
@@ -5136,6 +5239,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   Array.from(document.querySelectorAll('.confirm-modal-overlay')).forEach((overlay) => {
     if (overlay.querySelector('.viewer-published-browse-modal')) {
       overlay.remove();
+      renderViewerAuthFeedback(session);
     }
   });
   const host = document.body || getViewerOverlayHost();
@@ -5195,7 +5299,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
   closeBtn.className = 'confirm-modal__btn';
   closeBtn.textContent = t('common.actions.close');
   actions.append(signInBtn, loadMoreBtn, refreshBtn, closeBtn);
-  dialog.append(heading, filterRow, list, actions);
+  dialog.append(heading, createViewerAuthFeedback(), filterRow, list, actions);
   overlay.append(dialog);
   host.appendChild(overlay);
 
@@ -5231,6 +5335,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       searchDebounceTimer = null;
     }
     overlay.remove();
+    renderViewerAuthFeedback(session);
     if (previousActive && typeof previousActive.focus === 'function') {
       previousActive.focus();
     }
@@ -5238,9 +5343,12 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
 
   const renderRows = () => {
     if (closing) return;
+    renderViewerAuthFeedback(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
-    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    // A settled probe error must not disable the user's sign-in retry.
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING
+      && !session.state.serverSession?.error;
     const activeFilters = session.state.publishedFilters || {};
     if (document.activeElement !== titleFilterInput) titleFilterInput.value = String(activeFilters.title || '');
     if (document.activeElement !== subjectFilterInput) subjectFilterInput.value = String(activeFilters.subject || '');
@@ -5365,6 +5473,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
       subject: subjectFilterInput.value,
       owner: ownerFilterInput.value,
     }, options);
+    if (options.isCurrent && !options.isCurrent()) return;
     renderRows();
   };
 
@@ -5380,31 +5489,35 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         renderRows();
         finalizeFlow();
       },
-      onStatusMessage: ({ message }) => {
-        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+      onStatusMessage: ({ message, status }) => {
+        if (status === 'pending') {
           session.state.serverActionMessage = message;
           session.notifyStateChange();
           renderRows();
         }
       },
-      onSessionReady: async ({ finalizeFlow }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent, reportAuthFailure }) => {
         try {
-          const readiness = await session.preflightPublishedSession();
+          const readiness = await session.preflightPublishedSession({ isCurrent });
+          if (!isCurrent()) return;
           if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
-            session.state.serverActionMessage = readiness?.result?.error?.message
-              || session.state.serverSession?.error
-              || getViewerAuthNotification('sessionNotReadyAfterSignIn');
+            reportAuthFailure(readiness);
+            session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
             session.notifyStateChange();
             renderRows();
             return;
           }
-          await refreshBrowse({ preflight: false, reset: true });
+          await refreshBrowse({ preflight: false, reset: true, isCurrent });
+          if (!isCurrent()) return;
           session.state.serverActionMessage = null;
           session.notifyStateChange();
           renderRows();
         } finally {
-          signInInFlight = false;
-          finalizeFlow();
+          if (isCurrent()) {
+            signInInFlight = false;
+            renderRows();
+            finalizeFlow();
+          }
         }
       },
       onSessionNotReady: ({ result, finalizeFlow }) => {
@@ -5416,7 +5529,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         }
         signInInFlight = false;
         if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
-          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.state.serverActionMessage = getApiErrorMessage(result, 'session');
           session.notifyStateChange();
           renderRows();
         } else {
@@ -6800,7 +6913,7 @@ function renderViewerShell(session) {
       if (gateOutcome.kind === 'redirected') {
         return;
       }
-      // The auth gate returns non-auth application failures unchanged. They
+      // The auth gate returns attempted upload failures unchanged. They
       // already have upload feedback and may need conflict/slot recovery below.
       if (gateOutcome.kind === 'blocked') {
         const blockedMessage = gateOutcome.reason === 'blocked_session_probe'
@@ -6916,7 +7029,7 @@ function renderViewerShell(session) {
   }
   header.append(headerTop, answerSummary, resumeWarning);
   blockSection.append(blockHeading, stepper, blockList, crossQuestionStatus.root);
-  shell.append(header, blockSection);
+  shell.append(header, createViewerAuthFeedback(), blockSection);
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(shell, detailsModal);
@@ -7314,25 +7427,26 @@ function renderViewerStartPanel(session, options = {}) {
         renderServerControls();
         finalizeFlow();
       },
-      onStatusMessage: ({ message }) => {
-        if (message === 'Complete sign-in in the popup. Session will refresh automatically.') {
+      onStatusMessage: ({ message, status }) => {
+        if (status === 'pending') {
           session.state.serverActionMessage = message;
           session.notifyStateChange();
           renderServerControls();
         }
       },
-      onSessionReady: async ({ finalizeFlow }) => {
+      onSessionReady: async ({ finalizeFlow, isCurrent, reportAuthFailure }) => {
         try {
-          const readiness = await session.preflightPublishedSession();
+          const readiness = await session.preflightPublishedSession({ isCurrent });
+          if (!isCurrent()) return;
           if (!readiness?.ok || session.state.serverSession.status !== VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {
-            session.state.serverActionMessage = readiness?.result?.error?.message
-              || session.state.serverSession?.error
-            || getViewerAuthNotification('sessionNotReadyAfterSignIn');
+            reportAuthFailure(readiness);
+            session.state.serverActionMessage = getApiErrorMessage(readiness, 'session');
             session.notifyStateChange();
             renderServerControls();
             return;
           }
-          await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true });
+          await session.browsePublishedPackages(session.state.publishedFilters || {}, { preflight: false, reset: true, isCurrent });
+          if (!isCurrent()) return;
           session.state.serverActionMessage = null;
           session.notifyStateChange();
           renderServerControls();
@@ -7353,7 +7467,7 @@ function renderViewerStartPanel(session, options = {}) {
           return;
         }
         if (result?.error?.code !== 'SESSION_WAIT_CANCELLED') {
-          session.state.serverActionMessage = result?.error?.message || session.state.serverActionMessage;
+          session.state.serverActionMessage = getApiErrorMessage(result, 'session');
           session.notifyStateChange();
           renderServerControls();
         }
@@ -7373,17 +7487,19 @@ function renderViewerStartPanel(session, options = {}) {
     renderViewerNotifications(session);
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
-    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING;
+    // A settled probe error must not disable the user's sign-in retry.
+    const isChecking = sessionState === VIEWER_SERVER_SESSION_STATES.CHECKING
+      && !session.state.serverSession?.error;
     const userLabel = session.state.serverSession?.user?.email || session.state.serverSession?.user?.sub || t('common.values.unknown');
     let defaultSessionMessage = '';
     if (isLoggedIn) {
       defaultSessionMessage = t('viewer.start.serverSession.ready', { user: userLabel });
     } else if (isChecking) {
       defaultSessionMessage = t('viewer.start.serverSession.checking');
-    } else if (session.state.serverSession?.error === SESSION_EXPIRED_MESSAGE) {
-      defaultSessionMessage = SESSION_EXPIRED_MESSAGE;
+    } else if (session.state.serverSession?.reason === 'expired') {
+      defaultSessionMessage = t('apiErrors.sessionExpired');
     } else {
-      defaultSessionMessage = t('viewer.start.serverSession.loggedOut', { reason: SIGNED_OUT_MESSAGE });
+      defaultSessionMessage = t('viewer.start.serverSession.loggedOut', { reason: t('apiErrors.signedOut') });
     }
     sessionStatus.textContent = defaultSessionMessage;
     manageAttemptsBtn.hidden = false;
@@ -7420,6 +7536,7 @@ function renderViewerStartPanel(session, options = {}) {
     attemptsSection,
     worksheetsSection,
     sessionStatus,
+    createViewerAuthFeedback(),
     packageFileInput,
     attemptPackageFileInput,
     errorMessage
@@ -7578,7 +7695,7 @@ async function bootstrapViewer() {
     window.viewerSession = session;
   };
 
-  const handlePublishedPackageOpenResult = async (publishedPackageId, result, originalError) => {
+  const handlePublishedPackageOpenResult = async (result) => {
     if (result?.ok) {
       completePublishedPackageOpen();
       return true;
@@ -7587,16 +7704,18 @@ async function bootstrapViewer() {
     const errorCode = String(result?.error?.code || '').trim().toUpperCase();
     if (errorCode === 'PUBLISHED_PACKAGE_NOT_FOUND') {
       renderViewerFatalError(new ViewerBootError(VIEWER_BOOT_ERROR_CODES.PUBLISHED_PACKAGE_NOT_FOUND, {
-        userMessage: 'The requested published package was not found.',
-        technicalMessage: result?.error?.message || `Unable to open publishedPackageId=${publishedPackageId}.`,
+        userMessage: t('apiErrors.notFound'),
+        technicalMessage: getApiErrorDiagnostic(result, { operation: 'open' }),
+        cause: result,
       }));
       return true;
     }
 
     if (!result?.error?.requiresSignIn) {
       renderViewerFatalError(new ViewerBootError(VIEWER_BOOT_ERROR_CODES.VIEWER_BOOT_FAILED, {
-        userMessage: 'The requested published package could not be opened right now.',
-        technicalMessage: result?.error?.message || originalError?.technicalMessage || `Unable to open publishedPackageId=${publishedPackageId}.`,
+        userMessage: t('apiErrors.openFailed'),
+        technicalMessage: getApiErrorDiagnostic(result, { operation: 'open' }),
+        cause: result,
       }));
       return true;
     }
@@ -7620,40 +7739,43 @@ async function bootstrapViewer() {
         const updatePanel = (statusText, inFlight = true) => {
           renderPublishedPackageAuthRecovery(error, { statusText, inFlight });
         };
-        updatePanel('Opening sign-in...', true);
+        updatePanel(t('apiErrors.popupOpening'), true);
         session.beginServerSignIn({
           onPopupBlocked: ({ finalizeFlow }) => {
             popupBlockedHandled = true;
             finalizeFlow();
-            updatePanel('Sign-in popup was blocked. Allow popups for this site, then try again.', false);
+            updatePanel(t('apiErrors.popupBlockedHelp'), false);
           },
           onStatusMessage: ({ message }) => {
-            updatePanel(message || 'Waiting for sign-in confirmation...', true);
+            updatePanel(message || t('apiErrors.popupPending'), true);
           },
-          onSessionReady: async ({ finalizeFlow }) => {
+          onSessionReady: async ({ finalizeFlow, isCurrent }) => {
             try {
               showPublishedPackageLoading(session);
-              finalizeFlow();
               const result = await session.startFromPublishedPackage(publishedPackageId);
-              const handled = await handlePublishedPackageOpenResult(publishedPackageId, result, error);
+              if (!isCurrent()) return;
+              const handled = await handlePublishedPackageOpenResult(result);
+              if (!isCurrent()) return;
               if (!handled) {
-                updatePanel('Sign-in is still required. Please try again.', false);
+                updatePanel(t('apiErrors.authRequired'), false);
               }
             } catch (retryError) {
-              renderViewerFatalError(retryError);
+              if (isCurrent()) renderViewerFatalError(retryError);
+            } finally {
+              finalizeFlow();
             }
           },
           onSessionNotReady: ({ result, finalizeFlow }) => {
             if (result?.final === false && result?.waitingForCallback === true) {
-              updatePanel('Still waiting for sign-in confirmation from the popup...', true);
+              updatePanel(t('apiErrors.popupPending'), true);
               return;
             }
             finalizeFlow();
-            updatePanel(result?.error?.message || 'Sign-in did not complete. Try again to open this worksheet.', false);
+            updatePanel(getApiErrorMessage(result, 'session'), false);
           },
         });
         if (!session._authPopupWindow && !popupBlockedHandled) {
-          updatePanel(session.state.serverActionMessage || 'Unable to open sign-in popup. Please try again.', false);
+          updatePanel(session.state.serverActionMessage || t('apiErrors.popupOpenFailed'), false);
         }
       },
       onGoToStart: async () => {
@@ -7699,22 +7821,22 @@ async function bootstrapViewer() {
 
     const renderCallbackPanel = (overrideMessage = '') => {
       const fallbackStatusMessage = callbackState.inFlight
-        ? 'Checking sign-in status and restoring your previous action…'
+        ? t('apiErrors.recoveryChecking')
         : callbackState.lastStatus === 'replayed'
-          ? 'Session recovered successfully.'
+          ? t('apiErrors.recoverySuccess')
           : callbackState.lastStatus === 'not_authenticated'
-            ? 'Sign-in is still pending. You can continue sign-in or retry.'
+            ? t('apiErrors.recoveryPending')
             : callbackState.lastStatus === 'blocked_session_probe'
-              ? 'Temporary session-check issue. We will retry automatically.'
-              : 'Waiting to recover your previous protected action.';
+              ? t('apiErrors.recoveryRetrying')
+              : t('apiErrors.recoveryWaiting');
       const progressText = callbackState.timedOut
-        ? `Automatic retries paused after ${Math.round(AUTH_CALLBACK_RETRY_BUDGET_MS / 1000)} seconds.`
+        ? t('apiErrors.recoveryPaused', { seconds: Math.round(AUTH_CALLBACK_RETRY_BUDGET_MS / 1000) })
         : callbackState.signInPopupInFlight
-          ? 'Waiting for sign-in confirmation from popup…'
+          ? t('apiErrors.popupPending')
         : callbackState.inFlight
-          ? 'Recovery attempt in progress…'
+          ? t('apiErrors.recoveryInProgress')
           : callbackState.nextRetryDelayMs > 0
-            ? `Next automatic retry in ${Math.max(1, Math.ceil(callbackState.nextRetryDelayMs / 1000))} seconds.`
+            ? t('apiErrors.recoveryNextRetry', { seconds: Math.max(1, Math.ceil(callbackState.nextRetryDelayMs / 1000)) })
             : '';
       renderViewerAuthCallbackPanel(session, {
         statusText: fallbackStatusMessage,
@@ -7736,12 +7858,12 @@ async function bootstrapViewer() {
           callbackState.timedOut = false;
           callbackState.nextRetryDelayMs = 0;
           callbackState.signInPopupInFlight = true;
-          callbackState.lastMessage = 'Opening sign-in popup…';
+          callbackState.lastMessage = t('apiErrors.popupOpening');
           renderCallbackPanel();
           session.beginServerSignIn({
             onPopupBlocked: () => {
               callbackState.signInPopupInFlight = false;
-              callbackState.lastMessage = 'Sign-in popup was blocked. Allow popups for this site, then try again.';
+              callbackState.lastMessage = t('apiErrors.popupBlockedHelp');
               renderCallbackPanel();
             },
             onStatusMessage: ({ message }) => {
@@ -7753,19 +7875,19 @@ async function bootstrapViewer() {
               callbackState.timedOut = false;
               callbackState.startedAtMs = Date.now();
               callbackState.attemptCount = 0;
-              callbackState.lastMessage = 'Sign-in completed. Retrying recovery…';
+              callbackState.lastMessage = t('apiErrors.recoveryAfterSignIn');
               renderCallbackPanel();
               finalizeFlow();
               await attemptRecovery({ manual: true });
             },
             onSessionNotReady: ({ result, finalizeFlow }) => {
               if (result?.final === false && result?.waitingForCallback === true) {
-                callbackState.lastMessage = 'Still waiting for sign-in confirmation from the popup…';
+                callbackState.lastMessage = t('apiErrors.popupPending');
                 renderCallbackPanel();
                 return;
               }
               callbackState.signInPopupInFlight = false;
-              callbackState.lastMessage = result?.error?.message || 'Sign-in did not complete. Retry to continue.';
+              callbackState.lastMessage = getApiErrorMessage(result, 'session');
               finalizeFlow();
               renderCallbackPanel();
             },
@@ -7773,7 +7895,7 @@ async function bootstrapViewer() {
           if (!session._authPopupWindow) {
             callbackState.signInPopupInFlight = false;
             if (!callbackState.lastMessage) {
-              callbackState.lastMessage = 'Unable to open sign-in popup. Please retry or cancel recovery.';
+              callbackState.lastMessage = t('apiErrors.popupOpenFailed');
             }
             renderCallbackPanel();
           }
@@ -7787,7 +7909,7 @@ async function bootstrapViewer() {
           callbackState.stopped = true;
           authGate.clearPending();
           cleanupViewerAuthCallbackUrlParams();
-          session.setRecoveryMessage('Sign-in recovery was cancelled. You can resume manually from start.');
+          session.setRecoveryMessage(t('apiErrors.recoveryCanceled'));
           await renderStartPanelFromResumeFlag(session.state.recoveryMessage);
         },
       });
@@ -7823,7 +7945,7 @@ async function bootstrapViewer() {
           if (elapsedMs >= AUTH_CALLBACK_RETRY_BUDGET_MS) {
             callbackState.timedOut = true;
             callbackState.lastMessage = session.state.recoveryMessage
-              || 'Automatic retries timed out. You can retry now or continue sign-in.';
+              || t('apiErrors.recoveryTimedOut');
             return;
           }
           callbackState.timedOut = false;
