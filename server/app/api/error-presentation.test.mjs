@@ -142,3 +142,13 @@ for (const code of ['INVALID_ROLEPLAYSCENE_PACKAGE_ZIP', 'INVALID_ROLEPLAYSCENE_
     }
   });
 }
+
+test('uncertain deletion guidance is localized and does not promise safe automatic retry',()=>{
+  for(const locale of ['en','zh-Hant']) {
+    setLocale(locale,{persist:false});
+    const message=getApiErrorMessage({ok:false,error:{code:'DELETE_OUTCOME_UNCERTAIN',message:'raw secret'}},'delete');
+    assert.equal(message,(locale==='en'?en:zh).apiErrors.deleteUncertain);
+    assert.ok(!message.includes('raw secret'));
+  }
+  setLocale('en',{persist:false});
+});

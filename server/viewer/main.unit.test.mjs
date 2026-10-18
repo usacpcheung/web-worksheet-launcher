@@ -225,7 +225,7 @@ async function loadViewerModule(overrides = {}) {
     window: overrides.window || {},
   };
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
     {
       name: 'replace viewerStorage import with test bag binding',
       pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];/,
@@ -6957,7 +6957,7 @@ test('deletion lock releases after an unexpected request exception', async () =>
   session.notifyStateChange = () => {};
   session.ensureServerSessionReady = async () => ({ok:true});
   session.apiClient = { deleteUploadedAttempt: async () => {throw Error('fixture');} };
-  await assert.rejects(session.deleteUploadedAttemptAndRefresh('same-id'), /fixture/);
+  assert.equal((await session.deleteUploadedAttemptAndRefresh('same-id')).deletionStatus, 'uncertain');
   assert.equal(session._deletingUploadedAttemptIds.size,0);
 });
 
@@ -6981,4 +6981,19 @@ test('overlapping attempt lists return superseded outcomes and accepted rows bel
     session.state.uploadedAttempts=[];
     assert.equal(accepted.uploadedAttempts[0].title,'New');
   }
+});
+
+test('attempt deletion reserves confirmation and keeps success after refresh exception',async()=>{
+  const mod=await loadViewerModule();
+  const session=new mod.ViewerAttemptSession();
+  let confirm,calls=0;
+  session.apiClient={deleteUploadedAttempt:async()=>{calls++;return {ok:true};}};
+  session.listUploadedAttempts=async()=>{throw Error('list transport');};
+  const pending=session.deleteUploadedAttemptAndRefresh('one',{confirm:()=>new Promise(resolve=>{confirm=resolve;})});
+  assert.equal((await session.deleteUploadedAttemptAndRefresh('one')).deletionStatus,'busy');
+  assert.equal(calls,0); confirm(true);
+  const result=await pending;
+  assert.equal(result.deletionStatus,'confirmed');assert.equal(result.refreshStatus,'failed');assert.equal(calls,1);
+  assert.equal(session._deletingUploadedAttemptIds.size,0);
+  assert.equal(session.state.uploadedAttemptActionInFlightById.one,undefined);
 });

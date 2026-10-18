@@ -1,3 +1,4 @@
+import { runDeletionFlow } from '../../app/api/deletion-flow.js';
 import { runUploadRecoveryFlow } from '../../app/api/upload-recovery-flow.js';
 import { getApiErrorMessage } from '../../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../../app/api/upload-operation-lifecycle.js';
@@ -17,7 +18,7 @@ const extract = (start, end) => source.slice(source.indexOf(start), source.index
 test('manager refresh cannot reopen closed recovery or replace a newer modal', async () => {
   for (const state of ['closed', 'replaced', 'current']) {
     const response = deferred();
-    const c = vm.createContext({ serverModalRevision: 0,
+    const c = vm.createContext({ runDeletionFlow, deletingDraftIds: new Set(), deletingPublishedSceneIds: new Set(), store: { projectGeneration: 0 }, t: key => key, serverModalRevision: 0,
       uploadedDrafts: [], uploadedDraftSlotLimit: 3, openingUploadedDraft: null,
       activeServerModal: null, translate: key => key,
       loadUploadedRolePlaySceneDrafts: () => response.promise,
@@ -88,7 +89,7 @@ test('real slot recovery settles cancellation/failure and retries only after suc
 function harness() {
   const calls = [], preflight = deferred(), archive = deferred();
   let project = createProject({ meta: { title: 'A' } });
-  const context = vm.createContext({ runUploadRecoveryFlow, getApiErrorMessage, classifyUploadResult, staleUploadResult, canceledUploadResult, uploadOperations: new UploadOperationSlot(), AbortController, uploadController: null, serverModalRevision: 0,
+  const context = vm.createContext({ runDeletionFlow, deletingDraftIds: new Set(), deletingPublishedSceneIds: new Set(), t: key => key, runUploadRecoveryFlow, getApiErrorMessage, classifyUploadResult, staleUploadResult, canceledUploadResult, uploadOperations: new UploadOperationSlot(), AbortController, uploadController: null, serverModalRevision: 0,
     console, serializeProject, isUploadingDraft: false, openingUploadedDraft: null,
     store: { get: () => ({ project }) },
     ensureServerSessionReady: () => preflight.promise,

@@ -1,3 +1,4 @@
+import { runDeletionFlow } from '../app/api/deletion-flow.js';
 import { runUploadRecoveryFlow } from '../app/api/upload-recovery-flow.js';
 import { getApiErrorMessage } from '../app/api/error-presentation.js';
 import { UploadOperationSlot, canceledUploadResult } from '../app/api/upload-operation-lifecycle.js';
@@ -4111,56 +4112,42 @@ class EditorDraftSession {
     }
   }
 
-  async deleteUploadedDraft(uploadedDraftId, { isCurrent = () => true } = {}) {
-    if (!uploadedDraftId || !isCurrent()) return { ok: false, skipped: true };
+  async deleteUploadedDraft(uploadedDraftId, { isCurrent = () => true, confirm } = {}) {
+    if (!uploadedDraftId) return { ok: false, skipped: true };
     this._deletingUploadedDraftIds ??= new Set();
-    if (this._deletingUploadedDraftIds.has(uploadedDraftId)) return { ok: false, skipped: true, status: 'delete_in_progress' };
-    this._deletingUploadedDraftIds.add(uploadedDraftId);
-    try {
-      const sessionReady = await this.ensureServerSessionReady();
-      if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_delete' };
-      if (!sessionReady.ok) return sessionReady.result;
-      const result = await this.apiClient.deleteUploadedDraft(uploadedDraftId);
-      if (!isCurrent()) return result;
-      if (!result.ok) {
-        this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.delete', text: getApiErrorMessage(result, 'delete') });
-        this.notifyStateChange();
-        return result;
-      }
-      const successMessage = editorNotification('uploadDraft.uploadedDraftDeleted');
-      this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete', text: successMessage });
-      const refreshResult = await this.loadUploadedDrafts({ preflight: false, force: true, isCurrent });
-      if (!isCurrent()) return { ...result, refreshResult };
-      if (refreshResult && refreshResult.ok) {
-        this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete.refresh', text: editorNotification('uploadDraft.listRefreshed') });
-      } else if (refreshResult && !refreshResult.ok && refreshResult.status !== 'superseded') {
-        const refreshMessage = getApiErrorMessage(refreshResult, 'list');
-        this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDraft.delete.refresh', text: refreshMessage });
-      }
-      this.notifyStateChange();
-      return {
-        ...result,
-        refreshResult,
-      };
-    } finally {
-      this._deletingUploadedDraftIds.delete(uploadedDraftId);
+    const result = await runDeletionFlow({
+      pending: this._deletingUploadedDraftIds, key: uploadedDraftId, isCurrent, confirm,
+      preflight: () => this.ensureServerSessionReady(undefined, { isCurrent }),
+      remove: () => this.apiClient.deleteUploadedDraft(uploadedDraftId),
+      refresh: () => this.loadUploadedDrafts({ preflight: false, force: true, isCurrent }),
+    });
+    if (!isCurrent() || result.skipped || (result.deletionStatus === 'preflight_failed' && !result.cause)) return result;
+    this.pushNotification({ kind: result.ok ? 'success' : 'error', category: 'server', source: 'uploadedDraft.delete',
+      text: result.ok ? editorNotification('uploadDraft.uploadedDraftDeleted') : getApiErrorMessage(result, 'delete') });
+    if (result.refreshStatus === 'succeeded') {
+      this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete.refresh', text: editorNotification('uploadDraft.listRefreshed') });
+    } else if (result.refreshStatus === 'failed') {
+      this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDraft.delete.refresh', text: t('apiErrors.deleteRefreshFailed') });
     }
+    this.notifyStateChange();
+    return result;
   }
 
-  async deletePublishedPackage(publishedPackageId) {
-    const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
-    if (!normalizedPublishedPackageId) {
-      return { ok: false, error: { message: editorNotification('publishedPackage.idRequired') } };
+  async deletePublishedPackage(publishedPackageId, { confirm, isCurrent = () => true, refresh } = {}) {
+    const id = String(publishedPackageId || '').trim();
+    if (!id) return { ok: false, error: { message: editorNotification('publishedPackage.idRequired') } };
+    this._deletingPublishedPackageIds ??= new Set();
+    const result = await runDeletionFlow({
+      pending: this._deletingPublishedPackageIds, key: id, confirm, isCurrent, refresh,
+      preflight: () => this.ensureServerSessionReady(undefined, { isCurrent }),
+      remove: () => this.apiClient.deletePublishedPackage(id),
+    });
+    if (!isCurrent() || result.skipped || (result.deletionStatus === 'preflight_failed' && !result.cause)) return result;
+    this.pushNotification({ kind: result.ok ? 'success' : 'error', category: 'server', source: 'publishedPackage.delete',
+      text: result.ok ? editorNotification('publishedPackage.deleted') : getApiErrorMessage(result, 'delete') });
+    if (result.refreshStatus === 'failed') {
+      this.pushNotification({ kind: 'warn', category: 'server', source: 'publishedPackage.delete.refresh', text: t('apiErrors.deleteRefreshFailed') });
     }
-    const sessionReady = await this.ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-    const result = await this.apiClient.deletePublishedPackage(normalizedPublishedPackageId);
-    if (!result.ok) {
-      this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.delete', text: getApiErrorMessage(result, 'delete') });
-      this.notifyStateChange();
-      return result;
-    }
-    this.pushNotification({ kind: 'success', category: 'server', source: 'publishedPackage.delete', text: editorNotification('publishedPackage.deleted') });
     this.notifyStateChange();
     return result;
   }
@@ -5575,7 +5562,7 @@ function renderEditorShell(session) {
           if (deleting || !isCurrent()) return;
           setDeleting(true);
           try {
-            const confirmed = await showConfirmDialog({
+            const result = await session.deleteUploadedDraft(item.uploaded_draft_id, { isCurrent, confirm: () => showConfirmDialog({
               title: t('editor.uploadedDraft.deleteDialog.title'),
               entityLabel: item.title || t('common.values.untitled'),
               descriptionText: item.published_package_id
@@ -5583,9 +5570,7 @@ function renderEditorShell(session) {
                 : t('editor.uploadedDraft.deleteDialog.draftDescription'),
               removalItems: [t('editor.uploadedDraft.deleteDialog.removeArtifact'), t('editor.uploadedDraft.deleteDialog.removeMetadata')],
               confirmLabel: t('editor.uploadedDraft.deleteDialog.confirm'),
-            });
-            if (!confirmed || !isCurrent()) return;
-            const result = await session.deleteUploadedDraft(item.uploaded_draft_id, { isCurrent });
+            }) });
             if (isCurrent() && result?.ok) finish(true);
           } finally {
             if (!settled) setDeleting(false);
@@ -5612,8 +5597,18 @@ function renderEditorShell(session) {
   }
 
   async function runPublishedSearch(options = {}) {
+    const request = ++publishedSearchRequest;
+    const isCurrent = () => request === publishedSearchRequest && (options.isCurrent?.() ?? true);
+    if (!isCurrent()) {
+      if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
+      return { ok: false, status: 'superseded' };
+    }
     const append = options.append === true;
-    const sessionReady = await session.ensureServerSessionReady();
+    const sessionReady = await session.ensureServerSessionReady(undefined, { isCurrent });
+    if (!isCurrent()) {
+      if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
+      return { ok: false, status: 'superseded' };
+    }
     if (!sessionReady.ok) {
       const notReadyMessage = session.state.serverActionMessage || t('apiErrors.authRequired');
       browsePublishedState = {
@@ -5630,7 +5625,7 @@ function renderEditorShell(session) {
         text: notReadyMessage,
       });
       renderPublishedBrowserModal();
-      return;
+      return sessionReady.result;
     }
     browsePublishedState = {
       ...browsePublishedState,
@@ -5638,15 +5633,24 @@ function renderEditorShell(session) {
       error: null,
     };
     renderPublishedBrowserModal();
-    const result = await session.apiClient.listPublishedPackages({
-      title: browsePublishedState.title,
-      subject: browsePublishedState.subject,
-      owner: browsePublishedState.owner,
-      limit: 20,
-      offset: append && Number.isFinite(Number(browsePublishedState.nextOffset))
-        ? Number(browsePublishedState.nextOffset)
-        : 0,
-    });
+    let result;
+    try {
+      result = await session.apiClient.listPublishedPackages({
+        title: browsePublishedState.title,
+        subject: browsePublishedState.subject,
+        owner: browsePublishedState.owner,
+        limit: 20,
+        offset: append && Number.isFinite(Number(browsePublishedState.nextOffset))
+          ? Number(browsePublishedState.nextOffset)
+          : 0,
+      });
+    } catch (error) {
+      result = { ok: false, error: { code: 'NETWORK_ERROR' }, cause: error };
+    }
+    if (!isCurrent()) {
+      if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
+      return { ok: false, status: 'superseded' };
+    }
     if (!result.ok) {
       browsePublishedState = {
         ...browsePublishedState,
@@ -5661,7 +5665,7 @@ function renderEditorShell(session) {
         text: getApiErrorMessage(result, 'list'),
       });
       renderPublishedBrowserModal();
-      return;
+      return result;
     }
     const resultItems = Array.isArray(result.data?.items) ? result.data.items : [];
     browsePublishedState = {
@@ -5680,6 +5684,7 @@ function renderEditorShell(session) {
         : editorNotification('browsePublished.foundCount', { count: resultItems.length }),
     });
     renderPublishedBrowserModal();
+    return result;
   }
 
   function renderPublishedBrowserModal() {
@@ -5796,6 +5801,7 @@ function renderEditorShell(session) {
               text: editorNotification('browsePublished.openedPublishedPackageInEditor', { id: item.published_package_id }),
             });
             browsePublishedDialogOpen = false;
+            browsePublishedDialogRevision++;
           } else if (reopenResult?.canceled) {
             browsePublishedState = {
               ...browsePublishedState,
@@ -5826,18 +5832,19 @@ function renderEditorShell(session) {
           deletePublishedBtn.className = 'uploaded-draft-action uploaded-draft-action--danger published-result-action';
           deletePublishedBtn.textContent = t('common.actions.delete');
           deletePublishedBtn.addEventListener('click', async () => {
-            const confirmed = await showConfirmDialog({
-              title: 'Delete published package?',
-              entityLabel: item.title || 'Untitled',
-              descriptionText: 'This deletes the published package. Existing viewer links for this package will stop working.',
-              removalItems: ['Published package ZIP artifact', 'Published package metadata'],
-              confirmLabel: 'Delete package',
+            const generation = session._audioDraftGeneration;
+            const revision = browsePublishedDialogRevision;
+            const isCurrent = () => browsePublishedDialogOpen && revision === browsePublishedDialogRevision && generation === session._audioDraftGeneration;
+            await session.deletePublishedPackage(item.published_package_id, {
+              isCurrent, refresh: () => runPublishedSearch({ isCurrent }),
+              confirm: () => showConfirmDialog({
+                title: 'Delete published package?',
+                entityLabel: item.title || 'Untitled',
+                descriptionText: 'This deletes the published package. Existing viewer links for this package will stop working.',
+                removalItems: ['Published package ZIP artifact', 'Published package metadata'],
+                confirmLabel: 'Delete package',
+              }),
             });
-            if (!confirmed) return;
-            const result = await session.deletePublishedPackage(item.published_package_id);
-            if (result?.ok) {
-              await runPublishedSearch();
-            }
           });
           actionRow.appendChild(deletePublishedBtn);
         }
@@ -5890,6 +5897,7 @@ function renderEditorShell(session) {
     });
     closeBtn.addEventListener('click', () => {
       browsePublishedDialogOpen = false;
+      browsePublishedDialogRevision++;
       renderPublishedBrowserModal();
     });
   }
@@ -5979,8 +5987,11 @@ function renderEditorShell(session) {
     nextOffset: null,
     error: null,
   };
+  let publishedSearchRequest = 0;
   let browsePublishedDialogOpen = false;
+  let browsePublishedDialogRevision = 0;
   let manageUploadedDraftsDialogOpen = false;
+  let manageUploadedDraftsDialogRevision = 0;
   let detailSignature = null;
   let optionActionSignature = null;
   let visibleActivityCount = ACTIVITY_VISIBLE_INITIAL;
@@ -7894,6 +7905,7 @@ function renderEditorShell(session) {
         }
         if (result?.ok) {
           manageUploadedDraftsDialogOpen = false;
+          manageUploadedDraftsDialogRevision++;
           renderManageUploadedDraftsModal();
         }
         updateSummary();
@@ -7960,19 +7972,18 @@ function renderEditorShell(session) {
       deleteBtn.textContent = t('common.actions.delete');
       deleteBtn.disabled = !serverReady;
       deleteBtn.addEventListener('click', async () => {
-        await guardServerMenuAction(deleteBtn, async () => {
-          const confirmed = await showConfirmDialog({
-            title: t('editor.uploadedDraft.deleteDialog.title'),
-            entityLabel: isNonEmptyString(item.title) ? item.title.trim() : t('common.values.untitled'),
-            descriptionText: publishedPackageId
-              ? t('editor.uploadedDraft.deleteDialog.publishedDescription')
-              : t('editor.uploadedDraft.deleteDialog.draftDescription'),
-            removalItems: [t('editor.uploadedDraft.deleteDialog.removeArtifact'), t('editor.uploadedDraft.deleteDialog.removeMetadata')],
-            confirmLabel: t('editor.uploadedDraft.deleteDialog.confirm'),
-          });
-          if (!confirmed) return null;
-          return session.deleteUploadedDraft(item.uploaded_draft_id);
-        });
+        const generation = session._audioDraftGeneration;
+        const revision = manageUploadedDraftsDialogRevision;
+        const isCurrent = () => manageUploadedDraftsDialogOpen && revision === manageUploadedDraftsDialogRevision && generation === session._audioDraftGeneration;
+        await session.deleteUploadedDraft(item.uploaded_draft_id, { isCurrent, confirm: () => showConfirmDialog({
+          title: t('editor.uploadedDraft.deleteDialog.title'),
+          entityLabel: isNonEmptyString(item.title) ? item.title.trim() : t('common.values.untitled'),
+          descriptionText: publishedPackageId
+            ? t('editor.uploadedDraft.deleteDialog.publishedDescription')
+            : t('editor.uploadedDraft.deleteDialog.draftDescription'),
+          removalItems: [t('editor.uploadedDraft.deleteDialog.removeArtifact'), t('editor.uploadedDraft.deleteDialog.removeMetadata')],
+          confirmLabel: t('editor.uploadedDraft.deleteDialog.confirm'),
+        }) });
         updateSummary();
       });
       actions.appendChild(deleteBtn);
@@ -8019,6 +8030,7 @@ function renderEditorShell(session) {
     closeBtn.textContent = t('common.actions.close');
     closeBtn.addEventListener('click', () => {
       manageUploadedDraftsDialogOpen = false;
+      manageUploadedDraftsDialogRevision++;
       renderManageUploadedDraftsModal();
     });
     actions.append(refreshBtn, closeBtn);
@@ -8587,6 +8599,7 @@ function renderEditorShell(session) {
   browsePublishedBtn.addEventListener('click', async () => {
     await guardServerMenuAction(browsePublishedBtn, async () => {
       browsePublishedDialogOpen = true;
+      browsePublishedDialogRevision++;
       renderPublishedBrowserModal();
       await runPublishedSearch();
     });
@@ -8598,6 +8611,7 @@ function renderEditorShell(session) {
   manageUploadedDraftsBtn.addEventListener('click', async () => {
     await guardServerMenuAction(manageUploadedDraftsBtn, async () => {
       manageUploadedDraftsDialogOpen = true;
+      manageUploadedDraftsDialogRevision++;
       renderManageUploadedDraftsModal();
       await session.loadUploadedDrafts({ preflight: false });
       renderManageUploadedDraftsModal();

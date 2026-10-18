@@ -2,6 +2,8 @@ import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
   apiErrors: {
+    deleteUncertain: "無法確認刪除結果，項目可能已被刪除。請先重新整理清單確認，再決定是否重試。",
+    deleteRefreshFailed: "項目已刪除，但無法更新清單。請重新整理清單以查看最新內容。",
     recoveryTimedOut: "自動重試已逾時。你可以立即重試或繼續登入。",
     downloadTimeout: "下載已停頓。請檢查連線，然後再次開啟工作紙。",
     sessionExpired: "登入已逾時。請重新登入。",

@@ -1,3 +1,5 @@
+import { runDeletionFlow } from '../../app/api/deletion-flow.js';
+import { t } from '../../app/i18n/index.js';
 import { runUploadRecoveryFlow } from '../../app/api/upload-recovery-flow.js';
 import { getApiErrorMessage } from '../../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../../app/api/upload-operation-lifecycle.js';
@@ -120,6 +122,8 @@ let isUploadingDraft = false;
 let uploadController = null;
 const uploadOperations = new UploadOperationSlot();
 const publishingDraftIds = new Set();
+const deletingDraftIds = new Set();
+const deletingPublishedSceneIds = new Set();
 let isPublishingDraftFlow = false;
 let openingUploadedDraft = null;
 let publishedScenes = [];
@@ -1294,8 +1298,9 @@ async function probeServerSessionSilently({ force = false, timeoutMs = 15000 } =
   return result;
 }
 
-async function ensureServerSessionReady() {
+async function ensureServerSessionReady({ isCurrent = () => true } = {}) {
   const result = await probeServerSessionSilently({ force: true });
+  if (!isCurrent()) return { ok: false, result: { ok: false, skipped: true, status: 'superseded' } };
   if (result.ok && result.status === 'ready') {
     return { ok: true, result };
   }
@@ -2463,18 +2468,28 @@ async function deletePublishedRolePlayScene(scene) {
   if (openingUploadedDraft) return;
   const sceneId = getRolePlayScenePublishedSceneId(scene);
   if (!sceneId) return;
-  const choice = await showDeletePublishedSceneConfirmation(scene);
-  if (choice !== 'delete') return;
-  const deletionModalRevision = serverModalRevision;
-  const sessionReady = await ensureServerSessionReady();
-  if (!sessionReady.ok) return;
-  const result = await apiClient.deleteRolePlayScenePublishedScene(sceneId);
-  if (!result.ok) {
-    showMessage({ text: getServerErrorMessage(result, 'published.deleteFailed') });
-    return;
+  const generation = store.projectGeneration;
+  let revision = null;
+  const isCurrent = () => !openingUploadedDraft && generation === store.projectGeneration
+    && (revision === null || revision === serverModalRevision);
+  const result = await runDeletionFlow({
+    pending: deletingPublishedSceneIds, key: sceneId, isCurrent,
+    confirm: async () => {
+      const choice = await showDeletePublishedSceneConfirmation(scene);
+      revision = serverModalRevision;
+      return choice === 'delete';
+    },
+    preflight: () => ensureServerSessionReady({ isCurrent }),
+    remove: () => apiClient.deleteRolePlayScenePublishedScene(sceneId),
+    refresh: () => loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: false }),
+  });
+  if (!isCurrent() || result.skipped || (result.deletionStatus === 'preflight_failed' && !result.cause)) return result;
+  if (!result.ok) showMessage({ text: getServerErrorMessage(result, 'published.deleteFailed') });
+  else {
+    showMessage(result.refreshStatus === 'failed' ? { text: t('apiErrors.deleteRefreshFailed') } : { textId: 'published.deleted' });
+    if (result.refreshStatus === 'succeeded') renderPublishedBrowserModal();
   }
-  showMessage({ textId: 'published.deleted' });
-  await loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: deletionModalRevision === serverModalRevision });
+  return result;
 }
 
 function showSlotLimitRecoveryModal({ drafts = uploadedDrafts, slotLimit = uploadedDraftSlotLimit } = {}) {
@@ -2838,36 +2853,36 @@ async function downloadUploadedRolePlaySceneDraft(draft) {
 async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null, onDeleteCanceled = null } = {}) {
   const uploadedDraftId = getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId || openingUploadedDraft) return;
-  let deleted = false;
-  try {
-    const choice = await showDeleteDraftConfirmation(draft, {
-      replacementReason: onDeleteCanceled ? 'slot-recovery-delete-confirm' : 'replace',
-    });
-    if (choice !== 'delete') return;
-    const deletionModalRevision = serverModalRevision;
-    const sessionReady = await ensureServerSessionReady();
-    if (!sessionReady.ok) return;
-    const result = await apiClient.deleteRolePlaySceneDraft(uploadedDraftId);
-    if (!result.ok) {
+  const generation = store.projectGeneration;
+  let revision = null;
+  const isCurrent = () => !openingUploadedDraft && generation === store.projectGeneration
+    && (revision === null || revision === serverModalRevision);
+  const result = await runDeletionFlow({
+    pending: deletingDraftIds, key: uploadedDraftId, isCurrent,
+    confirm: async () => {
+      const choice = await showDeleteDraftConfirmation(draft, {
+        replacementReason: onDeleteCanceled ? 'slot-recovery-delete-confirm' : 'replace',
+      });
+      revision = serverModalRevision;
+      return choice === 'delete';
+    },
+    preflight: () => ensureServerSessionReady({ isCurrent }),
+    remove: () => apiClient.deleteRolePlaySceneDraft(uploadedDraftId),
+    refresh: onDraftDeleted ? null : () => loadUploadedRolePlaySceneDrafts({ preflight: false }),
+  });
+  // A duplicate click must not settle the original recovery's decision.
+  if (result.deletionStatus === 'busy') return result;
+  if (!isCurrent() || !result.ok) {
+    if (isCurrent() && !result.skipped && (result.deletionStatus !== 'preflight_failed' || result.cause)) {
       showMessage({ text: getServerErrorMessage(result, 'server.deleteFailed') });
-      return;
     }
-    deleted = true;
-    showMessage({ textId: 'server.deletedDraft' });
-    if (typeof onDraftDeleted === 'function') {
-      if (deletionModalRevision === serverModalRevision) onDraftDeleted(result);
-      else onDeleteCanceled?.();
-      return result;
-    }
-    const refreshResult = await loadUploadedRolePlaySceneDrafts({ preflight: false });
-    if (refreshResult?.ok && deletionModalRevision === serverModalRevision) {
-      renderUploadedDraftManager();
-    }
-  } catch (error) {
-    showMessage({ text: getApiErrorMessage(error, 'delete') });
-  } finally {
-    if (!deleted) onDeleteCanceled?.();
+    onDeleteCanceled?.();
+    return result;
   }
+  showMessage(result.refreshStatus === 'failed' ? { text: t('apiErrors.deleteRefreshFailed') } : { textId: 'server.deletedDraft' });
+  if (onDraftDeleted) onDraftDeleted(result);
+  else if (result.refreshStatus === 'succeeded') renderUploadedDraftManager();
+  return result;
 }
 
 if (importConfirmAccept) {

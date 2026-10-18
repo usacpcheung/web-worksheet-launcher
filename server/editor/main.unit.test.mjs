@@ -142,7 +142,7 @@ async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
@@ -5028,7 +5028,7 @@ test('deleteUploadedDraft preserves success message when refresh fails', async (
 
   assert.equal(result.ok, true);
   assert.equal(result.refreshResult.ok, false);
-  assert.equal(session.state.serverActionMessage, getApiErrorMessage({}, 'list'));
+  assert.equal(session.state.serverActionMessage, 'apiErrors.deleteRefreshFailed');
   assert.equal(
     session.state.notifications.some((item) => item.text === 'editor.notifications.uploadDraft.uploadedDraftDeleted'),
     true
@@ -5047,7 +5047,7 @@ test('deleteUploadedDraft preserves success message when refresh fails', async (
       source: 'uploadedDraft.delete.refresh',
       kind: 'warn',
       category: 'server',
-      text: getApiErrorMessage({}, 'list'),
+      text: 'apiErrors.deleteRefreshFailed',
     },
   ]);
 });
@@ -6069,7 +6069,7 @@ test('deletion lock releases after an unexpected request exception', async () =>
   session.notifyStateChange = () => {};
   session.ensureServerSessionReady = async () => ({ok:true});
   session.apiClient = { deleteUploadedDraft: async () => {throw Error('fixture');} };
-  await assert.rejects(session.deleteUploadedDraft('same-id'), /fixture/);
+  assert.equal((await session.deleteUploadedDraft('same-id')).deletionStatus, 'uncertain');
   assert.equal(session._deletingUploadedDraftIds.size,0);
 });
 
@@ -6142,3 +6142,21 @@ test('superseded preflight does not start a late list request', async () => {
   assert.equal((await old).status,'superseded');
   assert.equal(calls,1);
 });
+
+for (const published of [false,true]) {
+  test(`editor ${published?'publication':'draft'} deletion reserves confirmation and preserves success after refresh exception`, async () => {
+    const mod=await loadEditorModule(); const session=new mod.EditorDraftSession(createSessionForTests());
+    let confirm, calls=0;
+    session.ensureServerSessionReady=async()=>({ok:true});
+    session.apiClient={deleteUploadedDraft:async()=>{calls++;return {ok:true};},deletePublishedPackage:async()=>{calls++;return {ok:true};}};
+    const refresh=async()=>{throw Error('list transport');};session.loadUploadedDrafts=refresh;
+    const method=published?'deletePublishedPackage':'deleteUploadedDraft';
+    const pending=session[method]('one',{confirm:()=>new Promise(resolve=>{confirm=resolve;}),refresh});
+    assert.equal((await session[method]('one')).deletionStatus,'busy');
+    assert.equal(calls,0);confirm(true);
+    const result=await pending;
+    assert.equal(result.deletionStatus,'confirmed');assert.equal(result.refreshStatus,'failed');assert.equal(calls,1);
+    assert.ok(session.state.notifications.some(n=>n.kind==='success'));
+    assert.ok(session.state.notifications.some(n=>n.text==='apiErrors.deleteRefreshFailed'));
+  });
+}
