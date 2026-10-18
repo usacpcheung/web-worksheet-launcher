@@ -2463,6 +2463,7 @@ class ViewerAttemptSession {
       authFeedback: null,
       isUploadingAttemptPackage: false,
       isUploadAttemptFlowActive: false,
+      isLoadingUploadRecoveryList: false,
       uploadAttemptProgress: null,
       uploadAttemptConflictContext: null,
       uploadAttemptRecoveryHint: null,
@@ -3942,7 +3943,7 @@ class ViewerAttemptSession {
     this.notifyStateChange();
   }
 
-  async listUploadedAttempts({ isCurrent = () => true } = {}) {
+  async listUploadedAttempts({ isCurrent = () => true, signal = null } = {}) {
     if (!isCurrent()) return { ok: false, status: 'superseded' };
     const requestToken = {};
     this._uploadedAttemptsRequest = requestToken;
@@ -3958,8 +3959,8 @@ class ViewerAttemptSession {
     this.state.uploadedAttemptsError = null;
     this.notifyStateChange();
     try {
-      const result = await this.apiClient.listUploadedAttempts();
-      if (!isCurrent() || !ownsRequest()) return result;
+      const result = await this.apiClient.listUploadedAttempts({ signal });
+      if (!isCurrent() || !ownsRequest()) return { ok: false, skipped: true, status: 'superseded' };
       if (!result?.ok) {
         this.state.uploadedAttemptsError = getApiErrorMessage(result, 'list');
         return result;
@@ -3976,8 +3977,9 @@ class ViewerAttemptSession {
       if (Number.isFinite(limit) && limit > 0) {
         this.state.uploadedAttemptSlotLimit = limit;
       }
-      return result;
+      return { ...result, uploadedAttempts: rows };
     } catch (error) {
+      if (!isCurrent() || !ownsRequest()) return { ok: false, skipped: true, status: 'superseded' };
       const message = getApiErrorMessage(error, 'list');
       if (isCurrent() && ownsRequest()) this.state.uploadedAttemptsError = message;
       return { ok: false, error: { code: 'NETWORK_ERROR', message } };
@@ -3989,8 +3991,12 @@ class ViewerAttemptSession {
     }
   }
 
-  async deleteUploadedAttemptAndRefresh(uploadedAttemptId) {
+  async deleteUploadedAttemptAndRefresh(uploadedAttemptId, { isCurrent = () => true } = {}) {
     if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
+    if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_delete' };
+    this._deletingUploadedAttemptIds ??= new Set();
+    if (this._deletingUploadedAttemptIds.has(uploadedAttemptId)) return { ok: false, skipped: true, status: 'delete_in_progress' };
+    this._deletingUploadedAttemptIds.add(uploadedAttemptId);
     this.state.uploadedAttemptActionInFlightById = {
       ...this.state.uploadedAttemptActionInFlightById,
       [uploadedAttemptId]: 'delete',
@@ -3998,6 +4004,7 @@ class ViewerAttemptSession {
     this.notifyStateChange();
     try {
       const result = await this.apiClient.deleteUploadedAttempt(uploadedAttemptId);
+      if (!isCurrent()) return result;
       if (!result?.ok) {
         this.state.serverActionMessage = getApiErrorMessage(result, 'delete');
         this.pushNotification({
@@ -4007,7 +4014,8 @@ class ViewerAttemptSession {
         });
         return result;
       }
-      await this.listUploadedAttempts();
+      await this.listUploadedAttempts({ isCurrent });
+      if (!isCurrent()) return result;
       this.state.serverActionMessage = t('viewer.notifications.uploadedAttempt.deleted');
       this.pushNotification({
         kind: 'success',
@@ -4016,6 +4024,7 @@ class ViewerAttemptSession {
       });
       return result;
     } finally {
+      this._deletingUploadedAttemptIds.delete(uploadedAttemptId);
       const next = { ...this.state.uploadedAttemptActionInFlightById };
       delete next[uploadedAttemptId];
       this.state.uploadedAttemptActionInFlightById = next;
@@ -4849,7 +4858,7 @@ function getUploadedAttemptStatusBadge(status) {
 async function showAttemptSlotFullModal(session, options = {}) {
   const host = document.body || getViewerOverlayHost();
   if (!host) return { deleted: false };
-  const rows = Array.isArray(options.uploadedAttempts) && options.uploadedAttempts.length > 0
+  const rows = Array.isArray(options.uploadedAttempts)
     ? options.uploadedAttempts
     : (Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : []);
   const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -4878,8 +4887,17 @@ async function showAttemptSlotFullModal(session, options = {}) {
   host.appendChild(overlay);
 
   return new Promise((resolve) => {
+    let settled = false;
+    let deleting = false;
+    const flow = session._uploadPackageFlow;
+    const isCurrent = () => !settled && (!flow || flow.canProgress());
+    const setDeleting = value => {
+      deleting = value;
+      list.querySelectorAll('button').forEach(button => { button.disabled = value; });
+    };
     const finish = (deleted) => {
-      if (!overlay.isConnected) return;
+      if (settled) return;
+      settled = true;
       overlay.remove();
       if (previousActive && typeof previousActive.focus === 'function') {
         previousActive.focus();
@@ -4917,11 +4935,15 @@ async function showAttemptSlotFullModal(session, options = {}) {
         deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
         deleteBtn.textContent = t('common.actions.delete');
         deleteBtn.addEventListener('click', async () => {
-          const confirmed = await showDeleteUploadedAttemptModal(item);
-          if (!confirmed) return;
-          const deleted = await session.deleteUploadedAttemptAndRefresh(item.uploaded_attempt_id);
-          if (deleted?.ok) {
-            finish(true);
+          if (deleting || !isCurrent()) return;
+          setDeleting(true);
+          try {
+            const confirmed = await showDeleteUploadedAttemptModal(item);
+            if (!confirmed || !isCurrent()) return;
+            const deleted = await session.deleteUploadedAttemptAndRefresh(item.uploaded_attempt_id, { isCurrent });
+            if (isCurrent() && deleted?.ok) finish(true);
+          } finally {
+            if (!settled) setDeleting(false);
           }
         });
         row.append(meta, deleteBtn);
@@ -5707,7 +5729,10 @@ function renderViewerShell(session) {
   cancelUploadBtn.setAttribute('aria-label', t('common.actions.cancel'));
   cancelUploadBtn.title = t('common.actions.cancel');
   cancelUploadBtn.innerHTML = createViewerIcon('stop');
-  cancelUploadBtn.addEventListener('click', () => session.uploadController?.abort());
+  cancelUploadBtn.addEventListener('click', () => {
+    session._uploadPackageFlow?.controller.abort();
+    session.uploadController?.abort();
+  });
 
   const uploadAttemptBtn = document.createElement('button');
   uploadAttemptBtn.type = 'button';
@@ -6873,7 +6898,7 @@ function renderViewerShell(session) {
     checkBtn.disabled = session.state.isFinalizing || !checkAvailable;
     printReportBtn.hidden = !printAvailable;
     printReportBtn.disabled = session.state.isFinalizing || !printAvailable;
-    cancelUploadBtn.hidden = !session.state.isUploadingAttemptPackage;
+    cancelUploadBtn.hidden = !session.state.isUploadingAttemptPackage && !session.state.isLoadingUploadRecoveryList;
     uploadAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage || session.state.isUploadAttemptFlowActive;
     exportAttemptBtn.disabled = session.state.isFinalizing || session.state.isUploadingAttemptPackage;
     prevBtn.disabled = currentBlockIndex === 0;
@@ -6955,13 +6980,21 @@ function renderViewerShell(session) {
           return choice;
         },
         recoverSlots: async () => {
-          const listed = await session.listUploadedAttempts({ isCurrent: () => flow.canPublish() });
-          if (!flow.canPublish()) return { deleted: false };
+          let listed;
+          session.state.isLoadingUploadRecoveryList = true;
+          renderUI();
+          try {
+            listed = await session.listUploadedAttempts({ isCurrent: () => flow.canProgress(), signal: flow.signal });
+          } finally {
+            session.state.isLoadingUploadRecoveryList = false;
+            renderUI();
+          }
+          if (!flow.canPublish() || listed?.status === 'superseded') return { deleted: false };
           if (!listed?.ok) {
             session.pushNotification({ kind: 'error', text: getApiErrorMessage(listed, 'list'), ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS });
             return { deleted: false };
           }
-          const recovery = await showAttemptSlotFullModal(session, { uploadedAttempts: session.state.uploadedAttempts });
+          const recovery = await showAttemptSlotFullModal(session, { uploadedAttempts: listed.uploadedAttempts });
           if (flow.canPublish() && !recovery?.deleted) {
             session.state.serverActionMessage = t('viewer.serverAttempts.manageRecommendation');
           }

@@ -158,6 +158,7 @@ export default {
     "signInForServerFeatures": "登入以使用伺服器功能"
   },
   "editor": {
+    "localSaveValidationWarning": "草稿已儲存於本機，但有 {count} 項驗證警告。",
     "actions": {
       "saveLocalDraft": "儲存本機草稿",
       "startNewWorksheet": "新工作紙",
