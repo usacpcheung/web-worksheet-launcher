@@ -7,11 +7,18 @@ try {
     try {
       const page = await context.newPage();
       const errors = []; page.on('pageerror', error => errors.push(error.message));
-      let signedIn = false, failList = false, reads = 0, hold = null;
+      let signedIn = false, failList = false, reads = 0, hold = null, heldSession = null;
       await page.addInitScript(locale => localStorage.setItem('worksheetLauncher.locale', locale), locale);
       await page.route(url => url.pathname.startsWith('/api/'), async route => {
         if (hold) { const wait = hold; hold = null; await wait; }
         if (new URL(route.request().url()).pathname.endsWith('/session')) {
+          if (heldSession) {
+            const pending = heldSession; heldSession = null;
+            pending.started();
+            await pending.wait;
+            if (pending.network) return route.abort('failed');
+            return route.fulfill({status:503,json:{ok:false,error:{code:'SERVICE_BUSY'}}});
+          }
           return route.fulfill({ status: signedIn ? 200 : 401, json: signedIn
             ? { ok: true, data: { ready: true, user: { sub: 'fixture' } } }
             : { ok: false, error: { code: 'AUTH_REQUIRED' } } });
@@ -70,6 +77,30 @@ try {
           signedIn = true; failList = false;
           await refresh.click();
           await modal.locator('[role="alert"]').waitFor({ state: 'detached' });
+        }
+        for (const network of [false, true]) {
+          let release, started;
+          const began = new Promise(resolve => { started = resolve; });
+          heldSession = {network, started, wait:new Promise(resolve => {release = resolve;})};
+          await refresh.click();
+          await began;
+          await page.locator('#server-modal-close').click();
+          // A newer successful manager must retain its session and feedback.
+          await open(published ? '#server-manage-btn' : '#server-browse-published-btn');
+          await modal.waitFor({state:'visible'});
+          const before = await page.locator('#server-status').textContent();
+          const messageBefore = await page.locator('.app-messages__text').textContent();
+          const responseDone = page.waitForEvent(network ? 'requestfailed' : 'response', event => {
+            const url = event.url();
+            return new URL(url).pathname.endsWith('/session');
+          });
+          release(); await responseDone;
+          await page.waitForTimeout(100);
+          assert.equal(await page.locator('#server-status').textContent(), before);
+          assert.equal(await page.locator('.app-messages__text').textContent(), messageBefore);
+          await page.locator('#server-modal-close').click();
+          await open(published ? '#server-browse-published-btn' : '#server-manage-btn');
+          await modal.waitFor({state:'visible'});
         }
         await page.locator('#server-modal-close').click();
       }

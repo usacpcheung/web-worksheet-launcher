@@ -1278,13 +1278,23 @@ function getServerErrorMessage(result, fallbackId = 'server.actionFailed') {
   return getApiErrorMessage(result, operation);
 }
 
-async function probeServerSessionSilently({ force = false, timeoutMs = 15000 } = {}) {
+async function probeServerSessionSilently({ force = false, timeoutMs = 15000, isCurrent = () => true } = {}) {
+  const superseded = () => ({ ok: false, skipped: true, status: 'superseded' });
+  if (!isCurrent()) return superseded();
+  const previousSession = serverSession;
   serverSession = { status: 'checking', user: null, error: null };
   updateServerSessionUi();
   const pendingSession = serverSession;
   const result = await probeSession({ apiClient, force, timeoutMs });
   // A newer probe, API auth failure or sign-in result owns the current state.
-  if (serverSession !== pendingSession) return result;
+  if (serverSession !== pendingSession) return superseded();
+  if (!isCurrent()) {
+    // Release our checking state without publishing an obsolete probe result.
+    serverSession = previousSession?.status === 'checking' || !previousSession
+      ? { status: 'not_ready', user: null, error: null } : previousSession;
+    updateServerSessionUi();
+    return superseded();
+  }
   if (result.ok && result.status === 'ready') {
     serverSession = { status: 'ready', user: result.user || null, error: null };
   } else {
@@ -1299,8 +1309,8 @@ async function probeServerSessionSilently({ force = false, timeoutMs = 15000 } =
 }
 
 async function ensureServerSessionReady({ isCurrent = () => true } = {}) {
-  const result = await probeServerSessionSilently({ force: true });
-  if (!isCurrent()) return { ok: false, result: { ok: false, skipped: true, status: 'superseded' } };
+  const result = await probeServerSessionSilently({ force: true, isCurrent });
+  if (result.skipped || !isCurrent()) return { ok: false, result: { ok: false, skipped: true, status: 'superseded' } };
   if (result.ok && result.status === 'ready') {
     return { ok: true, result };
   }
@@ -2291,9 +2301,10 @@ async function loadPublishedRolePlaySceneScenes({
   const isCurrent = () => requestId === publishedScenesRequestId && modalRevision === serverModalRevision;
   try {
     if (preflight) {
-      const sessionReady = await ensureServerSessionReady();
+      const sessionReady = await ensureServerSessionReady({ isCurrent });
       if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
       if (!sessionReady.ok) {
+        if (sessionReady.result?.skipped) return sessionReady.result;
         failure = sessionReady.result;
         return failure;
       }
@@ -2558,7 +2569,7 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
   updateServerSessionUi();
   try {
     if (preflight) {
-      const sessionReady = await ensureServerSessionReady();
+      const sessionReady = await ensureServerSessionReady({ isCurrent });
       if (!isCurrent()) return stale();
       if (!sessionReady.ok) return sessionReady.result;
     }

@@ -14,7 +14,7 @@ function harness(apiClient) {
     assert.equal(options.timeoutMs, 15000);
     return probeSession({ ...options, timeoutMs: 10 });
   };
-  return new Function('apiClient', 'probeSession', 'showMessage', 'getApiErrorMessage', `
+  const app = new Function('apiClient', 'probeSession', 'showMessage', 'getApiErrorMessage', `
     let serverSession;
     const updateServerSessionUi = () => {};
     const translate = id => id;
@@ -22,6 +22,7 @@ function harness(apiClient) {
     return { ensureServerSessionReady, probeServerSessionSilently,
       state: () => serverSession, setState: state => { serverSession = state; } };
   `)(apiClient, boundedProbe, notice => notices.push(notice), getApiErrorMessage);
+  return { ...app, notices };
 }
 
 test('real preflight aborts a stalled fetch and manual retry starts a fresh request', async t => {
@@ -77,4 +78,41 @@ test('HTML gateway errors remain service failures for session and audio; login r
     }
     t.mock.restoreAll();
   }
+});
+
+
+test('obsolete preflight results cannot publish session state or notifications', async () => {
+  for (const newer of [false, true]) for (const outcome of ['success', '503', 'network', 'timeout']) {
+    let finish, current = true, calls = 0;
+    const app = harness({ getSession: () => ++calls === 1
+      ? new Promise(resolve => { finish = resolve; })
+      : Promise.resolve({ ok: true, data: { user: { sub: 'new' } } }) });
+    const initial = { status: 'ready', user: { sub: 'original' }, error: null };
+    app.setState(initial);
+    const pending = app.ensureServerSessionReady({ isCurrent: () => current });
+    current = false;
+    if (newer) await app.ensureServerSessionReady();
+    const expected = newer ? app.state() : initial;
+    if (outcome !== 'timeout') finish(outcome === 'success'
+      ? { ok: true, data: { user: { sub: 'obsolete' } } }
+      : { ok: false, error: { code: outcome === '503' ? 'SERVICE_BUSY' : 'NETWORK_ERROR', status: outcome === '503' ? 503 : null } });
+    assert.equal((await pending).result.status, 'superseded');
+    assert.equal(app.state(), expected);
+    assert.deepEqual(app.notices, []);
+    assert.equal((await app.ensureServerSessionReady()).ok, true);
+    if (outcome === 'timeout') finish({ ok: false, error: { code: 'NETWORK_ERROR' } });
+  }
+});
+
+test('a superseded probe cannot report failure even if its caller remains current', async () => {
+  let finish, calls = 0;
+  const app = harness({ getSession: () => ++calls === 1
+    ? new Promise(resolve => { finish = resolve; })
+    : Promise.resolve({ ok: true, data: { user: { sub: 'new' } } }) });
+  const old = app.ensureServerSessionReady();
+  await app.ensureServerSessionReady();
+  finish({ ok: false, error: { code: 'NETWORK_ERROR' } });
+  assert.equal((await old).result.status, 'superseded');
+  assert.deepEqual(app.notices, []);
+  assert.equal(app.state().status, 'ready');
 });
