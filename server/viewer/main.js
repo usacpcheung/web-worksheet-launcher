@@ -3960,7 +3960,7 @@ class ViewerAttemptSession {
     this.notifyStateChange();
     try {
       const result = await this.apiClient.listUploadedAttempts({ signal });
-      if (!isCurrent() || !ownsRequest()) return result;
+      if (!isCurrent() || !ownsRequest()) return { ok: false, skipped: true, status: 'superseded' };
       if (!result?.ok) {
         this.state.uploadedAttemptsError = getApiErrorMessage(result, 'list');
         return result;
@@ -3977,8 +3977,9 @@ class ViewerAttemptSession {
       if (Number.isFinite(limit) && limit > 0) {
         this.state.uploadedAttemptSlotLimit = limit;
       }
-      return result;
+      return { ...result, uploadedAttempts: rows };
     } catch (error) {
+      if (!isCurrent() || !ownsRequest()) return { ok: false, skipped: true, status: 'superseded' };
       const message = getApiErrorMessage(error, 'list');
       if (isCurrent() && ownsRequest()) this.state.uploadedAttemptsError = message;
       return { ok: false, error: { code: 'NETWORK_ERROR', message } };
@@ -4857,7 +4858,7 @@ function getUploadedAttemptStatusBadge(status) {
 async function showAttemptSlotFullModal(session, options = {}) {
   const host = document.body || getViewerOverlayHost();
   if (!host) return { deleted: false };
-  const rows = Array.isArray(options.uploadedAttempts) && options.uploadedAttempts.length > 0
+  const rows = Array.isArray(options.uploadedAttempts)
     ? options.uploadedAttempts
     : (Array.isArray(session.state.uploadedAttempts) ? session.state.uploadedAttempts : []);
   const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -6988,12 +6989,12 @@ function renderViewerShell(session) {
             session.state.isLoadingUploadRecoveryList = false;
             renderUI();
           }
-          if (!flow.canPublish()) return { deleted: false };
+          if (!flow.canPublish() || listed?.status === 'superseded') return { deleted: false };
           if (!listed?.ok) {
             session.pushNotification({ kind: 'error', text: getApiErrorMessage(listed, 'list'), ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS });
             return { deleted: false };
           }
-          const recovery = await showAttemptSlotFullModal(session, { uploadedAttempts: session.state.uploadedAttempts });
+          const recovery = await showAttemptSlotFullModal(session, { uploadedAttempts: listed.uploadedAttempts });
           if (flow.canPublish() && !recovery?.deleted) {
             session.state.serverActionMessage = t('viewer.serverAttempts.manageRecommendation');
           }

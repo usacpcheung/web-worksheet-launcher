@@ -30,6 +30,11 @@ The coordinator checks ownership before submission and after each awaited
 submission or decision. App callbacks must also check ownership before showing a
 new dialog after an internal asynchronous request. Viewer slot-list failure is
 reported and stops recovery; cached rows are not offered as fresh recovery data.
+Viewer attempt-list requests that lose ownership return a non-success `superseded`
+outcome, including late transport failures. Recovery stops quietly for this outcome.
+An accepted response includes its normalized `uploadedAttempts` rows; recovery uses
+those rows rather than rereading mutable session state. An explicitly empty list
+stays empty instead of falling back to cached rows.
 
 ## Recovery rules
 

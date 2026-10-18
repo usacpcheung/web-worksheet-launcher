@@ -60,6 +60,20 @@ try {
      await page.getByRole('dialog').last().getByRole('button',{name:labels.confirm,exact:true}).click();
    };
    await edit('Deletion guard fixture');
+   if(app==='editor') {
+     const warning = await page.evaluate(async()=>{
+       const {t}=await import('/server/app/i18n/index.js');
+       await editorSession.autosave();
+       const count=editorSession.state.lastContractValidationIssueCount;
+       const expected=t('editor.localSaveValidationWarning',{count});
+       const saved=editorSession.state.lastValidationWarning;
+       await editorSession.createOrOpenByLocalDraftId(editorSession.state.draft.localId);
+       return {count,expected,saved,reopened:editorSession.state.lastValidationWarning};
+     });
+     assert.ok(warning.count>0);
+     assert.equal(warning.saved,warning.expected);
+     assert.equal(warning.reopened,warning.expected);
+   }
    await button.click(); await confirmDelete(); await waitUntil(()=>deletions===1);
    const deleteButton=page.getByRole('dialog').getByRole('button',{name:labels.delete,exact:true});
    assert.equal(await deleteButton.isDisabled(),true);
@@ -103,6 +117,20 @@ try {
      await pendingLists.at(-1).fulfill({json:{ok:true,data:{items:[row]}}}).catch(()=>{});
      await page.waitForTimeout(50); assert.equal(await page.getByRole('dialog').count(),0);
      mode='success';await button.click();await settled();assert.equal(requests.length,beforePosts+2);
+   }
+   if(app==='viewer') {
+     mode='success'; await page.evaluate(async()=>{ const {createServerApiClient}=await import('/server/app/api/server-api-client.js'); viewerSession.apiClient=createServerApiClient(); await viewerSession.listUploadedAttempts(); });
+     mode='list-stall'; const beforeLists=pendingLists.length, beforePosts=requests.length;
+     await button.click(); await waitUntil(()=>pendingLists.length===beforeLists+1);
+     await page.evaluate(()=>{void viewerSession.listUploadedAttempts();});
+     await waitUntil(()=>pendingLists.length===beforeLists+2);
+     await pendingLists[beforeLists].fulfill({json:{ok:true,data:{items:[{uploaded_attempt_id:'obsolete',title:'Obsolete'}]}}});
+     await settled();
+     assert.equal(await page.getByRole('dialog').count(),0,'superseded success cannot open a cached-row deletion dialog');
+     assert.equal(requests.length,beforePosts+1);
+     await pendingLists[beforeLists+1].fulfill({json:{ok:true,data:{items:[{uploaded_attempt_id:'current',title:'Current'}]}}});
+     await page.waitForFunction(()=>!viewerSession.state.isLoadingUploadedAttempts);
+     assert.equal(await page.evaluate(()=>viewerSession.state.uploadedAttempts[0].title),'Current');
    }
    assert.deepEqual(errors,[]);
    console.log(`PASS ${app}/${locale}/${width}: guarded deletion, failed deletion unlock, stale feedback and recovery-list cancellation/deadline`);

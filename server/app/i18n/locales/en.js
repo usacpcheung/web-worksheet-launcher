@@ -158,6 +158,7 @@ export default {
     "signInForServerFeatures": "Sign in for server features"
   },
   "editor": {
+    "localSaveValidationWarning": "Draft saved locally with validation warnings ({count}).",
     "actions": {
       "saveLocalDraft": "Save Local Draft",
       "startNewWorksheet": "New worksheet",

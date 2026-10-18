@@ -6960,3 +6960,25 @@ test('deletion lock releases after an unexpected request exception', async () =>
   await assert.rejects(session.deleteUploadedAttemptAndRefresh('same-id'), /fixture/);
   assert.equal(session._deletingUploadedAttemptIds.size,0);
 });
+
+test('overlapping attempt lists return superseded outcomes and accepted rows belong to their response', async () => {
+  const mod = await loadViewerModule();
+  for (const rejection of [false, true]) {
+    const session = new mod.ViewerAttemptSession({ resumeFlags: { get() {}, set() {} } });
+    session.state.serverSession = {status:'logged_in'};
+    const replies=[];
+    session.apiClient.listUploadedAttempts = () => new Promise((resolve,reject)=>replies.push({resolve,reject}));
+    const older=session.listUploadedAttempts();
+    const newer=session.listUploadedAttempts();
+    if(rejection) replies[0].reject(Error('stale network failure'));
+    else replies[0].resolve({ok:true,data:{items:[{uploaded_attempt_id:'old',title:'Old'}]}});
+    assert.equal((await older).status,'superseded');
+    assert.equal(session.state.isLoadingUploadedAttempts,true);
+    replies[1].resolve({ok:true,data:{items:[{uploaded_attempt_id:'new',title:'New'}]}});
+    const accepted=await newer;
+    assert.equal(accepted.ok,true);
+    assert.equal(accepted.uploadedAttempts[0].title,'New');
+    session.state.uploadedAttempts=[];
+    assert.equal(accepted.uploadedAttempts[0].title,'New');
+  }
+});

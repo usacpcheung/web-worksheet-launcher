@@ -1590,7 +1590,7 @@ class EditorDraftSession {
         : 0;
       this.state.lastSavedLocalValidationIssueCount = this.validateCurrentDraft().errors.length;
       this.state.lastValidationWarning = existing?.contractValidation?.valid === false
-        ? `Draft saved locally with validation warnings (${this.state.lastContractValidationIssueCount}).`
+        ? t('editor.localSaveValidationWarning', { count: this.state.lastContractValidationIssueCount })
         : null;
       this.transientQuestionBlockIds.clear();
     } else {
@@ -3209,7 +3209,7 @@ class EditorDraftSession {
         this.state.lastValidationWarning =
           contractValidation.valid || shouldSuppressPristineWarning || shouldSuppressTransientQuestionWarning
           ? null
-          : `Draft saved locally with validation warnings (${contractValidation.errors.length}).`;
+          : t('editor.localSaveValidationWarning', { count: contractValidation.errors.length });
         this.setNotificationForSource({
           source: 'autosave.persistence',
           category: 'editor',
@@ -3433,7 +3433,7 @@ class EditorDraftSession {
       this.state.lastSavedLocalValidationIssueCount = this.validateCurrentDraft().errors.length;
       this.state.lastContractValidationIssueCount = contractValidation.errors.length;
       this.state.lastValidationWarning = contractValidation.valid ? null
-        : `Draft saved locally with validation warnings (${contractValidation.errors.length}).`;
+        : t('editor.localSaveValidationWarning', { count: contractValidation.errors.length });
       this.setNotificationForSource({ source: 'autosave.persistence', category: 'editor', kind: 'error', text: null });
       this.setNotificationForSource({ source: 'autosave.validation', category: 'editor', kind: 'warn', text: this.state.lastValidationWarning });
       this.persistRestoreMetadata();
