@@ -14,7 +14,7 @@ function harness() {
     AbortController, waitForDraftRequest, serverModalRevision: 0,
     openingUploadedDraft: null, isLoadingPublishedScenes: false, publishedScenesRequestId: 0,
     publishedScenes: [], publishedScenesFilters: {}, publishedScenesNextOffset: 0, publishedScenesHasMore: false,
-    serverModalOverlay: { hidden: false }, updateServerSessionUi() { events.push('ui'); },
+    serverModalOverlay: { hidden: false }, syncUploadedDraftActionAvailability() {}, updateServerSessionUi() { events.push('ui'); },
     renderPublishedBrowserModal() { events.push('render'); },
     ensureServerSessionReady: async () => ({ ok: true }),
     apiClient: { listRolePlayScenePublishedScenes() { events.push('fetch'); return response.promise; } },

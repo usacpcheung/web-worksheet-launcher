@@ -2283,6 +2283,7 @@ async function loadPublishedRolePlaySceneScenes({
   const requestId = ++publishedScenesRequestId;
   isLoadingPublishedScenes = true;
   updateServerSessionUi();
+  syncUploadedDraftActionAvailability();
   const hadOpenBrowser = showBrowser && !serverModalOverlay?.hidden;
   let failure = null;
   let loaded = false;
@@ -2329,8 +2330,15 @@ async function loadPublishedRolePlaySceneScenes({
       updateServerSessionUi();
       if (showBrowser && isCurrent()) {
         if (loaded) renderPublishedBrowserModal();
-        else if (failure && hadOpenBrowser) renderServerListFailure(failure, 'published.listFailed');
+        else if (failure && hadOpenBrowser) {
+          // A failed page is not a valid basis for Load more (including after reauthentication).
+          publishedScenes = [];
+          publishedScenesHasMore = false;
+          publishedScenesNextOffset = null;
+          renderServerListFailure(failure, 'published.listFailed');
+        }
       }
+      syncUploadedDraftActionAvailability();
     }
   }
 }

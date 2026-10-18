@@ -7,9 +7,10 @@ try {
     try {
       const page = await context.newPage();
       const errors = []; page.on('pageerror', error => errors.push(error.message));
-      let signedIn = false, failList = false, reads = 0;
+      let signedIn = false, failList = false, reads = 0, hold = null;
       await page.addInitScript(locale => localStorage.setItem('worksheetLauncher.locale', locale), locale);
-      await page.route(url => url.pathname.startsWith('/api/'), route => {
+      await page.route(url => url.pathname.startsWith('/api/'), async route => {
+        if (hold) { const wait = hold; hold = null; await wait; }
         if (new URL(route.request().url()).pathname.endsWith('/session')) {
           return route.fulfill({ status: signedIn ? 200 : 401, json: signedIn
             ? { ok: true, data: { ready: true, user: { sub: 'fixture' } } }
@@ -39,6 +40,28 @@ try {
         await open(published ? '#server-browse-published-btn' : '#server-manage-btn');
         await modal.waitFor({ state: 'visible' });
         const refresh = modal.locator(published ? '.published-refresh-action' : '.uploaded-drafts-refresh-action');
+        if (published) {
+          for (const fail of [false, true]) {
+            failList = fail;
+            let release;
+            hold = new Promise(resolve => { release = resolve; });
+            const idleLabel = await refresh.textContent();
+            await refresh.click();
+            assert.equal(await refresh.isDisabled(), true);
+            assert.notEqual(await refresh.textContent(), idleLabel);
+            assert.equal(await modal.locator('.published-more-action').isDisabled(), true);
+            for (const control of await modal.locator('.published-browser-filters input, .published-browser-filters button').all()) {
+              assert.equal(await control.isDisabled(), true);
+            }
+            release();
+            await page.waitForFunction(() => !document.querySelector('.published-refresh-action').disabled);
+            assert.equal(await refresh.textContent(), idleLabel);
+            if (fail) await modal.locator('[role="alert"]').waitFor();
+          }
+          failList = false;
+          await refresh.click();
+          await modal.locator('[role="alert"]').waitFor({state:'detached'});
+        }
         for (const failure of ['service', 'auth']) {
           signedIn = failure !== 'auth'; failList = failure === 'service';
           await refresh.click();
