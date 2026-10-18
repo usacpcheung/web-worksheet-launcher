@@ -1,3 +1,4 @@
+import { runUploadRecoveryFlow } from '../../app/api/upload-recovery-flow.js';
 import { getApiErrorMessage } from '../../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../../app/api/upload-operation-lifecycle.js';
 import { classifyUploadResult } from '../../app/api/upload-result.js';
@@ -87,7 +88,7 @@ test('real slot recovery settles cancellation/failure and retries only after suc
 function harness() {
   const calls = [], preflight = deferred(), archive = deferred();
   let project = createProject({ meta: { title: 'A' } });
-  const context = vm.createContext({ getApiErrorMessage, classifyUploadResult, staleUploadResult, canceledUploadResult, uploadOperations: new UploadOperationSlot(), AbortController, uploadController: null, serverModalRevision: 0,
+  const context = vm.createContext({ runUploadRecoveryFlow, getApiErrorMessage, classifyUploadResult, staleUploadResult, canceledUploadResult, uploadOperations: new UploadOperationSlot(), AbortController, uploadController: null, serverModalRevision: 0,
     console, serializeProject, isUploadingDraft: false, openingUploadedDraft: null,
     store: { get: () => ({ project }) },
     ensureServerSessionReady: () => preflight.promise,
@@ -117,8 +118,8 @@ test('copy/replace and slot recovery keep one snapshot and lock through retries'
     const h = harness(); let count = 0;
     h.context.apiClient.uploadRolePlaySceneDraftPackage = async (bytes, metadata) => {
       h.calls.push({ bytes, metadata }); count++;
-      if (count === 1) return { ok: false, error: { code: 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT' } };
-      if (count === 2) return { ok: false, error: { code: 'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED', details: { uploadedDrafts: ['existing'], slotLimit: 3 } } };
+      if (count === 1 || count === 4) return { ok: false, error: { code: 'ROLEPLAYSCENE_DRAFT_NAME_CONFLICT' } };
+      if (count === 2 || count === 3) return { ok: false, error: { code: 'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED', details: { uploadedDrafts: ['existing'], slotLimit: 3 } } };
       return { ok: true, data: {} };
     };
     h.context.showUploadConflictModal = async () => {
@@ -129,7 +130,7 @@ test('copy/replace and slot recovery keep one snapshot and lock through retries'
     };
     h.preflight.resolve({ ok: true }); h.archive.resolve();
     await h.context.uploadCurrentProjectToServer();
-    assert.deepEqual(h.calls.map(c => c.metadata.conflictAction), ['', choice, choice]);
+    assert.deepEqual(h.calls.map(c => c.metadata.conflictAction), ['', choice, choice, choice, choice]);
     assert.ok(h.calls.every(c => c.bytes === h.calls[0].bytes && c.metadata.title === 'A'));
     assert.equal(h.context.isUploadingDraft, false);
   }
