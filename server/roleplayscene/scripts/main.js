@@ -1282,30 +1282,47 @@ async function probeServerSessionSilently({ force = false, timeoutMs = 15000, is
   const superseded = () => ({ ok: false, skipped: true, status: 'superseded' });
   if (!isCurrent()) return superseded();
   const previousSession = serverSession;
-  serverSession = { status: 'checking', user: null, error: null };
+  let settle;
+  const pendingSession = { status: 'checking', user: null, error: null,
+    expectedSubject: previousSession?.expectedSubject || previousSession?.user?.sub || null,
+    settled: new Promise(resolve => { settle = resolve; }) };
+  serverSession = pendingSession;
   updateServerSessionUi();
-  const pendingSession = serverSession;
-  const result = await probeSession({ apiClient, force, timeoutMs });
-  // A newer probe, API auth failure or sign-in result owns the current state.
-  if (serverSession !== pendingSession) return superseded();
-  if (!isCurrent()) {
-    // Release our checking state without publishing an obsolete probe result.
-    serverSession = previousSession?.status === 'checking' || !previousSession
-      ? { status: 'not_ready', user: null, error: null } : previousSession;
+  try {
+    const result = await probeSession({ apiClient, force, timeoutMs });
+    if (serverSession !== pendingSession) {
+      // A newer check owns global state, but not this action's lifetime.
+      // Wait for its decision before allowing a same-account action to proceed.
+      while (isCurrent() && serverSession?.status === 'checking' && serverSession.settled) {
+        await serverSession.settled;
+      }
+      const subject = result.user?.sub;
+      if (isCurrent() && result.ok && result.status === 'ready' && subject
+        && serverSession?.status === 'ready' && serverSession.user?.sub === subject
+        && (!pendingSession.expectedSubject || pendingSession.expectedSubject === subject)) return result;
+      return superseded();
+    }
+    if (!isCurrent()) {
+      // Release our checking state without publishing an obsolete probe result.
+      serverSession = previousSession?.status === 'checking' || !previousSession
+        ? { status: 'not_ready', user: null, error: null } : previousSession;
+      updateServerSessionUi();
+      return superseded();
+    }
+    if (result.ok && result.status === 'ready') {
+      serverSession = { status: 'ready', user: result.user || null, error: null };
+    } else {
+      serverSession = {
+        status: result.status === 'error' ? 'error' : 'not_ready',
+        user: null,
+        error: getApiErrorMessage(result, 'session'),
+      };
+    }
     updateServerSessionUi();
-    return superseded();
+    return result;
+  } finally {
+    settle();
   }
-  if (result.ok && result.status === 'ready') {
-    serverSession = { status: 'ready', user: result.user || null, error: null };
-  } else {
-    serverSession = {
-      status: result.status === 'error' ? 'error' : 'not_ready',
-      user: null,
-      error: getApiErrorMessage(result, 'session'),
-    };
-  }
-  updateServerSessionUi();
-  return result;
 }
 
 async function ensureServerSessionReady({ isCurrent = () => true } = {}) {
@@ -2385,6 +2402,7 @@ async function openPublishedRolePlaySceneById(publishedSceneId, {
   const sessionReady = await ensureServerSessionReady();
   if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
   if (!sessionReady.ok) {
+    if (sessionReady.result?.skipped) return sessionReady.result;
     if (isDirect) {
       if (sessionReady.result?.status === 'not_ready' || isServerAuthRequired(sessionReady.result)) {
         pendingDirectPublishedSceneId = publishedSceneId;
@@ -2702,6 +2720,7 @@ async function publishUploadedRolePlaySceneDraft(draft) {
       try {
         const sessionReady = await ensureServerSessionReady();
         if (!sessionReady.ok) {
+          if (sessionReady.result?.skipped) return;
           showMessage({ text: getApiErrorMessage(sessionReady.result, 'session') });
           return;
         }

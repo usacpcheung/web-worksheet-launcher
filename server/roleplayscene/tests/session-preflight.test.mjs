@@ -8,11 +8,11 @@ import { createServerApiClient } from '../../app/api/server-api-client.js';
 // Execute the actual app wiring without bootstrapping its DOM and storage.
 const source = await readFile(new URL('../scripts/main.js', import.meta.url), 'utf8');
 const wiring = source.slice(source.indexOf('async function probeServerSessionSilently('), source.indexOf('function startServerSignIn()'));
-function harness(apiClient) {
+function harness(apiClient, timeoutMs = 10) {
   const notices = [];
   const boundedProbe = options => {
     assert.equal(options.timeoutMs, 15000);
-    return probeSession({ ...options, timeoutMs: 10 });
+    return probeSession({ ...options, timeoutMs });
   };
   const app = new Function('apiClient', 'probeSession', 'showMessage', 'getApiErrorMessage', `
     let serverSession;
@@ -115,4 +115,41 @@ test('a superseded probe cannot report failure even if its caller remains curren
   assert.equal((await old).result.status, 'superseded');
   assert.deepEqual(app.notices, []);
   assert.equal(app.state().status, 'ready');
+});
+
+
+test('concurrent current actions accept same-account success in either completion order', async () => {
+  for (const olderFirst of [true, false]) {
+    const resolvers = [];
+    const app = harness({ getSession: () => new Promise(resolve => resolvers.push(resolve)) }, 1000);
+    app.setState({status:'ready',user:{sub:'same'}});
+    const old = app.ensureServerSessionReady();
+    const next = app.ensureServerSessionReady();
+    const success = {ok:true,data:{user:{sub:'same'}}};
+    resolvers[olderFirst ? 0 : 1](success);
+    await Promise.resolve();
+    resolvers[olderFirst ? 1 : 0](success);
+    assert.equal((await old).ok,true);
+    assert.equal((await next).ok,true);
+    assert.equal(app.state().user.sub,'same');
+    assert.deepEqual(app.notices,[]);
+  }
+});
+
+test('older success cannot bypass newer failure, account change or caller cancellation', async () => {
+  for (const kind of ['failure','account','cancel']) for (const olderFirst of [true,false]) {
+    const resolvers=[];let current=true;
+    const app=harness({getSession:()=>new Promise(resolve=>resolvers.push(resolve))},1000);
+    app.setState({status:'ready',user:{sub:'same'}});
+    const old=app.ensureServerSessionReady({isCurrent:()=>current});
+    const next=app.ensureServerSessionReady();
+    const results=[{ok:true,data:{user:{sub:'same'}}},kind==='failure'
+      ? {ok:false,error:{code:'AUTH_REQUIRED'}} : {ok:true,data:{user:{sub:kind==='account'?'other':'same'}}}];
+    if(kind==='cancel')current=false;
+    resolvers[olderFirst?0:1](results[olderFirst?0:1]);await Promise.resolve();
+    resolvers[olderFirst?1:0](results[olderFirst?1:0]);
+    await next;const state=app.state();const notices=app.notices.length;
+    assert.equal((await old).result.status,'superseded');
+    assert.equal(app.state(),state);assert.equal(app.notices.length,notices);
+  }
 });

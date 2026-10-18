@@ -127,6 +127,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
       if (candidate !== undefined) return { ok: applyCandidate(op, candidate) };
       if (!skipSession) {
         const session = await waitFor(checkSession(), op.controller.signal);
+        if (!session?.ok && session?.result?.skipped) return { ok: false, status: 'superseded' };
         if (!session?.ok) throw session?.result?.error || session?.error || { code: 'AUTH_REQUIRED' };
       }
       if (!fresh(op)) { keep(op, 'STALE_CONTEXT'); return { ok: false }; }
