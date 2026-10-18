@@ -4097,29 +4097,40 @@ class EditorDraftSession {
     }
   }
 
-  async deleteUploadedDraft(uploadedDraftId) {
-    const sessionReady = await this.ensureServerSessionReady();
-    if (!sessionReady.ok) return sessionReady.result;
-    const result = await this.apiClient.deleteUploadedDraft(uploadedDraftId);
-    if (!result.ok) {
-      this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.delete', text: getApiErrorMessage(result, 'delete') });
+  async deleteUploadedDraft(uploadedDraftId, { isCurrent = () => true } = {}) {
+    if (!uploadedDraftId || !isCurrent()) return { ok: false, skipped: true };
+    this._deletingUploadedDraftIds ??= new Set();
+    if (this._deletingUploadedDraftIds.has(uploadedDraftId)) return { ok: false, skipped: true, status: 'delete_in_progress' };
+    this._deletingUploadedDraftIds.add(uploadedDraftId);
+    try {
+      const sessionReady = await this.ensureServerSessionReady();
+      if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_delete' };
+      if (!sessionReady.ok) return sessionReady.result;
+      const result = await this.apiClient.deleteUploadedDraft(uploadedDraftId);
+      if (!isCurrent()) return result;
+      if (!result.ok) {
+        this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.delete', text: getApiErrorMessage(result, 'delete') });
+        this.notifyStateChange();
+        return result;
+      }
+      const successMessage = editorNotification('uploadDraft.uploadedDraftDeleted');
+      this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete', text: successMessage });
+      const refreshResult = await this.loadUploadedDrafts({ preflight: false, isCurrent });
+      if (!isCurrent()) return { ...result, refreshResult };
+      if (refreshResult && refreshResult.ok) {
+        this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete.refresh', text: editorNotification('uploadDraft.listRefreshed') });
+      } else if (refreshResult && !refreshResult.ok) {
+        const refreshMessage = getApiErrorMessage(refreshResult, 'list');
+        this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDraft.delete.refresh', text: refreshMessage });
+      }
       this.notifyStateChange();
-      return result;
+      return {
+        ...result,
+        refreshResult,
+      };
+    } finally {
+      this._deletingUploadedDraftIds.delete(uploadedDraftId);
     }
-    const successMessage = editorNotification('uploadDraft.uploadedDraftDeleted');
-    this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete', text: successMessage });
-    const refreshResult = await this.loadUploadedDrafts({ preflight: false });
-    if (refreshResult && refreshResult.ok) {
-      this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete.refresh', text: editorNotification('uploadDraft.listRefreshed') });
-    } else if (refreshResult && !refreshResult.ok) {
-      const refreshMessage = getApiErrorMessage(refreshResult, 'list');
-      this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDraft.delete.refresh', text: refreshMessage });
-    }
-    this.notifyStateChange();
-    return {
-      ...result,
-      refreshResult,
-    };
   }
 
   async deletePublishedPackage(publishedPackageId) {
@@ -5516,7 +5527,22 @@ function renderEditorShell(session) {
       const description = document.createElement('p');
       description.className = 'confirm-modal__description';
       description.textContent = t('editor.modal.slotLimit.description');
+      let settled = false;
+      let deleting = false;
+      const flow = session._uploadPackageFlow;
+      const isCurrent = () => !settled && (!flow || flow.canProgress());
+      const finish = deleted => {
+        if (settled) return;
+        settled = true;
+        overlay.remove();
+        if (previousActive?.isConnected) previousActive.focus();
+        resolve({ deleted });
+      };
       const list = document.createElement('div');
+      const setDeleting = value => {
+        deleting = value;
+        list.querySelectorAll('button').forEach(button => { button.disabled = value; });
+      };
       list.className = 'browse-results';
       rows.forEach((item) => {
         const row = document.createElement('div');
@@ -5532,21 +5558,23 @@ function renderEditorShell(session) {
         deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
         deleteBtn.textContent = t('common.actions.delete');
         deleteBtn.addEventListener('click', async () => {
-          const confirmed = await showConfirmDialog({
-            title: t('editor.uploadedDraft.deleteDialog.title'),
-            entityLabel: item.title || t('common.values.untitled'),
-            descriptionText: item.published_package_id
-              ? t('editor.uploadedDraft.deleteDialog.publishedDescription')
-              : t('editor.uploadedDraft.deleteDialog.draftDescription'),
-            removalItems: [t('editor.uploadedDraft.deleteDialog.removeArtifact'), t('editor.uploadedDraft.deleteDialog.removeMetadata')],
-            confirmLabel: t('editor.uploadedDraft.deleteDialog.confirm'),
-          });
-          if (!confirmed) return;
-          const result = await session.deleteUploadedDraft(item.uploaded_draft_id);
-          if (result?.ok) {
-            overlay.remove();
-            if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
-            resolve({ deleted: true });
+          if (deleting || !isCurrent()) return;
+          setDeleting(true);
+          try {
+            const confirmed = await showConfirmDialog({
+              title: t('editor.uploadedDraft.deleteDialog.title'),
+              entityLabel: item.title || t('common.values.untitled'),
+              descriptionText: item.published_package_id
+                ? t('editor.uploadedDraft.deleteDialog.publishedDescription')
+                : t('editor.uploadedDraft.deleteDialog.draftDescription'),
+              removalItems: [t('editor.uploadedDraft.deleteDialog.removeArtifact'), t('editor.uploadedDraft.deleteDialog.removeMetadata')],
+              confirmLabel: t('editor.uploadedDraft.deleteDialog.confirm'),
+            });
+            if (!confirmed || !isCurrent()) return;
+            const result = await session.deleteUploadedDraft(item.uploaded_draft_id, { isCurrent });
+            if (isCurrent() && result?.ok) finish(true);
+          } finally {
+            if (!settled) setDeleting(false);
           }
         });
         row.append(title, meta, deleteBtn);
@@ -5559,9 +5587,7 @@ function renderEditorShell(session) {
       closeBtn.className = 'confirm-modal__btn';
       closeBtn.textContent = t('common.actions.cancel');
       closeBtn.addEventListener('click', () => {
-        overlay.remove();
-        if (previousActive && typeof previousActive.focus === 'function') previousActive.focus();
-        resolve({ deleted: false });
+        finish(false);
       });
       actions.appendChild(closeBtn);
       dialog.append(heading, description, list, actions);

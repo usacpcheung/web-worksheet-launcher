@@ -6033,3 +6033,56 @@ test('upload flow retains prepared bytes and metadata across retries, rejects st
   assert.equal(builds, 2);
   assert.equal(calls[3].title, 'Edited');
 });
+
+
+test('deletion rejects duplicate calls and suppresses stale completion feedback', async () => {
+  const mod = await loadEditorModule();
+  for (const stale of [false, true]) for (const ok of [false, true]) {
+    const session = new mod.EditorDraftSession(createSessionForTests());
+    let resolveDelete, started;
+    const entered = new Promise(resolve => { started = resolve; });
+    let calls = 0, refreshes = 0, current = true;
+    const notices = [];
+    session.notifyStateChange = () => {};
+    session.pushNotification = notice => notices.push(notice);
+    session.ensureServerSessionReady = async () => ({ok:true});
+    session.apiClient = { deleteUploadedDraft: async () => { calls++; started(); return new Promise(resolve => { resolveDelete = resolve; }); } };
+    session.loadUploadedDrafts = async () => { refreshes++; return {ok:true}; };
+    const pending = session.deleteUploadedDraft('same-id', {isCurrent:()=>current});
+    await entered;
+    assert.equal((await session.deleteUploadedDraft('same-id')).status, 'delete_in_progress');
+    if (stale) current = false;
+    resolveDelete({ok,error:{code:'NETWORK_ERROR'}});
+    assert.equal((await pending).ok,ok);
+    assert.equal(calls,1);
+    assert.equal(refreshes,ok && !stale ? 1 : 0);
+    if (stale) assert.equal(notices.length,0);
+    assert.equal(session._deletingUploadedDraftIds.size,0);
+    session.apiClient.deleteUploadedDraft = async () => ({ok:true});
+    assert.equal((await session.deleteUploadedDraft('same-id')).ok,true);
+  }
+});
+
+test('deletion lock releases after an unexpected request exception', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.notifyStateChange = () => {};
+  session.ensureServerSessionReady = async () => ({ok:true});
+  session.apiClient = { deleteUploadedDraft: async () => {throw Error('fixture');} };
+  await assert.rejects(session.deleteUploadedDraft('same-id'), /fixture/);
+  assert.equal(session._deletingUploadedDraftIds.size,0);
+});
+
+test('deletion reserves preflight and never mutates after its dialog becomes stale', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  let ready, current = true, deletes = 0;
+  session.ensureServerSessionReady = () => new Promise(resolve => { ready = resolve; });
+  session.apiClient = { deleteUploadedDraft: async () => { deletes++; return {ok:true}; } };
+  const pending = session.deleteUploadedDraft('same-id', {isCurrent:()=>current});
+  assert.equal((await session.deleteUploadedDraft('same-id')).status, 'delete_in_progress');
+  current = false; ready({ok:true});
+  assert.equal((await pending).status, 'stale_delete');
+  assert.equal(deletes,0);
+  assert.equal(session._deletingUploadedDraftIds.size,0);
+});

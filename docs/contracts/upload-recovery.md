@@ -48,6 +48,22 @@ the apps. General deletion/publication workflow consolidation is separate work.
 [Upload snapshot rules](upload-snapshots.md) apply throughout recovery. Local
 changes are not silently included in subsequent attempts within the same flow.
 
+## Slot deletion and list loading
+
+Editor and viewer slot dialogs reserve a deletion before opening confirmation and
+disable their deletion buttons until it settles. Their session deletion methods
+also reject concurrent deletion of the same resource. The dialog supplies an
+ownership callback so closing it or changing document context prevents a pending
+confirmation from sending DELETE and prevents late responses from publishing
+feedback or authorizing another upload. Closing a dialog after DELETE was sent
+does not undo that server mutation. Locks are released in finally.
+
+Viewer attempt lists use the API client's existing 15-second default list deadline,
+including stalled response bodies. The recovery list accepts the upload flow's
+abort signal, and the Cancel control is visible during this loading phase.
+Cancellation or timeout ends recovery without resending a package. Normal manager
+lists and post-deletion refreshes also benefit from the bounded list request.
+
 ## Verification
 
 The coordinator unit matrix covers all three resource kinds, repeated recovery,
@@ -60,3 +76,8 @@ race tests cover its production adapters and real slot/deletion callbacks.
 repeated slot/conflict responses in both languages and viewport sizes, comparing
 actual ZIP request bytes and operation IDs. Existing snapshot, cancellation,
 upload lifecycle and receipt-recovery suites remain required.
+
+`slot-recovery-guards-ui-smoke.mjs` checks disabled duplicate deletion, re-enabling
+after rejection, closed-dialog feedback suppression, and viewer recovery-list
+cancellation/deadlines in both languages and viewport sizes. Session tests cover
+duplicate calls, stale responses, preflight ownership and lock release on errors.

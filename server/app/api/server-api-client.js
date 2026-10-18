@@ -673,8 +673,8 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     deleteRolePlayScenePublishedScene(publishedSceneId) {
       return requestJson(`/roleplayscene/published/${publishedSceneId}`, { method: 'DELETE' });
     },
-    listUploadedAttempts() {
-      return requestJson('/attempts');
+    listUploadedAttempts(options = {}) {
+      return requestWithDeadline('/attempts', options);
     },
     uploadAttemptPackage(zipBytes, metadata = {}, options = {}) {
       return uploadZip('/attempts/upload', zipBytes, {
