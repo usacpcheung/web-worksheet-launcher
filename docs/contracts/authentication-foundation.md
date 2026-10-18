@@ -1,6 +1,6 @@
 # Shared authentication foundation
 
-This reference describes the first runtime extraction after main `980e131`. It does **not** implement the proposed cross-app sign-in UI or post-login continuation changes. The workflow mapping/target is tracked separately in [PR #318](https://github.com/usacpcheung/web-worksheet-launcher/pull/318); this implementation can merge independently of that documentation PR.
+This reference describes the first runtime extraction after main `980e131`. It does **not** implement the proposed cross-app sign-in UI or post-login continuation changes. The [workflow mapping and agreed target](authentication-workflows.md) was merged in PR #318. This implementation builds on that documented contract.
 
 ## Current integration
 
