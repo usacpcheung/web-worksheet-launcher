@@ -3787,6 +3787,8 @@ class ViewerAttemptSession {
       return { ok: false, status: 'stale_intent', error: { message } };
     }
 
+    const packageFlow = this._uploadPackageFlow;
+    if (packageFlow && !packageFlow.canPublish()) return staleUploadResult();
     const attemptId = this.state.localAttemptId;
     const generation = this._uploadContextGeneration;
     const contextIsCurrent = () => this.state.localAttemptId === attemptId && this._uploadContextGeneration === generation;
@@ -3806,17 +3808,28 @@ class ViewerAttemptSession {
     this.notifyStateChange();
 
     try {
-      await this.flushLocalStateForAuthRedirect();
-      if (!operation.canPublish()) return staleUploadResult();
-      const uploadTitle = String(this.state.viewerPayload?.title || 'Untitled worksheet');
-      const uploadSubject = firstNonBlankString(
-        this.state.sourceSubject,
-        this.state.viewerPayload?.subject,
-        this.state.viewerPayload?.metadata?.subject
-      );
-      const packageResult = operation.signal.aborted ? null : await this.buildUploadedAttemptPackage();
-      if (!operation.canPublish()) return staleUploadResult();
-      const uploadResult = operation.signal.aborted ? canceledUploadResult() : await this.apiClient.uploadAttemptPackage(packageResult.bytes, {
+      // Retain content across user-approved conflict/slot retries, not across
+      // separate Save actions. The API client still assigns each request its ID.
+      let prepared = packageFlow?.preparedPackage;
+      if (!prepared) {
+        await this.flushLocalStateForAuthRedirect();
+        if (!operation.canPublish()) return staleUploadResult();
+        const title = String(this.state.viewerPayload?.title || 'Untitled worksheet');
+        const subject = firstNonBlankString(
+          this.state.sourceSubject,
+          this.state.viewerPayload?.subject,
+          this.state.viewerPayload?.metadata?.subject
+        );
+        if (!operation.signal.aborted) {
+          const packageResult = await this.buildUploadedAttemptPackage();
+          prepared = { bytes: packageResult.bytes, title, subject };
+          if (operation.canPublish() && packageFlow?.canPublish()) packageFlow.preparedPackage = prepared;
+        }
+      }
+      if (!operation.canPublish() || (packageFlow && !packageFlow.canPublish())) return staleUploadResult();
+      const uploadTitle = prepared?.title;
+      const uploadSubject = prepared?.subject;
+      const uploadResult = operation.signal.aborted ? canceledUploadResult() : await this.apiClient.uploadAttemptPackage(prepared.bytes, {
         title: uploadTitle,
         subject: uploadSubject,
         conflictAction: options.conflictAction || 'fail_on_conflict',
@@ -6904,6 +6917,7 @@ function renderViewerShell(session) {
     session.uploadFlows ??= new UploadOperationSlot();
     const flow = session.uploadFlows.begin(() => session.state.localAttemptId === attemptId && session._uploadContextGeneration === generation);
     if (!flow) return;
+    session._uploadPackageFlow = flow;
     session.state.isUploadAttemptFlowActive = true;
     renderUI();
     try {
@@ -6955,6 +6969,8 @@ function renderViewerShell(session) {
       }
       renderUI();
     } finally {
+      flow.preparedPackage = null;
+      if (session._uploadPackageFlow === flow) session._uploadPackageFlow = null;
       if (flow.finish()) session.state.isUploadAttemptFlowActive = false;
       renderUI();
     }

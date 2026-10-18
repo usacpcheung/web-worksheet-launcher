@@ -6900,3 +6900,33 @@ for (const kind of ['attempts', 'published']) for (const ok of [true, false]) te
   await newer;
   assert.equal(session.state[busyKey], false);
 });
+
+test('attempt flow captures after local flush and reuses bytes and metadata through copy and slot recovery', async () => {
+  const mod = await loadViewerModule();
+  const calls = [];
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } }, { apiClient: {
+    uploadAttemptPackage: async (bytes, metadata) => { calls.push({ bytes: [...bytes], ...metadata }); return { ok: false, error: { code: 'ATTEMPT_NAME_CONFLICT' } }; },
+  } });
+  session.state.localAttemptId = 'attempt';
+  session.state.viewerPayload = { title: 'Original', subject: 'Subject', blocks: [] };
+  let builds = 0, flushes = 0, current = true;
+  session.flushLocalStateForAuthRedirect = async () => { flushes++; };
+  session.buildUploadedAttemptPackage = async () => {
+    assert.equal(flushes, builds + 1);
+    builds++; return { bytes: new TextEncoder().encode(session.state.viewerPayload.title) };
+  };
+  session._uploadPackageFlow = { canPublish: () => current };
+  await session.uploadCurrentAttemptPackage();
+  session.state.viewerPayload.title = 'Edited'; session.state.viewerPayload.subject = 'Edited subject';
+  await session.retryAttemptUploadFromConflict('copy');
+  await session.retryAttemptUploadAfterSlotRecovery({ conflictAction: 'copy' });
+  assert.equal(builds, 1); assert.equal(flushes, 1);
+  assert.ok(calls.every(call => call.title === 'Original' && call.subject === 'Subject'));
+  assert.deepEqual(calls[0].bytes, calls[2].bytes);
+  current = false;
+  assert.equal((await session.uploadCurrentAttemptPackage()).status, 'stale_upload');
+  assert.equal(calls.length, 3);
+  session._uploadPackageFlow = null;
+  await session.uploadCurrentAttemptPackage();
+  assert.equal(builds, 2); assert.equal(calls[3].title, 'Edited');
+});
