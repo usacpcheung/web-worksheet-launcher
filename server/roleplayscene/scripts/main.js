@@ -2053,6 +2053,16 @@ function syncUploadedDraftActionAvailability() {
   });
 }
 
+// A failed read is not an empty list. Keep feedback inside the current dialog.
+function renderServerListFailure(result, fallbackKey) {
+  if (!serverModalBody || serverModalOverlay?.hidden) return;
+  const message = document.createElement('p');
+  message.className = 'server-empty';
+  message.setAttribute('role', 'alert');
+  message.textContent = getServerErrorMessage(result, fallbackKey);
+  serverModalBody.replaceChildren(message);
+}
+
 function renderUploadedDraftManager({
   drafts = uploadedDrafts,
   slotLimit = uploadedDraftSlotLimit,
@@ -2091,6 +2101,9 @@ function renderUploadedDraftManager({
           const refreshingModal = activeServerModal;
           const result = await loadUploadedRolePlaySceneDrafts({ preflight: true, showManager: false });
           if (activeServerModal !== refreshingModal) return;
+          if (!result?.ok && !result?.skipped) {
+            renderServerListFailure(result, 'server.listFailed');
+          }
           if (result?.ok) {
             renderUploadedDraftManager({ onDraftDeleted, onDeleteCanceled, onClose, recoveryMode,
               replacementReason: recoveryMode ? 'slot-recovery-refresh' : 'replace' });
@@ -2270,16 +2283,19 @@ async function loadPublishedRolePlaySceneScenes({
   const requestId = ++publishedScenesRequestId;
   isLoadingPublishedScenes = true;
   updateServerSessionUi();
-  if (showBrowser && !serverModalOverlay?.hidden) {
-    renderPublishedBrowserModal();
-  }
+  const hadOpenBrowser = showBrowser && !serverModalOverlay?.hidden;
+  let failure = null;
+  let loaded = false;
   const modalRevision = serverModalRevision;
   const isCurrent = () => requestId === publishedScenesRequestId && modalRevision === serverModalRevision;
   try {
     if (preflight) {
       const sessionReady = await ensureServerSessionReady();
       if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
-      if (!sessionReady.ok) return sessionReady.result;
+      if (!sessionReady.ok) {
+        failure = sessionReady.result;
+        return failure;
+      }
     }
     if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
     const offset = append ? Number(publishedScenesNextOffset || publishedScenes.length || 0) : 0;
@@ -2292,9 +2308,11 @@ async function loadPublishedRolePlaySceneScenes({
       return { ok: false, skipped: true, status: 'stale_response' };
     }
     if (!result.ok) {
+      failure = result;
       showMessage({ text: getServerErrorMessage(result, 'published.listFailed') });
       return result;
     }
+    loaded = true;
     const incoming = Array.isArray(result.data?.items) ? result.data.items : [];
     publishedScenes = append ? [...publishedScenes, ...incoming] : incoming;
     publishedScenesHasMore = result.data?.hasMore === true;
@@ -2302,13 +2320,16 @@ async function loadPublishedRolePlaySceneScenes({
     return result;
   } catch (error) {
     if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
-    throw error;
+    failure = { ok: false, error };
+    showMessage({ text: getServerErrorMessage(failure, 'published.listFailed') });
+    return failure;
   } finally {
     if (requestId === publishedScenesRequestId) {
       isLoadingPublishedScenes = false;
       updateServerSessionUi();
       if (showBrowser && isCurrent()) {
-        renderPublishedBrowserModal();
+        if (loaded) renderPublishedBrowserModal();
+        else if (failure && hadOpenBrowser) renderServerListFailure(failure, 'published.listFailed');
       }
     }
   }
@@ -2550,7 +2571,9 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
     return result;
   } catch (error) {
     if (!isCurrent()) return stale();
-    throw error;
+    const result = { ok: false, error };
+    showMessage({ text: getServerErrorMessage(result, 'server.listFailed') });
+    return result;
   } finally {
     if (requestId === uploadedDraftsRequestId) {
       isLoadingUploadedDrafts = false;
