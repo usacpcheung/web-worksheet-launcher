@@ -1046,6 +1046,12 @@ function startDirectPublishedLaunch(sceneId, { initialPlaybackState = null } = {
     initialPlaybackState,
     directAttemptId: attemptId,
     signal: abortController?.signal,
+  }).then(result => {
+    // A superseded account context must not leave this launch spinning forever.
+    // Never alter a newer launch or one the user has already left.
+    if (result?.skipped && isCurrentDirectLaunchAttempt(attemptId, normalizedSceneId)) {
+      showDirectLaunchError(result);
+    }
   }).catch((err) => {
     if (!isCurrentDirectLaunchAttempt(attemptId, normalizedSceneId)) return;
     console.error(err);
@@ -2416,9 +2422,10 @@ async function openPublishedRolePlaySceneById(publishedSceneId, {
   const isDirect = source === 'direct';
   let modalRevision = serverModalRevision;
   const generation = store.projectGeneration;
-  const directAttemptIsCurrent = () => isDirect
+  let accountCurrent = () => true;
+  const directAttemptIsCurrent = () => accountCurrent() && (isDirect
     ? isCurrentDirectLaunchAttempt(directAttemptId, publishedSceneId)
-    : generation === store.projectGeneration && modalRevision === serverModalRevision;
+    : generation === store.projectGeneration && modalRevision === serverModalRevision);
   if (!isDirect && !(await ensureDiscussionCanBeDiscarded())) return { ok: false, canceled: true };
   modalRevision = serverModalRevision;
   const sessionReady = await ensureReadSessionReady({ isCurrent: directAttemptIsCurrent, signal, intent: { kind: 'publication', id: publishedSceneId } });
@@ -2486,6 +2493,7 @@ async function openPublishedRolePlaySceneById(publishedSceneId, {
       else showMessage({ text: getServerReadErrorMessage(artifact, 'published.openFailed') });
       return artifact;
     }
+    accountCurrent = getReadAuth().captureContext?.() || (() => true);
     if (isDirect) setDirectLaunchState('preparing', { progress: null });
     preparedImport = await prepareProjectImport(createZipFileFromBytes(
       artifact.data,
@@ -2802,7 +2810,8 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
       syncUploadedDraftActionAvailability();
     }
   } };
-  const isCurrent = () => openingUploadedDraft === operation && !controller.signal.aborted;
+  let accountCurrent = () => true;
+  const isCurrent = () => accountCurrent() && openingUploadedDraft === operation && !controller.signal.aborted;
   const wait = request => waitForDraftRequest(request, controller);
   openingUploadedDraft = operation;
   // Invalidate requests started before the copy lock, including responses that
@@ -2845,6 +2854,7 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
       showMessage({ text: getServerReadErrorMessage(artifact, published ? 'published.openFailed' : 'server.openFailed') });
       return;
     }
+    accountCurrent = getReadAuth().captureContext?.() || (() => true);
     if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
       openingUploadedDraft.phase = 'preparing';
       openingUploadedDraft.percent = null;
@@ -2865,18 +2875,19 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
     operation.phase = 'confirming';
     closeServerModal('import-confirm');
     const shouldImport = await confirmProjectImport();
+    if (!isCurrent()) { revokeProjectObjectUrls(preparedImport.project); return; }
     if (!shouldImport) {
       revokeProjectObjectUrls(preparedImport.project);
       showMessage({ textId: 'messages.importCanceled' });
       return;
     }
-    discardDiscussion();
     if (published) {
       // Direct published links deliberately skip local persistence at startup.
       // Reconnect it only after the user accepts replacing their local story.
       if (getDirectPublishedSceneIdFromLocation()) {
         persistenceCleanup();
         persistenceCleanup = await setupPersistence(store, { showMessage });
+        if (!isCurrent()) { revokeProjectObjectUrls(preparedImport.project); return; }
         directLaunch.abortController?.abort();
         finishDirectLaunch();
         globalThis.history?.replaceState?.(null, '', buildRolePlaySceneEditorUrl());
@@ -2887,6 +2898,7 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
       editorPreview = null;
       editorSession = { selectedSceneId: null, leftView: 'storyMap', selectedSpeechBubbleAnchorId: null };
     }
+    discardDiscussion();
     await applyPreparedProjectImport(store, preparedImport);
     const missingMediaWarnings = preparedImport.missingMediaPaths.map(path => (
       translate('messages.importMissingMediaWarning', { path })

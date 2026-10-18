@@ -7009,3 +7009,49 @@ test('attempt deletion reserves confirmation and keeps success after refresh exc
   assert.equal(session._deletingUploadedAttemptIds.size,0);
   assert.equal(session.state.uploadedAttemptActionInFlightById.one,undefined);
 });
+
+for (const kind of ['publication', 'attempt']) for (const pauseAt of ['validation', 'worksheet', 'asset', 'attempt']) {
+  if (kind === 'publication' && pauseAt === 'attempt') continue;
+  test(`${kind} cancellation during ${pauseAt} preserves active work and removes staged records`, async () => {
+    const model = { worksheet: { title: 'Incoming', blocks: [{ blockId: 'q', kind: 'question', position: 0, prompt: { text: 'Q' }, responseConfig: { inputType: 'text' } }] },
+      assets: [{ assetId: 'incoming-asset', binary: new Uint8Array([1]) }], attempt: { status: 'in_progress', answers: {} } };
+    const mod = await loadViewerModule({ parseWorksheetPackage: () => model });
+    let release, began, current = true;
+    const started = new Promise(resolve => { began = resolve; });
+    const hold = async key => { if (pauseAt === key) { began(); await new Promise(resolve => { release = resolve; }); } };
+    const existingAsset = { localId: 'incoming-asset', binary: new Uint8Array([9]) };
+    const records = new Map([['incoming-asset', existingAsset]]);
+    const store = key => ({ put: async record => { records.set(record.localId, record); await hold(key); return record; }, remove: async id => records.delete(id) });
+    const session = new mod.ViewerAttemptSession({ importedWorksheets: store('worksheet'), attempts: store('attempt'), localAssets: store('asset'), resumeFlags: { set() {}, get() {} } });
+    session.state.localAttemptId = 'original'; session.state.viewerPayload = { title: 'Original', blocks: [] };
+    session.validateViewerPayload = () => hold('validation');
+    session.preflightPublishedSession = async () => ({ ok: true });
+    session._readAuth = { read: request => request() };
+    session.apiClient.fetchPublishedPackageArtifact = async () => ({ ok: true, data: new Uint8Array([1]) });
+    const pending = kind === 'publication' ? session.startFromPublishedPackage('pub', { isCurrent: () => current })
+      : session.restoreAttemptPackageAsLocalAttempt(model, { isCurrent: () => current });
+    await started; current = false; release();
+    assert.equal((await pending).skipped, true);
+    assert.equal(session.state.localAttemptId, 'original'); assert.equal(session.state.viewerPayload.title, 'Original');
+    assert.equal(records.size, 1); assert.equal(records.get('incoming-asset'), existingAsset); clearTimeout(session.autosaveTimer);
+  });
+}
+
+test('server import isolates reused media IDs and keeps all worksheet references consistent', async () => {
+  for (const kind of ['publication', 'attempt']) {
+    const mod = await loadViewerModule();
+    const model = { worksheet: { title: 'Incoming', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Q', mediaRefs: [{ assetId: 'shared', usage: 'question_image' }] }, responseConfig: { inputType: 'text' } }] },
+      assets: [{ assetId: 'shared', binary: new Uint8Array([1]) }], attempt: { status: 'in_progress', answers: {} } };
+    const original = { localId: 'shared', binary: new Uint8Array([9]) };
+    const assets = new Map([['shared', original]]);
+    const session = new mod.ViewerAttemptSession({ importedWorksheets: { put: async value => value }, attempts: { put: async value => value },
+      localAssets: { put: async value => { assets.set(value.localId, value); return value; } }, resumeFlags: { set() {}, get() {} } });
+    session.validateViewerPayload = async () => {};
+    if (kind === 'publication') await session.startImportedWorksheetFromPackageModel(model, { isCurrent: () => true });
+    else await session.restoreAttemptPackageAsLocalAttempt(model, { isCurrent: () => true });
+    const id = session.state.viewerPayload.blocks[0].prompt.mediaRefs[0].assetId;
+    assert.notEqual(id, 'shared'); assert.deepEqual(assets.get(id).binary, new Uint8Array([1]));
+    assert.equal(assets.get('shared'), original); assert.equal(model.worksheet.blocks[0].prompt.mediaRefs[0].assetId, 'shared');
+    clearTimeout(session.autosaveTimer);
+  }
+});

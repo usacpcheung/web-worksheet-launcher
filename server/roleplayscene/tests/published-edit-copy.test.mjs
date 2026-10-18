@@ -95,3 +95,35 @@ test('download timeout releases lock without importing and consumes late rejecti
   reject(new Error('late offline'));
   await new Promise(r => setImmediate(r));
 });
+
+for (const published of [false, true]) test(`account change during ${published ? 'publication' : 'draft'} confirmation preserves the current story`, async () => {
+  const h = harness();
+  let current = true;
+  h.context.getReadAuth = () => ({ read: request => request(), captureContext: () => () => current });
+  h.context.apiClient.fetchRolePlaySceneDraftArtifact = h.context.apiClient.fetchRolePlayScenePublishedSceneArtifact;
+  h.context.confirmProjectImport = async () => { current = false; return true; };
+  h.context.discardDiscussion = () => { throw new Error('Existing discussion must survive'); };
+  await h.context.openUploadedRolePlaySceneDraft({ title: 'Incoming' }, { published });
+  assert.equal(h.current(), h.original);
+  assert.ok(h.events.some(([kind, project]) => kind === 'revoke' && project === h.candidate));
+  assert.equal(h.context.openingUploadedDraft, null);
+});
+
+test('superseded direct read leaves a retryable error only for its own active launch', async () => {
+  for (const stillCurrent of [true, false]) {
+    const states = [];
+    const context = vm.createContext({ AbortController, UUID_V4ISH_PATTERN: /^scene$/,
+      directLaunch: { attemptId: 0 },
+      setDirectLaunchState: state => states.push(state),
+      openPublishedRolePlaySceneById: async () => ({ ok: false, skipped: true }),
+      isCurrentDirectLaunchAttempt: () => stillCurrent,
+      showDirectLaunchError: () => states.push('error'), console,
+    });
+    const start = source.indexOf('function startDirectPublishedLaunch(');
+    const end = source.indexOf('\nfunction buildRolePlaySceneEditorUrl', start);
+    vm.runInContext(source.slice(start, end), context);
+    context.startDirectPublishedLaunch('scene');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(states, stillCurrent ? ['checking-session', 'error'] : ['checking-session']);
+  }
+});

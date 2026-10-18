@@ -2413,6 +2413,30 @@ function resolveImportedWorksheetPayload(importedRecord) {
   throw new Error('Imported worksheet payload format is not supported for viewer mode.');
 }
 
+// Server imports stage media under fresh local IDs. Abandoning an import must
+// never overwrite or delete media already referenced by another local attempt.
+function isolateReadPackageAssets(packageModel) {
+  const assets = Array.isArray(packageModel?.assets) ? packageModel.assets : [];
+  const ids = new Map(assets.filter(asset => asset?.assetId && asset.binary instanceof Uint8Array)
+    .map(asset => [asset.assetId, createLocalId('asset_import')]));
+  const remap = value => {
+    if (Array.isArray(value)) return value.map(remap);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) =>
+      [key, key === 'assetId' && ids.has(item) ? ids.get(item) : remap(item)]));
+  };
+  return { ...packageModel, worksheet: remap(packageModel.worksheet),
+    assets: assets.map(asset => ({ ...asset, assetId: ids.get(asset.assetId) || asset.assetId })) };
+}
+
+// Cancellation is an expected outcome, including after a storage await.
+function assertReadImportCurrent(options) {
+  if (options.isCurrent && !options.isCurrent()) {
+    throw Object.assign(new Error('Read import superseded'), { code: 'READ_IMPORT_SUPERSEDED' });
+  }
+}
+const skippedReadImport = () => ({ ok: false, skipped: true, status: 'superseded' });
+
 class ViewerAttemptSession {
   constructor(storage, options = {}) {
     this.storage = storage;
@@ -3423,10 +3447,12 @@ class ViewerAttemptSession {
   }
 
   async startImportedWorksheetFromPackageModel(packageModel, options = {}) {
+    if (options.isCurrent) packageModel = isolateReadPackageAssets(packageModel);
     const worksheet = packageModel?.worksheet;
     if (!worksheet || typeof worksheet !== 'object') {
       throw new Error('Imported worksheet package is missing worksheet content.');
     }
+    if (options.isCurrent && !options.isCurrent()) return skippedReadImport();
     const importedAt = nowIso();
     const packageAssets = Array.isArray(packageModel?.assets) ? packageModel.assets : [];
 
@@ -3442,12 +3468,16 @@ class ViewerAttemptSession {
     };
 
     const payload = resolveImportedWorksheetPayload(importedRecord);
-    await this.validateViewerPayload(payload);
+    try { await this.validateViewerPayload(payload); }
+    catch (error) { if (options.isCurrent && !options.isCurrent()) return skippedReadImport(); throw error; }
+    if (options.isCurrent && !options.isCurrent()) return skippedReadImport();
 
     const persistedAssetIds = [];
     try {
+      assertReadImportCurrent(options);
       await this.storage.importedWorksheets.put(importedRecord);
 
+      assertReadImportCurrent(options);
       if (packageAssets.length > 0 && this.storage.localAssets?.put) {
         try {
           for (const asset of packageAssets) {
@@ -3457,6 +3487,7 @@ class ViewerAttemptSession {
             if (!(asset.binary instanceof Uint8Array) || asset.binary.byteLength === 0) {
               continue;
             }
+            assertReadImportCurrent(options);
             await this.storage.localAssets.put({
               localId: asset.assetId,
               binary: asset.binary,
@@ -3471,8 +3502,10 @@ class ViewerAttemptSession {
               },
             });
             persistedAssetIds.push(asset.assetId);
+            assertReadImportCurrent(options);
           }
         } catch (error) {
+          if (error?.code === 'READ_IMPORT_SUPERSEDED') throw error;
           throw new Error(`Failed to save imported package assets. ${error?.message || String(error)}`);
         }
       }
@@ -3481,6 +3514,7 @@ class ViewerAttemptSession {
         persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {}))
       );
       await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
+      if (error?.code === 'READ_IMPORT_SUPERSEDED' || (options.isCurrent && !options.isCurrent())) return skippedReadImport();
       if (String(error?.message || '').startsWith('Failed to save imported package assets.')) {
         throw error;
       }
@@ -3488,6 +3522,7 @@ class ViewerAttemptSession {
     }
 
     try {
+      assertReadImportCurrent(options);
       const attempt = this.createLocalAttemptState(payload, 'imported_worksheet', {
         sourceImportedWorksheetId: importedRecord.localId,
         sourceSubject: options?.sourceSubject || worksheet?.subject || '',
@@ -3502,6 +3537,7 @@ class ViewerAttemptSession {
         persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {}))
       );
       await this.storage.importedWorksheets?.remove?.(importedRecord.localId).catch(() => {});
+      if (error?.code === 'READ_IMPORT_SUPERSEDED' || (options.isCurrent && !options.isCurrent())) return skippedReadImport();
       throw new Error(`Imported worksheet is invalid. ${error?.message || String(error)}`);
     }
   }
@@ -4111,6 +4147,8 @@ class ViewerAttemptSession {
   }
 
   async restoreAttemptPackageAsLocalAttempt(packageModel, options = {}) {
+    if (options.isCurrent) packageModel = isolateReadPackageAssets(packageModel);
+    if (options.isCurrent && !options.isCurrent()) return skippedReadImport();
     const importedAt = nowIso();
     const rawAttempt = packageModel?.attempt && typeof packageModel.attempt === 'object' ? packageModel.attempt : {};
     const attemptStatus = String(rawAttempt.status || 'in_progress');
@@ -4133,7 +4171,9 @@ class ViewerAttemptSession {
     };
     importedRecord.metadata.localId = importedRecord.localId;
     const payload = resolveImportedWorksheetPayload(importedRecord);
-    await this.validateViewerPayload(payload);
+    try { await this.validateViewerPayload(payload); }
+    catch (error) { if (options.isCurrent && !options.isCurrent()) return skippedReadImport(); throw error; }
+    if (options.isCurrent && !options.isCurrent()) return skippedReadImport();
 
     const restoredLocalAttemptId = createLocalId('attempt');
     const restoredStartedAt = rawAttempt.createdAt || nowIso();
@@ -4183,10 +4223,13 @@ class ViewerAttemptSession {
     let didPersistImportedWorksheet = false;
     let didAttemptPersistAttempt = false;
     try {
+      assertReadImportCurrent(options);
       await this.storage.importedWorksheets.put(importedRecord);
       didPersistImportedWorksheet = true;
+      assertReadImportCurrent(options);
       for (const asset of Array.isArray(packageModel.assets) ? packageModel.assets : []) {
         if (!asset?.assetId || !(asset.binary instanceof Uint8Array)) continue;
+        assertReadImportCurrent(options);
         await this.storage.localAssets.put({
           localId: asset.assetId,
           binary: asset.binary,
@@ -4201,9 +4244,12 @@ class ViewerAttemptSession {
           },
         });
         persistedAssetIds.push(asset.assetId);
+        assertReadImportCurrent(options);
       }
+      assertReadImportCurrent(options);
       didAttemptPersistAttempt = true;
       await this.storage.attempts.put(restoredAttemptRecord);
+      assertReadImportCurrent(options);
     } catch (error) {
       await Promise.all(persistedAssetIds.map((assetId) => this.storage.localAssets?.remove?.(assetId).catch(() => {})));
       if (didPersistImportedWorksheet) {
@@ -4212,6 +4258,7 @@ class ViewerAttemptSession {
       if (didAttemptPersistAttempt) {
         await this.storage.attempts?.remove?.(restoredLocalAttemptId).catch(() => {});
       }
+      if (error?.code === 'READ_IMPORT_SUPERSEDED' || (options.isCurrent && !options.isCurrent())) return skippedReadImport();
       throw error;
     }
 
@@ -4250,8 +4297,10 @@ class ViewerAttemptSession {
         });
         return artifact;
       }
+      const accountCurrent = this.readAuth.captureContext?.() || (() => true);
       const packageModel = parseUploadedAttemptPackage(artifact.data);
       return await this.restoreAttemptPackageAsLocalAttempt(packageModel, {
+        isCurrent: () => isCurrent() && accountCurrent(),
         subject: uploadedAttemptRow?.subject || '',
         owner: uploadedAttemptRow?.owner_email || uploadedAttemptRow?.owner_name || uploadedAttemptRow?.owner_sub || '',
         worksheetOrigin: 'uploaded_attempt_restore',
@@ -4714,14 +4763,17 @@ class ViewerAttemptSession {
         this.notifyStateChange();
         return artifact;
       }
+      const accountCurrent = this.readAuth.captureContext?.() || (() => true);
       this.packageLoad.update(progressToken, 'opening');
       // Yield to the browser before synchronous ZIP parsing begins.
       await new Promise(resolve => setTimeout(resolve, 0));
       if (!isCurrent()) return { ok: false, skipped: true };
       const started = await this.startImportedWorksheetFromPackageFile(artifact.data, {
+        isCurrent: () => isCurrent() && accountCurrent(),
         sourceSubject: options?.sourceSubject || '',
         sourceOwner: options?.sourceOwner || '',
       });
+      if (started?.skipped || !isCurrent()) return skippedReadImport();
       this.state.serverActionMessage = `Imported published package ${normalizedPublishedPackageId} into local viewer runtime.`;
       this.notifyStateChange();
       return { ok: true, data: started };
@@ -5191,7 +5243,7 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       resumeBtn.addEventListener('click', async () => {
         const result = await session.resumeUploadedAttempt(row, { isCurrent: () => !closing && overlay.isConnected });
         await renderRows();
-        if (!result?.ok) return;
+        if (!result?.ok || closing || !overlay.isConnected) return;
         closeModal();
         if (onResumeSuccess) {
           await onResumeSuccess(result?.data?.localAttemptId || null);
@@ -5515,6 +5567,7 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
         } catch {
           result = { ok: false };
         }
+        if (result.skipped || closing) return;
         if (!result.ok) {
           if (!closing && openBtn.isConnected) {
             loadError.textContent = t('viewer.packageLoad.failed');

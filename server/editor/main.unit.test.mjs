@@ -1,3 +1,4 @@
+import { t } from '../app/i18n/index.js';
 import { getApiErrorMessage } from '../app/api/error-presentation.js';
 import { URL as NodeURL } from 'node:url';
 import test from 'node:test';
@@ -6183,4 +6184,15 @@ test('editor download idle deadline excludes time spent recovering sign-in', asy
   session.importWorksheetPackageFile = async () => ({ imported: true });
   assert.equal((await session.reopenUploadedDraftAsLocalCopy('one')).ok, true);
   assert.equal(count, 2);
+});
+
+test('superseded draft preflight preserves account-change guidance', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.ensureReadSessionReady = async () => {
+    session.state.uploadedDraftsError = t('readAuth.accountChanged');
+    return { ok: false, result: { ok: false, skipped: true, status: 'superseded' } };
+  };
+  assert.equal((await session.loadUploadedDrafts()).skipped, true);
+  assert.equal(session.state.uploadedDraftsError, t('readAuth.accountChanged'));
 });

@@ -103,3 +103,43 @@ test('an observed external logout suppresses already-running read results', asyn
   finish({ ok: true }); assert.equal((await pending).skipped, true);
   assert.deepEqual(events, ['signed_out']);
 });
+
+test('real probe ownership shares signed-out preflight and recovery for concurrent readers', async () => {
+  const { runOwnedSessionProbe } = await import('./session-coordinator.js');
+  for (const cancelFirst of [false, true]) {
+    let state = { status: 'not_ready', user: null }, finish, signedIn = false, firstCurrent = true;
+    let probes = 0, prompts = 0, logins = 0; const reads = [0, 0];
+    const flow = createReadAuthFlow({ subject: () => state.user?.sub,
+      probe: options => runOwnedSessionProbe({ ...options, readState: () => state, writeState: value => { state = value; }, presentError: () => 'sign in',
+        probe: () => { probes++; return signedIn ? Promise.resolve(ready('a')) : new Promise(resolve => { finish = resolve; }); } }),
+      invalidate() {}, prompt: async () => { prompts++; return true; }, signIn: async () => { logins++; signedIn = true; return ready('a'); } });
+    const first = flow.read(async () => { reads[0]++; return { ok: true }; }, { isCurrent: () => firstCurrent });
+    const second = flow.read(async () => { reads[1]++; return { ok: true }; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(probes, 1);
+    if (cancelFirst) firstCurrent = false;
+    finish(auth);
+    const results = await Promise.all([first, second]);
+    assert.equal(results[1].ok, true); assert.equal(results[0].skipped === true, cancelFirst);
+    assert.deepEqual(reads, [cancelFirst ? 0 : 1, 1]); assert.equal(prompts, 1); assert.equal(logins, 1);
+  }
+});
+
+test('captured post-download context stops import after account change or logout', () => {
+  for (const change of ['account', 'logout']) {
+    const { flow, setUser } = fixture();
+    const current = flow.captureContext(); assert.equal(current(), true);
+    if (change === 'account') { setUser('b'); flow.observe(ready('b')); }
+    else flow.observe(auth);
+    assert.equal(current(), false);
+  }
+});
+
+test('captured context permits a transient checking state but rejects its signed-out verdict', () => {
+  const { flow, setUser } = fixture();
+  const current = flow.captureContext();
+  setUser(null);
+  assert.equal(current(), true);
+  flow.observe(auth);
+  assert.equal(current(), false);
+});

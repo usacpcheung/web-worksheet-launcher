@@ -3983,6 +3983,7 @@ class EditorDraftSession {
       if (shouldPreflight) {
         const sessionReady = await this.ensureReadSessionReady({ isCurrent: ownsRequest, intent: { kind: 'drafts' } });
         if (!ownsRequest()) return superseded();
+        if (sessionReady.result?.skipped) return sessionReady.result;
         if (!sessionReady.ok) {
           this.state.uploadedDraftsError = getApiErrorMessage(sessionReady.result, 'list');
           this.state.uploadedDrafts = []; this.notifyStateChange();
@@ -4093,9 +4094,10 @@ class EditorDraftSession {
         this.notifyStateChange();
         return artifact;
       }
+      const accountCurrent = this.readAuth.captureContext?.() || (() => true);
       const imported = await this.importWorksheetPackageFile(
         createZipFileFromBytes(artifact.data, `uploaded-draft-${uploadedDraftId}.zip`),
-        { convertToEditableDraft: true, migrationSource: 'uploaded-draft', loadToken, isCurrent }
+        { convertToEditableDraft: true, migrationSource: 'uploaded-draft', loadToken, isCurrent: () => isCurrent() && accountCurrent() }
       );
       if (imported?.canceled) return { ok: false, canceled: true, error: { message: 'Opening canceled. No worksheet was imported or changed.' } };
       this.pushNotification({
@@ -4140,9 +4142,10 @@ class EditorDraftSession {
         this.notifyStateChange();
         return artifact;
       }
+      const accountCurrent = this.readAuth.captureContext?.() || (() => true);
       const imported = await this.importWorksheetPackageFile(
         createZipFileFromBytes(artifact.data, `published-package-${normalizedPublishedPackageId}.zip`),
-        { convertToEditableDraft: true, migrationSource: 'published-package', loadToken, isCurrent }
+        { convertToEditableDraft: true, migrationSource: 'published-package', loadToken, isCurrent: () => isCurrent() && accountCurrent() }
       );
       if (imported?.canceled) {
         this.clearNotificationsBySource('publishedPackage.open');

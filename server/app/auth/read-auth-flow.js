@@ -21,6 +21,7 @@ function whileCurrent(promise, current) {
 // callback that also applies content. Application of results remains caller-owned.
 export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate, redirect }) {
   let recovery = null;
+  let preflight = null;
   let epoch = 0;
   let authFailureVersion = 0;
   let knownSubject = subject() || null;
@@ -78,11 +79,26 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     try { return await whileCurrent(entry.promise, current); }
     finally { entry.subscribers.delete(subscriber); }
   };
+  // One probe owns session state for all current read callers. A caller leaving
+  // must not invalidate the probe while another caller still needs its verdict.
+  const sharedPreflight = async (current, timeoutMs) => {
+    if (!preflight || ![...preflight.callers].some(check => check())) {
+      const entry = { callers: new Set(), promise: null };
+      preflight = entry;
+      entry.promise = Promise.resolve().then(() => probe({
+        isCurrent: () => [...entry.callers].some(check => check()), timeoutMs,
+      })).finally(() => { if (preflight === entry) preflight = null; });
+    }
+    const entry = preflight;
+    entry.callers.add(current);
+    try { return await whileCurrent(entry.promise, current); }
+    finally { entry.callers.delete(current); }
+  };
   const ensure = async ({ isCurrent = () => true, signal, intent, timeoutMs } = {}) => {
     const startEpoch = epoch;
     const current = () => !signal?.aborted && isCurrent() && startEpoch === epoch;
     if (!current()) return stale();
-    let result = await whileCurrent(probe({ isCurrent: current, timeoutMs }), current);
+    let result = await sharedPreflight(current, timeoutMs);
     if (!isCurrent() || signal?.aborted) return stale();
     result = observe(result);
     if (!current()) return stale();
@@ -121,5 +137,13 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     }
     return result;
   };
-  return { ensure, read, observe };
+  // Hold the verified account boundary through parsing and persistence too.
+  const captureContext = () => {
+    const capturedEpoch = epoch;
+    const capturedFailure = authFailureVersion;
+    const capturedSubject = subject() || knownSubject;
+    return () => epoch === capturedEpoch && authFailureVersion === capturedFailure
+      && (!capturedSubject || !subject() || subject() === capturedSubject);
+  };
+  return { ensure, read, observe, captureContext };
 }
