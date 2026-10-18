@@ -1278,29 +1278,56 @@ function getServerErrorMessage(result, fallbackId = 'server.actionFailed') {
   return getApiErrorMessage(result, operation);
 }
 
-async function probeServerSessionSilently({ force = false, timeoutMs = 15000 } = {}) {
-  serverSession = { status: 'checking', user: null, error: null };
+async function probeServerSessionSilently({ force = false, timeoutMs = 15000, isCurrent = () => true } = {}) {
+  const superseded = () => ({ ok: false, skipped: true, status: 'superseded' });
+  if (!isCurrent()) return superseded();
+  const previousSession = serverSession;
+  let settle;
+  const pendingSession = { status: 'checking', user: null, error: null,
+    expectedSubject: previousSession?.expectedSubject || previousSession?.user?.sub || null,
+    settled: new Promise(resolve => { settle = resolve; }) };
+  serverSession = pendingSession;
   updateServerSessionUi();
-  const pendingSession = serverSession;
-  const result = await probeSession({ apiClient, force, timeoutMs });
-  // A newer probe, API auth failure or sign-in result owns the current state.
-  if (serverSession !== pendingSession) return result;
-  if (result.ok && result.status === 'ready') {
-    serverSession = { status: 'ready', user: result.user || null, error: null };
-  } else {
-    serverSession = {
-      status: result.status === 'error' ? 'error' : 'not_ready',
-      user: null,
-      error: getApiErrorMessage(result, 'session'),
-    };
+  try {
+    const result = await probeSession({ apiClient, force, timeoutMs });
+    if (serverSession !== pendingSession) {
+      // A newer check owns global state, but not this action's lifetime.
+      // Wait for its decision before allowing a same-account action to proceed.
+      while (isCurrent() && serverSession?.status === 'checking' && serverSession.settled) {
+        await serverSession.settled;
+      }
+      const subject = result.user?.sub;
+      if (isCurrent() && result.ok && result.status === 'ready' && subject
+        && serverSession?.status === 'ready' && serverSession.user?.sub === subject
+        && (!pendingSession.expectedSubject || pendingSession.expectedSubject === subject)) return result;
+      return superseded();
+    }
+    if (!isCurrent()) {
+      // Release our checking state without publishing an obsolete probe result.
+      serverSession = previousSession?.status === 'checking' || !previousSession
+        ? { status: 'not_ready', user: null, error: null } : previousSession;
+      updateServerSessionUi();
+      return superseded();
+    }
+    if (result.ok && result.status === 'ready') {
+      serverSession = { status: 'ready', user: result.user || null, error: null };
+    } else {
+      serverSession = {
+        status: result.status === 'error' ? 'error' : 'not_ready',
+        user: null,
+        error: getApiErrorMessage(result, 'session'),
+      };
+    }
+    updateServerSessionUi();
+    return result;
+  } finally {
+    settle();
   }
-  updateServerSessionUi();
-  return result;
 }
 
 async function ensureServerSessionReady({ isCurrent = () => true } = {}) {
-  const result = await probeServerSessionSilently({ force: true });
-  if (!isCurrent()) return { ok: false, result: { ok: false, skipped: true, status: 'superseded' } };
+  const result = await probeServerSessionSilently({ force: true, isCurrent });
+  if (result.skipped || !isCurrent()) return { ok: false, result: { ok: false, skipped: true, status: 'superseded' } };
   if (result.ok && result.status === 'ready') {
     return { ok: true, result };
   }
@@ -2053,6 +2080,16 @@ function syncUploadedDraftActionAvailability() {
   });
 }
 
+// A failed read is not an empty list. Keep feedback inside the current dialog.
+function renderServerListFailure(result, fallbackKey) {
+  if (!serverModalBody || serverModalOverlay?.hidden) return;
+  const message = document.createElement('p');
+  message.className = 'server-empty';
+  message.setAttribute('role', 'alert');
+  message.textContent = getServerErrorMessage(result, fallbackKey);
+  serverModalBody.replaceChildren(message);
+}
+
 function renderUploadedDraftManager({
   drafts = uploadedDrafts,
   slotLimit = uploadedDraftSlotLimit,
@@ -2091,6 +2128,9 @@ function renderUploadedDraftManager({
           const refreshingModal = activeServerModal;
           const result = await loadUploadedRolePlaySceneDrafts({ preflight: true, showManager: false });
           if (activeServerModal !== refreshingModal) return;
+          if (!result?.ok && !result?.skipped) {
+            renderServerListFailure(result, 'server.listFailed');
+          }
           if (result?.ok) {
             renderUploadedDraftManager({ onDraftDeleted, onDeleteCanceled, onClose, recoveryMode,
               replacementReason: recoveryMode ? 'slot-recovery-refresh' : 'replace' });
@@ -2270,16 +2310,21 @@ async function loadPublishedRolePlaySceneScenes({
   const requestId = ++publishedScenesRequestId;
   isLoadingPublishedScenes = true;
   updateServerSessionUi();
-  if (showBrowser && !serverModalOverlay?.hidden) {
-    renderPublishedBrowserModal();
-  }
+  syncUploadedDraftActionAvailability();
+  const hadOpenBrowser = showBrowser && !serverModalOverlay?.hidden;
+  let failure = null;
+  let loaded = false;
   const modalRevision = serverModalRevision;
   const isCurrent = () => requestId === publishedScenesRequestId && modalRevision === serverModalRevision;
   try {
     if (preflight) {
-      const sessionReady = await ensureServerSessionReady();
+      const sessionReady = await ensureServerSessionReady({ isCurrent });
       if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
-      if (!sessionReady.ok) return sessionReady.result;
+      if (!sessionReady.ok) {
+        if (sessionReady.result?.skipped) return sessionReady.result;
+        failure = sessionReady.result;
+        return failure;
+      }
     }
     if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
     const offset = append ? Number(publishedScenesNextOffset || publishedScenes.length || 0) : 0;
@@ -2292,9 +2337,11 @@ async function loadPublishedRolePlaySceneScenes({
       return { ok: false, skipped: true, status: 'stale_response' };
     }
     if (!result.ok) {
+      failure = result;
       showMessage({ text: getServerErrorMessage(result, 'published.listFailed') });
       return result;
     }
+    loaded = true;
     const incoming = Array.isArray(result.data?.items) ? result.data.items : [];
     publishedScenes = append ? [...publishedScenes, ...incoming] : incoming;
     publishedScenesHasMore = result.data?.hasMore === true;
@@ -2302,14 +2349,24 @@ async function loadPublishedRolePlaySceneScenes({
     return result;
   } catch (error) {
     if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
-    throw error;
+    failure = { ok: false, error };
+    showMessage({ text: getServerErrorMessage(failure, 'published.listFailed') });
+    return failure;
   } finally {
     if (requestId === publishedScenesRequestId) {
       isLoadingPublishedScenes = false;
       updateServerSessionUi();
       if (showBrowser && isCurrent()) {
-        renderPublishedBrowserModal();
+        if (loaded) renderPublishedBrowserModal();
+        else if (failure && hadOpenBrowser) {
+          // A failed page is not a valid basis for Load more (including after reauthentication).
+          publishedScenes = [];
+          publishedScenesHasMore = false;
+          publishedScenesNextOffset = null;
+          renderServerListFailure(failure, 'published.listFailed');
+        }
       }
+      syncUploadedDraftActionAvailability();
     }
   }
 }
@@ -2345,6 +2402,7 @@ async function openPublishedRolePlaySceneById(publishedSceneId, {
   const sessionReady = await ensureServerSessionReady();
   if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
   if (!sessionReady.ok) {
+    if (sessionReady.result?.skipped) return sessionReady.result;
     if (isDirect) {
       if (sessionReady.result?.status === 'not_ready' || isServerAuthRequired(sessionReady.result)) {
         pendingDirectPublishedSceneId = publishedSceneId;
@@ -2529,7 +2587,7 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
   updateServerSessionUi();
   try {
     if (preflight) {
-      const sessionReady = await ensureServerSessionReady();
+      const sessionReady = await ensureServerSessionReady({ isCurrent });
       if (!isCurrent()) return stale();
       if (!sessionReady.ok) return sessionReady.result;
     }
@@ -2550,7 +2608,9 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
     return result;
   } catch (error) {
     if (!isCurrent()) return stale();
-    throw error;
+    const result = { ok: false, error };
+    showMessage({ text: getServerErrorMessage(result, 'server.listFailed') });
+    return result;
   } finally {
     if (requestId === uploadedDraftsRequestId) {
       isLoadingUploadedDrafts = false;
@@ -2660,6 +2720,7 @@ async function publishUploadedRolePlaySceneDraft(draft) {
       try {
         const sessionReady = await ensureServerSessionReady();
         if (!sessionReady.ok) {
+          if (sessionReady.result?.skipped) return;
           showMessage({ text: getApiErrorMessage(sessionReady.result, 'session') });
           return;
         }

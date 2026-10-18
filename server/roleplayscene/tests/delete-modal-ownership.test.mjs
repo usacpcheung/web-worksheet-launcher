@@ -18,7 +18,7 @@ test('deletion refresh preserves newer dialogs before and during refresh, but re
       publishedScenesNextOffset: null, publishedScenesHasMore: false, serverModalOverlay: { hidden: true },
       getRolePlaySceneDraftId: () => 'draft', getRolePlayScenePublishedSceneId: () => 'publication',
       showDeleteDraftConfirmation: async () => 'delete', showDeletePublishedSceneConfirmation: async () => 'delete',
-      ensureServerSessionReady: async () => ({ ok: true }), updateServerSessionUi() {}, showMessage() {},
+      ensureServerSessionReady: async () => ({ ok: true }), syncUploadedDraftActionAvailability() {}, updateServerSessionUi() {}, showMessage() {},
       renderUploadedDraftManager() { renders++; }, renderPublishedBrowserModal() { renders++; },
       apiClient: {
         deleteRolePlaySceneDraft: () => new Promise(r => { finishDelete = r; }),

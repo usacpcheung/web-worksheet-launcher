@@ -993,6 +993,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       }
       if (!sessionReady?.ok) {
         const failure = sessionReady?.result;
+        if (failure?.skipped) return;
         if (isAudioAuthFailure(failure)) {
           dialogueAuthFailures.add(token);
           showMessage({ textId: 'inspector.dialogue.t2aSessionExpired' });

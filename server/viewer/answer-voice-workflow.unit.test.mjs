@@ -250,3 +250,16 @@ test('sentence boundaries preserve punctuation, whitespace and Chinese without j
     ['Hello',' world','Hello world']
   ]) assert.equal(insertVoiceSegment(left,right,left.length).text,expected);
 });
+
+
+test('superseded session preflight releases voice/rewrite without fabricated authentication errors', async () => {
+  for (const mode of ['voice', 'rewrite']) {
+    const {flow,state}=setup({checkSession:async()=>({ok:false,result:{ok:false,skipped:true,status:'superseded'}})});
+    assert.equal((await flow.run('q1',{mode})).status,'superseded');
+    assert.equal(flow.active,null);
+    assert.equal(state.answers.q1,'Earlier');
+    assert.deepEqual(state.recovery,{});
+    assert.deepEqual(state.requests,[]);
+    assert.deepEqual(state.records,[]);
+  }
+});
