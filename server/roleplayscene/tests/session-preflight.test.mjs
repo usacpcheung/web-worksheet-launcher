@@ -1,3 +1,4 @@
+import { runOwnedSessionProbe } from '../../app/auth/session-coordinator.js';
 import { getApiErrorMessage } from '../../app/api/error-presentation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,14 +15,14 @@ function harness(apiClient, timeoutMs = 10) {
     assert.equal(options.timeoutMs, 15000);
     return probeSession({ ...options, timeoutMs });
   };
-  const app = new Function('apiClient', 'probeSession', 'showMessage', 'getApiErrorMessage', `
+  const app = new Function('apiClient', 'probeSession', 'showMessage', 'getApiErrorMessage', 'runOwnedSessionProbe', `
     let serverSession;
     const updateServerSessionUi = () => {};
     const translate = id => id;
     ${wiring}
     return { ensureServerSessionReady, probeServerSessionSilently,
       state: () => serverSession, setState: state => { serverSession = state; } };
-  `)(apiClient, boundedProbe, notice => notices.push(notice), getApiErrorMessage);
+  `)(apiClient, boundedProbe, notice => notices.push(notice), getApiErrorMessage, runOwnedSessionProbe);
   return { ...app, notices };
 }
 

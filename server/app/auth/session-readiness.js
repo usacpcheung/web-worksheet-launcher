@@ -1,3 +1,5 @@
+import { classifySessionFailure } from './session-outcome.js';
+
 const PROBE_CACHE_TTL_MS = 2000;
 
 let latestProbeCache = null;
@@ -26,14 +28,7 @@ function toErrorObject(error) {
 }
 
 function isSignInRequiredError(error) {
-  const status = Number(error?.status);
-  const code = String(error?.code || '').toUpperCase();
-  return Boolean(
-    error?.requiresSignIn
-    || status === 401
-    || status === 403
-    || code === 'AUTH_REQUIRED'
-  );
+  return classifySessionFailure({ error }, { legacyAuthStatuses: true }) === 'authentication_required';
 }
 
 function normalizeProbeResult(sessionResult) {

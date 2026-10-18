@@ -1,3 +1,4 @@
+import { runOwnedSessionProbe } from '../../app/auth/session-coordinator.js';
 import { runDeletionFlow } from '../../app/api/deletion-flow.js';
 import { t } from '../../app/i18n/index.js';
 import { runUploadRecoveryFlow } from '../../app/api/upload-recovery-flow.js';
@@ -1279,50 +1280,13 @@ function getServerErrorMessage(result, fallbackId = 'server.actionFailed') {
 }
 
 async function probeServerSessionSilently({ force = false, timeoutMs = 15000, isCurrent = () => true } = {}) {
-  const superseded = () => ({ ok: false, skipped: true, status: 'superseded' });
-  if (!isCurrent()) return superseded();
-  const previousSession = serverSession;
-  let settle;
-  const pendingSession = { status: 'checking', user: null, error: null,
-    expectedSubject: previousSession?.expectedSubject || previousSession?.user?.sub || null,
-    settled: new Promise(resolve => { settle = resolve; }) };
-  serverSession = pendingSession;
-  updateServerSessionUi();
-  try {
-    const result = await probeSession({ apiClient, force, timeoutMs });
-    if (serverSession !== pendingSession) {
-      // A newer check owns global state, but not this action's lifetime.
-      // Wait for its decision before allowing a same-account action to proceed.
-      while (isCurrent() && serverSession?.status === 'checking' && serverSession.settled) {
-        await serverSession.settled;
-      }
-      const subject = result.user?.sub;
-      if (isCurrent() && result.ok && result.status === 'ready' && subject
-        && serverSession?.status === 'ready' && serverSession.user?.sub === subject
-        && (!pendingSession.expectedSubject || pendingSession.expectedSubject === subject)) return result;
-      return superseded();
-    }
-    if (!isCurrent()) {
-      // Release our checking state without publishing an obsolete probe result.
-      serverSession = previousSession?.status === 'checking' || !previousSession
-        ? { status: 'not_ready', user: null, error: null } : previousSession;
-      updateServerSessionUi();
-      return superseded();
-    }
-    if (result.ok && result.status === 'ready') {
-      serverSession = { status: 'ready', user: result.user || null, error: null };
-    } else {
-      serverSession = {
-        status: result.status === 'error' ? 'error' : 'not_ready',
-        user: null,
-        error: getApiErrorMessage(result, 'session'),
-      };
-    }
-    updateServerSessionUi();
-    return result;
-  } finally {
-    settle();
-  }
+  return runOwnedSessionProbe({
+    readState: () => serverSession,
+    writeState: state => { serverSession = state; updateServerSessionUi(); },
+    probe: () => probeSession({ apiClient, force, timeoutMs }),
+    presentError: result => getApiErrorMessage(result, 'session'),
+    isCurrent,
+  });
 }
 
 async function ensureServerSessionReady({ isCurrent = () => true } = {}) {

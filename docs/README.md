@@ -15,6 +15,7 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Worksheet, attempt and RolePlayScene packages](contracts/package-formats.md)
 - [Implemented PostgreSQL schema](contracts/database-schema.md)
 - [Authentication messages, response schema and viewer launch](message-contract.md)
+- [Shared authentication foundation and compatibility boundary](contracts/authentication-foundation.md)
 - [Authentication workflow map and agreed target (implementation planned)](contracts/authentication-workflows.md)
 - [Worksheet published browsing and slot handling](contracts/editor-viewer-backend-contract.md)
 - [Package snapshots within an upload flow](contracts/upload-snapshots.md)
