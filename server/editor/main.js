@@ -3712,7 +3712,9 @@ class EditorDraftSession {
   }
 
   async ensureServerSessionReady(_legacyMessage = undefined, options = {}) {
-    const result = await this.probeServerSessionSilently({ force: true, timeoutMs: options.timeoutMs });
+    const isCurrent = options.isCurrent || (() => true);
+    const result = await this.probeServerSessionSilently({ force: true, timeoutMs: options.timeoutMs, isCurrent });
+    if (!isCurrent()) return { ok: false, result: { ok: false, skipped: true, status: 'superseded' } };
     if (result.ok && this.state.serverSession.status === 'ready') {
       return { ok: true, result };
     }
@@ -3832,7 +3834,7 @@ class EditorDraftSession {
         source: 'upload.status',
         text: editorNotification('uploadDraft.uploaded', { id: result.data.uploaded_draft_id }),
       });
-      const refreshResult = await this.loadUploadedDrafts({ preflight: false, signal: operation.signal });
+      const refreshResult = await this.loadUploadedDrafts({ preflight: false, force: true, signal: operation.signal });
       if (!operation.canPublish()) return result;
       if (refreshResult?.ok) {
         const uploadedDraftId = String(result.data?.uploaded_draft_id || '').trim();
@@ -3846,7 +3848,7 @@ class EditorDraftSession {
           source: 'upload.refresh',
           text: foundUploadedDraft ? editorNotification('uploadDraft.listRefreshed') : editorNotification('uploadDraft.refreshSucceeded'),
         });
-      } else {
+      } else if (refreshResult?.status !== 'superseded') {
         this.pushNotification({
           kind: 'warn',
           category: 'server',
@@ -3900,7 +3902,7 @@ class EditorDraftSession {
         source: 'publish.status',
         text: editorNotification('publishedPackage.published', { id: publishResult.data.published_package_id }),
       });
-      const refreshResult = await this.loadUploadedDrafts({ preflight: false });
+      const refreshResult = await this.loadUploadedDrafts({ preflight: false, force: true });
       if (refreshResult?.ok) {
         this.pushNotification({
           kind: 'success',
@@ -3908,7 +3910,7 @@ class EditorDraftSession {
           source: 'publish.refresh',
           text: editorNotification('uploadDraft.publishedRefreshSucceeded'),
         });
-      } else {
+      } else if (refreshResult?.status !== 'superseded') {
         this.pushNotification({
           kind: 'warn',
           category: 'server',
@@ -3931,13 +3933,19 @@ class EditorDraftSession {
     const inflightKey = options.signal ? '_loadUploadedDraftsCancelablePromise' : shouldPreflight
       ? '_loadUploadedDraftsWithPreflightPromise'
       : '_loadUploadedDraftsWithoutPreflightPromise';
-    if (!options.isCurrent && this[inflightKey]) {
+    if (!options.force && !options.signal && !options.isCurrent && this[inflightKey]
+      && this[`${inflightKey}Owner`] === this._uploadedDraftsRequest) {
       return this[inflightKey];
     }
 
+    const request = {};
+    this._uploadedDraftsRequest = request;
+    const ownsRequest = () => isCurrent() && this._uploadedDraftsRequest === request;
+    const superseded = () => ({ ok: false, skipped: true, status: 'superseded' });
     const loadPromise = (async () => {
       if (shouldPreflight) {
-        const sessionReady = await this.ensureServerSessionReady();
+        const sessionReady = await this.ensureServerSessionReady(undefined, { isCurrent: ownsRequest });
+        if (!ownsRequest()) return superseded();
         if (!sessionReady.ok) return sessionReady.result;
       }
 
@@ -3948,7 +3956,7 @@ class EditorDraftSession {
 
       try {
         const result = await this.apiClient.listUploadedDrafts({ signal: options.signal });
-        if (!isCurrent()) return result;
+        if (!ownsRequest()) return superseded();
         if (!result.ok) {
           this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDrafts.refresh', text: getApiErrorMessage(result, 'list') });
           this.notifyStateChange();
@@ -3962,6 +3970,9 @@ class EditorDraftSession {
         }
         this.notifyStateChange();
         return result;
+      } catch (error) {
+        if (!ownsRequest()) return superseded();
+        throw error;
       } finally {
         this._loadUploadedDraftsActiveCount = Math.max(0, this._loadUploadedDraftsActiveCount - 1);
         this.state.isLoadingUploadedDrafts = this._loadUploadedDraftsActiveCount > 0;
@@ -3974,7 +3985,10 @@ class EditorDraftSession {
         this.notifyStateChange();
       }
     })();
-    if (!options.isCurrent) this[inflightKey] = loadPromise;
+    if (!options.isCurrent && !options.signal) {
+      this[inflightKey] = loadPromise;
+      this[`${inflightKey}Owner`] = request;
+    }
     try {
       return await loadPromise;
     } finally {
@@ -4115,11 +4129,11 @@ class EditorDraftSession {
       }
       const successMessage = editorNotification('uploadDraft.uploadedDraftDeleted');
       this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete', text: successMessage });
-      const refreshResult = await this.loadUploadedDrafts({ preflight: false, isCurrent });
+      const refreshResult = await this.loadUploadedDrafts({ preflight: false, force: true, isCurrent });
       if (!isCurrent()) return { ...result, refreshResult };
       if (refreshResult && refreshResult.ok) {
         this.pushNotification({ kind: 'success', category: 'server', source: 'uploadedDraft.delete.refresh', text: editorNotification('uploadDraft.listRefreshed') });
-      } else if (refreshResult && !refreshResult.ok) {
+      } else if (refreshResult && !refreshResult.ok && refreshResult.status !== 'superseded') {
         const refreshMessage = getApiErrorMessage(refreshResult, 'list');
         this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDraft.delete.refresh', text: refreshMessage });
       }

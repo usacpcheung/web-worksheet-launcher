@@ -6086,3 +6086,59 @@ test('deletion reserves preflight and never mutates after its dialog becomes sta
   assert.equal(deletes,0);
   assert.equal(session._deletingUploadedDraftIds.size,0);
 });
+
+for (const outcome of ['success', 'failure', 'throw']) {
+  test(`post-delete refresh cannot be overwritten by an older ${outcome} response`, async () => {
+    const mod = await loadEditorModule();
+    const session = new mod.EditorDraftSession(createSessionForTests());
+    const pending = [];
+    session.ensureServerSessionReady = async () => ({ok:true});
+    session.apiClient = {
+      listUploadedDrafts: () => new Promise((resolve,reject) => pending.push({resolve,reject})),
+      deleteUploadedDraft: async () => ({ok:true}),
+    };
+    const old = session.loadUploadedDrafts({preflight:false});
+    const deletion = session.deleteUploadedDraft('deleted');
+    for (let i = 0; i < 100 && pending.length < 2; i++) await new Promise(resolve => setTimeout(resolve,0));
+    assert.equal(pending.length,2);
+    pending[1].resolve({ok:true,data:{items:[],slotLimit:7}});
+    assert.equal((await deletion).ok,true);
+    if (outcome === 'throw') pending[0].reject(Error('stale transport'));
+    else pending[0].resolve({ok:outcome==='success',data:{items:[{uploaded_draft_id:'deleted'}],slotLimit:1},error:{code:'NETWORK_ERROR'}});
+    assert.equal((await old).status,'superseded');
+    assert.deepEqual(session.state.uploadedDrafts,[]);
+    assert.equal(session.state.uploadedDraftSlotLimit,7);
+    assert.equal(session.state.notifications.some(n => n.kind==='warn'),false);
+    assert.equal(session.state.isLoadingUploadedDrafts,false);
+  });
+}
+
+test('forced refresh replaces deduplication ownership and shares only the current request', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  const pending=[];
+  session.apiClient={listUploadedDrafts:()=>new Promise(resolve=>pending.push(resolve))};
+  const old=session.loadUploadedDrafts({preflight:false});
+  const fresh=session.loadUploadedDrafts({preflight:false,force:true});
+  const shared=session.loadUploadedDrafts({preflight:false});
+  assert.equal(pending.length,2);
+  pending[1]({ok:true,data:{items:[{uploaded_draft_id:'fresh'}]}});
+  assert.equal((await fresh).ok,true);
+  assert.equal((await shared).ok,true);
+  pending[0]({ok:true,data:{items:[]}});
+  assert.equal((await old).status,'superseded');
+  assert.equal(session.state.uploadedDrafts[0].uploaded_draft_id,'fresh');
+});
+
+test('superseded preflight does not start a late list request', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  let ready, calls=0;
+  session.ensureServerSessionReady=()=>new Promise(resolve=>{ready=resolve;});
+  session.apiClient={listUploadedDrafts:async()=>{calls++;return {ok:true,data:{items:[]}};}};
+  const old=session.loadUploadedDrafts();
+  await session.loadUploadedDrafts({preflight:false});
+  ready({ok:true});
+  assert.equal((await old).status,'superseded');
+  assert.equal(calls,1);
+});

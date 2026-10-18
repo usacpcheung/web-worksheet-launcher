@@ -15,6 +15,7 @@ try {
    await page.route(url => url.pathname.startsWith('/api/'), async route => {
     const request = route.request(), url = new URL(request.url());
     if (url.pathname.endsWith('/session')) return route.fulfill({ json: { ok:true, data:{ ready:true,user:{sub:'fixture'} } } });
+    if (mode === 'editor-list-stall' && request.method() === 'GET' && url.pathname.endsWith('/drafts')) { pendingLists.push(route); return; }
     if (mode === 'list-stall' && request.method() === 'GET' && url.pathname.endsWith('/attempts')) { pendingLists.push(route); return; }
     if (request.method() === 'DELETE') { deletions++; pendingDeletes.push(route); return; }
     if (request.method() === 'POST') {
@@ -131,6 +132,20 @@ try {
      await pendingLists[beforeLists+1].fulfill({json:{ok:true,data:{items:[{uploaded_attempt_id:'current',title:'Current'}]}}});
      await page.waitForFunction(()=>!viewerSession.state.isLoadingUploadedAttempts);
      assert.equal(await page.evaluate(()=>viewerSession.state.uploadedAttempts[0].title),'Current');
+   }
+   if (app === 'editor') {
+     mode='editor-list-stall'; const listStart=pendingLists.length, deleteStart=pendingDeletes.length;
+     await page.evaluate(()=>{window.oldRefresh=editorSession.loadUploadedDrafts({preflight:false});});
+     await waitUntil(()=>pendingLists.length===listStart+1);
+     await page.evaluate(()=>{window.deleting=editorSession.deleteUploadedDraft('old');});
+     await waitUntil(()=>pendingDeletes.length===deleteStart+1);
+     await pendingDeletes[deleteStart].fulfill({json:{ok:true,data:{deleted:true}}});
+     await waitUntil(()=>pendingLists.length===listStart+2);
+     await pendingLists[listStart+1].fulfill({json:{ok:true,data:{items:[]}}});
+     await page.evaluate(()=>window.deleting);
+     await pendingLists[listStart].fulfill({json:{ok:true,data:{items:[row]}}});
+     assert.equal((await page.evaluate(()=>window.oldRefresh)).status,'superseded');
+     assert.deepEqual(await page.evaluate(()=>editorSession.state.uploadedDrafts),[]);
    }
    assert.deepEqual(errors,[]);
    console.log(`PASS ${app}/${locale}/${width}: guarded deletion, failed deletion unlock, stale feedback and recovery-list cancellation/deadline`);

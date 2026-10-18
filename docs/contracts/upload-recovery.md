@@ -36,6 +36,12 @@ An accepted response includes its normalized `uploadedAttempts` rows; recovery u
 those rows rather than rereading mutable session state. An explicitly empty list
 stays empty instead of falling back to cached rows.
 
+Editor draft-list refreshes accept results only from the latest request. Upload,
+publication and deletion force a fresh list request rather than reuse a read
+started before the mutation. Superseded results cannot replace rows or slot limits,
+or produce refresh-failure feedback. Concurrent ordinary refreshes may share only
+the currently owned request; independently cancellable requests are not shared.
+
 ## Recovery rules
 
 Conflict decisions and successful slot deletion may repeat: another tab can
