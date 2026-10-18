@@ -1,6 +1,14 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
+  readAuth: {
+    pendingWork: '請先完成或捨棄待處理的語音或討論內容，再於此分頁登入；或允許登入彈出視窗，保留目前頁面的工作。',
+    accountChanged: '帳戶已變更。請重新選擇伺服器操作。本機工作已保留。',
+    sameTab: '在此分頁登入',
+    saveFailed: '無法安全儲存本機工作及所選操作。請留在此頁重試，或允許登入彈出視窗。',
+    title: '登入以繼續',
+    description: '登入後可繼續瀏覽、開啟或下載伺服器上的內容。本機工作將會保留。',
+  },
   apiErrors: {
     deleteUncertain: "無法確認刪除結果，項目可能已被刪除。請先重新整理清單確認，再決定是否重試。",
     deleteRefreshFailed: "項目已刪除，但無法更新清單。請重新整理清單以查看最新內容。",

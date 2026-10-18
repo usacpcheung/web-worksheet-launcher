@@ -225,7 +225,7 @@ async function loadViewerModule(overrides = {}) {
     window: overrides.window || {},
   };
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
     {
       name: 'replace viewerStorage import with test bag binding',
       pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];/,
@@ -1124,11 +1124,11 @@ test('viewer browse action runs silent session preflight and blocks when session
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'apiErrors.sessionExpired');
-  assert.equal(session.state.serverSession.reason, 'expired');
+  assert.equal(session.state.serverActionMessage, getApiErrorMessage(result, 'session'));
+  assert.equal(session.state.serverSession.status, 'logged_out');
 });
 
-test('viewer browse preflight transitions to expired-session copy for invalid session responses', async () => {
+test('viewer browse preflight reports 503 without authentication recovery', async () => {
   const calls = [];
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({}, {
@@ -1156,8 +1156,8 @@ test('viewer browse preflight transitions to expired-session copy for invalid se
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'apiErrors.sessionExpired');
-  assert.equal(session.state.serverSession.reason, 'expired');
+  assert.equal(session.state.serverActionMessage, getApiErrorMessage(result, 'session'));
+  assert.notEqual(session.state.serverSession.reason, 'expired');
 });
 
 
@@ -3948,10 +3948,9 @@ test('renderViewerStartPanel shows contextual server-attempt management action',
   assert.equal(Boolean(manageBtn), true);
 });
 
-test('renderViewerStartPanel only fetches uploaded attempts when session is logged in', async () => {
+test('viewer manager reads carry their dialog ownership guard', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
-  assert.equal(source.includes('if (sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN) {'), true);
-  assert.equal(source.includes('await session.listUploadedAttempts();'), true);
+  assert.equal(source.includes('await session.listUploadedAttempts({ isCurrent: () => !closing && overlay.isConnected });'), true);
 });
 
 test('bootstrapViewer falls back to start panel when resume flag record is invalid', { concurrency: false }, async () => {
@@ -5718,6 +5717,7 @@ test('listUploadedAttempts stores rows and slot limit for management UI', async 
     resumeFlags: { get: () => null, set: () => {} },
   }, {
     apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { sub: 'learner' } } }),
       listUploadedAttempts: async () => ({
         ok: true,
         data: {
@@ -5741,6 +5741,7 @@ test('listUploadedAttempts skips network call when viewer session is logged out'
     resumeFlags: { get: () => null, set: () => {} },
   }, {
     apiClient: {
+      getSession: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED' } }),
       listUploadedAttempts: async () => {
         callCount += 1;
         return { ok: true, data: { uploadedAttempts: [] } };
@@ -5761,6 +5762,7 @@ test('deleteUploadedAttemptAndRefresh calls delete then refreshes list', async (
     resumeFlags: { get: () => null, set: () => {} },
   }, {
     apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { sub: 'learner' } } }),
       deleteUploadedAttempt: async (id) => {
         calls.push(`delete:${id}`);
         return { ok: true };
@@ -6076,6 +6078,7 @@ test('resumeUploadedAttempt restores uploaded package into a new local attempt',
     attempts: { put: async (record) => { savedAttempts.push(record); return record; } },
   }, {
     apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { sub: 'learner' } } }),
       fetchUploadedAttemptArtifact: async () => ({ ok: true, data: packageBytes }),
     },
   });
@@ -6115,6 +6118,7 @@ test('resumeUploadedAttempt surfaces failure message through serverActionMessage
     resumeFlags: { get: () => null, set: () => {} },
   }, {
     apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { sub: 'learner' } } }),
       fetchUploadedAttemptArtifact: async () => ({ ok: true, data: new Uint8Array([0x00]) }),
     },
   });
@@ -6130,6 +6134,7 @@ test('resumeUploadedAttempt surfaces API fetch failure through serverActionMessa
     resumeFlags: { get: () => null, set: () => {} },
   }, {
     apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { sub: 'learner' } } }),
       fetchUploadedAttemptArtifact: async () => ({ ok: false, error: { code: 'NOT_FOUND', message: 'artifact missing' } }),
     },
   });
@@ -6154,6 +6159,7 @@ test('downloadUploadedAttempt surfaces API errors through serverActionMessage', 
     resumeFlags: { get: () => null, set: () => {} },
   }, {
     apiClient: {
+      getSession: async () => ({ ok: true, data: { user: { sub: 'learner' } } }),
       fetchUploadedAttemptArtifact: async () => ({ ok: false, error: { code: 'NOT_FOUND', message: 'artifact missing' } }),
     },
   });
@@ -6870,6 +6876,7 @@ for (const kind of ['attempts', 'published']) for (const ok of [true, false]) te
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({ resumeFlags: { get: () => null, set() {} } });
   session.state.serverSession = { status: 'logged_in' };
+  session.apiClient.getSession = async () => ({ ok: true, data: { user: { sub: 'learner' } } });
   const replies = [];
   const apiMethod = kind === 'attempts' ? 'listUploadedAttempts' : 'listPublishedPackages';
   const stateKey = kind === 'attempts' ? 'uploadedAttempts' : 'publishedPackages';
@@ -6878,8 +6885,10 @@ for (const kind of ['attempts', 'published']) for (const ok of [true, false]) te
   const run = options => kind === 'attempts' ? session.listUploadedAttempts(options) : session.browsePublishedPackages('', { preflight: false, ...options });
   let current = true;
   const older = run({ isCurrent: () => current });
+  await new Promise(resolve => setImmediate(resolve));
   current = false;
   const newer = run({ isCurrent: () => true });
+  await new Promise(resolve => setImmediate(resolve));
   session.state[stateKey] = [{ title: 'keep' }];
   session.state.serverActionMessage = 'new feedback';
   replies[0](ok ? { ok: true, data: { items: [{ title: 'stale' }] } } : { ok: false, error: { code: 'FORBIDDEN' } });
@@ -6966,10 +6975,13 @@ test('overlapping attempt lists return superseded outcomes and accepted rows bel
   for (const rejection of [false, true]) {
     const session = new mod.ViewerAttemptSession({ resumeFlags: { get() {}, set() {} } });
     session.state.serverSession = {status:'logged_in'};
+    session.apiClient.getSession = async () => ({ ok: true, data: { user: { sub: 'learner' } } });
     const replies=[];
     session.apiClient.listUploadedAttempts = () => new Promise((resolve,reject)=>replies.push({resolve,reject}));
     const older=session.listUploadedAttempts();
+    await new Promise(resolve => setImmediate(resolve));
     const newer=session.listUploadedAttempts();
+    await new Promise(resolve => setImmediate(resolve));
     if(rejection) replies[0].reject(Error('stale network failure'));
     else replies[0].resolve({ok:true,data:{items:[{uploaded_attempt_id:'old',title:'Old'}]}});
     assert.equal((await older).status,'superseded');

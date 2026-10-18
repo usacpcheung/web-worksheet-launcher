@@ -11,6 +11,9 @@ function harness() {
   const response = deferred();
   const events = [];
   const context = vm.createContext({
+    getReadAuth: () => ({ read: request => request() }),
+    ensureReadSessionReady: async () => ({ ok: true }),
+    getServerReadErrorMessage: () => 'error',
     AbortController, waitForDraftRequest, serverModalRevision: 0,
     openingUploadedDraft: null, isLoadingPublishedScenes: false, publishedScenesRequestId: 0,
     publishedScenes: [], publishedScenesFilters: {}, publishedScenesNextOffset: 0, publishedScenesHasMore: false,

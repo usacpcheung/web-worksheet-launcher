@@ -110,8 +110,15 @@ try {
   assert.equal(await browse.evaluate(e => e === document.activeElement), true);
   pending.first();
   pending.finish();
-  await page.locator('.question-card').waitFor();
+  await page.waitForTimeout(150);
+  assert.equal(await page.locator('.question-card').count(), 0, 'closed browser must not apply a late package');
   assert.equal(await page.locator('.browse-modal').count(), 0);
+  await browse.click();
+  pending = null;
+  await page.locator('.viewer-package-load-button').first().click();
+  await page.waitForFunction(() => document.body.innerText.includes('Downloading'));
+  pending.first(); pending.finish();
+  await page.locator('.question-card').waitFor();
   console.log('PASS: streamed progress, both entries/locales/widths, loading surfaces fit viewport, no unexpected console errors, concurrent load prevention, unknown size, invalid ZIP retry and close/focus behavior');
 } finally {
   await browser.close();

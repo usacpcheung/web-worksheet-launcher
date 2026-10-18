@@ -29,6 +29,9 @@ try {
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const edit = title => store.set({ project: { ...store.get().project, meta: { title, version: 1 } } });
     let cleanup = await setupPersistence(store, { showMessage: m => notices.push(m) });
+    edit('Navigation flush'); await cleanup.flushForNavigation();
+    const checkpoint = new Store(); const closeCheckpoint = await setupPersistence(checkpoint);
+    const navigationTitle = checkpoint.get().project.meta.title; closeCheckpoint();
     edit('Cleanup flush'); cleanup(); cleanup();
     const reopened = new Store(); let close = await setupPersistence(reopened);
     const cleanupTitle = reopened.get().project.meta.title; close();
@@ -57,11 +60,15 @@ try {
       await sleep(50);
       const failedWarning = new Event('beforeunload', { cancelable: true });
       window.dispatchEvent(failedWarning);
+      let navigationRejected = false;
+      try { await cleanup.flushForNavigation(); } catch { navigationRejected = true; }
       cleanup();
-      return { cleanupTitle, latestTitle, pendingWarning: warning.defaultPrevented,
+      return { navigationTitle, navigationRejected, cleanupTitle, latestTitle, pendingWarning: warning.defaultPrevented,
         settledWarning: settled.defaultPrevented, failedWarning: failedWarning.defaultPrevented, notices };
     } finally { IDBObjectStore.prototype.put = originalPut; }
   });
+  assert.equal(result.navigationTitle, 'Navigation flush');
+  assert.equal(result.navigationRejected, true);
   assert.equal(result.cleanupTitle, 'Cleanup flush');
   assert.equal(result.latestTitle, 'After cached return');
   assert.equal(result.pendingWarning, true);

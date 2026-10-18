@@ -1,3 +1,8 @@
+import { createSilentSessionStateAdapter } from '../app/auth/session-state-adapter.js';
+import { redirectReadSignIn, takeReadAuthReturn } from '../app/auth/read-auth-return.js';
+import { runOwnedSessionProbe } from '../app/auth/session-coordinator.js';
+import { createReadAuthFlow } from '../app/auth/read-auth-flow.js';
+import { promptForReadSignIn } from '../app/auth/read-auth-prompt.js';
 import { runDeletionFlow } from '../app/api/deletion-flow.js';
 import { runUploadRecoveryFlow } from '../app/api/upload-recovery-flow.js';
 import { getApiErrorMessage } from '../app/api/error-presentation.js';
@@ -3293,6 +3298,7 @@ class EditorDraftSession {
         const referencedIds = collectDraftQuestionAssetIds({ blocks: migrated.blocks });
         parsedPackage.assets = parsedPackage.assets.filter((asset) => referencedIds.has(asset.assetId));
       }
+      if (options.isCurrent && !options.isCurrent()) return { canceled: true };
       if (options.convertToEditableDraft) {
         await stage('saving');
         await this.saveBeforeWorksheetReplacement();
@@ -3419,6 +3425,7 @@ class EditorDraftSession {
       // Include edits made while asset/incoming-record persistence was pending.
       await stage('saving');
       await this.saveBeforeWorksheetReplacement();
+      if (options.isCurrent && !options.isCurrent()) return { canceled: true };
       this.packageLoad.update(loadToken, 'opening');
       clearTimeout(this.autosaveTimer);
       this.autosaveTimer = null;
@@ -3559,7 +3566,8 @@ class EditorDraftSession {
     return createWorksheetPackageFromDraft(packagedDraft, assets).bytes;
   }
 
-  beginServerSignIn() {
+  beginServerSignIn({ readRecovery = false } = {}) {
+    if (this._authPopupFlow) return this._authPopupFlow.promise;
     const previousFlow = this._authPopupFlow;
     this.clearNotificationsBySource('auth.popup');
     this.clearNotificationsBySource('auth.status');
@@ -3621,7 +3629,7 @@ class EditorDraftSession {
         const result = await this.probeServerSessionSilently({ force: true, isCurrent });
         if (!isCurrent()) return;
         if (result.ok && this.state.serverSession.status === 'ready') {
-          await this.loadUploadedDrafts({ preflight: false, isCurrent });
+          if (!readRecovery) await this.loadUploadedDrafts({ preflight: false, isCurrent, recoverAuth: false });
           if (!isCurrent()) return;
           this.clearNotificationsBySource('auth.status');
           this.notifyStateChange();
@@ -3679,6 +3687,39 @@ class EditorDraftSession {
     } else {
       flow?.cancel?.();
     }
+    return flow.promise;
+  }
+
+  get readAuth() {
+    if (!this._readAuth) this._readAuth = createReadAuthFlow({
+      probe: options => this.probeServerSessionSilently({ force: true, ...options }),
+      subject: () => this.state.serverSession?.user?.sub,
+      signIn: () => this.beginServerSignIn({ readRecovery: true }),
+      prompt: options => promptForReadSignIn(options),
+      redirect: ({ intent, isCurrent, subject }) => redirectReadSignIn({
+        app: 'editor', intent, isCurrent, subject: () => subject,
+        save: () => this.saveBeforeWorksheetReplacement(),
+        localId: () => this.state.draft?.localId,
+      }),
+      invalidate: reason => {
+          this.state.uploadedDrafts = [];
+          this.state.uploadedDraftsError = t(reason === 'account_changed' ? 'readAuth.accountChanged' : 'apiErrors.authRequired');
+          if (reason === 'signed_out') this.state.serverSession = { status: 'not_ready', user: null, error: t('apiErrors.authRequired') };
+          this._onReadAuthInvalidated?.(reason);
+          this.notifyStateChange();
+      },
+    });
+    return this._readAuth;
+  }
+
+  async ensureReadSessionReady(options = {}) {
+    const result = await this.readAuth.ensure(options);
+    if (!result.ok && !result.skipped && (options.isCurrent?.() ?? true)) {
+      this.state.serverActionMessage = getApiErrorMessage(result, 'session');
+      if (!result.cancelled) this.pushNotification({ kind: 'warn', category: 'server', source: 'session.read', text: this.state.serverActionMessage });
+      this.notifyStateChange();
+    }
+    return { ok: result.ok === true, result };
   }
 
   async refreshServerSession() {
@@ -3692,29 +3733,24 @@ class EditorDraftSession {
   }
 
   async probeServerSessionSilently({ force = false, timeoutMs = null, isCurrent = () => true } = {}) {
-    const result = await probeSession({ apiClient: this.apiClient, force, timeoutMs });
-    if (!isCurrent()) return result;
-    if (result.status !== 'ready') {
-      this.state.serverSession = {
-        status: result.status === 'error' ? 'error' : 'not_ready',
-        user: null,
-        error: getApiErrorMessage(result, 'session'),
-      };
-      this.notifyStateChange();
-      return result;
-    }
-    this.state.serverSession = {
-      status: 'ready',
-      user: result.user || null,
-      error: null,
-    };
-    this.notifyStateChange();
+    this._sessionStateAdapter ??= createSilentSessionStateAdapter({
+      readState: () => this.state.serverSession,
+      writeState: state => { this.state.serverSession = state; this.notifyStateChange(); },
+    });
+    const result = await runOwnedSessionProbe({
+      ...this._sessionStateAdapter,
+      probe: () => probeSession({ apiClient: this.apiClient, force, timeoutMs: timeoutMs ?? 15000 }),
+      presentError: result => getApiErrorMessage(result, 'session'),
+      isCurrent,
+    });
+    this._readAuth?.observe(result);
     return result;
   }
 
   async ensureServerSessionReady(_legacyMessage = undefined, options = {}) {
     const isCurrent = options.isCurrent || (() => true);
     const result = await this.probeServerSessionSilently({ force: true, timeoutMs: options.timeoutMs, isCurrent });
+    if (result.skipped) return { ok: false, result };
     if (!isCurrent()) return { ok: false, result: { ok: false, skipped: true, status: 'superseded' } };
     if (result.ok && this.state.serverSession.status === 'ready') {
       return { ok: true, result };
@@ -3945,9 +3981,13 @@ class EditorDraftSession {
     const superseded = () => ({ ok: false, skipped: true, status: 'superseded' });
     const loadPromise = (async () => {
       if (shouldPreflight) {
-        const sessionReady = await this.ensureServerSessionReady(undefined, { isCurrent: ownsRequest });
+        const sessionReady = await this.ensureReadSessionReady({ isCurrent: ownsRequest, intent: { kind: 'drafts' } });
         if (!ownsRequest()) return superseded();
-        if (!sessionReady.ok) return sessionReady.result;
+        if (!sessionReady.ok) {
+          this.state.uploadedDraftsError = getApiErrorMessage(sessionReady.result, 'list');
+          this.state.uploadedDrafts = []; this.notifyStateChange();
+          return sessionReady.result;
+        }
       }
 
       this._loadUploadedDraftsActiveCount += 1;
@@ -3956,14 +3996,19 @@ class EditorDraftSession {
       this.notifyStateChange();
 
       try {
-        const result = await this.apiClient.listUploadedDrafts({ signal: options.signal });
+        const fetchRows = () => this.apiClient.listUploadedDrafts({ signal: options.signal });
+        const result = options.recoverAuth === false ? await fetchRows() : await this.readAuth.read(fetchRows, { preflight: false, isCurrent: ownsRequest, signal: options.signal, intent: { kind: 'drafts' } });
         if (!ownsRequest()) return superseded();
+        if (result.skipped) return result;
         if (!result.ok) {
+          this.state.uploadedDraftsError = getApiErrorMessage(result, 'list');
+          this.state.uploadedDrafts = [];
           this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDrafts.refresh', text: getApiErrorMessage(result, 'list') });
           this.notifyStateChange();
           return result;
         }
 
+        this.state.uploadedDraftsError = null;
         this.state.uploadedDrafts = Array.isArray(result.data?.items) ? result.data.items : [];
         const slotLimit = Number(result?.data?.draftSlotLimit || result?.data?.slotLimit);
         if (Number.isFinite(slotLimit) && slotLimit > 0) {
@@ -4032,14 +4077,17 @@ class EditorDraftSession {
     }
   }
 
-  async reopenUploadedDraftAsLocalCopy(uploadedDraftId) {
+  async reopenUploadedDraftAsLocalCopy(uploadedDraftId, { isCurrent: callerCurrent = () => true } = {}) {
     if (this.packageLoad.current) return { ok: false, skipped: true };
     const loadToken = this.packageLoad.start(`uploaded:${uploadedDraftId}`);
+    const isCurrent = () => this.packageLoad.current === loadToken && callerCurrent();
     try {
-      const sessionReady = await this.ensureServerSessionReady(undefined, { timeoutMs: this.packageSessionTimeoutMs });
+      const sessionReady = await this.ensureReadSessionReady({ isCurrent, timeoutMs: this.packageSessionTimeoutMs, intent: { kind: 'draft', id: uploadedDraftId } });
       if (!sessionReady.ok) return sessionReady.result;
-      const artifact = await this.downloadWorksheetArtifact(loadToken,
-        options => this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId, options));
+      const artifact = await this.readAuth.read(
+        () => this.downloadWorksheetArtifact(loadToken, options => this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId, options)),
+        { preflight: false, isCurrent, intent: { kind: 'draft', id: uploadedDraftId } });
+      if (artifact.skipped) return artifact;
       if (!artifact.ok) {
         this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.open', text: getApiErrorMessage(artifact, 'open') });
         this.notifyStateChange();
@@ -4047,7 +4095,7 @@ class EditorDraftSession {
       }
       const imported = await this.importWorksheetPackageFile(
         createZipFileFromBytes(artifact.data, `uploaded-draft-${uploadedDraftId}.zip`),
-        { convertToEditableDraft: true, migrationSource: 'uploaded-draft', loadToken }
+        { convertToEditableDraft: true, migrationSource: 'uploaded-draft', loadToken, isCurrent }
       );
       if (imported?.canceled) return { ok: false, canceled: true, error: { message: 'Opening canceled. No worksheet was imported or changed.' } };
       this.pushNotification({
@@ -4063,7 +4111,7 @@ class EditorDraftSession {
     }
   }
 
-  async reopenPublishedPackageAsLocalCopy(publishedPackageId) {
+  async reopenPublishedPackageAsLocalCopy(publishedPackageId, { isCurrent: callerCurrent = () => true } = {}) {
     const normalizedPublishedPackageId = String(publishedPackageId || '').trim();
     if (!normalizedPublishedPackageId) {
       return { ok: false, error: { message: editorNotification('publishedPackage.idRequired') } };
@@ -4079,11 +4127,14 @@ class EditorDraftSession {
     this.state.openingPublishedPackageIds.add(normalizedPublishedPackageId);
     this.pushNotification({ kind: 'info', category: 'server', source: 'publishedPackage.open', text: editorNotification('publishedPackage.opening'), logActivity: false });
     this.notifyStateChange();
+    const isCurrent = () => this.packageLoad.current === loadToken && callerCurrent();
     try {
-      const sessionReady = await this.ensureServerSessionReady(undefined, { timeoutMs: this.packageSessionTimeoutMs });
+      const sessionReady = await this.ensureReadSessionReady({ isCurrent, timeoutMs: this.packageSessionTimeoutMs, intent: { kind: 'publication', id: normalizedPublishedPackageId } });
       if (!sessionReady.ok) return sessionReady.result;
-      const artifact = await this.downloadWorksheetArtifact(loadToken,
-        options => this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, options));
+      const artifact = await this.readAuth.read(
+        () => this.downloadWorksheetArtifact(loadToken, options => this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, options)),
+        { preflight: false, isCurrent, intent: { kind: 'publication', id: normalizedPublishedPackageId } });
+      if (artifact.skipped) return artifact;
       if (!artifact.ok) {
         this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.open', text: getApiErrorMessage(artifact, 'open') });
         this.notifyStateChange();
@@ -4091,7 +4142,7 @@ class EditorDraftSession {
       }
       const imported = await this.importWorksheetPackageFile(
         createZipFileFromBytes(artifact.data, `published-package-${normalizedPublishedPackageId}.zip`),
-        { convertToEditableDraft: true, migrationSource: 'published-package', loadToken }
+        { convertToEditableDraft: true, migrationSource: 'published-package', loadToken, isCurrent }
       );
       if (imported?.canceled) {
         this.clearNotificationsBySource('publishedPackage.open');
@@ -4889,7 +4940,7 @@ function renderEditorShell(session) {
     const label = progress ? t(`editor.packageLoad.${progress.stage === 'downloading' && progress.percent !== null ? 'downloadingPercent' : progress.stage}`, { percent: progress.percent }) : '';
     shell.querySelectorAll('[data-editor-package-load]').forEach(button => {
       const active = progress?.id === button.dataset.editorPackageLoad;
-      button.disabled = Boolean(progress) || session.state.serverSession?.status !== 'ready';
+      button.disabled = Boolean(progress);
       button.textContent = active ? label : button.dataset.idleLabel;
       button.setAttribute('aria-busy', active ? 'true' : 'false');
       button.setAttribute('aria-label', active ? t(`editor.packageLoad.${progress.stage}`) : button.dataset.idleLabel);
@@ -5598,19 +5649,21 @@ function renderEditorShell(session) {
 
   async function runPublishedSearch(options = {}) {
     const request = ++publishedSearchRequest;
-    const isCurrent = () => request === publishedSearchRequest && (options.isCurrent?.() ?? true);
+    const revision = browsePublishedDialogRevision;
+    const isCurrent = () => browsePublishedDialogOpen && revision === browsePublishedDialogRevision && request === publishedSearchRequest && (options.isCurrent?.() ?? true);
     if (!isCurrent()) {
       if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
       return { ok: false, status: 'superseded' };
     }
     const append = options.append === true;
-    const sessionReady = await session.ensureServerSessionReady(undefined, { isCurrent });
+    const sessionReady = await session.ensureReadSessionReady({ isCurrent, intent: { kind: 'published', filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } } });
     if (!isCurrent()) {
       if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
       return { ok: false, status: 'superseded' };
     }
+    if (sessionReady.result?.skipped) return sessionReady.result;
     if (!sessionReady.ok) {
-      const notReadyMessage = session.state.serverActionMessage || t('apiErrors.authRequired');
+      const notReadyMessage = getApiErrorMessage(sessionReady.result, 'list');
       browsePublishedState = {
         ...browsePublishedState,
         loading: false,
@@ -5635,7 +5688,7 @@ function renderEditorShell(session) {
     renderPublishedBrowserModal();
     let result;
     try {
-      result = await session.apiClient.listPublishedPackages({
+      result = await session.readAuth.read(() => session.apiClient.listPublishedPackages({
         title: browsePublishedState.title,
         subject: browsePublishedState.subject,
         owner: browsePublishedState.owner,
@@ -5643,7 +5696,7 @@ function renderEditorShell(session) {
         offset: append && Number.isFinite(Number(browsePublishedState.nextOffset))
           ? Number(browsePublishedState.nextOffset)
           : 0,
-      });
+      }), { preflight: false, isCurrent, intent: { kind: 'published', filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } } });
     } catch (error) {
       result = { ok: false, error: { code: 'NETWORK_ERROR' }, cause: error };
     }
@@ -5651,6 +5704,7 @@ function renderEditorShell(session) {
       if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
       return { ok: false, status: 'superseded' };
     }
+    if (result.skipped) { browsePublishedState = { ...browsePublishedState, loading: false }; renderPublishedBrowserModal(); return result; }
     if (!result.ok) {
       browsePublishedState = {
         ...browsePublishedState,
@@ -5780,7 +5834,7 @@ function renderEditorShell(session) {
         openInEditorBtn.dataset.idleLabel = t('editor.published.openInEditor');
         const isOpening = session.state.openingPublishedPackageIds.has(item.published_package_id);
         openInEditorBtn.textContent = isOpening ? t('editor.published.openingInEditor') : t('editor.published.openInEditor');
-        openInEditorBtn.disabled = !serverReady || browsePublishedState.loading || isOpening;
+        openInEditorBtn.disabled = browsePublishedState.loading || isOpening;
         openInEditorBtn.addEventListener('click', async () => {
           if (session.packageLoad.current || session.state.openingPublishedPackageIds.has(item.published_package_id)) return;
           const confirmed = await showConfirmDialog({
@@ -5791,9 +5845,12 @@ function renderEditorShell(session) {
             variant: 'warning',
           });
           if (!confirmed || session.packageLoad.current) return;
-          const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id);
+          const revision = browsePublishedDialogRevision;
+          const isCurrent = () => browsePublishedDialogOpen && revision === browsePublishedDialogRevision;
+          const reopenPromise = session.reopenPublishedPackageAsLocalCopy(item.published_package_id, { isCurrent });
           renderPublishedBrowserModal();
           const reopenResult = await reopenPromise.catch((error) => ({ ok: false, error }));
+          if (!isCurrent() || reopenResult?.skipped) return;
           if (reopenResult?.ok) {
             emitPublishedBrowseNotification({
               kind: 'success',
@@ -5859,12 +5916,12 @@ function renderEditorShell(session) {
     loadMoreBtn.className = 'confirm-modal__btn';
     loadMoreBtn.textContent = browsePublishedState.loading ? t('common.actions.loading') : t('common.actions.loadMore');
     loadMoreBtn.hidden = !browsePublishedState.hasMore;
-    loadMoreBtn.disabled = browsePublishedState.loading || !serverReady;
+    loadMoreBtn.disabled = browsePublishedState.loading;
     const refreshBtn = document.createElement('button');
     refreshBtn.type = 'button';
     refreshBtn.className = 'confirm-modal__btn';
     refreshBtn.textContent = t('common.actions.refresh');
-    refreshBtn.disabled = browsePublishedState.loading || !serverReady;
+    refreshBtn.disabled = browsePublishedState.loading;
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
     closeBtn.className = 'confirm-modal__btn';
@@ -7819,6 +7876,10 @@ function renderEditorShell(session) {
   function renderUploadedDraftRows(container) {
     const serverReady = session.state.serverSession?.status === 'ready';
     container.innerHTML = '';
+    if (session.state.uploadedDraftsError) {
+      const error = document.createElement('p'); error.setAttribute('role', 'alert');
+      error.textContent = session.state.uploadedDraftsError; container.append(error); return;
+    }
     if (session.state.uploadedDrafts.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'muted';
@@ -7878,7 +7939,7 @@ function renderEditorShell(session) {
       openBtn.dataset.editorPackageLoad = `uploaded:${item.uploaded_draft_id}`;
       openBtn.dataset.idleLabel = t('common.actions.open');
       openBtn.textContent = t('common.actions.open');
-      openBtn.disabled = !serverReady;
+      openBtn.disabled = false;
       openBtn.addEventListener('click', async () => {
         if (session.packageLoad.current) return;
         const confirmed = await showConfirmDialog({
@@ -7891,7 +7952,8 @@ function renderEditorShell(session) {
         if (!confirmed || session.packageLoad.current) return;
         let result;
         try {
-          result = await session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id);
+          const revision = manageUploadedDraftsDialogRevision;
+          result = await session.reopenUploadedDraftAsLocalCopy(item.uploaded_draft_id, { isCurrent: () => manageUploadedDraftsDialogOpen && revision === manageUploadedDraftsDialogRevision });
         } catch (error) {
           session.pushNotification({
             kind: 'error',
@@ -8005,6 +8067,7 @@ function renderEditorShell(session) {
     heading.textContent = t('editor.uploadedDraft.manage');
     const slotUsage = document.createElement('p');
     slotUsage.className = 'confirm-modal__description';
+    slotUsage.hidden = Boolean(session.state.uploadedDraftsError) || session.state.isLoadingUploadedDrafts;
     const slotLimit = Number(session.state.uploadedDraftSlotLimit) || 3;
     slotUsage.textContent = t('editor.uploadedDraft.slotUsage', {
       used: session.state.uploadedDrafts.length,
@@ -8021,7 +8084,8 @@ function renderEditorShell(session) {
     refreshBtn.textContent = session.state.isLoadingUploadedDrafts ? t('common.actions.refreshing') : t('common.actions.refresh');
     refreshBtn.disabled = session.state.isLoadingUploadedDrafts;
     refreshBtn.addEventListener('click', async () => {
-      await session.loadUploadedDrafts({ preflight: false });
+      const revision = manageUploadedDraftsDialogRevision;
+      await session.loadUploadedDrafts({ isCurrent: () => manageUploadedDraftsDialogOpen && revision === manageUploadedDraftsDialogRevision });
       renderManageUploadedDraftsModal();
     });
     const closeBtn = document.createElement('button');
@@ -8184,12 +8248,25 @@ function renderEditorShell(session) {
     }
     cancelUploadBtn.hidden = !isUploadingDraft;
     syncDraftBtn.disabled = !serverReady || isUploadingDraft || isUploadDraftFlowActive;
-    browsePublishedBtn.disabled = !serverReady;
+    browsePublishedBtn.disabled = false;
     manageUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? t('common.actions.refreshing') : t('editor.uploadedDraft.manage');
-    manageUploadedDraftsBtn.disabled = !serverReady || isRefreshingUploadedDrafts;
+    manageUploadedDraftsBtn.disabled = isRefreshingUploadedDrafts;
     signInBtn.hidden = serverReady;
     if (manageUploadedDraftsDialogOpen) renderManageUploadedDraftsModal();
     refreshPackageLoadControls();
+  };
+
+  session.resumeReadIntent = async intent => {
+    if (intent.kind === 'drafts') { manageUploadedDraftsBtn.click(); return; }
+    if (intent.kind === 'published') { browsePublishedState = { ...browsePublishedState, ...intent.filters }; browsePublishedBtn.click(); return; }
+    if (!await showConfirmDialog({ title: t('editor.replaceWorksheet.title'),
+      bodyText: t('editor.uploadedDraft.openDialog.description', { title: intent.id }),
+      warningText: t('editor.uploadedDraft.openDialog.warning'), confirmLabel: t('editor.replaceWorksheet.confirm'), variant: 'warning' })) return;
+    if (intent.kind === 'draft') await session.reopenUploadedDraftAsLocalCopy(intent.id);
+    if (intent.kind === 'publication') await session.reopenPublishedPackageAsLocalCopy(intent.id);
+  };
+  session._onReadAuthInvalidated = reason => {
+    browsePublishedState = { ...browsePublishedState, items: [], hasMore: false, nextOffset: null, error: t(reason === 'account_changed' ? 'readAuth.accountChanged' : 'apiErrors.authRequired') };
   };
 
   session.setOnStateChange(() => {
@@ -8597,25 +8674,26 @@ function renderEditorShell(session) {
     }
   });
   browsePublishedBtn.addEventListener('click', async () => {
-    await guardServerMenuAction(browsePublishedBtn, async () => {
+    await (async () => {
       browsePublishedDialogOpen = true;
       browsePublishedDialogRevision++;
       renderPublishedBrowserModal();
       await runPublishedSearch();
-    });
+    })();
   });
   signInBtn.addEventListener('click', () => {
     session.beginServerSignIn();
     updateSummary();
   });
   manageUploadedDraftsBtn.addEventListener('click', async () => {
-    await guardServerMenuAction(manageUploadedDraftsBtn, async () => {
+    await (async () => {
       manageUploadedDraftsDialogOpen = true;
       manageUploadedDraftsDialogRevision++;
       renderManageUploadedDraftsModal();
-      await session.loadUploadedDrafts({ preflight: false });
+      const revision = manageUploadedDraftsDialogRevision;
+      await session.loadUploadedDrafts({ isCurrent: () => manageUploadedDraftsDialogOpen && revision === manageUploadedDraftsDialogRevision });
       renderManageUploadedDraftsModal();
-    });
+    })();
     updateSummary();
   });
   loadOlderActivityBtn.addEventListener('click', () => {
@@ -8671,6 +8749,7 @@ function renderEditorShell(session) {
 }
 
 async function bootstrapEditor() {
+  const readReturn = takeReadAuthReturn('editor');
   const session = new EditorDraftSession(editorStorage);
   const params = new URLSearchParams(window.location.search);
   let initialRestore = session.getRouteUiRestoreMetadata();
@@ -8759,7 +8838,7 @@ async function bootstrapEditor() {
   await authGate.restoreAfterAuthReturn();
   await session.refreshServerSession();
   if (session.state.serverSession.status === 'ready') {
-    await session.loadUploadedDrafts();
+    await session.loadUploadedDrafts({ preflight: false, recoverAuth: false });
   }
 
   session.persistRestoreMetadata();
@@ -8777,6 +8856,13 @@ async function bootstrapEditor() {
   }
 
   window.editorSession = session;
+  if (readReturn && (!readReturn.localId || readReturn.localId === session.state.draft?.localId)
+      && (!readReturn.subject || readReturn.subject === session.state.serverSession.user?.sub)
+      && session.state.serverSession.status === 'ready') await session.resumeReadIntent(readReturn.readIntent);
+  else if (readReturn && session.state.serverSession.status === 'ready') {
+    session.pushNotification({ kind: 'warn', category: 'server', source: 'session.readReturn', text: t('readAuth.accountChanged') });
+    session.notifyStateChange();
+  }
 }
 
 installPageRecovery('localDrafts', () => globalThis.window?.editorSession);

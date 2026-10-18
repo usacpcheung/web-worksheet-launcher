@@ -11,6 +11,9 @@ function harness({ confirm = true, failure = false } = {}) {
   let current = original, progress;
   const candidate = { meta: { title: 'Published' }, scenes: [{ id: 'scene-021' }] };
   const context = vm.createContext({
+    getReadAuth: () => ({ read: request => request() }),
+    ensureReadSessionReady: async () => ({ ok: true }),
+    getServerReadErrorMessage: () => 'error',
     AbortController, waitForDraftRequest, serverModalRevision: 0,
     openingUploadedDraft: null, teardown: null, publishedPlay: {}, editorPreview: null, editorSession: {},
     publishedScenesRequestId: 0, isLoadingPublishedScenes: false,

@@ -142,10 +142,21 @@ try {
         const bounds = await button.boundingBox();
         assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width);
         assert.equal(await button.evaluate(element => element.scrollWidth <= element.clientWidth), true);
-        // Closing does not cancel the request; reopening must recover its status.
+        // Closing invalidates this read. A new explicit open owns its own progress.
         if (mode === 'known') {
+          const beforeClose = await page.evaluate(() => window.editorSession.state.draft.localId);
+          const oldDownload = pending;
           await page.getByRole('button', { name: labels['common.actions.close'], exact: true }).click();
+          await page.waitForFunction(() => !window.editorSession.packageLoad.current);
+          oldDownload.finish();
+          assert.equal(await page.evaluate(() => window.editorSession.state.draft.localId), beforeClose);
+          pending = null;
           await openList();
+          await button.click();
+          await page.locator('.confirm-modal').filter({ has: page.locator('.confirm-modal__warning') }).locator('button').last().click();
+          while (!pending) await new Promise(resolve => setTimeout(resolve, 5));
+          pending.first();
+          await page.waitForFunction(() => window.editorSession.packageLoad.current?.percent > 0);
           assert.match(await button.textContent(), /%/);
           await page.evaluate(() => {
             const session = window.editorSession;

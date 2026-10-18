@@ -1,15 +1,15 @@
 # Shared authentication foundation
 
-This reference describes the first runtime extraction after main `980e131`. It does **not** implement the proposed cross-app sign-in UI or post-login continuation changes. The [workflow mapping and agreed target](authentication-workflows.md) was merged in PR #318. This implementation builds on that documented contract.
+This reference describes the first runtime extraction after main `980e131`. The subsequent [read integration](authentication-reads.md) implements contextual recovery for browsing/opening/downloading; other feature migrations remain planned. The [workflow mapping and agreed target](authentication-workflows.md) was merged in PR #318. This implementation builds on that documented contract.
 
 ## Current integration
 
 - `server/app/auth/session-coordinator.js` now owns the state/action ownership algorithm previously inline in RolePlayScene `probeServerSessionSilently`.
-- RolePlayScene supplies its existing state store, UI update callback, bounded `probeSession` invocation, localized error presentation and operation guard. Its public helper signatures, result envelopes, notifications and login UI remain unchanged.
+- RolePlayScene supplies its existing state store, UI update callback, bounded `probeSession` invocation, localized error presentation and operation guard. The foundation preserved its UI; the later read integration adds contextual recovery while retaining its application-specific layouts.
 - `server/app/auth/session-outcome.js` provides a pure failure classifier. `session-readiness.js` uses its **legacy compatibility mode**, preserving existing 401/403/code/flag behavior for every existing consumer.
-- Editor/viewer session orchestration is not migrated in this PR. API-client error flags, shared protected-intent replay, popup opening and callback validation are unchanged.
+- Editor/viewer now use the same probe owner through `session-state-adapter.js`, preserving silent probes and their existing enum values. API-client error flags and the popup callback protocol are unchanged.
 
-The classifier's new permission-aware policy is opt-in and is not yet used to change any app's login decisions. A later integration must migrate classification and its consumers together, including API-client `requiresSignIn` flags, app predicates and protected-action handlers. Changing only one predicate is insufficient.
+The permission-aware classifier is used by the read recovery coordinator. Legacy readiness normalization and mutation/provider callers retain their compatibility policy; their migration must update classification and consumers together.
 
 ## State ownership coordinator
 
@@ -53,4 +53,4 @@ Unit tests exercise both completion orders, newer failure/account change, extern
 
 Run the auth/RolePlayScene tests and full Node suite, plus list-feedback, deletion, popup/sign-in, direct-launch and voice browser coverage appropriate to the changed consumers. Simulated results do not establish live OIDC behavior. A deployment should verify that the new JavaScript modules load correctly and repeat focused session/list acceptance before merging.
 
-Next: integrate contextual sign-in and list/open/download behavior across the apps according to the agreed workflow contract. Retain the existing [popup contract](../message-contract.md), [upload recovery](upload-recovery.md) and [deletion contract](deletion-lifecycle.md). Reuse the popup helper; do not add a second authentication protocol.
+The read integration adds contextual sign-in and read continuation. Next: migrate mutation authentication without changing upload/deletion recovery semantics. Retain the existing [popup contract](../message-contract.md), [upload recovery](upload-recovery.md) and [deletion contract](deletion-lifecycle.md). Reuse the popup helper; do not add a second authentication protocol.

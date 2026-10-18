@@ -1,6 +1,14 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  readAuth: {
+    pendingWork: 'Finish or discard pending voice or discussion work before signing in in this tab, or allow the sign-in popup to keep working here.',
+    accountChanged: 'Your account changed. Select this server action again. Your local work has been kept.',
+    sameTab: 'Sign in in this tab',
+    saveFailed: 'Unable to safely save your local work and requested action. Stay on this page and retry, or allow the sign-in popup.',
+    title: 'Sign in to continue',
+    description: 'Sign in to continue this server browse, open or download action. Your local work will be kept.',
+  },
   apiErrors: {
     deleteUncertain: "Deletion could not be confirmed. The item may already have been deleted. Refresh the list to check before trying again.",
     deleteRefreshFailed: "The item was deleted, but the list could not be refreshed. Refresh the list to see its current contents.",
