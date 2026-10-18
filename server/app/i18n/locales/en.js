@@ -2,6 +2,8 @@ import roleplayscene from './roleplayscene/en.js';
 
 export default {
   apiErrors: {
+    deleteUncertain: "Deletion could not be confirmed. The item may already have been deleted. Refresh the list to check before trying again.",
+    deleteRefreshFailed: "The item was deleted, but the list could not be refreshed. Refresh the list to see its current contents.",
     recoveryTimedOut: "Automatic retries timed out. You can retry now or continue sign-in.",
     downloadTimeout: "Download stalled. Check your connection and try opening the worksheet again.",
     sessionExpired: "Session expired. Please log in again.",

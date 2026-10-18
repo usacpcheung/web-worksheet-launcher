@@ -9,6 +9,7 @@ function register(key, codes) {
 
 register('authRequired', 'AUTH_REQUIRED');
 register('sessionExpired', 'SESSION_EXPIRED');
+register('deleteUncertain', 'DELETE_OUTCOME_UNCERTAIN');
 register('downloadTimeout', 'DOWNLOAD_TIMEOUT');
 register('forbidden', 'FORBIDDEN PERMISSION_DENIED');
 register('conflict', 'DRAFT_NAME_CONFLICT ATTEMPT_NAME_CONFLICT ROLEPLAYSCENE_DRAFT_NAME_CONFLICT PUBLISHED_PACKAGE_CONFLICT ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT');

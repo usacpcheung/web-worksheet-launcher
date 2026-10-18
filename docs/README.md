@@ -18,6 +18,7 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Worksheet published browsing and slot handling](contracts/editor-viewer-backend-contract.md)
 - [Package snapshots within an upload flow](contracts/upload-snapshots.md)
 - [Shared upload conflict and slot recovery](contracts/upload-recovery.md)
+- [Shared server-resource deletion lifecycle](contracts/deletion-lifecycle.md)
 - [Retired widget boundary](contracts/widget-retirement.md)
 
 ## Worksheet editor and viewer

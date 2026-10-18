@@ -1,3 +1,4 @@
+import { runDeletionFlow } from '../app/api/deletion-flow.js';
 import { runUploadRecoveryFlow } from '../app/api/upload-recovery-flow.js';
 import { getApiErrorMessage, getApiErrorDiagnostic, resolveErrorPresentation, createErrorDetails } from '../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../app/api/upload-operation-lifecycle.js';
@@ -3991,44 +3992,37 @@ class ViewerAttemptSession {
     }
   }
 
-  async deleteUploadedAttemptAndRefresh(uploadedAttemptId, { isCurrent = () => true } = {}) {
+  async deleteUploadedAttemptAndRefresh(uploadedAttemptId, { isCurrent = () => true, confirm } = {}) {
     if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
-    if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_delete' };
     this._deletingUploadedAttemptIds ??= new Set();
-    if (this._deletingUploadedAttemptIds.has(uploadedAttemptId)) return { ok: false, skipped: true, status: 'delete_in_progress' };
-    this._deletingUploadedAttemptIds.add(uploadedAttemptId);
-    this.state.uploadedAttemptActionInFlightById = {
-      ...this.state.uploadedAttemptActionInFlightById,
-      [uploadedAttemptId]: 'delete',
-    };
-    this.notifyStateChange();
+    let actionStarted = false;
     try {
-      const result = await this.apiClient.deleteUploadedAttempt(uploadedAttemptId);
-      if (!isCurrent()) return result;
-      if (!result?.ok) {
-        this.state.serverActionMessage = getApiErrorMessage(result, 'delete');
-        this.pushNotification({
-          kind: 'error',
-          text: this.state.serverActionMessage,
-          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
-        });
-        return result;
-      }
-      await this.listUploadedAttempts({ isCurrent });
-      if (!isCurrent()) return result;
-      this.state.serverActionMessage = t('viewer.notifications.uploadedAttempt.deleted');
-      this.pushNotification({
-        kind: 'success',
-        text: this.state.serverActionMessage,
-        ttlMs: VIEWER_NOTIFICATION_DEFAULT_TTL_MS,
+      const result = await runDeletionFlow({
+        pending: this._deletingUploadedAttemptIds, key: uploadedAttemptId, isCurrent, confirm,
+        remove: async () => {
+          actionStarted = true;
+          this.state.uploadedAttemptActionInFlightById = { ...this.state.uploadedAttemptActionInFlightById, [uploadedAttemptId]: 'delete' };
+          this.notifyStateChange();
+          return this.apiClient.deleteUploadedAttempt(uploadedAttemptId);
+        },
+        refresh: () => this.listUploadedAttempts({ isCurrent }),
       });
+      if (!isCurrent() || result.skipped) return result;
+      this.state.serverActionMessage = result.ok ? t('viewer.notifications.uploadedAttempt.deleted') : getApiErrorMessage(result, 'delete');
+      this.pushNotification({ kind: result.ok ? 'success' : 'error', text: this.state.serverActionMessage,
+        ttlMs: result.ok ? VIEWER_NOTIFICATION_DEFAULT_TTL_MS : VIEWER_NOTIFICATION_ERROR_TTL_MS });
+      if (result.refreshStatus === 'failed') {
+        this.pushNotification({ kind: 'warn', text: t('apiErrors.deleteRefreshFailed'), ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS });
+      }
+      this.notifyStateChange();
       return result;
     } finally {
-      this._deletingUploadedAttemptIds.delete(uploadedAttemptId);
-      const next = { ...this.state.uploadedAttemptActionInFlightById };
-      delete next[uploadedAttemptId];
-      this.state.uploadedAttemptActionInFlightById = next;
-      this.notifyStateChange();
+      if (actionStarted) {
+        const next = { ...this.state.uploadedAttemptActionInFlightById };
+        delete next[uploadedAttemptId];
+        this.state.uploadedAttemptActionInFlightById = next;
+        this.notifyStateChange();
+      }
     }
   }
 
@@ -4938,9 +4932,7 @@ async function showAttemptSlotFullModal(session, options = {}) {
           if (deleting || !isCurrent()) return;
           setDeleting(true);
           try {
-            const confirmed = await showDeleteUploadedAttemptModal(item);
-            if (!confirmed || !isCurrent()) return;
-            const deleted = await session.deleteUploadedAttemptAndRefresh(item.uploaded_attempt_id, { isCurrent });
+            const deleted = await session.deleteUploadedAttemptAndRefresh(item.uploaded_attempt_id, { isCurrent, confirm: () => showDeleteUploadedAttemptModal(item) });
             if (isCurrent() && deleted?.ok) finish(true);
           } finally {
             if (!settled) setDeleting(false);
@@ -5167,10 +5159,10 @@ async function showUploadedAttemptsManagerModal(session, options = {}) {
       deleteBtn.textContent = inFlightAction === 'delete' ? t('viewer.serverAttempts.deleting') : t('common.actions.delete');
       deleteBtn.disabled = Boolean(inFlightAction);
       deleteBtn.addEventListener('click', async () => {
-        const confirmed = await showDeleteUploadedAttemptModal(row);
-        if (!confirmed) return;
-        await session.deleteUploadedAttemptAndRefresh(row.uploaded_attempt_id);
-        await renderRows();
+        const generation = session._uploadContextGeneration;
+        const isCurrent = () => !closing && overlay.isConnected && generation === session._uploadContextGeneration;
+        await session.deleteUploadedAttemptAndRefresh(row.uploaded_attempt_id, { isCurrent, confirm: () => showDeleteUploadedAttemptModal(row) });
+        if (isCurrent()) await renderRows();
       });
       rowActions.append(resumeBtn, downloadBtn, deleteBtn);
       attemptRow.append(metaWrap, rowActions);
