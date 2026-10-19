@@ -11,9 +11,9 @@ test('deletion refresh preserves newer dialogs before and during refresh, but re
   for (const published of [false, true]) for (const changedAt of ['none', 'delete', 'refresh']) {
     let finishDelete, finishList;
     let renders = 0;
-    const c = vm.createContext({
-    getReadAuth: () => ({ read: request => request() }),
-    ensureReadSessionReady: async () => ({ ok: true }),
+    const c = vm.createContext({ getReadAuth: () => ({ captureIdentity: () => () => true, observe: result => result }),
+    getReadAuth: () => ({ read: request => request(), captureIdentity: () => () => true, observe: result => result }),
+    ensureReadSessionReady: async () => ({ ok: true, isCurrent: () => true }),
     getServerReadErrorMessage: () => 'error', runDeletionFlow, deletingDraftIds: new Set(), deletingPublishedSceneIds: new Set(), store: { projectGeneration: 0 }, t: key => key,
       openingUploadedDraft: null, serverModalRevision: 0, uploadedDraftsRequestId: 0,
       publishedScenesRequestId: 0, isLoadingUploadedDrafts: false, isLoadingPublishedScenes: false,
@@ -21,7 +21,7 @@ test('deletion refresh preserves newer dialogs before and during refresh, but re
       publishedScenesNextOffset: null, publishedScenesHasMore: false, serverModalOverlay: { hidden: true },
       getRolePlaySceneDraftId: () => 'draft', getRolePlayScenePublishedSceneId: () => 'publication',
       showDeleteDraftConfirmation: async () => 'delete', showDeletePublishedSceneConfirmation: async () => 'delete',
-      ensureServerSessionReady: async () => ({ ok: true }), syncUploadedDraftActionAvailability() {}, updateServerSessionUi() {}, showMessage() {},
+      ensureMutationSessionReady: async () => ({ ok: true, isCurrent: () => true }), syncUploadedDraftActionAvailability() {}, updateServerSessionUi() {}, showMessage() {},
       renderUploadedDraftManager() { renders++; }, renderPublishedBrowserModal() { renders++; },
       apiClient: {
         deleteRolePlaySceneDraft: () => new Promise(r => { finishDelete = r; }),
@@ -38,7 +38,7 @@ test('deletion refresh preserves newer dialogs before and during refresh, but re
     const pending = published ? c.deletePublishedRolePlayScene({}) : c.deleteUploadedRolePlaySceneDraft({});
     await new Promise(r => setImmediate(r));
     if (changedAt === 'delete') c.serverModalRevision++;
-    finishDelete({ ok: true });
+    finishDelete({ ok: true, isCurrent: () => true });
     await new Promise(r => setImmediate(r));
     if (changedAt === 'refresh') c.serverModalRevision++;
     if (changedAt !== 'delete') finishList({ ok: true, data: { items: [] } });
@@ -50,10 +50,10 @@ test('deletion refresh preserves newer dialogs before and during refresh, but re
 test('late slot-recovery deletion settles without closing a newer dialog or retrying upload', async () => {
   let finishDelete;
   const events = [];
-  const c = vm.createContext({ runDeletionFlow, deletingDraftIds: new Set(), deletingPublishedSceneIds: new Set(), store: { projectGeneration: 0 }, t: key => key,
+  const c = vm.createContext({ getReadAuth: () => ({ captureIdentity: () => () => true, observe: result => result }), runDeletionFlow, deletingDraftIds: new Set(), deletingPublishedSceneIds: new Set(), store: { projectGeneration: 0 }, t: key => key,
     openingUploadedDraft: null, serverModalRevision: 0,
     getRolePlaySceneDraftId: () => 'draft', showDeleteDraftConfirmation: async () => 'delete',
-    ensureServerSessionReady: async () => ({ ok: true }), showMessage() {},
+    ensureMutationSessionReady: async () => ({ ok: true, isCurrent: () => true }), showMessage() {},
     apiClient: { deleteRolePlaySceneDraft: () => new Promise(r => { finishDelete = r; }) },
   });
   vm.runInContext(extract('async function deleteUploadedRolePlaySceneDraft(', 'if (importConfirmAccept)'), c);
@@ -62,7 +62,7 @@ test('late slot-recovery deletion settles without closing a newer dialog or retr
   });
   await new Promise(r => setImmediate(r));
   c.serverModalRevision++;
-  finishDelete({ ok: true });
+  finishDelete({ ok: true, isCurrent: () => true });
   await pending;
   assert.deepEqual(events, ['cancel']);
 });
@@ -70,11 +70,11 @@ test('late slot-recovery deletion settles without closing a newer dialog or retr
 for (const published of [false,true]) for (const outcome of ['preflight-stale','uncertain','refresh-failure']) {
   test(`scene ${published?'publication':'draft'} deletion: ${outcome}`,async()=>{
     let requests=0,ready;const messages=[];
-    const c=vm.createContext({runDeletionFlow,store:{projectGeneration:0},deletingDraftIds:new Set(),deletingPublishedSceneIds:new Set(),
+    const c=vm.createContext({ getReadAuth: () => ({ captureIdentity: () => () => true, observe: result => result }),runDeletionFlow,store:{projectGeneration:0},deletingDraftIds:new Set(),deletingPublishedSceneIds:new Set(),
       openingUploadedDraft:null,serverModalRevision:0,t:key=>key,
       getRolePlaySceneDraftId:()=> 'one',getRolePlayScenePublishedSceneId:()=> 'one',
       showDeleteDraftConfirmation:async()=> 'delete',showDeletePublishedSceneConfirmation:async()=> 'delete',
-      ensureServerSessionReady:()=>new Promise(resolve=>{ready=resolve;}),
+      ensureMutationSessionReady:()=>new Promise(resolve=>{ready=resolve;}),
       showMessage:m=>messages.push(m),getServerErrorMessage:result=>result.error.code,
       renderUploadedDraftManager(){},renderPublishedBrowserModal(){},
       loadUploadedRolePlaySceneDrafts:async()=>{throw Error('refresh');},loadPublishedRolePlaySceneScenes:async()=>{throw Error('refresh');},
@@ -87,7 +87,7 @@ for (const published of [false,true]) for (const outcome of ['preflight-stale','
     const pending=c[method]({});await new Promise(resolve=>setImmediate(resolve));
     assert.equal((await c[method]({})).deletionStatus,'busy');
     if(outcome==='preflight-stale')c.serverModalRevision++;
-    ready({ok:true});const result=await pending;
+    ready({ok:true, isCurrent: () => true});const result=await pending;
     assert.equal(result.deletionStatus,outcome==='preflight-stale'?'stale':outcome==='uncertain'?'uncertain':'confirmed');
     assert.equal(requests,outcome==='preflight-stale'?0:1);
     if(outcome==='preflight-stale')assert.equal(messages.length,0);

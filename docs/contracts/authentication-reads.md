@@ -38,7 +38,7 @@ The route continues to use the deployment's existing `auth=1` OIDC entry. Real d
 
 ## Deliberate boundaries
 
-Upload, publish, deletion and audio/transcription/rewrite execution policies are not migrated here. Existing conflict/slot recovery, upload receipts, deletion uncertainty, explicit mutation confirmation and legacy protected-intent handling remain in place. The shared probe owner protects those callers from stale probe results, but this PR does not claim their complete future authentication policy is implemented.
+Upload, publish and deletion preparation is now documented in [Authentication for server mutations](authentication-mutations.md). Audio/transcription/rewrite execution policies are not migrated yet. Existing conflict/slot recovery, upload receipts, deletion uncertainty and explicit mutation confirmation remain in place; old viewer upload intents now return guidance without replay. The shared probe owner protects those callers from stale probe results, but this PR does not claim their complete future authentication policy is implemented.
 
 Local content conversion remains in existing app code. Existing replacement confirmations and package validation must remain intact. Do not move those operations into the retried read callback.
 

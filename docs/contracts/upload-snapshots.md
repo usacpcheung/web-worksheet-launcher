@@ -15,8 +15,9 @@ silently included in a retry. A new explicit upload after the flow ends captures
 current content. Package references retained by the editor/viewer flow are
 cleared in its final cleanup; they are not stored in IndexedDB, login intents or
 session storage. Standalone upload calls without an active UI flow prepare their
-own package. Login-return replay prepares a package after restoration rather
-than persisting ZIP bytes across authentication navigation.
+own package. Same-tab login return restores local work without uploading. The
+next explicit upload prepares a package from that restored work; ZIP bytes are
+not persisted across authentication navigation. See [mutation authentication](authentication-mutations.md).
 
 Document ID and generation ownership checks remain authoritative: a retry may
 not apply the old package to a replacement document, including reopening the

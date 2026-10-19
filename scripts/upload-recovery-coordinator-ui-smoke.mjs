@@ -104,4 +104,51 @@ try {
    console.log(`PASS ${app}/${locale}/${width}: repeated conflict/slot recovery, stable snapshot, user decisions and stale-context guard`);
   } finally { await context.close(); }
  }
+ // RolePlayScene has a different manager lifecycle: confirmation replaces it.
+ for (const locale of ['en', 'zh-Hant']) for (const outcome of ['success', 'socket-failure', 'cancel']) {
+  const context = await browser.newContext({viewport:{width:locale==='en'?1280:390,height:900}});
+  try {
+   const page = await context.newPage(); page.setDefaultTimeout(15000);
+   let posts=0, deletes=0, releaseDelete, deletionStarted; const errors=[];
+   const deleteArrived = new Promise(resolve => { deletionStarted = resolve; });
+   page.on('pageerror', error=>errors.push(error.message));
+   await page.addInitScript(locale=>localStorage.setItem('worksheetLauncher.locale',locale),locale);
+   await page.route(url=>url.pathname.startsWith('/api/'),async route=>{
+    const request=route.request();
+    if(new URL(request.url()).pathname.endsWith('/session')) return route.fulfill({json:{ok:true,data:{ready:true,user:{sub:'fixture'}}}});
+    if(request.method()==='POST') {
+     posts++;
+     return route.fulfill(posts===1?{status:409,json:{ok:false,error:{code:'ROLEPLAYSCENE_DRAFT_SLOT_LIMIT_REACHED',details:{slotLimit:3,uploadedDrafts:[{roleplayscene_uploaded_draft_id:'old',title:'QA slot fixture'}]}}}}
+      :{json:{ok:true,data:{roleplayscene_uploaded_draft_id:'saved'}}});
+    }
+    if(request.method()==='DELETE') {
+     deletes++;
+     await new Promise(resolve => { releaseDelete = resolve; deletionStarted(); });
+     return outcome==='socket-failure'?route.abort('connectionreset'):route.fulfill({json:{ok:true,data:{deleted:true}}});
+    }
+    return route.fulfill({json:{ok:true,data:{items:[]}}});
+   });
+   await page.goto(`${base}/server/roleplayscene/`);
+   const save=page.locator('#server-save-btn');
+   if(!await save.isVisible()) await page.locator('#toolbar-more-btn').click();
+   await save.click();
+   await page.locator('[data-draft-action="delete"]').click();
+   const modal=page.locator('#server-modal-overlay');
+   if(outcome==='cancel') await modal.locator('.confirm-actions__secondary').click();
+   else {
+    await modal.locator('.server-danger-action').click();
+    await deleteArrived;
+    // The enabled button is Cancel while upload recovery is still in progress.
+    assert.equal(await save.isEnabled(),true);
+    assert.equal(await save.getAttribute('aria-busy'),'true');
+    assert.equal(posts,1,'a pending deletion cannot release the next upload');
+    releaseDelete();
+   }
+   await page.waitForFunction(()=>document.querySelector('#server-save-btn')?.getAttribute('aria-busy') === 'false');
+   assert.equal(posts,outcome==='success'?2:1);
+   assert.equal(deletes,outcome==='cancel'?0:1);
+   assert.deepEqual(errors,[]);
+   console.log(`PASS roleplayscene/${locale}/slot-${outcome}: upload continues only after confirmed deletion`);
+  } finally {await context.close();}
+ }
 } finally { await browser.close(); }

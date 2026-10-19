@@ -1,3 +1,4 @@
+import { prepareMutation } from '../../app/auth/mutation-auth.js';
 import { redirectReadSignIn, takeReadAuthReturn } from '../../app/auth/read-auth-return.js';
 import { classifySessionFailure } from '../../app/auth/session-outcome.js';
 import { createReadAuthFlow } from '../../app/auth/read-auth-flow.js';
@@ -1324,6 +1325,7 @@ function getReadAuth() {
       },
     }),
     invalidate: reason => {
+      returnedMutation = null;
       if (reason === 'signed_out') serverSession = { status: 'not_ready', user: null, error: translate('server.signInRequired') };
       uploadedDrafts = [];
       publishedScenes = [];
@@ -1338,6 +1340,14 @@ function getReadAuth() {
     },
   });
   return readAuthFlow;
+}
+let returnedMutation = null;
+async function ensureMutationSessionReady(options = {}) {
+  const ready = await prepareMutation(getReadAuth(), options);
+  if (!ready.ok && !ready.result?.skipped && !ready.result?.cancelled && (options.isCurrent?.() ?? true)) {
+    showMessage({ text: getApiErrorMessage(ready.result, 'session') });
+  }
+  return ready;
 }
 async function ensureReadSessionReady(options = {}) {
   const result = await getReadAuth().ensure(options);
@@ -2576,7 +2586,8 @@ async function deletePublishedRolePlayScene(scene) {
   if (!sceneId) return;
   const generation = store.projectGeneration;
   let revision = null;
-  const isCurrent = () => !openingUploadedDraft && generation === store.projectGeneration
+  let accountCurrent = getReadAuth().captureIdentity();
+  const isCurrent = () => accountCurrent() && !openingUploadedDraft && generation === store.projectGeneration
     && (revision === null || revision === serverModalRevision);
   const result = await runDeletionFlow({
     pending: deletingPublishedSceneIds, key: sceneId, isCurrent,
@@ -2585,7 +2596,11 @@ async function deletePublishedRolePlayScene(scene) {
       revision = serverModalRevision;
       return choice === 'delete';
     },
-    preflight: () => ensureServerSessionReady({ isCurrent }),
+    preflight: async () => {
+      const ready = await ensureMutationSessionReady({ isCurrent, intent: { kind: 'mutation', operation: 'delete-publication', id: sceneId } });
+      if (ready.ok) accountCurrent = ready.isCurrent;
+      return ready;
+    },
     remove: () => apiClient.deleteRolePlayScenePublishedScene(sceneId),
     refresh: () => loadPublishedRolePlaySceneScenes({ preflight: false, showBrowser: false }),
   });
@@ -2595,6 +2610,7 @@ async function deletePublishedRolePlayScene(scene) {
     showMessage(result.refreshStatus === 'failed' ? { text: t('apiErrors.deleteRefreshFailed') } : { textId: 'published.deleted' });
     if (result.refreshStatus === 'succeeded') renderPublishedBrowserModal();
   }
+  getReadAuth().observe(result);
   return result;
 }
 
@@ -2671,7 +2687,8 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
 async function uploadCurrentProjectToServer({ conflictAction = '', preflight = true } = {}) {
   if (isUploadingDraft || openingUploadedDraft) return { ok: false, skipped: true };
   const generation = store.projectGeneration;
-  const operation = uploadOperations.begin(() => store.projectGeneration === generation);
+  let accountCurrent = () => true;
+  const operation = uploadOperations.begin(() => accountCurrent() && store.projectGeneration === generation);
   if (!operation) return { ok: false, skipped: true };
   uploadController = operation.controller;
   isUploadingDraft = true;
@@ -2679,7 +2696,8 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
   try {
     const snapshot = serializeProject(store.get().project);
     if (preflight !== false) {
-      const sessionReady = await ensureServerSessionReady();
+      const sessionReady = await ensureMutationSessionReady({ isCurrent: () => operation.canPublish(), signal: operation.signal, intent: { kind: 'mutation', operation: 'upload' } });
+      if (sessionReady.ok) accountCurrent = sessionReady.isCurrent;
       if (!sessionReady.ok) return sessionReady.result;
     }
     if (!operation.canPublish()) return staleUploadResult();
@@ -2719,6 +2737,7 @@ async function uploadCurrentProjectToServer({ conflictAction = '', preflight = t
     const result = recovery.result;
     if (!result.ok) {
       showMessage({ text: getServerErrorMessage(result, 'server.uploadFailed') });
+      getReadAuth().observe(result);
       return result;
     }
     const warnings = getUploadWarnings(result.data);
@@ -2750,11 +2769,17 @@ async function publishUploadedRolePlaySceneDraft(draft) {
   isPublishingDraftFlow = true;
   syncUploadedDraftActionAvailability();
   let pendingManager = null;
-  let attemptedTitle = draft?.title || translate('server.values.untitledDraft');
-  let attemptedDescription = draft?.description ?? '';
+  const generation = store.projectGeneration;
+  let accountCurrent = getReadAuth().captureIdentity();
+  const isCurrent = () => accountCurrent() && generation === store.projectGeneration && !openingUploadedDraft;
+  const restored = returnedMutation?.operation === 'publish' && returnedMutation.id === uploadedDraftId ? returnedMutation.filters : null;
+  if (restored) returnedMutation = null;
+  let attemptedTitle = restored?.title ?? draft?.title ?? translate('server.values.untitledDraft');
+  let attemptedDescription = restored?.description ?? draft?.description ?? '';
   try {
     while (true) {
       const modalResult = await showPublishDraftModal(draft, attemptedTitle, attemptedDescription);
+      if (!isCurrent()) return;
       if (!modalResult) {
         showMessage({ textId: 'server.publishCanceled' });
         return;
@@ -2767,20 +2792,23 @@ async function publishUploadedRolePlaySceneDraft(draft) {
       showMessage({ textId: 'server.publishingMessage' });
       let result;
       try {
-        const sessionReady = await ensureServerSessionReady();
+        const sessionReady = await ensureMutationSessionReady({ isCurrent: () => isCurrent() && pendingManager === activeServerModal, intent: { kind: 'mutation', operation: 'publish', id: uploadedDraftId, filters: { title: attemptedTitle, description: attemptedDescription } } });
+        if (sessionReady.ok) accountCurrent = sessionReady.isCurrent;
+        if (!isCurrent() || pendingManager !== activeServerModal) return;
         if (!sessionReady.ok) {
-          if (sessionReady.result?.skipped) return;
+          if (sessionReady.result?.skipped || sessionReady.result?.cancelled) return;
           showMessage({ text: getApiErrorMessage(sessionReady.result, 'session') });
           return;
         }
         result = await apiClient.publishRolePlaySceneFromUploadedDraft(uploadedDraftId, { title: attemptedTitle, description: attemptedDescription });
       } catch (err) {
-        showMessage({ text: getApiErrorMessage(err, 'publish') });
+        if (isCurrent() && pendingManager === activeServerModal) showMessage({ text: getApiErrorMessage(err, 'publish') });
         return;
       } finally {
         publishingDraftIds.delete(uploadedDraftId);
       }
 
+      if (!isCurrent() || pendingManager !== activeServerModal) return;
       if (result?.ok) {
         showMessage({
           textId: 'server.published',
@@ -2799,12 +2827,13 @@ async function publishUploadedRolePlaySceneDraft(draft) {
         return;
       }
       showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
+      getReadAuth().observe(result);
       return;
     }
   } finally {
     publishingDraftIds.delete(uploadedDraftId);
     isPublishingDraftFlow = false;
-    if (pendingManager && activeServerModal === pendingManager) renderUploadedDraftManager();
+    if (isCurrent() && serverSession.status === 'ready' && pendingManager && activeServerModal === pendingManager) renderUploadedDraftManager();
     syncUploadedDraftActionAvailability();
   }
 }
@@ -2974,7 +3003,8 @@ async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null, 
   if (!uploadedDraftId || openingUploadedDraft) return;
   const generation = store.projectGeneration;
   let revision = null;
-  const isCurrent = () => !openingUploadedDraft && generation === store.projectGeneration
+  let accountCurrent = getReadAuth().captureIdentity();
+  const isCurrent = () => accountCurrent() && !openingUploadedDraft && generation === store.projectGeneration
     && (revision === null || revision === serverModalRevision);
   const result = await runDeletionFlow({
     pending: deletingDraftIds, key: uploadedDraftId, isCurrent,
@@ -2985,7 +3015,11 @@ async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null, 
       revision = serverModalRevision;
       return choice === 'delete';
     },
-    preflight: () => ensureServerSessionReady({ isCurrent }),
+    preflight: async () => {
+      const ready = await ensureMutationSessionReady({ isCurrent, intent: { kind: 'mutation', operation: 'delete-draft', id: uploadedDraftId } });
+      if (ready.ok) accountCurrent = ready.isCurrent;
+      return ready;
+    },
     remove: () => apiClient.deleteRolePlaySceneDraft(uploadedDraftId),
     refresh: onDraftDeleted ? null : () => loadUploadedRolePlaySceneDrafts({ preflight: false }),
   });
@@ -2995,6 +3029,7 @@ async function deleteUploadedRolePlaySceneDraft(draft, { onDraftDeleted = null, 
     if (isCurrent() && !result.skipped && (result.deletionStatus !== 'preflight_failed' || result.cause)) {
       showMessage({ text: getServerErrorMessage(result, 'server.deleteFailed') });
     }
+    if (isCurrent()) getReadAuth().observe(result);
     onDeleteCanceled?.();
     return result;
   }
@@ -3281,6 +3316,13 @@ bootstrap().then(async () => {
     return;
   }
   const intent = pendingReadReturn.readIntent;
+  if (intent.kind === 'mutation') {
+    returnedMutation = intent;
+    showMessage({ text: t('mutationAuth.returned') });
+    if (intent.operation === 'delete-publication') return loadPublishedRolePlaySceneScenes({ showBrowser: true });
+    if (intent.operation !== 'upload') return loadUploadedRolePlaySceneDrafts({ showManager: true });
+    return;
+  }
   if (intent.kind === 'drafts') return loadUploadedRolePlaySceneDrafts({ showManager: true });
   if (intent.kind === 'published') { publishedScenesFilters = intent.filters || {}; return loadPublishedRolePlaySceneScenes({ showBrowser: true }); }
   if (intent.kind === 'publication') return startDirectPublishedLaunch(intent.id);

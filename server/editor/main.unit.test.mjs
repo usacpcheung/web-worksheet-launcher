@@ -143,7 +143,7 @@ async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
@@ -1098,7 +1098,7 @@ test('editor upload action runs silent session preflight and blocks when session
 
   assert.equal(result.ok, false);
   assert.deepEqual(calls, ['getSession']);
-  assert.equal(session.state.serverActionMessage, 'editor.notifications.auth.sessionExpired');
+  assert.equal(result.cancelled, true);
 });
 
 test('editor upload preflight surfaces transient server/non-auth errors without expired-session copy', async () => {
@@ -1761,8 +1761,8 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes(": t('common.actions.publish');"), true);
   assert.equal(source.includes("heading.textContent = t('editor.modal.publishConflict.title');"), true);
   assert.equal(source.includes("editBtn.textContent = t('editor.modal.publishConflict.editNameSubject');"), true);
-  assert.equal(source.includes("let attemptedTitle = String(item?.title || '');"), true);
-  assert.equal(source.includes("let attemptedSubject = String(item?.subject || '');"), true);
+  assert.equal(source.includes("let attemptedTitle = String(restored?.title ?? item?.title ?? '');"), true);
+  assert.equal(source.includes("let attemptedSubject = String(restored?.subject ?? item?.subject ?? '');"), true);
   assert.equal(source.includes('initialTitle: attemptedTitle,'), true);
   assert.equal(source.includes('initialSubject: attemptedSubject,'), true);
   assert.equal(source.includes("attemptedTitle = String(modal.title ?? '');"), true);
@@ -1806,11 +1806,11 @@ test('editor source keeps detail status row visible and uses friendly block/save
   assert.equal(source.includes('rightPanel.append(statusRow);'), true);
 });
 
-test('editor read menu remains available signed out while mutation gating is preserved', async () => {
+test('editor read and mutation menus remain available signed out with busy guards', async () => {
   const source = await fs.readFile(path.resolve('server/editor/main.js'), 'utf8');
   assert.ok(source.includes('browsePublishedBtn.disabled = false;'));
   assert.ok(source.includes('manageUploadedDraftsBtn.disabled = isRefreshingUploadedDrafts;'));
-  assert.ok(source.includes('syncDraftBtn.disabled = !serverReady || isUploadingDraft || isUploadDraftFlowActive;'));
+  assert.ok(source.includes('syncDraftBtn.disabled = isUploadingDraft || isUploadDraftFlowActive;'));
 });
 
 test('detail signature includes media refs so media attach/remove rerenders immediately', async () => {
@@ -5833,20 +5833,19 @@ test('cancel settles a stalled post-upload refresh without changing a successful
   assert.equal(session.state.isLoadingUploadedDrafts, false);
 });
 
-test('upload snapshots the selected draft before session preflight yields', async () => {
+test('upload stops when the selected draft is replaced during authentication', async () => {
   const mod = await loadEditorModule();
   let release, received;
   const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: {
     uploadDraftPackage: async (_bytes, metadata) => { received = metadata; return { ok: true, data: { uploaded_draft_id: 'saved' } }; },
     listUploadedDrafts: async () => ({ ok: true, data: { items: [] } }),
   } });
-  session.ensureReadSessionReady = session.ensureServerSessionReady = () => new Promise(resolve => { release = resolve; });
+  session.ensureMutationSessionReady = session.ensureReadSessionReady = session.ensureServerSessionReady = () => new Promise(resolve => { release = resolve; });
   session.state.draft = mod.createDraftRecord({ title: 'Original' });
   const upload = session.uploadCurrentDraftToServer();
   session.state.draft = mod.createDraftRecord({ title: 'Replacement' });
-  release({ ok: true }); await upload;
-  assert.equal(received.title, 'Original');
-  assert.equal(globalThis.__lastCreateWorksheetPackageCall.draft.title, 'Original');
+  release({ ok: true, isCurrent: () => true }); await upload;
+  assert.equal(received, undefined);
 });
 
 test('replaced media schedules persistence before cleanup and never dirties a later draft', async () => {
@@ -5915,9 +5914,9 @@ for (const stage of ['preflight', 'package']) test(`upload cancel during ${stage
   let release, entered;
   const ready = new Promise(resolve => { entered = resolve; });
   const pending = new Promise(resolve => { release = resolve; });
-  session.ensureReadSessionReady = session.ensureServerSessionReady = async () => {
+  session.ensureMutationSessionReady = session.ensureReadSessionReady = session.ensureServerSessionReady = async () => {
     if (stage === 'preflight') { entered(); await pending; }
-    return { ok: true };
+    return { ok: true, isCurrent: () => true };
   };
   session.buildCurrentDraftPackageZipBytes = async () => {
     if (stage === 'package') { entered(); await pending; }
@@ -6033,7 +6032,7 @@ test('deletion rejects duplicate calls and suppresses stale completion feedback'
     const notices = [];
     session.notifyStateChange = () => {};
     session.pushNotification = notice => notices.push(notice);
-    session.ensureReadSessionReady = session.ensureServerSessionReady = async () => ({ok:true});
+    session.ensureMutationSessionReady = session.ensureReadSessionReady = session.ensureMutationSessionReady = async () => ({ok:true, isCurrent: () => true});
     session.apiClient = { deleteUploadedDraft: async () => { calls++; started(); return new Promise(resolve => { resolveDelete = resolve; }); } };
     session.loadUploadedDrafts = async () => { refreshes++; return {ok:true}; };
     const pending = session.deleteUploadedDraft('same-id', {isCurrent:()=>current});
@@ -6055,7 +6054,7 @@ test('deletion lock releases after an unexpected request exception', async () =>
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());
   session.notifyStateChange = () => {};
-  session.ensureReadSessionReady = session.ensureServerSessionReady = async () => ({ok:true});
+  session.ensureMutationSessionReady = session.ensureReadSessionReady = session.ensureMutationSessionReady = async () => ({ok:true, isCurrent: () => true});
   session.apiClient = { deleteUploadedDraft: async () => {throw Error('fixture');} };
   assert.equal((await session.deleteUploadedDraft('same-id')).deletionStatus, 'uncertain');
   assert.equal(session._deletingUploadedDraftIds.size,0);
@@ -6065,7 +6064,7 @@ test('deletion reserves preflight and never mutates after its dialog becomes sta
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests());
   let ready, current = true, deletes = 0;
-  session.ensureReadSessionReady = session.ensureServerSessionReady = () => new Promise(resolve => { ready = resolve; });
+  session.ensureMutationSessionReady = session.ensureReadSessionReady = session.ensureServerSessionReady = () => new Promise(resolve => { ready = resolve; });
   session.apiClient = { deleteUploadedDraft: async () => { deletes++; return {ok:true}; } };
   const pending = session.deleteUploadedDraft('same-id', {isCurrent:()=>current});
   assert.equal((await session.deleteUploadedDraft('same-id')).status, 'delete_in_progress');
@@ -6080,7 +6079,7 @@ for (const outcome of ['success', 'failure', 'throw']) {
     const mod = await loadEditorModule();
     const session = new mod.EditorDraftSession(createSessionForTests());
     const pending = [];
-    session.ensureReadSessionReady = session.ensureServerSessionReady = async () => ({ok:true});
+    session.ensureMutationSessionReady = session.ensureReadSessionReady = session.ensureMutationSessionReady = async () => ({ok:true, isCurrent: () => true});
     session.apiClient = {
       listUploadedDrafts: () => new Promise((resolve,reject) => pending.push({resolve,reject})),
       deleteUploadedDraft: async () => ({ok:true}),
@@ -6135,7 +6134,7 @@ for (const published of [false,true]) {
   test(`editor ${published?'publication':'draft'} deletion reserves confirmation and preserves success after refresh exception`, async () => {
     const mod=await loadEditorModule(); const session=new mod.EditorDraftSession(createSessionForTests());
     let confirm, calls=0;
-    session.ensureReadSessionReady=session.ensureServerSessionReady=async()=>({ok:true});
+    session.ensureMutationSessionReady=session.ensureReadSessionReady=session.ensureServerSessionReady=async()=>({ok:true,isCurrent:()=>true});
     session.apiClient={deleteUploadedDraft:async()=>{calls++;return {ok:true};},deletePublishedPackage:async()=>{calls++;return {ok:true};}};
     const refresh=async()=>{throw Error('list transport');};session.loadUploadedDrafts=refresh;
     const method=published?'deletePublishedPackage':'deleteUploadedDraft';
@@ -6154,7 +6153,7 @@ test('closing the originating editor manager stops an in-flight artifact from re
     const mod = await loadEditorModule();
     const session = new mod.EditorDraftSession(createSessionForTests());
     session.state.draft = mod.createDraftRecord({ localId: 'kept' });
-    session.ensureReadSessionReady = async () => ({ ok: true });
+    session.ensureReadSessionReady = async () => ({ ok: true, isCurrent: () => true });
     let finish, current = true;
     session.apiClient.fetchUploadedDraftArtifact = session.apiClient.fetchPublishedPackageArtifact = () => new Promise(resolve => { finish = resolve; });
     session.importWorksheetPackageFile = () => assert.fail('closed read must not import');
@@ -6174,7 +6173,7 @@ test('editor download idle deadline excludes time spent recovering sign-in', asy
   const mod = await loadEditorModule();
   const session = new mod.EditorDraftSession(createSessionForTests(), { packageDownloadIdleMs: 10 });
   session.state.draft = mod.createDraftRecord({ localId: 'kept' });
-  session.ensureReadSessionReady = async () => ({ ok: true });
+  session.ensureReadSessionReady = async () => ({ ok: true, isCurrent: () => true });
   session._readAuth = createReadAuthFlow({ subject: () => 'a', invalidate() {},
     prompt: async () => { await new Promise(resolve => setTimeout(resolve, 30)); return true; },
     signIn: async () => ({ ok: true }), probe: async () => ({ ok: true, status: 'ready', user: { sub: 'a' } }) });
@@ -6195,4 +6194,33 @@ test('superseded draft preflight preserves account-change guidance', async () =>
   };
   assert.equal((await session.loadUploadedDrafts()).skipped, true);
   assert.equal(session.state.uploadedDraftsError, t('readAuth.accountChanged'));
+});
+
+test('publication preparation honors closed owner and invalidated account before sending', async () => {
+  const mod = await loadEditorModule();
+  for (const reason of ['owner','account']) {
+    const session = new mod.EditorDraftSession(createSessionForTests());
+    let current = true, posts = 0;
+    session.ensureMutationSessionReady = async () => {
+      if (reason === 'owner') current = false;
+      return {ok:true,isCurrent:()=>reason!=='account'};
+    };
+    session.apiClient.publishFromUploadedDraft = async () => { posts++; return {ok:true}; };
+    const result = await session.publishUploadedDraftToServer('one', {title:'Prepared'}, {isCurrent:()=>current});
+    assert.equal(result.status,'superseded'); assert.equal(posts,0);
+    assert.equal(session.state.publishingDraftIds.size,0);
+  }
+});
+
+test('account switch during delete confirmation prevents a stale DELETE even when the new session is ready', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.state.serverSession = {status:'ready',user:{sub:'A'}};
+  let confirm, posts = 0;
+  session.ensureMutationSessionReady = async () => ({ok:true,isCurrent:()=>true});
+  session.apiClient.deleteUploadedDraft = async () => { posts++; return {ok:true}; };
+  const work = session.deleteUploadedDraft('one',{confirm:()=>new Promise(resolve=>{confirm=resolve;})});
+  session.state.serverSession = {status:'ready',user:{sub:'B'}};
+  session.readAuth.observe({ok:true,status:'ready',user:{sub:'B'}});
+  confirm(true); assert.equal((await work).deletionStatus,'stale'); assert.equal(posts,0);
 });
