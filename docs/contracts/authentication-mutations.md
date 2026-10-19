@@ -22,7 +22,7 @@ Signed-out users can select available mutation controls. Invalid context, active
 - After successful preparation, the returned account guard remains part of the app's ownership checks through packaging, conflict/slot choices, requests and refresh. Changing account, replacing the local record, closing the relevant manager or canceling an owned operation prevents stale work from continuing.
 - A rejected mutation is not replayed after authentication. An observed authentication failure invalidates private rows/session readiness. The user must select a fresh action. Existing outcome feedback remains visible.
 
-The shared prompt uses existing dialog styling, keyboard handling and English/Traditional Chinese catalogs. Each app retains its manager, publishing form, upload progress, delete confirmation and notification layout.
+The shared prompt uses existing dialog styling, keyboard handling and English/Traditional Chinese catalogs. Its width includes padding and borders independently of app-level CSS; action buttons wrap on narrow screens. Each app retains its manager, publishing form, upload progress, delete confirmation and notification layout.
 
 ## Blocked popup and same-tab return
 
@@ -48,3 +48,12 @@ Before merge, deploy the exact PR commit and verify all three apps in English an
 4. Close/cancel or replace context during preflight/login/packaging; switch accounts; verify no stale mutation or feedback reaches the new context.
 5. Request-level 401 and structured permission 403, network failure and uncertain deletion remain bounded without automatic replay. Verify local work survives.
 6. Retest basic reads/managers and provider functions as unchanged consumers. Record SHA, request counts and resource cleanup as text; capture screenshots/video only for failures or ambiguous UI.
+
+### Acceptance coverage boundaries
+
+- Shared prompt geometry is checked in all three apps, both languages, at 320, 390 and 1280 pixels, including the blocked-popup third action and post-login confirmations.
+- Slot continuation requires a confirmed deletion. Browser fixtures cover successful deletion, cancellation and connection reset; local HTTP integration checks cover committed deletes with lost/truncated responses and successful deletes followed by failed refresh. These do not diagnose a live proxy or test-forwarding socket failure; deployed editor/RolePlayScene continuation still needs a successful live rerun if forwarding was interrupted.
+- RolePlayScene archive inspection must support compressed entries, as its `scripts/utils/zip.js`/`fflate` reader does. The editor's stored-entry-only ZIP helper is not a general RolePlayScene inspection tool.
+- RolePlayScene's delete confirmation replaces the manager. After confirmation closes, there is no manager Close button to click during preflight. Test cancellation before confirmation or invalidate the project/account context; do not count a nonexistent Close interaction as executed.
+- Active viewer return replacement is tested through `tryResumeAttempt` because that screen has no import/replace control. Start-screen replacement is also tested through its import UI. These are distinct integration/UI coverage claims.
+- An authenticated session and popup return do not prove a fresh external OIDC challenge. That remains a deployment check requiring an actual identity-provider sign-in; automated local fixtures do not replace it.
