@@ -38,13 +38,15 @@ try {
       }
       await page.waitForFunction(app => Boolean(window[`${app}Session`]?.state), app);
       if (app === 'editor') await page.locator('details').filter({ has: page.locator('[data-upload-cancel="editor"]') }).locator('summary').click();
+      // Use the actual input so revision tracking protects the edit from an
+      // older in-flight autosave. Direct state assignment bypasses that contract.
+      if (app === 'editor') await page.locator('#editor-title-input').fill('Preserve this draft');
       const expected = await page.evaluate(async app => {
         const session = window[`${app}Session`];
         const { createServerApiClient } = await import('/server/app/api/server-api-client.js');
         const { t } = await import('/server/app/i18n/index.js');
         session.apiClient = createServerApiClient();
         await session.refreshServerSession();
-        if (app === 'editor') session.state.draft.title = 'Preserve this draft';
         window.cancelTestDone = false;
         // Invoke the real upload method, then cancel through the rendered control.
         const upload = app === 'editor' ? session.uploadCurrentDraftToServer() : session.uploadCurrentAttemptPackage();
