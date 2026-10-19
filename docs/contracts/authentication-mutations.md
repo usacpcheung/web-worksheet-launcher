@@ -30,7 +30,7 @@ The existing tab-scoped pending-intent envelope (`kind: read-auth`, `readAuthRet
 
 The existing save-before-navigation path must complete first. Voice/discussion work that cannot be durably restored still blocks navigation. Publication values longer than the return descriptor's 2,000-character field limit block navigation instead of being silently truncated; popup sign-in remains available.
 
-On return, the app restores local work, displays guidance and opens the relevant manager when applicable. Publication title/subject/description are used to seed the matching form when the user selects Publish again. **No POST or DELETE runs on return.** The user selects and confirms the intended action again; deletion is never automatically resumed. An older viewer `uploadAttemptPackageAfterLogin` intent also stops at guidance instead of replaying its upload.
+On return, the app restores local work, displays guidance and opens the relevant manager when applicable. Publication title/subject/description are used to seed the matching form when the user selects Publish again. **No POST or DELETE runs on return.** Viewer return guidance is rendered on both the start screen and an active attempt. Account/context mismatch, failed session verification and return exceptions display an explanation without replaying the action. A delayed viewer return check cannot reopen a manager or publish guidance after the local attempt is replaced; canceled or superseded checks remain silent. The user selects and confirms the intended action again; deletion is never automatically resumed. An older viewer `uploadAttemptPackageAfterLogin` intent also stops at guidance instead of replaying its upload.
 
 ## Existing recovery boundaries
 

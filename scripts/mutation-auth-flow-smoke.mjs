@@ -86,4 +86,36 @@ try {
       console.log(`PASS ${area}/${locale}/${recovery}: cancel, explicit confirmation, no replay, permission rejection`);
     } finally { await context.close(); }
   }
+  for (const locale of ['en', 'zh-Hant']) {
+    const context = await browser.newContext({ viewport: { width: locale === 'en' ? 1280 : 390, height: 900 } });
+    try {
+      const page = await context.newPage();
+      let failure = null, mutations = 0;
+      await page.addInitScript(locale => localStorage.setItem('worksheetLauncher.locale', locale), locale);
+      await page.route(url => url.pathname.startsWith('/api/'), route => {
+        if (['POST', 'DELETE'].includes(route.request().method())) mutations++;
+        return route.fulfill(failure ? { status: failure.status, json: { ok: false, error: failure } }
+          : { status: 200, json: { ok: true, data: { ready: true, user: { sub: 'qa' } } } });
+      });
+      await page.goto(`${base}/server/viewer/`);
+      await page.locator('.viewer-start-panel').waitFor();
+      for (const mode of ['account', 'AUTH_REQUIRED', 'FORBIDDEN', 'NETWORK_ERROR']) {
+        failure = mode === 'account' ? null : { code: mode, status: mode === 'AUTH_REQUIRED' ? 401 : mode === 'FORBIDDEN' ? 403 : 503 };
+        const target = await page.evaluate(async mode => {
+          const { setPendingIntent, getPendingIntent } = await import('/server/app/storage/local-storage.js');
+          setPendingIntent({ kind: 'read-auth', appArea: 'viewer', subject: mode === 'account' ? 'another-account' : 'qa',
+            readIntent: { kind: 'mutation', operation: 'delete-attempt', id: 'qa-resource' } });
+          const url = new URL(location.href);
+          url.searchParams.set('readAuthReturn', getPendingIntent().intentId);
+          return url.toString();
+        }, mode);
+        await page.goto(target);
+        await page.locator('.viewer-recovery-message').waitFor({ state: 'visible' });
+        assert.ok((await page.locator('.viewer-recovery-message').textContent()).trim());
+        assert.equal(mutations, 0, 'failed return verification never mutates');
+        assert.equal(await page.locator('.read-auth-prompt').count(), 0, 'return never automatically starts another login');
+      }
+      console.log(`PASS viewer/${locale}/start-panel: account mismatch and failed session returns display guidance without replay`);
+    } finally { await context.close(); }
+  }
 } finally { await browser.close(); }

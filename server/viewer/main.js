@@ -5729,12 +5729,21 @@ async function resumeViewerReadReturn(session) {
   const pending = session._readAuthReturn;
   if (!pending) return;
   session._readAuthReturn = null;
+  const attemptId = session.state.localAttemptId;
+  const generation = session._uploadContextGeneration;
+  const isCurrent = () => attemptId === session.state.localAttemptId && generation === session._uploadContextGeneration;
   try {
-    const ready = await session.probeServerSessionSilently({ force: true, timeoutMs: 15000 });
-    if (!ready.ok) return;
+    const ready = await session.probeServerSessionSilently({ force: true, timeoutMs: 15000, isCurrent });
+    if (!isCurrent() || ready.skipped || ready.cancelled) return;
+    if (!ready.ok) {
+      session.setRecoveryMessage(getApiErrorMessage(ready, 'session'));
+      session.notifyStateChange();
+      return;
+    }
     if ((pending.subject && pending.subject !== ready.user?.sub)
         || (pending.localId && pending.localId !== session.state.localAttemptId)) {
       session.setRecoveryMessage(t('readAuth.accountChanged'));
+      session.notifyStateChange();
       return;
     }
     const showRestoredAttempt = () => {
@@ -5763,7 +5772,9 @@ async function resumeViewerReadReturn(session) {
       : await session.resumeUploadedAttempt({ uploaded_attempt_id: intent.id });
     if (result?.ok) showRestoredAttempt();
   } catch (error) {
+    if (!isCurrent()) return;
     session.setRecoveryMessage(getApiErrorMessage({ error }, 'open'));
+    session.notifyStateChange();
   }
 }
 
@@ -7442,6 +7453,11 @@ function renderViewerStartPanel(session, options = {}) {
   errorMessage.setAttribute('role', 'status');
   errorMessage.setAttribute('aria-live', 'polite');
 
+  const recoveryMessage = document.createElement('p');
+  recoveryMessage.className = 'viewer-start-error viewer-recovery-message';
+  recoveryMessage.setAttribute('role', 'status');
+  recoveryMessage.setAttribute('aria-live', 'polite');
+
   let resumeCard = null;
   if (resumeAttempt) {
     resumeCard = document.createElement('div');
@@ -7606,6 +7622,8 @@ function renderViewerStartPanel(session, options = {}) {
 
   function renderServerControls() {
     renderViewerNotifications(session);
+    recoveryMessage.textContent = session.state.recoveryMessage || '';
+    recoveryMessage.hidden = !session.state.recoveryMessage;
     const sessionState = session.state.serverSession?.status || VIEWER_SERVER_SESSION_STATES.CHECKING;
     const isLoggedIn = sessionState === VIEWER_SERVER_SESSION_STATES.LOGGED_IN;
     // A settled probe error must not disable the user's sign-in retry.
@@ -7660,7 +7678,8 @@ function renderViewerStartPanel(session, options = {}) {
     createViewerAuthFeedback(),
     packageFileInput,
     attemptPackageFileInput,
-    errorMessage
+    errorMessage,
+    recoveryMessage
   );
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
