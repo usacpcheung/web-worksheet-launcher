@@ -1,3 +1,4 @@
+import { prepareMutation } from '../app/auth/mutation-auth.js';
 import { createSilentSessionStateAdapter } from '../app/auth/session-state-adapter.js';
 import { redirectReadSignIn, takeReadAuthReturn } from '../app/auth/read-auth-return.js';
 import { runOwnedSessionProbe } from '../app/auth/session-coordinator.js';
@@ -7,7 +8,7 @@ import { runDeletionFlow } from '../app/api/deletion-flow.js';
 import { runUploadRecoveryFlow } from '../app/api/upload-recovery-flow.js';
 import { getApiErrorMessage, getApiErrorDiagnostic, resolveErrorPresentation, createErrorDetails } from '../app/api/error-presentation.js';
 import { UploadOperationSlot, staleUploadResult, canceledUploadResult } from '../app/api/upload-operation-lifecycle.js';
-import { classifyUploadResult, classifyProtectedUploadResult } from '../app/api/upload-result.js';
+import { classifyUploadResult } from '../app/api/upload-result.js';
 import { assertAttemptPackage } from '../app/contracts/attempt-package-validator.js';
 import { installPageRecovery } from '../app/storage/recovery-journal.js';
 import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.js';
@@ -3576,8 +3577,8 @@ class ViewerAttemptSession {
         this.setRecoveryMessage(null);
         return { ok: true, status: 'noop_resume_attempt' };
       case 'uploadAttemptPackageAfterLogin':
-        this.setRecoveryMessage(null);
-        return this.uploadCurrentAttemptPackage(payload);
+        this.setRecoveryMessage(t('mutationAuth.returned'));
+        return { ok: true, status: 'confirmation_required' };
       default:
         this.setRecoveryMessage(null);
         return { ok: true, status: 'noop_unsupported_action' };
@@ -3835,7 +3836,7 @@ class ViewerAttemptSession {
     if (packageFlow && !packageFlow.canPublish()) return staleUploadResult();
     const attemptId = this.state.localAttemptId;
     const generation = this._uploadContextGeneration;
-    const contextIsCurrent = () => this.state.localAttemptId === attemptId && this._uploadContextGeneration === generation;
+    const contextIsCurrent = () => (!packageFlow || packageFlow.canPublish()) && this.state.localAttemptId === attemptId && this._uploadContextGeneration === generation;
     this.uploadOperations ??= new UploadOperationSlot();
     const operation = this.uploadOperations.begin(contextIsCurrent);
     if (!operation) return { ok: false, skipped: true, status: 'upload_in_progress' };
@@ -3928,6 +3929,7 @@ class ViewerAttemptSession {
           ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
         });
         this.notifyStateChange();
+        this.readAuth.observe(uploadResult);
         return uploadResult;
       }
 
@@ -4034,10 +4036,18 @@ class ViewerAttemptSession {
   async deleteUploadedAttemptAndRefresh(uploadedAttemptId, { isCurrent = () => true, confirm } = {}) {
     if (!uploadedAttemptId) return { ok: false, status: 'missing_id' };
     this._deletingUploadedAttemptIds ??= new Set();
+    const ownerCurrent = isCurrent;
+    let accountCurrent = this.readAuth.captureIdentity();
+    isCurrent = () => ownerCurrent() && accountCurrent();
     let actionStarted = false;
     try {
       const result = await runDeletionFlow({
         pending: this._deletingUploadedAttemptIds, key: uploadedAttemptId, isCurrent, confirm,
+        preflight: async () => {
+          const ready = await this.ensureMutationSessionReady({ isCurrent, intent: { kind: 'mutation', operation: 'delete-attempt', id: uploadedAttemptId } });
+          if (ready.ok) accountCurrent = ready.isCurrent;
+          return ready;
+        },
         remove: async () => {
           actionStarted = true;
           this.state.uploadedAttemptActionInFlightById = { ...this.state.uploadedAttemptActionInFlightById, [uploadedAttemptId]: 'delete' };
@@ -4046,7 +4056,7 @@ class ViewerAttemptSession {
         },
         refresh: () => this.listUploadedAttempts({ isCurrent }),
       });
-      if (!isCurrent() || result.skipped) return result;
+      if (!isCurrent() || result.skipped || (result.deletionStatus === 'preflight_failed' && !result.cause)) return result;
       this.state.serverActionMessage = result.ok ? t('viewer.notifications.uploadedAttempt.deleted') : getApiErrorMessage(result, 'delete');
       this.pushNotification({ kind: result.ok ? 'success' : 'error', text: this.state.serverActionMessage,
         ttlMs: result.ok ? VIEWER_NOTIFICATION_DEFAULT_TTL_MS : VIEWER_NOTIFICATION_ERROR_TTL_MS });
@@ -4054,6 +4064,7 @@ class ViewerAttemptSession {
         this.pushNotification({ kind: 'warn', text: t('apiErrors.deleteRefreshFailed'), ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS });
       }
       this.notifyStateChange();
+      this.readAuth.observe(result);
       return result;
     } finally {
       if (actionStarted) {
@@ -4576,6 +4587,16 @@ class ViewerAttemptSession {
       },
     });
     return this._readAuth;
+  }
+
+  async ensureMutationSessionReady(options = {}) {
+    const ready = await prepareMutation(this.readAuth, options);
+    if (!ready.ok && !ready.result?.skipped && !ready.result?.cancelled && (options.isCurrent?.() ?? true)) {
+      this.state.serverActionMessage = getApiErrorMessage(ready.result, 'session');
+      this.pushNotification({ kind: 'warn', category: 'server', source: 'session.mutation', text: this.state.serverActionMessage });
+      this.notifyStateChange();
+    }
+    return ready;
   }
 
   async ensureReadSessionReady(options = {}) {
@@ -5728,6 +5749,12 @@ async function resumeViewerReadReturn(session) {
       window.viewerSession = session;
     };
     const intent = pending.readIntent;
+    if (intent.kind === 'mutation') {
+      session.setRecoveryMessage(t('mutationAuth.returned'));
+      session.notifyStateChange();
+      if (intent.operation === 'delete-attempt') await showUploadedAttemptsManagerModal(session, { onResumeSuccess: showRestoredAttempt });
+      return;
+    }
     if (intent.kind === 'published') { session.state.publishedFilters = intent.filters || {}; return await showPublishedPackagesBrowseModal(session); }
     if (intent.kind === 'attempts') return await showUploadedAttemptsManagerModal(session, { onResumeSuccess: showRestoredAttempt });
     if (intent.kind === 'attempt-download') return await session.downloadUploadedAttempt({ uploaded_attempt_id: intent.id });
@@ -7061,35 +7088,18 @@ function renderViewerShell(session) {
     const attemptId = session.state.localAttemptId;
     const generation = session._uploadContextGeneration;
     session.uploadFlows ??= new UploadOperationSlot();
-    const flow = session.uploadFlows.begin(() => session.state.localAttemptId === attemptId && session._uploadContextGeneration === generation);
+    let accountCurrent = () => true;
+    const flow = session.uploadFlows.begin(() => accountCurrent() && session.state.localAttemptId === attemptId && session._uploadContextGeneration === generation);
     if (!flow) return;
     session._uploadPackageFlow = flow;
     session.state.isUploadAttemptFlowActive = true;
     renderUI();
     try {
-      const protectedActionResult = await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');
-      if (!flow.canPublish()) return;
-      const gateOutcome = classifyProtectedUploadResult(protectedActionResult, 'worksheet-attempt');
-      if (gateOutcome.kind === 'redirected') {
-        return;
-      }
-      // The auth gate returns attempted upload failures unchanged. They
-      // already have upload feedback and may need conflict/slot recovery below.
-      if (gateOutcome.kind === 'blocked') {
-        const blockedMessage = gateOutcome.reason === 'blocked_session_probe'
-          ? getViewerAuthNotification('unableToVerifySignIn')
-          : t('viewer.notifications.uploadAttempt.signInRequired');
-        session.pushNotification({
-          kind: 'warn',
-          text: blockedMessage,
-          ttlMs: VIEWER_NOTIFICATION_ERROR_TTL_MS,
-        });
-        renderUI();
-        return;
-      }
+      const ready = await session.ensureMutationSessionReady({ isCurrent: () => flow.canPublish(), signal: flow.signal, intent: { kind: 'mutation', operation: 'upload' } });
+      if (ready.ok) accountCurrent = ready.isCurrent;
+      if (!ready.ok || !flow.canPublish()) return;
       await runUploadRecoveryFlow({
         resource: 'worksheet-attempt',
-        initialResult: protectedActionResult,
         isCurrent: () => flow.canPublish(),
         signal: flow.signal,
         submit: conflictAction => session.retryAttemptUploadAfterSlotRecovery({ conflictAction }),

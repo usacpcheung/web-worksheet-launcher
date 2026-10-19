@@ -1,3 +1,4 @@
+import { prepareMutation } from '../app/auth/mutation-auth.js';
 import { createSilentSessionStateAdapter } from '../app/auth/session-state-adapter.js';
 import { redirectReadSignIn, takeReadAuthReturn } from '../app/auth/read-auth-return.js';
 import { runOwnedSessionProbe } from '../app/auth/session-coordinator.js';
@@ -3702,6 +3703,7 @@ class EditorDraftSession {
         localId: () => this.state.draft?.localId,
       }),
       invalidate: reason => {
+          this._returnedMutation = null;
           this.state.uploadedDrafts = [];
           this.state.uploadedDraftsError = t(reason === 'account_changed' ? 'readAuth.accountChanged' : 'apiErrors.authRequired');
           if (reason === 'signed_out') this.state.serverSession = { status: 'not_ready', user: null, error: t('apiErrors.authRequired') };
@@ -3710,6 +3712,16 @@ class EditorDraftSession {
       },
     });
     return this._readAuth;
+  }
+
+  async ensureMutationSessionReady(options = {}) {
+    const ready = await prepareMutation(this.readAuth, options);
+    if (!ready.ok && !ready.result?.skipped && !ready.result?.cancelled && (options.isCurrent?.() ?? true)) {
+      this.state.serverActionMessage = getApiErrorMessage(ready.result, 'session');
+      this.pushNotification({ kind: 'warn', category: 'server', source: 'session.mutation', text: this.state.serverActionMessage });
+      this.notifyStateChange();
+    }
+    return ready;
   }
 
   async ensureReadSessionReady(options = {}) {
@@ -3789,7 +3801,8 @@ class EditorDraftSession {
     if (packageFlow && !packageFlow.canPublish()) return { ok: false, skipped: true, status: 'stale_upload' };
     const draftId = this.state.draft?.localId;
     const generation = this._audioDraftGeneration;
-    const contextIsCurrent = () => this.state.draft?.localId === draftId && this._audioDraftGeneration === generation;
+    let accountCurrent = () => true;
+    const contextIsCurrent = () => accountCurrent() && (!packageFlow || packageFlow.canPublish()) && this.state.draft?.localId === draftId && this._audioDraftGeneration === generation;
     this.uploadOperations ??= new UploadOperationSlot();
     const operation = this.uploadOperations.begin(contextIsCurrent);
     if (!operation) return { ok: false, skipped: true, status: 'upload_in_progress' };
@@ -3810,9 +3823,11 @@ class EditorDraftSession {
       let prepared = packageFlow?.preparedPackage;
       const uploadDraft = prepared ? null : cloneDraftForPersistence(this.state.draft);
       if (options.preflight !== false) {
-        const sessionReady = await this.ensureServerSessionReady();
+        const sessionReady = await this.ensureMutationSessionReady({ isCurrent: () => operation.canPublish(), signal: operation.signal, intent: { kind: 'mutation', operation: 'upload' } });
+        if (sessionReady.ok) accountCurrent = sessionReady.isCurrent;
         if (!sessionReady.ok) return sessionReady.result;
       }
+      if (!operation.canPublish()) return { ok: false, skipped: true, status: 'stale_upload' };
       if (!prepared && !operation.signal.aborted) {
         prepared = {
           bytes: await this.buildCurrentDraftPackageZipBytes(uploadDraft),
@@ -3821,7 +3836,7 @@ class EditorDraftSession {
         };
         if (packageFlow?.canPublish()) packageFlow.preparedPackage = prepared;
       }
-      if (packageFlow && !packageFlow.canPublish()) return { ok: false, skipped: true, status: 'stale_upload' };
+      if (!operation.canPublish()) return { ok: false, skipped: true, status: 'stale_upload' };
       let lastProgressRenderKey = null;
       const result = operation.signal.aborted ? canceledUploadResult() : await this.apiClient.uploadDraftPackage(prepared.bytes, {
         title: prepared.title,
@@ -3862,6 +3877,7 @@ class EditorDraftSession {
         const errorText = getApiErrorMessage(result, 'upload');
         this.pushNotification({ kind: 'error', category: 'server', source: 'upload.status', text: errorText });
         this.notifyStateChange();
+        this.readAuth.observe(result);
         return result;
       }
       this.state.lastUploadedDraft = result.data;
@@ -3905,7 +3921,7 @@ class EditorDraftSession {
     }
   }
 
-  async publishUploadedDraftToServer(uploadedDraftId, metadata = {}) {
+  async publishUploadedDraftToServer(uploadedDraftId, metadata = {}, { isCurrent: ownerCurrent = () => true, onPrepared } = {}) {
     const normalizedUploadedDraftId = String(uploadedDraftId || '').trim();
     if (!normalizedUploadedDraftId) {
       return { ok: false, error: { message: editorNotification('uploadDraft.draftIdRequired') } };
@@ -3917,19 +3933,30 @@ class EditorDraftSession {
         error: { message: editorNotification('uploadDraft.publishAlreadyInProgress', { id: normalizedUploadedDraftId }) },
       };
     }
+    const generation = this._audioDraftGeneration;
+    let accountCurrent = () => true;
+    const isCurrent = () => ownerCurrent() && generation === this._audioDraftGeneration && accountCurrent();
+    const stale = () => ({ ok: false, skipped: true, status: 'superseded' });
     this.state.publishingDraftIds.add(normalizedUploadedDraftId);
     this.pushNotification({ kind: 'info', category: 'server', source: 'publish.status', text: editorNotification('publishedPackage.publishing'), logActivity: false });
     this.notifyStateChange();
     try {
-      const sessionReady = await this.ensureServerSessionReady();
+      const sessionReady = await this.ensureMutationSessionReady({ isCurrent, intent: { kind: 'mutation', operation: 'publish', id: normalizedUploadedDraftId, filters: metadata } });
+      if (sessionReady.ok) {
+        accountCurrent = sessionReady.isCurrent;
+        onPrepared?.(accountCurrent);
+      }
+      if (!isCurrent()) return stale();
       if (!sessionReady.ok) return sessionReady.result;
       const publishResult = await this.apiClient.publishFromUploadedDraft(normalizedUploadedDraftId, {
         title: metadata.title || '',
         subject: metadata.subject || '',
       });
+      if (!isCurrent()) return publishResult;
       if (!publishResult.ok) {
         this.pushNotification({ kind: 'error', category: 'server', source: 'publish.status', text: getApiErrorMessage(publishResult, 'publish') });
         this.notifyStateChange();
+        this.readAuth.observe(publishResult);
         return publishResult;
       }
       this.state.lastPublishedPackage = publishResult.data;
@@ -3939,7 +3966,8 @@ class EditorDraftSession {
         source: 'publish.status',
         text: editorNotification('publishedPackage.published', { id: publishResult.data.published_package_id }),
       });
-      const refreshResult = await this.loadUploadedDrafts({ preflight: false, force: true });
+      const refreshResult = await this.loadUploadedDrafts({ preflight: false, force: true, isCurrent });
+      if (!isCurrent()) return publishResult;
       if (refreshResult?.ok) {
         this.pushNotification({
           kind: 'success',
@@ -4169,9 +4197,16 @@ class EditorDraftSession {
   async deleteUploadedDraft(uploadedDraftId, { isCurrent = () => true, confirm } = {}) {
     if (!uploadedDraftId) return { ok: false, skipped: true };
     this._deletingUploadedDraftIds ??= new Set();
+    const ownerCurrent = isCurrent;
+    let accountCurrent = this.readAuth.captureIdentity();
+    isCurrent = () => ownerCurrent() && accountCurrent();
     const result = await runDeletionFlow({
       pending: this._deletingUploadedDraftIds, key: uploadedDraftId, isCurrent, confirm,
-      preflight: () => this.ensureServerSessionReady(undefined, { isCurrent }),
+      preflight: async () => {
+        const ready = await this.ensureMutationSessionReady({ isCurrent, intent: { kind: 'mutation', operation: 'delete-draft', id: uploadedDraftId } });
+        if (ready.ok) accountCurrent = ready.isCurrent;
+        return ready;
+      },
       remove: () => this.apiClient.deleteUploadedDraft(uploadedDraftId),
       refresh: () => this.loadUploadedDrafts({ preflight: false, force: true, isCurrent }),
     });
@@ -4184,6 +4219,7 @@ class EditorDraftSession {
       this.pushNotification({ kind: 'warn', category: 'server', source: 'uploadedDraft.delete.refresh', text: t('apiErrors.deleteRefreshFailed') });
     }
     this.notifyStateChange();
+    this.readAuth.observe(result);
     return result;
   }
 
@@ -4191,9 +4227,16 @@ class EditorDraftSession {
     const id = String(publishedPackageId || '').trim();
     if (!id) return { ok: false, error: { message: editorNotification('publishedPackage.idRequired') } };
     this._deletingPublishedPackageIds ??= new Set();
+    const ownerCurrent = isCurrent;
+    let accountCurrent = this.readAuth.captureIdentity();
+    isCurrent = () => ownerCurrent() && accountCurrent();
     const result = await runDeletionFlow({
       pending: this._deletingPublishedPackageIds, key: id, confirm, isCurrent, refresh,
-      preflight: () => this.ensureServerSessionReady(undefined, { isCurrent }),
+      preflight: async () => {
+        const ready = await this.ensureMutationSessionReady({ isCurrent, intent: { kind: 'mutation', operation: 'delete-publication', id } });
+        if (ready.ok) accountCurrent = ready.isCurrent;
+        return ready;
+      },
       remove: () => this.apiClient.deletePublishedPackage(id),
     });
     if (!isCurrent() || result.skipped || (result.deletionStatus === 'preflight_failed' && !result.cause)) return result;
@@ -4203,6 +4246,7 @@ class EditorDraftSession {
       this.pushNotification({ kind: 'warn', category: 'server', source: 'publishedPackage.delete.refresh', text: t('apiErrors.deleteRefreshFailed') });
     }
     this.notifyStateChange();
+    this.readAuth.observe(result);
     return result;
   }
 
@@ -5201,13 +5245,15 @@ function renderEditorShell(session) {
   }
 
   async function guardServerMenuAction(button, action) {
-    if (button?.disabled) return null;
-    const sessionReady = await session.ensureServerSessionReady();
-    if (!sessionReady.ok) {
-      updateSummary();
-      return sessionReady.result;
-    }
-    return action();
+    if (button?.disabled || session._publishMenuBusy) return null;
+    session._publishMenuBusy = true;
+    const generation = session._audioDraftGeneration;
+    const revision = manageUploadedDraftsDialogRevision;
+    let accountCurrent = session.readAuth.captureIdentity();
+    const isCurrent = () => accountCurrent() && generation === session._audioDraftGeneration
+      && manageUploadedDraftsDialogOpen && revision === manageUploadedDraftsDialogRevision;
+    try { return await action(isCurrent, guard => { accountCurrent = guard; }); }
+    finally { session._publishMenuBusy = false; updateSummary(); }
   }
 
   function createCopyIdMenu({ triggerKind = 'info', triggerText = '', title, idValue, copyLabel, source }) {
@@ -7994,7 +8040,7 @@ function renderEditorShell(session) {
       }
 
       if (publishState !== 'current_version_published') {
-        const isPublishing = session.state.publishingDraftIds.has(item.uploaded_draft_id);
+        const isPublishing = session._publishMenuBusy || session.state.publishingDraftIds.has(item.uploaded_draft_id);
         const publishBtn = document.createElement('button');
         publishBtn.type = 'button';
         publishBtn.className = 'uploaded-draft-action uploaded-draft-action--primary';
@@ -8003,25 +8049,28 @@ function renderEditorShell(session) {
           : publishState === 'unpublished_changes'
             ? t('editor.uploadedDraft.publishNewVersion')
             : t('common.actions.publish');
-        publishBtn.disabled = !serverReady || isPublishing;
+        publishBtn.disabled = isPublishing;
         publishBtn.addEventListener('click', async () => {
           if (session.state.publishingDraftIds.has(item.uploaded_draft_id)) return;
-          await guardServerMenuAction(publishBtn, async () => {
-            let attemptedTitle = String(item?.title || '');
-            let attemptedSubject = String(item?.subject || '');
+          await guardServerMenuAction(publishBtn, async (isCurrent, setAccountGuard) => {
+            const restored = session._returnedMutation?.operation === 'publish' && session._returnedMutation.id === item.uploaded_draft_id ? session._returnedMutation.filters : null;
+            if (restored) session._returnedMutation = null;
+            let attemptedTitle = String(restored?.title ?? item?.title ?? '');
+            let attemptedSubject = String(restored?.subject ?? item?.subject ?? '');
             while (true) {
               const modal = await showPublishModal({
                 uploadedDraft: item,
                 initialTitle: attemptedTitle,
                 initialSubject: attemptedSubject,
               });
-              if (!modal.confirmed) return null;
+              if (!isCurrent() || !modal.confirmed) return null;
               attemptedTitle = String(modal.title ?? '');
               attemptedSubject = String(modal.subject ?? '');
               const result = await session.publishUploadedDraftToServer(item.uploaded_draft_id, {
                 title: attemptedTitle,
                 subject: attemptedSubject,
-              });
+              }, { isCurrent, onPrepared: setAccountGuard });
+              if (!isCurrent()) return result;
               if (result?.ok || result?.error?.code !== 'PUBLISHED_PACKAGE_CONFLICT') return result;
               const conflictAction = await showPublishedPackageConflictModal();
               if (conflictAction?.action !== 'edit') return result;
@@ -8035,7 +8084,7 @@ function renderEditorShell(session) {
       deleteBtn.type = 'button';
       deleteBtn.className = 'uploaded-draft-action uploaded-draft-action--danger';
       deleteBtn.textContent = t('common.actions.delete');
-      deleteBtn.disabled = !serverReady;
+      deleteBtn.disabled = false;
       deleteBtn.addEventListener('click', async () => {
         const generation = session._audioDraftGeneration;
         const revision = manageUploadedDraftsDialogRevision;
@@ -8250,7 +8299,7 @@ function renderEditorShell(session) {
       syncDraftBtn.textContent = t('editor.server.uploadDraft');
     }
     cancelUploadBtn.hidden = !isUploadingDraft;
-    syncDraftBtn.disabled = !serverReady || isUploadingDraft || isUploadDraftFlowActive;
+    syncDraftBtn.disabled = isUploadingDraft || isUploadDraftFlowActive;
     browsePublishedBtn.disabled = false;
     manageUploadedDraftsBtn.textContent = isRefreshingUploadedDrafts ? t('common.actions.refreshing') : t('editor.uploadedDraft.manage');
     manageUploadedDraftsBtn.disabled = isRefreshingUploadedDrafts;
@@ -8260,6 +8309,14 @@ function renderEditorShell(session) {
   };
 
   session.resumeReadIntent = async intent => {
+    if (intent.kind === 'mutation') {
+      session._returnedMutation = intent;
+      session.pushNotification({ kind: 'info', category: 'server', source: 'session.mutation', text: t('mutationAuth.returned') });
+      session.notifyStateChange();
+      if (intent.operation === 'delete-publication') browsePublishedBtn.click();
+      else if (intent.operation !== 'upload') manageUploadedDraftsBtn.click();
+      return;
+    }
     if (intent.kind === 'drafts') { manageUploadedDraftsBtn.click(); return; }
     if (intent.kind === 'published') { browsePublishedState = { ...browsePublishedState, ...intent.filters }; browsePublishedBtn.click(); return; }
     if (!await showConfirmDialog({ title: t('editor.replaceWorksheet.title'),
@@ -8648,13 +8705,15 @@ function renderEditorShell(session) {
     const draftId = session.state.draft?.localId;
     const generation = session._audioDraftGeneration;
     session.uploadFlows ??= new UploadOperationSlot();
-    const flow = session.uploadFlows.begin(() => session.state.draft?.localId === draftId && session._audioDraftGeneration === generation);
+    let accountCurrent = () => true;
+    const flow = session.uploadFlows.begin(() => accountCurrent() && session.state.draft?.localId === draftId && session._audioDraftGeneration === generation);
     if (!flow) return;
     session._uploadPackageFlow = flow;
     session.state.isUploadDraftFlowActive = true;
     updateSummary();
     try {
-      const ready = await session.ensureServerSessionReady();
+      const ready = await session.ensureMutationSessionReady({ isCurrent: () => flow.canPublish(), signal: flow.signal, intent: { kind: 'mutation', operation: 'upload' } });
+      if (ready.ok) accountCurrent = ready.isCurrent;
       if (!ready.ok || !flow.canPublish()) return;
       await runUploadRecoveryFlow({
         resource: 'worksheet-draft',

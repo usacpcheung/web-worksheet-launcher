@@ -1,6 +1,6 @@
 # Shared authentication foundation
 
-This reference describes the first runtime extraction after main `980e131`. The subsequent [read integration](authentication-reads.md) implements contextual recovery for browsing/opening/downloading; other feature migrations remain planned. The [workflow mapping and agreed target](authentication-workflows.md) was merged in PR #318. This implementation builds on that documented contract.
+This reference describes the first runtime extraction after main `980e131`. The subsequent [read integration](authentication-reads.md) implements contextual recovery for browsing/opening/downloading; the [mutation integration](authentication-mutations.md) adds explicit post-login confirmation for upload/publish/delete; provider migrations remain planned. The [workflow mapping and agreed target](authentication-workflows.md) was merged in PR #318. This implementation builds on that documented contract.
 
 ## Current integration
 
@@ -9,7 +9,7 @@ This reference describes the first runtime extraction after main `980e131`. The 
 - `server/app/auth/session-outcome.js` provides a pure failure classifier. `session-readiness.js` uses its **legacy compatibility mode**, preserving existing 401/403/code/flag behavior for every existing consumer.
 - Editor/viewer now use the same probe owner through `session-state-adapter.js`, preserving silent probes and their existing enum values. API-client error flags and the popup callback protocol are unchanged.
 
-The permission-aware classifier is used by the read recovery coordinator. Legacy readiness normalization and mutation/provider callers retain their compatibility policy; their migration must update classification and consumers together.
+The permission-aware classifier is used by the read recovery coordinator. Legacy readiness normalization and provider callers retain their compatibility policy; their migration must update classification and consumers together.
 
 ## State ownership coordinator
 
@@ -53,4 +53,4 @@ Unit tests exercise both completion orders, newer failure/account change, extern
 
 Run the auth/RolePlayScene tests and full Node suite, plus list-feedback, deletion, popup/sign-in, direct-launch and voice browser coverage appropriate to the changed consumers. Simulated results do not establish live OIDC behavior. A deployment should verify that the new JavaScript modules load correctly and repeat focused session/list acceptance before merging.
 
-The read integration adds contextual sign-in and read continuation. Next: migrate mutation authentication without changing upload/deletion recovery semantics. Retain the existing [popup contract](../message-contract.md), [upload recovery](upload-recovery.md) and [deletion contract](deletion-lifecycle.md). Reuse the popup helper; do not add a second authentication protocol.
+The read integration adds contextual sign-in and read continuation. Mutation preparation now shares that coordinator without changing upload/deletion recovery semantics. Next: provider authentication and recovery. Retain the existing [popup contract](../message-contract.md), [upload recovery](upload-recovery.md) and [deletion contract](deletion-lifecycle.md). Reuse the popup helper; do not add a second authentication protocol.

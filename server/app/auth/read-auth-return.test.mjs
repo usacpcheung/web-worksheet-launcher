@@ -74,3 +74,26 @@ test('read fallback never overwrites a pending mutation and removes competing la
   for (const key of ['publishedPackageId','snapshot','authCallback']) assert.equal(url.searchParams.has(key), false);
   assert.equal(url.searchParams.get('auth'), '1');
 });
+
+test('mutation return carries only an allowlisted action, resource and form metadata; never executes it', async () => {
+  for (const app of ['editor', 'viewer', 'roleplayscene']) {
+    const h = fixture();
+    const operation = app === 'viewer' ? 'delete-attempt' : 'publish';
+    await redirectReadSignIn({ app, intent: { kind: 'mutation', operation, id: 'resource-one', filters: { title: 'Prepared', subject: 'Math', description: 'Retained', token: 'discard' } },
+      save: async () => {}, localId: () => 'local', subject: () => 'A', isCurrent: () => true });
+    window.location.href = h.target();
+    const pending = takeReadAuthReturn(app);
+    assert.equal(pending.readIntent.operation, operation);
+    assert.equal(pending.readIntent.filters.title, 'Prepared');
+    assert.equal(pending.readIntent.filters.token, undefined);
+    assert.equal(takeReadAuthReturn(app), null);
+  }
+  assert.equal(validReadIntent('viewer', { kind: 'mutation', operation: 'publish', id: 'one' }), false);
+  assert.equal(validReadIntent('editor', { kind: 'mutation', operation: 'delete-draft', id: '../other' }), false);
+});
+test('oversized prepared metadata blocks navigation instead of silently losing form text', async () => {
+  const h = fixture();
+  await assert.rejects(redirectReadSignIn({ app: 'editor', intent: { kind: 'mutation', operation: 'publish', id: 'one', filters: { title: 'x'.repeat(2001) } },
+    save: async () => {}, localId: () => 'local', subject: () => 'A', isCurrent: () => true }));
+  assert.equal(h.target(), undefined); assert.equal(getPendingIntent(), null);
+});

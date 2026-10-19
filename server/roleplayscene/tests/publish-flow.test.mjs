@@ -19,8 +19,9 @@ function deferred() {
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function harness(overrides = {}) {
   const state = { dialogs: [], requests: [], managers: 0, conflicts: 0 };
-  const context = vm.createContext({
+  const context = vm.createContext({ getReadAuth: () => ({ captureIdentity: () => () => true, observe: result => result }),
     getApiErrorMessage,
+    store: { projectGeneration: 0 }, returnedMutation: null, serverSession: { status: 'ready' },
     openingUploadedDraft: null, isPublishingDraftFlow: false,
     publishingDraftIds: new Set(), activeServerModal: null,
     getRolePlaySceneDraftId: draft => draft.id,
@@ -32,7 +33,7 @@ function harness(overrides = {}) {
       return metadata;
     },
     async showPublishConflictModal() { state.conflicts++; return null; },
-    async ensureServerSessionReady() { return { ok: true }; },
+    async ensureMutationSessionReady() { return { ok: true, isCurrent: () => true }; },
     async loadUploadedRolePlaySceneDrafts(options) { assert.equal(options.showManager, undefined); },
     apiClient: { async publishRolePlaySceneFromUploadedDraft(id, data) {
       state.requests.push({ id, ...data }); return success;
@@ -126,7 +127,7 @@ test('manager ownership is checked again after the success refresh finishes', as
 
 test('session failure, request failure, and refresh failure all release the guard', async () => {
   for (const overrides of [
-    { async ensureServerSessionReady() { return { ok: false }; } },
+    { async ensureMutationSessionReady() { return { ok: false }; } },
     { apiClient: { async publishRolePlaySceneFromUploadedDraft() { throw Error('offline'); } } },
     { apiClient: { async publishRolePlaySceneFromUploadedDraft() { return { ok: false }; } } },
     { async loadUploadedRolePlaySceneDrafts() { throw Error('refresh failed'); } },
@@ -146,7 +147,7 @@ test('publish preflight and thrown API failures use localized presentation and d
     let requests = 0;
     const h = harness({
       showMessage: notice => notices.push(notice),
-      ensureServerSessionReady: async () => scenario === 'session' ? { ok: false, result: failure } : { ok: true },
+      ensureMutationSessionReady: async () => scenario === 'session' ? { ok: false, result: failure } : { ok: true, isCurrent: () => true },
       apiClient: { async publishRolePlaySceneFromUploadedDraft() {
         requests++;
         throw new Error('Raw upstream detail');
@@ -157,4 +158,33 @@ test('publish preflight and thrown API failures use localized presentation and d
     assert.equal(notices.at(-1).text, getApiErrorMessage(scenario === 'session' ? failure : {}, scenario === 'session' ? 'session' : 'publish'));
     assert.equal(h.context.isPublishingDraftFlow, false);
   }
+});
+
+test('expired publish response preserves sign-in guidance instead of rerendering an empty manager', async () => {
+  const h = harness({
+    apiClient: { publishRolePlaySceneFromUploadedDraft: async () => ({ok:false,error:{code:'AUTH_REQUIRED',status:401}}) },
+    getReadAuth: () => ({ captureIdentity: () => () => true, observe() { h.context.serverSession.status = 'not_ready'; } }),
+  });
+  await h.run(); assert.equal(h.state.managers, 1);
+  assert.equal(h.context.isPublishingDraftFlow, false);
+});
+test('late publish transport failure cannot overwrite a newer manager message', async () => {
+  let reject; const messages = [];
+  const h = harness({showMessage: value => messages.push(value), apiClient: {publishRolePlaySceneFromUploadedDraft: () => new Promise((_r,j)=>{reject=j;})}});
+  const work = h.run(); await tick(); h.context.activeServerModal = {other:true};
+  const count = messages.length; reject(Error('offline')); await work;
+  assert.equal(messages.length,count); assert.equal(h.state.managers,1);
+});
+test('account invalidation during preparation cannot publish or restore an obsolete manager', async () => {
+  const h = harness({ensureMutationSessionReady: async () => ({ok:true,isCurrent:()=>false})});
+  await h.run(); assert.equal(h.state.requests.length,0); assert.equal(h.state.managers,1);
+});
+
+test('account switching while the initial publish form is open prevents preparation and POST', async () => {
+  const form = deferred(); let current = true;
+  const h = harness({showPublishDraftModal: () => form.promise,
+    getReadAuth: () => ({captureIdentity:()=>()=>current}),
+    ensureMutationSessionReady: () => assert.fail('stale form must not prepare')});
+  const work = h.run(); current = false; form.resolve(metadata); await work;
+  assert.equal(h.state.requests.length,0);
 });

@@ -43,3 +43,15 @@ test('account/context mismatch and exceptions cannot replay a restored action', 
   const h=fixture('publication',{startFromPublishedPackage:async()=>{throw Error('offline');}});
   await h.run(); assert.deepEqual(h.events,['localized-failure']);
 });
+
+test('mutation return updates visible guidance without invoking upload or deletion', async () => {
+  for (const operation of ['upload','delete-attempt']) {
+    const h = fixture('mutation', { notifyStateChange: () => h.events.push('notify') });
+    h.session._readAuthReturn.readIntent.operation = operation;
+    h.session.uploadCurrentAttemptPackage = () => assert.fail('return must not upload');
+    h.session.deleteUploadedAttemptAndRefresh = () => assert.fail('return must not delete');
+    await h.run();
+    assert.deepEqual(h.events.slice(0,2), ['mutationAuth.returned','notify']);
+    assert.equal(h.events.includes('manager'),operation==='delete-attempt');
+  }
+});

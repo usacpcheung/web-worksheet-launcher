@@ -1,6 +1,15 @@
 import roleplayscene from './roleplayscene/en.js';
 
 export default {
+  mutationAuth: {
+    upload: 'Upload',
+    publish: 'Publish',
+    delete: 'Delete',
+    title: "Ready to continue",
+    "description": "Sign in to prepare this server action. You will confirm it again after signing in.",
+    "confirm": "You are signed in. Confirm this action to send it to the server.",
+    "returned": "Signed in. Your work is restored. Select the intended Upload, Publish or Delete action again to continue."
+  },
   readAuth: {
     pendingWork: 'Finish or discard pending voice or discussion work before signing in in this tab, or allow the sign-in popup to keep working here.',
     accountChanged: 'Your account changed. Select this server action again. Your local work has been kept.',

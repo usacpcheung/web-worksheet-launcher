@@ -1,6 +1,6 @@
 # Authentication workflows: implementation map and agreed target
 
-Mapping baseline: main `980e131d580876bdbf2415a4b79359a3a5aefbce`, reviewed 2026-10-18 (Asia/Hong_Kong). This document has two distinct roles: sections 1–3 preserve the pre-migration mapping at that baseline; sections 4–7 define the agreed target and migration plan. **For the current read integration, see [Authentication for server reads](authentication-reads.md).** The remaining target is staged below; this baseline map is not a claim that those original entry paths remain unchanged.
+Mapping baseline: main `980e131d580876bdbf2415a4b79359a3a5aefbce`, reviewed 2026-10-18 (Asia/Hong_Kong). This document has two distinct roles: sections 1–3 preserve the pre-migration mapping at that baseline; sections 4–7 define the agreed target and migration plan. **For current integrations, see [server reads](authentication-reads.md) and [server mutations](authentication-mutations.md).** The remaining target is staged below; this baseline map is not a claim that those original entry paths remain unchanged.
 
 This is the maintained reference for authentication behavior across the worksheet editor, learner viewer and RolePlayScene. The [popup/message contract](../message-contract.md) remains authoritative for callback validation and launch protocols. The [server runtime reference](../operations/server-runtime.md) owns the endpoint inventory and deployment configuration. Neither is replaced here.
 
@@ -123,8 +123,8 @@ Share session classification, coordination and continuation rules. Keep editor a
 | --- | --- | --- |
 | 1 | This code-backed mapping and target contract; centralized index link. | Merged in #318. |
 | 2 | Shared classification/session coordination with compatibility adapters; reuse popup/readiness helpers. Preserve existing UI until migrated. | Foundation merged in #319; editor/viewer silent ownership adapters integrated with reads. |
-| 3 | Migrate browsing/managers/open/download across all three apps; account-bound lists and contextual prompts. | Implemented in the read integration; deployed acceptance pending. |
-| 4 | Migrate upload/publication/deletion entry and post-login confirmation; retain existing mutation coordinators. | Planned. |
+| 3 | Migrate browsing/managers/open/download across all three apps; account-bound lists and contextual prompts. | Merged in #320 after deployed acceptance passed. |
+| 4 | Migrate upload/publication/deletion entry and post-login confirmation; retain existing mutation coordinators. | Implemented in the mutation integration; deployed acceptance pending. |
 | 5 | Migrate audio/transcription/rewrite authentication and recovery, including both shared voice consumers. | Planned. |
 | 6 | Remove superseded code only after consumer tracing; update current docs and run cross-app acceptance. | Planned. |
 

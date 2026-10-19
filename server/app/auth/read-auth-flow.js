@@ -17,8 +17,8 @@ function whileCurrent(promise, current) {
   });
 }
 
-// Read-only recovery. Callers supply the actual read, never a mutation or a
-// callback that also applies content. Application of results remains caller-owned.
+// Shared session preparation and read-only replay. The read callback must never
+// send a mutation or apply content. Mutation callers use ensure via prepareMutation.
 export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate, redirect }) {
   let recovery = null;
   let preflight = null;
@@ -50,13 +50,13 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
         const anyCurrent = () => [...subscribers].some(entry => entry.current());
         // Start on the next microtask, after the first subscriber is registered.
         await Promise.resolve();
-        const accepted = await prompt({ isCurrent: anyCurrent });
+        const accepted = await prompt({ isCurrent: anyCurrent, intent: [...subscribers].find(entry => entry.current())?.intent });
         if (!anyCurrent()) return stale();
         if (!accepted) return { ok: false, cancelled: true, status: 'not_ready', error: { code: 'AUTH_REQUIRED', requiresSignIn: true } };
         let result = await signIn();
         while (result?.error?.code === 'AUTH_POPUP_BLOCKED' && anyCurrent()) {
           const owner = [...subscribers].find(entry => entry.current());
-          const choice = await prompt({ isCurrent: anyCurrent, blocked: true, canRedirect: Boolean(redirect && owner?.intent),
+          const choice = await prompt({ isCurrent: anyCurrent, blocked: true, intent: owner?.intent, canRedirect: Boolean(redirect && owner?.intent),
             redirect: async ({ isCurrent: promptCurrent }) => {
               const selected = [...subscribers].find(entry => entry.current() && entry.intent);
               if (selected && promptCurrent()) await redirect({ intent: selected.intent,
@@ -104,6 +104,7 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     if (!current()) return stale();
     if (!result.ok && classifySessionFailure(result) === 'authentication_required') {
       result = await recover(current, intent);
+      if (result?.ok) result = { ...result, authenticationRecovered: true };
     }
     return current() ? result : stale();
   };
@@ -145,5 +146,13 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     return () => epoch === capturedEpoch && authFailureVersion === capturedFailure
       && (!capturedSubject || !subject() || subject() === capturedSubject);
   };
-  return { ensure, read, observe, captureContext };
+  // Before login, permit expiry/re-authentication of the same account, but not
+  // a verified account switch while an app-owned form/confirmation is open.
+  const captureIdentity = () => {
+    const capturedEpoch = epoch;
+    const capturedSubject = subject() || knownSubject;
+    return () => epoch === capturedEpoch
+      && (!capturedSubject || !subject() || subject() === capturedSubject);
+  };
+  return { ensure, read, observe, captureContext, captureIdentity };
 }

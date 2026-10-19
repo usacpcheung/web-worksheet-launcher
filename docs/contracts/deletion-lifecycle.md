@@ -17,9 +17,11 @@ calling confirmation or settling the original recovery flow.
 Apps retain their dialogs, eligibility rules, endpoints, metadata, authentication
 policy, list filters and rendering. UI callers supply confirmation callbacks that
 return exactly `true` to proceed. Direct session callers may omit confirmation
-when confirmation has already been handled by their caller. Viewer continues to
-rely on server authorization for DELETE; this extraction adds no session probe or
-authentication replay to that path.
+when confirmation has already been handled by their caller. All five adapters now
+use [shared mutation authentication preparation](authentication-mutations.md) for
+preflight, including the viewer. Login recovery requires explicit confirmation
+before DELETE; server authorization remains authoritative and there is no
+authentication replay.
 
 Ownership is checked before starting and after confirmation/preflight. A stale
 flow sends no DELETE. Once DELETE is sent, loss of ownership cannot undo it or

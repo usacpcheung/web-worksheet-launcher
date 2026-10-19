@@ -225,7 +225,7 @@ async function loadViewerModule(overrides = {}) {
     window: overrides.window || {},
   };
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)), [
     {
       name: 'replace viewerStorage import with test bag binding',
       pattern: /import\s*\{\s*viewerStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];/,
@@ -5241,10 +5241,10 @@ test('viewer triggerProtectedAction forwards payload and remains functional with
   });
 });
 
-test('viewer header actions include server-save icon wiring and protected upload intent hook', async () => {
+test('viewer header actions include server-save icon wiring and explicit mutation preparation', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
   assert.equal(source.includes("uploadAttemptBtn.setAttribute('aria-label', t('viewer.upload.saveAttemptAriaLabel'));"), true);
-  assert.equal(source.includes("await session.triggerProtectedAction('uploadAttemptPackageAfterLogin');"), true);
+  assert.equal(source.includes("await session.ensureMutationSessionReady({ isCurrent: () => flow.canPublish()"), true);
 });
 
 
@@ -6942,7 +6942,7 @@ test('deletion rejects duplicate calls and suppresses stale completion feedback'
     const notices = [];
     session.notifyStateChange = () => {};
     session.pushNotification = notice => notices.push(notice);
-    session.ensureServerSessionReady = async () => ({ok:true});
+    session.ensureMutationSessionReady = async () => ({ok:true, isCurrent: () => true});
     session.apiClient = { deleteUploadedAttempt: async () => { calls++; started(); return new Promise(resolve => { resolveDelete = resolve; }); } };
     session.listUploadedAttempts = async () => { refreshes++; return {ok:true}; };
     const pending = session.deleteUploadedAttemptAndRefresh('same-id', {isCurrent:()=>current});
@@ -6964,7 +6964,7 @@ test('deletion lock releases after an unexpected request exception', async () =>
   const mod = await loadViewerModule();
   const session = new mod.ViewerAttemptSession({ resumeFlags: { get() {}, set() {} } });
   session.notifyStateChange = () => {};
-  session.ensureServerSessionReady = async () => ({ok:true});
+  session.ensureMutationSessionReady = async () => ({ok:true, isCurrent: () => true});
   session.apiClient = { deleteUploadedAttempt: async () => {throw Error('fixture');} };
   assert.equal((await session.deleteUploadedAttemptAndRefresh('same-id')).deletionStatus, 'uncertain');
   assert.equal(session._deletingUploadedAttemptIds.size,0);
@@ -6999,6 +6999,7 @@ test('attempt deletion reserves confirmation and keeps success after refresh exc
   const mod=await loadViewerModule();
   const session=new mod.ViewerAttemptSession();
   let confirm,calls=0;
+  session.ensureMutationSessionReady=async()=>({ok:true,isCurrent:()=>true});
   session.apiClient={deleteUploadedAttempt:async()=>{calls++;return {ok:true};}};
   session.listUploadedAttempts=async()=>{throw Error('list transport');};
   const pending=session.deleteUploadedAttemptAndRefresh('one',{confirm:()=>new Promise(resolve=>{confirm=resolve;})});
@@ -7025,7 +7026,7 @@ for (const kind of ['publication', 'attempt']) for (const pauseAt of ['validatio
     const session = new mod.ViewerAttemptSession({ importedWorksheets: store('worksheet'), attempts: store('attempt'), localAssets: store('asset'), resumeFlags: { set() {}, get() {} } });
     session.state.localAttemptId = 'original'; session.state.viewerPayload = { title: 'Original', blocks: [] };
     session.validateViewerPayload = () => hold('validation');
-    session.preflightPublishedSession = async () => ({ ok: true });
+    session.preflightPublishedSession = async () => ({ ok: true, isCurrent: () => true });
     session._readAuth = { read: request => request() };
     session.apiClient.fetchPublishedPackageArtifact = async () => ({ ok: true, data: new Uint8Array([1]) });
     const pending = kind === 'publication' ? session.startFromPublishedPackage('pub', { isCurrent: () => current })

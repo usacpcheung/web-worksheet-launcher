@@ -1,6 +1,15 @@
 import roleplayscene from './roleplayscene/zh-Hant.js';
 
 export default {
+  mutationAuth: {
+    upload: '上傳',
+    publish: '發佈',
+    delete: '刪除',
+    title: "準備繼續",
+    "description": "請登入以準備此伺服器操作。登入後需要再次確認。",
+    "confirm": "您已登入。請確認此操作，才會傳送至伺服器。",
+    "returned": "已登入並還原您的工作。請再次選擇所需的上傳、發佈或刪除操作以繼續。"
+  },
   readAuth: {
     pendingWork: '請先完成或捨棄待處理的語音或討論內容，再於此分頁登入；或允許登入彈出視窗，保留目前頁面的工作。',
     accountChanged: '帳戶已變更。請重新選擇伺服器操作。本機工作已保留。',
