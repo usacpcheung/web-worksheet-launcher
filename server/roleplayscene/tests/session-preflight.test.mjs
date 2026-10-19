@@ -8,7 +8,7 @@ import { createServerApiClient } from '../../app/api/server-api-client.js';
 
 // Execute the actual app wiring without bootstrapping its DOM and storage.
 const source = await readFile(new URL('../scripts/main.js', import.meta.url), 'utf8');
-const wiring = source.slice(source.indexOf('async function probeServerSessionSilently('), source.indexOf('function startServerSignIn()'));
+const wiring = source.slice(source.indexOf('async function probeServerSessionSilently('), source.indexOf('function startServerSignIn('));
 function harness(apiClient, timeoutMs = 10) {
   const notices = [];
   const boundedProbe = options => {

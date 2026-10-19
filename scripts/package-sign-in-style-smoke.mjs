@@ -15,6 +15,8 @@ try {
     page.on('pageerror', e => errors.push(e.message));
     await page.route(url => url.pathname.startsWith('/api/'), route => route.fulfill({ status: 401, json: { ok: false, error: { code: 'AUTH_REQUIRED', requiresSignIn: true, message: 'Sign in required' } } }));
     await page.goto(`${base}/server/${surface}/index.html?${surface === 'viewer' ? 'publishedPackageId' : 'publishedSceneId'}=11111111-1111-4111-8111-111111111111`);
+    await page.locator('.read-auth-prompt').waitFor();
+    await page.locator('.read-auth-prompt button').first().click();
     const card = page.locator(surface === 'viewer' ? '.viewer-fatal-panel--recoverable-auth' : '.direct-launch--authentication-required .direct-launch__panel');
     await card.waitFor({ timeout: 10000 }).catch(async error => { console.log(await page.locator('body').innerText(), errors); throw error; });
     const primary = card.getByRole('button', { name: locale === 'en' ? 'Sign in and continue' : '登入並繼續', exact: true });

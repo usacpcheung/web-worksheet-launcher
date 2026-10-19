@@ -1,6 +1,6 @@
 # Authentication workflows: implementation map and agreed target
 
-Mapping baseline: main `980e131d580876bdbf2415a4b79359a3a5aefbce`, reviewed 2026-10-18 (Asia/Hong_Kong). This document has two distinct roles: sections 1–3 describe the checked-in implementation; sections 4–7 define the agreed target and migration plan. **The target is not implemented by this documentation PR.** Update the baseline and migration status as each integration lands.
+Mapping baseline: main `980e131d580876bdbf2415a4b79359a3a5aefbce`, reviewed 2026-10-18 (Asia/Hong_Kong). This document has two distinct roles: sections 1–3 preserve the pre-migration mapping at that baseline; sections 4–7 define the agreed target and migration plan. **For the current read integration, see [Authentication for server reads](authentication-reads.md).** The remaining target is staged below; this baseline map is not a claim that those original entry paths remain unchanged.
 
 This is the maintained reference for authentication behavior across the worksheet editor, learner viewer and RolePlayScene. The [popup/message contract](../message-contract.md) remains authoritative for callback validation and launch protocols. The [server runtime reference](../operations/server-runtime.md) owns the endpoint inventory and deployment configuration. Neither is replaced here.
 
@@ -12,7 +12,7 @@ The separate same-origin rewrite bridge supplies text-to-audio, transcription an
 
 Local authoring, local save/reload, ZIP import/export, locally available playback, answer editing, local discussion text and printing do not acquire a login requirement. Retrieving missing server content does. Copying a known publication URL needs no server request; following it requires authentication. CLI maintenance is not an interactive browser-login feature.
 
-## 2. Current implementation map
+## 2. Baseline implementation map (before migration)
 
 Symbols below identify source paths to inspect when integrating; line numbers intentionally are not fixed. Shared session methods are not the whole workflow: trace their UI callers and response handlers too.
 
@@ -81,7 +81,7 @@ RolePlayScene's probe currently has bounded independent requests. Its global ses
 
 Gaps to address in later PRs: different signed-out affordances; inconsistent per-request expiry recovery; broad 403 classification; duplicated app session orchestration; record-based automatic replay versus the agreed mutation policy; account-bound invalidation of server lists/intents; and deliberate popup-blocked fallback. These are migration tasks, not claims that every path is currently defective or that the target already exists.
 
-## 4. Agreed target behavior (not yet implemented)
+## 4. Agreed target behavior (partially implemented; see staged status below)
 
 ### Entry and login
 
@@ -121,9 +121,9 @@ Share session classification, coordination and continuation rules. Keep editor a
 
 | Stage | Deliverable | Status |
 | --- | --- | --- |
-| 1 | This code-backed mapping and target contract; centralized index link. | Documentation PR; no runtime change. |
-| 2 | Shared classification/session coordination with compatibility adapters; reuse popup/readiness helpers. Preserve existing UI until migrated. | Planned. |
-| 3 | Migrate browsing/managers/open/download across all three apps; account-bound lists and contextual prompts. | Planned. |
+| 1 | This code-backed mapping and target contract; centralized index link. | Merged in #318. |
+| 2 | Shared classification/session coordination with compatibility adapters; reuse popup/readiness helpers. Preserve existing UI until migrated. | Foundation merged in #319; editor/viewer silent ownership adapters integrated with reads. |
+| 3 | Migrate browsing/managers/open/download across all three apps; account-bound lists and contextual prompts. | Implemented in the read integration; deployed acceptance pending. |
 | 4 | Migrate upload/publication/deletion entry and post-login confirmation; retain existing mutation coordinators. | Planned. |
 | 5 | Migrate audio/transcription/rewrite authentication and recovery, including both shared voice consumers. | Planned. |
 | 6 | Remove superseded code only after consumer tracing; update current docs and run cross-app acceptance. | Planned. |

@@ -286,7 +286,19 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       try {
         parsedError = await parseErrorBody(response);
       } catch (error) {
-        return toTransportError(error, { signal, duringRead: true });
+        return toTransportError(error, { signal, duringRead: true, status: response.status });
+      }
+      // Explicit resource permission denial must survive the legacy 403 auth
+      // fallback. Gateway HTML/malformed responses retain their existing policy.
+      const permissionCode = parsedError.kind === 'json'
+        ? String(parsedError.parsed?.error?.code || '').toUpperCase() : '';
+      if (response.status === 403 && ['FORBIDDEN', 'PERMISSION_DENIED'].includes(permissionCode)) {
+        return toStructuredError({
+          code: permissionCode,
+          message: parsedError.parsed.error.message || 'Permission denied.',
+          status: response.status,
+          details: parsedError.parsed.error.details || null,
+        });
       }
       if (authLikeStatus(response.status)) {
         return toStructuredError({
@@ -352,7 +364,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       });
       return { ok: true, data: bytes, status: response.status };
     } catch (error) {
-      return toTransportError(error, { signal, duringRead: true });
+      return toTransportError(error, { signal, duringRead: true, status: response.status });
     }
   }
 

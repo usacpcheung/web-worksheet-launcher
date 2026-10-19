@@ -266,7 +266,7 @@ assert.ok(
 );
 
 const openFunctionIndex = mainSource.indexOf('async function openUploadedRolePlaySceneDraft');
-const fetchIndex = mainSource.indexOf('await wait(fetchArtifact(uploadedDraftId', openFunctionIndex);
+const fetchIndex = mainSource.indexOf('await getReadAuth().read(() => wait(fetchArtifact(uploadedDraftId', openFunctionIndex);
 const prepareIndex = mainSource.indexOf('preparedImport = await prepareProjectImport', openFunctionIndex);
 const confirmIndex = mainSource.indexOf('const shouldImport = await confirmProjectImport()', openFunctionIndex);
 const closeModalBeforeConfirmIndex = mainSource.indexOf("closeServerModal('import-confirm')", openFunctionIndex);
@@ -290,7 +290,7 @@ assert.ok(
   'uploaded draft open flow should expose durable download progress and synchronize button state',
 );
 const claimOpenIndex = mainSource.indexOf('openingUploadedDraft = operation', openFunctionIndex);
-const firstOpenAwaitIndex = mainSource.indexOf('await ensureDiscussionCanBeDiscarded()', openFunctionIndex);
+const firstOpenAwaitIndex = mainSource.indexOf('await ensureDiscussionCanBeDiscarded(', openFunctionIndex);
 assert.ok(
   claimOpenIndex > openFunctionIndex && claimOpenIndex < firstOpenAwaitIndex,
   'uploaded draft open flow should claim its global lock synchronously before the first await',

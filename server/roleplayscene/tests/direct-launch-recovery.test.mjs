@@ -25,7 +25,7 @@ for (const confirmed of [true, false]) {
         navigations++;
       },
     });
-    load(context, 'async function ensureDiscussionCanBeDiscarded()', 'async function showUploadConflictModal');
+    load(context, 'async function ensureDiscussionCanBeDiscarded(', 'async function showUploadConflictModal');
     load(context, 'async function exitPublishedPlay()', 'async function openPublishedRolePlaySceneById(');
     const exiting = context.exitPublishedPlay();
     assert.equal(text, 'Synthetic discussion');
@@ -42,12 +42,12 @@ for (const blocked of [true, false]) {
     let callbacks;
     const states = [];
     const context = vm.createContext({
-      activeAuthFlow: null, apiClient: {}, directLaunch: { active: true },
+      activeAuthFlow: null, readAuthFlow: null, apiClient: {}, directLaunch: { active: true },
       AUTH_POPUP_FLOW_DEFAULTS: {}, showMessage() {},
       setDirectLaunchState: state => states.push(state),
       startAuthPopupFlow(options) { callbacks = options; return {}; },
     });
-    load(context, 'function startServerSignIn()', 'function getUploadWarnings');
+    load(context, 'function startServerSignIn(', 'function getUploadWarnings');
     context.startServerSignIn();
     if (blocked) callbacks.onPopupBlocked();
     callbacks.onStatusMessage();

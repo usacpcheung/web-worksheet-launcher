@@ -31,12 +31,16 @@ try {
       await page.goto(`${process.env.VIEWER_SMOKE_URL || 'http://127.0.0.1:8765'}/server/roleplayscene/`);
       const modal = page.locator('#server-modal-overlay');
       const open = async id => {
+        await page.waitForTimeout(150); // Allow responsive toolbar relayout after modal focus restoration.
         const button = page.locator(id);
+        await page.waitForFunction(id => { const target = document.querySelector(id), more = document.querySelector('#toolbar-more-btn'); return Boolean(target?.getClientRects().length || more?.getClientRects().length); }, id);
         if (!await button.isVisible()) await page.locator('#toolbar-more-btn').click();
         await button.click();
       };
       for (const id of ['#server-browse-published-btn', '#server-manage-btn']) {
         await open(id);
+        await page.locator('.read-auth-prompt').waitFor();
+        await page.locator('.read-auth-prompt button').first().click();
         await page.waitForFunction(() => !document.querySelector('#server-signin-btn')?.hidden);
         await page.waitForTimeout(100);
         assert.equal(await modal.isVisible(), false, 'signed-out action does not open list');
@@ -72,6 +76,7 @@ try {
         for (const failure of ['service', 'auth']) {
           signedIn = failure !== 'auth'; failList = failure === 'service';
           await refresh.click();
+          if (failure === 'auth') { await page.locator('.read-auth-prompt').waitFor(); await page.locator('.read-auth-prompt button').first().click(); }
           await modal.locator('[role="alert"]').waitFor();
           assert.equal(await modal.locator('.server-slot-usage').count(), 0);
           signedIn = true; failList = false;

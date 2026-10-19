@@ -21,7 +21,7 @@ try {
    window.open=()=>({closed:false,close(){this.closed=true;}});
    let enter, release;
    const entered=new Promise(resolve=>{enter=resolve;});
-   const method=app==='editor'?'probeServerSessionSilently':'preflightPublishedSession';
+   const method=app==='editor'?'probeServerSessionSilently':'ensureServerSessionReady';
    if(phase==='probe') session[method]=()=>{enter();return new Promise(resolve=>{release=resolve;});};
    else session.apiClient[app==='editor'?'listUploadedDrafts':'listPublishedPackages']=()=>{enter();return new Promise(resolve=>{release=resolve;});};
    session.apiClient.getSession=async()=>({ok:true,data:{ready:true,user:{sub:'fixture'}}});
@@ -29,6 +29,13 @@ try {
    const old=session._authPopupFlow;
    await entered;
    session.apiClient.getSession=()=>new Promise(()=>{});
+   // A second subscriber shares the running login. Explicit cancellation starts
+   // a new lifecycle; late callbacks from the canceled lifecycle stay obsolete.
+   const joined = session.beginServerSignIn();
+   if (joined !== old.promise) throw new Error('Expected one login flow per app');
+   session._activeAuthFlowId = null;
+   old.cancel();
+   session._authPopupFlow = null;
    session.beginServerSignIn();
    const newer=session._authPopupFlow, newerId=session._activeAuthFlowId;
    const before=app==='editor'?session.state.notifications.filter(n=>n.source?.startsWith('auth.')).map(n=>n.text):session.state.serverActionMessage;

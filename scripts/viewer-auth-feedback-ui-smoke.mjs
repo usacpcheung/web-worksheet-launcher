@@ -43,10 +43,12 @@ try {
       }
       const start = page.locator('.viewer-start-panel');
       await click(start, 'viewer.start.loginToManageServerAttempts');
-      await checkFeedback(start, 'apiErrors.popupPending');
+      await click(page.locator('.read-auth-prompt'), 'common.actions.signIn');
+      await checkFeedback(page.locator('.viewer-attempts-modal'), 'apiErrors.popupPending');
       await page.evaluate(() => window.qaSession._authPopupFlow.cancel());
       assert.equal(await page.locator('.viewer-auth-feedback:not([hidden])').count(), 0);
 
+      await click(page.locator('.viewer-attempts-modal'), 'common.actions.close');
       for (const surface of ['attempts', 'published']) {
         await page.evaluate(async () => {
           const session = window.qaSession;
@@ -64,6 +66,7 @@ try {
           await session.probeServerSessionSilently({ force: true });
         });
         await click(modal, 'common.actions.refresh');
+        await page.locator('.read-auth-prompt button').first().click();
         await click(modal, 'common.actions.signIn');
         await checkFeedback(modal, 'apiErrors.popupPending');
         if (surface === 'attempts') assert.equal(await modal.getByRole('button', { name: labels['common.actions.signingIn'], exact: true }).isDisabled(), true);
@@ -114,7 +117,10 @@ try {
       }
       await page.evaluate(() => window.qaSession.probeServerSessionSilently({ force: true }));
       await click(start, 'viewer.start.loginToManageServerAttempts');
-      await checkFeedback(start, 'apiErrors.popupPending');
+      const lastModal = page.locator('.viewer-attempts-modal');
+      await lastModal.waitFor();
+      await click(lastModal, 'common.actions.signIn');
+      await checkFeedback(lastModal, 'apiErrors.popupPending');
       await page.evaluate(() => window.qaSession._authPopupFlow.cancel());
       console.log(`PASS viewer start/attempts/published visible feedback, cancellation, blocked, success/failure: ${locale}/${width}`);
     } finally { await context.close(); }

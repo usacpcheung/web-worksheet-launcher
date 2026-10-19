@@ -651,7 +651,7 @@ export async function setupPersistence(store, { showMessage = noop } = {}) {
   globalThis.window?.addEventListener('pagehide', flush);
   globalThis.document?.addEventListener('visibilitychange', onVisibilityChange);
 
-  return () => {
+  const cleanup = () => {
     if (closed) return;
     flush();
     closed = true;
@@ -662,6 +662,27 @@ export async function setupPersistence(store, { showMessage = noop } = {}) {
     // close() permits already-started transactions to finish.
     db.close();
   };
+  cleanup.flushForNavigation = async () => {
+    if (disabled || closed || writeFailed) throw new Error('Local persistence is unavailable.');
+    const deadline = Date.now() + 15000;
+    while (pendingWrites) {
+      if (closed) throw new Error('Local persistence is closed.');
+      if (Date.now() >= deadline) throw new Error('Local persistence timed out.');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    let timer;
+    try {
+      await Promise.race([
+        (async () => {
+          do { dirty = true; await flush(); } while (dirty && !disabled && !closed);
+          if (disabled || closed || writeFailed) throw new Error('Local persistence failed.');
+        })(),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Local persistence timed out.')), 15000); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  };
+  return cleanup;
+
 }
 
 function serializePlainProjectJson(json) {

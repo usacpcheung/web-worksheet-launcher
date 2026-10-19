@@ -47,7 +47,7 @@ try {
    const settled = () => page.waitForFunction(app => !window[`${app}Session`].state[app==='editor'?'isUploadDraftFlowActive':'isUploadAttemptFlowActive'],app);
    const edit = title => page.evaluate(({app,title}) => {
     const session=window[`${app}Session`];
-    if(app==='editor') { session.state.draft.title=title; session.state.draft.metadata.subject=title; }
+    if(app==='editor') { session.updateTitle(title); session.updateSubject(title); }
     else { session.state.viewerPayload.title=title; session.state.viewerPayload.subject=title; session.state.sourceSubject=title; session.state.answers.q1={value:title}; }
    },{app,title});
    await edit('Original snapshot');
