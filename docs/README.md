@@ -19,6 +19,7 @@ Contributor instructions, discoverable UI skills, colocated module/font notes an
 - [Authentication for server reads](contracts/authentication-reads.md)
 - [Shared authentication foundation and compatibility boundary](contracts/authentication-foundation.md)
 - [Authentication workflow map and staged target](contracts/authentication-workflows.md)
+- [Rewrite-bridge workflow map and proposed shared lifecycle](contracts/rewrite-bridge-workflows.md)
 - [Worksheet published browsing and slot handling](contracts/editor-viewer-backend-contract.md)
 - [Package snapshots within an upload flow](contracts/upload-snapshots.md)
 - [Shared upload conflict and slot recovery](contracts/upload-recovery.md)
