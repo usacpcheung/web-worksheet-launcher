@@ -25,6 +25,12 @@ const server = createServer(async (req, res) => {
   if (path.endsWith('/published')) return json({ items: ['fixture', 'second'].map(id => ({ published_package_id: id, title: 'Worksheet ' + id, subject: 'Practice' })), hasMore: false });
   if (path.endsWith('/artifact')) {
     requests++;
+    if (['FORBIDDEN', 'PERMISSION_DENIED', 'PUBLISHED_PACKAGE_NOT_FOUND'].includes(mode)) {
+      res.writeHead(mode === 'PUBLISHED_PACKAGE_NOT_FOUND' ? 404 : 403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: { code: mode } }));
+      return;
+    }
+    if (mode === 'network') { req.socket.destroy(); return; }
     pending = {
       first() {
         res.setHeader('Content-Type', 'application/zip');
@@ -83,6 +89,43 @@ try {
     await page.locator('.question-card').waitFor();
     assert.deepEqual(errors, []);
     await context.close();
+  }
+  // Assert the visible browse-row guidance, not merely the transport result.
+  for (const locale of ['en', 'zh-Hant']) for (const width of [1280, 390]) {
+    const context = await browser.newContext({ viewport: { width, height: 900 } });
+    try {
+      await context.addInitScript(locale => localStorage.setItem('worksheetLauncher.locale', locale), locale);
+      const page = await context.newPage();
+      const mutations = []; page.on('request', request => {
+        if (request.method() !== 'GET') mutations.push(request.method());
+      });
+      let popups = 0; page.on('popup', () => popups++);
+      await page.goto(base);
+      await page.getByRole('button', { name: locale === 'en' ? 'Browse published worksheets' : '瀏覽已發布工作紙', exact: true }).click();
+      const open = page.locator('.viewer-package-load-button').first();
+      const error = page.locator('.published-result-row [role="alert"]').first();
+      for (const [fault, key] of [['FORBIDDEN', 'forbidden'], ['PERMISSION_DENIED', 'forbidden'], ['PUBLISHED_PACKAGE_NOT_FOUND', 'notFound'], ['network', 'network']]) {
+        mode = fault;
+        const before = requests;
+        await open.click();
+        await error.waitFor({ state: 'visible' });
+        const expected = await page.evaluate(async key => (await import('/server/app/i18n/index.js')).t('apiErrors.' + key), key);
+        assert.equal(await error.textContent(), expected);
+        // Chromium may retry a broken connection at the transport level.
+        if (fault !== 'network') assert.equal(requests, before + 1);
+        assert.equal(await page.locator('.read-auth-prompt').count(), 0);
+        assert.equal(await open.isEnabled(), true);
+        assert.equal(await page.locator('.question-card').count(), 0);
+      }
+      assert.equal(popups, 0); assert.deepEqual(mutations, []);
+      mode = 'known'; pending = null;
+      await open.click();
+      await page.waitForFunction(() => document.body.innerText.includes('Downloading') || document.body.innerText.includes('下載中'));
+      assert.equal(await error.isHidden(), true);
+      pending.first(); pending.finish();
+      await page.locator('.question-card').waitFor();
+      console.log(`PASS classified publication-row errors and successful retry ${locale}/${width}`);
+    } finally { await context.close(); }
   }
   // Missing length stays indeterminate; invalid ZIP restores an explicit retry.
   const page = await browser.newPage();

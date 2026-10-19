@@ -5565,13 +5565,13 @@ async function showPublishedPackagesBrowseModal(session, options = {}) {
             sourceSubject: item.subject || '',
             sourceOwner: item.owner_email || item.owner_name || item.owner_sub || '',
           });
-        } catch {
-          result = { ok: false };
+        } catch (error) {
+          result = { ok: false, error: error?.error || error };
         }
         if (result.skipped || closing) return;
         if (!result.ok) {
           if (!closing && openBtn.isConnected) {
-            loadError.textContent = t('viewer.packageLoad.failed');
+            loadError.textContent = getApiErrorMessage(result, 'open');
             loadError.hidden = false;
             if (result.error?.requiresSignIn) { signInBtn.hidden = false; signInBtn.disabled = false; }
             updateLoadButtons();
