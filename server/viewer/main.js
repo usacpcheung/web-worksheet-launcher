@@ -4011,6 +4011,7 @@ class ViewerAttemptSession {
         || result?.data
         || []
       );
+      this.state.uploadedAttemptsError = null;
       this.state.uploadedAttempts = rows;
       const limit = Number(result?.data?.attemptSlotLimit || result?.data?.slotLimit);
       if (Number.isFinite(limit) && limit > 0) {

@@ -25,7 +25,7 @@ for (const confirmed of [true, false]) {
         navigations++;
       },
     });
-    load(context, 'async function ensureDiscussionCanBeDiscarded()', 'async function showUploadConflictModal');
+    load(context, 'async function ensureDiscussionCanBeDiscarded(', 'async function showUploadConflictModal');
     load(context, 'async function exitPublishedPlay()', 'async function openPublishedRolePlaySceneById(');
     const exiting = context.exitPublishedPlay();
     assert.equal(text, 'Synthetic discussion');

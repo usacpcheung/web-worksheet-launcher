@@ -1096,3 +1096,34 @@ test('uploaded item lists bound stalled headers and bodies and honor cancellatio
     assert.equal((await request).error.code, 'ABORTED');
   }
 });
+
+test('all artifact reads preserve explicit permission denial without login recovery', async t => {
+  setTestWindow();
+  const client = createServerApiClient();
+  for (const code of ['FORBIDDEN', 'PERMISSION_DENIED']) {
+    t.mock.method(globalThis, 'fetch', async () => mockJsonResponse(403, { error: { code, message: 'Denied', details: { reason: 'ownership' } } }));
+    for (const method of ['fetchUploadedDraftArtifact', 'fetchPublishedPackageArtifact', 'fetchUploadedAttemptArtifact', 'fetchRolePlaySceneDraftArtifact', 'fetchRolePlayScenePublishedSceneArtifact']) {
+      const result = await client[method]('fixture');
+      assert.equal(result.error.code, code, method);
+      assert.equal(result.error.status, 403);
+      assert.equal(result.error.requiresSignIn, false);
+      assert.deepEqual(result.error.details, { reason: 'ownership' });
+    }
+    t.mock.restoreAll();
+  }
+});
+
+test('artifact auth fallback retains 401, malformed 403 and interrupted auth status', async t => {
+  setTestWindow();
+  for (const [status, body] of [[401, '{"error":{"code":"FORBIDDEN"}}'], [403, '{'], [403, '{"error":{"code":"AUTH_REQUIRED"}}']]) {
+    t.mock.method(globalThis, 'fetch', async () => new Response(body, { status, headers: { 'content-type': 'application/json' } }));
+    const result = await createServerApiClient().fetchUploadedAttemptArtifact('fixture');
+    assert.equal(result.error.code, 'AUTH_REQUIRED');
+    assert.equal(result.error.requiresSignIn, true);
+    t.mock.restoreAll();
+  }
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 401, headers: new Headers({ 'content-type': 'application/json' }), text: async () => { throw new Error('interrupted'); } }));
+  const result = await createServerApiClient().fetchUploadedAttemptArtifact('fixture');
+  assert.equal(result.error.status, 401);
+  assert.equal(result.error.requiresSignIn, true);
+});

@@ -210,7 +210,7 @@ test('player source wires cue and utility discussion entry points', async () => 
 
 test('main source protects discussion before story-changing actions', async () => {
   const source = await readFile(path.resolve('server/roleplayscene/scripts/main.js'), 'utf8');
-  assert.equal(source.includes('async function ensureDiscussionCanBeDiscarded()'), true);
+  assert.equal(source.includes('async function ensureDiscussionCanBeDiscarded(options = {})'), true);
   assert.equal(source.includes('if (!(await ensureDiscussionCanBeDiscarded())) return;'), true);
   assert.equal(source.includes("window.addEventListener('beforeunload', (event) => {"), true);
   assert.equal(source.includes("event.returnValue = '';"), true);
@@ -259,6 +259,6 @@ test('main source keeps active import confirmation copy tied to confirmation kin
   assert.equal(source.includes('function getImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, options = {})'), true);
   assert.equal(source.includes('function applyImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, options = {})'), true);
   assert.equal(source.includes('activeImportConfirmation?.kind || ImportConfirmationKind.IMPORT'), true);
-  assert.equal(source.includes('activeImportConfirmation = { resolve, previousFocus, kind, options };'), true);
+  assert.match(source, /activeImportConfirmation = \{[^}]*\bkind, options\s*\}/);
   assert.equal(source.includes('kind: ImportConfirmationKind.DISCUSSION_DISCARD'), true);
 });

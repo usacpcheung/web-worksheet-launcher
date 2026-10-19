@@ -290,7 +290,7 @@ assert.ok(
   'uploaded draft open flow should expose durable download progress and synchronize button state',
 );
 const claimOpenIndex = mainSource.indexOf('openingUploadedDraft = operation', openFunctionIndex);
-const firstOpenAwaitIndex = mainSource.indexOf('await ensureDiscussionCanBeDiscarded()', openFunctionIndex);
+const firstOpenAwaitIndex = mainSource.indexOf('await ensureDiscussionCanBeDiscarded(', openFunctionIndex);
 assert.ok(
   claimOpenIndex > openFunctionIndex && claimOpenIndex < firstOpenAwaitIndex,
   'uploaded draft open flow should claim its global lock synchronously before the first await',

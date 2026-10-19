@@ -11,6 +11,7 @@ function harness({ confirm = true, failure = false } = {}) {
   let current = original, progress;
   const candidate = { meta: { title: 'Published' }, scenes: [{ id: 'scene-021' }] };
   const context = vm.createContext({
+    document: { activeElement: null },
     getReadAuth: () => ({ read: request => request() }),
     ensureReadSessionReady: async () => ({ ok: true }),
     getServerReadErrorMessage: () => 'error',
@@ -112,7 +113,8 @@ for (const published of [false, true]) test(`account change during ${published ?
 test('superseded direct read leaves a retryable error only for its own active launch', async () => {
   for (const stillCurrent of [true, false]) {
     const states = [];
-    const context = vm.createContext({ AbortController, UUID_V4ISH_PATTERN: /^scene$/,
+    const context = vm.createContext({
+    document: { activeElement: null }, AbortController, UUID_V4ISH_PATTERN: /^scene$/,
       directLaunch: { attemptId: 0 },
       setDirectLaunchState: state => states.push(state),
       openPublishedRolePlaySceneById: async () => ({ ok: false, skipped: true }),

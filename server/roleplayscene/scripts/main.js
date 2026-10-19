@@ -1163,7 +1163,7 @@ function getFocusableElements(root) {
 }
 
 function handleServerModalKeydown(event) {
-  if (!activeServerModal) return;
+  if (!activeServerModal || activeImportConfirmation) return;
   if (event.key === 'Escape') {
     event.preventDefault();
     closeServerModal();
@@ -1205,6 +1205,7 @@ function openServerModal({ title, bodyRenderer, actions = [], onClose = null, re
   serverModalOverlay.removeAttribute('hidden');
   document.addEventListener('keydown', handleServerModalKeydown);
   requestAnimationFrame(() => {
+    if (activeImportConfirmation || !activeServerModal) return;
     const focusable = getFocusableElements(serverModalDialog || serverModalOverlay);
     (focusable[0] || serverModalDialog)?.focus();
   });
@@ -1719,14 +1720,19 @@ function applyImportConfirmationCopy(kind = ImportConfirmationKind.IMPORT, optio
 
 function closeImportConfirmation(result) {
   if (!activeImportConfirmation) return;
-  const { resolve, previousFocus } = activeImportConfirmation;
+  const { resolve, previousFocus, serverWasInert } = activeImportConfirmation;
   activeImportConfirmation = null;
   importConfirmOverlay.hidden = true;
   importConfirmOverlay.setAttribute('hidden', '');
   document.removeEventListener('keydown', handleImportConfirmationKeydown);
-  if (previousFocus && typeof previousFocus.focus === 'function') {
-    previousFocus.focus();
-  }
+  if (serverModalOverlay) serverModalOverlay.inert = serverWasInert;
+  // The awaiting import releases its disabled Open button in its finally block.
+  // Restore focus afterwards, without stealing it from a newer confirmation.
+  requestAnimationFrame(() => {
+    if (!activeImportConfirmation && previousFocus?.isConnected && !previousFocus.closest('[inert]')) {
+      previousFocus.focus();
+    }
+  });
   resolve(result);
 }
 
@@ -1761,17 +1767,21 @@ function confirmProjectImport(options = {}) {
   importConfirmOverlay.hidden = false;
   importConfirmOverlay.removeAttribute('hidden');
   document.addEventListener('keydown', handleImportConfirmationKeydown);
-  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const previousFocus = options.returnFocus instanceof HTMLElement ? options.returnFocus
+    : document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const serverWasInert = serverModalOverlay?.inert || false;
+  if (serverModalOverlay) serverModalOverlay.inert = true;
   requestAnimationFrame(() => {
-    importConfirmAccept.focus();
+    if (activeImportConfirmation) importConfirmAccept.focus();
   });
   return new Promise((resolve) => {
-    activeImportConfirmation = { resolve, previousFocus, kind, options };
+    activeImportConfirmation = { resolve, previousFocus, serverWasInert, kind, options };
   });
 }
 
-function confirmDiscardDiscussion() {
+function confirmDiscardDiscussion(options = {}) {
   return confirmProjectImport({
+    ...options,
     kind: ImportConfirmationKind.DISCUSSION_DISCARD,
   });
 }
@@ -1782,9 +1792,9 @@ function confirmNewStory() {
   });
 }
 
-async function ensureDiscussionCanBeDiscarded() {
+async function ensureDiscussionCanBeDiscarded(options = {}) {
   if (!discussionSession.hasAnyText() && !discussionSession.hasPendingWork()) return true;
-  return await confirmDiscardDiscussion();
+  return await confirmDiscardDiscussion(options);
 }
 
 function discardDiscussion() {
@@ -2802,6 +2812,7 @@ async function publishUploadedRolePlaySceneDraft(draft) {
 async function openUploadedRolePlaySceneDraft(draft, { published = false } = {}) {
   const uploadedDraftId = published ? getRolePlayScenePublishedSceneId(draft) : getRolePlaySceneDraftId(draft);
   if (!uploadedDraftId || openingUploadedDraft) return;
+  const returnFocus = document.activeElement;
   const controller = new AbortController();
   const operation = { uploadedDraftId, published, phase: 'downloading', percent: null, cancel() {
     controller.abort();
@@ -2821,7 +2832,7 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
   syncUploadedDraftActionAvailability();
   let preparedImport = null;
   try {
-    if (!(await ensureDiscussionCanBeDiscarded())) return;
+    if (!(await ensureDiscussionCanBeDiscarded({ returnFocus }))) return;
     if (!isCurrent()) return;
     const sessionReady = await ensureReadSessionReady({ isCurrent, signal: controller.signal, intent: { kind: published ? 'publication-copy' : 'draft', id: uploadedDraftId } });
     if (!isCurrent()) return;

@@ -11,6 +11,7 @@ function harness() {
   const response = deferred();
   const events = [];
   const context = vm.createContext({
+    document: { activeElement: null },
     getReadAuth: () => ({ read: request => request() }),
     ensureReadSessionReady: async () => ({ ok: true }),
     getServerReadErrorMessage: () => 'error',

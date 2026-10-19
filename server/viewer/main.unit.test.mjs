@@ -7055,3 +7055,30 @@ test('server import isolates reused media IDs and keeps all worksheet references
     clearTimeout(session.autosaveTimer);
   }
 });
+
+test('successful current attempt-list recovery clears the intermediate authentication error', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({});
+  session._readAuth = { read: async () => {
+    session.state.uploadedAttemptsError = 'Sign in required';
+    return { ok: true, data: { items: [{ uploaded_attempt_id: 'one', title: 'Recovered' }] } };
+  } };
+  assert.equal((await session.listUploadedAttempts()).ok, true);
+  assert.equal(session.state.uploadedAttemptsError, null);
+  assert.equal(session.state.uploadedAttempts.length, 1);
+});
+
+test('attempt-list stale success cannot clear a newer error; repeated auth failure stays visible', async () => {
+  const mod = await loadViewerModule();
+  const session = new mod.ViewerAttemptSession({});
+  let finish;
+  session._readAuth = { read: () => new Promise(resolve => { finish = resolve; }) };
+  const old = session.listUploadedAttempts();
+  session._readAuth = { read: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } }) };
+  assert.equal((await session.listUploadedAttempts()).ok, false);
+  const error = session.state.uploadedAttemptsError;
+  assert.ok(error);
+  finish({ ok: true, data: { items: [] } });
+  assert.equal((await old).skipped, true);
+  assert.equal(session.state.uploadedAttemptsError, error);
+});
