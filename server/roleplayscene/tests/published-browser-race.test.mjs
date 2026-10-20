@@ -12,7 +12,7 @@ function harness() {
   const events = [];
   const context = vm.createContext({
     document: { activeElement: null },
-    getReadAuth: () => ({ read: request => request() }),
+    getReadAuth: () => ({ read: async request => ({ ...await request(), isCurrent: () => true }) }),
     ensureReadSessionReady: async () => ({ ok: true }),
     getServerReadErrorMessage: () => 'error',
     AbortController, waitForDraftRequest, serverModalRevision: 0,

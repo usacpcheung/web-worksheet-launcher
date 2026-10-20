@@ -6644,7 +6644,7 @@ test('published opening reports preflight, download and opening, blocks competin
     callback=options.onProgress;callback({loaded:2,total:4,lengthComputable:true});
     await new Promise(r=>{release=r;});return{ok:true,data:new Uint8Array([1])};
   }}});
-  session.preflightPublishedSession=async()=>({ok:true});
+  session.preflightPublishedSession=async()=>({ok:true,isCurrent:()=>true});
   session.startImportedWorksheetFromPackageFile=async()=>{
     assert.equal(session.packageLoad.current.stage,'opening');return{};
   };
@@ -6663,7 +6663,7 @@ test('published auth/download/import failures clear loading and allow explicit r
   session.preflightPublishedSession=async()=>({ok:false,result:{ok:false,error:{requiresSignIn:true}}});
   assert.equal((await session.startFromPublishedPackage('a')).error.requiresSignIn,true);
   assert.equal(session.packageLoad.current,null);
-  session.preflightPublishedSession=async()=>({ok:true});
+  session.preflightPublishedSession=async()=>({ok:true,isCurrent:()=>true});
   assert.equal((await session.startFromPublishedPackage('a')).error.code,'NETWORK_ERROR');
   session.apiClient.fetchPublishedPackageArtifact=async()=>({ok:true,data:new Uint8Array([1])});
   session.startImportedWorksheetFromPackageFile=async()=>{throw Error('bad ZIP');};
@@ -7027,7 +7027,7 @@ for (const kind of ['publication', 'attempt']) for (const pauseAt of ['validatio
     session.state.localAttemptId = 'original'; session.state.viewerPayload = { title: 'Original', blocks: [] };
     session.validateViewerPayload = () => hold('validation');
     session.preflightPublishedSession = async () => ({ ok: true, isCurrent: () => true });
-    session._readAuth = { read: request => request() };
+    session._readAuth = { read: async request => ({ ...await request(), isCurrent: () => true }) };
     session.apiClient.fetchPublishedPackageArtifact = async () => ({ ok: true, data: new Uint8Array([1]) });
     const pending = kind === 'publication' ? session.startFromPublishedPackage('pub', { isCurrent: () => current })
       : session.restoreAttemptPackageAsLocalAttempt(model, { isCurrent: () => current });
@@ -7062,7 +7062,7 @@ test('successful current attempt-list recovery clears the intermediate authentic
   const session = new mod.ViewerAttemptSession({});
   session._readAuth = { read: async () => {
     session.state.uploadedAttemptsError = 'Sign in required';
-    return { ok: true, data: { items: [{ uploaded_attempt_id: 'one', title: 'Recovered' }] } };
+    return { ok: true, isCurrent: () => true, data: { items: [{ uploaded_attempt_id: 'one', title: 'Recovered' }] } };
   } };
   assert.equal((await session.listUploadedAttempts()).ok, true);
   assert.equal(session.state.uploadedAttemptsError, null);
@@ -7083,3 +7083,15 @@ test('attempt-list stale success cannot clear a newer error; repeated auth failu
   assert.equal((await old).skipped, true);
   assert.equal(session.state.uploadedAttemptsError, error);
 });
+
+for (const kind of ['publication', 'attempt']) {
+  test(`${kind} viewer import rejects a lease invalidated after download`, async () => {
+    const mod = await loadViewerModule();
+    const session = new mod.ViewerAttemptSession({});
+    session.preflightPublishedSession = async () => ({ ok: true, isCurrent: () => true });
+    session._readAuth = { read: async () => ({ ok: true, data: new Uint8Array([1]), isCurrent: () => false }) };
+    session.startImportedWorksheetFromPackageFile = session.restoreAttemptPackageAsLocalAttempt = () => assert.fail('must not import stale data');
+    const result = kind === 'publication' ? await session.startFromPublishedPackage('one') : await session.resumeUploadedAttempt({ uploaded_attempt_id: 'one' });
+    assert.equal(result.skipped, true);
+  });
+}

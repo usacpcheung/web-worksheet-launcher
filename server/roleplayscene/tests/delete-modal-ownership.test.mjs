@@ -12,7 +12,7 @@ test('deletion refresh preserves newer dialogs before and during refresh, but re
     let finishDelete, finishList;
     let renders = 0;
     const c = vm.createContext({ getReadAuth: () => ({ captureIdentity: () => () => true, observe: result => result }),
-    getReadAuth: () => ({ read: request => request(), captureIdentity: () => () => true, observe: result => result }),
+    getReadAuth: () => ({ read: async request => ({ ...await request(), isCurrent: () => true }), captureIdentity: () => () => true, observe: result => result }),
     ensureReadSessionReady: async () => ({ ok: true, isCurrent: () => true }),
     getServerReadErrorMessage: () => 'error', runDeletionFlow, deletingDraftIds: new Set(), deletingPublishedSceneIds: new Set(), store: { projectGeneration: 0 }, t: key => key,
       openingUploadedDraft: null, serverModalRevision: 0, uploadedDraftsRequestId: 0,

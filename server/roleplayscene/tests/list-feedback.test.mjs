@@ -11,7 +11,7 @@ function harness({ open = false, ready = true, result = { ok: true, data: { item
     const syncUploadedDraftActionAvailability=()=>{}, updateServerSessionUi=()=>{}, showMessage=()=>{}, getServerErrorMessage=()=>'';
     const renderPublishedBrowserModal=()=>renders.push('list');
     const renderServerListFailure=()=>renders.push('error');
-    const getReadAuth=()=>({read:request=>request()});
+    const getReadAuth=()=>({read:async request=>({...await request(),isCurrent:()=>true})});
     const getServerReadErrorMessage=()=>'';
     const ensureReadSessionReady=async()=>({ok:ready,result:{ok:false,error:{code:'AUTH_REQUIRED'}}});
     const apiClient={listRolePlayScenePublishedScenes:async()=>{ reads++; if(throws)throw Error('network');return await result; }};

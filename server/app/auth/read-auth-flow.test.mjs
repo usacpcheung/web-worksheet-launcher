@@ -204,3 +204,33 @@ test('preflight-free read discards late auth failure after peer recovery finishe
   assert.equal((await old).skipped, true);
   assert.equal(events.filter(value => value === 'login').length, 1);
 });
+
+test('prepared verification cannot be recaptured after invalidation', async () => {
+  const { flow } = fixture();
+  const prepared = await flow.ensure({ withContext: true });
+  flow.observe({ ...auth });
+  assert.equal((await flow.read(() => assert.fail('stale prepared request'), { preflight: false, prepared })).skipped, true);
+});
+
+test('successful read carries its original guard through post-download work', async () => {
+  const { flow } = fixture();
+  const result = await flow.read(async () => ({ ok: true, data: 'fixture' }));
+  assert.equal(result.isCurrent(), true);
+  flow.observe({ ...auth });
+  assert.equal(result.isCurrent(), false);
+});
+
+test('prepared read can replace its lease only through its own verified login recovery', async () => {
+  const { flow } = fixture(); let sends = 0;
+  const prepared = await flow.ensure({ withContext: true });
+  const result = await flow.read(async () => ++sends === 1 ? { ...auth } : { ok: true }, { preflight: false, prepared });
+  assert.equal(result.ok, true); assert.equal(result.isCurrent(), true); assert.equal(prepared.isCurrent(), false);
+});
+
+test('read with recovery disabled returns a guarded result without prompting or replay', async () => {
+  const { flow, events } = fixture();
+  assert.equal(await flow.read(async () => auth, { preflight: false, recoverAuth: false }), auth);
+  assert.deepEqual(events, []);
+  const result = await flow.read(async () => ({ ok: true }), { preflight: false, recoverAuth: false });
+  flow.observe({ ...auth }); assert.equal(result.isCurrent(), false);
+});

@@ -137,10 +137,11 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     }
     return result;
   };
-  const read = async (request, { isCurrent = () => true, signal, preflight = true, intent } = {}) => {
+  const read = async (request, { isCurrent = () => true, signal, preflight = true, intent, prepared = null, recoverAuth = true } = {}) => {
     const startEpoch = epoch;
     const initialSubject = subject() || knownSubject;
-    let accountCurrent = preflight ? () => true : captureContext();
+    let accountCurrent = prepared ? (prepared.isCurrent || (() => false))
+      : preflight ? () => true : captureContext();
     const contextCurrent = () => !signal?.aborted && isCurrent() && epoch === startEpoch;
     const identityCurrent = () => contextCurrent() && (!initialSubject || !subject() || subject() === initialSubject);
     const current = () => identityCurrent() && accountCurrent();
@@ -159,7 +160,7 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     const joinsRecovery = recovery && classifySessionFailure(result) === 'authentication_required';
     if (!identityCurrent() || (!current() && !joinsRecovery)
       || (result.ok && requestVersion !== authFailureVersion)) return stale();
-    if (!result.ok && classifySessionFailure(result) === 'authentication_required') {
+    if (recoverAuth && !result.ok && classifySessionFailure(result) === 'authentication_required') {
       authFailureVersion++;
       invalidate('signed_out');
       // The request's own auth failure invalidates its old lease. Recovery may
@@ -179,7 +180,9 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
         invalidate('signed_out');
       }
     }
-    return result;
+    // Carry the original account lease across the await in app adapters. Do
+    // not include caller isCurrent: adapters may compose this into that guard.
+    return result.ok ? { ...result, isCurrent: accountCurrent } : result;
   };
   // Hold the verified account boundary through parsing and persistence too.
   const captureContext = () => {

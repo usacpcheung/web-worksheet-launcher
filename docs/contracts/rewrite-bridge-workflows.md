@@ -215,8 +215,9 @@ mapping alone does not claim that outcome or certify the external bridge.
 
 [provider-request.js](../../server/app/bridge/provider-request.js) exports
 `runProviderRequest({auth, request, intent, signal, isCurrent, timeoutMs})` and
-`normalizeProviderResult(result)`. It is opt-in: existing production callers and
-API method signatures are unchanged. The endpoint characterization tests record
+`normalizeProviderResult(result)`. It is opt-in: existing bridge callers and
+API method signatures are unchanged. Shared authentication preparation and app
+read handoffs also receive account-validity fixes in this PR. The endpoint characterization tests record
 legacy behavior rather than claiming those inconsistencies are already fixed.
 
 - `auth` is the existing `createReadAuthFlow` interface. The helper calls `ensure`
@@ -226,7 +227,10 @@ legacy behavior rather than claiming those inconsistencies are already fixed.
   the interval before the provider runner resumes. Existing callers that omit
   `withContext` retain their result shape. Shared read preflight and mutation
   preparation also consume this lease; read-only login retries use the lease
-  captured around their fresh post-login verification. It does not call the read/replay method.
+  captured around their fresh post-login verification. App read adapters carry
+  prepared readiness into downloads and check the returned account guard before
+  lists, file downloads and imports are applied. The provider helper itself does
+  not call the read/replay method.
 - After authentication recovery it returns `kind: 'retry_required'` without
   invoking `request`. The owning UI must require another explicit action.
 - For an already-ready session, `request({signal, isCurrent})` runs once. It must

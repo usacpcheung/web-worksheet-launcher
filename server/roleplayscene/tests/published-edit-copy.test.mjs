@@ -12,8 +12,8 @@ function harness({ confirm = true, failure = false } = {}) {
   const candidate = { meta: { title: 'Published' }, scenes: [{ id: 'scene-021' }] };
   const context = vm.createContext({
     document: { activeElement: null },
-    getReadAuth: () => ({ read: request => request() }),
-    ensureReadSessionReady: async () => ({ ok: true }),
+    getReadAuth: () => ({ read: async request => ({ ...await request(), isCurrent: () => true }) }),
+    ensureReadSessionReady: async () => ({ ok: true, isCurrent: () => true }),
     getServerReadErrorMessage: () => 'error',
     AbortController, waitForDraftRequest, serverModalRevision: 0,
     openingUploadedDraft: null, teardown: null, publishedPlay: {}, editorPreview: null, editorSession: {},
@@ -100,7 +100,7 @@ test('download timeout releases lock without importing and consumes late rejecti
 for (const published of [false, true]) test(`account change during ${published ? 'publication' : 'draft'} confirmation preserves the current story`, async () => {
   const h = harness();
   let current = true;
-  h.context.getReadAuth = () => ({ read: request => request(), captureContext: () => () => current });
+  h.context.getReadAuth = () => ({ read: async request => ({ ...await request(), isCurrent: () => current }) });
   h.context.apiClient.fetchRolePlaySceneDraftArtifact = h.context.apiClient.fetchRolePlayScenePublishedSceneArtifact;
   h.context.confirmProjectImport = async () => { current = false; return true; };
   h.context.discardDiscussion = () => { throw new Error('Existing discussion must survive'); };
@@ -128,4 +128,12 @@ test('superseded direct read leaves a retryable error only for its own active la
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(states, stillCurrent ? ['checking-session', 'error'] : ['checking-session']);
   }
+});
+
+for (const published of [false, true]) test(`stale ${published ? 'publication' : 'draft'} lease stops before story preparation`, async () => {
+  const h = harness();
+  h.context.getReadAuth = () => ({ read: async () => ({ ok: true, data: new Uint8Array([1]), isCurrent: () => false }) });
+  h.context.prepareProjectImport = () => assert.fail('stale artifact must not be parsed or applied');
+  await h.context.openUploadedRolePlaySceneDraft({ title: 'Incoming' }, { published });
+  assert.equal(h.current(), h.original); assert.equal(h.context.openingUploadedDraft, null);
 });
