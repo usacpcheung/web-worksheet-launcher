@@ -55,7 +55,7 @@ baseline. Sharing infrastructure does not add these features to those apps.
 
 | Area | Current behavior |
 | --- | --- |
-| Editor audio | Session checks and legacy protected-intent execution; target locks in replay handlers. Named tracks capture source-text hash and draft generation before attachment. Requests do not pass an AbortSignal in these callers. |
+| Editor audio | Session checks and legacy protected-intent execution; target locks in replay handlers. Named tracks capture source-text hash and draft generation before attachment. Named-language failures preserve structured error fields; legacy no-language failures return only a display message. Requests do not pass an AbortSignal in these callers. |
 | RolePlayScene audio | Per-dialogue lock, line identity and disposal checks, source-text/replacement checks, AbortController and a 120-second bound for each awaited session/provider operation. This is not one combined 120-second workflow deadline. |
 | Viewer/discussion voice | Already one shared recording → transcription → rewrite workflow. One active operation per workflow instance, cancellation race protection and context/answer snapshot checks. No general provider deadline; pending work remains cancelable. |
 | Voice recovery | Transcript is retained before rewrite. Rewrite retry reuses text; it must not transcribe again. Audio retained after transcription authentication failure is memory-only. Reload recovery excludes raw audio and rewritten candidates. |
@@ -78,7 +78,8 @@ They do not establish that every affected user journey currently fails.
 
 | Finding and trigger | Evidence / consequence | Proposed resolution |
 | --- | --- | --- |
-| Editor T2A expires after preflight and returns an authentication error | `triggerProtectedAction` uses the legacy gate's default recovery; its auth-return path can replay a stored intent. This differs from the agreed explicit provider retry policy. | Restore work and offer explicit Generate/Retry after verified login; never automatically resend a provider request on login return. Cover existing pending intents too. |
+| Editor named-language T2A returns an authentication error after preflight | The named-language branches of `replayEditorPromptT2AIntent` and `replayEditorOptionT2AIntent` preserve `result.error`. `triggerProtectedAction` uses the legacy gate's default recovery, so a recognized authentication failure can queue recovery and later replay a valid stored intent. | Restore work and offer explicit Generate/Retry after verified login; never automatically resend a provider request on login return. Cover existing pending intents too. |
+| Editor legacy no-language T2A returns an authentication error after preflight | Both replay handlers replace the transport error with `{ message }`. The gate loses status, code and `requiresSignIn`, cannot classify this result as authentication-related, and therefore does not queue recovery/replay for this failure. A localized sign-in message alone is not structured authentication handling. | Preserve structured failure fields and integrate contextual sign-in guidance with explicit Generate/Retry. Change the continuation policy in the same migration: restoring fields alone could enable the old automatic replay path. |
 | Permission-denied bridge response resembles signed-out state | Binary transport classifies 401/403 before parsing the error body; voice `errorCode` also treats 403 as authentication. The presenter can recognize `FORBIDDEN`, but cannot recover a distinction already lost upstream. | Preserve structured permission codes before legacy auth fallback. Test actual bridge/proxy shapes; a successful worksheet session probe alone does not prove bridge permission. |
 | Cancellation/transport outcomes differ by operation | T2A fetch rejection becomes `NETWORK_ERROR`; rewrite with/without a signal intentionally retains different legacy failure behavior in existing tests. | Characterize first, then migrate callers to a consistent structured outcome through compatibility adapters. Distinguish cancellation, timeout, network failure and malformed response. |
 | A request stalls | RolePlayScene dialogue has bounded waits; Editor T2A and shared voice have different cancellation/deadline coverage. | Share waiting/cancellation mechanics, with explicit per-operation deadline policy. Preserve existing bounds until deployment evidence supports changes. |
@@ -173,6 +174,10 @@ source-string assertions.
 
 Required cases across applicable consumers:
 
+- Characterize named-language and legacy no-language Editor failures separately;
+  after migration, both preserve authentication classification and require an
+  explicit provider action after login. Restoring error fields must not introduce
+  automatic replay in the legacy path.
 - Signed out, ready, probe failure, expiry after preflight, explicit forbidden,
   OIDC HTML/redirect, invalid JSON/MIME, empty output, 413/429/5xx and offline.
 - Canceled/blocked popup, failed callback verification, same-tab save failure and
