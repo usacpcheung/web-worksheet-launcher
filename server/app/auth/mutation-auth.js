@@ -8,10 +8,11 @@ export async function prepareMutation(auth, { intent, isCurrent = () => true, si
   confirm = options => promptForReadSignIn({ ...options, confirmation: true }),
 } = {}) {
   const current = () => !signal?.aborted && isCurrent();
-  const result = await auth.ensure({ intent, isCurrent: current, signal });
+  const result = await auth.ensure({ intent, isCurrent: current, signal, withContext: true });
   if (!current()) return { ok: false, result: stale(), isCurrent: () => false };
   if (!result?.ok) return { ok: false, result, isCurrent: () => false };
-  const accountCurrent = auth.captureContext();
+  const accountCurrent = result.isCurrent;
+  if (typeof accountCurrent !== 'function') return { ok: false, result: stale(), isCurrent: () => false };
   const readyCurrent = () => current() && accountCurrent();
   if (!readyCurrent()) return { ok: false, result: stale(), isCurrent: () => false };
   if (result.authenticationRecovered) {

@@ -19,6 +19,7 @@ Signed-out users can select available mutation controls. Invalid context, active
 - Already authenticated: the user's ordinary action/form/destructive confirmation authorizes the request.
 - Authentication required: contextual Sign in / Cancel guidance precedes login. A successful login presents a separate, localized Upload, Publish or Delete confirmation. Neither login completion nor a canceled confirmation sends a request.
 - Permission denial and unavailable service/network results do not initiate login.
+- Preparation consumes the verification-bound guard returned by `ensure({withContext: true})`; it never captures a fresh guard after awaiting readiness. A newer observed sign-out invalidates the prepared result before confirmation or execution.
 - After successful preparation, the returned account guard remains part of the app's ownership checks through packaging, conflict/slot choices, requests and refresh. Changing account, replacing the local record, closing the relevant manager or canceling an owned operation prevents stale work from continuing.
 - A rejected mutation is not replayed after authentication. An observed authentication failure invalidates private rows/session readiness. The user must select a fresh action. Existing outcome feedback remains visible.
 

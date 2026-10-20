@@ -224,7 +224,9 @@ legacy behavior rather than claiming those inconsistencies are already fixed.
   returned by the coordinator. It fails closed if the lease is missing. A newer
   observed auth failure or account change invalidates the ready result, including
   the interval before the provider runner resumes. Existing callers that omit
-  `withContext` retain their result shape. It does not call the read/replay method.
+  `withContext` retain their result shape. Shared read preflight and mutation
+  preparation also consume this lease; read-only login retries use the lease
+  captured around their fresh post-login verification. It does not call the read/replay method.
 - After authentication recovery it returns `kind: 'retry_required'` without
   invoking `request`. The owning UI must require another explicit action.
 - For an already-ready session, `request({signal, isCurrent})` runs once. It must
