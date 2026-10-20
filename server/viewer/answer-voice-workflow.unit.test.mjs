@@ -230,16 +230,18 @@ test('unresolved recovery blocks new work until retry or discard, even after cle
   assert.equal(h.state.requests.length, 3);
 });
 
-test('preflight failure ends whole rewrite; a new click uses the current answer after sign-in', async () => {
+test('rewrite preflight failure preserves edited recovery and requires explicit retry', async () => {
   let ready = false;
   const h = setup({ checkSession: async () => ({ok:ready,error:{code:'AUTH_REQUIRED'}}) });
   await h.flow.run('q1', {mode:'rewrite'});
-  assert.equal(h.state.recovery.q1.phase, 'preflight');
+  assert.equal(h.state.recovery.q1.phase, 'text');
   assert.equal(h.state.requests.length, 0);
+  h.state.recovery.q1.text = 'Edited recovery';
   ready = true;
-  h.state.answers.q1 = 'Edited while signing in';
-  await h.flow.run('q1', {mode:'rewrite'});
-  assert.equal(h.state.requests[0].text, 'Edited while signing in');
+  assert.equal((await h.flow.run('q1', {mode:'rewrite'})).status, 'recovery_pending');
+  assert.equal(h.state.recovery.q1.text, 'Edited recovery');
+  await h.flow.run('q1', {mode:'rewrite', retry: h.state.recovery.q1});
+  assert.equal(h.state.requests[0].text, 'Edited recovery');
   assert.equal(h.state.records.length, 0);
   assert.equal(h.state.recovery.q1, undefined);
 });
@@ -299,7 +301,7 @@ test('rewrite preflight uses shared coordinator without login or provider replay
   assert.equal((await h.flow.run('q1', { mode: 'rewrite' })).error.code, 'AUTH_REQUIRED');
   assert.equal(h.state.requests.length, 0); ready = true;
   await tick(); assert.equal(h.state.requests.length, 0);
-  assert.equal((await h.flow.run('q1', { mode: 'rewrite' })).ok, true);
+  assert.equal((await h.flow.run('q1', { mode: 'rewrite', retry: h.state.recovery.q1 })).ok, true);
   assert.equal(h.state.requests.length, 1);
 });
 

@@ -287,8 +287,9 @@ Recording/transcription and all T2A adapters retain their existing implementatio
   after login. Missing auth adapters fail closed, including `skipSession` callers.
 - Voice recording keeps its existing readiness check. The rewrite stage checks
   readiness again after transcription; a failed check retains the transcript and
-  explicit retry never transcribes it again. Whole-answer preflight failure keeps
-  the normal new-click behavior using the current answer. No new provider deadline
+  explicit retry never transcribes it again. Whole-answer preflight failure retains editable text recovery and blocks a new
+  Rewrite until the learner chooses Retry or Discard. Retry uses the edited
+  recovery text, including after save/reload. No new provider deadline
   is imposed; cancellation remains available while waiting.
 - The runner receives operation, document/attempt and answer-snapshot ownership.
   Account changes, observed expiry, cancellation and supersession cannot apply

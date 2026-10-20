@@ -108,3 +108,24 @@ test('imported property-name IDs support rewrite, undo, recovery reload and retr
     assert.equal(restored.recovery[id], undefined);
   }
 });
+
+test('discussion rewrite preflight failure preserves recovery edits through reload and retry', async () => {
+  let ready = false; const sent = [];
+  const getRewriteAuth = () => ({ ensure: async () => ready
+    ? { ok: true, isCurrent: () => true } : { ok: false, error: { code: 'AUTH_REQUIRED' } } });
+  const apiClient = { rewriteText: async text => { sent.push(text); return { ok: true, data: { text } }; } };
+  const { session, storage } = setup({ getRewriteAuth, apiClient });
+  session.setText('one', 'Original');
+  await session.rewrite('one');
+  assert.equal(session.recovery.one.phase, 'text');
+  session.recovery.one.text = 'Edited recovery'; session.persist();
+  assert.equal((await session.rewrite('one')).status, 'recovery_pending');
+  const restored = new RolePlaySceneDiscussionSession({ storage, getRewriteAuth, apiClient });
+  restored.bindProject(project); ready = true;
+  assert.equal(restored.recovery.one.text, 'Edited recovery');
+  await restored.voice.run('one', { mode: 'rewrite', retry: restored.recovery.one });
+  assert.deepEqual(sent, ['Edited recovery']);
+  assert.equal(restored.getText('one'), 'Edited recovery');
+  assert.equal(restored.undo('one'), true);
+  assert.equal(restored.getText('one'), 'Original');
+});

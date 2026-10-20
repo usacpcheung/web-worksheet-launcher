@@ -138,7 +138,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
       if (!fresh(op)) { keep(op, 'STALE_CONTEXT'); return { ok: false }; }
       if (mode === 'rewrite') {
         op.text = hasRecoveryText(retry) ? retry.text : sourceText ?? current.answer.trim();
-        op.phase = hasRecoveryText(retry) ? 'text' : 'preflight';
+        op.phase = 'text';
       } else if (!hasRecoveryText(retry)) {
         op.phase = 'capture';
         let blob;
@@ -194,7 +194,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
       });
       if (!result.ok) {
         if (result.kind === 'superseded') {
-          if (op.phase === 'preflight') return { ok: false, status: 'superseded' };
+          if (op.state === 'checking_session' && !hasRecoveryText(retry)) return { ok: false, status: 'superseded' };
           keep(op, 'STALE_CONTEXT'); return { ok: false, status: 'recovery_required' };
         }
         if (result.kind === 'authentication_required' && fresh(op)) auth?.observe?.(result);
