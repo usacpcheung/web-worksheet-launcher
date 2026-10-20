@@ -124,8 +124,8 @@ Share session classification, coordination and continuation rules. Keep editor a
 | 1 | This code-backed mapping and target contract; centralized index link. | Merged in #318. |
 | 2 | Shared classification/session coordination with compatibility adapters; reuse popup/readiness helpers. Preserve existing UI until migrated. | Foundation merged in #319; editor/viewer silent ownership adapters integrated with reads. |
 | 3 | Migrate browsing/managers/open/download across all three apps; account-bound lists and contextual prompts. | Merged in #320 after deployed acceptance passed. |
-| 4 | Migrate upload/publication/deletion entry and post-login confirmation; retain existing mutation coordinators. | Implemented in the mutation integration; deployed acceptance pending. |
-| 5 | Migrate audio/transcription/rewrite authentication and recovery, including both shared voice consumers. | Planned. |
+| 4 | Migrate upload/publication/deletion entry and post-login confirmation; retain existing mutation coordinators. | Merged in #321 after deployed acceptance; subsequent CI regression checks passed. |
+| 5 | Unify the complete audio/transcription/rewrite request lifecycle, including authentication, cancellation, ownership, outcomes and recovery for both shared voice consumers. | [Code-backed map and proposed implementation contract](rewrite-bridge-workflows.md); runtime migration pending. |
 | 6 | Remove superseded code only after consumer tracing; update current docs and run cross-app acceptance. | Planned. |
 
 Each runtime PR must state which rows are migrated and which remain current legacy behavior. Do not mark this whole target implemented when only shared helpers exist. Publication creation consolidation (previous PR D) and list/download consolidation (previous PR E) remain separate roadmap work: coordinate overlapping changes and avoid extracting a second conflicting coordinator. This sequence intentionally prioritizes agreed authentication behavior; it does not declare the package/storage refactor finished.
