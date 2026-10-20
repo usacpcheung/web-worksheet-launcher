@@ -94,19 +94,36 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     try { return await whileCurrent(entry.promise, current); }
     finally { entry.callers.delete(current); }
   };
-  const ensure = async ({ isCurrent = () => true, signal, intent, timeoutMs } = {}) => {
+  const ensure = async ({ isCurrent = () => true, signal, intent, timeoutMs, withContext = false } = {}) => {
+    // Opt-in provider lease: bind both the start of verification and its result.
+    // Capturing only after awaiting ensure could authorize old work under a new
+    // account or after a newer observed authentication failure.
+    const initialContext = withContext ? captureContext() : null;
     const startEpoch = epoch;
     const current = () => !signal?.aborted && isCurrent() && startEpoch === epoch;
     if (!current()) return stale();
     let result = await sharedPreflight(current, timeoutMs);
     if (!isCurrent() || signal?.aborted) return stale();
+    if (withContext && result?.ok && !initialContext()) return stale();
     result = observe(result);
     if (!current()) return stale();
     if (!result.ok && classifySessionFailure(result) === 'authentication_required') {
       result = await recover(current, intent);
       if (result?.ok) result = { ...result, authenticationRecovered: true };
     }
-    return current() ? result : stale();
+    if (!current()) return stale();
+    if (withContext && result?.ok) {
+      // Login recovery deliberately returns without executing provider work.
+      // Its own auth failure must not invalidate that explicit-retry outcome.
+      const before = result.authenticationRecovered ? () => true : initialContext;
+      const verified = captureContext();
+      const accountCurrent = () => before() && verified();
+      if (!accountCurrent()) return stale();
+      // Account-only predicate: composing caller isCurrent here would recurse
+      // when the provider runner installs this lease into its own guard.
+      return { ...result, isCurrent: accountCurrent };
+    }
+    return result;
   };
   const read = async (request, { isCurrent = () => true, signal, preflight = true, intent } = {}) => {
     const startEpoch = epoch;

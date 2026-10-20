@@ -220,7 +220,11 @@ API method signatures are unchanged. The endpoint characterization tests record
 legacy behavior rather than claiming those inconsistencies are already fixed.
 
 - `auth` is the existing `createReadAuthFlow` interface. The helper calls `ensure`
-  and captures its account/context lease; it does not call the read/replay method.
+  with `withContext: true` and consumes the verification-bound `isCurrent` lease
+  returned by the coordinator. It fails closed if the lease is missing. A newer
+  observed auth failure or account change invalidates the ready result, including
+  the interval before the provider runner resumes. Existing callers that omit
+  `withContext` retain their result shape. It does not call the read/replay method.
 - After authentication recovery it returns `kind: 'retry_required'` without
   invoking `request`. The owning UI must require another explicit action.
 - For an already-ready session, `request({signal, isCurrent})` runs once. It must
@@ -233,7 +237,11 @@ legacy behavior rather than claiming those inconsistencies are already fixed.
   transaction or rollback mechanism.
 - Error output contains a normalized category and safe code/status, without raw
   upstream message/details. Use the existing localized presenter with the
-  operation fallback. `retry_required` and `superseded` are control outcomes for
+  operation fallback. Authentication-preparation failures carry
+  `source: 'repository-api'`: present them with the session operation and that
+  source to retain existing localized popup/session timeout guidance. Provider
+  failures use the bridge source and preserve allowlisted actionable codes such
+  as `VOICE_CHOICE_UNSUPPORTED`; raw messages remain excluded. `retry_required` and `superseded` are control outcomes for
   the adapter, not generic user-facing error messages.
 - External cancellation settles promptly; context/account invalidation is also
   checked at boundaries and polled every 50 ms while waiting. Late promise

@@ -4,7 +4,11 @@ import { normalizeProviderResult, runProviderRequest } from './provider-request.
 import { createReadAuthFlow } from '../auth/read-auth-flow.js';
 import { createServerApiClient } from '../api/server-api-client.js';
 
-const readyAuth = () => ({ ensure: async () => ({ ok: true }), captureContext: () => () => true });
+const readyAuth = () => {
+  const auth = { captureContext: () => () => true };
+  auth.ensure = async () => ({ ok: true, isCurrent: auth.captureContext() });
+  return auth;
+};
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const success = { ok: true, data: { text: 'fixture' }, status: 200 };
 
@@ -56,7 +60,7 @@ test('real auth coordinator verifies login but does not send provider request', 
 
 test('late API authentication failure never triggers another login or request', async () => {
   let probes = 0, sends = 0;
-  const auth = readyAuth(); auth.ensure = async () => { probes++; return { ok: true }; };
+  const auth = readyAuth(); auth.ensure = async () => { probes++; return { ok: true, isCurrent: auth.captureContext() }; };
   const result = await runProviderRequest({ auth, request: async () => {
     sends++; return { ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } };
   } });
@@ -179,4 +183,75 @@ test('invalid timeout configuration is rejected before preflight', async () => {
 test('transport AbortError remains cancellation without exposing its message', async () => {
   const result = await runProviderRequest({ auth: readyAuth(), request: () => { throw new DOMException('private', 'AbortError'); } });
   assert.equal(result.kind, 'cancelled'); assert.equal(JSON.stringify(result).includes('private'), false);
+});
+
+for (const change of ['authentication_failure', 'account_change']) {
+  for (const boundary of ['during_probe', 'after_ensure']) {
+    test(`${change} ${boundary} cannot authorize stale provider work`, async () => {
+      let subject = 'a'; const gate = deferred(), entered = deferred();
+      const auth = createReadAuthFlow({ subject: () => subject, invalidate: () => {},
+        prompt: () => assert.fail(), signIn: () => assert.fail(),
+        probe: async () => { entered.resolve(); await gate.promise; return { ok: true, status: 'ready', user: { sub: 'a' } }; },
+      });
+      const invalidate = () => {
+        if (change === 'account_change') { subject = 'b'; auth.observe({ ok: true, status: 'ready', user: { sub: 'b' } }); }
+        else auth.observe({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } });
+      };
+      if (boundary === 'after_ensure') {
+        const ensure = auth.ensure;
+        auth.ensure = async options => { const result = await ensure(options); invalidate(); return result; };
+      }
+      const pending = runProviderRequest({ auth, request: () => assert.fail('no stale provider request') });
+      await entered.promise;
+      if (boundary === 'during_probe') invalidate();
+      gate.resolve();
+      const result = await pending;
+      assert.equal(result.kind, 'superseded'); assert.equal(result.isCurrent(), false);
+    });
+  }
+}
+
+test('provider preparation fails closed without a verification lease', async () => {
+  const result = await runProviderRequest({ auth: { ensure: async () => ({ ok: true }) }, request: () => assert.fail() });
+  assert.equal(result.kind, 'invalid_response');
+});
+
+test('popup deadline through real coordinator preserves localized authentication guidance', async () => {
+  const auth = createReadAuthFlow({ subject: () => null, invalidate: () => {},
+    probe: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED' } }), prompt: async () => true,
+    signIn: async () => ({ ok: false, error: { code: 'AUTH_POPUP_FLOW_HARD_DEADLINE', message: 'private' } }),
+  });
+  const result = await runProviderRequest({ auth, request: () => assert.fail() });
+  assert.equal(result.kind, 'timeout'); assert.equal(result.error.code, 'AUTH_POPUP_FLOW_HARD_DEADLINE');
+  assert.equal(result.source, 'repository-api'); assert.equal(JSON.stringify(result).includes('private'), false);
+  const { resolveErrorPresentation, getApiErrorMessage } = await import('../api/error-presentation.js');
+  const { setLocale } = await import('../i18n/index.js');
+  assert.equal(resolveErrorPresentation(result, { source: result.source, operation: 'session' }).key, 'apiErrors.popupDeadline');
+  try {
+    for (const locale of ['en', 'zh-Hant']) {
+      setLocale(locale, { persist: false });
+      const messages = (await import(`../i18n/locales/${locale}.js`)).default;
+      assert.equal(getApiErrorMessage(result, 'session', result.source), messages.apiErrors.popupDeadline);
+    }
+  } finally { setLocale('en', { persist: false }); }
+});
+
+test('unsupported voice retains actionable localized guidance without upstream text', async () => {
+  const { getApiErrorMessage } = await import('../api/error-presentation.js');
+  const { setLocale } = await import('../i18n/index.js');
+  const result = normalizeProviderResult({ ok: false, error: { status: 422, code: 'VOICE_CHOICE_UNSUPPORTED', message: 'private' } });
+  assert.equal(result.kind, 'voice_unsupported'); assert.equal(result.error.code, 'VOICE_CHOICE_UNSUPPORTED');
+  assert.equal(JSON.stringify(result).includes('private'), false);
+  try {
+    for (const locale of ['en', 'zh-Hant']) {
+      setLocale(locale, { persist: false });
+      const messages = (await import(`../i18n/locales/${locale}.js`)).default;
+      assert.equal(getApiErrorMessage(result, 'audio', 'bridge'), messages.apiErrors.voiceUnsupported);
+    }
+  } finally { setLocale('en', { persist: false }); }
+});
+
+test('untrusted provider codes cannot claim popup ownership', () => {
+  const result = normalizeProviderResult({ ok: false, error: { code: 'AUTH_POPUP_FLOW_HARD_DEADLINE' } });
+  assert.equal(result.kind, 'failed'); assert.equal(result.source, undefined);
 });
