@@ -1,10 +1,11 @@
 # Rewrite-bridge workflow map and shared contract
 
-Status: **code-backed mapping and proposed implementation contract, not an implemented refactor**.
+Status: **mapping approved in PR #322; opt-in shared foundation added; app integration pending**.
 Reviewed against main `7762c74f63b119baeccaa513f3500746ff7b526a` (merged PR #321).
 This document extends stage 5 of the [authentication roadmap](authentication-workflows.md).
-It covers the complete provider-request lifecycle, not only sign-in. No runtime,
-external bridge, OIDC, database or deployment changes accompany this mapping.
+It covers the complete provider-request lifecycle, not only sign-in. The mapping PR changed documentation only. The foundation below adds an opt-in
+helper and tests; production app adapters have not migrated. No external bridge,
+OIDC, database or deployment changes are included.
 
 ## 1. Scope and existing ownership
 
@@ -152,8 +153,8 @@ separate decision; they are not prerequisites for this work.
 
 | PR | Deliverable and boundary | Gate |
 | --- | --- | --- |
-| Mapping (this PR) | Current call graph, differences, risks and target contract; documentation only | Review scope and behavior policy |
-| Shared foundation | Characterization tests for all three endpoints; common outcome/cancellation/ownership mechanics and provider auth preparation using existing helpers. Keep legacy call signatures until migrated. | Behavioral tests for old adapters and new contract; no unannounced consumer behavior change |
+| Mapping (merged #322) | Current call graph, differences, risks and target contract; documentation only | Approved and merged |
+| Shared foundation (implemented opt-in; see section 7) | Characterization tests for all three endpoints; common outcome/cancellation/ownership mechanics and provider auth preparation using existing helpers. Keep legacy call signatures until migrated. | Behavioral tests for old adapters and new contract; no unannounced consumer behavior change |
 | T2A integration | Migrate Editor prompt/option named and legacy paths plus RolePlayScene dialogue as one consumer group; explicit post-login retry and safe attachment | Both authoring apps, replacement/source-change races, real login and audio acceptance |
 | Voice/rewrite integration | Migrate the existing shared pipeline and both Viewer/discussion adapters together; account binding and agreed deadline policy; preserve recording and recovery | Both consumers, microphone/Undo/navigation/recovery and provider acceptance |
 | Completion cleanup | Remove only proven superseded paths, reconcile feature docs and verify all production callers | Full affected regression and cross-app acceptance; fold into integration if small and safe |
@@ -208,3 +209,47 @@ Completion means all mapped callers use the reviewed lifecycle, intentional
 adapter differences are documented, obsolete paths are removed only after caller
 and saved-intent tracing, and automated plus deployed acceptance passes. This
 mapping alone does not claim that outcome or certify the external bridge.
+
+
+## 7. Shared foundation API (app integration pending)
+
+[provider-request.js](../../server/app/bridge/provider-request.js) exports
+`runProviderRequest({auth, request, intent, signal, isCurrent, timeoutMs})` and
+`normalizeProviderResult(result)`. It is opt-in: existing production callers and
+API method signatures are unchanged. The endpoint characterization tests record
+legacy behavior rather than claiming those inconsistencies are already fixed.
+
+- `auth` is the existing `createReadAuthFlow` interface. The helper calls `ensure`
+  and captures its account/context lease; it does not call the read/replay method.
+- After authentication recovery it returns `kind: 'retry_required'` without
+  invoking `request`. The owning UI must require another explicit action.
+- For an already-ready session, `request({signal, isCurrent})` runs once. It must
+  return a result, not attach audio, insert text or mutate application state.
+  Post-request authentication errors return to the adapter without starting login
+  or retry. The adapter owns contextual guidance and observing current failures.
+- Successful output retains `data` and has `kind: 'success'` plus `isCurrent()`.
+  Check that predicate immediately before application and after any additional
+  asynchronous conversion/persistence preparation. It is a validity guard, not a
+  transaction or rollback mechanism.
+- Error output contains a normalized category and safe code/status, without raw
+  upstream message/details. Use the existing localized presenter with the
+  operation fallback. `retry_required` and `superseded` are control outcomes for
+  the adapter, not generic user-facing error messages.
+- External cancellation settles promptly; context/account invalidation is also
+  checked at boundaries and polled every 50 ms while waiting. Late promise
+  settlement is observed but cannot update the returned result. Timers/listeners
+  are released when the invocation finishes.
+- `timeoutMs` defaults to `null` (no new deadline). If supplied, it covers this
+  entire invocation, including authentication and response parsing. It is not
+  equivalent to RolePlayScene's existing per-wait timeout; integration must
+  preserve that policy explicitly rather than substitute the helper blindly.
+- The helper never retries, persists content, records audio or implements fetch.
+  It calls the existing client through the adapter callback. In particular it
+  cannot recover a structured permission code already discarded by legacy T2A;
+  that transport compatibility change belongs in the T2A integration.
+
+Foundation verification is in
+[provider-request.test.mjs](../../server/app/bridge/provider-request.test.mjs) and
+[bridge characterization tests](../../server/app/api/server-api-client.bridge-contract.test.mjs),
+including real session-coordinator and API-client adapters with synthetic responses.
+These tests do not establish completed integration or live provider acceptance.
