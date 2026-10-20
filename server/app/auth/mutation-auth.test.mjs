@@ -81,3 +81,25 @@ test('initial confirmation identity survives same-account expiry but rejects an 
   h.state.account = 'B'; h.auth.observe(ready('B')); assert.equal(identity(),false);
   assert.equal((await h.prepare({isCurrent:identity})).ok,false);
 });
+
+for (const recovered of [false, true]) {
+  test(`new sign-out after ensure cannot authorize mutation (recovered=${recovered})`, async () => {
+    const h = harness({ loggedIn: !recovered });
+    const ensure = h.auth.ensure;
+    h.auth.ensure = async options => {
+      const result = await ensure(options);
+      h.auth.observe({ ...signedOut });
+      return result;
+    };
+    const result = await h.prepare();
+    assert.equal(result.ok, false); assert.equal(result.isCurrent(), false);
+    assert.equal(h.state.confirmations, 0);
+  });
+}
+
+test('expiry while explicit mutation confirmation is open invalidates consent', async () => {
+  const h = harness(); const entered = deferred(), consent = deferred();
+  const pending = h.prepare({ confirm: () => { entered.resolve(); return consent.promise; } });
+  await entered.promise; h.auth.observe({ ...signedOut }); consent.resolve(true);
+  assert.equal((await pending).ok, false);
+});

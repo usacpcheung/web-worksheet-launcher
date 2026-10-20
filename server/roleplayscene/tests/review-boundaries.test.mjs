@@ -10,7 +10,7 @@ test('draft loader ignores stale success, failure and rejection without releasin
   for (const outcome of ['success', 'failure', 'reject', 'modal']) {
     const requests = [], events = [];
     const c = vm.createContext({
-    getReadAuth: () => ({ read: request => request() }),
+    getReadAuth: () => ({ read: async request => ({ ...await request(), isCurrent: () => true }) }),
     ensureReadSessionReady: async () => ({ ok: true }),
     getServerReadErrorMessage: () => 'error',
       openingUploadedDraft: null, uploadedDraftsRequestId: 0, serverModalRevision: 0,

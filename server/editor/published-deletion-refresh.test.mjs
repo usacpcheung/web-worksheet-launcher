@@ -8,7 +8,7 @@ const code=source.slice(start,source.indexOf('\n  function renderPublishedBrowse
 function harness() {
   const pending=[],messages=[];
   const c=vm.createContext({browsePublishedDialogOpen:true,browsePublishedDialogRevision:0,publishedSearchRequest:0,browsePublishedState:{items:[],title:'',subject:'',owner:'',loading:false},
-    session:{state:{},readAuth:{read:request=>request()},ensureReadSessionReady:async()=>({ok:true}),apiClient:{listPublishedPackages:()=>new Promise((resolve,reject)=>pending.push({resolve,reject}))}},
+    session:{state:{},readAuth:{read:async request=>({...await request(),isCurrent:()=>true})},ensureReadSessionReady:async()=>({ok:true}),apiClient:{listPublishedPackages:()=>new Promise((resolve,reject)=>pending.push({resolve,reject}))}},
     t:key=>key,getApiErrorMessage:()=> 'list failure',editorNotification:key=>key,
     emitPublishedBrowseNotification:value=>messages.push(value),renderPublishedBrowserModal(){},
   });

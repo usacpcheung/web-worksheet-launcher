@@ -322,7 +322,7 @@ for (const source of ['local', 'uploaded', 'published']) {
       session.state.draft = mod.createDraftRecord({ localId: 'outgoing', title: 'Unsaved edit' });
       session.state.draftRevision = 2;
       session.state.lastSavedRevision = 1;
-      session.ensureReadSessionReady = session.ensureServerSessionReady = async () => ({ ok: true });
+      session.ensureReadSessionReady = session.ensureServerSessionReady = async () => ({ ok: true, isCurrent: () => true });
       session.apiClient.fetchUploadedDraftArtifact = session.apiClient.fetchPublishedPackageArtifact = async () => ({ ok: true, data: new Uint8Array([1]) });
       const run = () => source === 'local'
         ? session.importWorksheetPackageFile({ arrayBuffer: async () => new ArrayBuffer(0) }, { convertToEditableDraft: true })
@@ -365,7 +365,7 @@ for (const source of ['uploaded', 'published']) {
       const mod = await loadEditorModule();
       const session = new mod.EditorDraftSession(createSessionForTests());
       session.state.draft = mod.createDraftRecord({ localId: 'old' });
-      session.ensureReadSessionReady = session.ensureServerSessionReady = async () => ({ ok: true });
+      session.ensureReadSessionReady = session.ensureServerSessionReady = async () => ({ ok: true, isCurrent: () => true });
       let finishDownload, report;
       const download = new Promise(resolve => { finishDownload = resolve; });
       const fetchArtifact = async (_id, options) => {
@@ -447,7 +447,7 @@ for (const source of ['uploaded', 'published']) {
   test(`${source} stalled downloads abort, unlock and ignore late completion`, async () => {
     const mod = await loadEditorModule();
     const session = new mod.EditorDraftSession(createSessionForTests(), { packageDownloadIdleMs: 15 });
-    session.ensureReadSessionReady = session.ensureServerSessionReady = async () => ({ ok: true });
+    session.ensureReadSessionReady = session.ensureServerSessionReady = async () => ({ ok: true, isCurrent: () => true });
     session.state.draft = mod.createDraftRecord({ localId: 'old' });
     let signal, progress, finish;
     session.apiClient.fetchUploadedDraftArtifact = session.apiClient.fetchPublishedPackageArtifact = async (_id, options) => {
@@ -4828,7 +4828,7 @@ test('loadUploadedDrafts deduplicates concurrent preflight calls before loading 
   session.ensureReadSessionReady = session.ensureServerSessionReady = async () => {
     ensureCalls += 1;
     await new Promise((resolve) => setTimeout(resolve, 5));
-    return { ok: true, result: { ok: true } };
+    return { ok: true, result: { ok: true }, isCurrent: () => true };
   };
 
   const [first, second] = await Promise.all([
@@ -4925,7 +4925,7 @@ test('loadUploadedDrafts keeps loading state true until overlapping preflight an
   });
   session.ensureReadSessionReady = session.ensureServerSessionReady = async () => {
     await ensureGate;
-    return { ok: true, result: { ok: true } };
+    return { ok: true, result: { ok: true }, isCurrent: () => true };
   };
 
   const withPreflight = session.loadUploadedDrafts();
@@ -6224,3 +6224,28 @@ test('account switch during delete confirmation prevents a stale DELETE even whe
   session.readAuth.observe({ok:true,status:'ready',user:{sub:'B'}});
   confirm(true); assert.equal((await work).deletionStatus,'stale'); assert.equal(posts,0);
 });
+
+for (const kind of ['draft', 'publication']) for (const boundary of ['prepared', 'downloaded']) {
+  test(`${kind} original read lease blocks import after ${boundary} handoff expiry`, async () => {
+    const { createReadAuthFlow } = await import('../app/auth/read-auth-flow.js');
+    const mod = await loadEditorModule();
+    const session = new mod.EditorDraftSession(createSessionForTests());
+    const auth = createReadAuthFlow({ subject: () => 'a', invalidate() {},
+      probe: async () => ({ ok: true, status: 'ready', user: { sub: 'a' } }), prompt: async () => false, signIn: async () => ({ ok: false }) });
+    session._readAuth = auth;
+    const expire = () => auth.observe({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } });
+    session.ensureReadSessionReady = async () => {
+      const result = await auth.ensure({ withContext: true });
+      if (boundary === 'prepared') expire();
+      return result;
+    };
+    const read = auth.read;
+    auth.read = async (...args) => { const result = await read(...args); if (boundary === 'downloaded') expire(); return result; };
+    let downloads = 0;
+    session.apiClient.fetchUploadedDraftArtifact = session.apiClient.fetchPublishedPackageArtifact = async () => { downloads++; return { ok: true, data: new Uint8Array([1]) }; };
+    session.importWorksheetPackageFile = () => assert.fail('stale artifact must not replace local work');
+    const result = kind === 'draft' ? await session.reopenUploadedDraftAsLocalCopy('one') : await session.reopenPublishedPackageAsLocalCopy('one');
+    assert.equal(result.skipped, true); assert.equal(downloads, boundary === 'prepared' ? 0 : 1);
+    assert.equal(session.packageLoad.current, null);
+  });
+}

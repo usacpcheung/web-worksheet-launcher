@@ -1350,11 +1350,11 @@ async function ensureMutationSessionReady(options = {}) {
   return ready;
 }
 async function ensureReadSessionReady(options = {}) {
-  const result = await getReadAuth().ensure(options);
+  const result = await getReadAuth().ensure({ ...options, withContext: true });
   if (!result.ok && !result.skipped && !result.cancelled && (options.isCurrent?.() ?? true)) {
     showMessage({ text: getApiErrorMessage(result, 'session') });
   }
-  return { ok: result.ok === true, result };
+  return { ok: result.ok === true, result, isCurrent: result.isCurrent };
 }
 
 async function ensureServerSessionReady({ isCurrent = () => true } = {}) {
@@ -2361,9 +2361,10 @@ async function loadPublishedRolePlaySceneScenes({
   let loaded = false;
   const modalRevision = serverModalRevision;
   const isCurrent = () => requestId === publishedScenesRequestId && modalRevision === serverModalRevision;
+  let sessionReady = null;
   try {
     if (preflight) {
-      const sessionReady = await ensureReadSessionReady({ isCurrent, intent: { kind: 'published', filters: publishedScenesFilters } });
+      sessionReady = await ensureReadSessionReady({ isCurrent, intent: { kind: 'published', filters: publishedScenesFilters } });
       if (!isCurrent()) return { ok: false, skipped: true, status: 'stale_response' };
       if (!sessionReady.ok) {
         if (sessionReady.result?.skipped) return sessionReady.result;
@@ -2375,10 +2376,11 @@ async function loadPublishedRolePlaySceneScenes({
     const offset = append ? Number(publishedScenesNextOffset || publishedScenes.length || 0) : 0;
     const result = await getReadAuth().read(() => apiClient.listRolePlayScenePublishedScenes({
       ...publishedScenesFilters, limit: 20, offset,
-    }), { preflight: false, intent: { kind: 'published', filters: publishedScenesFilters }, isCurrent });
+    }), { preflight: false, prepared: sessionReady, intent: { kind: 'published', filters: publishedScenesFilters }, isCurrent });
     if (!isCurrent()) {
       return { ok: false, skipped: true, status: 'stale_response' };
     }
+    if (result.ok && !result.isCurrent?.()) return { ok: false, skipped: true, status: 'superseded' };
     if (result.skipped) return result;
     if (!result.ok) {
       failure = result;
@@ -2471,9 +2473,10 @@ async function openPublishedRolePlaySceneById(publishedSceneId, {
   try {
     showMessage({ textId: 'published.opening' });
     let metadata = scene;
+    let preparedRead = sessionReady;
     if (!metadata) {
       if (isDirect) setDirectLaunchState('loading-metadata');
-      const metadataResult = await getReadAuth().read(() => apiClient.fetchRolePlayScenePublishedScene(publishedSceneId, { signal }), { preflight: false, isCurrent: directAttemptIsCurrent, signal, intent: { kind: 'publication', id: publishedSceneId } });
+      const metadataResult = await getReadAuth().read(() => apiClient.fetchRolePlayScenePublishedScene(publishedSceneId, { signal }), { preflight: false, prepared: preparedRead, isCurrent: directAttemptIsCurrent, signal, intent: { kind: 'publication', id: publishedSceneId } });
       if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
       if (metadataResult.skipped) return metadataResult;
       if (!metadataResult.ok) {
@@ -2481,6 +2484,8 @@ async function openPublishedRolePlaySceneById(publishedSceneId, {
         else showMessage({ text: getServerReadErrorMessage(metadataResult, 'published.openFailed') });
         return metadataResult;
       }
+      if (!metadataResult.isCurrent?.()) return { ok: false, skipped: true, status: 'stale_attempt' };
+      preparedRead = metadataResult;
       metadata = metadataResult.data;
     }
     if (isDirect) {
@@ -2505,7 +2510,7 @@ async function openPublishedRolePlaySceneById(publishedSceneId, {
           progress: { loaded, total, lengthComputable, percent },
         });
       } : null,
-    }), { preflight: false, isCurrent: directAttemptIsCurrent, signal, intent: { kind: 'publication', id: publishedSceneId } });
+    }), { preflight: false, prepared: preparedRead, isCurrent: directAttemptIsCurrent, signal, intent: { kind: 'publication', id: publishedSceneId } });
     if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
     if (artifact.skipped) return artifact;
     if (!artifact.ok) {
@@ -2513,7 +2518,8 @@ async function openPublishedRolePlaySceneById(publishedSceneId, {
       else showMessage({ text: getServerReadErrorMessage(artifact, 'published.openFailed') });
       return artifact;
     }
-    accountCurrent = getReadAuth().captureContext?.() || (() => true);
+    accountCurrent = artifact.isCurrent || (() => false);
+    if (!directAttemptIsCurrent()) return { ok: false, skipped: true, status: 'stale_attempt' };
     if (isDirect) setDirectLaunchState('preparing', { progress: null });
     preparedImport = await prepareProjectImport(createZipFileFromBytes(
       artifact.data,
@@ -2562,12 +2568,13 @@ async function downloadPublishedRolePlayScene(scene) {
   const isCurrent = () => revision === serverModalRevision && generation === store.projectGeneration;
   const sessionReady = await ensureReadSessionReady({ isCurrent, intent: { kind: 'publication-download', id: sceneId } });
   if (!sessionReady.ok || !isCurrent()) return;
-  const artifact = await getReadAuth().read(() => apiClient.fetchRolePlayScenePublishedSceneArtifact(sceneId), { preflight: false, isCurrent, intent: { kind: 'publication-download', id: sceneId } });
+  const artifact = await getReadAuth().read(() => apiClient.fetchRolePlayScenePublishedSceneArtifact(sceneId), { preflight: false, prepared: sessionReady, isCurrent, intent: { kind: 'publication-download', id: sceneId } });
   if (!isCurrent() || artifact.skipped) return;
   if (!artifact.ok) {
     showMessage({ text: getServerReadErrorMessage(artifact, 'published.downloadFailed') });
     return;
   }
+  if (!artifact.isCurrent?.()) return;
   const blob = new Blob([artifact.data], { type: 'application/zip' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -2649,14 +2656,16 @@ async function loadUploadedRolePlaySceneDrafts({ preflight = true, showManager =
   const stale = () => ({ ok: false, skipped: true, status: 'stale_response' });
   isLoadingUploadedDrafts = true;
   updateServerSessionUi();
+  let sessionReady = null;
   try {
     if (preflight) {
-      const sessionReady = await ensureReadSessionReady({ isCurrent, intent: { kind: 'drafts' } });
+      sessionReady = await ensureReadSessionReady({ isCurrent, intent: { kind: 'drafts' } });
       if (!isCurrent()) return stale();
       if (!sessionReady.ok) return sessionReady.result;
     }
-    const result = await getReadAuth().read(() => apiClient.listRolePlaySceneDrafts({ signal }), { preflight: false, intent: { kind: 'drafts' }, isCurrent, signal });
+    const result = await getReadAuth().read(() => apiClient.listRolePlaySceneDrafts({ signal }), { preflight: false, prepared: sessionReady, intent: { kind: 'drafts' }, isCurrent, signal });
     if (!isCurrent()) return stale();
+    if (result.ok && !result.isCurrent?.()) return { ok: false, skipped: true, status: 'superseded' };
     if (result.skipped) return result;
     if (!result.ok) {
       showMessage({ text: getServerReadErrorMessage(result, 'server.listFailed') });
@@ -2888,13 +2897,14 @@ async function openUploadedRolePlaySceneDraft(draft, { published = false } = {})
         openingUploadedDraft.percent = percent;
         syncUploadedDraftActionAvailability();
       },
-    })), { preflight: false, isCurrent, signal: controller.signal, intent: { kind: published ? 'publication-copy' : 'draft', id: uploadedDraftId } });
+    })), { preflight: false, prepared: sessionReady, isCurrent, signal: controller.signal, intent: { kind: published ? 'publication-copy' : 'draft', id: uploadedDraftId } });
     if (!isCurrent() || artifact.skipped) return;
     if (!artifact.ok) {
       showMessage({ text: getServerReadErrorMessage(artifact, published ? 'published.openFailed' : 'server.openFailed') });
       return;
     }
-    accountCurrent = getReadAuth().captureContext?.() || (() => true);
+    accountCurrent = artifact.isCurrent || (() => false);
+    if (!isCurrent()) return;
     if (openingUploadedDraft?.uploadedDraftId === uploadedDraftId) {
       openingUploadedDraft.phase = 'preparing';
       openingUploadedDraft.percent = null;
@@ -2980,12 +2990,13 @@ async function downloadUploadedRolePlaySceneDraft(draft) {
   const isCurrent = () => revision === serverModalRevision && generation === store.projectGeneration;
   const sessionReady = await ensureReadSessionReady({ isCurrent, intent: { kind: 'draft-download', id: uploadedDraftId } });
   if (!sessionReady.ok || !isCurrent()) return;
-  const artifact = await getReadAuth().read(() => apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId), { preflight: false, isCurrent, intent: { kind: 'draft-download', id: uploadedDraftId } });
+  const artifact = await getReadAuth().read(() => apiClient.fetchRolePlaySceneDraftArtifact(uploadedDraftId), { preflight: false, prepared: sessionReady, isCurrent, intent: { kind: 'draft-download', id: uploadedDraftId } });
   if (!isCurrent() || artifact.skipped) return;
   if (!artifact.ok) {
     showMessage({ text: getServerReadErrorMessage(artifact, 'server.downloadFailed') });
     return;
   }
+  if (!artifact.isCurrent?.()) return;
   const blob = new Blob([artifact.data], { type: 'application/zip' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');

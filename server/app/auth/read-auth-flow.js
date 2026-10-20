@@ -26,6 +26,7 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
   let authFailureVersion = 0;
   let knownSubject = subject() || null;
   const observed = new WeakSet();
+  const verifiedContexts = new WeakMap();
   const observe = result => {
     if (!result || typeof result !== 'object' || observed.has(result)) return result;
     observed.add(result);
@@ -67,10 +68,16 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
         }
         if (!anyCurrent()) return stale();
         if (!result?.ok) return result || stale();
+        const verificationContext = captureContext();
         const verified = await probe({ isCurrent: anyCurrent });
-        if (!anyCurrent()) return stale();
+        if (!anyCurrent() || !verificationContext()) return stale();
         if (verified.ok && !verified.user?.sub) return { ok: false, status: 'error', error: { code: 'SESSION_PROBE_FAILED' } };
-        return observe(verified);
+        observe(verified);
+        if (verified.ok) {
+          const completedContext = captureContext();
+          verifiedContexts.set(verified, () => verificationContext() && completedContext());
+        }
+        return verified;
       })().finally(() => { if (recovery === entry) recovery = null; });
     }
     const entry = recovery;
@@ -94,39 +101,76 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     try { return await whileCurrent(entry.promise, current); }
     finally { entry.callers.delete(current); }
   };
-  const ensure = async ({ isCurrent = () => true, signal, intent, timeoutMs } = {}) => {
+  const ensure = async ({ isCurrent = () => true, signal, intent, timeoutMs, withContext = false } = {}) => {
+    // Opt-in provider lease: bind both the start of verification and its result.
+    // Capturing only after awaiting ensure could authorize old work under a new
+    // account or after a newer observed authentication failure.
+    const initialContext = withContext ? captureContext() : null;
     const startEpoch = epoch;
     const current = () => !signal?.aborted && isCurrent() && startEpoch === epoch;
     if (!current()) return stale();
+    let recoveryContext = null;
     let result = await sharedPreflight(current, timeoutMs);
     if (!isCurrent() || signal?.aborted) return stale();
+    if (withContext && result?.ok && !initialContext()) return stale();
     result = observe(result);
     if (!current()) return stale();
     if (!result.ok && classifySessionFailure(result) === 'authentication_required') {
       result = await recover(current, intent);
-      if (result?.ok) result = { ...result, authenticationRecovered: true };
+      if (result?.ok) {
+        recoveryContext = verifiedContexts.get(result);
+        if (!recoveryContext?.()) return stale();
+        result = { ...result, authenticationRecovered: true };
+      }
     }
-    return current() ? result : stale();
+    if (!current()) return stale();
+    if (withContext && result?.ok) {
+      // Login recovery deliberately returns without executing provider work.
+      // Its own auth failure must not invalidate that explicit-retry outcome.
+      const before = result.authenticationRecovered ? recoveryContext : initialContext;
+      const verified = captureContext();
+      const accountCurrent = () => before() && verified();
+      if (!accountCurrent()) return stale();
+      // Account-only predicate: composing caller isCurrent here would recurse
+      // when the provider runner installs this lease into its own guard.
+      return { ...result, isCurrent: accountCurrent };
+    }
+    return result;
   };
-  const read = async (request, { isCurrent = () => true, signal, preflight = true, intent } = {}) => {
+  const read = async (request, { isCurrent = () => true, signal, preflight = true, intent, prepared = null, recoverAuth = true } = {}) => {
     const startEpoch = epoch;
     const initialSubject = subject() || knownSubject;
+    let accountCurrent = prepared ? (prepared.isCurrent || (() => false))
+      : preflight ? () => true : captureContext();
     const contextCurrent = () => !signal?.aborted && isCurrent() && epoch === startEpoch;
-    const current = () => contextCurrent() && (!initialSubject || !subject() || subject() === initialSubject);
+    const identityCurrent = () => contextCurrent() && (!initialSubject || !subject() || subject() === initialSubject);
+    const current = () => identityCurrent() && accountCurrent();
     if (!current()) return stale();
     if (preflight) {
-      const ready = await ensure({ isCurrent: contextCurrent, signal, intent });
+      const ready = await ensure({ isCurrent: contextCurrent, signal, intent, withContext: true });
       if (!ready.ok || !current()) return current() ? ready : stale();
+      accountCurrent = ready.isCurrent;
+      if (!current()) return stale();
     }
     const requestVersion = authFailureVersion;
-    let result = await whileCurrent(request(), current);
-    if (!current() || (result.ok && requestVersion !== authFailureVersion)) return stale();
-    if (!result.ok && classifySessionFailure(result) === 'authentication_required') {
+    let result = await whileCurrent(request(), identityCurrent);
+    // A peer's auth failure can invalidate this lease while both requests are
+    // already in flight. Only an auth failure may join that active recovery;
+    // stale success/other errors must never escape or initiate a fresh login.
+    const joinsRecovery = recovery && classifySessionFailure(result) === 'authentication_required';
+    if (!identityCurrent() || (!current() && !joinsRecovery)
+      || (result.ok && requestVersion !== authFailureVersion)) return stale();
+    if (recoverAuth && !result.ok && classifySessionFailure(result) === 'authentication_required') {
       authFailureVersion++;
       invalidate('signed_out');
+      // The request's own auth failure invalidates its old lease. Recovery may
+      // replace it only with the lease tied to a fresh successful verification.
+      accountCurrent = () => true;
       const ready = await recover(current, intent);
       if (!current()) return stale();
       if (!ready.ok) return ready;
+      accountCurrent = verifiedContexts.get(ready) || (() => false);
+      if (!current()) return stale();
       // At most one repeat. A second auth failure is returned to the surface.
       const retryVersion = authFailureVersion;
       result = await whileCurrent(request(), current);
@@ -136,7 +180,9 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
         invalidate('signed_out');
       }
     }
-    return result;
+    // Carry the original account lease across the await in app adapters. Do
+    // not include caller isCurrent: adapters may compose this into that guard.
+    return result.ok ? { ...result, isCurrent: accountCurrent } : result;
   };
   // Hold the verified account boundary through parsing and persistence too.
   const captureContext = () => {

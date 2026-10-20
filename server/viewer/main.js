@@ -3997,11 +3997,10 @@ class ViewerAttemptSession {
     this.notifyStateChange();
     try {
       const request = () => this.apiClient.listUploadedAttempts({ signal });
-      const result = recoverAuth
-        ? await this.readAuth.read(request, { signal, isCurrent: () => isCurrent() && ownsRequest(), intent: { kind: 'attempts' } })
-        : await request();
+      const result = await this.readAuth.read(request, { preflight: recoverAuth, recoverAuth, signal, isCurrent: () => isCurrent() && ownsRequest(), intent: { kind: 'attempts' } });
       if (!isCurrent() || !ownsRequest()) return { ok: false, skipped: true, status: 'superseded' };
       if (result?.skipped) return result;
+      if (result?.ok && !result.isCurrent?.()) return { ok: false, skipped: true, status: 'superseded' };
       if (!result?.ok) {
         this.state.uploadedAttemptsError = getApiErrorMessage(result, 'list');
         return result;
@@ -4085,7 +4084,7 @@ class ViewerAttemptSession {
     };
     this.notifyStateChange();
     try {
-      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, intent: { kind: 'attempt-download', id: uploadedAttemptId } });
+      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData, isCurrent } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, intent: { kind: 'attempt-download', id: uploadedAttemptId } });
       if (artifact?.skipped) return artifact;
       if (!artifact?.ok) {
         this.state.serverActionMessage = getApiErrorMessage(artifact, 'download');
@@ -4096,6 +4095,7 @@ class ViewerAttemptSession {
         });
         return artifact;
       }
+      if (!isCurrent() || !artifact.isCurrent?.()) return { ok: false, skipped: true, status: 'superseded' };
       const bytes = ensureUint8Array(artifact?.data);
       if (!bytes) {
         const result = { ok: false, error: { code: 'INVALID_ARTIFACT', message: t('viewer.notifications.uploadedAttempt.artifactEmpty') } };
@@ -4298,7 +4298,7 @@ class ViewerAttemptSession {
     };
     this.notifyStateChange();
     try {
-      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, intent: { kind: 'attempt', id: uploadedAttemptId } });
+      const artifact = uploadedAttemptRow?.__artifactData ? { ok: true, data: uploadedAttemptRow.__artifactData, isCurrent } : await this.readAuth.read(() => this.apiClient.fetchUploadedAttemptArtifact(uploadedAttemptId), { isCurrent, intent: { kind: 'attempt', id: uploadedAttemptId } });
       if (artifact?.skipped) return artifact;
       if (!artifact?.ok) {
         this.state.serverActionMessage = getApiErrorMessage(artifact, 'open');
@@ -4309,7 +4309,8 @@ class ViewerAttemptSession {
         });
         return artifact;
       }
-      const accountCurrent = this.readAuth.captureContext?.() || (() => true);
+      const accountCurrent = artifact.isCurrent || (() => false);
+      if (!isCurrent() || !accountCurrent()) return { ok: false, skipped: true, status: 'superseded' };
       const packageModel = parseUploadedAttemptPackage(artifact.data);
       return await this.restoreAttemptPackageAsLocalAttempt(packageModel, {
         isCurrent: () => isCurrent() && accountCurrent(),
@@ -4600,13 +4601,13 @@ class ViewerAttemptSession {
   }
 
   async ensureReadSessionReady(options = {}) {
-    const result = await this.readAuth.ensure(options);
+    const result = await this.readAuth.ensure({ ...options, withContext: true });
     if (!result.ok && !result.skipped && (options.isCurrent?.() ?? true)) {
       this.state.serverActionMessage = getApiErrorMessage(result, 'session');
       this.state.publishedListError = this.state.serverActionMessage;
       this.notifyStateChange();
     }
-    return { ok: result.ok === true, result };
+    return { ok: result.ok === true, result, isCurrent: result.isCurrent };
   }
 
   async refreshServerSession() {
@@ -4714,8 +4715,9 @@ class ViewerAttemptSession {
     }
     this.notifyStateChange();
 
+    let sessionReady = null;
     if (options.preflight !== false) {
-      const sessionReady = await this.preflightPublishedSession({ isCurrent });
+      sessionReady = await this.preflightPublishedSession({ isCurrent });
       if (!isCurrent() || !ownsRequest()) return sessionReady.result;
       if (!sessionReady.ok) return sessionReady.result;
     }
@@ -4730,11 +4732,11 @@ class ViewerAttemptSession {
       offset: requestOffset,
     });
     const request = () => fetchPublishedPackagesPage({ apiClient: this.apiClient, filters, pagination });
-    const result = options.recoverAuth === false ? await request()
-      : await this.readAuth.read(request, { preflight: false, isCurrent: () => isCurrent() && ownsRequest(), intent: { kind: 'published', filters: normalizedFilters } });
+    const result = await this.readAuth.read(request, { preflight: false, prepared: sessionReady, recoverAuth: options.recoverAuth !== false, isCurrent: () => isCurrent() && ownsRequest(), intent: { kind: 'published', filters: normalizedFilters } });
     if (!ownsRequest()) return result;
     this.state.isLoadingPublishedPackages = false;
     if (!isCurrent()) { this.notifyStateChange(); return result; }
+    if (result.ok && !result.isCurrent?.()) { this.notifyStateChange(); return { ok: false, skipped: true, status: 'superseded' }; }
     if (result.skipped) { this.notifyStateChange(); return result; }
     if (!result.ok) {
       this.state.serverActionMessage = getApiErrorMessage(result, 'list');
@@ -4778,14 +4780,15 @@ class ViewerAttemptSession {
       this.packageLoad.update(progressToken, 'downloading');
       const artifact = await this.readAuth.read(() => this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, {
         onProgress: progress => this.packageLoad.update(progressToken, 'downloading', progress),
-      }), { preflight: false, isCurrent, intent: { kind: 'publication', id: normalizedPublishedPackageId, filters: { subject: options.sourceSubject || '', owner: options.sourceOwner || '' } } });
+      }), { preflight: false, prepared: sessionReady, isCurrent, intent: { kind: 'publication', id: normalizedPublishedPackageId, filters: { subject: options.sourceSubject || '', owner: options.sourceOwner || '' } } });
       if (artifact.skipped) return artifact;
       if (!artifact.ok) {
         this.state.serverActionMessage = getApiErrorMessage(artifact, 'download');
         this.notifyStateChange();
         return artifact;
       }
-      const accountCurrent = this.readAuth.captureContext?.() || (() => true);
+      const accountCurrent = artifact.isCurrent || (() => false);
+      if (!isCurrent() || !accountCurrent()) return { ok: false, skipped: true, status: 'superseded' };
       this.packageLoad.update(progressToken, 'opening');
       // Yield to the browser before synchronous ZIP parsing begins.
       await new Promise(resolve => setTimeout(resolve, 0));

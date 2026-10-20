@@ -143,3 +143,94 @@ test('captured context permits a transient checking state but rejects its signed
   flow.observe(auth);
   assert.equal(current(), false);
 });
+
+// Walk microtask boundaries around probe completion, ensure/recover settlement,
+// and request invocation. No timers or arbitrary sleeps control these races.
+for (const phase of ['preflight', 'recovery']) {
+  test(`newer sign-out cannot authorize a read across ${phase} continuations`, async () => {
+    for (let delay = 0; delay < 24; delay++) {
+      let flow, invalidated = false, probes = 0, requests = 0, violation = false;
+      const later = (n, callback) => queueMicrotask(() => n ? later(n - 1, callback) : callback());
+      flow = createReadAuthFlow({ subject: () => 'a', invalidate() {},
+        prompt: async () => true, signIn: async () => ready('a'),
+        probe: async () => {
+          probes++;
+          if (phase === 'preflight' || probes > 1) {
+            later(delay, () => { invalidated = true; flow.observe({ ...auth }); });
+          }
+          return ready('a');
+        },
+      });
+      await flow.read(async () => {
+        requests++;
+        if (phase === 'recovery' && requests === 1) return { ...auth };
+        violation ||= invalidated;
+        return { ok: true };
+      });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(violation, false, `${phase}, microtask offset ${delay}`);
+      assert.ok(requests <= (phase === 'recovery' ? 2 : 1));
+    }
+  });
+}
+
+test('newer failure during login verification prevents read retry', async () => {
+  let resolveProbe, probes = 0, requests = 0;
+  const { flow } = fixture({ probe: async () => ++probes === 1 ? ready('a')
+    : new Promise(resolve => { resolveProbe = resolve; }) });
+  const work = flow.read(async () => { requests++; return { ...auth }; });
+  await new Promise(resolve => setImmediate(resolve));
+  flow.observe({ ...auth }); resolveProbe(ready('a'));
+  assert.equal((await work).skipped, true); assert.equal(requests, 1);
+});
+
+test('late auth failure after completed recovery cannot start another login', async () => {
+  let finishOld, count = 0;
+  const { flow, events } = fixture();
+  const old = flow.read(() => new Promise(resolve => { finishOld = resolve; }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await flow.read(async () => ++count === 1 ? { ...auth } : { ok: true })).ok, true);
+  finishOld({ ...auth });
+  assert.equal((await old).skipped, true);
+  assert.equal(events.filter(value => value === 'login').length, 1);
+});
+
+test('preflight-free read discards late auth failure after peer recovery finishes', async () => {
+  let finishOld, count = 0;
+  const { flow, events } = fixture();
+  const old = flow.read(() => new Promise(resolve => { finishOld = resolve; }), { preflight: false });
+  assert.equal((await flow.read(async () => ++count === 1 ? { ...auth } : { ok: true })).ok, true);
+  finishOld({ ...auth });
+  assert.equal((await old).skipped, true);
+  assert.equal(events.filter(value => value === 'login').length, 1);
+});
+
+test('prepared verification cannot be recaptured after invalidation', async () => {
+  const { flow } = fixture();
+  const prepared = await flow.ensure({ withContext: true });
+  flow.observe({ ...auth });
+  assert.equal((await flow.read(() => assert.fail('stale prepared request'), { preflight: false, prepared })).skipped, true);
+});
+
+test('successful read carries its original guard through post-download work', async () => {
+  const { flow } = fixture();
+  const result = await flow.read(async () => ({ ok: true, data: 'fixture' }));
+  assert.equal(result.isCurrent(), true);
+  flow.observe({ ...auth });
+  assert.equal(result.isCurrent(), false);
+});
+
+test('prepared read can replace its lease only through its own verified login recovery', async () => {
+  const { flow } = fixture(); let sends = 0;
+  const prepared = await flow.ensure({ withContext: true });
+  const result = await flow.read(async () => ++sends === 1 ? { ...auth } : { ok: true }, { preflight: false, prepared });
+  assert.equal(result.ok, true); assert.equal(result.isCurrent(), true); assert.equal(prepared.isCurrent(), false);
+});
+
+test('read with recovery disabled returns a guarded result without prompting or replay', async () => {
+  const { flow, events } = fixture();
+  assert.equal(await flow.read(async () => auth, { preflight: false, recoverAuth: false }), auth);
+  assert.deepEqual(events, []);
+  const result = await flow.read(async () => ({ ok: true }), { preflight: false, recoverAuth: false });
+  flow.observe({ ...auth }); assert.equal(result.isCurrent(), false);
+});

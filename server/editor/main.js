@@ -3725,13 +3725,13 @@ class EditorDraftSession {
   }
 
   async ensureReadSessionReady(options = {}) {
-    const result = await this.readAuth.ensure(options);
+    const result = await this.readAuth.ensure({ ...options, withContext: true });
     if (!result.ok && !result.skipped && (options.isCurrent?.() ?? true)) {
       this.state.serverActionMessage = getApiErrorMessage(result, 'session');
       if (!result.cancelled) this.pushNotification({ kind: 'warn', category: 'server', source: 'session.read', text: this.state.serverActionMessage });
       this.notifyStateChange();
     }
-    return { ok: result.ok === true, result };
+    return { ok: result.ok === true, result, isCurrent: result.isCurrent };
   }
 
   async refreshServerSession() {
@@ -4008,8 +4008,9 @@ class EditorDraftSession {
     const ownsRequest = () => isCurrent() && this._uploadedDraftsRequest === request;
     const superseded = () => ({ ok: false, skipped: true, status: 'superseded' });
     const loadPromise = (async () => {
+      let sessionReady = null;
       if (shouldPreflight) {
-        const sessionReady = await this.ensureReadSessionReady({ isCurrent: ownsRequest, intent: { kind: 'drafts' } });
+        sessionReady = await this.ensureReadSessionReady({ isCurrent: ownsRequest, intent: { kind: 'drafts' } });
         if (!ownsRequest()) return superseded();
         if (sessionReady.result?.skipped) return sessionReady.result;
         if (!sessionReady.ok) {
@@ -4026,9 +4027,10 @@ class EditorDraftSession {
 
       try {
         const fetchRows = () => this.apiClient.listUploadedDrafts({ signal: options.signal });
-        const result = options.recoverAuth === false ? await fetchRows() : await this.readAuth.read(fetchRows, { preflight: false, isCurrent: ownsRequest, signal: options.signal, intent: { kind: 'drafts' } });
+        const result = await this.readAuth.read(fetchRows, { preflight: false, prepared: sessionReady, recoverAuth: options.recoverAuth !== false, isCurrent: ownsRequest, signal: options.signal, intent: { kind: 'drafts' } });
         if (!ownsRequest()) return superseded();
         if (result.skipped) return result;
+        if (result.ok && !result.isCurrent?.()) return superseded();
         if (!result.ok) {
           this.state.uploadedDraftsError = getApiErrorMessage(result, 'list');
           this.state.uploadedDrafts = [];
@@ -4115,14 +4117,15 @@ class EditorDraftSession {
       if (!sessionReady.ok) return sessionReady.result;
       const artifact = await this.readAuth.read(
         () => this.downloadWorksheetArtifact(loadToken, options => this.apiClient.fetchUploadedDraftArtifact(uploadedDraftId, options)),
-        { preflight: false, isCurrent, intent: { kind: 'draft', id: uploadedDraftId } });
+        { preflight: false, prepared: sessionReady, isCurrent, intent: { kind: 'draft', id: uploadedDraftId } });
       if (artifact.skipped) return artifact;
       if (!artifact.ok) {
         this.pushNotification({ kind: 'error', category: 'server', source: 'uploadedDraft.open', text: getApiErrorMessage(artifact, 'open') });
         this.notifyStateChange();
         return artifact;
       }
-      const accountCurrent = this.readAuth.captureContext?.() || (() => true);
+      const accountCurrent = artifact.isCurrent || (() => false);
+      if (!isCurrent() || !accountCurrent()) return { ok: false, skipped: true, status: 'superseded' };
       const imported = await this.importWorksheetPackageFile(
         createZipFileFromBytes(artifact.data, `uploaded-draft-${uploadedDraftId}.zip`),
         { convertToEditableDraft: true, migrationSource: 'uploaded-draft', loadToken, isCurrent: () => isCurrent() && accountCurrent() }
@@ -4163,14 +4166,15 @@ class EditorDraftSession {
       if (!sessionReady.ok) return sessionReady.result;
       const artifact = await this.readAuth.read(
         () => this.downloadWorksheetArtifact(loadToken, options => this.apiClient.fetchPublishedPackageArtifact(normalizedPublishedPackageId, options)),
-        { preflight: false, isCurrent, intent: { kind: 'publication', id: normalizedPublishedPackageId } });
+        { preflight: false, prepared: sessionReady, isCurrent, intent: { kind: 'publication', id: normalizedPublishedPackageId } });
       if (artifact.skipped) return artifact;
       if (!artifact.ok) {
         this.pushNotification({ kind: 'error', category: 'server', source: 'publishedPackage.open', text: getApiErrorMessage(artifact, 'open') });
         this.notifyStateChange();
         return artifact;
       }
-      const accountCurrent = this.readAuth.captureContext?.() || (() => true);
+      const accountCurrent = artifact.isCurrent || (() => false);
+      if (!isCurrent() || !accountCurrent()) return { ok: false, skipped: true, status: 'superseded' };
       const imported = await this.importWorksheetPackageFile(
         createZipFileFromBytes(artifact.data, `published-package-${normalizedPublishedPackageId}.zip`),
         { convertToEditableDraft: true, migrationSource: 'published-package', loadToken, isCurrent: () => isCurrent() && accountCurrent() }
@@ -5745,7 +5749,7 @@ function renderEditorShell(session) {
         offset: append && Number.isFinite(Number(browsePublishedState.nextOffset))
           ? Number(browsePublishedState.nextOffset)
           : 0,
-      }), { preflight: false, isCurrent, intent: { kind: 'published', filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } } });
+      }), { preflight: false, prepared: sessionReady, isCurrent, intent: { kind: 'published', filters: { title: browsePublishedState.title, subject: browsePublishedState.subject, owner: browsePublishedState.owner } } });
     } catch (error) {
       result = { ok: false, error: { code: 'NETWORK_ERROR' }, cause: error };
     }
@@ -5753,6 +5757,7 @@ function renderEditorShell(session) {
       if (request === publishedSearchRequest) browsePublishedState = { ...browsePublishedState, loading: false };
       return { ok: false, status: 'superseded' };
     }
+    if (result.ok && !result.isCurrent?.()) result = { ok: false, skipped: true, status: 'superseded' };
     if (result.skipped) { browsePublishedState = { ...browsePublishedState, loading: false }; renderPublishedBrowserModal(); return result; }
     if (!result.ok) {
       browsePublishedState = {
