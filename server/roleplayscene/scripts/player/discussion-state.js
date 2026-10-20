@@ -59,7 +59,7 @@ function normalizeText(value) {
 }
 
 export class RolePlaySceneDiscussionSession {
-  constructor({ storage = globalThis?.sessionStorage, apiClient = null, checkSession = async () => ({ ok: true }), beginSignIn = () => {}, recording } = {}) {
+  constructor({ storage = globalThis?.sessionStorage, apiClient = null, checkSession = async () => ({ ok: true }), beginSignIn = () => {}, getRewriteAuth, recording } = {}) {
     this.storage = getStorage(storage);
     this.apiClient = apiClient;
     this.projectFingerprint = '';
@@ -72,7 +72,7 @@ export class RolePlaySceneDiscussionSession {
     this.beginServerSignIn = beginSignIn;
     this.scheduleAutosave = () => this.persist();
     this.voice = createVoiceWorkflow({
-      api: apiClient, checkSession, recording,
+      api: apiClient, checkSession, getRewriteAuth, recording,
       context: id => ({ attemptId: String(this.generation), contextKey: this.projectFingerprint,
         block: this.state.viewerPayload.blocks.find(b => b.blockId === id),
         editable: Boolean(this.project), answer: this.getText(id), recovery: this.recovery[id] }),

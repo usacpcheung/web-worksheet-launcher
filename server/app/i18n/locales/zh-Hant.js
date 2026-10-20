@@ -692,6 +692,7 @@ export default {
         "rewriting": "正在改寫…"
       },
       "errors": {
+        "EXPLICIT_RETRY_REQUIRED": "已登入。請檢查文字，再按「重試」進行重寫。系統未有自動傳送任何請求。",
         "AUTH_REQUIRED": "請登入後再按「重試」。錄音不會自動開始。",
         "PERMISSION_DENIED": "麥克風權限被拒絕。請在瀏覽器允許存取後重試。",
         "DEVICE_UNAVAILABLE": "未能使用麥克風。請檢查麥克風後重試。",

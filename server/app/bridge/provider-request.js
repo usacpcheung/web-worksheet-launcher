@@ -99,7 +99,8 @@ export async function runProviderRequest({ auth, request, intent, signal,
     const result = await Promise.race([work, interruption]);
     return check() ? result : stopped;
   };
-  const finish = result => ({ ...result, isCurrent: result.ok ? current : () => false });
+  const finish = result => ({ ...result, isCurrent: result.ok ? current : () => false,
+    ...(result.ok ? { accountCurrent } : {}) });
   try {
     if (!check()) return finish(stopped);
     signal?.addEventListener('abort', onAbort, { once: true });

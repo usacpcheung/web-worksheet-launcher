@@ -10,6 +10,14 @@ import { createStoredZip, parseStoredZip, decodeUtf8, crc32 } from '../editor/zi
 import { PackageService } from '../api/services/package-service.js';
 import { createWorksheetPackageFromDraft, parseWorksheetPackage } from '../editor/worksheet-package.js';
 
+// Model login-return restoration and a later, explicit Retry click separately.
+async function restoreAndRetryViewerRewrite(session, payload) {
+  session.autosave = async () => {};
+  const restored = await session.replayViewerRewriteIntent(payload);
+  if (restored.status !== 'retry_required') return restored;
+  return session.voice.run(payload.blockId, { mode: 'rewrite', retry: session.state.voiceRecovery[payload.blockId] });
+}
+
 test('editor package subject survives viewer import and attempt ZIP', async () => {
   const mod = await loadViewerModule();
   const subject = 'QA bilingual preservation 科學';
@@ -6243,7 +6251,8 @@ test('replayViewerRewriteIntent valid viewerRewrite context calls rewrite API an
     q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
   };
 
-  const result = await session.replayViewerRewriteIntent({
+  session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+  const result = await restoreAndRetryViewerRewrite(session, {
     localAttemptId: 'attempt_1',
     blockId: 'q1',
     answerTextAtClickTime: 'original answer',
@@ -6282,7 +6291,8 @@ test('replayViewerRewriteIntent stores raw click snapshot for undo when provided
     q1: { value: '01234567890123456789', answeredAt: '2026-04-01T00:00:00.000Z' },
   };
 
-  const result = await session.replayViewerRewriteIntent({
+  session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+  const result = await restoreAndRetryViewerRewrite(session, {
     localAttemptId: 'attempt_1',
     blockId: 'q1',
     answerTextAtClickTime: '01234567890123456789EXTRA',
@@ -6314,7 +6324,8 @@ test('replayViewerRewriteIntent accepts unchanged answers that differ only by su
     q1: { value: '  hello  ', answeredAt: '2026-04-01T00:00:00.000Z' },
   };
 
-  const result = await session.replayViewerRewriteIntent({
+  session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+  const result = await restoreAndRetryViewerRewrite(session, {
     localAttemptId: 'attempt_1',
     blockId: 'q1',
     answerTextAtClickTime: 'hello',
@@ -6352,7 +6363,8 @@ test('replayViewerRewriteIntent accepts auth-restore maxLength truncation when s
     q1: { value: '01234567890123456789', answeredAt: '2026-04-01T00:00:00.000Z' },
   };
 
-  const result = await session.replayViewerRewriteIntent({
+  session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+  const result = await restoreAndRetryViewerRewrite(session, {
     localAttemptId: 'attempt_1',
     blockId: 'q1',
     answerTextAtClickTime: '01234567890123456789EXTRA_CHARS_TYPED_BEFORE_AUTH',
@@ -6390,7 +6402,8 @@ test('replayViewerRewriteIntent stale-check prefers raw snapshot and save-equiva
     q1: { value: '   ab', answeredAt: '2026-04-01T00:00:00.000Z' },
   };
 
-  const result = await session.replayViewerRewriteIntent({
+  session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+  const result = await restoreAndRetryViewerRewrite(session, {
     localAttemptId: 'attempt_1',
     blockId: 'q1',
     // Legacy trimmed snapshot would not match restored value in this edge case.
@@ -6460,7 +6473,8 @@ test('stale replay context aborts without calling rewrite API or mutating answer
   };
   const before = JSON.stringify(session.state.answers);
 
-  const result = await session.replayViewerRewriteIntent({
+  session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+  const result = await restoreAndRetryViewerRewrite(session, {
     localAttemptId: 'attempt_stale',
     blockId: 'q1',
     answerTextAtClickTime: 'keep me',
@@ -6529,7 +6543,8 @@ test('rewrite API failure keeps original answer unchanged and clears in-flight f
     q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
   };
 
-  const result = await session.replayViewerRewriteIntent({
+  session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+  const result = await restoreAndRetryViewerRewrite(session, {
     localAttemptId: 'attempt_1',
     blockId: 'q1',
     answerTextAtClickTime: 'original answer',
@@ -6567,7 +6582,8 @@ test('rewrite API thrown error keeps original answer unchanged and clears in-fli
     q1: { value: 'original answer', answeredAt: '2026-04-01T00:00:00.000Z' },
   };
 
-  const result = await session.replayViewerRewriteIntent({
+  session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+  const result = await restoreAndRetryViewerRewrite(session, {
     localAttemptId: 'attempt_1',
     blockId: 'q1',
     answerTextAtClickTime: 'original answer',
@@ -6603,7 +6619,8 @@ test('rewrite apply with unchanged resulting text is treated as success (not non
   };
   session.state.undoBuffer = { q1: 'older answer' };
 
-  const result = await session.replayViewerRewriteIntent({
+  session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+  const result = await restoreAndRetryViewerRewrite(session, {
     localAttemptId: 'attempt_1',
     blockId: 'q1',
     answerTextAtClickTime: 'same answer',
@@ -6683,6 +6700,7 @@ test('imported worksheet keys support rewrite, recovery restore, retry and disca
     }, { apiClient: { rewriteText: async () => fail
       ? { ok: false, error: { code: 'UPSTREAM_FAILED' } }
       : { ok: true, data: { text: 'Improved answer' } } } });
+    session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
     session.applyAttemptState({ localAttemptId: 'imported', status: 'in_progress',
       viewerPayload: { worksheetId: 'w', snapshotId: 's', blocks: [
         { blockId: id, kind: 'question', responseConfig: { inputType: 'text', maxLength: 200 } },
@@ -7095,3 +7113,22 @@ for (const kind of ['publication', 'attempt']) {
     assert.equal(result.skipped, true);
   });
 }
+
+test('legacy rewrite login return restores explicit retry without sending or replacing local recovery', async () => {
+  const mod = await loadViewerModule();
+  let saves = 0;
+  const session = new mod.ViewerAttemptSession({ resumeFlags: { get() {}, set() {} } }, {
+    apiClient: { rewriteText: () => assert.fail('login return must not send') },
+  });
+  session.autosave = async () => { saves++; };
+  session.state.localAttemptId = 'a'; session.state.lastActiveBlockId = 'q';
+  session.state.viewerPayload = { blocks: [{ blockId: 'q', kind: 'question', responseConfig: { inputType: 'text' } }] };
+  session.state.answers = { q: { value: 'Original' } };
+  const intent = { actionId: 'viewerRewrite', payload: { localAttemptId: 'a', blockId: 'q', answerTextAtClickTime: 'Original' } };
+  assert.equal((await session.replayProtectedAction(intent)).status, 'retry_required');
+  assert.equal(saves, 1); assert.equal(session.state.answers.q.value, 'Original');
+  assert.equal(session.state.voiceRecovery.q.text, 'Original');
+  session.state.voiceRecovery.q.text = 'Edited recovery';
+  assert.equal((await session.replayProtectedAction(intent)).status, 'recovery_pending');
+  assert.equal(session.state.voiceRecovery.q.text, 'Edited recovery');
+});

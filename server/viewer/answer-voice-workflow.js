@@ -1,3 +1,4 @@
+import { runProviderRequest } from '../app/bridge/provider-request.js';
 import { createAnswerRecording } from './answer-recording.js';
 
 export const REWRITE_INPUT_LIMIT = 2000;
@@ -40,6 +41,7 @@ export function normalizeVoiceRecovery(records, blocks = []) {
         { deliberate: true, snapshot: item.snapshot, index: item.index }),
       mode: item.mode === 'rewrite' ? 'rewrite' : 'voice',
       createdAt: typeof item.createdAt === 'string' ? item.createdAt : '',
+      ...(typeof item.undoSnapshot === 'string' ? { undoSnapshot: item.undoSnapshot } : {}),
     }]);
   }
   return Object.fromEntries(entries);
@@ -70,7 +72,7 @@ function waitFor(promise, signal) {
 }
 
 export function createVoiceWorkflow({ context, apply, recover, changed = () => {},
-  api, checkSession, recording = createAnswerRecording, setTimer = setInterval, clearTimer = clearInterval }) {
+  api, checkSession, getRewriteAuth, recording = createAnswerRecording, setTimer = setInterval, clearTimer = clearInterval }) {
   let sequence = 0, active = null, timer = null;
   let pendingAudio = null;
   let lastDiagnostic = null;
@@ -92,9 +94,12 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
   const keep = (op, code, candidate) => {
     if (!valid(op)) return;
     return recover(op.blockId, { mode: op.mode, phase: op.phase, text: op.text || '', snapshot: op.snapshot,
-      index: op.index, createdAt: op.createdAt, code, ...(candidate !== undefined ? { candidate } : {}) });
+      index: op.index, createdAt: op.createdAt, code,
+      ...(typeof op.undoSnapshot === 'string' ? { undoSnapshot: op.undoSnapshot } : {}), ...(op.providerError ? { providerError: op.providerError } : {}),
+      ...(candidate !== undefined ? { candidate, accountCurrent: op.accountCurrent } : {}) });
   };
   const applyCandidate = (op, candidate) => {
+    if (op.accountCurrent && !op.accountCurrent()) { keep(op, 'STALE_CONTEXT'); return false; }
     if (!fresh(op)) { keep(op, 'STALE_CONTEXT', candidate); return false; }
     const value = op.mode === 'rewrite' ? { text: candidate, caret: candidate.length }
       : insertVoiceSegment(op.snapshot, candidate, op.index);
@@ -117,15 +122,15 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
       index: insertionIndex(retry?.snapshot ?? current.answer, retry
         ? { deliberate: true, snapshot: retry.snapshot, index: retry.index } : intent),
       createdAt: new Date().toISOString(), controller: new AbortController(), state: 'checking_session',
-      phase: hasRecoveryText(retry) ? 'text' : retry?.phase || 'preflight', text: retry?.text || '', undoSnapshot };
+      phase: hasRecoveryText(retry) ? 'text' : retry?.phase || 'preflight', text: retry?.text || '', undoSnapshot: undoSnapshot ?? retry?.undoSnapshot };
     if (append) { op.snapshot = current.answer; op.index = current.answer.length; }
     if (mode === 'rewrite' || retry?.text || candidate !== undefined) pendingAudio = null;
     lastDiagnostic = null;
     active = op; emit();
     try {
-      if (!fresh(op)) { keep(op, 'STALE_CONTEXT', candidate); return { ok: false }; }
-      if (candidate !== undefined) return { ok: applyCandidate(op, candidate) };
-      if (!skipSession) {
+      if (candidate !== undefined) { op.accountCurrent = retry?.accountCurrent; return { ok: applyCandidate(op, candidate) }; }
+      if (!fresh(op)) { keep(op, 'STALE_CONTEXT'); return { ok: false }; }
+      if (!skipSession && mode !== 'rewrite' && !hasRecoveryText(retry)) {
         const session = await waitFor(checkSession(), op.controller.signal);
         if (!session?.ok && session?.result?.skipped) return { ok: false, status: 'superseded' };
         if (!session?.ok) throw session?.result?.error || session?.error || { code: 'AUTH_REQUIRED' };
@@ -133,7 +138,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
       if (!fresh(op)) { keep(op, 'STALE_CONTEXT'); return { ok: false }; }
       if (mode === 'rewrite') {
         op.text = hasRecoveryText(retry) ? retry.text : sourceText ?? current.answer.trim();
-        op.phase = 'text';
+        op.phase = hasRecoveryText(retry) ? 'text' : 'preflight';
       } else if (!hasRecoveryText(retry)) {
         op.phase = 'capture';
         let blob;
@@ -172,16 +177,42 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
       if (!op.text.trim()) throw { code: 'EMPTY_RECORDING' };
       if (unicodeLength(op.text) > REWRITE_INPUT_LIMIT) throw { code: 'TRANSCRIPT_TOO_LONG' };
       if (!fresh(op)) { keep(op, 'STALE_CONTEXT'); return { ok: false }; }
-      stage(op, 'rewriting');
-      const result = await waitFor(api.rewriteText(op.text, { signal: op.controller.signal }), op.controller.signal);
-      if (!result.ok) throw result.error;
+      stage(op, 'checking_session');
+      const auth = getRewriteAuth?.();
+      const result = await runProviderRequest({
+        // Preserve each app's sign-in surface. Preparation checks the shared
+        // coordinator without replaying or opening a second login flow.
+        auth: { ensure: options => auth?.ensure
+          ? auth.ensure({ ...options, recoverAuth: false })
+          : Promise.resolve({ ok: false, error: { code: 'SESSION_PROBE_FAILED' } }) },
+        signal: op.controller.signal, isCurrent: () => fresh(op),
+        request: ({ signal }) => {
+          op.phase = 'text'; stage(op, 'rewriting');
+          if (!fresh(op) || signal.aborted) return { ok: false, skipped: true, status: 'superseded' };
+          return api.rewriteText(op.text, { signal });
+        },
+      });
+      if (!result.ok) {
+        if (result.kind === 'superseded') {
+          if (op.phase === 'preflight') return { ok: false, status: 'superseded' };
+          keep(op, 'STALE_CONTEXT'); return { ok: false, status: 'recovery_required' };
+        }
+        if (result.kind === 'authentication_required' && fresh(op)) auth?.observe?.(result);
+        if (result.kind !== 'retry_required') op.providerError = { error: result.error, source: result.source || 'bridge' };
+        throw { ...result.error, providerKind: result.kind };
+      }
+      // Keep only the account part for recoverable candidates; the runner's
+      // predicate also owns this operation, which ends in finally below.
+      op.accountCurrent = result.accountCurrent;
+      if (!result.isCurrent()) { keep(op, 'STALE_CONTEXT'); return { ok: false, status: 'recovery_required' }; }
       if (active !== op) return { ok: false };
       if (!result.data?.text?.trim()) throw { code: 'REWRITE_FAILED' };
       const ok = applyCandidate(op, result.data.text.trim());
       return { ok, status: ok ? 'rewrite_applied' : 'recovery_required' };
     } catch (error) {
       if (active !== op) return { ok: false, status: 'cancelled' };
-      const code = errorCode(error, op.state);
+      const code = error?.providerKind ? ({ authentication_required: 'AUTH_REQUIRED', permission_denied: 'FORBIDDEN',
+        cancelled: 'CANCELED', retry_required: 'EXPLICIT_RETRY_REQUIRED' }[error.providerKind] || 'REWRITE_FAILED') : errorCode(error, op.state);
       // Memory-only troubleshooting metadata. Never retain message/details/body,
       // which can contain learner text or an upstream login page.
       lastDiagnostic = { stage: op.state, code,

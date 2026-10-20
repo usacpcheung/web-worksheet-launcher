@@ -101,7 +101,7 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     try { return await whileCurrent(entry.promise, current); }
     finally { entry.callers.delete(current); }
   };
-  const ensure = async ({ isCurrent = () => true, signal, intent, timeoutMs, withContext = false } = {}) => {
+  const ensure = async ({ isCurrent = () => true, signal, intent, timeoutMs, withContext = false, recoverAuth = true } = {}) => {
     // Opt-in provider lease: bind both the start of verification and its result.
     // Capturing only after awaiting ensure could authorize old work under a new
     // account or after a newer observed authentication failure.
@@ -115,7 +115,7 @@ export function createReadAuthFlow({ probe, signIn, prompt, subject, invalidate,
     if (withContext && result?.ok && !initialContext()) return stale();
     result = observe(result);
     if (!current()) return stale();
-    if (!result.ok && classifySessionFailure(result) === 'authentication_required') {
+    if (recoverAuth && !result.ok && classifySessionFailure(result) === 'authentication_required') {
       result = await recover(current, intent);
       if (result?.ok) {
         recoveryContext = verifiedContexts.get(result);

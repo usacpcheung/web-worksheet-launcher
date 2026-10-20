@@ -2520,6 +2520,7 @@ class ViewerAttemptSession {
 
     this.voice = createVoiceWorkflow({
       api: this.apiClient,
+      getRewriteAuth: () => this.readAuth,
       checkSession: () => this.ensureServerSessionReady(),
       context: (blockId) => ({
         attemptId: this.state.localAttemptId,
@@ -4382,8 +4383,17 @@ class ViewerAttemptSession {
       block, this.state.answers?.[payload.blockId]?.value)) {
       return { ok: false, status: 'rewrite_stale_context' };
     }
-    return this.voice.run(payload.blockId, { mode: 'rewrite', skipSession: true,
-      sourceText: String(payload.answerTextAtClickTime ?? '').trim(), undoSnapshot: payload.answerTextRawAtClickTime });
+    if (this.voice.active || hasPendingRecovery(getVoiceRecovery(this.state.voiceRecovery, payload.blockId))) return { ok: true, status: 'recovery_pending' };
+    this.state.voiceRecovery = { ...this.state.voiceRecovery, [payload.blockId]: {
+      mode: 'rewrite', phase: 'text', text: String(payload.answerTextAtClickTime ?? '').trim(),
+      snapshot: String(this.state.answers?.[payload.blockId]?.value ?? ''), index: 0,
+      code: 'EXPLICIT_RETRY_REQUIRED', createdAt: new Date().toISOString(),
+      ...(typeof payload.answerTextRawAtClickTime === 'string' ? { undoSnapshot: payload.answerTextRawAtClickTime } : {}),
+    } };
+    this.state.attemptRevision++;
+    await this.autosave();
+    this.notifyStateChange();
+    return { ok: true, status: 'retry_required' };
   }
 
   async triggerProtectedAction(actionId, intentPayload = {}) {

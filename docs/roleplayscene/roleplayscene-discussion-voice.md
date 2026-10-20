@@ -31,3 +31,17 @@ View/查看 returns to the operation's scene even after choosing a different bra
 Leaving the page explicitly pauses music before browser history caching. After Back/Forward restoration, music controls refresh from the media state. Stopped music stays stopped until the learner uses the existing Unmute control; scene redraws do not restart it. No separate Resume label is introduced. During recording the music control shows the temporary off state while the controller separately remembers whether to resume after microphone release. An ordinary same-scene redraw does not stop capture; actual scene navigation and explicit discussion close still do. Discussion DOM IDs are generated independently of imported scene IDs.
 
 Use a reviewed branch/release based on current `main` for future live acceptance. No new configuration is required; existing transcription/rewrite routes and HTTPS microphone access must work. Test real recordings in Windows Chrome/Edge, actual iPad Safari and mobile Chrome. Verify music pauses before recording and resumes after microphone release only when previously playing, while dialogue requires explicit resume; verify music controls after browser Back/Forward; deny permission; expire login during upload; throttle/disconnect; cancel/retry; close or change scenes during each stage; replace stories with reused scene IDs; reload transcript recovery; print; and test cue-card layouts in portrait/landscape. Automated synthetic recordings do not establish real provider/device compatibility. No live provider calls or VPS deployment are performed during automated verification.
+
+## Shared rewrite request integration
+
+Text rewriting (including the stage after transcription) uses the shared bridge
+runner and verified account guard; see [the current bridge contract](../contracts/rewrite-bridge-workflows.md#8-text-rewrite-integration).
+Each rewrite explicitly checks readiness, sends at most one provider request and
+rejects late output after cancellation, target changes or observed account/session
+invalidation. The existing sign-in UI remains responsible for login; login never
+resends a rewrite. Transcript retry retains text and does not repeat transcription.
+Safe provider/session errors use the shared localized presentation layer.
+
+Recovery may include an optional local string `undoSnapshot` for legacy login-return
+compatibility. Provider metadata, account guards and candidate output are not saved.
+Recording, transcription and T2A integration remain separate work.
