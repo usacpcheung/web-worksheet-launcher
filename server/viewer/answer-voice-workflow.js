@@ -116,13 +116,21 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
   // Recording preparation remains app-owned and never replays a provider call.
   async function provider(op, operation, request) {
     const auth = getProviderAuth?.();
+    // A failed readiness probe invalidates the previous transcription lease.
+    // Let that probe report its failure; require the old lease again before
+    // accepting successful readiness or sending/applying any provider work.
+    let preparing = true;
     const result = await runProviderRequest({
-      auth: { ensure: options => auth?.ensure
-        ? auth.ensure({ ...options, recoverAuth: false })
-        : Promise.resolve({ ok: false, error: { code: 'SESSION_PROBE_FAILED' } }) },
+      auth: { ensure: async options => {
+        const ready = auth?.ensure
+          ? await auth.ensure({ ...options, recoverAuth: false })
+          : { ok: false, error: { code: 'SESSION_PROBE_FAILED' } };
+        if (ready?.ok) preparing = false;
+        return ready;
+      } },
       signal: op.controller.signal,
       isCurrent: () => fresh(op) && (!op.identityCurrent || op.identityCurrent())
-        && (!op.transcriptionCurrent || op.transcriptionCurrent()),
+        && (preparing || !op.transcriptionCurrent || op.transcriptionCurrent()),
       request,
     });
     if (!result.ok) {

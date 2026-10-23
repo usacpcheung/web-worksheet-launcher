@@ -337,7 +337,10 @@ No automatic login recovery, POST retry or new timeout is introduced.
   An observed account switch prevents sending/applying old work, including between
   retaining the transcript and preparing rewrite. The successful transcription
   lease also spans rewrite preparation, so observed session invalidation stops
-  continuation while preserving text for explicit retry. Cancellation settles local
+  continuation while preserving text for explicit retry. A current failed session
+  probe still reports authentication guidance; its own invalidation must not hide
+  the failure as stale work. Successful preparation and all provider work still
+  require the earlier transcription lease. Cancellation settles local
   waiting even when a transport ignores its AbortSignal.
 - A transcription authentication failure retains the audio only in memory for
   explicit Retry. Reuse requires the same account identity, attempt/project

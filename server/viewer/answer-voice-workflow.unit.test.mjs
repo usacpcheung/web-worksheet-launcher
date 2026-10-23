@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createReadAuthFlow } from '../app/auth/read-auth-flow.js';
 import { createVoiceWorkflow, insertVoiceSegment, insertionIndex, normalizeVoiceRecovery,
   unicodeLength, isVoiceQuestion, AUDIO_UPLOAD_LIMIT } from './answer-voice-workflow.js';
 
@@ -476,3 +477,62 @@ test('session invalidation between transcription and rewrite retains text withou
   assert.equal((await h.flow.run('q1', { retry: h.state.recovery.q1 })).ok, true);
   assert.equal(h.state.requests.filter(r => r.kind === 'transcribe').length, 1);
 });
+
+
+for (const boundary of ['transcription', 'rewrite']) {
+  test(`real coordinator preserves ${boundary} readiness auth failure and explicit retry`, async () => {
+    let subject = 'A', probes = 0, failed = false, prompts = 0;
+    const auth = createReadAuthFlow({
+      subject: () => subject, invalidate: () => { subject = null; },
+      prompt: () => { prompts++; return false; }, signIn: () => { throw new Error('Unexpected login'); },
+      probe: async () => {
+        const deny = !failed && ++probes === (boundary === 'transcription' ? 1 : 2);
+        if (deny) failed = true;
+        const result = deny ? { ok: false, status: 'not_ready', error: { code: 'AUTH_REQUIRED', status: 401 } }
+          : { ok: true, status: 'ready', user: { sub: 'A' } };
+        subject = deny ? null : 'A';
+        // Both production app probes observe the result before returning it.
+        auth.observe(result);
+        return result;
+      },
+    });
+    const h = setup({ getProviderAuth: () => auth });
+    const result = await h.record();
+    assert.equal(result.error?.code, 'AUTH_REQUIRED');
+    assert.equal(h.state.recovery.q1.code, 'AUTH_REQUIRED');
+    assert.equal(h.state.recovery.q1.providerError.source, 'repository-api');
+    assert.equal(h.state.recovery.q1.text, boundary === 'rewrite' ? 'new segment' : '');
+    assert.equal(h.state.requests.length, boundary === 'rewrite' ? 1 : 0);
+    assert.equal(h.state.applied.length, 0);
+    assert.equal(prompts, 0);
+    assert.equal((await h.flow.run('q1', { retry: h.state.recovery.q1 })).ok, true);
+    assert.equal(h.state.records.length, 1);
+    assert.deepEqual(h.state.requests.map(r => r.kind), ['transcribe', 'rewrite']);
+  });
+}
+
+for (const change of ['cancel', 'target', 'account', 'peer-expiry']) {
+  test(`real coordinator blocks ${change} during rewrite verification`, async () => {
+    let subject = 'A', probes = 0;
+    const gate = deferred();
+    const auth = createReadAuthFlow({
+      subject: () => subject, invalidate: () => {}, prompt: () => false, signIn: () => {},
+      probe: async () => {
+        if (++probes === 2) await gate.promise;
+        const result = { ok: true, status: 'ready', user: { sub: subject } };
+        auth.observe(result); return result;
+      },
+    });
+    const h = setup({ getProviderAuth: () => auth });
+    const pending = h.record(); await tick();
+    assert.equal(probes, 2);
+    if (change === 'cancel') h.flow.cancel();
+    if (change === 'target') h.state.contextKey = {};
+    if (change === 'account') { subject = 'B'; auth.observe({ ok: true, status: 'ready', user: { sub: 'B' } }); }
+    if (change === 'peer-expiry') auth.observe({ ok: false, error: { code: 'AUTH_REQUIRED' } });
+    gate.resolve();
+    assert.equal((await pending).ok, false);
+    assert.equal(h.state.applied.length, 0);
+    assert.deepEqual(h.state.requests.map(r => r.kind), ['transcribe']);
+  });
+}

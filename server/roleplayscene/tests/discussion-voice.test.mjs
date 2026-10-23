@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createReadAuthFlow } from '../../app/auth/read-auth-flow.js';
 import { RolePlaySceneDiscussionSession } from '../scripts/player/discussion-state.js';
 import { buildDiscussionPrintModel } from '../scripts/player/discussion-print.js';
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -128,4 +129,29 @@ test('discussion rewrite preflight failure preserves recovery edits through relo
   assert.equal(restored.getText('one'), 'Edited recovery');
   assert.equal(restored.undo('one'), true);
   assert.equal(restored.getText('one'), 'Original');
+});
+
+
+test('discussion expiry after transcription retains sign-in guidance and retries text only', async () => {
+  let subject = 'A', probes = 0;
+  const auth = createReadAuthFlow({ subject: () => subject,
+    invalidate: () => { subject = null; }, prompt: () => false, signIn: () => {},
+    probe: async () => {
+      const fail = ++probes === 2;
+      subject = fail ? null : 'A';
+      const result = fail ? { ok: false, status: 'not_ready', error: { code: 'AUTH_REQUIRED' } }
+        : { ok: true, status: 'ready', user: { sub: 'A' } };
+      auth.observe(result); return result;
+    },
+  });
+  const { session, counts } = setup({ getProviderAuth: () => auth });
+  session.setText('one', 'Original');
+  const task = session.voice.run('one'); await tick(); session.voice.stop();
+  assert.equal((await task).error.code, 'AUTH_REQUIRED');
+  assert.equal(session.recovery.one.code, 'AUTH_REQUIRED');
+  assert.equal(session.recovery.one.text, 'new sentence');
+  assert.equal(session.getText('one'), 'Original');
+  assert.equal((await session.voice.run('one', { retry: session.recovery.one })).ok, true);
+  assert.equal(session.getText('one'), 'Original new sentence');
+  assert.deepEqual(counts(), { captures: 1, transcriptions: 1 });
 });
