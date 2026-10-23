@@ -327,3 +327,32 @@ test('rewrite cannot bypass preparation through legacy skipSession or missing au
   assert.equal((await h.flow.run('q1', { mode: 'rewrite', skipSession: true })).ok, false);
   assert.equal(h.state.requests.length, 0);
 });
+
+for (const cancel of [false, true]) {
+  test(`navigation during post-transcription verification preserves original target; explicit cancel=${cancel}`, async () => {
+    const gate = deferred();
+    const h = setup({ getRewriteAuth: () => ({ ensure: () => gate.promise }) });
+    const pending = h.record(); await tick();
+    assert.equal(h.flow.active.state, 'checking_session');
+    h.flow.navigate();
+    assert.ok(h.flow.active, 'background verification survives navigation');
+    h.state.answers.q2 = 'New unrelated answer';
+    if (cancel) h.flow.cancel();
+    gate.resolve({ ok: true, isCurrent: () => true });
+    const result = await pending;
+    assert.equal(result.ok, !cancel);
+    assert.equal(h.state.answers.q1, cancel ? 'Earlier' : 'Earlier New segment');
+    assert.equal(h.state.answers.q2, 'New unrelated answer');
+    assert.equal(h.state.requests.filter(r => r.kind === 'rewrite').length, cancel ? 0 : 1);
+  });
+}
+
+for (const candidate of [undefined, 'Recovered']) {
+  test(`append replaces legacy Undo snapshot with current answer; candidate=${candidate !== undefined}`, async () => {
+    const h = setup(); h.state.answers.q1 = 'New answer';
+    const retry = { phase: 'text', mode: 'rewrite', text: 'Original source', snapshot: 'Original', undoSnapshot: 'Old pre-login answer' };
+    await h.flow.run('q1', { mode: 'voice', append: true, retry, candidate });
+    assert.equal(h.state.applied[0].snapshot, 'New answer');
+    assert.equal(h.state.answers.q1, candidate ? 'New answer Recovered' : 'New answer New segment');
+  });
+}

@@ -306,6 +306,11 @@ Recording/transcription and all T2A adapters retain their existing implementatio
   normalization supports an optional string `undoSnapshot` to preserve the raw
   pre-login answer for Undo; old records remain valid. Audio, candidate output,
   account functions and provider-error metadata remain memory-only.
+- Navigation during the verification after completed transcription keeps valid
+  background work on its original target; explicit Cancel still stops waiting.
+  Initial microphone/session preparation keeps its existing navigation cancellation.
+  Add at end always captures the current answer for Undo, replacing any legacy
+  pre-login snapshot carried by the recovery record.
 - App layouts, caret placement, text limits, Undo, save/reload and distinct
   Viewer/discussion purposes remain owned by their adapters.
 

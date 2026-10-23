@@ -123,7 +123,7 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
         ? { deliberate: true, snapshot: retry.snapshot, index: retry.index } : intent),
       createdAt: new Date().toISOString(), controller: new AbortController(), state: 'checking_session',
       phase: hasRecoveryText(retry) ? 'text' : retry?.phase || 'preflight', text: retry?.text || '', undoSnapshot: undoSnapshot ?? retry?.undoSnapshot };
-    if (append) { op.snapshot = current.answer; op.index = current.answer.length; }
+    if (append) { op.snapshot = current.answer; op.index = current.answer.length; op.undoSnapshot = current.answer; }
     if (mode === 'rewrite' || retry?.text || candidate !== undefined) pendingAudio = null;
     lastDiagnostic = null;
     active = op; emit();
@@ -171,6 +171,8 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
         blob = null;
         op.text = result.data.text;
         op.phase = 'text';
+        // Navigation may leave completed capture processing in the background.
+        op.transcriptionCompleted = true;
         if (active !== op || !valid(op)) return { ok: false };
         await waitFor(keep(op, null), op.controller.signal);
       }
@@ -229,7 +231,8 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
     stop() { if (active?.state === 'recording') { stage(active, 'stopping'); active.recorder.stop(); } },
     navigate() {
       if (active?.state === 'recording') this.stop();
-      else if (['checking_session', 'requesting_permission'].includes(active?.state)) this.cancel();
+      else if (active?.state === 'requesting_permission'
+        || (active?.state === 'checking_session' && !active.transcriptionCompleted)) this.cancel();
     },
     cancel({ discard = false } = {}) {
       pendingAudio = null;
