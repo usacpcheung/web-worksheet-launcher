@@ -120,7 +120,7 @@ export function createVoiceControls({ session, block, control, t, view, applied,
     recovery.hidden = !record || Boolean(own);
     if (record) {
       message.textContent = record.providerError
-        ? getApiErrorMessage(record.providerError, record.providerError.source === 'repository-api' ? 'session' : 'rewrite', record.providerError.source)
+        ? getApiErrorMessage(record.providerError, record.providerError.source === 'repository-api' ? 'session' : record.providerError.operation || 'rewrite', record.providerError.source)
         : t(`viewer.voice.errors.${record.code || 'RECOVERED'}`);
       if (record.phase === 'preflight' && (!record.providerError || record.code === 'AUTH_REQUIRED')) message.textContent = t(record.code === 'AUTH_REQUIRED'
         ? (record.mode === 'rewrite' ? 'viewer.voice.signInThenRewrite' : 'viewer.voice.signInThenVoice')

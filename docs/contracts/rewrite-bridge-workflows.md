@@ -1,10 +1,10 @@
 # Rewrite-bridge workflow map and shared contract
 
-Status: **mapping approved in PR #322; foundation merged in PR #323; shared text-rewrite integration implemented; transcription and T2A migration pending**.
+Status: **mapping approved in PR #322; foundation merged in PR #323; shared text-rewrite and transcription integration implemented; T2A migration pending**.
 Original mapping baseline: main `7762c74f63b119baeccaa513f3500746ff7b526a` (merged PR #321). Text-rewrite integration is based on main `1f17a2cd7e693ad626f040b299606cc6fe93083c` (merged PR #323).
 This document extends stage 5 of the [authentication roadmap](authentication-workflows.md).
 It covers the complete provider-request lifecycle, not only sign-in. The mapping PR changed documentation only. The foundation below adds a shared
-helper and tests; text-rewrite adapters now use it as described in section 8. No external bridge,
+helper and tests; text-rewrite and transcription adapters now use it as described in sections 8–9. No external bridge,
 OIDC, database or deployment changes are included.
 
 ## 1. Scope and existing ownership
@@ -76,8 +76,7 @@ valid background work can remain attached to its original answer or scene.
 
 These are original mapping findings and migration risks, not newly reproduced live defects.
 They do not establish that every affected user journey currently fails. Section 8
-resolves rewrite-stage account binding, safe outcomes and explicit retry; the
-transcription/T2A portions remain pending.
+resolves rewrite-stage account binding, safe outcomes and explicit retry; section 9 resolves transcription; T2A remains pending.
 
 | Finding and trigger | Evidence / consequence | Proposed resolution |
 | --- | --- | --- |
@@ -278,7 +277,7 @@ The production rewrite transport has one shared caller in
 `server/viewer/answer-voice-workflow.js`, used by Viewer answers and RolePlayScene
 discussions. Editor has no rewrite caller. Whole-text rewrites, rewrites after
 transcription, and explicit transcript retries now call `runProviderRequest`.
-Recording/transcription and all T2A adapters retain their existing implementation.
+Transcription now uses the same runner (section 9); T2A adapters retain their existing implementation.
 
 - Both adapters supply the existing read-auth coordinator lazily. Preparation
   uses `ensure({ withContext: true, recoverAuth: false })`: a verified account
@@ -320,7 +319,41 @@ legacy login-return restoration and both consumer regressions. Deployed acceptan
 must check both apps' rewrite and voice-to-rewrite flows, original sign-in surfaces,
 explicit retry, cancellation, Undo and English/Traditional Chinese guidance.
 
-Remaining sequence: migrate transcription in both shared consumers, migrate T2A
-across both authoring apps, then reconcile contracts and remove proven superseded
-code. The smaller rewrite-first boundary supersedes the combined voice/rewrite
+Remaining sequence: migrate T2A across both authoring apps, then reconcile
+contracts and remove proven superseded code. The smaller rewrite-first boundary supersedes the combined voice/rewrite
 integration row in the original staging table; storage/package scope stays closed.
+
+
+## 9. Transcription integration
+
+Viewer answers and RolePlayScene discussion now route transcription through the
+same `runProviderRequest` adapter as rewriting. Both inject `getProviderAuth`.
+The initial app-owned microphone readiness check is retained. Before uploading,
+transcription independently verifies readiness with `recoverAuth: false`, binds
+the request to the verified account and checks the original target/answer.
+No automatic login recovery, POST retry or new timeout is introduced.
+
+- An identity guard captured before recording spans transcription and rewrite.
+  An observed account switch prevents sending/applying old work, including between
+  retaining the transcript and preparing rewrite. The successful transcription
+  lease also spans rewrite preparation, so observed session invalidation stops
+  continuation while preserving text for explicit retry. Cancellation settles local
+  waiting even when a transport ignores its AbortSignal.
+- A transcription authentication failure retains the audio only in memory for
+  explicit Retry. Reuse requires the same account identity, attempt/project
+  generation, question/scene and answer snapshot. Sign-in alone sends nothing.
+  Account switches discard that pending recording; a new recording is required.
+- Successful transcription is retained before rewrite. Failed rewrite retries
+  only that editable text. Audio, account functions and provider diagnostics are
+  excluded from persisted recovery. Existing recording duration/size limits,
+  caret insertion, Undo, media coordination and navigation behavior remain.
+- Safe errors carry their operation so unknown transcription failures use the
+  English/Traditional Chinese transcription fallback, not rewrite guidance.
+  Explicit permission denial does not start login; authentication does. Provider
+  response messages, bodies and audio are not copied into recovery or logs.
+
+Regression coverage includes late transcription after account/target/answer
+changes or cancellation, auth failure before upload, same-account audio retry,
+account changes before retry/rewrite, safe failure categories and both consumer
+browser flows. Synthetic fixtures do not establish live microphone/provider or
+real background-tab acceptance; deployment acceptance remains necessary.

@@ -31,7 +31,7 @@ try {
       const data = { project, audioGate: true }; const listeners = new Set();
       const store = { get: () => data, set: update => { Object.assign(data, update); for (const fn of listeners) fn(); }, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); } };
       window.redrawPlayer = () => store.set({ audioGate: false });
-      window.discussion = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), apiClient }); window.discussion.bindProject(project);
+      window.discussion = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), apiClient }); window.discussion.bindProject(project);
       window.discussion.setText('one', 'Earlier discussion');
       window.cleanupPlayer = renderPlayer(store, document.querySelector('#left'), document.querySelector('#right'), () => {}, { initialSceneId: 'one', discussionSession: window.discussion, apiClient });
       window.restoreMusicPlayer = () => {

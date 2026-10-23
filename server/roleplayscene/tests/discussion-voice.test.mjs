@@ -8,7 +8,7 @@ function setup(options = {}) {
   let stored = ''; let finishCapture;
   const storage = { getItem: () => stored, setItem: (_, value) => { stored = value; } };
   let captures = 0, transcriptions = 0;
-  const session = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage,
+  const session = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage,
     recording: () => ({ start: async () => { captures++; return { ok: true }; },
       result: new Promise(resolve => { finishCapture = resolve; }),
       stop: () => finishCapture({ ok: true, data: { audioBlob: new Blob(['audio']) } }), teardown() {} }),
@@ -57,7 +57,7 @@ test('transcript recovery survives empty editing/reload and retry does not trans
   assert.equal(session.recovery.one.text, 'new sentence');
   assert.equal((await session.rewrite('one')).status, 'recovery_pending');
   session.recovery.one.text = ''; session.persist();
-  const restored = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage }); restored.bindProject(project);
+  const restored = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage }); restored.bindProject(project);
   assert.equal(restored.recovery.one.phase, 'text'); assert.equal(restored.recovery.one.text, '');
   assert.equal(restored.hasPendingWork(), true);
   session.recovery.one.text = 'edited'; fail = false;
@@ -86,7 +86,7 @@ test('imported property-name IDs support rewrite, undo, recovery reload and retr
     const apiClient = { rewriteText: async () => fail ? { ok: false, error: { code: 'UPSTREAM_FAILED' } }
       : { ok: true, data: { text: 'Rewritten' } } };
     const unusual = { meta: { title: 'Imported' }, scenes: [{ id }] };
-    const session = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage, apiClient });
+    const session = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage, apiClient });
     session.bindProject(unusual);
     assert.equal(session.getMessage(id), '');
     session.setText(id, 'Original');
@@ -96,7 +96,7 @@ test('imported property-name IDs support rewrite, undo, recovery reload and retr
     assert.equal(session.getText(id), 'Original');
     fail = true; await session.rewrite(id);
     assert.equal(Object.hasOwn(JSON.parse(stored).recovery, id), true);
-    const restored = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage, apiClient });
+    const restored = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage, apiClient });
     restored.bindProject(unusual);
     assert.equal(restored.recovery[id].text, 'Original');
     fail = false;
@@ -111,16 +111,16 @@ test('imported property-name IDs support rewrite, undo, recovery reload and retr
 
 test('discussion rewrite preflight failure preserves recovery edits through reload and retry', async () => {
   let ready = false; const sent = [];
-  const getRewriteAuth = () => ({ ensure: async () => ready
+  const getProviderAuth = () => ({ ensure: async () => ready
     ? { ok: true, isCurrent: () => true } : { ok: false, error: { code: 'AUTH_REQUIRED' } } });
   const apiClient = { rewriteText: async text => { sent.push(text); return { ok: true, data: { text } }; } };
-  const { session, storage } = setup({ getRewriteAuth, apiClient });
+  const { session, storage } = setup({ getProviderAuth, apiClient });
   session.setText('one', 'Original');
   await session.rewrite('one');
   assert.equal(session.recovery.one.phase, 'text');
   session.recovery.one.text = 'Edited recovery'; session.persist();
   assert.equal((await session.rewrite('one')).status, 'recovery_pending');
-  const restored = new RolePlaySceneDiscussionSession({ storage, getRewriteAuth, apiClient });
+  const restored = new RolePlaySceneDiscussionSession({ storage, getProviderAuth, apiClient });
   restored.bindProject(project); ready = true;
   assert.equal(restored.recovery.one.text, 'Edited recovery');
   await restored.voice.run('one', { mode: 'rewrite', retry: restored.recovery.one });

@@ -2520,7 +2520,7 @@ class ViewerAttemptSession {
 
     this.voice = createVoiceWorkflow({
       api: this.apiClient,
-      getRewriteAuth: () => this.readAuth,
+      getProviderAuth: () => this.readAuth,
       checkSession: () => this.ensureServerSessionReady(),
       context: (blockId) => ({
         attemptId: this.state.localAttemptId,

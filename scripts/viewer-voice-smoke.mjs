@@ -12,12 +12,12 @@ const page=await browser.newPage({viewport:{width:1280,height:900}});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
 const shot = async name => { if (screenshots) { await page.screenshot({path: screenshots + '/' + name, fullPage: false, animations: 'disabled'}); } };
-let failRewrite=false; let transcriptions=0; let sessionReady=true; let rewrittenSource;
+let failTranscription=false; let failRewrite=false; let transcriptions=0; let sessionReady=true; let rewrittenSource;
 let finishTranscription;let hold=true;
 await page.route(url => url.pathname.startsWith('/api/'),async route=>{
  const url=route.request().url();
  if(url.endsWith('/session')) return route.fulfill({json:sessionReady ? {ok:true,data:{user:{sub:'fixture',name:'Test learner'}}} : {ok:false,error:{code:'AUTH_REQUIRED'}}});
- if(url.endsWith('/transcriptions')) {transcriptions++;if(hold)await new Promise(r=>{finishTranscription=r});return route.fulfill({json:{ok:true,result:'synthetic segment'}});}
+ if(url.endsWith('/transcriptions')) {transcriptions++;if(hold)await new Promise(r=>{finishTranscription=r});return route.fulfill({json:failTranscription ? {ok:false,error:{code:'UPSTREAM_UNKNOWN',message:'PRIVATE UPSTREAM'}} : {ok:true,result:'synthetic segment'}});}
  if(url.endsWith('/rewrite')) { rewrittenSource=route.request().postDataJSON().text; return route.fulfill({json:failRewrite ? {ok:false,error:{code:'UPSTREAM_FAILED'}} : {ok:true,result:'New segment'}}); }
  return route.fulfill({json:{ok:true,data:{items:[]}}});
 });
@@ -122,6 +122,17 @@ sessionReady=true; failRewrite=false;
 await page.getByRole('button',{name:'Retry rewrite',exact:true}).click();
 await page.waitForFunction(()=>!window.viewerSession.voice.active);
 assert.equal(rewrittenSource,'Edited recovery after signing in');
+// Unknown transcription errors use their own localized fallback in the real UI.
+failTranscription=true;
+await page.getByRole('button',{name:'Add by voice',exact:true}).click();
+await page.getByRole('button',{name:'Stop',exact:true}).click();
+await page.waitForFunction(()=>!window.viewerSession.voice.active);
+assert.equal(await page.locator('.viewer-voice-recovery > [role="status"]').textContent(),
+ 'Unable to transcribe the recording. Please try recording again.');
+await page.locator('.language-selector__trigger').click();
+await page.locator('.language-selector__option[value="zh-Hant"]').click();
+await page.waitForFunction(()=>document.querySelector('.viewer-voice-recovery > [role="status"]')?.textContent === '未能將錄音轉換為文字，請重新錄音。');
+assert.equal((await page.locator('body').textContent()).includes('PRIVATE UPSTREAM'),false);
 assert.deepEqual(errors, []);
 console.log('PASS cross-question completion, focus, selection insertion, undo, mobile width, recovery editing and reload, rewrite-only retry; no browser errors');
 

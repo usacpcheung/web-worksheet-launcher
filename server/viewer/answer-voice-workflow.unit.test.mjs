@@ -26,7 +26,7 @@ function setup(options = {}) {
     apply: (id, text, snapshot, caret) => { state.answers[id] = text; state.applied.push({ id, text, snapshot, caret }); },
     recover: (id, record) => { if (record) state.recovery[id] = record; else delete state.recovery[id]; },
     changed: () => { state.states.push(flow.active?.state || 'idle'); },
-    getRewriteAuth: options.getRewriteAuth || (() => ({ ensure: async () => {
+    getProviderAuth: options.getProviderAuth || (() => ({ ensure: async () => {
       const ready = options.checkSession ? await options.checkSession() : { ok: true };
       return { ...(ready.result || ready), isCurrent: () => true };
     } })),
@@ -278,7 +278,7 @@ for (const change of ['account', 'signout']) {
       probe: async () => ({ ok: true, status: 'ready', user: { sub: subject } }),
       prompt: () => assert.fail('no implicit login'), signIn: () => assert.fail(),
     });
-    const h = setup({ getRewriteAuth: () => auth, rewrite: () => pending.promise });
+    const h = setup({ getProviderAuth: () => auth, rewrite: () => pending.promise });
     const task = h.flow.run('q1', { mode: 'rewrite' }); await tick();
     assert.equal(h.state.requests.length, 1);
     if (change === 'account') { subject = 'b'; auth.observe({ ok: true, status: 'ready', user: { sub: subject } }); }
@@ -297,7 +297,7 @@ test('rewrite preflight uses shared coordinator without login or provider replay
     probe: async () => ready ? { ok: true, status: 'ready', user: { sub: 'a' } } : { ok: false, error: { code: 'AUTH_REQUIRED' } },
     prompt: () => assert.fail('adapter owns sign-in'), signIn: () => assert.fail(),
   });
-  const h = setup({ getRewriteAuth: () => auth });
+  const h = setup({ getProviderAuth: () => auth });
   assert.equal((await h.flow.run('q1', { mode: 'rewrite' })).error.code, 'AUTH_REQUIRED');
   assert.equal(h.state.requests.length, 0); ready = true;
   await tick(); assert.equal(h.state.requests.length, 0);
@@ -315,7 +315,7 @@ test('rewrite forbidden does not request sign-in and retains safe shared present
 
 test('recovered candidate cannot be inserted after its account guard expires', async () => {
   let current = true;
-  const h = setup({ maxLength: 8, getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => current }) }) });
+  const h = setup({ maxLength: 8, getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => current }) }) });
   await h.record(); assert.equal(h.state.recovery.q1.code, 'ANSWER_TOO_LONG');
   current = false; h.state.answers.q1 = 'Changed';
   await h.flow.run('q1', { retry: h.state.recovery.q1, candidate: 'X' });
@@ -323,7 +323,7 @@ test('recovered candidate cannot be inserted after its account guard expires', a
 });
 
 test('rewrite cannot bypass preparation through legacy skipSession or missing auth adapter', async () => {
-  const h = setup({ getRewriteAuth: () => undefined });
+  const h = setup({ getProviderAuth: () => undefined });
   assert.equal((await h.flow.run('q1', { mode: 'rewrite', skipSession: true })).ok, false);
   assert.equal(h.state.requests.length, 0);
 });
@@ -331,7 +331,9 @@ test('rewrite cannot bypass preparation through legacy skipSession or missing au
 for (const cancel of [false, true]) {
   test(`navigation during post-transcription verification preserves original target; explicit cancel=${cancel}`, async () => {
     const gate = deferred();
-    const h = setup({ getRewriteAuth: () => ({ ensure: () => gate.promise }) });
+    let probes = 0;
+    const h = setup({ getProviderAuth: () => ({ ensure: () => ++probes === 1
+      ? Promise.resolve({ ok: true, isCurrent: () => true }) : gate.promise }) });
     const pending = h.record(); await tick();
     assert.equal(h.flow.active.state, 'checking_session');
     h.flow.navigate();
@@ -356,3 +358,121 @@ for (const candidate of [undefined, 'Recovered']) {
     assert.equal(h.state.answers.q1, candidate ? 'New answer Recovered' : 'New answer New segment');
   });
 }
+
+for (const kind of ['account', 'target', 'answer', 'cancel']) {
+  test(`transcription ignores late completion after ${kind} changes`, async () => {
+    const gate = deferred(); let identity = true;
+    const h = setup({
+      getProviderAuth: () => ({ captureIdentity: () => () => identity,
+        ensure: async () => ({ ok: true, isCurrent: () => identity }) }),
+      transcribe: () => gate.promise,
+    });
+    const pending = h.record(); await tick();
+    assert.equal(h.state.requests.length, 1);
+    if (kind === 'account') identity = false;
+    if (kind === 'target') h.state.contextKey = {};
+    if (kind === 'answer') h.state.answers.q1 = 'New typing';
+    if (kind === 'cancel') h.flow.cancel();
+    gate.resolve({ ok: true, data: { text: 'Stale transcript' } });
+    assert.equal((await pending).ok, false);
+    assert.equal(h.state.applied.length, 0);
+    assert.equal(h.state.requests.filter(r => r.kind === 'rewrite').length, 0);
+    assert.notEqual(h.state.recovery.q1?.text, 'Stale transcript');
+    assert.equal(h.state.recovery.q1?.providerError, undefined);
+    assert.equal(h.flow.active, null);
+  });
+}
+
+for (const [upstream, code] of [['FORBIDDEN', 'FORBIDDEN'], ['NETWORK_ERROR', 'TRANSCRIPTION_FAILED'],
+  ['RATE_LIMITED', 'RATE_LIMITED'], ['UPLOAD_TOO_LARGE', 'UPLOAD_TOO_LARGE'], ['API_ERROR', 'TRANSCRIPTION_FAILED']]) {
+  test(`transcription ${upstream} uses safe shared outcomes without opening login`, async () => {
+    let observed = 0;
+    const h = setup({
+      getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }), observe: () => observed++ }),
+      transcribe: async () => ({ ok: false, error: { code: upstream, message: 'PRIVATE PROVIDER BODY', details: { audio: 'PRIVATE' } } }),
+    });
+    const result = await h.record();
+    assert.equal(result.error.code, code);
+    assert.equal(observed, 0);
+    assert.equal(h.state.requests.length, 1);
+    assert.equal(h.state.recovery.q1.providerError.operation, 'transcription');
+    assert.equal(JSON.stringify(h.state.recovery).includes('PRIVATE'), false);
+  });
+}
+
+test('transcription preparation failure sends no audio and explicit same-account retry reuses recording', async () => {
+  let ready = false, observed = 0;
+  const h = setup({ getProviderAuth: () => ({
+    captureIdentity: () => () => true,
+    ensure: async () => ready ? { ok: true, isCurrent: () => true }
+      : { ok: false, error: { code: 'AUTH_REQUIRED' } },
+    observe: () => observed++,
+  }) });
+  assert.equal((await h.record()).error.code, 'AUTH_REQUIRED');
+  assert.equal(h.state.requests.length, 0);
+  assert.equal(observed, 1);
+  ready = true;
+  assert.equal((await h.flow.run('q1', { retry: h.state.recovery.q1 })).ok, true);
+  assert.equal(h.state.records.length, 1);
+  assert.deepEqual(h.state.requests.map(r => r.kind), ['transcribe', 'rewrite']);
+});
+
+test('audio retained for authentication retry cannot cross a verified account switch', async () => {
+  let account = 'A';
+  const h = setup({ getProviderAuth: () => ({
+    captureIdentity: () => { const original = account; return () => account === original; },
+    ensure: async () => ({ ok: true, isCurrent: () => true }),
+  }), transcribe: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED' } }) });
+  await h.record(); account = 'B';
+  const result = await h.flow.run('q1', { retry: h.state.recovery.q1 });
+  assert.equal(result.status, 'superseded');
+  assert.equal(h.state.records.length, 1);
+  assert.equal(h.state.requests.length, 1);
+});
+
+test('account change after transcription but before rewrite prevents sending retained text', async () => {
+  let account = true, probes = 0;
+  const h = setup({ getProviderAuth: () => ({
+    captureIdentity: () => () => account,
+    ensure: async () => {
+      if (++probes === 2) account = false;
+      return { ok: true, isCurrent: () => true };
+    },
+  }) });
+  assert.equal((await h.record()).ok, false);
+  assert.equal(h.state.requests.length, 1);
+  assert.equal(h.state.applied.length, 0);
+  assert.equal(h.state.recovery.q1.text, 'new segment');
+});
+
+
+test('transcription account invalidation releases an unresponsive transport without waiting for output', async () => {
+  let current = true;
+  const h = setup({ getProviderAuth: () => ({
+    captureIdentity: () => () => current,
+    ensure: async () => ({ ok: true, isCurrent: () => current }),
+  }), transcribe: () => new Promise(() => {}) });
+  const pending = h.record(); await tick(); current = false;
+  assert.equal((await pending).error.code, 'STALE_CONTEXT');
+  assert.equal(h.flow.active, null);
+  assert.equal(h.state.requests.length, 1);
+});
+
+
+test('session invalidation between transcription and rewrite retains text without sending rewrite', async () => {
+  let lease = true, probes = 0;
+  const h = setup({ getProviderAuth: () => ({
+    captureIdentity: () => () => true,
+    ensure: async () => {
+      if (++probes === 2) lease = false;
+      return { ok: true, isCurrent: probes === 1 ? () => lease : () => true };
+    },
+  }) });
+  assert.equal((await h.record()).ok, false);
+  assert.equal(h.state.requests.length, 1);
+  assert.equal(h.state.recovery.q1.text, 'new segment');
+  assert.equal(h.state.applied.length, 0);
+  // A later explicit click may authorize that locally retained source anew.
+  assert.equal((await h.flow.run('q1', { retry: h.state.recovery.q1 })).ok, true);
+  assert.equal(h.state.requests.filter(r => r.kind === 'transcribe').length, 1);
+});
