@@ -234,3 +234,12 @@ test('read with recovery disabled returns a guarded result without prompting or 
   const result = await flow.read(async () => ({ ok: true }), { preflight: false, recoverAuth: false });
   flow.observe({ ...auth }); assert.equal(result.isCurrent(), false);
 });
+
+test('ensure can prepare a provider without prompting or replaying authentication', async () => {
+  const auth = createReadAuthFlow({ subject: () => null, invalidate() {},
+    probe: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED' } }),
+    prompt: () => assert.fail('provider adapter owns sign-in'), signIn: () => assert.fail(),
+  });
+  const result = await auth.ensure({ withContext: true, recoverAuth: false });
+  assert.equal(result.ok, false); assert.equal(result.error.code, 'AUTH_REQUIRED');
+});

@@ -113,3 +113,17 @@ Historical acceptance rollback used the then-validated `main-v1` revision
 deployment, record and use its own previously validated commit and the normal
 service/cache refresh procedure. The original voice PR introduced no database
 migration to reverse.
+
+## Shared rewrite request integration
+
+Text rewriting (including the stage after transcription) uses the shared bridge
+runner and verified account guard; see [the current bridge contract](../contracts/rewrite-bridge-workflows.md#8-text-rewrite-integration).
+Each rewrite explicitly checks readiness, sends at most one provider request and
+rejects late output after cancellation, target changes or observed account/session
+invalidation. The existing sign-in UI remains responsible for login; login never
+resends a rewrite. Transcript retry retains text and does not repeat transcription.
+Safe provider/session errors use the shared localized presentation layer.
+
+Recovery may include an optional local string `undoSnapshot` for legacy login-return
+compatibility. Provider metadata, account guards and candidate output are not saved.
+Recording, transcription and T2A integration remain separate work.

@@ -1,3 +1,4 @@
+import { getApiErrorMessage } from '../app/api/error-presentation.js';
 import { supportsAnswerRecording } from './answer-recording.js';
 import { REWRITE_INPUT_LIMIT, unicodeLength, hasRecoveryText, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 
@@ -118,8 +119,10 @@ export function createVoiceControls({ session, block, control, t, view, applied,
         : intent ? t('viewer.voice.atCursor') : t('viewer.voice.atEnd');
     recovery.hidden = !record || Boolean(own);
     if (record) {
-      message.textContent = t(`viewer.voice.errors.${record.code || 'RECOVERED'}`);
-      if (record.phase === 'preflight') message.textContent = t(record.code === 'AUTH_REQUIRED'
+      message.textContent = record.providerError
+        ? getApiErrorMessage(record.providerError, record.providerError.source === 'repository-api' ? 'session' : 'rewrite', record.providerError.source)
+        : t(`viewer.voice.errors.${record.code || 'RECOVERED'}`);
+      if (record.phase === 'preflight' && (!record.providerError || record.code === 'AUTH_REQUIRED')) message.textContent = t(record.code === 'AUTH_REQUIRED'
         ? (record.mode === 'rewrite' ? 'viewer.voice.signInThenRewrite' : 'viewer.voice.signInThenVoice')
         : 'viewer.voice.preflightFailed');
       editorLabel.hidden = !hasRecoveryText(record);

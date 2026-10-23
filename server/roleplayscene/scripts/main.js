@@ -97,7 +97,7 @@ const directLaunchReturnButton = document.getElementById('direct-launch-return')
 
 const store = new Store();
 const apiClient = createServerApiClient();
-const discussionSession = new RolePlaySceneDiscussionSession({ apiClient, checkSession: ensureServerSessionReady, beginSignIn: startServerSignIn });
+const discussionSession = new RolePlaySceneDiscussionSession({ apiClient, getRewriteAuth: () => getReadAuth(), checkSession: ensureServerSessionReady, beginSignIn: startServerSignIn });
 
 let mode = 'edit'; // 'edit' | 'play'
 let teardown = null;

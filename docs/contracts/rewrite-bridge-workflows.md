@@ -1,10 +1,10 @@
 # Rewrite-bridge workflow map and shared contract
 
-Status: **mapping approved in PR #322; opt-in shared foundation added; app integration pending**.
-Reviewed against main `7762c74f63b119baeccaa513f3500746ff7b526a` (merged PR #321).
+Status: **mapping approved in PR #322; foundation merged in PR #323; shared text-rewrite integration implemented; transcription and T2A migration pending**.
+Original mapping baseline: main `7762c74f63b119baeccaa513f3500746ff7b526a` (merged PR #321). Text-rewrite integration is based on main `1f17a2cd7e693ad626f040b299606cc6fe93083c` (merged PR #323).
 This document extends stage 5 of the [authentication roadmap](authentication-workflows.md).
-It covers the complete provider-request lifecycle, not only sign-in. The mapping PR changed documentation only. The foundation below adds an opt-in
-helper and tests; production app adapters have not migrated. No external bridge,
+It covers the complete provider-request lifecycle, not only sign-in. The mapping PR changed documentation only. The foundation below adds a shared
+helper and tests; text-rewrite adapters now use it as described in section 8. No external bridge,
 OIDC, database or deployment changes are included.
 
 ## 1. Scope and existing ownership
@@ -74,8 +74,10 @@ valid background work can remain attached to its original answer or scene.
 
 ## 3. Code-backed gaps and proposed resolution
 
-These are source findings and migration risks, not newly reproduced live defects.
-They do not establish that every affected user journey currently fails.
+These are original mapping findings and migration risks, not newly reproduced live defects.
+They do not establish that every affected user journey currently fails. Section 8
+resolves rewrite-stage account binding, safe outcomes and explicit retry; the
+transcription/T2A portions remain pending.
 
 | Finding and trigger | Evidence / consequence | Proposed resolution |
 | --- | --- | --- |
@@ -215,7 +217,7 @@ mapping alone does not claim that outcome or certify the external bridge.
 
 [provider-request.js](../../server/app/bridge/provider-request.js) exports
 `runProviderRequest({auth, request, intent, signal, isCurrent, timeoutMs})` and
-`normalizeProviderResult(result)`. It is opt-in: existing bridge callers and
+`normalizeProviderResult(result)`. Text rewriting now uses this foundation (section 8). Transcription/T2A callers and
 API method signatures are unchanged. Shared authentication preparation and app
 read handoffs also receive account-validity fixes in this PR. The endpoint characterization tests record
 legacy behavior rather than claiming those inconsistencies are already fixed.
@@ -238,6 +240,8 @@ legacy behavior rather than claiming those inconsistencies are already fixed.
   Post-request authentication errors return to the adapter without starting login
   or retry. The adapter owns contextual guidance and observing current failures.
 - Successful output retains `data` and has `kind: 'success'` plus `isCurrent()`.
+  `accountCurrent()` exposes only the verified account guard for a recoverable
+  candidate after the original operation ends; app context checks still apply.
   Check that predicate immediately before application and after any additional
   asynchronous conversion/persistence preparation. It is a validity guard, not a
   transaction or rollback mechanism.
@@ -267,3 +271,56 @@ Foundation verification is in
 [bridge characterization tests](../../server/app/api/server-api-client.bridge-contract.test.mjs),
 including real session-coordinator and API-client adapters with synthetic responses.
 These tests do not establish completed integration or live provider acceptance.
+
+## 8. Text-rewrite integration
+
+The production rewrite transport has one shared caller in
+`server/viewer/answer-voice-workflow.js`, used by Viewer answers and RolePlayScene
+discussions. Editor has no rewrite caller. Whole-text rewrites, rewrites after
+transcription, and explicit transcript retries now call `runProviderRequest`.
+Recording/transcription and all T2A adapters retain their existing implementation.
+
+- Both adapters supply the existing read-auth coordinator lazily. Preparation
+  uses `ensure({ withContext: true, recoverAuth: false })`: a verified account
+  guard without a second contextual login prompt or automatic replay. The existing
+  voice controls retain sign-in ownership. A fresh explicit action is required
+  after login. Missing auth adapters fail closed, including `skipSession` callers.
+- Voice recording keeps its existing readiness check. The rewrite stage checks
+  readiness again after transcription; a failed check retains the transcript and
+  explicit retry never transcribes it again. Whole-answer preflight failure retains editable text recovery and blocks a new
+  Rewrite until the learner chooses Retry or Discard. Retry uses the edited
+  recovery text, including after save/reload. No new provider deadline
+  is imposed; cancellation remains available while waiting.
+- The runner receives operation, document/attempt and answer-snapshot ownership.
+  Account changes, observed expiry, cancellation and supersession cannot apply
+  late output. Recoverable over-length candidates carry an account-only guard;
+  local Insert/Add at end checks it too. A stale candidate is discarded while
+  locally entered/transcribed source text remains available for review.
+- Provider failures use the shared safe presentation layer and current language.
+  Explicit forbidden does not trigger sign-in. Raw response text and diagnostics
+  are excluded from the new recovery presentation. Session failures retain the
+  repository source so session-specific guidance remains available.
+- Existing saved Viewer `viewerRewrite`/`resumeViewerRewriteAfterLogin` intents
+  are still validated, but return only restores text recovery and requires Retry.
+  Return never sends a provider request or overwrites newer recovery. Recovery
+  normalization supports an optional string `undoSnapshot` to preserve the raw
+  pre-login answer for Undo; old records remain valid. Audio, candidate output,
+  account functions and provider-error metadata remain memory-only.
+- Navigation during the verification after completed transcription keeps valid
+  background work on its original target; explicit Cancel still stops waiting.
+  Initial microphone/session preparation keeps its existing navigation cancellation.
+  Add at end always captures the current answer for Undo, replacing any legacy
+  pre-login snapshot carried by the recovery record.
+- App layouts, caret placement, text limits, Undo, save/reload and distinct
+  Viewer/discussion purposes remain owned by their adapters.
+
+Verification includes shared-coordinator account/expiry races, bounded sends,
+permission classification, cancellation, candidate insertion after invalidation,
+legacy login-return restoration and both consumer regressions. Deployed acceptance
+must check both apps' rewrite and voice-to-rewrite flows, original sign-in surfaces,
+explicit retry, cancellation, Undo and English/Traditional Chinese guidance.
+
+Remaining sequence: migrate transcription in both shared consumers, migrate T2A
+across both authoring apps, then reconcile contracts and remove proven superseded
+code. The smaller rewrite-first boundary supersedes the combined voice/rewrite
+integration row in the original staging table; storage/package scope stays closed.

@@ -692,6 +692,7 @@ export default {
         "rewriting": "Rewriting…"
       },
       "errors": {
+        "EXPLICIT_RETRY_REQUIRED": "Signed in. Review your text and press Try again to rewrite. Nothing was sent automatically.",
         "AUTH_REQUIRED": "Please sign in, then press Try again. Recording will not start automatically.",
         "PERMISSION_DENIED": "Microphone permission was denied. Allow access in your browser, then try again.",
         "DEVICE_UNAVAILABLE": "No microphone is available. Check your microphone and try again.",

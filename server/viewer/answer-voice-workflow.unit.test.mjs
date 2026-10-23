@@ -26,6 +26,10 @@ function setup(options = {}) {
     apply: (id, text, snapshot, caret) => { state.answers[id] = text; state.applied.push({ id, text, snapshot, caret }); },
     recover: (id, record) => { if (record) state.recovery[id] = record; else delete state.recovery[id]; },
     changed: () => { state.states.push(flow.active?.state || 'idle'); },
+    getRewriteAuth: options.getRewriteAuth || (() => ({ ensure: async () => {
+      const ready = options.checkSession ? await options.checkSession() : { ok: true };
+      return { ...(ready.result || ready), isCurrent: () => true };
+    } })),
     checkSession: options.checkSession || (async () => ({ ok: true })),
     api: {
       transcribeAudio: async (blob, request) => {
@@ -141,7 +145,7 @@ test('rewrite failure retains transcript and retry does not transcribe again', a
     : { ok: true, data: { text: 'Recovered' } } });
   await record(); assert.equal(state.recovery.q1.text, 'new segment');
   assert.equal(state.recovery.q1.code, 'REWRITE_FAILED');
-  assert.equal(flow.lastDiagnostic.upstreamCode, 'UNKNOWN_UPSTREAM');
+  assert.equal(flow.lastDiagnostic.upstreamCode, 'API_ERROR');
   assert.ok(!JSON.stringify(flow.lastDiagnostic).includes('private'));
   assert.ok(!JSON.stringify(state.recovery).includes('private'));
   fail = false; await flow.run('q1', { retry: state.recovery.q1 });
@@ -226,16 +230,18 @@ test('unresolved recovery blocks new work until retry or discard, even after cle
   assert.equal(h.state.requests.length, 3);
 });
 
-test('preflight failure ends whole rewrite; a new click uses the current answer after sign-in', async () => {
+test('rewrite preflight failure preserves edited recovery and requires explicit retry', async () => {
   let ready = false;
   const h = setup({ checkSession: async () => ({ok:ready,error:{code:'AUTH_REQUIRED'}}) });
   await h.flow.run('q1', {mode:'rewrite'});
-  assert.equal(h.state.recovery.q1.phase, 'preflight');
+  assert.equal(h.state.recovery.q1.phase, 'text');
   assert.equal(h.state.requests.length, 0);
+  h.state.recovery.q1.text = 'Edited recovery';
   ready = true;
-  h.state.answers.q1 = 'Edited while signing in';
-  await h.flow.run('q1', {mode:'rewrite'});
-  assert.equal(h.state.requests[0].text, 'Edited while signing in');
+  assert.equal((await h.flow.run('q1', {mode:'rewrite'})).status, 'recovery_pending');
+  assert.equal(h.state.recovery.q1.text, 'Edited recovery');
+  await h.flow.run('q1', {mode:'rewrite', retry: h.state.recovery.q1});
+  assert.equal(h.state.requests[0].text, 'Edited recovery');
   assert.equal(h.state.records.length, 0);
   assert.equal(h.state.recovery.q1, undefined);
 });
@@ -263,3 +269,90 @@ test('superseded session preflight releases voice/rewrite without fabricated aut
     assert.deepEqual(state.records,[]);
   }
 });
+
+for (const change of ['account', 'signout']) {
+  test(`shared rewrite discards late output after ${change} and releases lock`, async () => {
+    const { createReadAuthFlow } = await import('../app/auth/read-auth-flow.js');
+    let subject = 'a'; const pending = deferred();
+    const auth = createReadAuthFlow({ subject: () => subject, invalidate() {},
+      probe: async () => ({ ok: true, status: 'ready', user: { sub: subject } }),
+      prompt: () => assert.fail('no implicit login'), signIn: () => assert.fail(),
+    });
+    const h = setup({ getRewriteAuth: () => auth, rewrite: () => pending.promise });
+    const task = h.flow.run('q1', { mode: 'rewrite' }); await tick();
+    assert.equal(h.state.requests.length, 1);
+    if (change === 'account') { subject = 'b'; auth.observe({ ok: true, status: 'ready', user: { sub: subject } }); }
+    else auth.observe({ ok: false, error: { code: 'AUTH_REQUIRED' } });
+    pending.resolve({ ok: true, data: { text: 'must not apply' } });
+    assert.equal((await task).ok, false);
+    assert.equal(h.state.answers.q1, 'Earlier'); assert.equal(h.flow.active, null);
+    assert.equal(h.state.recovery.q1.candidate, undefined);
+  });
+}
+
+test('rewrite preflight uses shared coordinator without login or provider replay', async () => {
+  const { createReadAuthFlow } = await import('../app/auth/read-auth-flow.js');
+  let ready = false;
+  const auth = createReadAuthFlow({ subject: () => ready ? 'a' : null, invalidate() {},
+    probe: async () => ready ? { ok: true, status: 'ready', user: { sub: 'a' } } : { ok: false, error: { code: 'AUTH_REQUIRED' } },
+    prompt: () => assert.fail('adapter owns sign-in'), signIn: () => assert.fail(),
+  });
+  const h = setup({ getRewriteAuth: () => auth });
+  assert.equal((await h.flow.run('q1', { mode: 'rewrite' })).error.code, 'AUTH_REQUIRED');
+  assert.equal(h.state.requests.length, 0); ready = true;
+  await tick(); assert.equal(h.state.requests.length, 0);
+  assert.equal((await h.flow.run('q1', { mode: 'rewrite', retry: h.state.recovery.q1 })).ok, true);
+  assert.equal(h.state.requests.length, 1);
+});
+
+test('rewrite forbidden does not request sign-in and retains safe shared presentation', async () => {
+  const h = setup({ rewrite: async () => ({ ok: false, error: { code: 'FORBIDDEN', status: 403, requiresSignIn: true, message: 'private text' } }) });
+  const result = await h.flow.run('q1', { mode: 'rewrite' });
+  assert.equal(result.error.code, 'FORBIDDEN'); assert.equal(h.state.requests.length, 1);
+  assert.equal(h.state.recovery.q1.providerError.error.requiresSignIn, false);
+  assert.equal(JSON.stringify(h.state.recovery).includes('private text'), false);
+});
+
+test('recovered candidate cannot be inserted after its account guard expires', async () => {
+  let current = true;
+  const h = setup({ maxLength: 8, getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => current }) }) });
+  await h.record(); assert.equal(h.state.recovery.q1.code, 'ANSWER_TOO_LONG');
+  current = false; h.state.answers.q1 = 'Changed';
+  await h.flow.run('q1', { retry: h.state.recovery.q1, candidate: 'X' });
+  assert.equal(h.state.answers.q1, 'Changed'); assert.equal(h.state.recovery.q1.candidate, undefined);
+});
+
+test('rewrite cannot bypass preparation through legacy skipSession or missing auth adapter', async () => {
+  const h = setup({ getRewriteAuth: () => undefined });
+  assert.equal((await h.flow.run('q1', { mode: 'rewrite', skipSession: true })).ok, false);
+  assert.equal(h.state.requests.length, 0);
+});
+
+for (const cancel of [false, true]) {
+  test(`navigation during post-transcription verification preserves original target; explicit cancel=${cancel}`, async () => {
+    const gate = deferred();
+    const h = setup({ getRewriteAuth: () => ({ ensure: () => gate.promise }) });
+    const pending = h.record(); await tick();
+    assert.equal(h.flow.active.state, 'checking_session');
+    h.flow.navigate();
+    assert.ok(h.flow.active, 'background verification survives navigation');
+    h.state.answers.q2 = 'New unrelated answer';
+    if (cancel) h.flow.cancel();
+    gate.resolve({ ok: true, isCurrent: () => true });
+    const result = await pending;
+    assert.equal(result.ok, !cancel);
+    assert.equal(h.state.answers.q1, cancel ? 'Earlier' : 'Earlier New segment');
+    assert.equal(h.state.answers.q2, 'New unrelated answer');
+    assert.equal(h.state.requests.filter(r => r.kind === 'rewrite').length, cancel ? 0 : 1);
+  });
+}
+
+for (const candidate of [undefined, 'Recovered']) {
+  test(`append replaces legacy Undo snapshot with current answer; candidate=${candidate !== undefined}`, async () => {
+    const h = setup(); h.state.answers.q1 = 'New answer';
+    const retry = { phase: 'text', mode: 'rewrite', text: 'Original source', snapshot: 'Original', undoSnapshot: 'Old pre-login answer' };
+    await h.flow.run('q1', { mode: 'voice', append: true, retry, candidate });
+    assert.equal(h.state.applied[0].snapshot, 'New answer');
+    assert.equal(h.state.answers.q1, candidate ? 'New answer Recovered' : 'New answer New segment');
+  });
+}
