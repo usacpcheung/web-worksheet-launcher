@@ -72,7 +72,7 @@ function waitFor(promise, signal) {
 }
 
 export function createVoiceWorkflow({ context, apply, recover, changed = () => {},
-  api, checkSession, getRewriteAuth, recording = createAnswerRecording, setTimer = setInterval, clearTimer = clearInterval }) {
+  api, checkSession, getProviderAuth, recording = createAnswerRecording, setTimer = setInterval, clearTimer = clearInterval }) {
   let sequence = 0, active = null, timer = null;
   let pendingAudio = null;
   let lastDiagnostic = null;
@@ -112,6 +112,35 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
     recover(op.blockId, null);
     return true;
   };
+  // Both paid requests share readiness, cancellation and safe failure handling.
+  // Recording preparation remains app-owned and never replays a provider call.
+  async function provider(op, operation, request) {
+    const auth = getProviderAuth?.();
+    // A failed readiness probe invalidates the previous transcription lease.
+    // Let that probe report its failure; require the old lease again before
+    // accepting successful readiness or sending/applying any provider work.
+    let preparing = true;
+    const result = await runProviderRequest({
+      auth: { ensure: async options => {
+        const ready = auth?.ensure
+          ? await auth.ensure({ ...options, recoverAuth: false })
+          : { ok: false, error: { code: 'SESSION_PROBE_FAILED' } };
+        if (ready?.ok) preparing = false;
+        return ready;
+      } },
+      signal: op.controller.signal,
+      isCurrent: () => fresh(op) && (!op.identityCurrent || op.identityCurrent())
+        && (preparing || !op.transcriptionCurrent || op.transcriptionCurrent()),
+      request,
+    });
+    if (!result.ok) {
+      if (result.kind === 'authentication_required' && fresh(op)) auth?.observe?.(result);
+      if (!['retry_required', 'superseded', 'cancelled'].includes(result.kind)) op.providerError = {
+        error: result.error, source: result.source || 'bridge', operation,
+      };
+    }
+    return result;
+  }
   async function run(blockId, { mode = 'voice', intent, retry, candidate, append = false, skipSession = false, sourceText, undoSnapshot } = {}) {
     const current = read(blockId);
     if (active || !current.editable || !current.attemptId || !isVoiceQuestion(current.block)) return { ok: false, status: 'busy_or_invalid' };
@@ -136,14 +165,21 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
         if (!session?.ok) throw session?.result?.error || session?.error || { code: 'AUTH_REQUIRED' };
       }
       if (!fresh(op)) { keep(op, 'STALE_CONTEXT'); return { ok: false }; }
+      op.identityCurrent = getProviderAuth?.()?.captureIdentity?.();
       if (mode === 'rewrite') {
         op.text = hasRecoveryText(retry) ? retry.text : sourceText ?? current.answer.trim();
         op.phase = 'text';
       } else if (!hasRecoveryText(retry)) {
         op.phase = 'capture';
         let blob;
-        if (pendingAudio && pendingAudio.attemptId === op.attemptId && pendingAudio.blockId === blockId
+        if (pendingAudio && pendingAudio.attemptId === op.attemptId && pendingAudio.contextKey === op.contextKey && pendingAudio.blockId === blockId
           && pendingAudio.snapshot === op.snapshot) {
+          if (pendingAudio.identityCurrent && !pendingAudio.identityCurrent()) {
+            pendingAudio = null;
+            keep(op, 'STALE_CONTEXT');
+            return { ok: false, status: 'superseded' };
+          }
+          op.identityCurrent = pendingAudio.identityCurrent || op.identityCurrent;
           blob = pendingAudio.blob; pendingAudio = null;
         } else {
           pendingAudio = null;
@@ -161,14 +197,17 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
         }
         if (blob.size > AUDIO_UPLOAD_LIMIT) throw { code: 'UPLOAD_TOO_LARGE' };
         stage(op, 'transcribing');
-        const result = await waitFor(api.transcribeAudio(blob, { signal: op.controller.signal }), op.controller.signal);
+        const result = await provider(op, 'transcription', ({ signal }) => api.transcribeAudio(blob, { signal }));
         if (!result.ok) {
-          if (errorCode(result.error, op.state) === 'AUTH_REQUIRED' && fresh(op)) {
-            pendingAudio = { blob, attemptId: op.attemptId, blockId, snapshot: op.snapshot };
+          if (result.kind === 'authentication_required' && fresh(op)) {
+            pendingAudio = { blob, attemptId: op.attemptId, contextKey: op.contextKey, blockId, snapshot: op.snapshot, identityCurrent: op.identityCurrent };
           }
-          throw result.error;
+          throw { ...result.error, providerKind: result.kind };
         }
         blob = null;
+        if (!result.isCurrent()) throw { code: 'STALE_CONTEXT' };
+        if (typeof result.data?.text !== 'string' || !result.data.text.trim()) throw { code: 'EMPTY_RECORDING' };
+        op.transcriptionCurrent = result.accountCurrent;
         op.text = result.data.text;
         op.phase = 'text';
         // Navigation may leave completed capture processing in the background.
@@ -180,27 +219,16 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
       if (unicodeLength(op.text) > REWRITE_INPUT_LIMIT) throw { code: 'TRANSCRIPT_TOO_LONG' };
       if (!fresh(op)) { keep(op, 'STALE_CONTEXT'); return { ok: false }; }
       stage(op, 'checking_session');
-      const auth = getRewriteAuth?.();
-      const result = await runProviderRequest({
-        // Preserve each app's sign-in surface. Preparation checks the shared
-        // coordinator without replaying or opening a second login flow.
-        auth: { ensure: options => auth?.ensure
-          ? auth.ensure({ ...options, recoverAuth: false })
-          : Promise.resolve({ ok: false, error: { code: 'SESSION_PROBE_FAILED' } }) },
-        signal: op.controller.signal, isCurrent: () => fresh(op),
-        request: ({ signal }) => {
-          op.phase = 'text'; stage(op, 'rewriting');
-          if (!fresh(op) || signal.aborted) return { ok: false, skipped: true, status: 'superseded' };
-          return api.rewriteText(op.text, { signal });
-        },
+      const result = await provider(op, 'rewrite', ({ signal }) => {
+        op.phase = 'text'; stage(op, 'rewriting');
+        if (!fresh(op) || signal.aborted) return { ok: false, skipped: true, status: 'superseded' };
+        return api.rewriteText(op.text, { signal });
       });
       if (!result.ok) {
         if (result.kind === 'superseded') {
           if (op.state === 'checking_session' && !hasRecoveryText(retry)) return { ok: false, status: 'superseded' };
           keep(op, 'STALE_CONTEXT'); return { ok: false, status: 'recovery_required' };
         }
-        if (result.kind === 'authentication_required' && fresh(op)) auth?.observe?.(result);
-        if (result.kind !== 'retry_required') op.providerError = { error: result.error, source: result.source || 'bridge' };
         throw { ...result.error, providerKind: result.kind };
       }
       // Keep only the account part for recoverable candidates; the runner's
@@ -214,7 +242,9 @@ export function createVoiceWorkflow({ context, apply, recover, changed = () => {
     } catch (error) {
       if (active !== op) return { ok: false, status: 'cancelled' };
       const code = error?.providerKind ? ({ authentication_required: 'AUTH_REQUIRED', permission_denied: 'FORBIDDEN',
-        cancelled: 'CANCELED', retry_required: 'EXPLICIT_RETRY_REQUIRED' }[error.providerKind] || 'REWRITE_FAILED') : errorCode(error, op.state);
+        cancelled: 'CANCELED', superseded: 'STALE_CONTEXT', retry_required: 'EXPLICIT_RETRY_REQUIRED',
+        too_large: 'UPLOAD_TOO_LARGE', rate_limited: 'RATE_LIMITED', busy: 'BUSY' }[error.providerKind]
+        || (op.state === 'transcribing' ? 'TRANSCRIPTION_FAILED' : 'REWRITE_FAILED')) : errorCode(error, op.state);
       // Memory-only troubleshooting metadata. Never retain message/details/body,
       // which can contain learner text or an upstream login page.
       lastDiagnostic = { stage: op.state, code,

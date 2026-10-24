@@ -152,3 +152,9 @@ test('uncertain deletion guidance is localized and does not promise safe automat
   }
   setLocale('en',{persist:false});
 });
+
+
+test('unknown transcription errors have a localized operation fallback without raw prose', () => {
+  assert.equal(resolveErrorPresentation({ error: { code: 'UPSTREAM_UNKNOWN', message: 'private' } },
+    { operation: 'transcription', source: 'bridge' }).key, 'apiErrors.transcriptionFailed');
+});

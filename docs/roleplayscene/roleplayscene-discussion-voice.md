@@ -44,4 +44,9 @@ Safe provider/session errors use the shared localized presentation layer.
 
 Recovery may include an optional local string `undoSnapshot` for legacy login-return
 compatibility. Provider metadata, account guards and candidate output are not saved.
-Recording, transcription and T2A integration remain separate work.
+Transcription also uses the shared runner; see [transcription integration](../contracts/rewrite-bridge-workflows.md#9-transcription-integration).
+It verifies readiness before upload and rejects stale account/target output.
+Authentication failure retains audio in memory for explicit same-account Retry;
+account changes invalidate it. Raw audio is never saved. Transcript-only retry
+continues to skip transcription. Recording controls stay app-owned; T2A migration
+remains separate work.

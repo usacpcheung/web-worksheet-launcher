@@ -42,7 +42,7 @@ const project = {
 };
 
 test('discussion session stores text by scene and clears undo on manual input', () => {
-  const session = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage: createMemoryStorage() });
+  const session = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage: createMemoryStorage() });
   session.bindProject(project);
   session.setText('start', 'first answer');
   session.undoBySceneId = { start: 'before rewrite' };
@@ -55,11 +55,11 @@ test('discussion session stores text by scene and clears undo on manual input', 
 
 test('discussion session restores only matching project fingerprint from session storage', () => {
   const storage = createMemoryStorage();
-  const session = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage });
+  const session = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage });
   session.bindProject(project);
   session.setText('start', 'saved text');
 
-  const restored = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage });
+  const restored = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage });
   restored.bindProject(project);
   assert.equal(restored.getText('start'), 'saved text');
 
@@ -69,13 +69,13 @@ test('discussion session restores only matching project fingerprint from session
   };
   assert.notEqual(computeDiscussionProjectFingerprint(project), computeDiscussionProjectFingerprint(changedProject));
 
-  const mismatched = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage });
+  const mismatched = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }), storage });
   mismatched.bindProject(changedProject);
   assert.equal(mismatched.getText('start'), '');
 });
 
 test('discussion rewrite applies fresh result and undo restores snapshot', async () => {
-  const session = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
+  const session = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
     storage: createMemoryStorage(),
     apiClient: {
       rewriteText: async text => ({ ok: true, data: { text: `${text} rewritten` } }),
@@ -95,7 +95,7 @@ test('discussion rewrite applies fresh result and undo restores snapshot', async
 });
 
 test('discussion rewrite failure and stale context preserve current text', async () => {
-  const failing = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
+  const failing = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
     storage: createMemoryStorage(),
     apiClient: { rewriteText: async () => ({ ok: false, error: { message: 'failed' } }) },
   });
@@ -106,7 +106,7 @@ test('discussion rewrite failure and stale context preserve current text', async
   assert.equal(failing.getText('start'), 'keep me');
 
   let resolveRewrite;
-  const stale = new RolePlaySceneDiscussionSession({ getRewriteAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
+  const stale = new RolePlaySceneDiscussionSession({ getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
     storage: createMemoryStorage(),
     apiClient: {
       rewriteText: () => new Promise(resolve => {

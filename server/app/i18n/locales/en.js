@@ -50,6 +50,7 @@ export default {
     "deleteFailed": "Unable to delete this item.",
     "sessionFailed": "Unable to verify sign-in due to a temporary session check issue. Please retry when the connection is stable.",
     "audioFailed": "Unable to generate audio. Your local content is still available.",
+    "transcriptionFailed": "Unable to transcribe the recording. Please try recording again.",
     "rewriteFailed": "Unable to rewrite the text. Your original text is still available.",
     "authRequired": "You are not signed in yet. Please complete sign-in and try again.",
     "forbidden": "You do not have permission to perform this action.",

@@ -51,6 +51,7 @@ const fallbacks = {
   session: 'sessionFailed',
   audio: 'audioFailed',
   rewrite: 'rewriteFailed',
+  transcription: 'transcriptionFailed',
 };
 const isPositiveInteger = value => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 
