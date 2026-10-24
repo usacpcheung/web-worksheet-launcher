@@ -1,3 +1,4 @@
+import { runAudioGeneration } from '../app/bridge/audio-generation.js';
 import { prepareMutation } from '../app/auth/mutation-auth.js';
 import { createSilentSessionStateAdapter } from '../app/auth/session-state-adapter.js';
 import { redirectReadSignIn, takeReadAuthReturn } from '../app/auth/read-auth-return.js';
@@ -1988,6 +1989,7 @@ class EditorDraftSession {
   }
 
   async attachQuestionMedia(blockId, usage, file, options = {}) {
+    if (options.isCurrent && !options.isCurrent()) return { ok: false, reason: 'stale-target' };
     if (!this.state.draft || !blockId) return { ok: false, reason: 'missing-draft' };
     const kind = usage === 'question_image' ? 'image' : 'audio';
     const validation = validateMediaFile(file, kind);
@@ -2011,7 +2013,7 @@ class EditorDraftSession {
     const newAsset = await this.createLocalAssetRecord(file, usage, kind);
 
     const currentTarget = this.findBlock(blockId);
-    if (this.state.draft?.localId !== draftId || this._audioDraftGeneration !== generation
+    if ((options.isCurrent && !options.isCurrent()) || this.state.draft?.localId !== draftId || this._audioDraftGeneration !== generation
       || currentTarget?.kind !== 'question'
       || JSON.stringify(normalizeMediaRefs(currentTarget.prompt?.mediaRefs, usage)) !== JSON.stringify(priorRefsForUsage)) {
       await this.storage.localAssets?.remove?.(newAsset.assetId);
@@ -2089,6 +2091,7 @@ class EditorDraftSession {
   }
 
   async attachOptionAudio(blockId, optionId, file, options = {}) {
+    if (options.isCurrent && !options.isCurrent()) return { ok: false, reason: 'stale-target' };
     if (!this.state.draft || !blockId || !optionId) return { ok: false, reason: 'missing-input' };
     const validation = validateMediaFile(file, 'audio');
     if (!validation.ok) {
@@ -2113,6 +2116,10 @@ class EditorDraftSession {
     const replacedAssetIds = priorRefsForUsage.map((ref) => ref.assetId);
 
     const newAsset = await this.createLocalAssetRecord(file, 'option_audio', 'audio');
+    if (options.isCurrent && !options.isCurrent()) {
+      await this.storage.localAssets?.remove?.(newAsset.assetId);
+      return { ok: false, reason: 'stale-target' };
+    }
     this.state.draft.blocks = this.state.draft.blocks.map((candidate) => {
       if (candidate.blockId !== blockId || candidate.kind !== 'question') return candidate;
       const cfg = normalizeQuestionResponseConfig(candidate.responseConfig);
@@ -2215,7 +2222,7 @@ class EditorDraftSession {
     const optionId = options.optionId || null;
     const draftId = this.state.draft.localId;
     const generation = this._audioDraftGeneration;
-    const isCurrentDraft = () => this.state.draft?.localId === draftId
+    const isCurrentDraft = () => (!options.isCurrent || options.isCurrent()) && this.state.draft?.localId === draftId
       && this._audioDraftGeneration === generation
       && (!options.expectedDraft || (options.expectedDraft.localId === draftId
         && options.expectedDraft.generation === generation));
@@ -2303,6 +2310,25 @@ class EditorDraftSession {
     return { ok: true, removedAssetId: existingTrack.assetId };
   }
 
+  captureAudioTarget(blockId, target, optionId = null, language = null) {
+    const localId = this.state.draft?.localId, generation = this._audioDraftGeneration;
+    const signature = () => {
+      const value = this.getAudioTrackTarget(blockId, target, optionId);
+      if (!value) return null;
+      return JSON.stringify([value.text, language
+        ? getAudioTrack(value.audioTracks, language)?.assetId || null
+        : normalizeMediaRefs(target === 'prompt' ? value.block.prompt?.mediaRefs : value.option?.mediaRefs,
+          target === 'prompt' ? 'question_audio' : 'option_audio')]);
+    };
+    const original = signature();
+    return () => Boolean(original) && this.state.draft?.localId === localId
+      && this._audioDraftGeneration === generation && signature() === original;
+  }
+
+  async requestGeneratedAudio(text, voice, isCurrent) {
+    return runAudioGeneration({ auth: this.readAuth, api: this.apiClient, text, voice, isCurrent });
+  }
+
   async generateAudioTrack(blockId, target, language, options = {}) {
     if (!isAudioTrackLanguage(language)) return { ok: false, reason: 'invalid-language' };
     const optionId = options.optionId || null;
@@ -2317,11 +2343,13 @@ class EditorDraftSession {
     if (existingTrack && options.confirmReplace !== true) return { ok: false, reason: 'confirm-replace-required', existingAssetId: existingTrack.assetId };
     const expectedSourceTextHash = getAudioSourceTextHash(current.text);
     const expectedDraft = { localId: this.state.draft.localId, generation: this._audioDraftGeneration };
-    const audioResult = await this.apiClient.generateAudioFromText(textState.trimmedText, preset.options);
+    const isCurrent = this.captureAudioTarget(blockId, target, optionId, language);
+    const audioResult = await this.requestGeneratedAudio(textState.trimmedText, preset.options, isCurrent);
     if (this.state.draft?.localId !== expectedDraft.localId || this._audioDraftGeneration !== expectedDraft.generation) {
       return { ok: false, reason: 'draft-changed' };
     }
-    if (!audioResult?.ok) return { ok: false, reason: 'generation-failed', error: audioResult?.error || null };
+    if (audioResult.kind === 'superseded' && getAudioSourceTextHash(this.getAudioTrackTarget(blockId, target, optionId)?.text || '') !== expectedSourceTextHash) return { ok: false, reason: 'source-text-changed' };
+    if (!audioResult?.ok) return { ok: false, reason: 'generation-failed', error: audioResult?.error || null, source: audioResult?.source };
     const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
     if (!audioBytes) return { ok: false, reason: 'invalid-audio-data' };
     const fileName = target === 'prompt' ? `${blockId}_${language}.mp3` : `${blockId}_${optionId}_${language}.mp3`;
@@ -2331,6 +2359,7 @@ class EditorDraftSession {
       voicePresetId: language,
       expectedSourceTextHash,
       expectedDraft,
+      isCurrent: audioResult.isCurrent,
     });
   }
 
@@ -4436,7 +4465,7 @@ class EditorDraftSession {
       if (isAudioTrackLanguage(payload.language)) {
         const result = await this.generateAudioTrack(blockId, 'prompt', payload.language, { confirmReplace: true });
         if (!result.ok) {
-          const message = result.reason === 'generation-failed' ? getApiErrorMessage(result, 'audio', 'bridge') : (result.error?.message || editorNotification('audioGeneration.failed'));
+          const message = result.reason === 'generation-failed' ? getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') : (result.error?.message || editorNotification('audioGeneration.failed'));
           this.setRecoveryMessage(message);
           return { ok: false, status: 'generation_failed', error: { ...result.error, message } };
         }
@@ -4445,9 +4474,10 @@ class EditorDraftSession {
         this.notifyStateChange();
         return { ok: true, status: 'generated_editor_prompt_t2a_track', data: { blockId, language: payload.language } };
       }
-      const audioResult = await this.apiClient.generateAudioFromText(promptText);
+      const isCurrent = this.captureAudioTarget(blockId, 'prompt', null);
+      const audioResult = await this.requestGeneratedAudio(promptText, {}, isCurrent);
       if (!audioResult?.ok) {
-        const message = getApiErrorMessage(audioResult, 'audio', 'bridge');
+        const message = getApiErrorMessage(audioResult, audioResult.source === 'repository-api' ? 'session' : 'audio', audioResult.source || 'bridge');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -4456,7 +4486,7 @@ class EditorDraftSession {
           text: message,
         });
         this.notifyStateChange();
-        return { ok: false, status: 'generation_failed', error: { message } };
+        return { ok: false, status: 'generation_failed', error: { ...audioResult.error, message } };
       }
       const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
       if (!audioBytes) {
@@ -4475,6 +4505,7 @@ class EditorDraftSession {
       const hasExistingQuestionAudio = Boolean(getSingleMediaRef(block?.prompt?.mediaRefs, 'question_audio'));
       const attachResult = await this.attachQuestionMedia(blockId, 'question_audio', generatedFile, {
         confirmReplace: hasExistingQuestionAudio,
+        isCurrent: audioResult.isCurrent,
       });
       if (!attachResult?.ok) {
         const message = String(attachResult?.error?.message || '').trim() || editorNotification('audioGeneration.attachPromptFailed');
@@ -4602,7 +4633,7 @@ class EditorDraftSession {
       if (isAudioTrackLanguage(payload.language)) {
         const result = await this.generateAudioTrack(blockId, 'option', payload.language, { optionId, confirmReplace: true });
         if (!result.ok) {
-          const message = result.reason === 'generation-failed' ? getApiErrorMessage(result, 'audio', 'bridge') : (result.error?.message || editorNotification('audioGeneration.failed'));
+          const message = result.reason === 'generation-failed' ? getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') : (result.error?.message || editorNotification('audioGeneration.failed'));
           this.setRecoveryMessage(message);
           return { ok: false, status: 'generation_failed', error: { ...result.error, message } };
         }
@@ -4617,9 +4648,10 @@ class EditorDraftSession {
         this.notifyStateChange();
         return { ok: true, status: 'generated_editor_option_t2a_track', data: { blockId, optionId, language: payload.language } };
       }
-      const audioResult = await this.apiClient.generateAudioFromText(optionText);
+      const isCurrent = this.captureAudioTarget(blockId, 'option', optionId);
+      const audioResult = await this.requestGeneratedAudio(optionText, {}, isCurrent);
       if (!audioResult?.ok) {
-        const message = getApiErrorMessage(audioResult, 'audio', 'bridge');
+        const message = getApiErrorMessage(audioResult, audioResult.source === 'repository-api' ? 'session' : 'audio', audioResult.source || 'bridge');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -4628,7 +4660,7 @@ class EditorDraftSession {
           text: message,
         });
         this.notifyStateChange();
-        return { ok: false, status: 'generation_failed', error: { message } };
+        return { ok: false, status: 'generation_failed', error: { ...audioResult.error, message } };
       }
       const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
       if (!audioBytes) {
@@ -4647,6 +4679,7 @@ class EditorDraftSession {
       const hasExistingOptionAudio = Boolean(getSingleMediaRef(selectedOption?.mediaRefs, 'option_audio'));
       const attachResult = await this.attachOptionAudio(blockId, optionId, generatedFile, {
         confirmReplace: hasExistingOptionAudio,
+        isCurrent: audioResult.isCurrent,
       });
       if (!attachResult?.ok) {
         const message = String(attachResult?.error?.message || '').trim() || editorNotification('audioGeneration.attachOptionFailed');
@@ -4675,16 +4708,25 @@ class EditorDraftSession {
     }
   }
 
-  async triggerProtectedAction(actionId, intentPayload = {}) {
-    if (!this.authGate) {
-      throw new Error('Auth gate is not configured for editor session.');
+  async restoreProtectedAction(intent) {
+    if (['editorPromptT2A', 'editorOptionT2A', 'resumeT2AAfterLogin'].includes(intent?.actionId)) {
+      this.setRecoveryMessage(t('apiErrors.audioRetryRequired'));
+      return { ok: true, status: 'explicit_retry_required' };
     }
+    return this.replayProtectedAction(intent);
+  }
 
+  async triggerProtectedAction(actionId, intentPayload = {}) {
     const payload = {
       ...(intentPayload && typeof intentPayload === 'object' ? intentPayload : {}),
       localDraftId: this.state.draft?.localId || null,
     };
 
+    if (['editorPromptT2A', 'editorOptionT2A'].includes(actionId)) {
+      const result = await this.replayProtectedAction({ actionId, payload });
+      if (result.error?.requiresSignIn) this.beginServerSignIn({ readRecovery: true });
+      return result;
+    }
     return this.authGate.runProtectedAction({
       actionId,
       recordStore: 'localDrafts',
@@ -7311,7 +7353,7 @@ function renderEditorShell(session) {
             language,
           });
           if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
-            session.setMediaFeedback(result?.reason === 'generation-failed' ? getApiErrorMessage(result, 'audio', 'bridge') : (result?.error?.message || editorNotification('audioGeneration.failed')));
+            session.setMediaFeedback(result?.reason === 'generation-failed' ? getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') : (result?.error?.message || editorNotification('audioGeneration.failed')));
           }
         } finally {
           promptT2AInFlightBlockIds.delete(blockId);
@@ -7802,7 +7844,7 @@ function renderEditorShell(session) {
                 language,
               });
               if (!result?.ok && result?.status !== 'executed' && result?.status !== 'redirected') {
-                session.setMediaFeedback(result?.reason === 'generation-failed' ? getApiErrorMessage(result, 'audio', 'bridge') : (result?.error?.message || editorNotification('audioGeneration.failed')));
+                session.setMediaFeedback(result?.reason === 'generation-failed' ? getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') : (result?.error?.message || editorNotification('audioGeneration.failed')));
               }
             } finally {
               optionT2AInFlightKeys.delete(optionT2AKey);
@@ -8892,7 +8934,7 @@ async function bootstrapEditor() {
     restoreByLocalId: (localIdToRestore) => session.restoreByLocalId(localIdToRestore),
     restoreUiState: (uiState) => session.applyUiRestoreState(uiState),
     validateIntent: (intent) => validateEditorIntent(intent),
-    replayIntent: (intent) => session.replayProtectedAction(intent),
+    replayIntent: (intent) => session.restoreProtectedAction(intent),
     onRecoveryMessage: (message) => session.setRecoveryMessage(message),
     redirectToAuth: ({ redirectTo }) => {
       const url = new URL(redirectTo);

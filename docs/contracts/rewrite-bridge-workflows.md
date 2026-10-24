@@ -1,6 +1,6 @@
 # Rewrite-bridge workflow map and shared contract
 
-Status: **mapping approved in PR #322; foundation merged in PR #323; shared text-rewrite and transcription integration implemented; T2A migration pending**.
+Status: **mapping approved in PR #322; foundation merged in PR #323; shared rewrite, transcription and T2A integrations implemented; final reconciliation pending**.
 Original mapping baseline: main `7762c74f63b119baeccaa513f3500746ff7b526a` (merged PR #321). Text-rewrite integration is based on main `1f17a2cd7e693ad626f040b299606cc6fe93083c` (merged PR #323).
 This document extends stage 5 of the [authentication roadmap](authentication-workflows.md).
 It covers the complete provider-request lifecycle, not only sign-in. The mapping PR changed documentation only. The foundation below adds a shared
@@ -56,8 +56,8 @@ baseline. Sharing infrastructure does not add these features to those apps.
 
 | Area | Current behavior |
 | --- | --- |
-| Editor audio | Session checks and legacy protected-intent execution; target locks in replay handlers. Named tracks capture source-text hash and draft generation before attachment. Named-language failures preserve structured error fields; legacy no-language failures return only a display message. Requests do not pass an AbortSignal in these callers. |
-| RolePlayScene audio | Per-dialogue lock, line identity and disposal checks, source-text/replacement checks, AbortController and a 120-second bound for each awaited session/provider operation. This is not one combined 120-second workflow deadline. |
+| Editor audio | Shared provider preparation and explicit Generate actions; target locks remain in app handlers. Named and legacy attachments retain account/target ownership through local persistence. Failures preserve structured categories; requests receive AbortSignal. Legacy login-return intents offer explicit retry. |
+| RolePlayScene audio | Shared provider runner with per-dialogue lock, line/voice identity and disposal checks, source-text/replacement checks, AbortController and a 120-second bound for each session/provider phase. This is not one combined 120-second workflow deadline. |
 | Viewer/discussion voice | Already one shared recording → transcription → rewrite workflow. One active operation per workflow instance, cancellation race protection and context/answer snapshot checks. No general provider deadline; pending work remains cancelable. |
 | Voice recovery | Transcript is retained before rewrite. Rewrite retry reuses text; it must not transcribe again. Audio retained after transcription authentication failure is memory-only. Reload recovery excludes raw audio and rewritten candidates. |
 | Local persistence | Viewer uses attempt recovery/autosave; discussion uses its own session storage and project generation/fingerprint. Authoring attaches assets through each product's existing model. |
@@ -76,7 +76,7 @@ valid background work can remain attached to its original answer or scene.
 
 These are original mapping findings and migration risks, not newly reproduced live defects.
 They do not establish that every affected user journey currently fails. Section 8
-resolves rewrite-stage account binding, safe outcomes and explicit retry; section 9 resolves transcription; T2A remains pending.
+resolves rewrite-stage account binding, safe outcomes and explicit retry; section 9 resolves transcription; section 10 resolves T2A.
 
 | Finding and trigger | Evidence / consequence | Proposed resolution |
 | --- | --- | --- |
@@ -277,7 +277,7 @@ The production rewrite transport has one shared caller in
 `server/viewer/answer-voice-workflow.js`, used by Viewer answers and RolePlayScene
 discussions. Editor has no rewrite caller. Whole-text rewrites, rewrites after
 transcription, and explicit transcript retries now call `runProviderRequest`.
-Transcription now uses the same runner (section 9); T2A adapters retain their existing implementation.
+Transcription now uses the same runner (section 9); T2A adapters use the shared audio boundary described in section 10.
 
 - Both adapters supply the existing read-auth coordinator lazily. Preparation
   uses `ensure({ withContext: true, recoverAuth: false })`: a verified account
@@ -319,8 +319,8 @@ legacy login-return restoration and both consumer regressions. Deployed acceptan
 must check both apps' rewrite and voice-to-rewrite flows, original sign-in surfaces,
 explicit retry, cancellation, Undo and English/Traditional Chinese guidance.
 
-Remaining sequence: migrate T2A across both authoring apps, then reconcile
-contracts and remove proven superseded code. The smaller rewrite-first boundary supersedes the combined voice/rewrite
+Remaining sequence: reconcile the complete bridge lifecycle and remove proven
+superseded code after integration acceptance. The smaller rewrite-first boundary supersedes the combined voice/rewrite
 integration row in the original staging table; storage/package scope stays closed.
 
 
@@ -360,3 +360,38 @@ changes or cancellation, auth failure before upload, same-account audio retry,
 account changes before retry/rewrite, safe failure categories and both consumer
 browser flows. Synthetic fixtures do not establish live microphone/provider or
 real background-tab acceptance; deployment acceptance remains necessary.
+
+
+## 10. T2A authoring integration
+
+Editor prompt/option generation (named-language and supported legacy no-language
+paths) and RolePlayScene dialogue generation now call
+[`runAudioGeneration`](../../server/app/bridge/audio-generation.js), which uses
+`runProviderRequest`. Each call verifies the existing shared session coordinator
+with `recoverAuth: false`, sends at most one T2A POST and carries a verified account
+guard through attachment. Product adapters still own voice choices, replacement
+confirmation, target validation, UI messages and local asset persistence.
+
+- Editor's explicit Generate action no longer runs through the automatic replay
+  gate. Authentication failures preserve structured codes and use the existing
+  sign-in surface. Stored legacy T2A login-return intents restore the document/UI
+  but show localized explicit-Generate guidance, without sending a provider POST.
+- Editor captures document generation, target text and the existing audio reference.
+  Named tracks and legacy prompt/option attachment recheck request/account ownership
+  after asynchronous asset persistence and discard newly stored stale assets.
+- RolePlayScene keeps stable dialogue ownership, source text, selected voice,
+  replacement confirmations and its existing separate 120-second preparation and
+  provider bounds. Confirmation time is outside the provider network bound.
+  Disposal aborts waiting; stale output cannot overwrite changed content.
+- Editor adds no default deadline. Target/account invalidation releases pending
+  provider waiting; this does not undo work already admitted by the bridge.
+- Explicit structured HTTP 403 FORBIDDEN/PERMISSION_DENIED remains permission denial.
+  Legacy unknown auth-like 401/403 and OIDC HTML continue to request authentication.
+  Safe error categories are localized by source/operation; arbitrary provider prose
+  and exception details are not copied into the new shared error presentation.
+
+Validation covers both authoring adapters, all existing named voice choices,
+legacy option/prompt generation, cancellation, phase timeout, session expiry,
+no-replay restoration, late account invalidation during asset persistence and
+replacement/target races. Browser fixtures are synthetic and do not replace
+VPS acceptance with the real bridge and sign-in service.

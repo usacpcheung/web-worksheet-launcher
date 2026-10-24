@@ -1,3 +1,4 @@
+import { runAudioGeneration } from '../../../app/bridge/audio-generation.js';
 import { getApiErrorMessage } from '../../../app/api/error-presentation.js';
 import { canEditSceneName, getSceneName, sceneNameInputValue } from '../scene-name.js';
 import { canEditProjectTitle, projectTitleInputValue } from '../project-title.js';
@@ -15,13 +16,8 @@ import {
   getDialogueVoiceChoice,
 } from '../t2a-presets.js';
 import { newId } from '../utils/id.js';
-import { waitForAudioRequest } from './audio-generation-request.js';
+import { AUDIO_REQUEST_TIMEOUT_MS } from './audio-generation-request.js';
 
-function isAudioAuthFailure(result) {
-  const error = result?.error || result;
-  return result?.status === 'not_ready' || error?.requiresSignIn
-    || [401, 403].includes(Number(error?.status)) || error?.code === 'AUTH_REQUIRED';
-}
 
 export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) {
   leftEl.innerHTML = '';
@@ -43,7 +39,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     ? options.initialLeftView
     : 'storyMap';
   const apiClient = options.apiClient || null;
-  const ensureServerSessionReady = options.ensureServerSessionReady || null;
+  const getProviderAuth = options.getProviderAuth;
   const onServerApiResult = typeof options.onServerApiResult === 'function'
     ? options.onServerApiResult
     : null;
@@ -969,7 +965,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       });
       return;
     }
-    if (!apiClient?.generateAudioFromText || typeof ensureServerSessionReady !== 'function') {
+    if (!apiClient?.generateAudioFromText || typeof getProviderAuth !== 'function') {
       showMessage({ textId: 'inspector.dialogue.t2aUnavailable' });
       return;
     }
@@ -985,39 +981,34 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     let confirmedAudioSignature = null;
     const controller = new AbortController();
     dialogueRequests.set(controller, isOriginalLine);
-    const wait = operation => waitForAudioRequest(operation, controller, options.audioRequestTimeoutMs);
+    const isCurrent = () => isOriginalLine()
+      && String(getDialogueLine(sceneId, index)?.text || '').trim() === textState.trimmedText
+      && getDialogueVoiceChoice(getDialogueLine(sceneId, index), store.get().project.speakers) === preset.id;
     try {
-      const sessionReady = await wait(ensureServerSessionReady());
-      if (!isOriginalLine()) {
-        return;
-      }
-      if (!sessionReady?.ok) {
-        const failure = sessionReady?.result;
-        if (failure?.skipped) return;
-        if (isAudioAuthFailure(failure)) {
-          dialogueAuthFailures.add(token);
-          showMessage({ textId: 'inspector.dialogue.t2aSessionExpired' });
-        } else {
-          showMessage({ textId: 'inspector.dialogue.t2aFailed' });
-        }
-        return;
-      }
-      const lineBeforeGenerate = getCurrentT2ALine(sceneId, index, textState.trimmedText);
-      if (!lineBeforeGenerate) {
-        return;
-      }
-      if (lineBeforeGenerate.audio) {
-        const confirmed = globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio')) ?? false;
-        if (!confirmed) {
-          showMessage({ textId: 'inspector.dialogue.t2aCanceled' });
-          return;
-        }
-        confirmedAudioSignature = getAudioSignature(lineBeforeGenerate.audio);
-      }
-      const result = await wait(apiClient.generateAudioFromText(textState.trimmedText, preset.options || {}, { signal: controller.signal }));
+      const result = await runAudioGeneration({
+        auth: getProviderAuth(), text: textState.trimmedText, voice: preset.options || {},
+        signal: controller.signal, isCurrent,
+        phaseTimeoutMs: options.audioRequestTimeoutMs ?? AUDIO_REQUEST_TIMEOUT_MS,
+        beforeRequest: () => {
+          const lineBeforeGenerate = getCurrentT2ALine(sceneId, index, textState.trimmedText);
+          if (!lineBeforeGenerate) return { ok: false, skipped: true, status: 'superseded' };
+          if (lineBeforeGenerate.audio) {
+            const confirmed = globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio')) ?? false;
+            if (!confirmed) return { ok: false, error: { code: 'CANCELED' } };
+            confirmedAudioSignature = getAudioSignature(lineBeforeGenerate.audio);
+          }
+        },
+        api: apiClient,
+      });
       if (!isOriginalLine()) return;
-      onServerApiResult?.(result);
-      if (isAudioAuthFailure(result)) {
+      if (result.kind === 'superseded') {
+        if (!isCurrent()) showMessage({ textId: 'inspector.dialogue.t2aLineChanged' });
+        return;
+      }
+      if (result.kind === 'cancelled') { showMessage({ textId: 'inspector.dialogue.t2aCanceled' }); return; }
+      if (result.kind === 'timeout') { showMessage({ textId: 'inspector.dialogue.t2aTimedOut' }); return; }
+      if (result.ok || result.kind === 'authentication_required') onServerApiResult?.(result);
+      if (result.kind === 'authentication_required') {
         dialogueAuthFailures.add(token);
         showMessage({ textId: 'inspector.dialogue.t2aSessionExpired' });
         return;
@@ -1026,9 +1017,10 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
         return;
       }
       if (!result?.ok || !(result.data instanceof Uint8Array) || result.data.byteLength <= 0) {
-        showMessage({ text: getApiErrorMessage(result, 'audio', 'bridge') });
+        showMessage({ text: getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') });
         return;
       }
+      if (!result.isCurrent()) return;
       const lineBeforeAttach = getCurrentT2ALine(sceneId, index, textState.trimmedText);
       if (!lineBeforeAttach) {
         return;
@@ -1045,6 +1037,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
           return;
         }
       }
+      if (!result.isCurrent()) return;
       const safeSceneId = String(sceneId).replace(/[^a-z0-9_-]+/gi, '-');
       const generatedFile = createAudioFileFromBytes(
         result.data,
@@ -1057,12 +1050,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       });
     } catch (error) {
       if (!isOriginalLine()) return;
-      const detail = String(error?.message || '').trim();
-      showMessage({
-        textId: error?.code === 'AUDIO_TIMEOUT' ? 'inspector.dialogue.t2aTimedOut'
-          : detail ? 'inspector.dialogue.t2aFailedWithDetail' : 'inspector.dialogue.t2aFailed',
-        textArgs: { detail },
-      });
+      showMessage({ textId: 'inspector.dialogue.t2aFailed' });
     } finally {
       dialogueRequests.delete(controller);
       dialogueT2AInFlightKeys.delete(key);

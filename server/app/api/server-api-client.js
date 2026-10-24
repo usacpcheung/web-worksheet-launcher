@@ -372,6 +372,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     const { method = 'GET', body = null, headers = {}, signal = null } = request;
     let response;
     try {
+      if (signal?.aborted) return canceledBridgeRequest();
       response = await fetch(`${BRIDGE_API_BASE}${path}`, {
         method,
         credentials: 'include',
@@ -380,6 +381,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
         ...(signal ? { signal } : {}),
       });
     } catch (error) {
+      if (signal?.aborted || error?.name === 'AbortError') return canceledBridgeRequest();
       return toStructuredError({
         code: 'NETWORK_ERROR',
         message: `Unable to reach bridge API. ${error?.message || String(error)}`,
@@ -390,6 +392,10 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       const contentType = String(response.headers.get('content-type') || '').toLowerCase();
 
       if (!response.ok) {
+        const parsedError = await parseErrorBody(response);
+        const explicitCode = parsedError.parsed?.error?.code || parsedError.parsed?.code;
+        const forbidden = response.status === 403 && ['FORBIDDEN', 'PERMISSION_DENIED'].includes(explicitCode);
+        if (forbidden) return toStructuredError({ code: 'FORBIDDEN', status: 403, message: 'Permission denied.' });
         if (authLikeStatus(response.status)) {
           return toStructuredError({
             code: 'AUTH_REQUIRED',
@@ -398,7 +404,6 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
             requiresSignIn: true,
           });
         }
-        const parsedError = await parseErrorBody(response);
         if (parsedError.kind === 'json') {
           return toStructuredError({
             code: parsedError.parsed?.error?.code || 'API_ERROR',
@@ -431,6 +436,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       }
 
       const bytes = await response.arrayBuffer();
+      if (signal?.aborted) return canceledBridgeRequest();
       if (!bytes || bytes.byteLength <= 0) {
         return toStructuredError({
           code: 'BRIDGE_EMPTY_RESPONSE',
