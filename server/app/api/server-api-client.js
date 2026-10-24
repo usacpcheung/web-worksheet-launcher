@@ -57,6 +57,17 @@ function toStructuredError({ code, message, status = null, requiresSignIn = fals
   };
 }
 
+// Headers remain authoritative when an error body is truncated. An unreadable
+// 403 has no established permission code, so preserve the legacy auth fallback.
+// Explicit cancellation is handled by callers before using this fallback.
+function interruptedBridgeRejection(response) {
+  if (!(response?.status >= 400 && response.status <= 599)) return null;
+  const auth = authLikeStatus(response.status);
+  return toStructuredError({ code: auth ? 'AUTH_REQUIRED' : 'API_ERROR',
+    message: auth ? createAuthMessage() : 'Bridge request was rejected.',
+    status: response.status, requiresSignIn: auth });
+}
+
 function toTransportError(error, { signal = null, duringRead = false, status = null } = {}) {
   const aborted = signal?.aborted || error?.name === 'AbortError';
   return toStructuredError({
@@ -391,6 +402,7 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     try {
       const contentType = String(response.headers.get('content-type') || '').toLowerCase();
 
+      if (response.status === 401) return interruptedBridgeRejection(response);
       if (!response.ok) {
         const parsedError = await parseErrorBody(response);
         const explicitCode = parsedError.parsed?.error?.code || parsedError.parsed?.code;
@@ -446,7 +458,8 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
       }
       return { ok: true, data: new Uint8Array(bytes), status: response.status };
     } catch (error) {
-      return toTransportError(error, { signal, duringRead: true });
+      if (signal?.aborted) return canceledBridgeRequest();
+      return interruptedBridgeRejection(response) || toTransportError(error, { signal, duringRead: true });
     }
   }
 
@@ -734,10 +747,11 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     // Cancellation stops local waiting; admitted backend work may still complete.
     async transcribeAudio(audioBlob, { signal } = {}) {
       if (signal?.aborted) return canceledBridgeRequest();
+      let response;
       try {
         const form = new FormData();
         form.append('audio', audioBlob);
-        const response = await fetch(`${BRIDGE_API_BASE}/transcriptions`, {
+        response = await fetch(`${BRIDGE_API_BASE}/transcriptions`, {
           method: 'POST', credentials: 'include', body: form,
           ...(signal ? { signal } : {}),
         });
@@ -755,6 +769,8 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
         }
         let body;
         try { body = JSON.parse(text); } catch {
+          const rejection = interruptedBridgeRejection(response);
+          if (rejection) return rejection;
           return toStructuredError({ code: 'INVALID_JSON_RESPONSE',
             message: 'Server returned malformed JSON.', status: response.status });
         }
@@ -773,7 +789,10 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
           durationSeconds: body.durationSeconds ?? null, requestId: body.requestId ?? null,
           timings: body.timings ?? null }, status: response.status };
       } catch (error) {
-        if (signal?.aborted || error?.name === 'AbortError') return canceledBridgeRequest();
+        if (signal?.aborted) return canceledBridgeRequest();
+        const rejection = interruptedBridgeRejection(response);
+        if (rejection) return rejection;
+        if (error?.name === 'AbortError') return canceledBridgeRequest();
         // Never include response bodies, audio, or thrown exception text in diagnostics.
         return toStructuredError({ code: 'NETWORK_ERROR', message: 'Unable to reach bridge API.' });
       }
@@ -781,8 +800,8 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
     async rewriteText(text, { signal } = {}) {
       // Cancellation is opt-in; existing callers retain their legacy error contract.
       if (signal?.aborted) return canceledBridgeRequest();
+      let response;
       try {
-        let response;
         try {
           response = await fetch(`${BRIDGE_API_BASE}/rewrite`, {
             method: 'POST',
@@ -865,7 +884,10 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
           body = await response.json();
           if (signal?.aborted) return canceledBridgeRequest();
         } catch (error) {
-          if (signal && (signal.aborted || error?.name === 'AbortError')) return canceledBridgeRequest();
+          if (signal?.aborted) return canceledBridgeRequest();
+          const rejection = interruptedBridgeRejection(response);
+          if (rejection) return rejection;
+          if (signal && error?.name === 'AbortError') return canceledBridgeRequest();
           return toStructuredError({
             code: 'INVALID_JSON_RESPONSE',
             message: 'Server returned malformed JSON.',
@@ -893,6 +915,9 @@ function createServerApiClient({ uploadTimeoutMs = 120000, listTimeoutMs = 15000
         }
         return { ok: true, data: { text: rewrittenText }, status: response.status };
       } catch (error) {
+        if (signal?.aborted) return canceledBridgeRequest();
+        const rejection = interruptedBridgeRejection(response);
+        if (rejection) return rejection;
         if (!signal) throw error;
         if (signal && (signal.aborted || error?.name === 'AbortError')) return canceledBridgeRequest();
         return toStructuredError({ code: 'NETWORK_ERROR', message: 'Unable to reach bridge API.' });
