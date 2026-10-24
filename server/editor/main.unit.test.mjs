@@ -7,7 +7,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { rewriteModuleSourceForTests } from '../test-utils/module-source-test-helpers.mjs';
 import { createServerApiClient } from '../app/api/server-api-client.js';
-import { SharedAuthGate as RealSharedAuthGate } from '../app/auth/shared-auth-gate.js';
+
+function audioReady(session) {
+  session._readAuth ||= { ensure: async () => ({ ok: true, isCurrent: () => true }), observe() {} };
+  return session;
+}
 
 test('opening persisted drafts restores their save time without leaking previous draft status', async () => {
   const mod = await loadEditorModule();
@@ -65,7 +69,8 @@ test('audio generation rejects worksheet switches and reopening the same workshe
     const session = new mod.EditorDraftSession(storage, { apiClient: { generateAudioFromText: () => new Promise(resolve => { finish = resolve; }) } });
     const original = mod.createDraftRecord({ localId: 'original', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Same text' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', value: 'Same option', label: 'Same option' }] } }] });
     session.state.draft = original;
-    const run = session.generateAudioTrack('q1', target, 'english', { optionId: 'o1' });
+    const run = audioReady(session).generateAudioTrack('q1', target, 'english', { optionId: 'o1' });
+    while (!finish) await new Promise(resolve => setImmediate(resolve));
     storage.drafts.get = async () => ({ ...structuredClone(original), localId: sameId ? 'original' : 'copy' });
     await session.createOrOpenByLocalDraftId(sameId ? 'original' : 'copy');
     const before = structuredClone(session.state.draft);
@@ -87,7 +92,7 @@ test('audio saved after source edits or target deletion is discarded without rep
     const session = new mod.EditorDraftSession(storage, { apiClient: { generateAudioFromText: async () => ({ ok: true, data: new Uint8Array([1, 2, 3]) }) } });
     const track = { language: 'english', assetId: 'old-audio', voicePresetId: 'english' };
     session.state.draft = mod.createDraftRecord({ localId: 'original', assets: [{ assetId: 'old-audio', kind: 'audio', usage: 'question_audio', path: 'old.mp3', mimeType: 'audio/mpeg' }], blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Original', audioTracks: [track] }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', value: 'Original', label: 'Original', audioTracks: [track] }] } }] });
-    const run = session.generateAudioTrack('q1', target, 'english', { optionId: 'o1', confirmReplace: true });
+    const run = audioReady(session).generateAudioTrack('q1', target, 'english', { optionId: 'o1', confirmReplace: true });
     await entered;
     if (change === 'switch') session.state.draft = mod.createDraftRecord({ localId: 'copy' });
     else if (change === 'delete') session.state.draft.blocks = [];
@@ -104,18 +109,21 @@ test('audio saved after source edits or target deletion is discarded without rep
   }
 });
 
-test('late prompt and option authentication failures reach the real auth recovery gate', async () => {
+test('prompt and option auth failures request login without persisting automatic replay', async () => {
   const mod = await loadEditorModule();
   for (const target of ['prompt', 'option']) {
-    const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: { generateAudioFromText: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401, requiresSignIn: true, message: 'Sign in' } }) } });
+    const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: { generateAudioFromText: async () => ({ ok: false, error: { code: 'AUTH_REQUIRED', status: 401 } }) } });
+    audioReady(session);
     session.state.draft = mod.createDraftRecord({ localId: 'original', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', label: 'Option', value: 'Option' }] } }] });
-    let pending, redirects = 0;
-    const gate = new RealSharedAuthGate({ resumeFlagKey: 'review', storage: { pendingIntent: { set: value => { pending = value; } }, resumeFlags: { set: () => {} } }, getCurrentLocalId: () => session.state.draft.localId, checkSessionReady: async () => ({ ok: true }), replayIntent: intent => session.replayProtectedAction(intent), redirectToAuth: () => { redirects++; } });
-    const result = await gate.runProtectedAction({ actionId: target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A', recordStore: 'localDrafts', payload: { localDraftId: 'original', blockId: 'q1', target: target === 'prompt' ? 'question_prompt' : 'option', optionId: 'o1', language: 'english' } });
-    assert.equal(result.status, 'redirected');
-    assert.equal(redirects, 1);
-    assert.equal(pending.intentPayload.language, 'english');
-    assert.equal(pending.localId, 'original');
+    let signIns = 0;
+    session.beginServerSignIn = () => { signIns++; };
+    session.authGate = { runProtectedAction: () => assert.fail('No replay gate for provider requests') };
+    const intent = { actionId: target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A', payload: { localDraftId: 'original', blockId: 'q1', target: target === 'prompt' ? 'question_prompt' : 'option', optionId: 'o1', language: 'english' } };
+    const result = await session.triggerProtectedAction(intent.actionId, intent.payload);
+    assert.equal(result.error.code, 'AUTH_REQUIRED');
+    assert.equal(signIns, 1);
+    assert.equal((await session.restoreProtectedAction(intent)).status, 'explicit_retry_required');
+    assert.equal(signIns, 1);
     clearTimeout(session.autosaveTimer);
   }
 });
@@ -141,7 +149,7 @@ test('modal load-status copies are visual-only and preserve the single shell ann
 
 async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
-  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
+  const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
   const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
@@ -624,7 +632,7 @@ test('track attachment replaces only its selected language and generated audio f
   const replace = await session.attachAudioTrack('q1', 'prompt', 'cantonese', createFakeFile({ name: 'b.mp3', type: 'audio/mpeg' }), { confirmReplace: true });
   assert.equal(replace.ok, true);
   assert.equal(removed.includes(first.assetId), true);
-  const generated = await session.generateAudioTrack('q1', 'prompt', 'english');
+  const generated = await audioReady(session).generateAudioTrack('q1', 'prompt', 'english');
   assert.equal(generated.ok, true);
   assert.deepEqual(calls[0].options, { voice_choice: 'english_narrator_female' });
   const tracks = session.state.draft.blocks[0].prompt.audioTracks;
@@ -649,7 +657,7 @@ test('protected prompt and option generation send all narrator choices through t
   try {
     for (const [language, choice] of [['cantonese', 'cantonese_narrator_female'], ['mandarin', 'mandarin_narrator_female'], ['english', 'english_narrator_female']]) {
       for (const target of ['prompt', 'option']) {
-        const result = await session.replayProtectedAction({ actionId: target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A',
+        const result = await audioReady(session).replayProtectedAction({ actionId: target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A',
           payload: { localDraftId: 'narrator-draft', blockId: 'q1', target: target === 'prompt' ? 'question_prompt' : 'option', language, ...(target === 'option' ? { optionId: 'o1' } : {}) } });
         assert.equal(result.ok, true);
         assert.deepEqual(requests.at(-1), { text: target === 'prompt' ? 'Prompt text' : 'Option text', format: 'mp3', response_mode: 'binary', voice_choice: choice });
@@ -675,13 +683,13 @@ test('bridge choice rejection preserves attached prompt and option tracks and as
   }] });
   try {
     for (const target of ['prompt', 'option']) {
-      assert.equal((await session.generateAudioTrack('q1', target, 'english', target === 'option' ? { optionId: 'o1' } : {})).ok, true);
+      assert.equal((await audioReady(session).generateAudioTrack('q1', target, 'english', target === 'option' ? { optionId: 'o1' } : {})).ok, true);
     }
     const before = structuredClone(session.state.draft);
     assert.equal(before.assets.length, 2);
     reject = true;
     for (const target of ['prompt', 'option']) {
-      const result = await session.generateAudioTrack('q1', target, 'english', { confirmReplace: true, ...(target === 'option' ? { optionId: 'o1' } : {}) });
+      const result = await audioReady(session).generateAudioTrack('q1', target, 'english', { confirmReplace: true, ...(target === 'option' ? { optionId: 'o1' } : {}) });
       assert.equal(result.ok, false);
       assert.equal(result.error.code, 'VOICE_CHOICE_UNSUPPORTED');
       assert.deepEqual(session.state.draft, before);
@@ -710,14 +718,16 @@ test('generated audio is discarded when prompt or option text changes while the 
     }],
   };
 
-  const promptGeneration = session.generateAudioTrack('q1', 'prompt', 'english');
+  const promptGeneration = audioReady(session).generateAudioTrack('q1', 'prompt', 'english');
+  while (!resolvers.length) await new Promise(resolve => setImmediate(resolve));
   session.state.draft.blocks[0].prompt.text = 'Updated prompt';
   resolvers.shift()({ ok: true, data: new Uint8Array([1, 2, 3]) });
   const promptResult = await promptGeneration;
   assert.equal(promptResult.reason, 'source-text-changed');
   assert.deepEqual(session.state.draft.blocks[0].prompt.audioTracks, []);
 
-  const optionGeneration = session.generateAudioTrack('q1', 'option', 'mandarin', { optionId: 'o1' });
+  const optionGeneration = audioReady(session).generateAudioTrack('q1', 'option', 'mandarin', { optionId: 'o1' });
+  while (!resolvers.length) await new Promise(resolve => setImmediate(resolve));
   session.state.draft.blocks[0].responseConfig.options[0].label = 'Updated option';
   session.state.draft.blocks[0].responseConfig.options[0].value = 'Updated option';
   resolvers.shift()({ ok: true, data: new Uint8Array([1, 2, 3]) });
@@ -4043,7 +4053,7 @@ test('generation cancels pending preview loads for prompt and option audio', asy
     session.getLocalAssetRecord = () => new Promise(resolve => { finishLoad = resolve; });
     session.createObjectUrlForAsset = () => { throw new Error('Cancelled preview must not create an audio URL'); };
     const playing = session.playAssetAudio('old');
-    const generated = await session.generateAudioTrack('q1', target, 'english', { optionId: 'o1' });
+    const generated = await audioReady(session).generateAudioTrack('q1', target, 'english', { optionId: 'o1' });
     assert.equal(generated.ok, false);
     finishLoad({ binary: new Uint8Array([1, 2, 3]) });
     assert.equal((await playing).reason, 'superseded');
@@ -5264,6 +5274,7 @@ test('editor triggerProtectedAction forwards payload and remains functional with
     },
   };
 
+  session.replayProtectedAction = async intent => { calls.push({ ...intent, recordStore: 'localDrafts' }); return { status: 'executed' }; };
   const noPayloadResult = await session.triggerProtectedAction('resumeRewriteAfterLogin');
   const withPayloadResult = await session.triggerProtectedAction('editorPromptT2A', {
     localDraftId: 'draft_stale',
@@ -5302,7 +5313,7 @@ test('editor replayProtectedAction receives payload and avoids mutation on stale
   });
   const beforeDraft = JSON.stringify(session.state.draft);
 
-  const result = await session.replayProtectedAction({
+  const result = await audioReady(session).replayProtectedAction({
     actionId: 'editorOptionT2A',
     payload: {
       localDraftId: 'draft_stale',
@@ -5337,7 +5348,7 @@ test('editor replayEditorPromptT2AIntent generates audio and attaches via canoni
     return { ok: true };
   };
 
-  const result = await session.replayEditorPromptT2AIntent({
+  const result = await audioReady(session).replayEditorPromptT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     target: 'question_prompt',
@@ -5364,7 +5375,7 @@ test('editor replayEditorPromptT2AIntent returns plain-language errors for inval
     blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: '' } }],
   });
 
-  const missingPrompt = await session.replayEditorPromptT2AIntent({
+  const missingPrompt = await audioReady(session).replayEditorPromptT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     target: 'question_prompt',
@@ -5373,7 +5384,7 @@ test('editor replayEditorPromptT2AIntent returns plain-language errors for inval
   assert.equal(missingPrompt.error.message, 'editor.notifications.audioGeneration.promptRequired');
 
   session.state.draft.blocks[0].prompt.text = 'a'.repeat(501);
-  const tooLong = await session.replayEditorPromptT2AIntent({
+  const tooLong = await audioReady(session).replayEditorPromptT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     target: 'question_prompt',
@@ -5382,7 +5393,7 @@ test('editor replayEditorPromptT2AIntent returns plain-language errors for inval
   assert.equal(tooLong.error.message, 'editor.notifications.audioGeneration.promptTextTooLong');
 
   session.state.draft.blocks[0].prompt.text = 'short prompt';
-  const generationFailure = await session.replayEditorPromptT2AIntent({
+  const generationFailure = await audioReady(session).replayEditorPromptT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     target: 'question_prompt',
@@ -5422,7 +5433,7 @@ test('editor replayEditorOptionT2AIntent generates audio and attaches via canoni
     return { ok: true };
   };
 
-  const result = await session.replayEditorOptionT2AIntent({
+  const result = await audioReady(session).replayEditorOptionT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     optionId: 'opt_1',
@@ -5462,7 +5473,7 @@ test('editor replayEditorOptionT2AIntent returns plain-language errors for inval
     }],
   });
 
-  const missingText = await session.replayEditorOptionT2AIntent({
+  const missingText = await audioReady(session).replayEditorOptionT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     optionId: 'opt_1',
@@ -5472,7 +5483,7 @@ test('editor replayEditorOptionT2AIntent returns plain-language errors for inval
   assert.equal(missingText.error.message, 'editor.notifications.audioGeneration.optionTextRequired');
 
   session.state.draft.blocks[0].responseConfig.options[0].label = 'a'.repeat(201);
-  const tooLong = await session.replayEditorOptionT2AIntent({
+  const tooLong = await audioReady(session).replayEditorOptionT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     optionId: 'opt_1',
@@ -5482,7 +5493,7 @@ test('editor replayEditorOptionT2AIntent returns plain-language errors for inval
   assert.equal(tooLong.error.message, 'editor.notifications.audioGeneration.optionTextTooLong');
 
   session.state.draft.blocks[0].responseConfig.options[0].label = 'short option';
-  const generationFailure = await session.replayEditorOptionT2AIntent({
+  const generationFailure = await audioReady(session).replayEditorOptionT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     optionId: 'opt_1',
@@ -5523,12 +5534,12 @@ test('stage3: replay T2A rejects invalid binary payload shape without replacing 
     }],
   });
 
-  const promptResult = await session.replayEditorPromptT2AIntent({
+  const promptResult = await audioReady(session).replayEditorPromptT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     target: 'question_prompt',
   });
-  const optionResult = await session.replayEditorOptionT2AIntent({
+  const optionResult = await audioReady(session).replayEditorOptionT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     optionId: 'opt_1',
@@ -5577,12 +5588,12 @@ test('prompt/option replay T2A guards duplicate in-flight requests per target', 
   session.attachQuestionMedia = async () => ({ ok: true });
   session.attachOptionAudio = async () => ({ ok: true });
 
-  const firstPrompt = session.replayEditorPromptT2AIntent({
+  const firstPrompt = audioReady(session).replayEditorPromptT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     target: 'question_prompt',
   });
-  const duplicatePrompt = await session.replayEditorPromptT2AIntent({
+  const duplicatePrompt = await audioReady(session).replayEditorPromptT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     target: 'question_prompt',
@@ -5592,13 +5603,13 @@ test('prompt/option replay T2A guards duplicate in-flight requests per target', 
   resolvePrompt({ ok: true, data: new Uint8Array([1]) });
   await firstPrompt;
 
-  const firstOption = session.replayEditorOptionT2AIntent({
+  const firstOption = audioReady(session).replayEditorOptionT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     optionId: 'opt_1',
     target: 'option',
   });
-  const duplicateOption = await session.replayEditorOptionT2AIntent({
+  const duplicateOption = await audioReady(session).replayEditorOptionT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     optionId: 'opt_1',
@@ -5640,12 +5651,12 @@ test('stage3: api failure keeps existing prompt/option audio refs unchanged and 
   });
   const before = JSON.stringify(session.state.draft);
 
-  const promptResult = await session.replayEditorPromptT2AIntent({
+  const promptResult = await audioReady(session).replayEditorPromptT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     target: 'question_prompt',
   });
-  const optionResult = await session.replayEditorOptionT2AIntent({
+  const optionResult = await audioReady(session).replayEditorOptionT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     optionId: 'opt_1',
@@ -5693,12 +5704,12 @@ test('stage3: successful replay T2A attaches mp3 bytes through canonical media h
     }],
   });
 
-  const promptResult = await session.replayEditorPromptT2AIntent({
+  const promptResult = await audioReady(session).replayEditorPromptT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     target: 'question_prompt',
   });
-  const optionResult = await session.replayEditorOptionT2AIntent({
+  const optionResult = await audioReady(session).replayEditorOptionT2AIntent({
     localDraftId: 'draft_active',
     blockId: 'q1',
     optionId: 'opt_1',
@@ -5775,13 +5786,13 @@ test('prompt audio sends displayed list numbers and counts the final Unicode tex
   const id = session.state.selectedBlockId; let sent;
   session.apiClient.generateAudioFromText = async text => { sent = text; return { ok: false }; };
   session.updateBlockContent(id, '3. **閱讀**\n1. 寫下答案。');
-  await session.generateAudioTrack(id, 'prompt', 'cantonese');
+  await audioReady(session).generateAudioTrack(id, 'prompt', 'cantonese');
   assert.equal(sent, '3. 閱讀\n4. 寫下答案。');
   session.updateBlockContent(id, '**' + '𠮷'.repeat(500) + '**');
-  await session.generateAudioTrack(id, 'prompt', 'cantonese');
+  await audioReady(session).generateAudioTrack(id, 'prompt', 'cantonese');
   assert.equal(sent, '𠮷'.repeat(500));
   session.updateBlockContent(id, '𠮷'.repeat(501)); sent = null;
-  assert.equal((await session.generateAudioTrack(id, 'prompt', 'cantonese')).reason, 'text-too-long');
+  assert.equal((await audioReady(session).generateAudioTrack(id, 'prompt', 'cantonese')).reason, 'text-too-long');
   assert.equal(sent, null);
   clearTimeout(session.autosaveTimer);
 });
@@ -6247,5 +6258,29 @@ for (const kind of ['draft', 'publication']) for (const boundary of ['prepared',
     const result = kind === 'draft' ? await session.reopenUploadedDraftAsLocalCopy('one') : await session.reopenPublishedPackageAsLocalCopy('one');
     assert.equal(result.skipped, true); assert.equal(downloads, boundary === 'prepared' ? 0 : 1);
     assert.equal(session.packageLoad.current, null);
+  });
+}
+
+
+for (const target of ['prompt', 'option']) for (const language of ['english', null]) {
+  test(`T2A ${target}/${language || 'legacy'} rejects account invalidation during asset persistence`, async () => {
+    const mod = await loadEditorModule();
+    let current = true, finish, entered;
+    const started = new Promise(resolve => { entered = resolve; });
+    const removed = [];
+    const storage = createSessionForTests();
+    storage.localAssets = { put: async () => { entered(); await new Promise(resolve => { finish = resolve; }); }, remove: async id => removed.push(id) };
+    const session = new mod.EditorDraftSession(storage, { apiClient: { generateAudioFromText: async () => ({ ok: true, data: new Uint8Array([1,2,3]) }) } });
+    session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => current }) };
+    session.state.draft = mod.createDraftRecord({ localId: 'guarded', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', label: 'Option', value: 'Option' }] } }] });
+    const task = session.replayProtectedAction({ actionId: target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A', payload: {
+      localDraftId: 'guarded', blockId: 'q1', optionId: 'o1', target: target === 'prompt' ? 'question_prompt' : 'option', ...(language ? { language } : {}),
+    } });
+    await started;
+    current = false; finish();
+    assert.equal((await task).ok, false);
+    assert.equal(session.state.draft.assets.length, 0);
+    assert.equal(removed.length, 1);
+    clearTimeout(session.autosaveTimer);
   });
 }

@@ -49,6 +49,7 @@ export default {
     "downloadFailed": "Unable to download this item.",
     "deleteFailed": "Unable to delete this item.",
     "sessionFailed": "Unable to verify sign-in due to a temporary session check issue. Please retry when the connection is stable.",
+    "audioRetryRequired": "Signed in. Review your text and voice, then choose Generate again. No audio request was resent.",
     "audioFailed": "Unable to generate audio. Your local content is still available.",
     "transcriptionFailed": "Unable to transcribe the recording. Please try recording again.",
     "rewriteFailed": "Unable to rewrite the text. Your original text is still available.",

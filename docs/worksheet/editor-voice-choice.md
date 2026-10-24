@@ -94,3 +94,12 @@ An older bridge can ignore the unknown field and generate default Cantonese audi
 Before deployment, verify a real named-choice request for each language against the
 VPS and listen to the output. Successful raw-control calls alone do not establish
 named-choice support. This documentation review does not deploy or change VPS configuration.
+
+
+## Shared generation workflow
+
+Generation uses the [shared T2A contract](../contracts/rewrite-bridge-workflows.md#10-t2a-authoring-integration):
+verified session readiness, one provider request per explicit action, account and
+target checks before attaching audio, and localized safe errors. Sign-in does not
+automatically resend generation. Review text/voice and choose Generate again.
+Existing voice choices, replacement confirmation and app-specific controls remain.

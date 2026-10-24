@@ -125,3 +125,12 @@ Closing or replacing the dialog suppresses late results and errors. Uploaded-dra
 and published-copy downloads have a two-minute deadline and are cancelled when
 their dialog closes; cancellation releases the lock and ignores late completion.
 Timeout messages ask for an explicit retry in both supported languages.
+
+
+## Shared generation workflow
+
+Generation uses the [shared T2A contract](../contracts/rewrite-bridge-workflows.md#10-t2a-authoring-integration):
+verified session readiness, one provider request per explicit action, account and
+target checks before attaching audio, and localized safe errors. Sign-in does not
+automatically resend generation. Review text/voice and choose Generate again.
+Existing voice choices, replacement confirmation and app-specific controls remain.

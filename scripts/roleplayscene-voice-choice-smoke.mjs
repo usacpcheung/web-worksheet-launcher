@@ -26,7 +26,7 @@ try {
     window.mountVoiceEditor=(scene='first')=>{
      window.disposeVoiceEditor?.();
      window.disposeVoiceEditor=renderEditor(store,document.querySelector('#left'),document.querySelector('#right'),()=>{}, {
-      initialSelectedSceneId:scene,ensureServerSessionReady:async()=>({ok:true}),onSignIn:()=>window.signIns++,
+      initialSelectedSceneId:scene,getProviderAuth:()=>({ensure:async()=>({ok:true,isCurrent:()=>true})}),onSignIn:()=>window.signIns++,
       apiClient:{generateAudioFromText:async(text,options)=>{window.voiceCalls.push({text,options});return window.voiceFailure ? {ok:false,error:{status:401,requiresSignIn:true,message:'Expired'}} : {ok:true,data:new Uint8Array([1,2,3])};}}
      });
     };window.mountVoiceEditor();
