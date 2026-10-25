@@ -11,7 +11,7 @@ try {
         const errors = [], requests = []; page.on('pageerror', error => errors.push(error.message));
         const app = kind.startsWith('scene') ? 'roleplayscene' : kind.split('-')[0];
         const published = kind.endsWith('publication'), publishing = kind.endsWith('publish');
-        let signedIn = true;
+        let signedIn = true, listRevision = 0;
         const row = {uploaded_draft_id:'fixture', uploaded_attempt_id:'fixture', published_package_id:published?'fixture':null,
           roleplayscene_uploaded_draft_id:'fixture',roleplayscene_published_scene_id:'fixture',owner_sub:'fixture',title:'QA fixture',subject:'Subject',publish_state:'draft_only'};
         await page.addInitScript(({locale,recovery}) => {
@@ -26,7 +26,7 @@ try {
             requests.push({method:req.method(), body:req.postDataJSON()});
             return route.fulfill({json:{ok:true,data:{deleted:true,published_package_id:'saved',roleplayscene_published_scene_id:'saved'}}});
           }
-          return route.fulfill({json:{ok:true,data:{items:[row]}}});
+          return route.fulfill({json:{ok:true,data:{items:[{...row,title:`QA fixture ${++listRevision}`}]}}});
         });
         await page.goto(`${base}/server/${app}/`);
         const label = key => page.evaluate(async key => (await import('/server/app/i18n/index.js')).t(key), key);
@@ -45,7 +45,20 @@ try {
         const action = () => app==='roleplayscene' ? page.locator(publishing?'[data-draft-action="publish"]':published?'[data-published-delete]':'[data-draft-action="delete"]').first()
           : publishing ? page.locator('.browse-modal').getByRole('button',{name:publishLabel,exact:true}).first() : page.locator('.browse-modal .uploaded-draft-action--danger').first();
         const form = () => app==='roleplayscene'?page.locator('#server-modal-overlay'):page.getByRole('dialog').last();
-        await open(); await action().waitFor(); signedIn=false;
+        // Editor can render cached rows before its manager preflight/refresh.
+        // Expire only after fresh rows render, not while that read is pending.
+        if (app === 'editor') await page.waitForFunction(() => Boolean(window.editorSession));
+        const refreshed = app === 'editor' ? page.waitForResponse(response => {
+          const url = new URL(response.url());
+          return url.pathname.startsWith('/api/') && !url.pathname.endsWith('/session')
+            && response.request().method() === 'GET';
+        }) : null;
+        await open();
+        if (refreshed) {
+          const freshRows = await (await refreshed).json();
+          await page.locator('.browse-modal').getByText(freshRows.data.items[0].title, {exact:true}).waitFor();
+        }
+        await action().waitFor(); signedIn=false;
         await action().click();
         if(publishing) {
           await form().locator('input').first().fill('Prepared publication');
