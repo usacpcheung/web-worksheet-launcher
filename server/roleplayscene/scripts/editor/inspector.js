@@ -517,6 +517,14 @@ function buildInspector(hostEl, project, scene, actions) {
       lineParts.body.append(message, signIn);
     }
     t2aControls.append(presetLabel, generateAudio);
+    if (isGeneratingAudio) {
+      const cancelAudio = document.createElement('button');
+      cancelAudio.type = 'button'; applyButtonClass(cancelAudio);
+      cancelAudio.textContent = translate('inspector.dialogue.cancelAudio');
+      cancelAudio.dataset.focusKey = `dialogue-t2a-cancel-${scene.id}-${index}`;
+      cancelAudio.addEventListener('click', () => actions.onCancelDialogueAudio?.(scene.id, index));
+      t2aControls.appendChild(cancelAudio);
+    }
     lineParts.body.append(t2aControls, t2aHint);
 
     if (speechBubble.enabled) {

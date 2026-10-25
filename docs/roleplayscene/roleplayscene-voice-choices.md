@@ -134,3 +134,12 @@ verified session readiness, one provider request per explicit action, account an
 target checks before attaching audio, and localized safe errors. Sign-in does not
 automatically resend generation. Review text/voice and choose Generate again.
 Existing voice choices, replacement confirmation and app-specific controls remain.
+
+
+## Timeout and Cancel
+
+Session preparation and audio generation each have a separate 120-second limit.
+Use Cancel beside the pending generation to stop waiting and keep existing audio.
+The server may continue processing; a retry requires a new Generate action.
+Cancellation and timeout never automatically resend the request. See the
+[shared cancellation contract](../contracts/rewrite-bridge-workflows.md#12-t2a-deadlines-and-user-cancellation).

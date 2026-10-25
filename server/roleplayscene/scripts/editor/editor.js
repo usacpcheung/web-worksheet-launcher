@@ -51,6 +51,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     : null;
   const dialogueT2AInFlightKeys = new Map();
   const dialogueRequests = new Map();
+  const dialogueCancel = new Map();
   const dialogueAuthFailures = new Set();
   const lineIdentity = Symbol('generationLine');
   let activeDialoguePreview = null;
@@ -199,6 +200,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       getSpeakerDraftForDialogue: getSpeakerDraftForDialogue,
       onSetDialogueAudio: setDialogueAudio,
       onGenerateDialogueAudio: generateDialogueAudio,
+      onCancelDialogueAudio: (sceneId, index) => dialogueCancel.get(getDialogueT2AKey(sceneId, index))?.abort(),
       isDialogueAudioGenerating: (sceneId, index) => dialogueT2AInFlightKeys.has(getDialogueT2AKey(sceneId, index)),
       onPreviewDialogueAudio: previewDialogueAudio,
       isDialogueAudioPreviewing: (sceneId, index) => activeDialoguePreview?.key === getDialogueT2AKey(sceneId, index),
@@ -981,6 +983,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
     let confirmedAudioSignature = null;
     const controller = new AbortController();
     dialogueRequests.set(controller, isOriginalLine);
+    dialogueCancel.set(key, controller);
     const isCurrent = () => isOriginalLine()
       && String(getDialogueLine(sceneId, index)?.text || '').trim() === textState.trimmedText
       && getDialogueVoiceChoice(getDialogueLine(sceneId, index), store.get().project.speakers) === preset.id;
@@ -1053,6 +1056,7 @@ export function renderEditor(store, leftEl, rightEl, showMessage, options = {}) 
       showMessage({ textId: 'inspector.dialogue.t2aFailed' });
     } finally {
       dialogueRequests.delete(controller);
+      if (dialogueCancel.get(key) === controller) dialogueCancel.delete(key);
       dialogueT2AInFlightKeys.delete(key);
       if (!disposed) {
         update();

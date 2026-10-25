@@ -27,7 +27,7 @@ try {
      window.disposeVoiceEditor?.();
      window.disposeVoiceEditor=renderEditor(store,document.querySelector('#left'),document.querySelector('#right'),()=>{}, {
       initialSelectedSceneId:scene,getProviderAuth:()=>({ensure:async()=>({ok:true,isCurrent:()=>true})}),onSignIn:()=>window.signIns++,
-      apiClient:{generateAudioFromText:async(text,options)=>{window.voiceCalls.push({text,options});return window.voiceFailure ? {ok:false,error:{status:401,requiresSignIn:true,message:'Expired'}} : {ok:true,data:new Uint8Array([1,2,3])};}}
+      apiClient:{generateAudioFromText:async(text,options)=>{window.voiceCalls.push({text,options});if(window.voiceHold) return new Promise(resolve=>window.finishVoice=resolve);return window.voiceFailure ? {ok:false,error:{status:401,requiresSignIn:true,message:'Expired'}} : {ok:true,data:new Uint8Array([1,2,3])};}}
      });
     };window.mountVoiceEditor();
    },locale);
@@ -55,14 +55,23 @@ try {
    });
    assert.equal(await voice('first',1).inputValue(),'cantonese_female_3');
    assert.equal(await page.evaluate(()=>window.voiceStore.get().project.speakers[0].lastVoiceChoice),'cantonese_female_3');
+   // A canceled request can finish late without attaching to the dialogue.
+   await page.evaluate(()=>{window.voiceHold=true;});
+   await page.locator('.dialogue-t2a-controls button').first().click();
+   await page.waitForFunction(()=>Boolean(window.finishVoice));
+   await page.locator('[data-focus-key="dialogue-t2a-cancel-first-0"]').click();
+   await page.waitForFunction(()=>!document.querySelector('[data-focus-key="dialogue-t2a-cancel-first-0"]'));
+   await page.evaluate(()=>{window.voiceHold=false;window.finishVoice({ok:true,data:new Uint8Array([1,2,3])});});
+   assert.equal(await page.evaluate(()=>Boolean(window.voiceStore.get().project.scenes[0].dialogue[0].audio)),false);
    // An expiry must keep selection, expose sign-in, and never auto-retry.
+   const callsBeforeExpiry = await page.evaluate(()=>window.voiceCalls.length);
    await page.evaluate(()=>window.voiceFailure=true);
    await page.locator('.dialogue-t2a-controls button').nth(1).click();
    const notice=locale==='en'?'Session expired. Existing audio is unchanged. Sign in, then press Generate again.':'登入已過期，原有音訊未有更改。請重新登入，再按「生成」。';
    await page.getByText(notice,{exact:true}).waitFor();
    await page.getByRole('button',{name:locale==='en'?'Sign in':'登入',exact:true}).click();
    assert.equal(await page.evaluate(()=>window.signIns),1);
-   assert.equal(await page.evaluate(()=>window.voiceCalls.length),1);
+   assert.equal(await page.evaluate(()=>window.voiceCalls.length),callsBeforeExpiry+1);
    assert.equal(await voice('first',1).inputValue(),'cantonese_female_3');
    assert.deepEqual(await page.evaluate(()=>window.voiceCalls[0].options),{voice_choice:'cantonese_female_3'});
    // All seven labels stay short; keyboard can reach the selector.

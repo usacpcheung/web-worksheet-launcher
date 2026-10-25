@@ -357,10 +357,11 @@ export default {
       "t2aTextTooLong": "台詞太長，無法生成音訊（最多 {max} 個字元）。",
       "t2aUnavailable": "音訊生成功能暫時不可用。",
       "confirmRegenerateAudio": "要取代這句台詞現有的音訊嗎？",
-      "t2aCanceled": "已取消生成音訊。",
+      "cancelAudio": "取消",
+      "t2aCanceled": "已停止等待音訊，原有音訊未有更改。伺服器可能仍在處理；如需重試，請再按「生成」。",
       "t2aGenerated": "已生成第 {index} 行的音訊。",
       "t2aFailed": "無法生成音訊。",
-      "t2aTimedOut": "音訊請求逾時，原有音訊未有更改。請檢查網絡連線，再按「生成」。",
+      "t2aTimedOut": "音訊請求逾時，原有音訊未有更改。伺服器可能仍在處理；如需重試，請再按「生成」。",
       "t2aFailedWithDetail": "無法生成音訊：{detail}",
       "t2aLineChanged": "音訊生成已取消，因為這句台詞已被修改。",
       "t2aPreset": {

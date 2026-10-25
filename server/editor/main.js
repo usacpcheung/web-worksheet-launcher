@@ -1,4 +1,4 @@
-import { runAudioGeneration } from '../app/bridge/audio-generation.js';
+import { runAudioGeneration, waitForAudioAttachment, AUDIO_GENERATION_PHASE_TIMEOUT_MS } from '../app/bridge/audio-generation.js';
 import { prepareMutation } from '../app/auth/mutation-auth.js';
 import { createSilentSessionStateAdapter } from '../app/auth/session-state-adapter.js';
 import { redirectReadSignIn, takeReadAuthReturn } from '../app/auth/read-auth-return.js';
@@ -1221,6 +1221,8 @@ class EditorDraftSession {
     this._loadUploadedDraftsWithPreflightPromise = null;
     this._loadUploadedDraftsWithoutPreflightPromise = null;
     this._loadUploadedDraftsActiveCount = 0;
+    this._audioOperations = new Map();
+    this.audioPhaseTimeoutMs = AUDIO_GENERATION_PHASE_TIMEOUT_MS;
     this._promptT2AInFlightTargets = new Set();
     this._optionT2AInFlightTargets = new Set();
     this._audioDraftGeneration = 0;
@@ -2325,8 +2327,13 @@ class EditorDraftSession {
       && this._audioDraftGeneration === generation && signature() === original;
   }
 
-  async requestGeneratedAudio(text, voice, isCurrent) {
-    return runAudioGeneration({ auth: this.readAuth, api: this.apiClient, text, voice, isCurrent });
+  cancelAudioGeneration(blockId, optionId = null) {
+    this._audioOperations.get(JSON.stringify([blockId, optionId]))?.abort();
+  }
+
+  async requestGeneratedAudio(text, voice, isCurrent, signal) {
+    return runAudioGeneration({ auth: this.readAuth, api: this.apiClient, text, voice, isCurrent,
+      signal, phaseTimeoutMs: this.audioPhaseTimeoutMs });
   }
 
   async generateAudioTrack(blockId, target, language, options = {}) {
@@ -2344,7 +2351,7 @@ class EditorDraftSession {
     const expectedSourceTextHash = getAudioSourceTextHash(current.text);
     const expectedDraft = { localId: this.state.draft.localId, generation: this._audioDraftGeneration };
     const isCurrent = this.captureAudioTarget(blockId, target, optionId, language);
-    const audioResult = await this.requestGeneratedAudio(textState.trimmedText, preset.options, isCurrent);
+    const audioResult = await this.requestGeneratedAudio(textState.trimmedText, preset.options, isCurrent, options.signal);
     if (this.state.draft?.localId !== expectedDraft.localId || this._audioDraftGeneration !== expectedDraft.generation) {
       return { ok: false, reason: 'draft-changed' };
     }
@@ -2353,14 +2360,14 @@ class EditorDraftSession {
     const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
     if (!audioBytes) return { ok: false, reason: 'invalid-audio-data' };
     const fileName = target === 'prompt' ? `${blockId}_${language}.mp3` : `${blockId}_${optionId}_${language}.mp3`;
-    return this.attachAudioTrack(blockId, target, language, createAudioFileFromBytes(audioBytes, fileName), {
+    return waitForAudioAttachment(() => this.attachAudioTrack(blockId, target, language, createAudioFileFromBytes(audioBytes, fileName), {
       optionId,
       confirmReplace: true,
       voicePresetId: language,
       expectedSourceTextHash,
       expectedDraft,
       isCurrent: audioResult.isCurrent,
-    });
+    }), options.signal);
   }
 
   migrateLegacyAudioInDraft(choice) {
@@ -4365,7 +4372,7 @@ class EditorDraftSession {
     this.notifyStateChange();
   }
 
-  async replayProtectedAction(intent) {
+  async replayProtectedAction(intent, request = {}) {
     const actionId = typeof intent?.actionId === 'string' ? intent.actionId : '';
     const payload = intent?.payload && typeof intent.payload === 'object' ? intent.payload : {};
     this.state.lastProtectedAction = actionId || null;
@@ -4373,9 +4380,9 @@ class EditorDraftSession {
     switch (actionId) {
       case 'editorPromptT2A':
       case 'resumeT2AAfterLogin':
-        return this.replayEditorPromptT2AIntent(payload);
+        return this.replayEditorPromptT2AIntent(payload, request);
       case 'editorOptionT2A':
-        return this.replayEditorOptionT2AIntent(payload);
+        return this.replayEditorOptionT2AIntent(payload, request);
       case 'resumeRewriteAfterLogin':
         this.setRecoveryMessage(editorNotification('recovery.rewriteUnavailable'));
         return { ok: true, status: 'deferred_editor_rewrite' };
@@ -4414,7 +4421,7 @@ class EditorDraftSession {
     return { ok: true };
   }
 
-  async replayEditorPromptT2AIntent(payload = {}) {
+  async replayEditorPromptT2AIntent(payload = {}, { signal } = {}) {
     const validation = this.validateEditorPromptT2AIntentPayload(payload);
     if (!validation.ok) {
       this.setRecoveryMessage(validation.message);
@@ -4463,7 +4470,7 @@ class EditorDraftSession {
     this._promptT2AInFlightTargets.add(inFlightKey);
     try {
       if (isAudioTrackLanguage(payload.language)) {
-        const result = await this.generateAudioTrack(blockId, 'prompt', payload.language, { confirmReplace: true });
+        const result = await this.generateAudioTrack(blockId, 'prompt', payload.language, { confirmReplace: true, signal });
         if (!result.ok) {
           const message = result.reason === 'generation-failed' ? getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') : (result.error?.message || editorNotification('audioGeneration.failed'));
           this.setRecoveryMessage(message);
@@ -4475,7 +4482,7 @@ class EditorDraftSession {
         return { ok: true, status: 'generated_editor_prompt_t2a_track', data: { blockId, language: payload.language } };
       }
       const isCurrent = this.captureAudioTarget(blockId, 'prompt', null);
-      const audioResult = await this.requestGeneratedAudio(promptText, {}, isCurrent);
+      const audioResult = await this.requestGeneratedAudio(promptText, {}, isCurrent, signal);
       if (!audioResult?.ok) {
         const message = getApiErrorMessage(audioResult, audioResult.source === 'repository-api' ? 'session' : 'audio', audioResult.source || 'bridge');
         this.setRecoveryMessage(message);
@@ -4503,12 +4510,12 @@ class EditorDraftSession {
       }
       const generatedFile = createAudioFileFromBytes(audioBytes, `${blockId}_prompt.mp3`);
       const hasExistingQuestionAudio = Boolean(getSingleMediaRef(block?.prompt?.mediaRefs, 'question_audio'));
-      const attachResult = await this.attachQuestionMedia(blockId, 'question_audio', generatedFile, {
+      const attachResult = await waitForAudioAttachment(() => this.attachQuestionMedia(blockId, 'question_audio', generatedFile, {
         confirmReplace: hasExistingQuestionAudio,
         isCurrent: audioResult.isCurrent,
-      });
+      }), signal);
       if (!attachResult?.ok) {
-        const message = String(attachResult?.error?.message || '').trim() || editorNotification('audioGeneration.attachPromptFailed');
+        const message = attachResult?.error?.code === 'ABORTED' ? getApiErrorMessage(attachResult, 'audio', 'bridge') : String(attachResult?.error?.message || '').trim() || editorNotification('audioGeneration.attachPromptFailed');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -4577,7 +4584,7 @@ class EditorDraftSession {
     return { ok: true };
   }
 
-  async replayEditorOptionT2AIntent(payload = {}) {
+  async replayEditorOptionT2AIntent(payload = {}, { signal } = {}) {
     const validation = this.validateEditorOptionT2AIntentPayload(payload);
     if (!validation.ok) {
       this.setRecoveryMessage(validation.message);
@@ -4631,7 +4638,7 @@ class EditorDraftSession {
     this._optionT2AInFlightTargets.add(inFlightKey);
     try {
       if (isAudioTrackLanguage(payload.language)) {
-        const result = await this.generateAudioTrack(blockId, 'option', payload.language, { optionId, confirmReplace: true });
+        const result = await this.generateAudioTrack(blockId, 'option', payload.language, { optionId, confirmReplace: true, signal });
         if (!result.ok) {
           const message = result.reason === 'generation-failed' ? getApiErrorMessage(result, result.source === 'repository-api' ? 'session' : 'audio', result.source || 'bridge') : (result.error?.message || editorNotification('audioGeneration.failed'));
           this.setRecoveryMessage(message);
@@ -4649,7 +4656,7 @@ class EditorDraftSession {
         return { ok: true, status: 'generated_editor_option_t2a_track', data: { blockId, optionId, language: payload.language } };
       }
       const isCurrent = this.captureAudioTarget(blockId, 'option', optionId);
-      const audioResult = await this.requestGeneratedAudio(optionText, {}, isCurrent);
+      const audioResult = await this.requestGeneratedAudio(optionText, {}, isCurrent, signal);
       if (!audioResult?.ok) {
         const message = getApiErrorMessage(audioResult, audioResult.source === 'repository-api' ? 'session' : 'audio', audioResult.source || 'bridge');
         this.setRecoveryMessage(message);
@@ -4677,12 +4684,12 @@ class EditorDraftSession {
       }
       const generatedFile = createAudioFileFromBytes(audioBytes, `${blockId}_${optionId}.mp3`);
       const hasExistingOptionAudio = Boolean(getSingleMediaRef(selectedOption?.mediaRefs, 'option_audio'));
-      const attachResult = await this.attachOptionAudio(blockId, optionId, generatedFile, {
+      const attachResult = await waitForAudioAttachment(() => this.attachOptionAudio(blockId, optionId, generatedFile, {
         confirmReplace: hasExistingOptionAudio,
         isCurrent: audioResult.isCurrent,
-      });
+      }), signal);
       if (!attachResult?.ok) {
-        const message = String(attachResult?.error?.message || '').trim() || editorNotification('audioGeneration.attachOptionFailed');
+        const message = attachResult?.error?.code === 'ABORTED' ? getApiErrorMessage(attachResult, 'audio', 'bridge') : String(attachResult?.error?.message || '').trim() || editorNotification('audioGeneration.attachOptionFailed');
         this.setRecoveryMessage(message);
         this.pushNotification({
           kind: 'error',
@@ -4723,9 +4730,17 @@ class EditorDraftSession {
     };
 
     if (['editorPromptT2A', 'editorOptionT2A'].includes(actionId)) {
-      const result = await this.replayProtectedAction({ actionId, payload });
-      if (result.error?.requiresSignIn) this.beginServerSignIn({ readRecovery: true });
-      return result;
+      const key = JSON.stringify([payload.blockId, actionId === 'editorOptionT2A' ? payload.optionId : null]);
+      if (this._audioOperations.has(key)) return { ok: false, status: 'already_in_flight' };
+      const controller = new AbortController();
+      this._audioOperations.set(key, controller);
+      try {
+        const result = await this.replayProtectedAction({ actionId, payload }, { signal: controller.signal });
+        if (!controller.signal.aborted && result.error?.requiresSignIn) this.beginServerSignIn({ readRecovery: true });
+        return result;
+      } finally {
+        if (this._audioOperations.get(key) === controller) this._audioOperations.delete(key);
+      }
     }
     return this.authGate.runProtectedAction({
       actionId,
@@ -6796,6 +6811,8 @@ function renderEditorShell(session) {
       const generateBtn = trackRow.querySelector('[data-audio-track-action="generate"]');
       const playBtn = trackRow.querySelector('[data-audio-track-action="play"]');
       const removeBtn = trackRow.querySelector('[data-audio-track-action="remove"]');
+      const cancelBtn = trackRow.querySelector('[data-audio-track-action="cancel"]');
+      if (cancelBtn) cancelBtn.hidden = !(isPromptT2AInFlight && promptTrackGenerationLanguageByBlockId.get(selectedBlock.blockId) === language);
       const moreMenu = trackRow.querySelector('.audio-track-more-menu');
       const overflowGenerateBtn = trackRow.querySelector('[data-audio-track-overflow-action="generate"]');
       trackRow.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
@@ -6872,6 +6889,8 @@ function renderEditorShell(session) {
       const generateBtn = trackSection.querySelector('[data-option-audio-action="generate"]');
       const playBtn = trackSection.querySelector('[data-option-audio-action="play"]');
       const removeBtn = trackSection.querySelector('[data-option-audio-action="remove"]');
+      const cancelBtn = trackSection.querySelector('[data-option-audio-action="cancel"]');
+      if (cancelBtn) cancelBtn.hidden = !(isOptionT2AInFlight && optionTrackGenerationLanguageByKey.get(optionT2AKey) === language);
       const moreMenu = trackSection.querySelector('.audio-track-more-menu');
       trackSection.dataset.audioTrackSourceHash = track?.sourceTextHash || '';
       trackSection.classList.toggle('option-audio-track--attached', Boolean(track));
@@ -7336,8 +7355,6 @@ function renderEditorShell(session) {
           const latestTrack = getAudioTrack(latestBlock?.prompt?.audioTracks, language);
           const warning = await confirmAudioLanguageMismatch(latestPromptText, language, { replacing: Boolean(latestTrack) });
           if (!warning.confirmed) return;
-          const sessionReady = await session.ensureServerSessionReady();
-          if (!sessionReady.ok) return;
           if (latestTrack && !warning.replacementConfirmed) {
             const confirmed = await confirmDangerAction({
               title: t('editor.media.audioTracks.confirm.regenerateTitle', { language: getAudioTrackLanguageLabel(language) }),
@@ -7423,7 +7440,13 @@ function renderEditorShell(session) {
         });
         setAudioTrackMoreMenuDisabled(moreMenu, isPromptT2AInFlight);
       }
-      actions.append(attachBtn, generateBtn, playBtn, removeBtn);
+      const cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button'; cancelBtn.className = 'media-action-btn';
+      cancelBtn.dataset.audioTrackAction = 'cancel';
+      cancelBtn.textContent = t('common.actions.cancel');
+      cancelBtn.hidden = !isTrackGenerating;
+      cancelBtn.addEventListener('click', () => session.cancelAudioGeneration(selectedBlock.blockId));
+      actions.append(attachBtn, generateBtn, cancelBtn, playBtn, removeBtn);
       if (moreMenu) actions.appendChild(moreMenu);
       trackRow.append(trackMeta, actions);
       languageTrackRows.appendChild(trackRow);
@@ -7826,8 +7849,6 @@ function renderEditorShell(session) {
               const latestTrack = getAudioTrack(latestOption?.audioTracks, language);
               const warning = await confirmAudioLanguageMismatch(latestOptionText, language, { replacing: Boolean(latestTrack) });
               if (!warning.confirmed) return;
-              const ready = await session.ensureServerSessionReady();
-              if (!ready.ok) return;
               if (latestTrack && !warning.replacementConfirmed) {
                 const confirmed = await confirmDangerAction({
                   title: t('editor.media.audioTracks.confirm.regenerateTitle', { language: languageLabel }),
@@ -7901,6 +7922,13 @@ function renderEditorShell(session) {
           } else {
             trackActions.append(attachTrackBtn, generateTrackBtn);
           }
+          const cancelTrackBtn = document.createElement('button');
+          cancelTrackBtn.type = 'button'; cancelTrackBtn.className = 'media-action-btn';
+          cancelTrackBtn.dataset.optionAudioAction = 'cancel';
+          cancelTrackBtn.textContent = t('common.actions.cancel');
+          cancelTrackBtn.hidden = !isTrackGenerating;
+          cancelTrackBtn.addEventListener('click', () => session.cancelAudioGeneration(selectedBlock.blockId, optionId));
+          trackActions.appendChild(cancelTrackBtn);
           trackSection.appendChild(trackActions);
           optionTrackList.appendChild(trackSection);
         });

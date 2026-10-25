@@ -57,3 +57,12 @@ test('permission and transport errors expose safe categories and no raw provider
     assert.equal(result.error.requiresSignIn, false);
   }
 });
+
+test('cancel after provider success invalidates attachment ownership', async () => {
+  const controller = new AbortController();
+  const result = await runAudioGeneration({ auth: ready(), text: 'Text', isCurrent: () => true,
+    signal: controller.signal, api: { generateAudioFromText: async () => ({ ok: true, data: new Uint8Array([1]) }) } });
+  assert.equal(result.isCurrent(), true);
+  controller.abort();
+  assert.equal(result.isCurrent(), false);
+});

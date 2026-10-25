@@ -80,7 +80,7 @@ try {
       const mandarinGenerate = page.locator('[data-option-audio-menu-key="audio-question:first"][data-option-audio-language="mandarin"][data-option-audio-action="generate"]');
       const callsBeforeCancel = await page.evaluate(() => window.generationCalls.length);
       await mandarinGenerate.click();
-      const cancel = page.getByRole('button', { name: await page.evaluate(() => window.cancelLabel), exact: true });
+      const cancel = page.getByRole('dialog').getByRole('button', { name: await page.evaluate(() => window.cancelLabel), exact: true });
       await cancel.waitFor({ state: 'visible' });
       assert.equal(await generate.isDisabled(), true);
       assert.equal(await attach.isDisabled(), true);

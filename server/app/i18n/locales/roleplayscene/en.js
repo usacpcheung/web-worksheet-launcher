@@ -357,10 +357,11 @@ export default {
       "t2aTextTooLong": "Dialogue text is too long to generate audio (max {max} characters).",
       "t2aUnavailable": "Audio generation is unavailable.",
       "confirmRegenerateAudio": "Replace the existing audio for this dialogue line?",
-      "t2aCanceled": "Audio generation canceled.",
+      "cancelAudio": "Cancel",
+      "t2aCanceled": "Stopped waiting for audio. Existing audio is unchanged. Server processing may continue; choose Generate to try again.",
       "t2aGenerated": "Generated audio for line {index}.",
       "t2aFailed": "Unable to generate audio.",
-      "t2aTimedOut": "Audio request timed out. Existing audio is unchanged. Check your connection, then press Generate again.",
+      "t2aTimedOut": "Audio request timed out. Existing audio is unchanged. Server processing may continue; choose Generate to try again.",
       "t2aFailedWithDetail": "Unable to generate audio: {detail}",
       "t2aLineChanged": "Audio generation was canceled because this dialogue line changed.",
       "t2aPreset": {
