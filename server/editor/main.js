@@ -2039,17 +2039,23 @@ class EditorDraftSession {
     filtered.push(newAsset);
     this.state.draft.assets = filtered;
 
-    // Schedule persistence before asynchronous cleanup can outlive the target.
     this.clearMediaFeedback();
     this.touchDraft();
-    if (this.storage.localAssets?.remove && replacedAssetIds.length > 0) {
-      await Promise.all(replacedAssetIds.map(async id => {
-        try { await this.storage.localAssets.remove(id); }
-        catch (error) { console.warn('Unable to remove replaced local media.', error); }
-      }));
-    }
+    const result = { ok: true, assetId: newAsset.assetId, replacedAssetId: replacedAssetIds[0] || null };
+    options.onCommitted?.(result);
+    this.cleanupReplacedMedia(replacedAssetIds);
+    return result;
+  }
 
-    return { ok: true, assetId: newAsset.assetId, replacedAssetId: replacedAssetIds[0] || null };
+  // Cleanup cannot change the outcome of an already committed attachment.
+  cleanupReplacedMedia(assetIds) {
+    const assets = this.storage.localAssets;
+    if (!assets?.remove) return;
+    for (const id of assetIds) {
+      Promise.resolve().then(() => assets.remove(id)).catch(() => {
+        console.warn('Unable to remove replaced local media.');
+      });
+    }
   }
 
   async removeQuestionMedia(blockId, usage, options = {}) {
@@ -2145,13 +2151,12 @@ class EditorDraftSession {
     filtered.push(newAsset);
     this.state.draft.assets = filtered;
 
-    if (this.storage.localAssets?.remove && replacedAssetIds.length > 0) {
-      await Promise.all(replacedAssetIds.map((id) => this.storage.localAssets.remove(id)));
-    }
-
     this.clearMediaFeedback();
     this.touchDraft();
-    return { ok: true, assetId: newAsset.assetId, replacedAssetId: replacedAssetIds[0] || null };
+    const result = { ok: true, assetId: newAsset.assetId, replacedAssetId: replacedAssetIds[0] || null };
+    options.onCommitted?.(result);
+    this.cleanupReplacedMedia(replacedAssetIds);
+    return result;
   }
 
   async removeOptionAudio(blockId, optionId, options = {}) {
@@ -2282,7 +2287,9 @@ class EditorDraftSession {
     if (existingTrack) this.pruneAssetLinks([existingTrack.assetId]);
     this.clearMediaFeedback();
     this.touchDraft();
-    return { ok: true, assetId: newAsset.assetId, replacedAssetId: existingTrack?.assetId || null };
+    const result = { ok: true, assetId: newAsset.assetId, replacedAssetId: existingTrack?.assetId || null };
+    options.onCommitted?.(result);
+    return result;
   }
 
   removeAudioTrack(blockId, target, language, options = {}) {
@@ -2360,13 +2367,13 @@ class EditorDraftSession {
     const audioBytes = toValidGeneratedAudioBytes(audioResult.data);
     if (!audioBytes) return { ok: false, reason: 'invalid-audio-data' };
     const fileName = target === 'prompt' ? `${blockId}_${language}.mp3` : `${blockId}_${optionId}_${language}.mp3`;
-    return waitForAudioAttachment(() => this.attachAudioTrack(blockId, target, language, createAudioFileFromBytes(audioBytes, fileName), {
+    return waitForAudioAttachment(onCommitted => this.attachAudioTrack(blockId, target, language, createAudioFileFromBytes(audioBytes, fileName), {
       optionId,
       confirmReplace: true,
       voicePresetId: language,
       expectedSourceTextHash,
       expectedDraft,
-      isCurrent: audioResult.isCurrent,
+      isCurrent: audioResult.isCurrent, onCommitted,
     }), options.signal);
   }
 
@@ -4510,9 +4517,9 @@ class EditorDraftSession {
       }
       const generatedFile = createAudioFileFromBytes(audioBytes, `${blockId}_prompt.mp3`);
       const hasExistingQuestionAudio = Boolean(getSingleMediaRef(block?.prompt?.mediaRefs, 'question_audio'));
-      const attachResult = await waitForAudioAttachment(() => this.attachQuestionMedia(blockId, 'question_audio', generatedFile, {
+      const attachResult = await waitForAudioAttachment(onCommitted => this.attachQuestionMedia(blockId, 'question_audio', generatedFile, {
         confirmReplace: hasExistingQuestionAudio,
-        isCurrent: audioResult.isCurrent,
+        isCurrent: audioResult.isCurrent, onCommitted,
       }), signal);
       if (!attachResult?.ok) {
         const message = attachResult?.error?.code === 'ABORTED' ? getApiErrorMessage(attachResult, 'audio', 'bridge') : String(attachResult?.error?.message || '').trim() || editorNotification('audioGeneration.attachPromptFailed');
@@ -4684,9 +4691,9 @@ class EditorDraftSession {
       }
       const generatedFile = createAudioFileFromBytes(audioBytes, `${blockId}_${optionId}.mp3`);
       const hasExistingOptionAudio = Boolean(getSingleMediaRef(selectedOption?.mediaRefs, 'option_audio'));
-      const attachResult = await waitForAudioAttachment(() => this.attachOptionAudio(blockId, optionId, generatedFile, {
+      const attachResult = await waitForAudioAttachment(onCommitted => this.attachOptionAudio(blockId, optionId, generatedFile, {
         confirmReplace: hasExistingOptionAudio,
-        isCurrent: audioResult.isCurrent,
+        isCurrent: audioResult.isCurrent, onCommitted,
       }), signal);
       if (!attachResult?.ok) {
         const message = attachResult?.error?.code === 'ABORTED' ? getApiErrorMessage(attachResult, 'audio', 'bridge') : String(attachResult?.error?.message || '').trim() || editorNotification('audioGeneration.attachOptionFailed');

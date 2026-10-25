@@ -453,7 +453,10 @@ Editor passes an operation signal separately from saved intent payloads. The
 successful provider guard remains sensitive to that signal through asynchronous
 asset storage. Cancel releases attachment waiting promptly, while the late write
 retains ownership checks and removes its newly stored stale asset. Old work cannot
-attach to, overwrite or unlock a newer generation. Existing content formats and
+attach to, overwrite or unlock a newer generation. Once attachment commits and
+persistence is scheduled, success takes precedence over a late Cancel. Old-asset
+cleanup runs separately; slow or failed cleanup cannot turn committed audio into
+a cancellation result or touch a subsequently selected document. Existing content formats and
 login-return compatibility remain unchanged.
 
 Validation includes stalled preparation/provider calls, both phase timeouts,

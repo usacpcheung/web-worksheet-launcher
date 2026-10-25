@@ -6364,3 +6364,35 @@ for (const phase of ['prepare', 'provider']) {
     clearTimeout(session.autosaveTimer);
   });
 }
+
+for (const target of ['prompt', 'option']) for (const cleanupFails of [false, true]) {
+  test(`committed legacy ${target} succeeds despite cancel during ${cleanupFails ? 'failed' : 'delayed'} cleanup`, async () => {
+    const mod = await loadEditorModule();
+    let entered, finish;
+    const started = new Promise(resolve => { entered = resolve; });
+    const storage = createSessionForTests();
+    storage.localAssets = { put: async () => {}, remove: async () => {} };
+    const session = new mod.EditorDraftSession(storage, { apiClient: {
+      generateAudioFromText: async () => ({ ok: true, data: new Uint8Array([1,2,3]) }),
+    } });
+    session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+    session.state.draft = mod.createDraftRecord({ localId: 'commit', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', label: 'Option', value: 'Option' }] } }] });
+    const action = target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A';
+    const payload = { blockId: 'q1', optionId: 'o1', target: target === 'prompt' ? 'question_prompt' : 'option' };
+    assert.equal((await session.triggerProtectedAction(action, payload)).ok, true);
+    const old = session.state.draft.assets[0].assetId;
+    storage.localAssets.remove = async () => { entered(); await new Promise(resolve => { finish = resolve; }); if (cleanupFails) throw new Error('cleanup failed'); };
+    const task = session.triggerProtectedAction(action, payload);
+    await started;
+    session.cancelAudioGeneration('q1', target === 'prompt' ? null : 'o1');
+    assert.equal((await task).ok, true);
+    assert.notEqual(session.state.draft.assets[0].assetId, old);
+    // Cleanup must not touch a subsequently selected document.
+    let touches = 0;
+    session.touchDraft = () => { touches++; };
+    finish();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(touches, 0);
+    clearTimeout(session.autosaveTimer);
+  });
+}

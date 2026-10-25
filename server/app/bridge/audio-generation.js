@@ -49,14 +49,16 @@ export async function runAudioGeneration({ auth, api, text, voice = {}, isCurren
 
 // Stop local attachment waiting promptly. The task must retain its ownership
 // guard after every asynchronous write and remove any newly stored stale asset.
+// task(onCommitted) reports the synchronous attachment boundary so a late abort
+// cannot misreport a completed replacement as canceled.
 export async function waitForAudioAttachment(task, signal) {
   const cancelled = () => ({ ok: false, reason: 'generation-failed', error: { code: 'ABORTED' } });
   if (signal?.aborted) return cancelled();
-  let onAbort;
-  const stopped = new Promise(resolve => { onAbort = () => resolve(cancelled()); });
+  let onAbort, committed;
+  const stopped = new Promise(resolve => { onAbort = () => resolve(committed || cancelled()); });
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    return await Promise.race([Promise.resolve().then(() => signal?.aborted ? cancelled() : task()), stopped]);
+    return await Promise.race([Promise.resolve().then(() => signal?.aborted ? cancelled() : task(result => { committed = result; })), stopped]);
   } finally {
     signal?.removeEventListener('abort', onAbort);
   }
