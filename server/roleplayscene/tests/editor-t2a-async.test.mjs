@@ -269,7 +269,7 @@ test('pending audio locks scene reordering even through a stale button handler',
   const deferred = createDeferred();
   let calls = 0;
   renderEditor(store, document.createElement('div'), right, () => {}, {
-    ensureServerSessionReady: async () => ({ ok: true }),
+    getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
     apiClient: { generateAudioFromText: () => { calls++; return deferred.promise; } },
   });
   const staleMove = findElement(right, el => el.dataset?.focusKey === 'dialogue-move-scene-1-0-1');
@@ -304,7 +304,7 @@ test('T2A result is discarded when dialogue text changes before response', async
 
   renderEditor(store, left, right, (message) => messages.push(message), {
     apiClient,
-    ensureServerSessionReady: async () => ({ ok: true }),
+    getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
   });
 
   findButtonByText(right, 'Generate audio').dispatchEvent('click');
@@ -342,7 +342,7 @@ test('T2A result asks before replacing audio added while request is in flight', 
         return apiDeferred.promise;
       },
     },
-    ensureServerSessionReady: async () => ({ ok: true }),
+    getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
   });
 
   findButtonByText(right, 'Generate audio').dispatchEvent('click');
@@ -371,7 +371,7 @@ test('T2A result is ignored after editor teardown', async () => {
         return apiDeferred.promise;
       },
     },
-    ensureServerSessionReady: async () => ({ ok: true }),
+    getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
   });
 
   findButtonByText(right, 'Generate audio').dispatchEvent('click');
@@ -405,14 +405,16 @@ test('T2A late auth failure is reported to the server session owner', async () =
     apiClient: {
       generateAudioFromText: async () => authFailure,
     },
-    ensureServerSessionReady: async () => ({ ok: true }),
+    getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => true }) }),
     onServerApiResult: (result) => serverResults.push(result),
   });
 
   findButtonByText(right, 'Generate audio').dispatchEvent('click');
   await waitFor(() => serverResults.length === 1);
 
-  assert.equal(serverResults[0], authFailure);
+  assert.equal(serverResults[0].error.code, authFailure.error.code);
+  assert.equal(serverResults[0].error.requiresSignIn, true);
+  assert.equal(serverResults[0].error.message, undefined);
   assert.equal(store.get().project.scenes[0].dialogue[0].audio, null);
   assert.equal(
     messages.some((message) => (
@@ -453,7 +455,7 @@ test('late generation cannot attach to another identical line or replacement pro
     installDomGlobals();
     const p=makeProject({text:'Same'});p.scenes[0].dialogue.push({...p.scenes[0].dialogue[0]});
     const store=new TestStore(p), right=document.createElement('div'), deferred=createDeferred();let calls=0;
-    renderEditor(store,document.createElement('div'),right,()=>{}, {ensureServerSessionReady:async()=>({ok:true}),apiClient:{generateAudioFromText:()=>{calls++;return deferred.promise;}}});
+    renderEditor(store,document.createElement('div'),right,()=>{}, {getProviderAuth:()=>({ensure:async()=>({ok:true,isCurrent:()=>true})}),apiClient:{generateAudioFromText:()=>{calls++;return deferred.promise;}}});
     findButtonByText(right,'Generate audio').dispatchEvent('click');await waitFor(()=>calls===1);
     if(replacement==='delete') findElement(right,el=>el.dataset?.focusKey==='dialogue-remove-scene-1-0').dispatchEvent('click');
     else store.set({project:makeProject({text:'Same'})});
@@ -468,7 +470,7 @@ test('removing confirmed audio while generation is pending must not restore it',
   installDomGlobals();globalThis.confirm=()=>true;
   const store=new TestStore(makeProject({audio:{name:'old.mp3',objectUrl:'blob:old'}}));
   const right=document.createElement('div'), request=createDeferred();let calls=0;
-  renderEditor(store,document.createElement('div'),right,()=>{}, {ensureServerSessionReady:async()=>({ok:true}),apiClient:{generateAudioFromText:()=>{calls++;return request.promise;}}});
+  renderEditor(store,document.createElement('div'),right,()=>{}, {getProviderAuth:()=>({ensure:async()=>({ok:true,isCurrent:()=>true})}),apiClient:{generateAudioFromText:()=>{calls++;return request.promise;}}});
   findButtonByText(right,'Regenerate audio').dispatchEvent('click');await waitFor(()=>calls===1);
   store.set({project:cloneProjectWithLine(store.get().project,{audio:null})});
   request.resolve({ok:true,data:new Uint8Array([1,2,3])});
@@ -482,8 +484,8 @@ test('failed replacement URL creation must keep the original playback URL usable
   globalThis.URL.createObjectURL=()=>{throw new Error('Allocation failed');};
   const store=new TestStore(makeProject({audio:{name:'old.mp3',objectUrl:'blob:old'}})), right=document.createElement('div');
   const messages=[];
-  renderEditor(store,document.createElement('div'),right,m=>messages.push(m), {ensureServerSessionReady:async()=>({ok:true}),apiClient:{generateAudioFromText:async()=>({ok:true,data:new Uint8Array([1,2,3])})}});
-  findButtonByText(right,'Regenerate audio').dispatchEvent('click');await waitFor(()=>messages.some(m=>m.textId==='inspector.dialogue.t2aFailedWithDetail'));
+  renderEditor(store,document.createElement('div'),right,m=>messages.push(m), {getProviderAuth:()=>({ensure:async()=>({ok:true,isCurrent:()=>true})}),apiClient:{generateAudioFromText:async()=>({ok:true,data:new Uint8Array([1,2,3])})}});
+  findButtonByText(right,'Regenerate audio').dispatchEvent('click');await waitFor(()=>messages.some(m=>m.textId==='inspector.dialogue.t2aFailed'));
   assert.equal(store.get().project.scenes[0].dialogue[0].audio.objectUrl,'blob:old');
   assert.deepEqual(revoked,[]);
 });
@@ -530,7 +532,7 @@ test('real client handles expiry, HTML login, rejection, offline and interrupted
     let retry=false,calls=0;
     t.mock.method(globalThis,'fetch',async()=>{calls++;return retry?new Response(new Uint8Array([1,2,3]),{headers:{'content-type':'audio/mpeg'}}):response();});
     const store=new TestStore(makeProject({audio:{name:'old.mp3',objectUrl:'blob:old'}})),right=document.createElement('div'),messages=[];
-    const cleanup=renderEditor(store,document.createElement('div'),right,m=>messages.push(m),{ensureServerSessionReady:async()=>({ok:true}),apiClient:createServerApiClient()});
+    const cleanup=renderEditor(store,document.createElement('div'),right,m=>messages.push(m),{getProviderAuth:()=>({ensure:async()=>({ok:true,isCurrent:()=>true})}),apiClient:createServerApiClient()});
     findButtonByText(right,'Regenerate audio').dispatchEvent('click');
     await waitFor(()=>messages.length>0 && !findButtonByText(right,'Generating audio...'));
     assert.equal(calls,1,name+' must not retry automatically');
@@ -549,7 +551,7 @@ test('timeouts release generation locks and ignore late results; editor disposal
     const store=new TestStore(makeProject()),right=document.createElement('div'),messages=[];
     const cleanup=renderEditor(store,document.createElement('div'),right,m=>messages.push(m),{
       audioRequestTimeoutMs:stage==='dispose'?1000:5,
-      ensureServerSessionReady:()=>stage==='session'?deferred.promise:Promise.resolve({ok:true}),
+      getProviderAuth:()=>({ensure:()=>stage==='session'?deferred.promise:Promise.resolve({ok:true,isCurrent:()=>true})}),
       apiClient:{generateAudioFromText:(_text,_options,request)=>{signal=request.signal;return deferred.promise;}}
     });
     findButtonByText(right,'Generate audio').dispatchEvent('click');
@@ -562,4 +564,24 @@ test('timeouts release generation locks and ignore late results; editor disposal
     assert.equal(messages.length,count);
     cleanup();
   }
+});
+
+
+test('T2A account change while bytes are pending cannot attach or trigger login', async () => {
+  installDomGlobals();
+  let current = true, sends = 0;
+  const gate = createDeferred(), store = new TestStore(makeProject()), right = document.createElement('div'), messages = [];
+  const cleanup = renderEditor(store, document.createElement('div'), right, m => messages.push(m), {
+    getProviderAuth: () => ({ ensure: async () => ({ ok: true, isCurrent: () => current }) }),
+    apiClient: { generateAudioFromText: () => { sends++; return gate.promise; } },
+    onSignIn: () => assert.fail('No stale login'),
+  });
+  findButtonByText(right, 'Generate audio').dispatchEvent('click');
+  await waitFor(() => sends === 1);
+  current = false;
+  gate.resolve({ ok: true, data: new Uint8Array([1,2,3]) });
+  await waitFor(() => findButtonByText(right, 'Generate audio')?.disabled === false);
+  assert.equal(store.get().project.scenes[0].dialogue[0].audio, null);
+  assert.equal(sends, 1);
+  cleanup();
 });

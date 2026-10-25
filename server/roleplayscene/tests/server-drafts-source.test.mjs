@@ -151,7 +151,7 @@ assert.ok(
 assert.ok(
   mainSource.includes('teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {')
     && mainSource.includes('apiClient,')
-    && mainSource.includes('ensureServerSessionReady,')
+    && mainSource.includes('getProviderAuth: getReadAuth,')
     && mainSource.includes('onServerApiResult: syncServerSessionFromApiResult')
     && mainSource.includes('initialSelectedSceneId: editorSession.selectedSceneId')
     && mainSource.includes('onPreviewCurrentScene: startEditorScenePreview'),
@@ -180,7 +180,7 @@ assert.ok(
   'RolePlayScene should launch editor current-scene previews through the real player and return to saved editor context',
 );
 assert.ok(
-  editorSource.includes('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {}, { signal: controller.signal })')
+  editorSource.includes('await runAudioGeneration({') && editorSource.includes('api: apiClient,')
     && editorSource.includes('createAudioFileFromBytes(')
     && editorSource.includes('result.data,')
     && editorSource.includes('createRolePlaySceneT2AAudioFilename(')
@@ -213,8 +213,7 @@ assert.ok(
 );
 assert.ok(
   dialogueT2ASource.indexOf("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))") > -1
-    && dialogueT2ASource.indexOf("globalThis.confirm?.(translate('inspector.dialogue.confirmRegenerateAudio'))")
-      < dialogueT2ASource.indexOf('apiClient.generateAudioFromText(textState.trimmedText, preset.options || {}, { signal: controller.signal })')
+    && dialogueT2ASource.includes('beforeRequest: () => {')
     && dialogueT2ASource.includes("showMessage({ textId: 'inspector.dialogue.t2aCanceled' })"),
   'RolePlayScene dialogue T2A should confirm replacement before calling the bridge and cancel without generation',
 );

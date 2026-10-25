@@ -696,7 +696,7 @@ function setMode(next, options = {}) {
   if (mode === 'edit') {
     teardown = renderEditor(getActiveStore(), elLeft, elRight, showMessage, {
       apiClient,
-      ensureServerSessionReady,
+      getProviderAuth: getReadAuth,
       onServerApiResult: syncServerSessionFromApiResult,
       onSignIn: startServerSignIn,
       initialSelectedSceneId: editorSession.selectedSceneId,
