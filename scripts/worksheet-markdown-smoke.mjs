@@ -12,8 +12,21 @@ try {
     const page = await context.newPage(); const errors = [];
     page.setDefaultTimeout(10000);
     page.on('pageerror', error => { errors.push(error.message); console.error(error.message); });
-    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-    await context.route(url => url.pathname.startsWith('/api/'), route => route.fulfill({ json: { ok: true, data: { user: { sub: 'fixture' }, items: [] } } }));
+    page.on('console', message => {
+      const expectedRejection = denySession && message.location().url?.endsWith('/session')
+        && message.text() === 'Failed to load resource: the server responded with a status of 503 (Service Unavailable)';
+      if (message.type() === 'error' && !expectedRejection) errors.push(message.text());
+    });
+    let denySession = false, rejectedSessionChecks = 0, audioRequests = 0;
+    await context.route(url => url.pathname.startsWith('/api/'), route => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/t2a')) audioRequests++;
+      if (denySession && path.endsWith('/session')) {
+        rejectedSessionChecks++;
+        return route.fulfill({status:503,json:{ok:false,error:{code:'SESSION_PROBE_FAILED'}}});
+      }
+      return route.fulfill({json:{ok:true,data:{user:{sub:'fixture'},items:[]}}});
+    });
     await page.goto(base + '/server/editor/index.html');
     await page.waitForFunction(() => window.editorSession);
     await page.evaluate(async locale => { (await import('/server/app/i18n/index.js')).setLocale(locale); }, locale);
@@ -51,10 +64,16 @@ try {
     assert.equal(await field.getAttribute('aria-invalid'), 'false');
     const generate = page.locator('[data-prompt-audio-track-block-id] [data-audio-track-action="generate"]').first();
     assert.equal(await generate.isEnabled(), true);
-    await page.evaluate(() => { window.reviewAuthCalls = 0; window.originalReady = window.editorSession.ensureServerSessionReady; window.editorSession.ensureServerSessionReady = async () => { window.reviewAuthCalls++; return { ok: false }; }; });
+    // Exercise the shared preparation boundary, not the retired UI preflight.
+    denySession = true;
+    const rejected = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/session') && response.status() === 503);
     await generate.click();
-    await page.waitForFunction(() => window.reviewAuthCalls === 1);
-    await page.evaluate(() => { window.editorSession.ensureServerSessionReady = window.originalReady; });
+    await rejected;
+    await page.waitForFunction(() => window.editorSession._audioOperations.size === 0
+      && !document.querySelector('[data-prompt-audio-track-block-id] [data-audio-track-action="generate"]').disabled);
+    assert.equal(rejectedSessionChecks, 1, 'eligible Markdown reaches preparation once');
+    assert.equal(audioRequests, 0, 'failed preparation never sends T2A');
+    denySession = false;
     await field.fill('**' + '文'.repeat(501) + '**');
     assert.equal(await field.getAttribute('aria-invalid'), 'true');
     assert.equal(await generate.isEnabled(), false);

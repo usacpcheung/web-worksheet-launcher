@@ -2003,3 +2003,6 @@ textarea.control {
   cursor: default;
 }
 [data-upload-cancel][hidden] { display: none !important; }
+
+/* Flex button styling must not override the pending-action visibility flag. */
+.media-action-btn[hidden] { display: none; }

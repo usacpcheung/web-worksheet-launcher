@@ -1911,9 +1911,9 @@ test('stage3: option row triggers replace confirmation before option bridge gene
   const optionBridgeCallIdx = handlerSource.indexOf("await session.triggerProtectedAction('editorOptionT2A', {");
   assert.equal(trackHandlerStart >= 0 && trackHandlerEnd > trackHandlerStart, true);
   assert.equal(hasAudioConfirmIdx >= 0, true);
-  assert.equal(optionSessionReadyIdx >= 0, true);
+  assert.equal(optionSessionReadyIdx, -1, 'preparation belongs to the bounded shared runner');
   assert.equal(optionBridgeCallIdx >= 0, true);
-  assert.equal(optionSessionReadyIdx < optionBridgeCallIdx, true);
+
   assert.equal(hasAudioConfirmIdx < optionBridgeCallIdx, true);
 });
 
@@ -6282,5 +6282,170 @@ for (const target of ['prompt', 'option']) for (const language of ['english', nu
     assert.equal(session.state.draft.assets.length, 0);
     assert.equal(removed.length, 1);
     clearTimeout(session.autosaveTimer);
+  });
+}
+
+for (const target of ['prompt', 'option']) for (const language of ['english', null]) {
+  test(`T2A cancel ${target}/${language || 'legacy'} releases storage wait and rejects late asset`, async () => {
+    const mod = await loadEditorModule();
+    let finish, entered;
+    const started = new Promise(resolve => { entered = resolve; });
+    const removed = [];
+    const storage = createSessionForTests();
+    storage.localAssets = { put: async () => { entered(); await new Promise(resolve => { finish = resolve; }); }, remove: async id => removed.push(id) };
+    const session = new mod.EditorDraftSession(storage, { apiClient: { generateAudioFromText: async () => ({ ok: true, data: new Uint8Array([1,2,3]) }) } });
+    session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+    session.state.draft = mod.createDraftRecord({ localId: 'cancel', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', label: 'Option', value: 'Option' }] } }] });
+    const action = target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A';
+    const payload = { blockId: 'q1', optionId: 'o1', target: target === 'prompt' ? 'question_prompt' : 'option', ...(language ? { language } : {}) };
+    const task = session.triggerProtectedAction(action, payload);
+    await started;
+    session.cancelAudioGeneration('q1', target === 'prompt' ? null : 'o1');
+    assert.equal((await task).ok, false);
+    assert.equal(session._audioOperations.size, 0);
+    // A fresh operation succeeds before the old asset write settles.
+    storage.localAssets.put = async () => {};
+    assert.equal((await session.triggerProtectedAction(action, payload)).ok, true);
+    const freshAssets = session.state.draft.assets.map(asset => asset.assetId);
+    finish();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(session.state.draft.assets.map(asset => asset.assetId), freshAssets);
+    assert.equal(removed.length, 1);
+    clearTimeout(session.autosaveTimer);
+  });
+}
+
+for (const phase of ['prepare', 'provider']) {
+  test(`Editor T2A timeout releases ${phase} and allows explicit retry`, async () => {
+    const mod = await loadEditorModule();
+    let stall = true, calls = 0;
+    const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: {
+      generateAudioFromText: async () => { calls++; return stall && phase === 'provider' ? new Promise(() => {}) : { ok: true, data: new Uint8Array([1,2,3]) }; },
+    } });
+    session.audioPhaseTimeoutMs = 10;
+    session._readAuth = { ensure: async () => stall && phase === 'prepare' ? new Promise(() => {}) : { ok: true, isCurrent: () => true } };
+    session.state.draft = mod.createDraftRecord({ localId: 'timeout', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt' } }] });
+    const payload = { blockId: 'q1', target: 'question_prompt', language: 'english' };
+    const result = await session.triggerProtectedAction('editorPromptT2A', payload);
+    assert.equal(result.error.code, 'REQUEST_TIMEOUT');
+    assert.equal(calls, phase === 'prepare' ? 0 : 1);
+    assert.equal(session._audioOperations.size, 0);
+    stall = false;
+    assert.equal((await session.triggerProtectedAction('editorPromptT2A', payload)).ok, true);
+    clearTimeout(session.autosaveTimer);
+  });
+}
+
+for (const phase of ['prepare', 'provider']) {
+  test(`Editor cancel during ${phase} ignores late response and permits retry`, async () => {
+    const mod = await loadEditorModule();
+    let finish, entered, stall = true, calls = 0;
+    const started = new Promise(resolve => { entered = resolve; });
+    const held = () => { entered(); return new Promise(resolve => { finish = resolve; }); };
+    const session = new mod.EditorDraftSession(createSessionForTests(), { apiClient: {
+      generateAudioFromText: async () => { calls++; return stall && phase === 'provider' ? held() : { ok: true, data: new Uint8Array([1,2,3]) }; },
+    } });
+    session._readAuth = { ensure: async () => stall && phase === 'prepare' ? held() : { ok: true, isCurrent: () => true } };
+    session.state.draft = mod.createDraftRecord({ localId: 'cancel', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt' } }] });
+    const payload = { blockId: 'q1', target: 'question_prompt', language: 'english' };
+    const task = session.triggerProtectedAction('editorPromptT2A', payload);
+    await started;
+    session.cancelAudioGeneration('unrelated');
+    assert.equal(session._audioOperations.size, 1);
+    session.cancelAudioGeneration('q1');
+    assert.equal((await task).error.code, 'ABORTED');
+    assert.equal(calls, phase === 'prepare' ? 0 : 1);
+    stall = false;
+    assert.equal((await session.triggerProtectedAction('editorPromptT2A', payload)).ok, true);
+    const assets = session.state.draft.assets.map(asset => asset.assetId);
+    finish(phase === 'prepare' ? { ok: true, isCurrent: () => true } : { ok: true, data: new Uint8Array([4,5,6]) });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(session.state.draft.assets.map(asset => asset.assetId), assets);
+    clearTimeout(session.autosaveTimer);
+  });
+}
+
+for (const target of ['prompt', 'option']) for (const cleanupFails of [false, true]) {
+  test(`committed legacy ${target} succeeds despite cancel during ${cleanupFails ? 'failed' : 'delayed'} cleanup`, async () => {
+    const mod = await loadEditorModule();
+    let entered, finish;
+    const started = new Promise(resolve => { entered = resolve; });
+    const storage = createSessionForTests();
+    storage.localAssets = { put: async () => {}, remove: async () => {} };
+    const session = new mod.EditorDraftSession(storage, { apiClient: {
+      generateAudioFromText: async () => ({ ok: true, data: new Uint8Array([1,2,3]) }),
+    } });
+    session._readAuth = { ensure: async () => ({ ok: true, isCurrent: () => true }) };
+    session.state.draft = mod.createDraftRecord({ localId: 'commit', blocks: [{ blockId: 'q1', kind: 'question', prompt: { text: 'Prompt' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o1', label: 'Option', value: 'Option' }] } }] });
+    const action = target === 'prompt' ? 'editorPromptT2A' : 'editorOptionT2A';
+    const payload = { blockId: 'q1', optionId: 'o1', target: target === 'prompt' ? 'question_prompt' : 'option' };
+    assert.equal((await session.triggerProtectedAction(action, payload)).ok, true);
+    const old = session.state.draft.assets[0].assetId;
+    storage.localAssets.remove = async () => { entered(); await new Promise(resolve => { finish = resolve; }); if (cleanupFails) throw new Error('cleanup failed'); };
+    const task = session.triggerProtectedAction(action, payload);
+    await started;
+    session.cancelAudioGeneration('q1', target === 'prompt' ? null : 'o1');
+    assert.equal((await task).ok, true);
+    assert.notEqual(session.state.draft.assets[0].assetId, old);
+    // Cleanup must not touch a subsequently selected document.
+    let touches = 0;
+    session.touchDraft = () => { touches++; };
+    finish();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(touches, 0);
+    clearTimeout(session.autosaveTimer);
+  });
+}
+
+for (const change of ['draft', 'generation', 'remove-question', 'remove-option', 'input-type', 'newer-audio']) {
+  test(`manual option attachment rejects ${change} during storage`, async () => {
+    const mod = await loadEditorModule();
+    let entered, finish;
+    const started = new Promise(resolve => { entered = resolve; }), removed = [];
+    const storage = createSessionForTests();
+    storage.localAssets = { put: async () => { entered(); await new Promise(resolve => { finish = resolve; }); }, remove: async id => removed.push(id) };
+    const session = new mod.EditorDraftSession(storage);
+    const draft = localId => mod.createDraftRecord({ localId, blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Prompt' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o', label: 'Option', value: 'Option' }] } }] });
+    session.state.draft = draft('old');
+    const file = new Blob([new Uint8Array([1,2,3])], { type: 'audio/mpeg' }); file.name = 'manual.mp3';
+    const task = session.attachOptionAudio('q', 'o', file);
+    await started;
+    if (change === 'draft') session.state.draft = draft('new');
+    if (change === 'generation') session._audioDraftGeneration++;
+    if (change === 'remove-question') session.state.draft.blocks = [];
+    if (change === 'remove-option') session.state.draft.blocks[0].responseConfig.options = [];
+    if (change === 'input-type') session.state.draft.blocks[0].responseConfig.inputType = 'text';
+    if (change === 'newer-audio') session.state.draft.blocks[0].responseConfig.options[0].mediaRefs = [{ usage: 'option_audio', assetId: 'newer' }];
+    const before = JSON.stringify(session.state.draft);
+    finish();
+    assert.equal((await task).reason, 'stale-target');
+    assert.equal(JSON.stringify(session.state.draft), before);
+    assert.equal(removed.length, 1);
+    clearTimeout(session.autosaveTimer);
+  });
+}
+
+for (const target of ['prompt', 'option']) {
+  test(`manual ${target} removal schedules persistence before failed cleanup`, async () => {
+    const mod = await loadEditorModule();
+    const storage = createSessionForTests();
+    let finish, entered, touches = 0;
+    const started = new Promise(resolve => { entered = resolve; });
+    storage.localAssets = { put: async () => {}, remove: async () => { entered(); await new Promise(resolve => { finish = resolve; }); throw new Error('fixture cleanup failure'); } };
+    const session = new mod.EditorDraftSession(storage);
+    session.state.draft = mod.createDraftRecord({ localId: 'remove', blocks: [{ blockId: 'q', kind: 'question', prompt: { text: 'Prompt' }, responseConfig: { inputType: 'multiple_choice', options: [{ id: 'o', label: 'Option', value: 'Option' }] } }] });
+    const file = new Blob([new Uint8Array([1,2,3])], { type: 'audio/mpeg' }); file.name = 'manual.mp3';
+    const result = target === 'prompt' ? await session.attachQuestionMedia('q', 'question_audio', file) : await session.attachOptionAudio('q', 'o', file);
+    assert.equal(result.ok, true);
+    clearTimeout(session.autosaveTimer);
+    session.touchDraft = () => { touches++; };
+    const removed = target === 'prompt' ? await session.removeQuestionMedia('q', 'question_audio', { confirmRemove: true }) : await session.removeOptionAudio('q', 'o', { confirmRemove: true });
+    assert.equal(removed.ok, true);
+    assert.equal(touches, 1);
+    await started;
+    finish();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(touches, 1);
+    assert.equal(session.state.draft.assets.length, 0);
   });
 }

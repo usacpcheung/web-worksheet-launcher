@@ -139,6 +139,26 @@ try {
       assert.equal(await page.getByText('Synthetic choice rejection', { exact: true }).count(), 0);
       await closeOptionMenu();
 
+      // Cancel is reachable outside overflow controls and never removes old audio.
+      for (const target of ['prompt', 'option']) {
+        behavior = 'hold';
+        const heldCancel = new Promise(resolve => { resolveHeld = resolve; });
+        if (target === 'option') { await openOptionMenu('english'); await optionGenerate('english').click(); }
+        else await clickPromptGenerate('english');
+        await confirmReplace();
+        await heldCancel;
+        const cancel = target === 'prompt'
+          ? page.locator('[data-prompt-audio-track-language="english"] [data-audio-track-action="cancel"]')
+          : page.locator('.option-audio-track').filter({has: optionGenerate('english')}).locator('[data-option-audio-action="cancel"]');
+        await cancel.click();
+        await waitIdle();
+        assert.deepEqual(await attachments(), original);
+        await pending.fulfill({contentType:'audio/mpeg',body:audio}).catch(() => {});
+        pending = null;
+        assert.deepEqual(await attachments(), original);
+        if (target === 'option') await closeOptionMenu();
+      }
+
       // A real in-flight response may not overwrite audio after the source changes.
       const held = new Promise(resolve => { resolveHeld = resolve; });
       behavior = 'hold'; count = requests.length;

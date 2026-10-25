@@ -72,7 +72,8 @@ export function resolveErrorPresentation(result, { operation = 'action', source 
     && (error.requiresSignIn || value?.requiresSignIn);
   if (status === 401 || (status === 403 && key !== 'forbidden') || authWithoutStatus) key = 'authRequired';
   const rejected = status >= 400 && status < 500;
-  if (!rejected && ['ABORTED', 'CANCELED'].includes(code)) key = operation === 'upload' ? 'uploadCanceled' : 'canceled';
+  if (!rejected && ['ABORTED', 'CANCELED'].includes(code)) key = operation === 'upload' ? 'uploadCanceled' : operation === 'audio' ? 'audioCanceled' : 'canceled';
+  else if (!rejected && operation === 'audio' && code === 'REQUEST_TIMEOUT') key = 'audioTimeout';
   else if (!rejected && ['NETWORK_ERROR', 'UPLOAD_TIMEOUT', 'REQUEST_TIMEOUT'].includes(code)) key = operation === 'upload' ? 'uploadUncertain' : 'network';
   if (operation === 'upload' && !error.requiresSignIn && !(status >= 400 && status < 500)
       && (status >= 500 || ['INVALID_JSON_RESPONSE', 'UNEXPECTED_NON_JSON_RESPONSE'].includes(code))

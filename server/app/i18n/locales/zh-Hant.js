@@ -49,6 +49,8 @@ export default {
     "downloadFailed": "未能下載此項目。",
     "deleteFailed": "未能刪除此項目。",
     "sessionFailed": "因暫時的連線問題，未能確認登入狀態。請待連線穩定後重試。",
+    "audioCanceled": "已停止等待音訊，原有音訊未有更改。伺服器可能仍在處理；如需重試，請再按「產生」。",
+    "audioTimeout": "音訊請求逾時，原有音訊未有更改。伺服器可能仍在處理；如需重試，請再按「產生」。",
     "audioRetryRequired": "已登入。請檢查文字和聲音設定，再按產生。系統沒有自動重新發送音訊要求。",
     "audioFailed": "未能產生語音。你的本機內容仍然保留。",
     "transcriptionFailed": "未能將錄音轉換為文字，請重新錄音。",

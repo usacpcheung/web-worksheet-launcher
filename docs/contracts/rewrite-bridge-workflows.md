@@ -56,8 +56,8 @@ baseline. Sharing infrastructure does not add these features to those apps.
 
 | Area | Current behavior |
 | --- | --- |
-| Editor audio | Shared provider preparation and explicit Generate actions; target locks remain in app handlers. Named and legacy attachments retain account/target ownership through local persistence. Failures preserve structured categories; requests receive AbortSignal. Legacy login-return intents offer explicit retry. |
-| RolePlayScene audio | Shared provider runner with per-dialogue lock, line/voice identity and disposal checks, source-text/replacement checks, AbortController and a 120-second bound for each session/provider phase. This is not one combined 120-second workflow deadline. |
+| Editor audio | Shared provider preparation and explicit Generate actions; target locks remain in app handlers. Named and legacy attachments retain account/target ownership through local persistence. Failures preserve structured categories; requests receive AbortSignal. Legacy login-return intents offer explicit retry. Preparation and generation each have a 120-second limit; per-target Cancel also covers attachment waiting. |
+| RolePlayScene audio | Shared provider runner with per-dialogue lock, line/voice identity and disposal checks, source-text/replacement checks, AbortController and a 120-second bound for each session/provider phase. This is not one combined 120-second workflow deadline. Pending dialogue generation exposes Cancel. |
 | Viewer/discussion voice | Already one shared recording → transcription → rewrite workflow. One active operation per workflow instance, cancellation race protection and context/answer snapshot checks. No general provider deadline; pending work remains cancelable. |
 | Voice recovery | Transcript is retained before rewrite. Rewrite retry reuses text; it must not transcribe again. Audio retained after transcription authentication failure is memory-only. Reload recovery excludes raw audio and rewritten candidates. |
 | Local persistence | Viewer uses attempt recovery/autosave; discussion uses its own session storage and project generation/fingerprint. Authoring attaches assets through each product's existing model. |
@@ -386,7 +386,8 @@ confirmation, target validation, UI messages and local asset persistence.
   replacement confirmations and its existing separate 120-second preparation and
   provider bounds. Confirmation time is outside the provider network bound.
   Disposal aborts waiting; stale output cannot overwrite changed content.
-- Editor adds no default deadline. Target/account invalidation releases pending
+- Editor now selects separate 120-second preparation/provider bounds and exposes
+  per-target Cancel (section 12). Target/account invalidation also releases pending
   provider waiting; this does not undo work already admitted by the bridge.
 - Explicit structured HTTP 403 FORBIDDEN/PERMISSION_DENIED remains permission denial.
   Legacy unknown auth-like 401/403 and OIDC HTML continue to request authentication.
@@ -428,8 +429,41 @@ Adjacent transcription/rewrite and microphone adapters in that run were syntheti
 The report also records 1,701 passing Node tests. These are prior integration
 evidence, not a claim that every live-provider or physical-microphone case passed.
 
-Current policy remains intentional: Editor has no generation deadline, RolePlayScene
-has separate 120-second preparation/provider bounds, and neither authoring UI
-offers pending T2A Cancel. Adding those controls/deadlines or explicit sign-out is
-separate product work. This cleanup changes no UI, timeout, authentication,
-storage, external bridge or deployment behavior.
+At the cleanup baseline, Editor had no generation deadline and neither authoring
+UI offered pending T2A Cancel. The subsequent approved change is described in
+section 12. Explicit sign-out remains separate product work.
+
+## 12. T2A deadlines and user cancellation
+
+Editor and RolePlayScene retain separate UIs over the shared audio runner. Each
+uses a 120000ms preparation limit and a fresh 120000ms provider limit. Editor
+selects the exported shared policy through its session configuration;
+RolePlayScene retains its existing adapter override. These are not one combined
+deadline and do not change transcription/rewrite policy. Confirmation dialogs
+are outside network deadlines.
+
+Cancel is displayed on the active prompt/option language row or dialogue controls.
+It aborts local waiting, releases that operation's controls and leaves source text
+and existing audio intact. Another target is unaffected. Retry requires a new
+Generate action, with normal confirmation and fresh preparation. Both locales
+explain that server processing may continue; abort is not a provider rollback
+or a guarantee against charges for work already admitted.
+
+Editor passes an operation signal separately from saved intent payloads. The
+successful provider guard remains sensitive to that signal through asynchronous
+asset storage. Cancel releases attachment waiting promptly, while the late write
+retains ownership checks and removes its newly stored stale asset. Old work cannot
+attach to, overwrite or unlock a newer generation. Once attachment commits and
+persistence is scheduled, success takes precedence over a late Cancel. Old-asset
+cleanup runs separately; slow or failed cleanup cannot turn committed audio into
+a cancellation result or touch a subsequently selected document. Existing content formats and
+login-return compatibility remain unchanged. Manual legacy option attachments
+also recheck draft generation, target existence/type and original media references
+after storage. Local media removal schedules persistence before best-effort
+asset cleanup, so cleanup cannot delay saving or touch a later document.
+
+Validation includes stalled preparation/provider calls, both phase timeouts,
+late success after cancel, cancel during asset storage, explicit retry before an
+old write finishes, unrelated targets, and visible controls in both languages
+and desktop/mobile layouts. Browser fixtures use synthetic providers; deploy
+acceptance should verify the new controls against normal OIDC and real generation.

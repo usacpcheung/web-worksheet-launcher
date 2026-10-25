@@ -2,7 +2,8 @@ import { runProviderRequest } from './provider-request.js';
 
 // Product adapters own targets, confirmation and attachment. This boundary owns
 // one authorized request, never login replay. Bounds reset between preparation
-// and provider work; null preserves the Editor's existing unbounded policy.
+// and provider work. Adapters explicitly select their product deadline policy.
+export const AUDIO_GENERATION_PHASE_TIMEOUT_MS = 120000;
 export async function runAudioGeneration({ auth, api, text, voice = {}, isCurrent,
   signal, phaseTimeoutMs = null, beforeRequest }) {
   const controller = new AbortController();
@@ -38,9 +39,27 @@ export async function runAudioGeneration({ auth, api, text, voice = {}, isCurren
     });
     if (timedOut && result.kind === 'cancelled') return { ok: false, kind: 'timeout', error: { code: 'REQUEST_TIMEOUT' } };
     if (result.kind === 'authentication_required' && isCurrent()) auth?.observe?.(result);
-    return result;
+    return result.ok ? { ...result, isCurrent: () => !signal?.aborted && result.isCurrent() } : result;
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', cancel);
+  }
+}
+
+
+// Stop local attachment waiting promptly. The task must retain its ownership
+// guard after every asynchronous write and remove any newly stored stale asset.
+// task(onCommitted) reports the synchronous attachment boundary so a late abort
+// cannot misreport a completed replacement as canceled.
+export async function waitForAudioAttachment(task, signal) {
+  const cancelled = () => ({ ok: false, reason: 'generation-failed', error: { code: 'ABORTED' } });
+  if (signal?.aborted) return cancelled();
+  let onAbort, committed;
+  const stopped = new Promise(resolve => { onAbort = () => resolve(committed || cancelled()); });
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await Promise.race([Promise.resolve().then(() => signal?.aborted ? cancelled() : task(result => { committed = result; })), stopped]);
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
   }
 }

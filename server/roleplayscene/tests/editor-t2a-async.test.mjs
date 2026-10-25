@@ -585,3 +585,25 @@ test('T2A account change while bytes are pending cannot attach or trigger login'
   assert.equal(sends, 1);
   cleanup();
 });
+
+for (const phase of ['session', 'provider']) {
+  test(`visible Cancel releases stalled ${phase} and ignores late dialogue audio`, async () => {
+    installDomGlobals();
+    const gate = createDeferred(), store = new TestStore(makeProject()), right = document.createElement('div'), messages = [];
+    let calls = 0, ready = 0;
+    const cleanup = renderEditor(store, document.createElement('div'), right, m => messages.push(m), {
+      getProviderAuth: () => ({ ensure: () => { ready++; return phase === 'session' ? gate.promise : Promise.resolve({ok:true,isCurrent:()=>true}); } }),
+      apiClient: { generateAudioFromText: () => { calls++; return gate.promise; } },
+    });
+    findButtonByText(right, 'Generate audio').dispatchEvent('click');
+    await waitFor(() => phase === 'session' ? ready === 1 : calls === 1);
+    findButtonByText(right, 'Cancel').dispatchEvent('click');
+    await waitFor(() => findButtonByText(right, 'Generate audio')?.disabled === false);
+    assert.equal(calls, phase === 'session' ? 0 : 1);
+    gate.resolve({ok:true,data:new Uint8Array([1,2,3]),isCurrent:()=>true});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(store.get().project.scenes[0].dialogue[0].audio, null);
+    assert.ok(messages.some(m=>m.textId==='inspector.dialogue.t2aCanceled'));
+    cleanup();
+  });
+}
