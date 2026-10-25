@@ -1,10 +1,10 @@
 # Rewrite-bridge workflow map and shared contract
 
-Status: **mapping approved in PR #322; foundation merged in PR #323; shared rewrite, transcription and T2A integrations implemented; final reconciliation pending**.
+Status: **mapping approved in PR #322; foundation merged in PR #323; shared rewrite, transcription and T2A integrations merged through PR #326; lifecycle documentation reconciled**.
 Original mapping baseline: main `7762c74f63b119baeccaa513f3500746ff7b526a` (merged PR #321). Text-rewrite integration is based on main `1f17a2cd7e693ad626f040b299606cc6fe93083c` (merged PR #323).
 This document extends stage 5 of the [authentication roadmap](authentication-workflows.md).
-It covers the complete provider-request lifecycle, not only sign-in. The mapping PR changed documentation only. The foundation below adds a shared
-helper and tests; text-rewrite and transcription adapters now use it as described in sections 8–9. No external bridge,
+It covers the complete provider-request lifecycle, not only sign-in. The mapping PR changed documentation only. All mapped production callers now use the shared
+provider runner through the voice and audio adapters described in sections 8–10. No external bridge,
 OIDC, database or deployment changes are included.
 
 ## 1. Scope and existing ownership
@@ -36,7 +36,7 @@ Source entry points:
   `triggerProtectedAction` and their UI handlers. Trace both language-track and
   legacy no-language branches; they are supported adapters, not dead code.
 - [RolePlayScene editor](../../server/roleplayscene/scripts/editor/editor.js):
-  `generateDialogueAudio`; [request wait helper](../../server/roleplayscene/scripts/editor/audio-generation-request.js).
+  `generateDialogueAudio`; [per-phase timeout policy](../../server/roleplayscene/scripts/editor/audio-generation-request.js).
 - [Shared voice workflow](../../server/viewer/answer-voice-workflow.js):
   `createVoiceWorkflow`; [recorder](../../server/viewer/answer-recording.js).
   Consumers are [Viewer main](../../server/viewer/main.js) and
@@ -72,7 +72,7 @@ append/caret insertion, Undo, navigation behavior, music/dialogue coordination,
 legacy packages and named audio tracks. Navigation is not universally cancellation:
 valid background work can remain attached to its original answer or scene.
 
-## 3. Code-backed gaps and proposed resolution
+## 3. Historical mapping findings and migration decisions
 
 These are original mapping findings and migration risks, not newly reproduced live defects.
 They do not establish that every affected user journey currently fails. Section 8
@@ -152,12 +152,14 @@ make proposed new limits explicit for review. New automatic retries, a cross-tab
 request queue, persistent audio recovery or bridge backend changes require a
 separate decision; they are not prerequisites for this work.
 
+Original delivery plan, with current merge status (current behavior is in sections 7–11):
+
 | PR | Deliverable and boundary | Gate |
 | --- | --- | --- |
 | Mapping (merged #322) | Current call graph, differences, risks and target contract; documentation only | Approved and merged |
-| Shared foundation (implemented opt-in; see section 7) | Characterization tests for all three endpoints; common outcome/cancellation/ownership mechanics and provider auth preparation using existing helpers. Keep legacy call signatures until migrated. | Behavioral tests for old adapters and new contract; no unannounced consumer behavior change |
-| T2A integration | Migrate Editor prompt/option named and legacy paths plus RolePlayScene dialogue as one consumer group; explicit post-login retry and safe attachment | Both authoring apps, replacement/source-change races, real login and audio acceptance |
-| Voice/rewrite integration | Migrate the existing shared pipeline and both Viewer/discussion adapters together; account binding and agreed deadline policy; preserve recording and recovery | Both consumers, microphone/Undo/navigation/recovery and provider acceptance |
+| Shared foundation (merged #323; see section 7) | Characterization tests for all three endpoints; common outcome/cancellation/ownership mechanics and provider auth preparation using existing helpers. Keep legacy call signatures until migrated. | Behavioral tests for old adapters and new contract; no unannounced consumer behavior change |
+| T2A integration (merged #326) | Migrate Editor prompt/option named and legacy paths plus RolePlayScene dialogue as one consumer group; explicit post-login retry and safe attachment | Both authoring apps, replacement/source-change races, real login and audio acceptance |
+| Voice/rewrite integration (merged #324–325) | Migrate the existing shared pipeline and both Viewer/discussion adapters together; account binding and agreed deadline policy; preserve recording and recovery | Both consumers, microphone/Undo/navigation/recovery and provider acceptance |
 | Completion cleanup | Remove only proven superseded paths, reconcile feature docs and verify all production callers | Full affected regression and cross-app acceptance; fold into integration if small and safe |
 
 Each runtime PR must work independently and preserve unmigrated callers. Prefer
@@ -212,14 +214,16 @@ and saved-intent tracing, and automated plus deployed acceptance passes. This
 mapping alone does not claim that outcome or certify the external bridge.
 
 
-## 7. Shared foundation API (app integration pending)
+## 7. Shared foundation API
 
 [provider-request.js](../../server/app/bridge/provider-request.js) exports
 `runProviderRequest({auth, request, intent, signal, isCurrent, timeoutMs})` and
-`normalizeProviderResult(result)`. Text rewriting now uses this foundation (section 8). Transcription/T2A callers and
-API method signatures are unchanged. Shared authentication preparation and app
-read handoffs also receive account-validity fixes in this PR. The endpoint characterization tests record
-legacy behavior rather than claiming those inconsistencies are already fixed.
+`normalizeProviderResult(result)`. All mapped callers use this foundation:
+text rewriting (section 8), transcription (section 9), and T2A through
+`runAudioGeneration` (section 10). Existing transport method names and supported
+legacy audio input formats remain compatible. The endpoint contract tests cover
+structured permission denial and interrupted rejection bodies as well as
+authentication, cancellation and one-request behavior.
 
 - `auth` is the existing `createReadAuthFlow` interface. The helper calls `ensure`
   with `withContext: true` and consumes the verification-bound `isCurrent` lease
@@ -261,15 +265,15 @@ legacy behavior rather than claiming those inconsistencies are already fixed.
   equivalent to RolePlayScene's existing per-wait timeout; integration must
   preserve that policy explicitly rather than substitute the helper blindly.
 - The helper never retries, persists content, records audio or implements fetch.
-  It calls the existing client through the adapter callback. In particular it
-  cannot recover a structured permission code already discarded by legacy T2A;
-  that transport compatibility change belongs in the T2A integration.
+  It calls the existing client through the adapter callback. The T2A transport
+  preserves explicit structured permission denial before applying the legacy
+  unknown-403 authentication fallback.
 
 Foundation verification is in
 [provider-request.test.mjs](../../server/app/bridge/provider-request.test.mjs) and
 [bridge characterization tests](../../server/app/api/server-api-client.bridge-contract.test.mjs),
 including real session-coordinator and API-client adapters with synthetic responses.
-These tests do not establish completed integration or live provider acceptance.
+These synthetic tests do not establish live provider acceptance; see section 11.
 
 ## 8. Text-rewrite integration
 
@@ -319,8 +323,7 @@ legacy login-return restoration and both consumer regressions. Deployed acceptan
 must check both apps' rewrite and voice-to-rewrite flows, original sign-in surfaces,
 explicit retry, cancellation, Undo and English/Traditional Chinese guidance.
 
-Remaining sequence: reconcile the complete bridge lifecycle and remove proven
-superseded code after integration acceptance. The smaller rewrite-first boundary supersedes the combined voice/rewrite
+The completion reconciliation is recorded in section 11. The smaller rewrite-first boundary supersedes the combined voice/rewrite
 integration row in the original staging table; storage/package scope stays closed.
 
 
@@ -395,3 +398,38 @@ legacy option/prompt generation, cancellation, phase timeout, session expiry,
 no-replay restoration, late account invalidation during asset persistence and
 replacement/target races. Browser fixtures are synthetic and do not replace
 VPS acceptance with the real bridge and sign-in service.
+
+
+## 11. Completion reconciliation and evidence
+
+Code baseline: merged main `ddbe9fe` (PR #326). Production call tracing confirms:
+
+| Operation | Shared path | Consumers |
+| --- | --- | --- |
+| Rewrite and transcription | `createVoiceWorkflow` → `runProviderRequest` → API client | Viewer answers and RolePlayScene discussion |
+| T2A | `runAudioGeneration` → `runProviderRequest` → API client | Editor named/legacy prompt and option adapters; RolePlayScene dialogue |
+
+The obsolete RolePlayScene `waitForAudioRequest` export had no repository callers,
+dynamic wiring, stored-intent references or tests. It was removed after the shared
+runner took over waiting. Its module and exported 120000ms policy remain in use.
+Legacy Editor handlers, saved-intent restoration, package formats and raw voice
+options remain supported; their names are not evidence of dead code.
+
+All three transports retain a received HTTP rejection when its body read fails.
+Explicit cancellation remains cancellation; parsed FORBIDDEN/PERMISSION_DENIED
+remains permission denial. The shared presenter exposes safe localized categories.
+
+The user-supplied PR #326 acceptance report for `c2deb59` (identical merged files)
+records 66 deployed passes, zero failures, three blocked deployed interrupted-body
+groups, and six not-applicable cases. Three real T2A requests succeeded. Fifteen
+separate native Chromium loopback tests exercised actual truncated rejection
+bodies and cancellation; they are not VPS proxy fault-injection evidence.
+Adjacent transcription/rewrite and microphone adapters in that run were synthetic.
+The report also records 1,701 passing Node tests. These are prior integration
+evidence, not a claim that every live-provider or physical-microphone case passed.
+
+Current policy remains intentional: Editor has no generation deadline, RolePlayScene
+has separate 120-second preparation/provider bounds, and neither authoring UI
+offers pending T2A Cancel. Adding those controls/deadlines or explicit sign-out is
+separate product work. This cleanup changes no UI, timeout, authentication,
+storage, external bridge or deployment behavior.
