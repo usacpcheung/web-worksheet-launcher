@@ -457,7 +457,10 @@ attach to, overwrite or unlock a newer generation. Once attachment commits and
 persistence is scheduled, success takes precedence over a late Cancel. Old-asset
 cleanup runs separately; slow or failed cleanup cannot turn committed audio into
 a cancellation result or touch a subsequently selected document. Existing content formats and
-login-return compatibility remain unchanged.
+login-return compatibility remain unchanged. Manual legacy option attachments
+also recheck draft generation, target existence/type and original media references
+after storage. Local media removal schedules persistence before best-effort
+asset cleanup, so cleanup cannot delay saving or touch a later document.
 
 Validation includes stalled preparation/provider calls, both phase timeouts,
 late success after cancel, cancel during asset storage, explicit retry before an

@@ -2089,12 +2089,9 @@ class EditorDraftSession {
     const removedSet = new Set(removedAssetIds);
     this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets).filter((asset) => !removedSet.has(asset.assetId));
 
-    if (this.storage.localAssets?.remove && removedAssetIds.length > 0) {
-      await Promise.all(removedAssetIds.map((id) => this.storage.localAssets.remove(id)));
-    }
-
     this.clearMediaFeedback();
     this.touchDraft();
+    this.cleanupReplacedMedia(removedAssetIds);
     return { ok: true, removedAssetId };
   }
 
@@ -2120,11 +2117,19 @@ class EditorDraftSession {
       return { ok: false, reason: 'confirm-replace-required', existingAssetId: currentRef.assetId };
     }
 
+    const draftId = this.state.draft.localId;
+    const generation = this._audioDraftGeneration;
     const priorRefsForUsage = normalizeMediaRefs(existingOption.mediaRefs, 'option_audio');
     const replacedAssetIds = priorRefsForUsage.map((ref) => ref.assetId);
 
     const newAsset = await this.createLocalAssetRecord(file, 'option_audio', 'audio');
-    if (options.isCurrent && !options.isCurrent()) {
+    const latestBlock = this.findBlock(blockId);
+    const latestConfig = normalizeQuestionResponseConfig(latestBlock?.responseConfig);
+    const latestOption = (latestConfig.options || []).map(item => normalizeResponseOption(item)).find(item => item.id === optionId);
+    if ((options.isCurrent && !options.isCurrent()) || this.state.draft?.localId !== draftId
+      || this._audioDraftGeneration !== generation || latestBlock?.kind !== 'question'
+      || latestConfig.inputType !== 'multiple_choice' || !latestOption
+      || JSON.stringify(normalizeMediaRefs(latestOption.mediaRefs, 'option_audio')) !== JSON.stringify(priorRefsForUsage)) {
       await this.storage.localAssets?.remove?.(newAsset.assetId);
       return { ok: false, reason: 'stale-target' };
     }
@@ -2201,12 +2206,9 @@ class EditorDraftSession {
     this.state.draft.assets = normalizeDraftAssets(this.state.draft.assets)
       .filter((asset) => !removedSet.has(asset.assetId));
 
-    if (this.storage.localAssets?.remove && removedAssetIds.length > 0) {
-      await Promise.all(removedAssetIds.map((id) => this.storage.localAssets.remove(id)));
-    }
-
     this.clearMediaFeedback();
     this.touchDraft();
+    this.cleanupReplacedMedia(removedAssetIds);
     return { ok: true, removedAssetId };
   }
 
