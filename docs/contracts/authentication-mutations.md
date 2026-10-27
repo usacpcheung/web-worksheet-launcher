@@ -10,7 +10,7 @@ This stage follows the read integration merged in #320. It implements stage 4 of
 | Learner viewer | Upload current attempt; delete uploaded attempts |
 | RolePlayScene | Upload current project; publish an uploaded draft; delete uploaded drafts and publications |
 
-Signed-out users can select available mutation controls. Invalid context, active work and duplicate-action guards still disable or reject actions. Resource rows still require an authenticated read, and publication owner controls retain their existing policy. Audio, transcription and rewrite retain their previous authentication adapters pending stage 5. Local actions remain available without login.
+Signed-out users can select available mutation controls. Invalid context, active work and duplicate-action guards still disable or reject actions. Resource rows still require an authenticated read, and publication owner controls retain their existing policy. Audio, transcription and rewrite now use the [shared bridge lifecycle](rewrite-bridge-workflows.md), with explicit provider actions after login rather than mutation execution through this helper. Local actions remain available without login.
 
 ## Preparation and confirmation
 
