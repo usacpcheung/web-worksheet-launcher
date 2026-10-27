@@ -8174,6 +8174,9 @@ function renderEditorShell(session) {
   }
 
   function renderManageUploadedDraftsModal() {
+    // A list response may arrive while a publication/confirmation dialog is open.
+    const hasForegroundDialog = [...document.querySelectorAll('[role="dialog"]')]
+      .some(node => !manageUploadedDraftsModalRoot.contains(node) && node.getClientRects().length);
     manageUploadedDraftsModalRoot.innerHTML = '';
     if (!manageUploadedDraftsDialogOpen) return;
     const overlay = document.createElement('div');
@@ -8222,7 +8225,7 @@ function renderEditorShell(session) {
     overlay.appendChild(dialog);
     manageUploadedDraftsModalRoot.appendChild(overlay);
     refreshPackageLoadControls();
-    closeBtn.focus();
+    if (!hasForegroundDialog) closeBtn.focus();
   }
 
   const updateSummary = ({ preserveDetailEditor = false } = {}) => {

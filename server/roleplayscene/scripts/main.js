@@ -1191,12 +1191,15 @@ function handleServerModalKeydown(event) {
 
 function openServerModal({ title, bodyRenderer, actions = [], onClose = null, replacementReason = 'replace' }) {
   if (!serverModalOverlay || !serverModalTitle || !serverModalBody) return;
+  // Retain the original launcher when one server dialog replaces another.
+  const previousFocus = activeServerModal?.previousFocus
+    || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
   if (activeServerModal) {
     closeServerModal(replacementReason);
   }
-  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   serverModalRevision++;
   activeServerModal = { onClose, previousFocus };
+  const openedModal = activeServerModal;
   serverModalTitle.textContent = title;
   serverModalBody.innerHTML = '';
   if (typeof bodyRenderer === 'function') {
@@ -1207,7 +1210,7 @@ function openServerModal({ title, bodyRenderer, actions = [], onClose = null, re
   serverModalOverlay.removeAttribute('hidden');
   document.addEventListener('keydown', handleServerModalKeydown);
   requestAnimationFrame(() => {
-    if (activeImportConfirmation || !activeServerModal) return;
+    if (activeImportConfirmation || activeServerModal !== openedModal) return;
     const focusable = getFocusableElements(serverModalDialog || serverModalOverlay);
     (focusable[0] || serverModalDialog)?.focus();
   });
@@ -1230,6 +1233,17 @@ function closeServerModal(reason = 'close') {
     current.previousFocus.focus();
   }
   if (current?.onClose) current.onClose(reason);
+  const closedRevision = serverModalRevision;
+  requestAnimationFrame(() => {
+    // Publication cleanup re-enables controls asynchronously. Never take focus
+    // from a newer dialog or from a control the user has already focused.
+    if (serverModalRevision !== closedRevision || activeServerModal || activeImportConfirmation) return;
+    if (document.activeElement !== document.body && document.activeElement?.getClientRects().length
+      && !document.activeElement.matches(':disabled')) return;
+    const target = [current?.previousFocus, serverManageButton, toolbarMoreButton]
+      .find(node => node?.isConnected && node !== document.body && !node.matches(':disabled') && !node.closest('[inert]') && node.getClientRects().length);
+    target?.focus();
+  });
 }
 
 function chooseFromServerModal({ title, message, actions, replacementReason = 'replace' }) {

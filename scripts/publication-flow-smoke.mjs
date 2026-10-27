@@ -9,6 +9,7 @@ try {
       try {
         const page = await context.newPage(); page.setDefaultTimeout(15000);
         const errors = [], posts = []; let refreshes = 0;
+        let holdNextList = false, releaseList;
         page.on('pageerror', e => errors.push(e.message));
         await page.addInitScript(locale => localStorage.setItem('worksheetLauncher.locale', locale), locale);
         const row = { uploaded_draft_id: 'fixture', roleplayscene_uploaded_draft_id: 'fixture', title: 'Fixture', subject: 'Subject', description: 'Description', publish_state: 'draft_only', owner_sub: 'fixture' };
@@ -20,6 +21,10 @@ try {
             if (scenario === 'lost-response') return route.abort('connectionreset');
             if (scenario === 'conflict' && posts.length === 1) return route.fulfill({ status: 409, json: { ok: false, error: { code: app === 'editor' ? 'PUBLISHED_PACKAGE_CONFLICT' : 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT' } } });
             return route.fulfill({ json: { ok: true, data: { published_package_id: 'saved', roleplayscene_published_scene_id: 'saved' } } });
+          }
+          if (holdNextList) {
+            holdNextList = false;
+            await new Promise(resolve => { releaseList = resolve; });
           }
           if (posts.length) {
             refreshes++;
@@ -38,18 +43,40 @@ try {
           await page.locator('#server-manage-btn').click();
         }
         const action = app === 'editor' ? page.locator('.browse-modal').getByRole('button', { name: await label('common.actions.publish'), exact: true }).first() : page.locator('[data-draft-action="publish"]').first();
+        if (app === 'editor' && scenario === 'cancel') {
+          await action.waitFor({ state: 'visible' });
+          await page.waitForFunction(() => !window.editorSession.state.isLoadingUploadedDrafts);
+          holdNextList = true;
+          await page.locator('.browse-modal').getByRole('button', { name: await label('common.actions.refresh'), exact: true }).click();
+          // Wait for interception, not an arbitrary network timing delay.
+          const deadline = Date.now() + 15000;
+          while (!releaseList && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+          assert.ok(releaseList, 'refresh request reached the held response');
+        }
         await action.click();
         const form = () => app === 'editor' ? page.getByRole('dialog').last() : page.locator('#server-modal-overlay');
         const primary = () => form().locator(app === 'editor' ? '.confirm-modal__btn--primary' : '.confirm-actions__primary');
         const secondary = () => form().locator(app === 'editor' ? '.confirm-modal__btn:not(.confirm-modal__btn--primary)' : '.confirm-actions__secondary').last();
         await form().locator('input').first().fill('Taken');
         await form().locator(app === 'editor' ? 'input' : 'textarea').last().fill('Retained metadata');
+        if (releaseList) {
+          await form().locator('input').first().focus();
+          releaseList();
+          await page.waitForFunction(() => !window.editorSession.state.isLoadingUploadedDrafts);
+          assert.equal(await form().evaluate(node => node.contains(document.activeElement)), true,
+            'background list completion must not steal publication focus');
+        }
         // Real dialogs retain keyboard focus within the active form.
         await page.keyboard.press('Tab');
         assert.equal(await form().evaluate(node => node.contains(document.activeElement)), true);
         if (scenario === 'cancel') {
           await secondary().click();
           if (app === 'roleplayscene') {
+            await page.waitForFunction(() => {
+              const active = document.activeElement;
+              return ['server-manage-btn', 'toolbar-more-btn'].includes(active?.id)
+                && !active.disabled && active.getClientRects().length > 0;
+            });
             if (!await page.locator('#server-manage-btn').isVisible()) await page.locator('#toolbar-more-btn').click();
             await page.locator('#server-manage-btn').click();
           }
