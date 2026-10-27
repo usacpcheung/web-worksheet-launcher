@@ -1,3 +1,4 @@
+import { runPublicationFlow, runPublicationAttempt } from '../../app/api/publication-flow.js';
 import { getApiErrorMessage } from '../../app/api/error-presentation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +20,7 @@ function deferred() {
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function harness(overrides = {}) {
   const state = { dialogs: [], requests: [], managers: 0, conflicts: 0 };
-  const context = vm.createContext({ getReadAuth: () => ({ captureIdentity: () => () => true, observe: result => result }),
+  const context = vm.createContext({ runPublicationFlow, runPublicationAttempt, getReadAuth: () => ({ captureIdentity: () => () => true, observe: result => result }),
     getApiErrorMessage,
     store: { projectGeneration: 0 }, returnedMutation: null, serverSession: { status: 'ready' },
     openingUploadedDraft: null, isPublishingDraftFlow: false,
@@ -133,8 +134,11 @@ test('session failure, request failure, and refresh failure all release the guar
     { async loadUploadedRolePlaySceneDrafts() { throw Error('refresh failed'); } },
   ]) {
     const h = harness(overrides);
-    if (overrides.loadUploadedRolePlaySceneDrafts) await assert.rejects(h.run(), /refresh failed/);
-    else await h.run();
+    const result = await h.run();
+    if (overrides.loadUploadedRolePlaySceneDrafts) {
+      assert.equal(result.ok, true);
+      assert.equal(result.refreshStatus, 'failed');
+    }
     assert.equal(h.context.isPublishingDraftFlow, false);
     assert.equal(h.context.publishingDraftIds.size, 0);
   }

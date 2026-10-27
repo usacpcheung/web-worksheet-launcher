@@ -1,3 +1,4 @@
+import { runPublicationFlow, runPublicationAttempt } from '../../app/api/publication-flow.js';
 import { prepareMutation } from '../../app/auth/mutation-auth.js';
 import { redirectReadSignIn, takeReadAuthReturn } from '../../app/auth/read-auth-return.js';
 import { classifySessionFailure } from '../../app/auth/session-outcome.js';
@@ -2783,62 +2784,62 @@ async function publishUploadedRolePlaySceneDraft(draft) {
   const isCurrent = () => accountCurrent() && generation === store.projectGeneration && !openingUploadedDraft;
   const restored = returnedMutation?.operation === 'publish' && returnedMutation.id === uploadedDraftId ? returnedMutation.filters : null;
   if (restored) returnedMutation = null;
-  let attemptedTitle = restored?.title ?? draft?.title ?? translate('server.values.untitledDraft');
-  let attemptedDescription = restored?.description ?? draft?.description ?? '';
   try {
-    while (true) {
-      const modalResult = await showPublishDraftModal(draft, attemptedTitle, attemptedDescription);
-      if (!isCurrent()) return;
-      if (!modalResult) {
-        showMessage({ textId: 'server.publishCanceled' });
-        return;
-      }
-      attemptedTitle = modalResult.title;
-      attemptedDescription = modalResult.description;
-      publishingDraftIds.add(uploadedDraftId);
-      renderUploadedDraftManager();
-      pendingManager = activeServerModal;
-      showMessage({ textId: 'server.publishingMessage' });
-      let result;
-      try {
-        const sessionReady = await ensureMutationSessionReady({ isCurrent: () => isCurrent() && pendingManager === activeServerModal, intent: { kind: 'mutation', operation: 'publish', id: uploadedDraftId, filters: { title: attemptedTitle, description: attemptedDescription } } });
-        if (sessionReady.ok) accountCurrent = sessionReady.isCurrent;
-        if (!isCurrent() || pendingManager !== activeServerModal) return;
-        if (!sessionReady.ok) {
-          if (sessionReady.result?.skipped || sessionReady.result?.cancelled) return;
-          showMessage({ text: getApiErrorMessage(sessionReady.result, 'session') });
-          return;
+    const outcome = await runPublicationFlow({
+      initialMetadata: { title: restored?.title ?? draft?.title ?? translate('server.values.untitledDraft'), description: restored?.description ?? draft?.description ?? '' },
+      isCurrent,
+      collectMetadata: metadata => showPublishDraftModal(draft, metadata.title, metadata.description),
+      publish: async metadata => {
+        publishingDraftIds.add(uploadedDraftId);
+        renderUploadedDraftManager();
+        pendingManager = activeServerModal;
+        const ownsManager = () => isCurrent() && pendingManager === activeServerModal;
+        showMessage({ textId: 'server.publishingMessage' });
+        try {
+          const result = await runPublicationAttempt({
+            isCurrent: ownsManager,
+            preflight: async () => {
+              const ready = await ensureMutationSessionReady({ isCurrent: ownsManager, intent: { kind: 'mutation', operation: 'publish', id: uploadedDraftId, filters: metadata } });
+              if (ready.ok) accountCurrent = ready.isCurrent;
+              return ready;
+            },
+            submit: () => apiClient.publishRolePlaySceneFromUploadedDraft(uploadedDraftId, metadata),
+            onSubmitted: result => {
+              // Request-level reservation ends before refresh; the outer flow
+              // remains reserved until dialogs, refresh and final cleanup finish.
+              publishingDraftIds.delete(uploadedDraftId);
+              if (result?.ok) {
+                showMessage({ textId: 'server.published', textArgs: { id: result.data?.roleplayscene_published_scene_id || '' } });
+              } else {
+                showMessage({ text: result.cause ? getApiErrorMessage(result.cause, 'publish') : getServerErrorMessage(result, 'server.publishFailed') });
+                getReadAuth().observe(result);
+              }
+            },
+            refresh: () => loadUploadedRolePlaySceneDrafts({ preflight: false }),
+          });
+          if (ownsManager() && result.phase === 'preflight' && !result.skipped && !result.cancelled) {
+            showMessage({ text: getApiErrorMessage(result, 'session') });
+          }
+          // The list loader presents returned failures. Only a thrown refresh
+          // needs presentation here; it cannot invalidate confirmed publication.
+          if (ownsManager() && result.refreshStatus === 'failed' && result.refreshResult?.cause) {
+            showMessage({ text: getApiErrorMessage(result.refreshResult, 'list') });
+          }
+          return ownsManager() ? result : { ...result, skipped: true };
+        } finally {
+          publishingDraftIds.delete(uploadedDraftId);
         }
-        result = await apiClient.publishRolePlaySceneFromUploadedDraft(uploadedDraftId, { title: attemptedTitle, description: attemptedDescription });
-      } catch (err) {
-        if (isCurrent() && pendingManager === activeServerModal) showMessage({ text: getApiErrorMessage(err, 'publish') });
-        return;
-      } finally {
-        publishingDraftIds.delete(uploadedDraftId);
-      }
-
-      if (!isCurrent() || pendingManager !== activeServerModal) return;
-      if (result?.ok) {
-        showMessage({
-          textId: 'server.published',
-          textArgs: { id: result.data?.roleplayscene_published_scene_id || '' },
-        });
-        // Refresh data without reopening a manager the user closed or replaced.
-        await loadUploadedRolePlaySceneDrafts({ preflight: false });
-        return;
-      }
-      if (result?.error?.code === 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT') {
-        showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
-        if (!pendingManager || activeServerModal !== pendingManager) return;
+      },
+      isConflict: result => result?.error?.code === 'ROLEPLAYSCENE_PUBLISHED_TITLE_CONFLICT',
+      chooseConflict: async result => {
+        if (!isCurrent() || pendingManager !== activeServerModal) return null;
         const choice = await showPublishConflictModal(result);
-        if (choice === 'edit') continue;
-        showMessage({ textId: 'server.publishCanceled' });
-        return;
-      }
-      showMessage({ text: getServerErrorMessage(result, 'server.publishFailed') });
-      getReadAuth().observe(result);
-      return;
-    }
+        if (isCurrent() && choice !== 'edit') showMessage({ textId: 'server.publishCanceled' });
+        return choice;
+      },
+    });
+    if (isCurrent() && outcome?.status === 'cancelled') showMessage({ textId: 'server.publishCanceled' });
+    return outcome;
   } finally {
     publishingDraftIds.delete(uploadedDraftId);
     isPublishingDraftFlow = false;
