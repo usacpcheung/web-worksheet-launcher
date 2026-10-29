@@ -80,10 +80,11 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
     if (event.touches.length === 1 && delta && !isNestedScroller(event.target, delta)) intentionalScroll();
   }, { passive: true, signal });
   window.addEventListener('keydown', event => {
-    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    const boundaryKey = event.key === 'Home' || event.key === 'End';
+    if (event.defaultPrevented || event.altKey || ((event.ctrlKey || event.metaKey) && !boundaryKey)) return;
     if (event.target.closest?.('input, textarea, select, [contenteditable="true"], [role="dialog"], dialog')) return;
     if (event.key === ' ' && event.target.closest?.('button, a')) return;
-    if (!event.shiftKey && (event.key === 'Home' || event.key === 'End')) {
+    if (!event.shiftKey && boundaryKey) {
       // Page-boundary keys are one explicit destination, like Previous/Next.
       // Avoid a browser smooth-scroll sequence being interrupted by layout updates.
       event.preventDefault(); restoring = false; stopTracking();

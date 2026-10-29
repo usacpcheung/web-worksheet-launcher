@@ -13,6 +13,8 @@ code, voice workflow and API contracts are unchanged.
 Review fixes covered native scroll anchoring during off-screen completion, focus
 clearance above fixed controls, touch gestures versus activation, nested-scroller
 boundaries, fast gestures ending in gaps, and unnecessary off-screen DOM updates.
+The post-creation review also fixed Ctrl+Home/End page navigation so it updates
+section identity; plain and modified boundary keys have bilingual browser coverage.
 
 ## Automated coverage
 

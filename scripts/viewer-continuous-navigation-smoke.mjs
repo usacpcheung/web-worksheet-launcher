@@ -143,6 +143,10 @@ try {
   await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'intro');
   await page.keyboard.press('End');
   await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'end');
+  await page.keyboard.press('Control+Home');
+  await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'intro');
+  await page.keyboard.press('Control+End');
+  await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'end');
   assert.equal(await page.locator('#answer-q2').inputValue(), 'Typing in second answer');
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   if (shots) await page.screenshot({ path: `${shots}/continuous-${locale}-${width}.png`, animations: 'disabled' });
