@@ -5,6 +5,12 @@ description: Use when changing the worksheet product UI in this repository, espe
 
 # Worksheet UI Design Language
 
+> Viewer target design, recorded 2026-10-29; not yet implemented.
+> The viewer guidance below describes the selected Version C direction.
+> See the [implementation plan](../../../docs/worksheet/viewer-ui-refactor-plan.md)
+> for current-code evidence, pending decisions and staged acceptance gates.
+> Existing interfaces remain valid until their migration PR is implemented.
+
 ## Overview
 
 Use this skill to keep the worksheet editor and viewer feeling like one product while preserving their different jobs. The editor is a compact authoring tool; the viewer is a calmer learner-facing experience with larger task surfaces and persistent navigation.
@@ -33,9 +39,9 @@ Keep the app light, utilitarian, and workflow-focused:
 - Preserve the bundled `Worksheet Chinese` font import from `server/app/fonts/worksheet-chinese.css` and the existing Inter/system fallbacks. Do not replace local font subsets with remote font requests as incidental UI cleanup.
 - Use a light color scheme, neutral text, and pale gray/blue workspace backgrounds.
 - Prefer white or near-white surfaces with thin neutral borders and restrained shadows.
-- Use 8px radius for buttons, rows, inputs, menus, and compact tools; 10-12px for panels and modals; larger radii only where viewer cards already use them.
-- Favor dense but readable controls over marketing-style composition.
-- Use blue as the main accent, green for saved/correct/success, amber for warnings, and red only for destructive/error states.
+- Use 8px radius for buttons, rows, inputs, menus, and compact tools; 10-12px for panels and modals. The selected viewer design may use its softer, larger radii within viewer-scoped styles; do not propagate those changes into the editor or shared dialogs.
+- Favor compact, readable authoring controls and calmer, roomier viewer controls. Avoid marketing-style composition.
+- Use blue as the main accent, green for saved/correct/success, amber for warnings, and red for destructive/error states. Preserve the viewer’s existing pale red False choice as an explicit exception: selecting False is not an incorrect-answer judgment.
 - Keep focus rings visible and consistent with the existing blue ring language.
 - Avoid decorative gradients, oversized hero sections, unrelated icon styles, and one-off button treatments.
 
@@ -67,20 +73,126 @@ Editor UI should not feel like a landing page or a learner presentation. Keep it
 
 ## Viewer Direction
 
-Design `/server/viewer` as a learner-facing flow:
+### Design status and authority
 
-- Keep worksheet content and questions as the primary surface.
-- Use larger readable cards for content and questions; viewer cards may be softer and roomier than editor panels.
-- Keep persistent navigation in the bottom bar. Preserve body/app bottom clearance variables so content is not hidden behind fixed controls.
-- Use the stepper as progress/navigation, not as editor structure.
-- Keep viewer header actions compact and icon-based.
-- Use the start panel as a focused launch/resume surface, with simple sections for attempts and worksheets.
-- Use bottom action buttons for learner actions such as save, complete, or check; avoid moving primary learner actions into scattered page regions.
-- Use larger form controls for learner input than editor controls, with strong readability and clear checked/correct/incorrect states.
-- Preserve animation and DOM stability for card transitions, check banners, text counters, and rewrite controls.
-- On mobile, stack the bottom bar zones and maintain enough clearance for fixed controls.
+Version C's continuous worksheet and ordered, paginated chooser are the selected
+viewer direction. The latest standalone mockup is a visual and interaction
+reference; it is not the production implementation or a source of business rules.
+The detailed plan records trial parameters, open decisions and acceptance gates.
+Do not describe a planned feature as shipped until the corresponding PR is merged
+and its deployment status is known.
 
-Viewer UI should not inherit editor inspector density. It may share tokens and components, but the learner flow should feel calmer and more spacious.
+During migration, preserve the existing interface for areas outside each PR's
+scope. The target design supersedes this skill's former mandatory bottom bar,
+mobile stacked bottom zones and horizontal stepper layout. Earlier handoff rules
+for an inline question grid also no longer define the selected chooser.
+
+### Worksheet and actions
+
+- Present actual content blocks and questions in worksheet order on a continuous,
+  readable paper-like surface. Content blocks are first-class reading sections,
+  not answerable questions. Never synthesize an introductory block from a demo.
+- Use the selected desktop side action area and mobile launcher/drawer as the
+  presentation reference. Preserve every existing action, its availability and
+  enabled conditions. Keep header actions compact and clearly labelled.
+- Keep navigation and primary worksheet actions easy to reach. Maintain clearance
+  for fixed UI and ensure the first and last sections remain accessible.
+- Keep the existing start/resume, package browser, upload manager and auth flows;
+  this presentation redesign does not authorize redesigning those workflows.
+- Use readable spacing and responsive question/media/answer layouts. Long prompts,
+  images, answers and translated text must not overlap controls or be clipped.
+
+### Position, navigation and progress
+
+- Use one current-section model for scroll navigation, Previous/Next, the chooser
+  and voice-operation View. Follow the decision rules in the implementation plan;
+  do not invent different navigation behavior for each entry point.
+- Separate section identity, displayed question number and answered progress.
+  Preserve stable block IDs and worksheet ordering. Question numbering excludes
+  content blocks. The ring describes the current question or reading section;
+  its completion arc uses the existing answered-question calculation.
+- Restore the existing resume target in both state and scroll position after
+  layout is ready. Restoration must not activate intermediate sections or start
+  playback/recording; preserve the existing resume-selection algorithm.
+- Label sequential navigation as Previous section / Next section
+  (上一節 / 下一節), since it also visits reading sections.
+- Use Version C's ordered chooser: question and reading titles in sequence,
+  separate current and answered indicators, and responsive pagination. All items
+  must be reachable without an internal chooser scrollbar at supported sizes.
+  Reduce entries per page and use the agreed compact layout for short/zoomed
+  viewports; never clip required controls or hide overflow to claim compliance.
+  Full item names must remain accessible when visual excerpts are shortened.
+  Do not add the rejected A/B tabs or grouping model.
+- Use a compact, labelled chooser dialog. Avoid nested mobile dialogs; maintain
+  predictable close, selection, Escape and focus-return behavior.
+- Keep chooser row identities stable during answer/status updates. Preserve
+  focus and hover; update states without rebuilding unchanged rows.
+- Follow agreed navigation behavior for audio and voice operations. Rendering,
+  animation or a section merely entering/leaving the viewport must not independently
+  stop or start services; retain the separate page-lifecycle behavior below.
+
+### Visual language and controls
+
+- Use Version C's cooler blue accent and pale blue canvas with white reading
+  surfaces. Retain semantic success, warning, error and existing True/False
+  colors; labels and state indicators must work without color alone.
+- Preserve the production bundled Chinese font and existing fallbacks. The demo's
+  embedded Noto Sans HK font does not authorize a production font migration.
+- Keep MC answer surfaces equal in width, including options without audio. Keep
+  option letters plain and consistent. Reserve a consistent audio-control column;
+  single-track and multi-track triggers have the same outer dimensions.
+- Preserve deterministic option shuffling, stable option values and their media
+  associations. Display letters are presentation, never answer identities.
+- Keep True/False controls equal in width, with their existing pale green/red
+  hover and selected semantics. Preserve validation and answer-selection rules.
+- Keep question audio associated with its prompt and option audio with its
+  option. Preserve direct single-track playback, multi-track language selection
+  and Stop behavior. Audio language selection is separate from UI language.
+- Use stationary hover feedback: background, border and subtle shadow changes.
+  Do not move or resize navigation buttons on hover. Restrict mouse hover effects
+  to suitable pointer devices; retain touch feedback and visible keyboard focus.
+
+### Motion and interaction stability
+
+- Preserve the chosen blur-to-clear treatment together with prompt/media slides
+  and staggered answer/option movement. They are separate presentation effects.
+- Begin entry effects while content enters the viewport and settle before the
+  reading line. Reveal lower elements of long questions when those elements enter.
+  Never wait for the whole long section to fit in the viewport.
+- Measure stable layout containers, not animated transforms. Do not let motion
+  change section detection, answers, permissions, requests or autosave semantics.
+- Keep visible, revealed content clear. Do not restart animation on status updates
+  or minor scroll reversal. Protect focused, edited or selected content and audio
+  menus; never move a control away from an active pointer or text selection.
+- Explicit navigation destinations must be clear and stable. Preserve natural
+  scrolling and allow user input to interrupt programmatic scrolling.
+- Reduced-motion mode must remove blur/movement and unnecessary smooth scrolling.
+  Unsupported animation must degrade to visible, usable content.
+- Preserve the existing print-report flow and content. Motion and fixed chrome
+  must not leak into printed output or cause saving/submission.
+
+### Behavior and compatibility
+
+- Keep actual answer controls, validation, raw input/caret handling, autosave,
+  resume, submission, check/review and import/export behavior as the baseline.
+- Preserve the complete voice/rewrite state machine, including session readiness,
+  permission requests, recording, processing, cancellation, recovery and Undo.
+  Do not reduce this to the mockup's timer simulations.
+- Define operation-status ownership for multiple mounted blocks before implementation.
+  Stop/Cancel/View must stay reachable without repeating the active operation's
+  controls and live announcements in every text question. Use the plan's pending
+  status-placement decision; do not silently invent a new operation flow.
+- Preserve existing language-switch, page-hidden, page-exit and viewer-replacement
+  behavior. These are lifecycle events, not ordinary section navigation. Dispose
+  listeners, timers, media and controls correctly when the shell is replaced.
+- Keep results attached to the original attempt and block, and preserve late-result
+  protection. Background completion must not steal focus or scroll the worksheet.
+- Maintain unique labels/IDs and isolated state when several question controls
+  coexist. Do not recreate the worksheet form on each keystroke or scroll frame.
+- No mock questions, synthetic answers/audio, demo localStorage keys, fake service
+  calls, trial controls or diagnostic reading line may enter production.
+- If implementation would alter an existing flow or function, identify the exact
+  change and obtain the user's agreement before implementing that behavior change.
 
 ## Buttons, Icons, And Controls
 
@@ -105,8 +217,8 @@ Icon language:
 Before finishing UI work:
 
 - Verify desktop and narrow mobile layouts for overlap, hidden fixed-bottom content, and long text wrapping.
-- Keep explicit responsive constraints for fixed-format elements such as button rows, stepper nodes, option rows, media rows, and bottom bars.
-- Preserve keyboard access for buttons, menus, modals, form controls, and steppers.
+- Keep explicit responsive constraints for button/option/media rows and fixed action areas. For the target viewer, include the chooser, ring and mobile drawer; retain existing stepper/bottom-bar checks during migration.
+- Preserve keyboard access for buttons, menus, dialogs, form controls and navigation. The viewer chooser must expose its current item and answered state accessibly.
 - Use `textContent` for plain user/imported text. Supported worksheet Markdown must go through `server/app/worksheet-text.js` (`setWorksheetText` or `renderWorksheetText`); never interpolate raw input into HTML or bypass its format validation.
 - Provide `aria-label` for icon-only buttons and accessible labels for dialogs/forms.
 - Keep disabled states visibly disabled.
@@ -136,3 +248,12 @@ Before finishing UI work:
   setup before running it; do not point synthetic tests at production data.
 - Check both supported locales, narrow/mobile and desktop layouts, keyboard
   focus, browser errors and the affected interaction. State what was not tested.
+- Test current-section transitions separately from visual effects. Include mixed
+  reading/question sequences, long sections, interrupted jumps and background
+  voice completion. Test status refreshes without hover/focus loss.
+- Every runtime PR needs acceptance evidence appropriate to its scope. Mocked
+  microphone/auth/provider tests do not establish real-device or live integration
+  compatibility. Use the plan's acceptance matrix and record remaining gaps.
+- Evaluate representative large worksheets when continuous rendering is introduced,
+  before adding motion. Record package sizes, media volume, load/scroll/input
+  responsiveness and resource cleanup; repeat affected checks after animation.
