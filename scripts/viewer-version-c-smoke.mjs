@@ -10,12 +10,14 @@ try {
  for (const locale of ['en','zh-Hant']) {
   const page = await browser.newPage({viewport:{width:1280,height:900}});
   const errors=[];page.on('pageerror', e=>errors.push(e.message));
+  await page.addInitScript(()=>{ window.Audio = class extends EventTarget { play(){return Promise.resolve();} pause(){} load(){} removeAttribute(){} }; });
   await page.route(url=>url.pathname.startsWith('/api/'), route=>route.fulfill({json:{ok:true,data:{user:{sub:'fixture'},items:[]}}}));
   await page.goto(base+'/server/viewer/');
   await page.evaluate(async locale=>{
    localStorage.setItem('worksheetLauncher.locale',locale);
    const {viewerStorage}=await import('/server/viewer/storage/index.js');
    const now=new Date().toISOString();
+   for(const id of ['audio','audio2']) await viewerStorage.localAssets.put({localId:id,binary:new Uint8Array([1]),metadata:{localId:id,origin:'local_source',updatedAt:now,mimeType:'audio/mpeg'}});
    const tracks=[{language:'english',assetId:'audio',sourceTextHash:'fixture'},{language:'cantonese',assetId:'audio2',sourceTextHash:'fixture'}];
    const blocks=Array.from({length:20},(_,position)=>{
     const blockId='b'+position;
@@ -38,6 +40,26 @@ try {
   const bool=await page.locator('[data-block-id="b3"] .boolean-segmented-control__button').evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().width));
   assert(Math.abs(bool[0]-bool[1])<1);
   if(shots)await page.screenshot({path:`${shots}/layout-${locale}.png`});
+  for (const width of [1280,320]) {
+   await page.setViewportSize({width,height:900});
+   await chooseViewerSection(page,1);
+   const prompt=page.locator('[data-block-id="b1"] .viewer-audio-control--question');
+   await prompt.locator('button').first().click();
+   assert(await prompt.locator('.viewer-audio-control__menu').evaluate(node=>{const r=node.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;}),'prompt language menu stays within viewport');
+   assert.equal(await prompt.locator('.viewer-audio-control__menu-item').count(),2);
+   await prompt.locator('.viewer-audio-control__menu-item').last().click();
+   await page.waitForFunction(()=>Boolean(window.viewerSession.activeAudio));
+   await prompt.locator('button').first().click();
+   assert.equal(await page.evaluate(()=>Boolean(window.viewerSession.activeAudio)),false);
+   await chooseViewerSection(page,4);
+   const option=page.locator('[data-block-id="b4"] .viewer-audio-control--option').first();
+   await option.locator('button').first().click();
+   assert(await option.locator('.viewer-audio-control__menu').evaluate(node=>{const r=node.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;}),'option language menu stays within viewport');
+   await option.locator('.viewer-audio-control__menu-item').first().click();
+   await page.waitForFunction(()=>Boolean(window.viewerSession.activeAudio));
+   await chooseViewerSection(page,0);
+   assert.equal(await page.evaluate(()=>Boolean(window.viewerSession.activeAudio)),false,'section change stops option playback');
+  }
   for(const viewport of [{width:1280,height:900},{width:390,height:844},{width:320,height:568},{width:740,height:360},{width:640,height:450},{width:320,height:225}]) {
    await page.setViewportSize(viewport);
    if(await page.locator('.viewer-actions-launcher').isVisible()) assert(await page.locator('.viewer-actions-launcher').evaluate(node=>node.getBoundingClientRect().bottom<=innerHeight));

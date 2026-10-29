@@ -52,6 +52,11 @@ authentication and Apache configuration are unchanged by this stage.
   behind a native modal backdrop. The root scroll is locked while either viewer
   dialog is open, with a stable scrollbar gutter to avoid width jumps. The chooser
   fixture checks that backdrop wheel input leaves the worksheet position intact.
+- Audio review reproduced the old right-aligned language menu extending past
+  the viewport after prompt playback moved under the left-hand prompt. Prompt
+  menus now align left; option menus retain right alignment. Both menus, language
+  selection, Stop and navigation interruption are covered at 1280/320px in both
+  locales using synthetic Audio objects and stored fixture assets.
 - Old smoke selectors were adapted to the real drawer/chooser and answer wrapper.
   Markdown parity still compares the exact rendered content, and the resume
   test checks programmatic scroll calls while allowing native scroll anchoring.

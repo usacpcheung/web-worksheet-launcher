@@ -3000,3 +3000,9 @@ html:has(.viewer-shell--continuous) {
 html:has(.viewer-navigation dialog[open]) {
   overflow: hidden;
 }
+
+/* Prompt audio sits under the left-hand text; option menus remain right-aligned. */
+.viewer-shell--continuous .viewer-audio-control--question .viewer-audio-control__menu {
+  left: 0;
+  right: auto;
+}
