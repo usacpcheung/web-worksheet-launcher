@@ -27,6 +27,8 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
   let idleTimer;
   let pointerScroll = false;
   let touchY = null;
+  let focusedControl = null;
+  let focusedControlVisible = false;
   const sections = () => [...container.children];
   const viewport = () => {
     const visual = window.visualViewport;
@@ -57,7 +59,6 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
     scrolling = true;
     clearTimeout(idleTimer);
     idleTimer = setTimeout(stopTracking, 200);
-    schedule();
   };
   const isNestedScroller = (target, delta) => {
     for (let node = target instanceof Element ? target : null; node && node !== document.body; node = node.parentElement) {
@@ -107,10 +108,13 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
   window.addEventListener('pointerup', () => { pointerScroll = false; }, { signal });
   window.addEventListener('scroll', () => {
     if (scrolling || pointerScroll) { intentionalScroll(); schedule(); }
+    if (focusedControl === document.activeElement && !focusFrame) {
+      const rect = focusedControl.getBoundingClientRect();
+      const { top, bottom } = viewport();
+      focusedControlVisible = rect.bottom > top && rect.top < bottom;
+    }
   }, { passive: true, signal });
-  container.addEventListener('focusin', event => {
-    const control = event.target;
-    if (!control.matches?.('input, textarea, select')) return;
+  const revealFocusedControl = control => {
     cancelAnimationFrame(focusFrame);
     focusFrame = requestAnimationFrame(() => {
       focusFrame = 0;
@@ -125,11 +129,25 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
         stopTracking();
         window.scrollBy({ top: offset, behavior: 'instant' });
       }
+      focusedControlVisible = true;
     });
+  };
+  container.addEventListener('focusin', event => {
+    const control = event.target;
+    if (!control.matches?.('input, textarea, select')) return;
+    focusedControl = control;
+    focusedControlVisible = true;
+    revealFocusedControl(control);
   }, { signal });
   const layoutChanged = () => { stopTracking(); schedule(); };
-  window.addEventListener('resize', layoutChanged, { signal });
-  window.visualViewport?.addEventListener('resize', layoutChanged, { signal });
+  const viewportChanged = () => {
+    layoutChanged();
+    // Preserve access when a keyboard/resize covers an answer that was visible.
+    // An input deliberately scrolled off-screen must not pull the page back.
+    if (focusedControlVisible && focusedControl === document.activeElement) revealFocusedControl(focusedControl);
+  };
+  window.addEventListener('resize', viewportChanged, { signal });
+  window.visualViewport?.addEventListener('resize', viewportChanged, { signal });
   const observer = new ResizeObserver(layoutChanged);
   observer.observe(container);
   for (const element of layoutElements) observer.observe(element);

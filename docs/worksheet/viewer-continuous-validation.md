@@ -17,6 +17,10 @@ The post-creation review also fixed Ctrl+Home/End page navigation so it updates
 section identity; plain and modified boundary keys have bilingual browser coverage.
 A subsequent review fixed resume restoration after header keyboard interaction:
 late layout changes must not override the student’s first Tab/typing interaction.
+Screenshot review added focused-answer clearance after resizing an already focused
+answer, with a regression check that deliberately off-screen inputs stay off-screen.
+Scroll selection waits for actual movement, avoiding a transition based on stale
+geometry before a wheel event’s default scrolling takes effect.
 
 ## Automated coverage
 

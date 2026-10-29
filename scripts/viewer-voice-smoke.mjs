@@ -12,7 +12,7 @@ const page=await browser.newPage({viewport:{width:1280,height:900}});
 const current = page.locator('.viewer-block-section.is-current');
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-const shot = async name => { if (screenshots) { await page.screenshot({path: screenshots + '/' + name, fullPage: false, animations: 'disabled'}); } };
+const shot = async name => { if (screenshots) { await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); await page.screenshot({path: screenshots + '/' + name, fullPage: false, animations: 'disabled'}); } };
 let expireAfterTranscript=false; let failTranscription=false; let failRewrite=false; let transcriptions=0; let sessionReady=true; let rewrittenSource;
 let finishTranscription;let hold=true;
 await page.route(url => url.pathname.startsWith('/api/'),async route=>{

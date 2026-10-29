@@ -108,6 +108,13 @@ try {
   const scrollBefore = await page.evaluate(() => ({ y: scrollY, top: document.querySelector('#answer-q2').getBoundingClientRect().top }));
   assert(await page.locator('#answer-q2').evaluate(node => node.getBoundingClientRect().bottom <= document.querySelector('.viewer-operation-panel').getBoundingClientRect().top), 'newly focused answer clears the fixed operation panel');
   const scrollCalls = await page.evaluate(() => window.scrollCalls.length);
+  await page.setViewportSize({ width, height: 780 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await current(), 'q2', 'resize does not navigate');
+  assert(await page.locator('#answer-q2').evaluate(node => node.getBoundingClientRect().bottom <= document.querySelector('.viewer-operation-panel').getBoundingClientRect().top), 'resize keeps the focused answer clear of controls');
+  await page.setViewportSize({ width, height: 900 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const settledTop = await page.locator('#answer-q2').evaluate(node => node.getBoundingClientRect().top);
   releaseRewrite();
   await page.waitForFunction(() => !window.viewerSession.voice.active);
   assert.equal(await page.evaluate(() => window.scrollCalls.length), scrollCalls, 'completion does not initiate navigation');
@@ -115,7 +122,16 @@ try {
   assert.equal(await page.locator('#answer-q2').inputValue(), 'Typing in second answer');
   assert(await page.locator('#answer-q2').evaluate(node => document.activeElement === node));
   const scrollAfter = await page.evaluate(() => ({ y: scrollY, top: document.querySelector('#answer-q2').getBoundingClientRect().top }));
-  assert.ok(Math.abs(scrollAfter.top - scrollBefore.top) <= 1, 'background result must not shift the current answer: ' + JSON.stringify({scrollBefore, scrollAfter}));
+  assert.ok(Math.abs(scrollAfter.top - settledTop) <= 1, 'background result must not shift the current answer: ' + JSON.stringify({settledTop, scrollAfter}));
+  // A focused answer deliberately scrolled off-screen is not pinned by resize.
+  await page.mouse.move(width / 2, 100);
+  await page.mouse.wheel(0, -10000);
+  await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'intro');
+  await page.setViewportSize({ width, height: 780 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await current(), 'intro');
+  assert(await page.locator('#answer-q2').evaluate(node => node.getBoundingClientRect().top >= innerHeight));
+  await page.setViewportSize({ width, height: 900 });
   // Recording survives layout changes; scrolling to another section stops capture.
   ready = new Promise(resolve => { requestStarted = resolve; });
   await jump(1);
@@ -125,6 +141,7 @@ try {
   assert.equal(await page.evaluate(() => window.viewerSession.voice.active?.state), 'recording');
   await page.mouse.move(width / 2, 100);
   await page.mouse.wheel(0, await section('reading').evaluate(el => el.getBoundingClientRect().top - 100));
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'reading');
   await ready;
   await page.locator('.viewer-operation-panel button').last().click();
