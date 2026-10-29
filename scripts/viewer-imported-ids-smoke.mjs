@@ -33,7 +33,7 @@ try {
     assert.equal(await page.locator('.question-card__rewrite-btn').isEnabled(), true);
     assert.equal(await page.locator('.question-card__voice-btn').isEnabled(), true);
     assert.equal(await page.locator('.viewer-voice-recovery').isVisible(), false);
-    assert.equal(await page.locator('.question-card > textarea:not(.question-card__review-status)').inputValue(), 'Original answer');
+    assert.equal(await page.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').inputValue(), 'Original answer');
     assert.equal((await page.locator('.question-card').innerText()).includes('[native code]'), false);
   }
   assert.deepEqual(errors, []);

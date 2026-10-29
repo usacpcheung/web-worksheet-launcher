@@ -309,7 +309,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|package-load-progress|block-view-host|section-navigation)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|package-load-progress|block-view-host|section-navigation|worksheet-navigation)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -5147,7 +5147,8 @@ test('viewer block navigation interrupts active audio before switching question'
   const source = (await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8')).replace(/\r\n/g, '\n');
   assert.equal(source.includes("const navigateToBlockIndex = (requestedIndex, options = {}) => {"), true);
   assert.equal(source.includes("session.stopActiveAudio('interrupted');"), true);
-  assert.equal(source.includes("node.addEventListener('click', () => {\n        navigateToBlockIndex(index, { orderedBlocks });\n      });"), true);
+  // Chooser navigation now has behavioral coverage in viewer-continuous-navigation-smoke.
+  assert.equal(source.includes("navigate: index => navigateToBlockIndex(index),"), true);
   assert.equal(source.includes("navigateToBlockIndex(currentBlockIndex - 1, { orderedBlocks });"), true);
   assert.equal(source.includes("navigateToBlockIndex(currentBlockIndex + 1, { orderedBlocks });"), true);
 });

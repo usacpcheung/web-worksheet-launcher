@@ -656,6 +656,22 @@ export default {
     }
   },
   "viewer": {
+    navigation: {
+      "actions": "工作紙操作",
+      "browse": "瀏覽工作紙",
+      "previousSection": "上一節",
+      "nextSection": "下一節",
+      "previousPage": "上一頁",
+      "nextPage": "下一頁",
+      "page": "{page} / {total}",
+      "question": "第 {number} 題",
+      "reading": "閱讀 {number}",
+      "currentQuestion": "題目",
+      "currentReading": "閱讀",
+      "location": "目前：{section}",
+      "answered": "已作答",
+      "unanswered": "未作答"
+},
     "packageLoad": {
       "checking": "正在檢查登入狀態…",
       "downloading": "下載中…",
