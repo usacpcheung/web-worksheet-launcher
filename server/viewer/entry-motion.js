@@ -111,10 +111,16 @@ export function createEntryMotion({ container, viewport, signal }) {
     }
     if (Number.isFinite(deadline)) timer = setTimeout(schedule, Math.max(1, deadline - now));
   };
-  function schedule() { if (!frame && !signal.aborted) frame = requestAnimationFrame(update); }
+  function schedule() { if (!frame && !signal.aborted && !document.hidden) frame = requestAnimationFrame(update); }
   for (const event of ['scroll', 'resize']) window.addEventListener(event, schedule, { passive: true, signal });
   window.visualViewport?.addEventListener('resize', schedule, { signal });
   reduced.addEventListener('change', schedule, { signal });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      cancelAnimationFrame(frame); frame = 0; clearTimeout(timer);
+      for (const entry of entries.values()) entry.units.forEach(settle);
+    } else schedule();
+  }, { signal });
   // Settle on pointer entry/down before hit targets can move underneath the user.
   for (const event of ['pointerover', 'pointerdown', 'focusin', 'input']) container.addEventListener(event, e => {
     const section = e.target.closest?.('.viewer-block-section');

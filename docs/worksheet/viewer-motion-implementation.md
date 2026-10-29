@@ -55,3 +55,30 @@ suites and GitHub Regression gate. After opening the implementation, review and
 fix findings, then repeat a broader review and affected checks until no further
 fix is identified. Leave the PR open. Integrated VPS/local-browser acceptance
 remains a later step on the complete candidate, before an authorized merge.
+
+## Implementation and review record
+
+The viewer-only controller uses the existing section controller's viewport and
+untransformed offset geometry. Prompt/media share a movement group; answer fields,
+True/False controls and MC rows have their own reveal bounds. Progress is monotonic
+while visible. Off-screen rearming uses the reference's 140px/190ms guard. Explicit
+jumps/resume and interactions settle the section; focus, selection and audio-menu
+state protect controls. Resize and status rendering do not reset visible progress.
+
+The controller owns animation handles, observers and scheduled work through the
+shell abort signal. Review added hidden-page cleanup. Reduced-motion/print CSS
+also guarantees clear stationary content independently of animation scheduling.
+No audio, voice, answer, storage, authentication or RolePlayScene service is called
+by the motion controller.
+
+A dedicated browser fixture checks intermediate blur plus a separate running slide,
+off-screen replay, explicit jumps, focused-answer protection, print and reduced
+motion, in both locales at 1280px and 390px. Intermediate screenshots are captured.
+Existing continuous-navigation, voice, Version C and lifecycle fixtures are retained.
+A pure geometry test checks early settling in both scroll directions. Full-suite
+results and the final GitHub commit/run are recorded in the PR.
+
+Synthetic scale checks reuse the 20/100/300-section fixture (20% reading; mixed
+text/MC; 2/10/30 small images). These are local regression spot checks, not evidence
+of low-end-device performance or live provider compatibility. Real-device and VPS
+acceptance remain required before merging the completed candidate.
