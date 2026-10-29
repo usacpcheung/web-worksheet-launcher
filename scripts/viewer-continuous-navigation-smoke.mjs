@@ -139,6 +139,11 @@ try {
   await page.reload();
   await section('end').waitFor();
   assert.equal(await current(), 'end');
+  await page.keyboard.press('Tab');
+  const keyboardPosition = await page.evaluate(() => scrollY);
+  await section('intro').evaluate(node => { node.style.paddingBottom = '200px'; });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await page.evaluate(() => scrollY), keyboardPosition, 'late layout cannot resume-jump after keyboard interaction');
   await page.keyboard.press('Home');
   await page.waitForFunction(() => window.viewerSession.state.lastActiveBlockId === 'intro');
   await page.keyboard.press('End');

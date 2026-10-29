@@ -80,6 +80,9 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
     if (event.touches.length === 1 && delta && !isNestedScroller(event.target, delta)) intentionalScroll();
   }, { passive: true, signal });
   window.addEventListener('keydown', event => {
+    // Tab/typing in header controls is also an interaction: late media must not
+    // pull the page back to the resume target after keyboard use has begun.
+    restoring = false; stopTracking();
     const boundaryKey = event.key === 'Home' || event.key === 'End';
     if (event.defaultPrevented || event.altKey || ((event.ctrlKey || event.metaKey) && !boundaryKey)) return;
     if (event.target.closest?.('input, textarea, select, [contenteditable="true"], [role="dialog"], dialog')) return;
@@ -97,6 +100,7 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
   }, { signal });
   window.addEventListener('pointerdown', event => {
     restoring = false;
+    stopTracking();
     pointerScroll = event.clientX >= document.documentElement.clientWidth;
     if (pointerScroll) intentionalScroll();
   }, { signal });

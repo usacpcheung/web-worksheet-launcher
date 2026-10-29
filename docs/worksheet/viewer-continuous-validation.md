@@ -15,6 +15,8 @@ clearance above fixed controls, touch gestures versus activation, nested-scrolle
 boundaries, fast gestures ending in gaps, and unnecessary off-screen DOM updates.
 The post-creation review also fixed Ctrl+Home/End page navigation so it updates
 section identity; plain and modified boundary keys have bilingual browser coverage.
+A subsequent review fixed resume restoration after header keyboard interaction:
+late layout changes must not override the student’s first Tab/typing interaction.
 
 ## Automated coverage
 
