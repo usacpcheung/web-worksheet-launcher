@@ -45,6 +45,11 @@ try {
    const current=await page.evaluate(()=>window.viewerSession.state.lastActiveBlockId);
    await page.locator('.viewer-browse').click();
    assert.equal(await page.locator('dialog[open]').count(),1);
+   const backgroundScroll = await page.evaluate(()=>scrollY);
+   await page.mouse.move(1,1);
+   await page.mouse.wheel(0,1200);
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   assert.equal(await page.evaluate(()=>scrollY),backgroundScroll,'modal backdrop cannot move the worksheet');
    assert.equal(await page.evaluate(()=>window.viewerSession.state.lastActiveBlockId),current);
    // Traverse every section exactly once, including short and 200/400% equivalent CSS viewports.
    const seen=[];

@@ -2992,3 +2992,11 @@ body:has(.viewer-shell--continuous) #app {
   background-color:#edf5ff;
   border-color:#256ac4;
 }
+
+/* Native modal focus does not itself stop wheel/touch scrolling behind a dialog. */
+html:has(.viewer-shell--continuous) {
+  scrollbar-gutter: stable;
+}
+html:has(.viewer-navigation dialog[open]) {
+  overflow: hidden;
+}

@@ -48,6 +48,10 @@ authentication and Apache configuration are unchanged by this stage.
   floating operation panel. The side panel now reserves the measured operation
   panel height, including changes during recording and font/viewport resize. A
   real synthetic recording fixture checks this with 200% text size.
+- A further accessibility pass reproduced wheel scrolling of the worksheet
+  behind a native modal backdrop. The root scroll is locked while either viewer
+  dialog is open, with a stable scrollbar gutter to avoid width jumps. The chooser
+  fixture checks that backdrop wheel input leaves the worksheet position intact.
 - Old smoke selectors were adapted to the real drawer/chooser and answer wrapper.
   Markdown parity still compares the exact rendered content, and the resume
   test checks programmatic scroll calls while allowing native scroll anchoring.
