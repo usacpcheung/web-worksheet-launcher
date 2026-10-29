@@ -1,8 +1,9 @@
 # Viewer UI refactor — implementation plan draft
 
-Status: proposed implementation plan, 2026-10-29. The documentation PR is
-authorized; runtime implementation, deployment and merge are not authorized by
-this document. Selected design and pending decisions are distinguished below.
+Status: continuous-rendering implementation authorized, 2026-10-30 (Asia/Hong_Kong).
+PR #332 remains open. The next runtime PR is stacked on its branch. The user
+approved D1–D6 and the operation-panel placement below; D7/D8 remain pending
+for later stages. Deployment and merging the stack require separate authorization.
 
 Companion: [worksheet UI skill](../../.agents/skills/worksheet-ui-design-language/SKILL.md).
 This plan is the durable written design baseline. Visual comparison uses
@@ -54,7 +55,7 @@ new business behavior or adding demo-only functions.
 | Reference layout | Desktop side action area; mobile launcher/drawer. Verify exact placement against the full production action inventory. |
 | Latest trial values | Reading line at 40% viewport height; reveal settles at approximately 55% when entering from below. These are tuning values, not a package/API contract. |
 | Pending final visual acceptance | Revised C mockup's motion timing, hover appearance, spacing and small-screen usability. |
-| Proposed behavior rules | The edge cases in section 4. These are recommendations, not yet accepted implementation requirements. |
+| Accepted behavior rules | D1–D6 and the operation-panel placement in section 4, agreed 2026-10-30. D7/D8 remain pending. |
 
 Keep production fonts and existing localization. Do not import the HTML's embedded
 font/audio data, fixtures, hardcoded translations, simulated functions, diagnostic
@@ -104,10 +105,13 @@ Before changing the renderer, inventory every production control and relevant st
 map its destination in the new layout, and record any gap in the mockup. Missing
 mockup controls must not disappear from the product.
 
-## 4. Interaction rules requiring agreement
+## 4. Interaction decisions
 
 The ordinary rule is a stable section crossing the reading line. The following
-recommendations cover exceptions that the single-block UI did not need to resolve.
+rules cover exceptions that the single-block UI did not need to resolve. D1–D6
+are accepted for the first implementation. Their small numeric tolerances are
+implementation details to verify, not additional product decisions. D7/D8 remain
+proposals for later stages.
 
 | ID | Case | Recommended rule | Why it needs review |
 | --- | --- | --- | --- |
@@ -119,7 +123,7 @@ recommendations cover exceptions that the single-block UI did not need to resolv
 | D6 | Start/end and long final section | Keep the first section at the start. At the end, allow the final section to become current even if its top cannot reach the line. Do not let an end-of-page shortcut override an explicit target or active editing. | Short final blocks, trailing space and keyboard shrinkage need testing. |
 | D7 | Chooser opening, closing, resizing and zoom | Opening does not change the current section. From mobile, close the action drawer before opening chooser. Cancel restores opener/context; selecting navigates. Page capacity adapts while preserving the focused/current item where practical. Start with 320 × 568, 390 × 844, desktop and short landscape; test enlarged text and 200%/400% zoom. Reduce to one row and a compact/full-window arrangement when necessary. Keep title, full accessible row name, close and pagination reachable; never use hidden overflow to conceal a failure. If the tested layout cannot satisfy these requirements, resolve the design before release. | Prevent nested dialogs, lost focus and inaccessible rows at zoom/short heights. |
 | D8 | Animation replay and interaction | Revealed content stays clear while visible. Prepare replay only after fully leaving the viewport with a margin; never replay on answer/status updates. Focus, selection and open controls stay stable. Explicit jumps settle immediately. | Decide whether the latest mockup's off-screen replay remains desirable in real use. |
-| D9 | Operation status with multiple text questions mounted | Keep the original question's inline status and one cross-section status area when needed. Keep Stop/Cancel/View reachable while the source is off-screen, including from content or non-text sections. Give one live region responsibility for announcing the operation stage; do not duplicate announcements or active controls in every mounted text question. | Current `createVoiceControls` creates a status component for each text question. Agree on placement/visibility before PR 2; reuse the actual operation state and actions. |
+| D9 | Operation status with multiple text questions mounted | Use one shared operation panel and retain question-specific hints/recovery. Keep Stop/Cancel/View reachable while the source is off-screen, including from content or non-text sections. Give one live region responsibility for announcing the operation stage; do not duplicate announcements or active controls in every mounted text question. | Current `createVoiceControls` creates a status component for each text question. Placement accepted: one fixed bottom-right operation panel on desktop, across the lower mobile viewport with clearance for controls. Keep one operation live region; reuse actual state/actions and per-question recovery. Do not duplicate Stop/Cancel/View in every mounted question. |
 
 The 40% line is relative to a chosen viewport definition. For the first implementation,
 recommend the unobscured reading viewport when stable, with keyboard/resize
@@ -135,8 +139,11 @@ required package metadata. Confirm the exact label strategy in the PR 1 inventor
 ## 5. PR sequence and acceptance gates
 
 PR 0–4 below are implementation-stage labels, not GitHub PR numbers. Each runtime
-PR needs automated checks and user acceptance appropriate to its scope. Implement
-against the merged predecessor. Do not postpone all integration testing until the last PR.
+PR needs its own automated regression checks and review/fix loop. Per the user’s
+2026-10-30 decision, implement on the preceding open PR branch and target that
+branch in GitHub. Keep the stack open; deploy the complete Version C candidate
+for integrated live acceptance, including preparation changes, before merging
+in dependency order. Local integration testing continues at each stage.
 
 ### PR 0 — Document the target viewer design
 
@@ -256,8 +263,8 @@ VPS deployment; user approval of the plan alone is not deployment permission.
 
 Each runtime PR must remain functional and independently revertible on its tested
 base. Before deploying a candidate, record the exact candidate and previously
-validated deployment SHA. Run scoped acceptance after each code-changing deployment,
-then integrated acceptance for the finished design. Plan no storage migration or
+validated deployment SHA. The agreed release path is one complete Version C candidate deployment followed
+by integrated acceptance of the full stack; retest any fixes before release. Plan no storage migration or
 new feature-flag infrastructure by default. If an intermediate production rollout
 is unsuitable, agree on a test deployment instead of silently exposing unfinished UI.
 
@@ -278,7 +285,8 @@ solely because the standalone mockup passed visual checks.
 Documentation stage 0 merged as [PR #331](https://github.com/usacpcheung/web-worksheet-launcher/pull/331).
 Stage 1 retains the single visible block, existing CSS, stepper and bottom actions.
 The continuous worksheet, chooser, ring, new labels and motion are not implemented
-by this preparation. D1–D9 remain pending for their dependent stages.
+by this preparation. At the preparation stage D1–D9 were pending; section 4 and the agreement below
+record subsequent approvals for the continuous-rendering stage.
 
 The following inventory was checked against the stage-1 base `c2e1bc0`.
 Functions are in `server/viewer/main.js` unless another module is named. This is
@@ -319,3 +327,30 @@ selection retention, disposed-input isolation, raw numeric input, False/zero,
 shuffle/resume, permission cancellation, language teardown and late image cleanup. Live deployment,
 real microphone/provider calls and actual mobile devices remain separate acceptance
 requirements before merging the runtime PR; synthetic fixtures are not that evidence.
+
+## 10. Accepted continuous-navigation rules (2026-10-30)
+
+- Start the reading line at 40% of the unobscured reading viewport. Measure stable
+  section containers, not transforms. Keep the current section in gaps in either
+  direction and use a small tolerance to avoid boundary jitter.
+- Clicking or keyboard-focusing an answer or playback control makes its section
+  current once before running the action. Ordinary scroll never moves focus.
+- Previous/Next, chooser and operation View commit one destination before
+  scrolling. Intermediate sections do not activate. Manual scroll interruption
+  cancels the jump and resumes geometry-based tracking without forcing the target.
+- Keyboard opening/closing, resize and delayed image/font loading preserve current
+  identity. Recalculate positions and resume tracking on intentional navigation
+  or scrolling; do not stop audio/recording because layout changed.
+- The first section is current at the start. Intentional scrolling to the bottom
+  may activate a short final section that cannot reach the reading line; never
+  override an explicit target or activate solely because the keyboard opens.
+- Use the final C mockup’s one floating operation panel: lower right on desktop,
+  across the lower mobile viewport. Keep clearance from navigation and edited
+  answers. Preserve production Stop/Cancel/View availability, recovery, result
+  ownership and submission blocking rather than copying simulated mockup logic.
+- Resume keeps the existing block-selection algorithm and persistence format.
+  The restored target must be visible without intermediate navigation effects.
+
+The user approved these behaviors individually. Chooser details and motion replay
+remain later-stage decisions. The mockup checksum above still identifies the visual
+reference; it does not authorize importing demonstration fixtures or fonts.
