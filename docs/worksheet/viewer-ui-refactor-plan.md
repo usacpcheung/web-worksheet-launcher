@@ -2,7 +2,7 @@
 
 Status: Version C layout/chooser implementation authorized, 2026-10-30 (Asia/Hong_Kong).
 PRs #332 and #333 remain open. Stage 3 is stacked on #333. The user
-approved D1–D6 and the operation-panel placement below; D7 is accepted in section 11; D8 remains pending
+approved D1–D6 and the operation-panel placement below; D7 is accepted in section 11; D8 is agreed in the stage 4 motion plan
 for later stages. Deployment and merging the stack require separate authorization.
 
 Companion: [worksheet UI skill](../../.agents/skills/worksheet-ui-design-language/SKILL.md).
@@ -55,7 +55,7 @@ new business behavior or adding demo-only functions.
 | Reference layout | Desktop side action area; mobile launcher/drawer. Verify exact placement against the full production action inventory. |
 | Latest trial values | Reading line at 40% viewport height; reveal settles at approximately 55% when entering from below. These are tuning values, not a package/API contract. |
 | Pending final visual acceptance | Revised C mockup's motion timing, hover appearance, spacing and small-screen usability. |
-| Accepted behavior rules | D1–D6 and the operation-panel placement in section 4, agreed 2026-10-30. D7 is accepted in section 11; D8 remains pending. |
+| Accepted behavior rules | D1–D6 and the operation-panel placement in section 4, agreed 2026-10-30. D7 is accepted in section 11; D8 is agreed in the stage 4 motion plan. |
 
 Keep production fonts and existing localization. Do not import the HTML's embedded
 font/audio data, fixtures, hardcoded translations, simulated functions, diagnostic
@@ -110,8 +110,7 @@ mockup controls must not disappear from the product.
 The ordinary rule is a stable section crossing the reading line. The following
 rules cover exceptions that the single-block UI did not need to resolve. D1–D6
 are accepted for the first implementation. Their small numeric tolerances are
-implementation details to verify, not additional product decisions. D7 is accepted in section 11; D8 remains
-a proposal for the motion stage.
+implementation details to verify, not additional product decisions. D7 is accepted in section 11; D8 is agreed in the stage 4 motion plan.
 
 | ID | Case | Recommended rule | Why it needs review |
 | --- | --- | --- | --- |
@@ -411,3 +410,5 @@ sliding animations. Keep the stack open; integrated VPS/real-device acceptance
 still belongs to the complete Version C candidate before merging.
 
 Stage 3 evidence: [Version C validation](viewer-version-c-validation.md).
+
+Stage 4: [motion implementation and D8 agreement](viewer-motion-implementation.md).

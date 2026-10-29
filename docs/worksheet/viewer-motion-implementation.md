@@ -2,7 +2,7 @@
 
 Drafted 2026-10-30 (Asia/Hong_Kong). Stack on PR #334 at
 `bf28fb29a7399e0eb04524bb3d7a58fcae64a91b`. Keep the existing stack open.
-This document prepares implementation; it does not enable runtime effects.
+Implementation is in this PR; it remains unmerged and undeployed.
 
 ## Design baseline
 
@@ -18,16 +18,12 @@ reveal lower answer elements independently when a long question enters view.
 Preserve the reference's approximate 520–760 ms slide durations and restrained
 stagger, then verify the resulting effect on actual controls and narrow layouts.
 
-## D8 decision to confirm
+## D8 agreement — 2026-10-30
 
-Recommendation: retain off-screen replay from the final mockup. Rearm only after
+The user agreed to match the mockup: retain off-screen replay from the final mockup. Rearm only after
 an entire affected section/element has left the viewport with a generous margin
 (reference: 140 px and approximately 190 ms). Do not restart effects on small
 scroll reversals, answers, autosave, operation updates or resize.
-
-Alternative: reveal each section/element once per viewer session, with no replay
-when returning to it. Both alternatives keep revealed visible content clear.
-This choice remains pending the user's explicit D8 decision in the parent plan.
 
 ## Implementation boundaries
 

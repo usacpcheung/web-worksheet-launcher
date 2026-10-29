@@ -16,6 +16,7 @@ import { setWorksheetText, renderWorksheetText, WORKSHEET_TEXT_CSS, installWorks
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { createWorksheetViewHost, createBlockViewScope } from './block-view-host.js';
+import { createEntryMotion } from './entry-motion.js';
 import { createSectionNavigation } from './section-navigation.js';
 import { createWorksheetNavigation, describeSections, isAnsweredValue } from './worksheet-navigation.js';
 import { viewerStorage } from './storage/index.js';
@@ -5850,6 +5851,7 @@ function renderViewerShell(session) {
   crossQuestionStatus.root.id = 'viewer-operation-status';
   crossQuestionStatus.root.classList.add('viewer-operation-panel');
   let sectionNavigation;
+  let entryMotion;
   const numberInputErrors = new Map();
   const localInputCache = new Map();
   let currentBlockIndex = 0;
@@ -6846,6 +6848,7 @@ function renderViewerShell(session) {
       session.voice.navigate();
       renderUI();
     }
+    if (source !== 'scroll') entryMotion?.settleSection(clampedIndex);
     if (source === 'explicit') sectionNavigation?.jump(clampedIndex, { focus: true });
   };
 
@@ -7084,6 +7087,8 @@ function renderViewerShell(session) {
   // Capture runs before playback/answer handlers, including keyboard activation.
   blockList.addEventListener('focusin', activateControl, { capture: true, signal });
   blockList.addEventListener('click', activateControl, { capture: true, signal });
+  entryMotion = createEntryMotion({ container: blockList, viewport: sectionNavigation.viewport, signal });
+  entryMotion.settleSection(currentBlockIndex);
   sectionNavigation.restore();
 }
 

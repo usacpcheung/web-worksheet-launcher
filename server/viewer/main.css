@@ -3006,3 +3006,11 @@ html:has(.viewer-navigation dialog[open]) {
   left: 0;
   right: auto;
 }
+
+@media print, (prefers-reduced-motion: reduce) {
+  .viewer-shell--continuous #viewer-answer-form * {
+    filter: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+}

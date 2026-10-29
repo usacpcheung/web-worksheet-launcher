@@ -156,6 +156,7 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
     disposed = true; stopTracking(); cancelAnimationFrame(frame); cancelAnimationFrame(focusFrame); observer.disconnect();
   }, { once: true });
   return {
+    viewport,
     restore() { schedule(); },
     layoutChanged,
     interact() { restoring = false; stopTracking(); },
