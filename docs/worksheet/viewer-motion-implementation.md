@@ -1,0 +1,61 @@
+# Viewer motion implementation — stage 4
+
+Drafted 2026-10-30 (Asia/Hong_Kong). Stack on PR #334 at
+`bf28fb29a7399e0eb04524bb3d7a58fcae64a91b`. Keep the existing stack open.
+This document prepares implementation; it does not enable runtime effects.
+
+## Design baseline
+
+Use the final Version C reference identified in the
+[viewer plan](viewer-ui-refactor-plan.md). Keep blur-to-clear and element movement
+as distinct effects. Begin while entering the viewport and finish about 15% of
+viewport height before the 40% reading line. Use the same unobscured viewport as
+section navigation, accounting for the operation panel and visual viewport.
+
+Animate inner presentation elements, never the stable section wrappers measured
+by section navigation. Group prompt and question media movement. Stagger MC rows;
+reveal lower answer elements independently when a long question enters view.
+Preserve the reference's approximate 520–760 ms slide durations and restrained
+stagger, then verify the resulting effect on actual controls and narrow layouts.
+
+## D8 decision to confirm
+
+Recommendation: retain off-screen replay from the final mockup. Rearm only after
+an entire affected section/element has left the viewport with a generous margin
+(reference: 140 px and approximately 190 ms). Do not restart effects on small
+scroll reversals, answers, autosave, operation updates or resize.
+
+Alternative: reveal each section/element once per viewer session, with no replay
+when returning to it. Both alternatives keep revealed visible content clear.
+This choice remains pending the user's explicit D8 decision in the parent plan.
+
+## Implementation boundaries
+
+- Add a viewer-only presentation controller owned by the shell AbortSignal.
+- Reuse the section controller's viewport geometry rather than defining another
+  reading line. Motion never activates sections or calls audio/voice services.
+- Explicit navigation, resume destinations and control interaction settle the
+  destination immediately. Protect pointer targets before movement, keyboard
+  focus, selections, editing, recovery controls and open language menus.
+- Observe replacement cards without remounting existing answer controls. Keep
+  late background results at their original block without focus or scroll changes.
+- Reduced motion, unsupported animation and print must leave all content clear
+  and stationary. Dispose observers, animation handles and scheduled work on
+  language change, viewer replacement and teardown.
+- Do not change RolePlayScene, shared voice workflows, persistence or API contracts.
+
+## Required implementation gate
+
+Add browser coverage for separate blur and movement, early completion, long
+questions, reverse scrolling, explicit jumps, focus/selection/audio-menu protection,
+background rewrite/transcription, replacement cleanup, reduced motion and print.
+Verify both locales, desktop/mobile, short/zoom-equivalent viewports and every
+answer type. Inspect intermediate screenshots as well as settled output so a
+missing animation cannot pass merely because the final layout looks correct.
+
+Repeat the existing 20/100/300-section performance comparison with motion enabled,
+including scroll/input responsiveness and cleanup. Run the full Node and browser
+suites and GitHub Regression gate. After opening the implementation, review and
+fix findings, then repeat a broader review and affected checks until no further
+fix is identified. Leave the PR open. Integrated VPS/local-browser acceptance
+remains a later step on the complete candidate, before an authorized merge.
