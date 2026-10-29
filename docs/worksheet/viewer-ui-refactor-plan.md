@@ -143,7 +143,9 @@ PR needs its own automated regression checks and review/fix loop. Per the userâ€
 2026-10-30 decision, implement on the preceding open PR branch and target that
 branch in GitHub. Keep the stack open; deploy the complete Version C candidate
 for integrated live acceptance, including preparation changes, before merging
-in dependency order. Local integration testing continues at each stage.
+in dependency order. Local integration testing continues at each stage. Do not stack the next PR
+until the current PR passes its automated checks and the post-creation code
+review/fix/review loop has no remaining issue requiring a fix.
 
 ### PR 0 â€” Document the target viewer design
 
@@ -354,3 +356,27 @@ requirements before merging the runtime PR; synthetic fixtures are not that evid
 The user approved these behaviors individually. Chooser details and motion replay
 remain later-stage decisions. The mockup checksum above still identifies the visual
 reference; it does not authorize importing demonstration fixtures or fonts.
+
+### Stage 2 implementation details
+
+The initial controller uses instant jumps, with presentation motion deferred to
+stage 4. It measures the visual viewport's top and its visible bottom clipped by
+fixed navigation/operation controls, then places the reading line 40% into that
+unobscured area. A 3 CSS-pixel boundary tolerance prevents jitter. Wheel, touch,
+page-scroll keys and scrollbar dragging authorize scroll tracking; ordinary
+layout/focus-induced scroll events do not. Nested scrolling retains its own
+behavior, including scrolling onto the page at a nested scroller's boundary.
+Resize observers cover worksheet size, header and fixed controls. Focused inputs
+receive clearance from fixed controls on entry; ordinary scrolling does not pin
+an input. Native scroll anchoring preserves the reading position when earlier
+content changes. All listeners/observers are disposed with the shell.
+
+The original resume algorithm selects the initial section. Its resolved identity
+is shared with the mounted controls even when saved IDs are stale; restoration
+aligns the target until the first student interaction, with no intermediate
+operation transitions or pixel-offset persistence.
+
+See [continuous-viewer validation](viewer-continuous-validation.md) for local
+coverage, review findings, synthetic scale measurements and the live acceptance
+boundary. This stage retains the old navigation presentation; the final chooser,
+ring and Version C appearance remain subsequent PRs.

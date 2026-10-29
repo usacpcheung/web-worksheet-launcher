@@ -57,7 +57,7 @@ try {
     await page.goto(url);
     const go = async index => {
       await page.locator('.block-stepper__node').nth(index).click();
-      assert.equal(await page.locator('#viewer-answer-form > article').count(), 1);
+      assert.equal(await page.locator('#viewer-answer-form > section > article').count(), 6);
       await page.waitForFunction(index => window.viewerSession.state.lastActiveIndex === index, index);
     };
     await page.locator('#answer-text').fill('Original 中文 answer');
@@ -68,7 +68,7 @@ try {
     assert(await page.locator('#answer-text').evaluate(control => control === window.originalControl
       && document.activeElement === control && control.selectionStart === 3 && control.selectionEnd === 6));
     await go(2);
-    await page.evaluate(() => { window.originalControl.value = 'Detached edit';window.originalControl.dispatchEvent(new Event('input')); });
+    assert(await page.evaluate(() => window.originalControl.isConnected), 'navigation preserves mounted controls');
     assert.equal(await page.evaluate(() => window.viewerSession.state.answers.text.value), 'Original 中文 answer');
     await page.locator('#answer-number').fill('1.');
     await page.evaluate(() => window.viewerSession.notifyStateChange());
@@ -103,19 +103,23 @@ try {
     // Existing cancellation recovery must be explicitly discarded before another operation.
     await page.locator('.viewer-voice-recovery-actions button').last().click();
     // Language replacement retains answers and the existing cancellation behavior.
+    await page.locator('#answer-text').evaluate(control => { window.originalControl = control; });
     await page.locator('.question-card__voice-btn').click();
     await page.waitForFunction(() => window.viewerSession.voice.active?.state === 'recording');
     await page.locator('.language-selector__trigger').click();
     await page.locator(`.language-selector__option[value="${locale === 'en' ? 'zh-Hant' : 'en'}"]`).click();
     await page.waitForFunction(() => !window.viewerSession.voice.active);
     assert.equal(await page.locator('#answer-text').inputValue(), 'Original 中文 answer');
-    assert.equal(await page.locator('#viewer-answer-form > article').count(), 1);
-    // A late image lookup must not create a blob URL after its card was disposed.
+    await page.evaluate(() => { window.originalControl.value = 'Detached edit';window.originalControl.dispatchEvent(new Event('input')); });
+    assert.equal(await page.evaluate(() => window.viewerSession.state.answers.text.value), 'Original 中文 answer');
+    assert.equal(await page.locator('#viewer-answer-form > section > article').count(), 6);
+    // A late image lookup must not create a blob URL after its card was replaced.
     await page.evaluate(() => {
       const session = window.viewerSession;
       session.state.viewerPayload.blocks.find(b => b.blockId === 'number').prompt.mediaRefs = [
         { usage: 'question_image', assetId: 'held-image' },
       ];
+      session.state.viewerPayload.blocks.find(b => b.blockId === 'number').prompt.text += ' image';
       const originalGet = session.storage.localAssets.get.bind(session.storage.localAssets);
       session.storage.localAssets.get = id => id === 'held-image'
         ? new Promise(resolve => { window.finishImageLookup = resolve; }) : originalGet(id);
@@ -125,6 +129,12 @@ try {
     });
     await go(2);
     await page.waitForFunction(() => typeof window.finishImageLookup === 'function');
+    await page.evaluate(() => {
+      const session = window.viewerSession;
+      const block = session.state.viewerPayload.blocks.find(b => b.blockId === 'number');
+      block.prompt.mediaRefs = []; block.prompt.text += ' replaced';
+      session.notifyStateChange();
+    });
     await go(5);
     await page.evaluate(async () => {
       window.finishImageLookup({ binary: new Uint8Array([1]), metadata: { mimeType: 'image/png' } });
