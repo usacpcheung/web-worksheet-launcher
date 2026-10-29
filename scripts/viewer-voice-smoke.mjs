@@ -40,6 +40,12 @@ await page.goto(base + '/server/viewer/index.html?localAttemptId=voice-smoke');
 await current.getByRole('button',{name:'Add by voice',exact:true}).click();
 await page.getByRole('button',{name:'Stop',exact:true}).waitFor();
 await shot('voice-recording-desktop.png');
+// Enlarged desktop actions must remain above the fixed operation panel.
+await page.evaluate(()=>{document.documentElement.style.fontSize='32px';});
+await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+assert(await page.locator('.viewer-action-panel').evaluate(node=>node.getBoundingClientRect().bottom<=document.querySelector('.viewer-operation-panel').getBoundingClientRect().top));
+await page.evaluate(()=>{document.documentElement.style.fontSize='';});
+
 
 assert.equal(await current.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').evaluate(e=>e.readOnly),true);
 assert.equal(await page.getByRole('button',{name:'Submit',exact:true}).isDisabled(),true);

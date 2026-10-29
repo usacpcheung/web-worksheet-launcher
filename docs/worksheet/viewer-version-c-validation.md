@@ -44,6 +44,10 @@ authentication and Apache configuration are unchanged by this stage.
   are computed before rendering rather than scanning all blocks per card.
 - Navigation feedback is stationary, including touch hover. Desktop actions can
   scroll within the available viewport if enlarged text exceeds its height.
+- Post-creation review reproduced enlarged desktop actions overlapping the
+  floating operation panel. The side panel now reserves the measured operation
+  panel height, including changes during recording and font/viewport resize. A
+  real synthetic recording fixture checks this with 200% text size.
 - Old smoke selectors were adapted to the real drawer/chooser and answer wrapper.
   Markdown parity still compares the exact rendered content, and the resume
   test checks programmatic scroll calls while allowing native scroll anchoring.

@@ -7060,7 +7060,7 @@ function renderViewerShell(session) {
   app.innerHTML = '';
   bottomBarRoot.innerHTML = '';
   app.append(shell, detailsModal);
-  const navigation = createWorksheetNavigation({ t, signal,
+  const navigation = createWorksheetNavigation({ t, signal, operationPanel: crossQuestionStatus.root,
     actions: { previous: prevBtn, next: nextBtn, save: saveBtn, submit: completeBtn, check: checkBtn },
     navigate: index => navigateToBlockIndex(index),
   });

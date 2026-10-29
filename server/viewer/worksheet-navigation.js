@@ -32,7 +32,7 @@ export function describeSections(blocks, t) {
   });
 }
 
-export function createWorksheetNavigation({ t, actions, navigate, signal }) {
+export function createWorksheetNavigation({ t, actions, navigate, operationPanel, signal }) {
   const root = make('div', 'viewer-navigation');
   const panel = make('aside', 'viewer-action-panel');
   panel.setAttribute('aria-label', t('viewer.navigation.actions'));
@@ -129,9 +129,14 @@ export function createWorksheetNavigation({ t, actions, navigate, signal }) {
     drawPage();
     fitting = false;
   };
+  const updateClearance = () => {
+    const clearance = operationPanel && !operationPanel.hidden
+      ? Math.max(0, innerHeight - operationPanel.getBoundingClientRect().top + 12) : 0;
+    root.style.setProperty('--viewer-operation-clearance', `${clearance}px`);
+  };
   const scheduleFit = () => {
     cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => { if (!signal.aborted) fit(); });
+    frame = requestAnimationFrame(() => { if (!signal.aborted) { updateClearance(); fit(); } });
   };
   const openChooser = () => {
     returnFocus = document.activeElement;
@@ -181,11 +186,13 @@ export function createWorksheetNavigation({ t, actions, navigate, signal }) {
   document.fonts?.ready.then(() => { if (!signal.aborted) scheduleFit(); });
   const observer = new ResizeObserver(scheduleFit);
   observer.observe(head); observer.observe(footer);
+  if (operationPanel) observer.observe(operationPanel);
   adapt();
   signal.addEventListener('abort', () => {
     cancelAnimationFrame(frame); observer.disconnect(); closeChooser(false); closeDrawer(false);
   }, { once: true });
   const update = (blocks, activeIndex, answers, summary) => {
+    updateClearance();
     const next = describeSections(blocks, t);
     if (JSON.stringify(entries) !== JSON.stringify(next)) {
       entries = next;

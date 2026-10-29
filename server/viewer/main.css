@@ -2554,9 +2554,9 @@ body:has(.viewer-shell--continuous) #app {
 .viewer-action-panel {
   position:fixed;
   right:max(24px, calc((100vw - 1360px)/2 + 24px));
-  top:50%;
+  top:calc((100dvh - var(--viewer-operation-clearance, 0px)) / 2);
   transform:translateY(-50%);
-  max-height:calc(100dvh - 48px);
+  max-height:max(44px, calc(100dvh - 48px - var(--viewer-operation-clearance, 0px)));
   overflow-y:auto;
   box-sizing:border-box;
   width:212px;
