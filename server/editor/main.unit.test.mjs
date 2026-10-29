@@ -151,7 +151,7 @@ async function loadEditorModule() {
   const filePath = path.resolve('server/editor/main.js');
   const source = (await fs.readFile(filePath, 'utf8')).replaceAll("'../app/bridge/audio-generation.js'", JSON.stringify(new NodeURL('../app/bridge/audio-generation.js', import.meta.url).href)).replaceAll("'../app/worksheet-text.js'", JSON.stringify(new NodeURL('../app/worksheet-text.js', import.meta.url).href)).replaceAll("'./text-preview.js'", JSON.stringify(new NodeURL('./text-preview.js', import.meta.url).href)).replaceAll("'../app/contracts/number-input-validator.js'", JSON.stringify(new NodeURL('../app/contracts/number-input-validator.js', import.meta.url).href)).replaceAll("'../app/storage/recovery-journal.js'", JSON.stringify(new NodeURL('../app/storage/recovery-journal.js', import.meta.url).href));
 
-  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
+  const rewrittenSource = rewriteModuleSourceForTests(source.replaceAll("'../app/api/publication-flow.js'", JSON.stringify(new NodeURL('../app/api/publication-flow.js', import.meta.url).href)).replaceAll("'../app/auth/mutation-auth.js'", JSON.stringify(new NodeURL('../app/auth/mutation-auth.js', import.meta.url).href)).replaceAll("'../app/auth/session-state-adapter.js'", JSON.stringify(new NodeURL('../app/auth/session-state-adapter.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-return.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-return.js', import.meta.url).href)).replaceAll("'../app/auth/session-coordinator.js'", JSON.stringify(new NodeURL('../app/auth/session-coordinator.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-flow.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-flow.js', import.meta.url).href)).replaceAll("'../app/auth/read-auth-prompt.js'", JSON.stringify(new NodeURL('../app/auth/read-auth-prompt.js', import.meta.url).href)).replaceAll("'../app/api/deletion-flow.js'", JSON.stringify(new NodeURL('../app/api/deletion-flow.js', import.meta.url).href)).replaceAll("'../app/api/upload-recovery-flow.js'", JSON.stringify(new NodeURL('../app/api/upload-recovery-flow.js', import.meta.url).href)).replaceAll("'../app/api/error-presentation.js'", JSON.stringify(new NodeURL('../app/api/error-presentation.js', import.meta.url).href)).replaceAll("'../app/api/upload-operation-lifecycle.js'", JSON.stringify(new NodeURL('../app/api/upload-operation-lifecycle.js', import.meta.url).href)).replaceAll("'../app/api/upload-result.js'", JSON.stringify(new NodeURL('../app/api/upload-result.js', import.meta.url).href)).replaceAll("'../viewer/package-load-progress.js'", JSON.stringify(new NodeURL('../viewer/package-load-progress.js', import.meta.url).href)).replaceAll("'./block-drag-reorder.js'", JSON.stringify(new NodeURL('./block-drag-reorder.js', import.meta.url).href)), [
     {
       name: 'replace editor dependency imports with test doubles',
       pattern: /import\s*\{\s*editorStorage\s*\}\s*from\s*['"]\.\/storage\/index\.js['"];\s*import\s*\{\s*SharedAuthGate\s*\}\s*from\s*['"]\.\.\/app\/auth\/shared-auth-gate\.js['"];\s*import\s*\{\s*createServerApiClient\s*\}\s*from\s*['"]\.\.\/app\/api\/server-api-client\.js['"];\s*import\s*\{\s*createWorksheetPackageFromDraft,\s*parseWorksheetPackage,\s*\}\s*from\s*['"]\.\/worksheet-package\.js['"];\s*/,
@@ -1771,12 +1771,8 @@ test('editor source removes global Publish button and adds labeled metadata and 
   assert.equal(source.includes(": t('common.actions.publish');"), true);
   assert.equal(source.includes("heading.textContent = t('editor.modal.publishConflict.title');"), true);
   assert.equal(source.includes("editBtn.textContent = t('editor.modal.publishConflict.editNameSubject');"), true);
-  assert.equal(source.includes("let attemptedTitle = String(restored?.title ?? item?.title ?? '');"), true);
-  assert.equal(source.includes("let attemptedSubject = String(restored?.subject ?? item?.subject ?? '');"), true);
-  assert.equal(source.includes('initialTitle: attemptedTitle,'), true);
-  assert.equal(source.includes('initialSubject: attemptedSubject,'), true);
-  assert.equal(source.includes("attemptedTitle = String(modal.title ?? '');"), true);
-  assert.equal(source.includes("attemptedSubject = String(modal.subject ?? '');"), true);
+  // Retained publication metadata/conflict editing is exercised through the real UI
+  // in publication-flow-smoke.mjs, rather than asserting the loop's variable names.
   assert.equal(source.includes("if (event.key !== 'Tab') return;"), true);
   assert.equal(source.includes("dialog.removeEventListener('keydown', onKeyDown);"), true);
   assert.equal(
@@ -6449,3 +6445,37 @@ for (const target of ['prompt', 'option']) {
     assert.equal(session.state.draft.assets.length, 0);
   });
 }
+
+test('publication keeps same-ID reservation through delayed refresh and retains success on refresh exception', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.ensureMutationSessionReady = async () => ({ ok: true, isCurrent: () => true });
+  let finish, sends = 0;
+  const response = { ok: true, data: { published_package_id: 'saved' } };
+  session.apiClient.publishFromUploadedDraft = async () => { sends++; return response; };
+  session.loadUploadedDrafts = () => new Promise((_r, reject) => { finish = reject; });
+  const work = session.publishUploadedDraftToServer('same');
+  while (!finish) await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await session.publishUploadedDraftToServer('same')).skipped, true);
+  assert.equal(sends, 1); finish(Error('refresh disconnected'));
+  const result = await work;
+  assert.equal(result.ok, true); assert.equal(result.publicationResult, response);
+  assert.equal(result.refreshStatus, 'failed'); assert.equal(session.state.publishingDraftIds.size, 0);
+  assert.ok(session.state.notifications.some(n => n.source === 'publish.refresh' && n.kind === 'warn'));
+});
+
+test('late confirmed publication retains its result without feedback or refresh in a replacement editor', async () => {
+  const mod = await loadEditorModule();
+  const session = new mod.EditorDraftSession(createSessionForTests());
+  session.ensureMutationSessionReady = async () => ({ ok: true, isCurrent: () => true });
+  let finish, current = true;
+  const response = { ok: true, data: { published_package_id: 'old' } };
+  session.apiClient.publishFromUploadedDraft = () => new Promise(resolve => { finish = resolve; });
+  session.loadUploadedDrafts = () => assert.fail('stale publication must not refresh');
+  const work = session.publishUploadedDraftToServer('old', {}, { isCurrent: () => current });
+  while (!finish) await new Promise(resolve => setImmediate(resolve));
+  current = false; const count = session.state.notifications.length; finish(response);
+  const result = await work;
+  assert.equal(result.publicationResult, response); assert.equal(result.ok, true);
+  assert.equal(session.state.notifications.length, count); assert.equal(session.state.publishingDraftIds.size, 0);
+});

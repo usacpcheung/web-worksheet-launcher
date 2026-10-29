@@ -128,7 +128,7 @@ Share session classification, coordination and continuation rules. Keep editor a
 | 5 | Unify the complete audio/transcription/rewrite request lifecycle, including authentication, cancellation, ownership, outcomes and recovery for both shared voice consumers. | [Shared lifecycle contract](rewrite-bridge-workflows.md); rewrite, transcription and T2A integrations merged through PR #326. |
 | 6 | Remove superseded code only after consumer tracing; update current docs and run cross-app acceptance. | Bridge reconciliation and unused-wait cleanup are recorded in [bridge completion](rewrite-bridge-workflows.md#11-completion-reconciliation-and-evidence); this does not claim a repository-wide dead-code audit. |
 
-Each runtime PR must state which rows are migrated and which remain current legacy behavior. Do not mark this whole target implemented when only shared helpers exist. Publication creation consolidation (previous PR D) and list/download consolidation (previous PR E) are separate workflow-level roadmap items, not missing authentication integrations. Their existing shared coverage is marked below. This inventory does not decide the remaining extraction scope or declare the package/storage refactor finished.
+Each runtime PR must state which rows are migrated and which remain current legacy behavior. Do not mark this whole target implemented when only shared helpers exist. Publication creation consolidation (previous PR D) is implemented by the [shared publication lifecycle](publication-lifecycle.md). List/download consolidation (previous PR E) remains separate workflow-level work, not a missing authentication integration. Their existing shared coverage is marked below. This inventory does not decide the remaining extraction scope or declare the package/storage refactor finished.
 
 ### Implemented shared coverage for publication and list/download planning
 
@@ -161,6 +161,8 @@ Verification for this inventory is static source/caller tracing and documentatio
 
 ### Remaining duplication worth sharing
 
+The publication recommendation below is now implemented by the [shared publication lifecycle](publication-lifecycle.md). The assessment records the original extraction rationale; worksheet page-helper reuse and browser file saving remain separate work.
+
 Step 2 assessment against the same runtime baseline, 2026-10-27. These are recommendations for subsequent implementation, not new helpers or changed runtime behavior. Existing functionality and previously implemented shared coverage remain intact.
 
 | Candidate and recommendation | Repeated production behavior | Smallest useful shared boundary | Why it warrants sharing; constraints |
@@ -184,7 +186,7 @@ Editor currently retains `publishResult` and separately reports a failed refresh
 - File saving: correct bytes/name/MIME, successful browser download event, cleanup after success/exception and no save after invalidated ownership. Exercise both Viewer and RolePlayScene consumers; a mocked anchor click alone is insufficient to establish download behavior.
 - Preserve English/Traditional Chinese, desktop/mobile, keyboard/focus behavior and all existing compatibility contracts. Apply the repository's cross-module test requirements when runtime extraction is implemented.
 
-Recommended implementation order is publication lifecycle first, then the smaller file-save utility and worksheet page-helper reuse as independently reviewable changes. This assessment narrows PR D/E into concrete candidates; it does not approve a broad package/storage rewrite or mark the roadmap items complete. Runtime tests were not rerun for this static assessment.
+The original recommended implementation order was publication lifecycle first, then the smaller file-save utility and worksheet page-helper reuse as independently reviewable changes. Publication sequencing is now implemented; the latter two remain recommendations. This assessment narrows PR D/E into concrete candidates; it does not approve a broad package/storage rewrite or mark the roadmap items complete. Runtime tests were not rerun for this static assessment.
 
 ## 6. Verification and acceptance
 

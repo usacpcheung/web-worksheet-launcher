@@ -1,3 +1,4 @@
+import { runPublicationFlow, runPublicationAttempt } from '../app/api/publication-flow.js';
 import { runAudioGeneration, waitForAudioAttachment, AUDIO_GENERATION_PHASE_TIMEOUT_MS } from '../app/bridge/audio-generation.js';
 import { prepareMutation } from '../app/auth/mutation-auth.js';
 import { createSilentSessionStateAdapter } from '../app/auth/session-state-adapter.js';
@@ -3981,55 +3982,46 @@ class EditorDraftSession {
     const generation = this._audioDraftGeneration;
     let accountCurrent = () => true;
     const isCurrent = () => ownerCurrent() && generation === this._audioDraftGeneration && accountCurrent();
-    const stale = () => ({ ok: false, skipped: true, status: 'superseded' });
     this.state.publishingDraftIds.add(normalizedUploadedDraftId);
     this.pushNotification({ kind: 'info', category: 'server', source: 'publish.status', text: editorNotification('publishedPackage.publishing'), logActivity: false });
     this.notifyStateChange();
     try {
-      const sessionReady = await this.ensureMutationSessionReady({ isCurrent, intent: { kind: 'mutation', operation: 'publish', id: normalizedUploadedDraftId, filters: metadata } });
-      if (sessionReady.ok) {
-        accountCurrent = sessionReady.isCurrent;
-        onPrepared?.(accountCurrent);
-      }
-      if (!isCurrent()) return stale();
-      if (!sessionReady.ok) return sessionReady.result;
-      const publishResult = await this.apiClient.publishFromUploadedDraft(normalizedUploadedDraftId, {
-        title: metadata.title || '',
-        subject: metadata.subject || '',
+      const outcome = await runPublicationAttempt({
+        isCurrent,
+        preflight: async () => {
+          const ready = await this.ensureMutationSessionReady({ isCurrent, intent: { kind: 'mutation', operation: 'publish', id: normalizedUploadedDraftId, filters: metadata } });
+          if (ready.ok) {
+            accountCurrent = ready.isCurrent;
+            onPrepared?.(accountCurrent);
+          }
+          return ready;
+        },
+        submit: () => this.apiClient.publishFromUploadedDraft(normalizedUploadedDraftId, {
+          title: metadata.title || '', subject: metadata.subject || '',
+        }),
+        onSubmitted: publishResult => {
+          if (!publishResult.ok) {
+            this.pushNotification({ kind: 'error', category: 'server', source: 'publish.status', text: getApiErrorMessage(publishResult, 'publish') });
+            this.notifyStateChange();
+            this.readAuth.observe(publishResult);
+            return;
+          }
+          this.state.lastPublishedPackage = publishResult.data;
+          this.pushNotification({ kind: 'success', category: 'server', source: 'publish.status',
+            text: editorNotification('publishedPackage.published', { id: publishResult.data.published_package_id }) });
+        },
+        refresh: () => this.loadUploadedDrafts({ preflight: false, force: true, isCurrent }),
       });
-      if (!isCurrent()) return publishResult;
-      if (!publishResult.ok) {
-        this.pushNotification({ kind: 'error', category: 'server', source: 'publish.status', text: getApiErrorMessage(publishResult, 'publish') });
-        this.notifyStateChange();
-        this.readAuth.observe(publishResult);
-        return publishResult;
-      }
-      this.state.lastPublishedPackage = publishResult.data;
-      this.pushNotification({
-        kind: 'success',
-        category: 'server',
-        source: 'publish.status',
-        text: editorNotification('publishedPackage.published', { id: publishResult.data.published_package_id }),
-      });
-      const refreshResult = await this.loadUploadedDrafts({ preflight: false, force: true, isCurrent });
-      if (!isCurrent()) return publishResult;
-      if (refreshResult?.ok) {
-        this.pushNotification({
-          kind: 'success',
-          category: 'server',
-          source: 'publish.refresh',
-          text: editorNotification('uploadDraft.publishedRefreshSucceeded'),
-        });
-      } else if (refreshResult?.status !== 'superseded') {
-        this.pushNotification({
-          kind: 'warn',
-          category: 'server',
-          source: 'publish.refresh',
-          text: getApiErrorMessage(refreshResult, 'list'),
-        });
+      if (!isCurrent()) return outcome;
+      if (outcome.refreshStatus === 'succeeded') {
+        this.pushNotification({ kind: 'success', category: 'server', source: 'publish.refresh',
+          text: editorNotification('uploadDraft.publishedRefreshSucceeded') });
+      } else if (outcome.refreshStatus === 'failed') {
+        this.pushNotification({ kind: 'warn', category: 'server', source: 'publish.refresh',
+          text: getApiErrorMessage(outcome.refreshResult, 'list') });
       }
       this.notifyStateChange();
-      return publishResult;
+      return outcome;
     } finally {
       this.state.publishingDraftIds.delete(normalizedUploadedDraftId);
       this.notifyStateChange();
@@ -8139,26 +8131,17 @@ function renderEditorShell(session) {
           await guardServerMenuAction(publishBtn, async (isCurrent, setAccountGuard) => {
             const restored = session._returnedMutation?.operation === 'publish' && session._returnedMutation.id === item.uploaded_draft_id ? session._returnedMutation.filters : null;
             if (restored) session._returnedMutation = null;
-            let attemptedTitle = String(restored?.title ?? item?.title ?? '');
-            let attemptedSubject = String(restored?.subject ?? item?.subject ?? '');
-            while (true) {
-              const modal = await showPublishModal({
-                uploadedDraft: item,
-                initialTitle: attemptedTitle,
-                initialSubject: attemptedSubject,
-              });
-              if (!isCurrent() || !modal.confirmed) return null;
-              attemptedTitle = String(modal.title ?? '');
-              attemptedSubject = String(modal.subject ?? '');
-              const result = await session.publishUploadedDraftToServer(item.uploaded_draft_id, {
-                title: attemptedTitle,
-                subject: attemptedSubject,
-              }, { isCurrent, onPrepared: setAccountGuard });
-              if (!isCurrent()) return result;
-              if (result?.ok || result?.error?.code !== 'PUBLISHED_PACKAGE_CONFLICT') return result;
-              const conflictAction = await showPublishedPackageConflictModal();
-              if (conflictAction?.action !== 'edit') return result;
-            }
+            return runPublicationFlow({
+              initialMetadata: { title: String(restored?.title ?? item?.title ?? ''), subject: String(restored?.subject ?? item?.subject ?? '') },
+              isCurrent,
+              collectMetadata: async metadata => {
+                const modal = await showPublishModal({ uploadedDraft: item, initialTitle: metadata.title, initialSubject: metadata.subject });
+                return modal.confirmed ? { title: String(modal.title ?? ''), subject: String(modal.subject ?? '') } : null;
+              },
+              publish: metadata => session.publishUploadedDraftToServer(item.uploaded_draft_id, metadata, { isCurrent, onPrepared: setAccountGuard }),
+              isConflict: result => result?.error?.code === 'PUBLISHED_PACKAGE_CONFLICT',
+              chooseConflict: async () => (await showPublishedPackageConflictModal())?.action,
+            });
           });
           updateSummary();
         });
@@ -8191,6 +8174,9 @@ function renderEditorShell(session) {
   }
 
   function renderManageUploadedDraftsModal() {
+    // A list response may arrive while a publication/confirmation dialog is open.
+    const hasForegroundDialog = [...document.querySelectorAll('[role="dialog"]')]
+      .some(node => !manageUploadedDraftsModalRoot.contains(node) && node.getClientRects().length);
     manageUploadedDraftsModalRoot.innerHTML = '';
     if (!manageUploadedDraftsDialogOpen) return;
     const overlay = document.createElement('div');
@@ -8239,7 +8225,7 @@ function renderEditorShell(session) {
     overlay.appendChild(dialog);
     manageUploadedDraftsModalRoot.appendChild(overlay);
     refreshPackageLoadControls();
-    closeBtn.focus();
+    if (!hasForegroundDialog) closeBtn.focus();
   }
 
   const updateSummary = ({ preserveDetailEditor = false } = {}) => {
