@@ -14,11 +14,14 @@ page.on('console', message => { if (message.type() === 'error') errors.push(mess
 const shot = async name => { if (screenshots) { await page.screenshot({path: screenshots + '/' + name, fullPage: false, animations: 'disabled'}); } };
 let failRewrite=false; let transcriptions=0; let sessionReady=true; let rewrittenSource;
 let finishTranscription;let hold=true;let finishRewrite;
+let transcriptionStarted, rewriteStarted;
+const transcriptionReady = new Promise(resolve => { transcriptionStarted = resolve; });
+const rewriteReady = new Promise(resolve => { rewriteStarted = resolve; });
 await page.route(url => url.pathname.startsWith('/api/'),async route=>{
  const url=route.request().url();
  if(url.endsWith('/session')) return route.fulfill({json:sessionReady ? {ok:true,data:{user:{sub:'fixture',name:'Test learner'}}} : {ok:false,error:{code:'AUTH_REQUIRED'}}});
- if(url.endsWith('/transcriptions')) {transcriptions++;if(hold)await new Promise(r=>{finishTranscription=r});return route.fulfill({json:{ok:true,result:'synthetic segment'}});}
- if(url.endsWith('/rewrite')) { await new Promise(resolve=>{finishRewrite=resolve;}); rewrittenSource=route.request().postDataJSON().text; return route.fulfill({json:failRewrite ? {ok:false,error:{code:'UPSTREAM_FAILED'}} : {ok:true,result:'New segment'}}); }
+ if(url.endsWith('/transcriptions')) {transcriptions++;if(hold)await new Promise(r=>{finishTranscription=r;transcriptionStarted();});return route.fulfill({json:{ok:true,result:'synthetic segment'}});}
+ if(url.endsWith('/rewrite')) { await new Promise(resolve=>{finishRewrite=resolve;rewriteStarted();}); rewrittenSource=route.request().postDataJSON().text; return route.fulfill({json:failRewrite ? {ok:false,error:{code:'UPSTREAM_FAILED'}} : {ok:true,result:'New segment'}}); }
  return route.fulfill({json:{ok:true,data:{items:[]}}});
 });
 await page.addInitScript(()=>{
@@ -52,6 +55,7 @@ for(const name of ['Add by voice','Rewrite','Undo']) {
 assert.equal(await page.locator('.viewer-voice-status:visible').count(),1);
 await page.getByRole('button',{name:'Stop',exact:true}).click();
 await page.waitForFunction(()=>window.viewerSession.voice.active?.state==='transcribing');
+await transcriptionReady;
 finishTranscription();hold=false;
 await page.waitForFunction(()=>window.viewerSession.voice.active?.state==='rewriting');
 for(const selector of ['.question-card__voice-btn','.question-card__rewrite-btn','.question-card__undo-btn']) {
@@ -59,6 +63,7 @@ for(const selector of ['.question-card__voice-btn','.question-card__rewrite-btn'
  assert.equal(await page.locator(selector).isDisabled(),true);
 }
 assert.match(await page.locator('.viewer-voice-status:visible').innerText(),/Rewriting/);
+await rewriteReady;
 finishRewrite();
 await page.waitForFunction(()=>!window.viewerSession.voice.active);
 assert.equal(await page.getByRole('button',{name:'Undo',exact:true}).isEnabled(),true);

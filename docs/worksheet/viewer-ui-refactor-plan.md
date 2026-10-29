@@ -272,3 +272,50 @@ solely because the standalone mockup passed visual checks.
 3. Review D1–D6 and D9 before PR 2; D2, D5 and operation-status ownership deserve special attention.
 4. Review D7/D8 before their dependent implementation; record approvals in this plan.
 5. Review documentation PR 0 on its fetched main baseline; merge only when authorized. Documentation acceptance does not approve unresolved runtime behavior or authorize runtime implementation.
+
+## 9. Rendering-preparation inventory and implementation boundary
+
+Documentation stage 0 merged as [PR #331](https://github.com/usacpcheung/web-worksheet-launcher/pull/331).
+Stage 1 retains the single visible block, existing CSS, stepper and bottom actions.
+The continuous worksheet, chooser, ring, new labels and motion are not implemented
+by this preparation. D1–D9 remain pending for their dependent stages.
+
+The following inventory was checked against the stage-1 base `c2e1bc0`.
+Functions are in `server/viewer/main.js` unless another module is named. This is
+an implementation review inventory, not a new business contract.
+
+| Surface/state | Existing source and behavior | Preparation responsibility |
+| --- | --- | --- |
+| Title, student identity, saved/answered/checked summary, warnings | `renderViewerShell`, `computeAnswerSummary`, learner-name form and technical-details dialog | Retain shell ownership, real counts, validation and localized messages. |
+| Header actions | Language, information, attempt upload/cancel, export, completed-only print; preview return-to-editor flush | Preserve availability and handlers. Changing UI language rebuilds the shell; keep existing operation teardown and recovery. |
+| Bottom actions | Save, Previous/Next, Submit, completed-only Check | Keep current placement, labels, conditions and navigation path. No new completion/edit mode. |
+| Reading sections | `setWorksheetText` renders content using supported text formats | Create a block-owned reading view; no question control, answer number or fake intro. |
+| Text answers | Single-line/multiline controls, counters, limits, raw cache, caret and selection | Keep input identity on answer/status updates. Cache remains keyed by block ID for the shell lifetime. |
+| Number answers | Raw text input, format hints, inline errors and normalized saved value | Preserve incomplete/invalid focused text without replacing it during refresh; zero remains answered. |
+| Boolean answers | Equal controls; selected value can be cleared by clicking again; false remains answered | Preserve selected/disabled state and current green/red semantics. |
+| Choice answers | Single/multiple selection, keyboard movement, stable option values and attempt/block-seeded shuffle | Preserve order through navigation/resume, selected state and option audio associations. |
+| Prompt image and prompt/option audio | Local assets, legacy and named tracks, one audio owner, multilingual menu, feedback | Card-scoped events and image URLs must be released on disposal; ignore late image loads. Session owns audio requests and interruption. |
+| Voice/rewrite/recovery | `answer-voice-ui.js` and `answer-voice-workflow.js`: inline status, Stop/Cancel/View, retry, recovery editor, Undo and original-answer targeting | A disposed card must not cancel session-owned network work. Pass the shell signal to voice/auth work; use a separate scope for presentation resources. |
+| Completed review/checking | Read-only text, blank-answer placeholder, hidden editing footer, grading banners and print report | Keep existing conditions and grading-driven remounts; ordinary status updates reuse the view. |
+| Resume and loading | `computeResumeStartBlockIndex`, start/resume, imported/published loading, auth-return recovery | Preserve block-ID, index and first-unanswered fallback. Visual scroll restoration is stage 2; this stage still shows one block. |
+| Page lifecycle | Hidden document calls voice navigation; page exit and shell replacement tear voice work down | Card disposal is independent of these shell/session lifecycle decisions. No new provider or auth policy. |
+
+Preparation introduces `block-view-host.js`: the host replaces only a changed
+block/presentation and calls the current view's update otherwise. Each view owns
+its answer control, voice-control reference, feedback nodes and UI-resource scope;
+these are no longer shell-wide maps cleared on every card change. The shell still
+owns cached raw values, numeric errors, current index, autosave and the existing
+navigation side effects. Block signatures keep the existing grading/content rules.
+
+There is no persistent cache of detached cards and no multiple-card rendering yet.
+A future continuous renderer can own several independent view instances after its
+navigation and status-ownership decisions are accepted. Preparation does not
+pre-approve that behavior or change the shared voice workflow.
+
+Acceptance for this stage combines the existing viewer/worksheet browser fixtures
+with `scripts/viewer-rendering-lifecycle-smoke.mjs` and the host/scope Node tests.
+The new fixture covers both locales and desktop/mobile widths, same-control
+selection retention, disposed-input isolation, raw numeric input, False/zero,
+shuffle/resume, permission cancellation, language teardown and late image cleanup. Live deployment,
+real microphone/provider calls and actual mobile devices remain separate acceptance
+requirements before merging the runtime PR; synthetic fixtures are not that evidence.

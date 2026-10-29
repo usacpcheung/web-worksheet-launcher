@@ -15,6 +15,7 @@ import { PackageLoadProgress, packageLoadLabel } from './package-load-progress.j
 import { setWorksheetText, renderWorksheetText, WORKSHEET_TEXT_CSS, installWorksheetTextStyles, assertWorksheetTextFormats, hasMarkdown } from '../app/worksheet-text.js';
 import { createVoiceWorkflow, normalizeVoiceRecovery, REWRITE_INPUT_LIMIT, unicodeLength, hasPendingRecovery, getVoiceRecovery } from './answer-voice-workflow.js';
 import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
+import { createBlockViewHost, createBlockViewScope } from './block-view-host.js';
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
@@ -395,6 +396,7 @@ function createViewerAudioControl({
   kind,
   session,
   reportMediaFeedback,
+  signal,
 } = {}) {
   const sources = resolveViewerAudioSources(audioTracks, legacyAudioRef);
   if (sources.length === 0 || !session?.playAssetAudio) return null;
@@ -447,6 +449,7 @@ function createViewerAudioControl({
   };
 
   const setIdle = () => {
+    if (signal?.aborted) return;
     activeSource = null;
     isStarting = false;
     trigger.disabled = false;
@@ -481,6 +484,7 @@ function createViewerAudioControl({
   };
 
   const setPlaying = (source) => {
+    if (signal?.aborted) return;
     activeSource = source;
     isStarting = false;
     trigger.disabled = false;
@@ -497,7 +501,7 @@ function createViewerAudioControl({
   };
 
   const playSource = async (source) => {
-    if (!source || isStarting) return;
+    if (signal?.aborted || !source || isStarting) return;
     closeOpenViewerAudioMenu();
     setMenuOpen(false);
     setStarting();
@@ -511,6 +515,7 @@ function createViewerAudioControl({
       onError: setIdle,
       onInterrupted: setIdle,
     });
+    if (signal?.aborted) return;
     if (!result?.ok) {
       setIdle();
       if (result?.reason !== 'superseded' && typeof reportMediaFeedback === 'function') {
@@ -551,7 +556,7 @@ function createViewerAudioControl({
         event.preventDefault();
         event.stopPropagation();
         playSource(source);
-      });
+      }, { signal });
       menu.appendChild(button);
       return button;
     });
@@ -560,7 +565,7 @@ function createViewerAudioControl({
       if (event.key !== 'Escape' || menu.hidden) return;
       event.preventDefault();
       setMenuOpen(false, { restoreFocus: true });
-    });
+    }, { signal });
   }
 
   trigger.addEventListener('click', (event) => {
@@ -586,7 +591,7 @@ function createViewerAudioControl({
       };
       menuButtons[0]?.focus?.();
     }
-  });
+  }, { signal });
 
   setIdle();
   return root;
@@ -1337,6 +1342,7 @@ function createChoiceButtonGroup({
   session,
   updateSummary,
   reportMediaFeedback,
+  signal,
 }) {
   const selectionMode = block.responseConfig?.selectionMode === 'multi' ? 'multi' : 'single';
   const validValues = optionSource.map((option) => String(option.value ?? option.label ?? ''));
@@ -1389,7 +1395,7 @@ function createChoiceButtonGroup({
       });
       session.setAnswer(block.blockId, nextValue);
       updateSummary();
-    });
+    }, { signal });
     row.appendChild(button);
 
     const optionAudioControl = createViewerAudioControl({
@@ -1398,6 +1404,7 @@ function createChoiceButtonGroup({
       kind: 'option',
       session,
       reportMediaFeedback,
+      signal,
     });
     if (optionAudioControl) row.appendChild(optionAudioControl);
 
@@ -1419,7 +1426,7 @@ function createChoiceButtonGroup({
         btn.tabIndex = idx === nextIndex ? 0 : -1;
       });
       radioButtons[nextIndex].focus();
-    });
+    }, { signal });
   }
 
   return container;
@@ -5854,13 +5861,9 @@ function renderViewerShell(session) {
   nextBtn.setAttribute('aria-label', t('viewer.actions.nextBlock'));
   nextBtn.title = t('viewer.actions.nextBlockTitle');
   navActions.append(prevBtn, nextBtn);
-  const voiceControls = new Map();
   const crossQuestionStatus = createVoiceStatus({ session, t,
     view: blockId => navigateToBlockIndex(getOrderedBlocks().findIndex(block => block.blockId === blockId)),
   });
-  const answerControls = new Map();
-  const textControlFeedback = new Map();
-  let blockSignature = null;
   let stepperOrderSignature = null;
   let lastStepperActiveIndex = -1;
   const numberInputErrors = new Map();
@@ -6424,7 +6427,7 @@ function renderViewerShell(session) {
     };
   };
 
-  const renderCurrentBlockCard = (currentBlock) => {
+  const getBlockPresentation = (currentBlock) => {
     const currentBlockCheckStatus = currentBlock?.blockId
       ? session.state.checkResult?.statusByBlockId?.[currentBlock.blockId]
       : undefined;
@@ -6455,26 +6458,22 @@ function renderViewerShell(session) {
       currentBlockIsCheckable,
       currentBlockCheckStatus: hasCurrentBlockCheckStatus ? currentBlockCheckStatus : null,
     });
-    if (nextSignature === blockSignature) return;
+    return { signature: nextSignature, currentBlockCheckStatus, shouldShowCheckFeedback };
+  };
 
-    closeOpenViewerAudioMenu();
-    session.stopActiveAudio('interrupted');
-    blockSignature = nextSignature;
-    voiceControls.clear();
-    answerControls.clear();
-    textControlFeedback.clear();
-    blockList.innerHTML = '';
-    if (!currentBlock) return;
-
+  const createBlockView = (currentBlock, { currentBlockCheckStatus, shouldShowCheckFeedback }) => {
+    const block = currentBlock;
+    const scope = createBlockViewScope();
+    let control;
+    let voiceControl = null;
+    let textFeedback = null;
     if (currentBlock.kind === 'content') {
       const card = document.createElement('article');
       card.className = 'content-card viewer-card-transition';
       setWorksheetText(card, currentBlock.content);
-      blockList.appendChild(card);
-      return;
+      return { element: card, update() {}, dispose: scope.dispose };
     }
 
-    const block = currentBlock;
     const card = document.createElement('article');
     card.className = 'question-card viewer-card-transition';
     const label = document.createElement('div');
@@ -6482,14 +6481,14 @@ function renderViewerShell(session) {
     const inputType = block.responseConfig?.inputType || 'text';
     const controlId = `answer-${block.blockId}`;
     label.id = `${controlId}-label`;
-    label.addEventListener('click', () => document.getElementById(label.htmlFor || controlId)?.focus());
+    label.addEventListener('click', () => document.getElementById(label.htmlFor || controlId)?.focus(), { signal: scope.signal });
     setWorksheetText(label, { ...block.prompt, text: block.prompt?.text || t('viewer.stepper.question') });
     const mediaFeedback = document.createElement('p');
     mediaFeedback.className = 'viewer-media-feedback';
     mediaFeedback.setAttribute('role', 'status');
     mediaFeedback.setAttribute('aria-live', 'polite');
     const setMediaFeedback = (message) => {
-      mediaFeedback.textContent = message || '';
+      if (!scope.signal.aborted) mediaFeedback.textContent = message || '';
     };
 
     const promptMediaRefs = normalizePromptMediaRefs(block.prompt?.mediaRefs);
@@ -6510,6 +6509,7 @@ function renderViewerShell(session) {
       kind: 'question',
       session,
       reportMediaFeedback: setMediaFeedback,
+      signal: scope.signal,
     });
     if (questionAudioControl) promptRow.append(questionAudioControl);
 
@@ -6522,15 +6522,16 @@ function renderViewerShell(session) {
       imageWrap.appendChild(imageEl);
       card.append(imageWrap);
       session.storage.localAssets?.get?.(questionImageRef.assetId).then((asset) => {
+        if (scope.signal.aborted) return;
         if (!asset?.binary) {
           setMediaFeedback(t('viewer.image.missingWithId', { id: questionImageRef.assetId }));
           return;
         }
         const mimeType = asset?.metadata?.mimeType || 'image/png';
-        const objectUrl = URL.createObjectURL(new Blob([asset.binary], { type: mimeType }));
-        imageEl.onload = () => URL.revokeObjectURL(objectUrl);
+        const objectUrl = scope.createObjectURL(new Blob([asset.binary], { type: mimeType }));
+        imageEl.onload = () => scope.releaseObjectURL(objectUrl);
         imageEl.onerror = () => {
-          URL.revokeObjectURL(objectUrl);
+          scope.releaseObjectURL(objectUrl);
           setMediaFeedback(t('viewer.image.couldNotRender'));
           imageWrap.remove();
         };
@@ -6644,7 +6645,7 @@ function renderViewerShell(session) {
         textStatus.setAttribute('role', 'status');
       }
 
-      let control;
+
       if (inputType === 'text' && block.responseConfig?.displayMode === 'single_line') {
         control = document.createElement('input');
         control.type = 'text';
@@ -6659,7 +6660,7 @@ function renderViewerShell(session) {
           const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
           renderUI();
-        });
+        }, { signal: scope.signal });
       } else if (inputType === 'number') {
         control = document.createElement('input');
         control.type = 'text';
@@ -6721,7 +6722,7 @@ function renderViewerShell(session) {
           numberInputErrors.set(block.blockId, '');
           session.setAnswer(block.blockId, normalizedValue);
           renderUI();
-        });
+        }, { signal: scope.signal });
       } else if (inputType === 'boolean') {
         control = document.createElement('div');
         control.className = 'boolean-segmented-control';
@@ -6743,7 +6744,7 @@ function renderViewerShell(session) {
             const nextValue = normalizedCurrentValue === optionConfig.value ? null : optionConfig.value;
             session.setAnswer(block.blockId, nextValue);
             renderUI();
-          });
+          }, { signal: scope.signal });
           control.appendChild(button);
         });
       } else if (inputType === 'multiple_choice' && Array.isArray(block.responseConfig?.options)) {
@@ -6761,6 +6762,7 @@ function renderViewerShell(session) {
           session,
           updateSummary: () => renderUI(),
           reportMediaFeedback: setMediaFeedback,
+          signal: scope.signal,
         });
       } else {
         control = document.createElement('textarea');
@@ -6776,7 +6778,7 @@ function renderViewerShell(session) {
           const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
           updateTextCounterUI(textCounter, textStatus, feedback);
           renderUI();
-        });
+        }, { signal: scope.signal });
       }
 
       if (typeof HTMLElement !== 'undefined' && control instanceof HTMLElement) {
@@ -6794,7 +6796,7 @@ function renderViewerShell(session) {
         }
         ensureControlDescribedBy(control, inputError.id);
       }
-      answerControls.set(block.blockId, control);
+
       if (inputType === 'text') {
         const textFooter = document.createElement('div');
         textFooter.className = 'question-card__text-footer';
@@ -6812,7 +6814,7 @@ function renderViewerShell(session) {
             control.value = value.text;
           },
         });
-        voiceControls.set(block.blockId, voiceUi);
+        voiceControl = voiceUi;
         const rewriteButton = document.createElement('button');
         rewriteButton.type = 'button';
         rewriteButton.className = 'question-card__rewrite-btn icon-nav-btn';
@@ -6820,7 +6822,7 @@ function renderViewerShell(session) {
         rewriteButton.setAttribute('aria-describedby', `${control.id}-voice-status`);
         rewriteButton.addEventListener('click', () => {
           if (!rewriteButton.disabled) voiceUi.rewrite();
-        });
+        }, { signal: scope.signal });
 
         const undoButton = document.createElement('button');
         undoButton.type = 'button';
@@ -6841,7 +6843,7 @@ function renderViewerShell(session) {
           delete nextUndoBuffer[block.blockId];
           session.state.undoBuffer = nextUndoBuffer;
           renderUI();
-        });
+        }, { signal: scope.signal });
 
         const rewriteHint = document.createElement('p');
         rewriteHint.className = 'question-card__rewrite-hint';
@@ -6861,10 +6863,10 @@ function renderViewerShell(session) {
         reviewStatus.disabled = false;
         reviewStatus.removeAttribute('aria-describedby');
         reviewStatus.hidden = true;
-        textControlFeedback.set(block.blockId, {
+        textFeedback = {
           counter: textCounter, status: textStatus, footer: textFooter, helper, reviewStatus, label,
           editingDescription: control.getAttribute('aria-describedby'),
-        });
+        };
 
         if (!card.contains(label)) card.append(label);
         if (checkBanner && checkReveal) {
@@ -6878,15 +6880,10 @@ function renderViewerShell(session) {
         }
         card.append(helper, control, mediaFeedback, inputError);
       }
-      blockList.appendChild(card);
-  };
 
-  const syncAnswerControlValues = (currentBlock) => {
-    if (!currentBlock || currentBlock.kind !== 'question') return;
-    const activeElement = document.activeElement;
-    const block = currentBlock;
-    const control = answerControls.get(block.blockId);
-    if (!control) return;
+    const update = () => {
+      if (scope.signal.aborted) return;
+      const activeElement = document.activeElement;
       const inputType = block.responseConfig?.inputType || 'text';
       const storedValue = session.state.answers?.[block.blockId]?.value;
       const cachedRawValue = localInputCache.get(block.blockId);
@@ -6915,7 +6912,7 @@ function renderViewerShell(session) {
         cacheRawControlValue(block.blockId, stateValue);
       }
       if (inputType === 'text') {
-        const feedbackNodes = textControlFeedback.get(block.blockId);
+        const feedbackNodes = textFeedback;
         const feedback = computeTextLengthFeedback(control.value, block.responseConfig?.maxLength || 200);
         updateTextCounterUI(feedbackNodes?.counter, feedbackNodes?.status, feedback);
         const card = control.closest('.question-card');
@@ -6951,10 +6948,10 @@ function renderViewerShell(session) {
           rewriteError.textContent = rewriteInlineMessage ? `⚠️ ${rewriteInlineMessage}` : '';
         }
       }
-      voiceControls.get(block.blockId)?.update();
+      voiceControl?.update();
       if (inputType === 'text') {
         const completed = session.state.status === 'completed';
-        const feedback = textControlFeedback.get(block.blockId);
+        const feedback = textFeedback;
         control.closest('.question-card').classList.toggle('question-card--text-review', completed);
         feedback.footer.hidden = completed;
         feedback.helper.hidden = completed;
@@ -6978,7 +6975,20 @@ function renderViewerShell(session) {
       if (errorNode) {
         errorNode.textContent = inputType === 'number' ? (numberInputErrors.get(block.blockId) || '') : '';
       }
+    };
+
+    return { element: card, update, dispose: scope.dispose };
   };
+
+  const blockViewHost = createBlockViewHost({
+    container: blockList,
+    createView: createBlockView,
+    beforeReplace: () => {
+      closeOpenViewerAudioMenu();
+      session.stopActiveAudio('interrupted');
+    },
+    signal,
+  });
 
   const persistNavigationState = (orderedBlocks) => {
     session.state.lastActiveIndex = currentBlockIndex;
@@ -7042,8 +7052,7 @@ function renderViewerShell(session) {
     }
     stepperOrderSignature = stepperSignature;
     lastStepperActiveIndex = currentBlockIndex;
-    renderCurrentBlockCard(currentBlock);
-    syncAnswerControlValues(currentBlock);
+    blockViewHost.update(currentBlock, getBlockPresentation(currentBlock));
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
     status.textContent = session.state.isFinalizing

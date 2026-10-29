@@ -309,7 +309,7 @@ async function loadViewerModule(overrides = {}) {
   globalThis.document = globalThis[bagName].document;
   globalThis.window = globalThis[bagName].window;
 
-  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|package-load-progress)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
+  const dataUrl = `data:text/javascript,${encodeURIComponent(rewrittenSource.replace(/from '(\.\/(?:answer-(?:voice-workflow|voice-ui)|package-load-progress|block-view-host)\.js)'/g, (_, path) => 'from ' + JSON.stringify(new NodeURL(path, import.meta.url).href)))}`;
   return import(dataUrl);
 }
 
@@ -3394,7 +3394,7 @@ test('getNumberInputErrorMessage ignores legacy step config', async () => {
 
 
 
-test('renderCurrentBlockCard signature includes grading-derived fields and guarded check feedback rendering', async () => {
+test('block presentation signature includes grading-derived fields and guarded check feedback rendering', async () => {
   const source = await fs.readFile(path.resolve('server/viewer/main.js'), 'utf8');
 
   assert.equal(source.includes('hasGlobalCheckResult = session.state.checkResult !== null;'), true);
