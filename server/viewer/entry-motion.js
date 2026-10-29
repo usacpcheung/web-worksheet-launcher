@@ -42,6 +42,7 @@ export function createEntryMotion({ container, viewport, signal }) {
       const groups = [];
       const add = (nodes, kind, order = 0) => {
         nodes = nodes.filter(Boolean);
+        nodes.forEach(node => { node.dataset.viewerEntry = kind; });
         if (nodes.length) groups.push({ nodes, kind, order, state: 'armed', progress: 0, edge: 'bottom', outside: null, animations: [] });
       };
       add([card.querySelector('.question-card__prompt-row'), card.querySelector('.viewer-question-image-wrap')], 'prompt');
