@@ -163,6 +163,12 @@ try {
   // Enlarged text uses measured row heights; resize keeps the focused item.
   await page.setViewportSize({width:390,height:844});
   await page.evaluate(()=>{document.documentElement.style.fontSize='32px';});
+  await page.setViewportSize({width:320,height:568});
+  assert(await page.locator('.viewer-question-number').evaluateAll(nodes=>nodes.every(node=>{
+   const number=node.getBoundingClientRect(),heading=node.parentElement.getBoundingClientRect();
+   return number.left>=0&&number.right<=heading.left;
+  })),'decorative margin numbers remain visible with enlarged document text');
+  await page.setViewportSize({width:390,height:844});
   await openViewerActions(page);
   await page.locator('.viewer-browse').click();
   await page.locator('.viewer-chooser__item').first().focus();

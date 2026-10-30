@@ -52,6 +52,12 @@ The review/fix/review cycle corrected:
    to the actual header; prompt and option controls retain identical dimensions.
 3. Mobile answer borders approached the fixed launcher. Additional right-side
    clearance is checked against actual rendered control bounds.
+4. At 200% document text size, a margin number extended 9px beyond the left edge
+   on a 320px viewport. Decorative ordinals now use the reference's fixed CSS
+   sizes within the fixed gutter. Normal browser zoom still scales the page;
+   prompt, answer and caption text retains its existing relative sizing. The
+   original accessible question heading is preserved, and enlarged-text coverage
+   checks the visible ordinal bounds as well as the chooser.
 
 The broader follow-up review covered selector scope, responsive wrapping,
 accessible question names, locale captions, semantic selected/disabled states,
