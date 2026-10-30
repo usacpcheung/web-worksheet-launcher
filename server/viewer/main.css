@@ -2357,8 +2357,8 @@ body:has(.viewer-shell--continuous) {
   background:#f1f7ff;
   background-image:url('./worksheet-atmosphere.svg');
   background-repeat:no-repeat;
-  background-position:right top;
-  background-size:min(700px, 55vw) 100vh;
+  background-position:right center;
+  background-size:cover;
   background-attachment:fixed;
   color:#20344d;
   padding-bottom:0;

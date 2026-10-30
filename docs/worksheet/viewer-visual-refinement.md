@@ -28,6 +28,13 @@ All prompt/option audio triggers remain 50 × 44 CSS pixels, including single- a
 multiple-language controls. True/False selection colors, equal choice widths,
 stationary hover feedback and visible keyboard focus remain intact.
 
+The background was subsequently revised following visual feedback: a pale blue
+canvas with broad translucent blue planes replaces the grey outlined geometry.
+The decorative SVG covers the viewport without tiling and leaves the white paper
+unchanged. Fresh desktop/mobile previews and the existing bilingual Version C
+browser smoke passed for this background-only revision; no interaction code or
+layout measurements changed.
+
 No answer, playback, transcription, rewrite, navigation, progress, persistence,
 authentication or submission logic changes. Motion triggers and the reading-line
 model are unchanged. No editor or RolePlayScene styles or shared voice helpers
