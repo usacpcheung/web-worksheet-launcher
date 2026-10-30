@@ -146,3 +146,28 @@ The final review found no further issue requiring a fix.
 
 These checks use local synthetic data and Chromium. Native print-dialog behavior,
 physical printing and VPS acceptance still require the user's local session.
+
+
+## Follow-up: remove presentation captions
+
+The user subsequently removed question-type captions from the worksheet, chooser
+and printout, and removed visible Reading/閱讀 labels from content sections and
+navigation. This supersedes the caption presentation described above.
+
+Questions retain margin numbers; content blocks display their authored text.
+The chooser identifies questions by number and content by book icon. The ring
+shows a book icon while a content block is current, retaining the answered-question
+count below it. Content blocks do not affect question totals or completion.
+Screen-reader section labels remain descriptive, using Reading/閱讀; the viewer's
+remaining Content/內容 fallback terminology is updated to match. Author-written
+text is not renamed. Empty content entries use the existing Untitled fallback.
+
+Caption spacing is removed so the question number aligns with its prompt in the
+viewer and printout. Navigation, current-section detection and motion still use
+the same existing controllers. No answer or stored-data changes are introduced.
+
+Validation: all 1,757 Node tests and six Chromium smokes passed (Version C,
+continuous navigation, entry motion, voice, worksheet printing and Markdown).
+Desktop/mobile chooser and worksheet screenshots and printed PDF pages were
+inspected. Both nine-page PDFs still contain all 80 reading paragraphs and all
+65 answer lines. Final review found no further issue requiring a fix.

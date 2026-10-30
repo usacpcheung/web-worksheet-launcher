@@ -20,16 +20,6 @@ export function isAnsweredValue(value) {
   if (Array.isArray(value)) return value.length > 0;
   return true;
 }
-// A caption only: answer controls continue to use their existing configuration.
-export function questionTypeLabel(block, t) {
-  const config = block.responseConfig || {};
-  const type = config.inputType === 'multiple_choice'
-    ? (config.selectionMode === 'multi' ? 'multipleChoice' : 'singleChoice')
-    : config.inputType === 'boolean' ? 'boolean'
-      : config.inputType === 'number' ? 'number'
-        : config.displayMode === 'single_line' ? 'shortText' : 'longText';
-  return t(`viewer.questionTypes.${type}`);
-}
 export function describeSections(blocks, t) {
   let question = 0, reading = 0;
   return blocks.map(block => {
@@ -222,7 +212,7 @@ export function createWorksheetNavigation({ t, actions, navigate, operationPanel
         if (!entry.isQuestion) mark.innerHTML = bookIcon;
         mark.setAttribute('aria-hidden', 'true');
         const words = make('span', 'viewer-chooser__words');
-        words.append(make('span', 'viewer-chooser__title', entry.title || entry.label), make('span', 'viewer-chooser__kind', entry.isQuestion ? questionTypeLabel(blocks[index], t) : entry.label));
+        words.append(make('span', 'viewer-chooser__title', entry.title || (entry.isQuestion ? entry.label : t('common.values.untitled'))));
         const state = make('span', 'viewer-chooser__state');
         state.setAttribute('aria-hidden', 'true');
         row.append(mark, words, state);
@@ -235,6 +225,8 @@ export function createWorksheetNavigation({ t, actions, navigate, operationPanel
     current = activeIndex;
     const entry = entries[current];
     if (!entry) return;
+    ringLabel.classList.toggle('viewer-sr-only', !entry.isQuestion);
+    location.classList.toggle('viewer-sr-only', !entry.isQuestion);
     setText(ringLabel, t(entry.isQuestion ? 'viewer.navigation.currentQuestion' : 'viewer.navigation.currentReading'));
     if (entry.isQuestion) setText(ringValue, String(entry.number));
     else if (!ringValue.firstElementChild) ringValue.innerHTML = bookIcon;

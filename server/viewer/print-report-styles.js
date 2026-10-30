@@ -93,7 +93,8 @@ export const PRINT_REPORT_CSS = `
     .print-question-header {
       break-after: avoid;
       page-break-after: avoid;
-      margin-bottom: 5mm;
+      margin: 0;
+      height: 0;
     }
 
     .print-question-number {
@@ -131,13 +132,6 @@ export const PRINT_REPORT_CSS = `
 
     .print-prompt-area, .print-answer-area {
       min-width: 0;
-    }
-
-    .print-content-label {
-      font-size: 9pt;
-      color: #256ac4;
-      margin: 0 0 4mm;
-      break-after: avoid;
     }
 
     .print-content-text {

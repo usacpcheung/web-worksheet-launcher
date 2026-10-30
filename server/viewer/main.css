@@ -2451,7 +2451,9 @@ body:has(.viewer-shell--continuous) #app {
 
 .viewer-question-heading {
   position:relative;
-  grid-column:1/-1;
+  grid-column:1;
+  grid-row:1;
+  height:0;
   color:var(--viewer-blue);
   font-size:.8125rem;
   font-weight:500;
@@ -2471,12 +2473,9 @@ body:has(.viewer-shell--continuous) #app {
   white-space:nowrap;
 }
 
-.viewer-shell--continuous .content-card .viewer-section-label {
-  margin-bottom:20px;
-}
-
 .viewer-shell--continuous .question-card__prompt-row {
   grid-column:1;
+  grid-row:1;
   display:flex;
   flex-direction:column;
   align-items:flex-start;
@@ -2497,7 +2496,7 @@ body:has(.viewer-shell--continuous) #app {
 
 .viewer-answer-area {
   grid-column:2;
-  grid-row:2 / span 2;
+  grid-row:1 / span 2;
   min-width:0;
   display:flex;
   flex-direction:column;
@@ -2911,13 +2910,6 @@ body:has(.viewer-shell--continuous) #app {
   font-size:.875rem;
   line-height:1.5;
   color:#20344d;
-}
-
-.viewer-chooser__kind {
-  display:block;
-  font-size:.75rem;
-  line-height:1.5;
-  color:#526985;
 }
 
 .viewer-chooser__state {

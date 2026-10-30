@@ -656,14 +656,6 @@ export default {
     }
   },
   "viewer": {
-    questionTypes: {
-      shortText: '短答題',
-      longText: '文字作答',
-      number: '數字題',
-      boolean: '是非題',
-      singleChoice: '單項選擇',
-      multipleChoice: '多項選擇',
-    },
     navigation: {
       "actions": "工作紙操作",
       "browse": "瀏覽工作紙",
@@ -1008,7 +1000,7 @@ export default {
       "saving": "儲存中..."
     },
     "stepper": {
-      "content": "內容",
+      "content": "閱讀",
       "instruction": "說明",
       "instructionNumber": "第 {number} 個說明",
       "question": "題目",

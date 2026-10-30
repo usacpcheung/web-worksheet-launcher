@@ -53,7 +53,10 @@ try {
   await page.waitForFunction(()=>window.originalUtilities.parentElement.matches('.viewer-action-panel')&&document.activeElement===window.originalLanguageTrigger);
   assert.deepEqual(await page.locator('.viewer-question-number').allTextContents(),Array.from({length:16},(_,i)=>String(i+1).padStart(2,'0')));
   assert.equal(await page.locator('.viewer-answer-area .viewer-question-heading').count(),0,'question identity stays with the prompt, outside the answer area');
-  assert.equal(await page.locator('[data-block-id="b4"] .viewer-question-kind').innerText(),locale==='en'?'Single choice':'單項選擇');
+  assert.equal(await page.locator('.viewer-question-kind, .viewer-chooser__kind').count(),0);
+  assert.equal(await page.locator('.viewer-section-label:not(.viewer-sr-only)').count(),0);
+  assert(await page.locator('.viewer-progress-ring__label').evaluate(node=>node.classList.contains('viewer-sr-only')));
+  assert.equal(await page.locator('.viewer-progress-ring .viewer-book-icon').count(),1);
   // Equal answer surfaces, reserved audio column, single/multi track size parity.
   const sizes=await page.locator('[data-block-id="b4"] .choice-button-group__row').evaluateAll(rows=>rows.map(r=>({answer:r.firstElementChild.getBoundingClientRect().width,audio:r.querySelector('.viewer-audio-control__trigger')?.getBoundingClientRect().width})));
   assert(sizes.every(r=>Math.abs(r.answer-sizes[0].answer)<1));

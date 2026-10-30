@@ -18,7 +18,7 @@ import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { createWorksheetViewHost, createBlockViewScope } from './block-view-host.js';
 import { createEntryMotion } from './entry-motion.js';
 import { createSectionNavigation } from './section-navigation.js';
-import { createWorksheetNavigation, describeSections, isAnsweredValue, questionTypeLabel } from './worksheet-navigation.js';
+import { createWorksheetNavigation, describeSections, isAnsweredValue } from './worksheet-navigation.js';
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
@@ -2046,7 +2046,6 @@ async function buildWorksheetPrintReportModel({
       kind: 'question',
       blockId: block.blockId,
       questionNumber: index + 1,
-      typeLabel: questionTypeLabel(block, t),
       inputType: config.inputType || 'text',
       choices,
       promptText: String(block?.prompt?.text || ''),
@@ -2135,8 +2134,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
 
   const sectionsHtml = (reportModel.sections || reportModel.questions || []).map((question) => {
     if (question.kind === 'content') return `
-      <article class="print-content" data-block-id="${escapeHtml(question.blockId)}">
-        <p class="print-content-label">${escapeHtml(question.label)}</p>
+      <article class="print-content" data-block-id="${escapeHtml(question.blockId)}" aria-label="${escapeHtml(question.label)}">
         <div class="print-content-text worksheet-text">${renderWorksheetText(question.content)}</div>
       </article>`;
     const imageHtml = question.image?.status === 'ready' && question.image?.src
@@ -2182,7 +2180,6 @@ function buildWorksheetPrintReportHtml(reportModel) {
         <header class="print-question-header">
           <h2 class="print-question-number" aria-label="${escapeHtml(t('viewer.print.questionNumber', { number: question.questionNumber }))}">
             <span class="print-question-ordinal" aria-hidden="true">${escapeHtml(String(question.questionNumber).padStart(2, '0'))}</span>
-            <span>${escapeHtml(question.typeLabel || t('viewer.print.questionHeading'))}</span>
           </h2>
         </header>
         <div class="print-question-layout">
@@ -6377,7 +6374,7 @@ function renderViewerShell(session) {
       const card = document.createElement('article');
       card.className = 'content-card viewer-card-transition';
       const heading = document.createElement('h3');
-      heading.className = 'viewer-section-label';
+      heading.className = 'viewer-section-label viewer-sr-only';
       heading.textContent = sectionLabels.get(block.blockId);
       const body = document.createElement('div');
       setWorksheetText(body, currentBlock.content);
@@ -6397,10 +6394,7 @@ function renderViewerShell(session) {
     questionNumber.className = 'viewer-question-number';
     questionNumber.setAttribute('aria-hidden', 'true');
     questionNumber.textContent = String(sectionNumbers.get(block.blockId)).padStart(2, '0');
-    const questionKind = document.createElement('span');
-    questionKind.className = 'viewer-question-kind';
-    questionKind.textContent = questionTypeLabel(block, t);
-    questionHeading.append(questionNumber, questionKind);
+    questionHeading.append(questionNumber);
     card.append(questionHeading);
     const label = document.createElement('div');
     label.className = 'question-card__prompt-label';

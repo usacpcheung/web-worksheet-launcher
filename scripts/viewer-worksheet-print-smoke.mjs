@@ -78,6 +78,8 @@ try {
     await printed.emulateMedia({ media: 'print' });
     assert.deepEqual(await printed.locator('.print-report > article').evaluateAll(nodes => nodes.map(node => node.dataset.blockId)),
       ['intro','text','between','choices','bool','number','blank','long-reading','long-answer','end']);
+    assert.equal(await printed.locator('.print-content-label').count(), 0);
+    assert.equal(await printed.locator('.print-question-number > span:not(.print-question-ordinal)').count(), 0);
     assert.deepEqual(await printed.locator('.print-question-ordinal').allTextContents(), ['01','02','03','04','05','06']);
     assert.match(await printed.locator('[data-block-id="intro"] h2').innerText(), /Read first/);
     assert.equal(await printed.locator('[data-block-id="between"] script').count(), 0);
