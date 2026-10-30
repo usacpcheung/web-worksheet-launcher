@@ -33,8 +33,14 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
   const viewport = () => {
     const visual = window.visualViewport;
     const top = visual?.offsetTop || 0;
-    const bottom = Math.min(top + (visual?.height || window.innerHeight), window.innerHeight - getBottomInset());
+    // Operation chrome must not move section boundaries: otherwise its arrival
+    // makes the next small downward scroll select the preceding section.
+    const bottom = Math.min(top + (visual?.height || window.innerHeight), window.innerHeight);
     return { top, bottom, line: top + Math.max(1, bottom - top) * 0.4 };
+  };
+  const controlViewport = () => {
+    const view = viewport();
+    return { top: view.top, bottom: Math.min(view.bottom, window.innerHeight - getBottomInset()) };
   };
   const stopTracking = () => { scrolling = false; clearTimeout(idleTimer); };
   const align = () => {
@@ -110,7 +116,7 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
     if (scrolling || pointerScroll) { intentionalScroll(); schedule(); }
     if (focusedControl === document.activeElement && !focusFrame) {
       const rect = focusedControl.getBoundingClientRect();
-      const { top, bottom } = viewport();
+      const { top, bottom } = controlViewport();
       focusedControlVisible = rect.bottom > top && rect.top < bottom;
     }
   }, { passive: true, signal });
@@ -120,7 +126,7 @@ export function createSectionNavigation({ container, getCurrentIndex, activate, 
       focusFrame = 0;
       if (disposed || document.activeElement !== control) return;
       const rect = control.getBoundingClientRect();
-      const { top, bottom } = viewport();
+      const { top, bottom } = controlViewport();
       // A newly focused answer must fit above fixed navigation/operation UI.
       // Do this only on deliberate focus, never to pin an off-screen input.
       const offset = rect.top < top + 12 || rect.height > bottom - top - 24

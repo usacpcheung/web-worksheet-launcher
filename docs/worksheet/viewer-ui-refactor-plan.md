@@ -124,10 +124,12 @@ implementation details to verify, not additional product decisions. D7 is accept
 | D8 | Animation replay and interaction | Revealed content stays clear while visible. Prepare replay only after fully leaving the viewport with a margin; never replay on answer/status updates. Focus, selection and open controls stay stable. Explicit jumps settle immediately. | Decide whether the latest mockup's off-screen replay remains desirable in real use. |
 | D9 | Operation status with multiple text questions mounted | Use one shared operation panel and retain question-specific hints/recovery. Keep Stop/Cancel/View reachable while the source is off-screen, including from content or non-text sections. Give one live region responsibility for announcing the operation stage; do not duplicate announcements or active controls in every mounted text question. | Current `createVoiceControls` creates a status component for each text question. Placement accepted: one fixed bottom-right operation panel on desktop, across the lower mobile viewport with clearance for controls. Keep one operation live region; reuse actual state/actions and per-question recovery. Do not duplicate Stop/Cancel/View in every mounted question. |
 
-The 40% line is relative to a chosen viewport definition. For the first implementation,
-recommend the unobscured reading viewport when stable, with keyboard/resize
-suppression under D5. Specify and test this precisely before coding; do not silently
-mix `innerHeight` and visual-viewport measurements.
+The 40% line uses the visual viewport (clipped to the layout viewport), with
+keyboard/resize suppression under D5. The 2026-10-30 acceptance correction keeps
+operation-panel height out of reading-line geometry: a panel appearing must not
+make a small downward scroll select the preceding section. Input clearance still
+uses the area above that panel, independently of section selection. Motion and
+explicit jumps share the same reading geometry.
 
 Progress counts answered questions using existing semantics, not correctness or
 validity. Content-only and empty worksheets need a safe zero-total display.
@@ -331,7 +333,8 @@ requirements before merging the runtime PR; synthetic fixtures are not that evid
 
 ## 10. Accepted continuous-navigation rules (2026-10-30)
 
-- Start the reading line at 40% of the unobscured reading viewport. Measure stable
+- Start the reading line at 40% of the visual viewport, independent of the
+  operation panel height (2026-10-30 acceptance correction). Measure stable
   section containers, not transforms. Keep the current section in gaps in either
   direction and use a small tolerance to avoid boundary jitter.
 - Clicking or keyboard-focusing an answer or playback control makes its section
@@ -359,9 +362,11 @@ reference; it does not authorize importing demonstration fixtures or fonts.
 ### Stage 2 implementation details
 
 The initial controller uses instant jumps, with presentation motion deferred to
-stage 4. It measures the visual viewport's top and its visible bottom clipped by
-fixed navigation/operation controls, then places the reading line 40% into that
-unobscured area. A 3 CSS-pixel boundary tolerance prevents jitter. Wheel, touch,
+stage 4. The original operation-panel inset moved the reading line upward when
+recording began. The acceptance correction now measures the visual viewport's
+top and visible bottom clipped to the layout viewport, with a 40% reading line.
+A separate panel-aware viewport preserves focused-input clearance. A 3 CSS-pixel
+boundary tolerance prevents jitter. Wheel, touch,
 page-scroll keys and scrollbar dragging authorize scroll tracking; ordinary
 layout/focus-induced scroll events do not. Nested scrolling retains its own
 behavior, including scrolling onto the page at a nested scroller's boundary.

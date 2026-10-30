@@ -9,8 +9,9 @@ Implementation is in this PR; it remains unmerged and undeployed.
 Use the final Version C reference identified in the
 [viewer plan](viewer-ui-refactor-plan.md). Keep blur-to-clear and element movement
 as distinct effects. Begin while entering the viewport and finish about 15% of
-viewport height before the 40% reading line. Use the same unobscured viewport as
-section navigation, accounting for the operation panel and visual viewport.
+viewport height before the 40% reading line. Use the same visual viewport as
+section navigation. Operation-panel height affects input clearance, not the
+reading line or motion geometry (2026-10-30 acceptance correction).
 
 Animate inner presentation elements, never the stable section wrappers measured
 by section navigation. Group prompt and question media movement. Stagger MC rows;
@@ -120,3 +121,41 @@ passed. Final bilingual menu screenshots were inspected. Review covered open/
 close/abort observer cleanup, nested menu scrolling, focus return, viewport edges
 and unchanged audio/voice ownership; no further change was identified after the
 scroll-fallback fix. GitHub CI for the follow-up commit is recorded in the PR.
+
+## Reading-line correction after focused retest — 2026-10-30
+
+Focused deployed acceptance at `662f2a2` verified menu placement, stationary real
+speech/transcription, controlled real rewrite after scrolling and publication.
+It recorded 40 passes and two blockers: successful transcription after recording
+was stopped by scroll departure, and genuine hidden-tab/return. Cleanup preserved
+all original server resources. Environment coverage limitations remain unchanged.
+
+The new event/geometry evidence identified a distinct panel-induced reversal:
+explicit Q1 selection aligned its top near 360px on a 900px viewport. Opening
+recording chrome shifted the 40% line to about 305px without moving the worksheet.
+A small downward wheel then selected the preceding reading section and stopped
+capture. The exact regression was reproduced locally before fixing it: an 8px
+wheel changed Q1 to the introduction and advanced recording to processing.
+
+Reading geometry now ignores operation-panel height. Navigation, explicit jumps
+and motion use the same visual viewport; focused inputs still clear the panel
+through a separate control viewport. No direction lock, recording lock, provider,
+voice-state-machine or storage change is introduced. Browser regressions cover
+small forward/reverse movement, panel growth, jumps while recording, real forward
+and reverse boundary departure, late original-answer completion and focus/scroll
+preservation in English/Traditional Chinese at desktop/mobile widths. All provider
+and microphone data in these automated checks are synthetic.
+
+The original uninstrumented incident is not retrospectively proven by this fix.
+The reproduced panel-induced reversal is fixed locally; updated deployed real
+speech/departure and genuine hidden-tab/return acceptance remain required. There
+is no need to repeat the passed menu/publication matrix unless a new change affects
+those areas. Keep the stack open until the remaining acceptance is resolved.
+
+Validation for the reading-line correction: 1,755 Node tests and all 56 browser
+smoke scripts passed locally (three shards: 19/19, 19/19, 18/18). The review/fix/
+review cycle covered all consumers of viewport geometry, focused-input panel
+clearance, genuine forward/reverse departure, motion, lifecycle cleanup and late
+result ownership. The added repeat-recording fixture uses Discard to resolve its
+previous canceled operation before starting again. No further production issue
+was identified after the geometry correction. Final commit CI is recorded in the PR.
