@@ -138,7 +138,15 @@ try {
   await jump(1);
   await section('q1').locator('.question-card__voice-btn').click();
   await page.waitForFunction(() => window.viewerSession.voice.active?.state === 'recording');
+  // Acceptance investigation: opening the operation panel and elapsed-time updates
+  // must not select the leading reading or stop capture without user navigation.
+  await page.waitForTimeout(1800);
+  assert.equal(await current(), 'q1', 'idle recording retains its originating section');
+  assert.equal(await page.evaluate(() => window.viewerSession.voice.active?.state), 'recording');
+  await section('intro').evaluate(node => { node.style.paddingBottom = '150px'; });
   await page.setViewportSize({ width, height: 780 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await current(), 'q1', 'layout and viewport changes do not navigate during recording');
   assert.equal(await page.evaluate(() => window.viewerSession.voice.active?.state), 'recording');
   await page.mouse.move(width / 2, 100);
   await page.mouse.wheel(0, await section('reading').evaluate(el => el.getBoundingClientRect().top - 100));

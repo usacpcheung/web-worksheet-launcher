@@ -393,6 +393,51 @@ function resolveViewerAudioSources(audioTracks, legacyAudioRef = null) {
   return [];
 }
 
+// Own positioning only while a language menu is open. Keep the menu inside its
+// control so keyboard focus and section ownership retain their existing meaning.
+function positionViewerAudioMenu(root, menu, kind) {
+  const controller = new AbortController();
+  const { signal } = controller;
+  let frame = 0;
+  const place = () => {
+    frame = 0;
+    const visual = window.visualViewport;
+    const left = (visual?.offsetLeft || 0) + 8;
+    const top = (visual?.offsetTop || 0) + 8;
+    const right = Math.min(document.documentElement.clientWidth,
+      (visual?.offsetLeft || 0) + (visual?.width || innerWidth)) - 8;
+    const bottom = Math.min(innerHeight,
+      (visual?.offsetTop || 0) + (visual?.height || innerHeight)) - 8;
+    const anchor = root.getBoundingClientRect();
+    const above = Math.max(0, anchor.top - 8 - top);
+    const below = Math.max(0, bottom - anchor.bottom - 8);
+    menu.style.maxWidth = `${Math.max(1, right - left)}px`;
+    menu.style.minWidth = `${Math.min(184, Math.max(1, right - left))}px`;
+    const desiredHeight = menu.scrollHeight + menu.offsetHeight - menu.clientHeight;
+    const upwards = desiredHeight > below && above > below;
+    menu.style.maxHeight = `${Math.max(1, upwards ? above : below)}px`;
+    const rect = menu.getBoundingClientRect();
+    const x = Math.max(left, Math.min(kind === 'question' ? anchor.left : anchor.right - rect.width, right - rect.width));
+    const y = Math.max(top, Math.min(upwards ? anchor.top - 8 - rect.height : anchor.bottom + 8, bottom - rect.height));
+    menu.style.left = `${x - anchor.left}px`;
+    menu.style.top = `${y - anchor.top}px`;
+    menu.style.right = 'auto';
+  };
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(place); };
+  window.addEventListener('scroll', event => {
+    if (!menu.contains(event.target)) schedule();
+  }, { capture: true, passive: true, signal });
+  window.addEventListener('resize', schedule, { signal });
+  window.visualViewport?.addEventListener('resize', schedule, { signal });
+  window.visualViewport?.addEventListener('scroll', schedule, { signal });
+  const observer = new ResizeObserver(schedule);
+  observer.observe(root);
+  observer.observe(menu);
+  document.fonts?.ready.then(() => { if (!signal.aborted) schedule(); });
+  place();
+  return () => { controller.abort(); observer.disconnect(); cancelAnimationFrame(frame); };
+}
+
 function createViewerAudioControl({
   audioTracks,
   legacyAudioRef = null,
@@ -417,6 +462,7 @@ function createViewerAudioControl({
 
   let menu = null;
   let menuButtons = [];
+  let stopMenuPositioning = null;
   let activeSource = null;
   let isStarting = false;
 
@@ -444,7 +490,10 @@ function createViewerAudioControl({
 
   const setMenuOpen = (open, { restoreFocus = false } = {}) => {
     if (!menu) return;
+    stopMenuPositioning?.();
+    stopMenuPositioning = null;
     menu.hidden = !open;
+    if (open) stopMenuPositioning = positionViewerAudioMenu(root, menu, normalizedKind);
     trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
     root.classList.toggle('is-menu-open', open);
     if (!open && openViewerAudioMenu?.root === root) openViewerAudioMenu = null;
@@ -592,10 +641,14 @@ function createViewerAudioControl({
         trigger,
         close: () => setMenuOpen(false),
       };
-      menuButtons[0]?.focus?.();
+      menuButtons[0]?.focus?.({ preventScroll: true });
     }
   }, { signal });
 
+  signal?.addEventListener('abort', () => {
+    stopMenuPositioning?.();
+    if (openViewerAudioMenu?.root === root) openViewerAudioMenu = null;
+  }, { once: true });
   setIdle();
   return root;
 }

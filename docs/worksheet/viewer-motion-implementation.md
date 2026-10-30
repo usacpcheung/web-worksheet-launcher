@@ -82,3 +82,41 @@ Synthetic scale checks reuse the 20/100/300-section fixture (20% reading; mixed
 text/MC; 2/10/30 small images). These are local regression spot checks, not evidence
 of low-end-device performance or live provider compatibility. Real-device and VPS
 acceptance remain required before merging the completed candidate.
+
+## Deployed acceptance follow-up — 2026-10-30
+
+The supplied acceptance report verified eleven deployed assets at `16fba040`
+and recorded 59 passing cases, three failures representing one audio-language
+menu clipping defect, two blocked cases and eight untested cases. The report
+is acceptance evidence for that revision, not certification of this follow-up.
+
+Audio menus previously opened downward unconditionally; the browser smoke checked
+horizontal bounds only. Positioning now measures the visual viewport, flips above
+when needed, clamps horizontally and constrains height with scrollable language
+choices. Open-menu scroll/resize observers are disposed on close or shell abort.
+Prompt and option menus retain their existing ownership, dismissal, focus and
+playback behavior. Focus on opening does not scroll the worksheet. Review added
+protection against resetting internal menu scroll during placement. Browser
+regressions cover both locales, top/bottom edges, short screens, open-menu scroll/
+resize and enlarged language rows with the final choice reachable.
+
+The unexplained Q1-to-leading-reading transition during real recording remains
+unresolved. Local synthetic recording investigation in both locales at desktop/
+mobile widths preserves Q1 and capture through 1.8 seconds of idle status updates,
+layout changes and viewport resize, then confirms deliberate scroll departure
+stops capture. No navigation/voice state-machine change is justified by that
+evidence. The follow-up live test must log input events, scroll/focus, section
+identity and operation geometry around one real speech capture and deliberate
+scroll departure. Synthetic capture cannot prove a real microphone/provider path.
+
+Before merge: retest menu placement on the updated deployment; obtain successful
+real transcription and real rewrite after natural scrolling; verify an actual
+hidden-tab/return; use a publishable QA prompt for a fresh publish/open round trip.
+Physical mobile/IME/native zoom/Safari limitations remain explicit. Keep the stack
+open. This follow-up does not change Apache, API, persistence or RolePlayScene.
+
+Local follow-up validation: 1,755 Node tests and all 56 browser smoke scripts
+passed. Final bilingual menu screenshots were inspected. Review covered open/
+close/abort observer cleanup, nested menu scrolling, focus return, viewport edges
+and unchanged audio/voice ownership; no further change was identified after the
+scroll-fallback fix. GitHub CI for the follow-up commit is recorded in the PR.

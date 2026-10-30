@@ -23,7 +23,7 @@ try {
     const blockId='b'+position;
     if(position%5===0)return {blockId,position,kind:'content',content:{text:'Reading section 閱讀資料 '+position+'\n'+('Keep a healthy routine. 保持健康生活。 ').repeat(8)}};
     const inputType=['text','number','boolean','multiple_choice'][(position-1)%4];
-    return {blockId,position,kind:'question',prompt:{text:'How can we maintain a healthy lifestyle? 如何保持健康的生活？ '+position,audioTracks:position===1?tracks:position===2?tracks.slice(0,1):[]},responseConfig:{inputType,maxLength:200,selectionMode:'single',options:['Sleep','Skip meals','Exercise'].map((label,i)=>({id:'o'+i,value:'v'+i,label,audioTracks:i===0?tracks:i===1?tracks.slice(0,1):[]}))}};
+    return {blockId,position,kind:'question',prompt:{text:'How can we maintain a healthy lifestyle? 如何保持健康的生活？ '+position,audioTracks:(position===1||position===6)?tracks:position===2?tracks.slice(0,1):[]},responseConfig:{inputType,maxLength:200,selectionMode:'single',options:['Sleep','Skip meals','Exercise'].map((label,i)=>({id:'o'+i,value:'v'+i,label,audioTracks:i===0?tracks:i===1?tracks.slice(0,1):[]}))}};
    });
    await viewerStorage.attempts.put({localId:'version-c',localAttemptId:'version-c',status:'in_progress',startedAt:now,lastActiveBlockId:'b0',lastActiveIndex:0,viewerPayload:{worksheetId:'fixture',snapshotId:'fixture',snapshotVersion:1,title:'Healthy habits 健康生活',blocks},answers:{b2:{value:0},b3:{value:false}},metadata:{localId:'version-c',origin:'local_source',updatedAt:now}});
   },locale);
@@ -60,6 +60,48 @@ try {
    await chooseViewerSection(page,0);
    assert.equal(await page.evaluate(()=>Boolean(window.viewerSession.activeAudio)),false,'section change stops option playback');
   }
+  // Acceptance regression: menus near either vertical edge must remain reachable.
+  for (const viewport of [{width:1280,height:900},{width:320,height:225}]) {
+   await page.setViewportSize(viewport);
+   for (const [index,kind] of [[6,'question'],[4,'option']]) for (const edge of ['bottom','top']) {
+    await chooseViewerSection(page,index);
+    const root=page.locator(`[data-block-id="b${index}"] .viewer-audio-control--${kind}`).first();
+    const trigger=root.locator('.viewer-audio-control__trigger');
+    await trigger.evaluate((node,edge)=>window.scrollBy(0,node.getBoundingClientRect().top-(edge==='bottom'?innerHeight-104:12)),edge);
+    await trigger.click();
+    const menu=root.locator('.viewer-audio-control__menu');
+    const contained=()=>menu.evaluate(node=>{const r=node.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:innerWidth,height:innerHeight};});
+    let r=await contained();
+    assert(r.top>=0&&r.bottom<=r.height&&r.left>=0&&r.right<=r.width,JSON.stringify({locale,kind,edge,r}));
+    if (shots && edge==='bottom') await page.screenshot({path:`${shots}/audio-menu-${locale}-${kind}-${viewport.width}.png`});
+    await page.evaluate(()=>window.scrollBy(0,10));
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    r=await contained();
+    assert(r.top>=0&&r.bottom<=r.height&&r.left>=0&&r.right<=r.width,JSON.stringify({scrolled:true,locale,kind,edge,r}));
+    // A resize while open must reposition without dismissing or stealing focus.
+    await page.setViewportSize({width:viewport.width,height:viewport.height-30});
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    r=await contained();
+    assert(r.top>=0&&r.bottom<=r.height&&r.left>=0&&r.right<=r.width,JSON.stringify({resized:true,locale,kind,edge,r}));
+    assert(await menu.locator('button').first().evaluate(node=>node===document.activeElement));
+    if (viewport.height===225) {
+     // Enlarged language rows force the constrained-height scrolling fallback.
+     await menu.locator('button').evaluateAll(nodes=>nodes.forEach(node=>node.style.minHeight='100px'));
+     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+     const last=menu.locator('button').last();
+     await last.focus();
+     await menu.evaluate(node=>node.scrollTop=node.scrollHeight);
+     await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+     assert(await menu.evaluate(node=>node.scrollTop>0),'menu scrolling is not reset by positioning');
+     assert(await last.evaluate(node=>{const r=node.getBoundingClientRect(),m=node.parentElement.getBoundingClientRect();return r.bottom<=m.bottom+1;}),'last language is reachable');
+     await menu.locator('button').evaluateAll(nodes=>nodes.forEach(node=>node.style.minHeight=''));
+    }
+    await page.keyboard.press('Escape');
+    assert(await trigger.evaluate(node=>node===document.activeElement));
+    await page.setViewportSize(viewport);
+   }
+  }
+  await chooseViewerSection(page,0);
   for(const viewport of [{width:1280,height:900},{width:390,height:844},{width:320,height:568},{width:740,height:360},{width:640,height:450},{width:320,height:225}]) {
    await page.setViewportSize(viewport);
    if(await page.locator('.viewer-actions-launcher').isVisible()) assert(await page.locator('.viewer-actions-launcher').evaluate(node=>node.getBoundingClientRect().bottom<=innerHeight));

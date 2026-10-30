@@ -1284,6 +1284,9 @@ body {
 }
 
 .viewer-audio-control__menu {
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
