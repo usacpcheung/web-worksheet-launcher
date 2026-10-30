@@ -2006,6 +2006,7 @@ async function buildWorksheetPrintReportModel({
   subject = '',
   checkResult = null,
   storage = null,
+  localAttemptId = 'attempt',
 } = {}) {
   const orderedQuestions = getQuestionBlocksInOrder(viewerPayload);
   const checkedSummary = checkResult
@@ -2017,14 +2018,41 @@ async function buildWorksheetPrintReportModel({
 
   const questions = await Promise.all(orderedQuestions.map(async (block, index) => {
     const learnerValue = answers?.[block.blockId]?.value;
+    const config = block.responseConfig || {};
+    const options = Array.isArray(config.options) ? config.options : [];
+    const displayedOptions = config.shuffleOptions
+      ? deterministicShuffle(options, `${localAttemptId || 'attempt'}:${block.blockId}`)
+      : options;
+    // Resolve printed letters, selected choices and marking details in the same
+    // order the learner saw, without changing the stored payload or answers.
+    const displayBlock = { ...block, responseConfig: { ...config, options: displayedOptions } };
+    const selectedValues = config.selectionMode === 'multi'
+      ? (Array.isArray(learnerValue) ? learnerValue.map(String) : [])
+      : learnerValue == null ? [] : [String(learnerValue)];
+    const choices = config.inputType === 'multiple_choice'
+      ? displayedOptions.map((option, optionIndex) => ({
+        label: String(option.label ?? option.value ?? ''),
+        prefix: getChoicePrefix(optionIndex),
+        selected: selectedValues.includes(String(option.value ?? option.label ?? '')),
+      }))
+      : config.inputType === 'boolean'
+        ? [true, false].map(value => ({ label: value ? 'True' : 'False', booleanValue: String(value),
+          selected: coerceAnswerValueByInputType('boolean', learnerValue) === value }))
+        : [];
     const questionImage = await resolvePrintQuestionImage(getQuestionImageRefForPrint(block), storage);
+    const longChoices = choices.length > 8 || choices.some(choice => choice.label.length > 500)
+      || choices.reduce((length, choice) => length + choice.label.length, 0) > 850;
     const question = {
+      kind: 'question',
       blockId: block.blockId,
       questionNumber: index + 1,
+      typeLabel: questionTypeLabel(block, t),
+      inputType: config.inputType || 'text',
+      choices,
       promptText: String(block?.prompt?.text || ''),
       promptFormat: block?.prompt?.format || 'plain_text',
-      answerText: formatAnswerValueForPrint(block, learnerValue),
-      result: buildPrintQuestionResult(block, checkResult),
+      answerText: formatAnswerValueForPrint(displayBlock, learnerValue),
+      result: buildPrintQuestionResult(displayBlock, checkResult),
       image: questionImage,
     };
     const promptSectionMode = classifyPrintSectionBreakMode({
@@ -2047,14 +2075,24 @@ async function buildWorksheetPrintReportModel({
       : null;
     return {
       ...question,
-      layoutMode: classifyPrintQuestionLayout(question),
+      layoutMode: longChoices ? 'flow' : classifyPrintQuestionLayout(question),
       sectionBreakModes: {
         prompt: promptSectionMode,
-        answer: answerSectionMode,
+        answer: longChoices ? 'flow' : answerSectionMode,
         checkedAnswer: checkedAnswerSectionMode,
       },
     };
   }));
+
+  const questionById = new Map(questions.map(question => [question.blockId, question]));
+  let readingNumber = 0;
+  const sections = [...(viewerPayload?.blocks || [])]
+    .sort((a, b) => a.position - b.position)
+    .flatMap(block => block.kind === 'content' ? [{
+      kind: 'content', blockId: block.blockId,
+      label: t('viewer.navigation.reading', { number: ++readingNumber }),
+      content: block.content || { text: '' },
+    }] : questionById.has(block.blockId) ? [questionById.get(block.blockId)] : []);
 
   return {
     schoolName: normalizeViewerPrintSchoolName(schoolName),
@@ -2064,6 +2102,8 @@ async function buildWorksheetPrintReportModel({
     submittedAtLabel: formatTimestampForReportHeader(submittedAt),
     checkedSummary,
     questions,
+    sections,
+    locale: getLocale(),
   };
 }
 
@@ -2093,7 +2133,12 @@ function buildWorksheetPrintReportHtml(reportModel) {
     `
     : '';
 
-  const questionsHtml = reportModel.questions.map((question) => {
+  const sectionsHtml = (reportModel.sections || reportModel.questions || []).map((question) => {
+    if (question.kind === 'content') return `
+      <article class="print-content" data-block-id="${escapeHtml(question.blockId)}">
+        <p class="print-content-label">${escapeHtml(question.label)}</p>
+        <div class="print-content-text worksheet-text">${renderWorksheetText(question.content)}</div>
+      </article>`;
     const imageHtml = question.image?.status === 'ready' && question.image?.src
       ? `
         <div class="print-question-image-wrap">
@@ -2122,27 +2167,47 @@ function buildWorksheetPrintReportHtml(reportModel) {
       `
       : '';
 
+    const choicesHtml = question.choices?.length ? `
+      <div class="print-choices${question.inputType === 'boolean' ? ' print-choices--boolean' : ''}">
+        ${question.choices.map(choice => `
+          <div class="print-choice${choice.selected ? ' is-selected' : ''}"${choice.booleanValue ? ` data-boolean-value="${escapeHtml(choice.booleanValue)}"` : ''}>
+            ${choice.prefix ? `<span class="print-choice-prefix">${escapeHtml(choice.prefix)}</span>` : ''}
+            <span class="print-choice-label">${escapeHtml(choice.label)}</span>
+            <span class="print-choice-mark" aria-hidden="true">${choice.selected ? '✓' : ''}</span>
+          </div>`).join('')}
+      </div>` : '';
+
     return `
-      <article class="print-question print-question--${escapeHtml(question.layoutMode || 'keep-all')}">
+      <article class="print-question print-question--${escapeHtml(question.layoutMode || 'keep-all')}" data-block-id="${escapeHtml(question.blockId)}">
         <header class="print-question-header">
-          <div class="print-question-number">${escapeHtml(t('viewer.print.questionNumber', { number: question.questionNumber }))}</div>
+          <h2 class="print-question-number" aria-label="${escapeHtml(t('viewer.print.questionNumber', { number: question.questionNumber }))}">
+            <span class="print-question-ordinal" aria-hidden="true">${escapeHtml(String(question.questionNumber).padStart(2, '0'))}</span>
+            <span>${escapeHtml(question.typeLabel || t('viewer.print.questionHeading'))}</span>
+          </h2>
         </header>
+        <div class="print-question-layout">
+        <div class="print-prompt-area">
         <section class="print-question-section print-question-section--prompt print-question-section--${escapeHtml(question.sectionBreakModes?.prompt || 'keep')}">
           <h3>${escapeHtml(t('viewer.print.questionHeading'))}</h3>
           <div class="print-question-text worksheet-text">${renderWorksheetText({ text: question.promptText?.trim() ? question.promptText : t('viewer.print.noPromptProvided'), format: question.promptFormat })}</div>
         </section>
         ${imageSectionHtml}
+        </div>
+        <div class="print-answer-area">
         <section class="print-question-section print-question-section--answer print-question-section--${escapeHtml(question.sectionBreakModes?.answer || 'keep')}">
           <h3>${escapeHtml(t('viewer.print.answerHeading'))}</h3>
-          <p class="print-answer-text">${escapeHtml(t('viewer.print.answerPrefix'))}: ${formatMultilineTextForHtml(question.answerText)}</p>
+          ${choicesHtml}
+          <p class="print-answer-text">${escapeHtml(t('viewer.print.answerPrefix'))} ${formatMultilineTextForHtml(question.answerText)}</p>
         </section>
         ${resultHtml}
+        </div>
+        </div>
       </article>
     `;
   }).join('');
 
   return `<!doctype html>
-<html lang="en">
+<html lang="${escapeHtml(reportModel.locale || 'en')}">
 <head>
   <meta charset="utf-8">
   <title>${escapeHtml(reportModel.title)}</title>
@@ -2160,7 +2225,7 @@ function buildWorksheetPrintReportHtml(reportModel) {
         ${checkedRow}
       </dl>
     </header>
-    ${questionsHtml}
+    ${sectionsHtml}
   </main>
   <script>
     (function () {
@@ -2236,6 +2301,7 @@ async function startWorksheetPrintFlow({
     subject: session.state.sourceSubject,
     checkResult: session.state.checkResult,
     storage: session.storage,
+    localAttemptId: session.state.localAttemptId,
   });
 
   if (
@@ -7131,6 +7197,7 @@ function renderViewerShell(session) {
   bottomBarRoot.innerHTML = '';
   app.append(shell, detailsModal);
   const navigation = createWorksheetNavigation({ t, signal, operationPanel: crossQuestionStatus.root,
+    utilityActions: headerActions, utilityHome: headerTop,
     actions: { previous: prevBtn, next: nextBtn, save: saveBtn, submit: completeBtn, check: checkBtn },
     navigate: index => navigateToBlockIndex(index),
   });

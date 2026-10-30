@@ -33,6 +33,24 @@ try {
   assert.equal(await page.locator('.viewer-section-label').count(),20);
   assert.deepEqual(await page.locator('.viewer-section-label').allTextContents(),Array.from({length:20},(_,i)=>i%5===0?(locale==='en'?`Reading ${i/5+1}`:`閱讀 ${i/5+1}`):(locale==='en'?`Question ${i-Math.floor(i/5)}`:`第 ${i-Math.floor(i/5)} 題`)));
   assert.equal(await page.locator('.viewer-progress-count').innerText(),locale==='en'?'Answered 2/16':'已作答 2/16');
+  const utilities=page.locator('.viewer-header-actions');
+  await utilities.evaluate(node=>{window.originalUtilities=node;window.originalLanguageTrigger=node.querySelector('summary');});
+  assert(await utilities.evaluate(node=>node.parentElement.matches('.viewer-action-panel')));
+  assert(await utilities.evaluate(node=>node.getBoundingClientRect().bottom<document.querySelector('.viewer-progress-ring').getBoundingClientRect().top));
+  const utilityBounds=await utilities.locator(':scope > button:visible, :scope > details > summary').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {top:r.top,width:r.width,height:r.height};}));
+  assert.equal(utilityBounds.length,4);
+  assert(utilityBounds.every(r=>r.width===40&&r.height===40&&Math.abs(r.top-utilityBounds[0].top)<1));
+  await utilities.locator('summary').click();
+  assert(await utilities.locator('.language-selector__menu').evaluate(node=>{
+   const r=node.getBoundingClientRect(),panel=node.closest('.viewer-action-panel').getBoundingClientRect();
+   return r.left>=panel.left&&r.right<=panel.right&&r.bottom<=panel.bottom;
+  }),'desktop language menu is not clipped by the action rail');
+  await utilities.locator('.language-selector__option').filter({hasText:locale==='en'?'English':'繁體中文'}).click();
+  await utilities.locator('summary').focus();
+  await page.setViewportSize({width:390,height:844});
+  await page.waitForFunction(()=>window.originalUtilities.parentElement.matches('.viewer-header-top')&&document.activeElement===window.originalLanguageTrigger);
+  await page.setViewportSize({width:1280,height:900});
+  await page.waitForFunction(()=>window.originalUtilities.parentElement.matches('.viewer-action-panel')&&document.activeElement===window.originalLanguageTrigger);
   assert.deepEqual(await page.locator('.viewer-question-number').allTextContents(),Array.from({length:16},(_,i)=>String(i+1).padStart(2,'0')));
   assert.equal(await page.locator('.viewer-answer-area .viewer-question-heading').count(),0,'question identity stays with the prompt, outside the answer area');
   assert.equal(await page.locator('[data-block-id="b4"] .viewer-question-kind').innerText(),locale==='en'?'Single choice':'單項選擇');
@@ -126,6 +144,11 @@ try {
    const current=await page.evaluate(()=>window.viewerSession.state.lastActiveBlockId);
    await page.locator('.viewer-browse').click();
    assert.equal(await page.locator('dialog[open]').count(),1);
+   assert(await page.locator('.viewer-chooser__close').evaluate(button=>{
+    const b=button.getBoundingClientRect(),icon=button.querySelector('svg').getBoundingClientRect();
+    return b.width===40&&b.height===40&&Math.abs((b.left+b.right)-(icon.left+icon.right))<1
+     &&Math.abs((b.top+b.bottom)-(icon.top+icon.bottom))<1;
+   }),'chooser SVG close icon is centered in its circular button');
    const backgroundScroll = await page.evaluate(()=>scrollY);
    await page.mouse.move(1,1);
    await page.mouse.wheel(0,1200);
@@ -158,7 +181,9 @@ try {
    await page.evaluate(()=>window.viewerSession.notifyStateChange());
    assert.deepEqual(await first.boundingBox(),before);
    if(shots)await page.screenshot({path:`${shots}/chooser-${locale}-${viewport.width}-${viewport.height}.png`});
-   await page.keyboard.press('Escape');
+   await page.locator('.viewer-chooser__close').click();
+   assert.equal(await page.locator('dialog[open]').count(),0);
+   assert(await page.evaluate(()=>document.activeElement.matches('.viewer-browse,.viewer-actions-launcher')));
   }
   // Enlarged text uses measured row heights; resize keeps the focused item.
   await page.setViewportSize({width:390,height:844});
@@ -187,7 +212,7 @@ try {
   await page.locator('.viewer-browse').click();
   assert(await page.locator('[data-section-index="19"]').evaluate(node=>!node.hidden&&node===document.activeElement));
   await page.keyboard.press('Escape');
-  await clickViewerAction(page,locale==='en'?'Previous section':'上一節');
+  await clickViewerAction(page,locale==='en'?'Previous':'上一節');
   assert.equal(await page.evaluate(()=>window.viewerSession.state.lastActiveBlockId),'b18');
   await clickViewerAction(page,locale==='en'?'Save':'儲存');
   await page.waitForFunction(()=>!window.viewerSession.state.autosavePending);

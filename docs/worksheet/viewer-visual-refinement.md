@@ -38,8 +38,10 @@ layout measurements changed.
 No answer, playback, transcription, rewrite, navigation, progress, persistence,
 authentication or submission logic changes. Motion triggers and the reading-line
 model are unchanged. No editor or RolePlayScene styles or shared voice helpers
-are changed. The new locale entries are viewer captions only. Printing omits
-the decorative background; the existing generated report flow is unchanged.
+are changed. Locale changes are limited to viewer captions and the approved shorter English
+Previous/Next labels. Printing omits the decorative background; the popup and
+completion requirement remain intact. The separately approved print-body expansion
+is recorded below.
 
 ## Review and verification
 
@@ -92,3 +94,55 @@ Validation:
 This is local Chromium evidence, not live microphone/provider, physical-device,
 IME or Safari acceptance. The PR remains open; this work does not deploy the VPS
 or merge the stack. Outstanding deployment acceptance from PR #335 still applies.
+
+
+## Follow-up: utilities, chooser close and worksheet printing
+
+The user approved moving the desktop utilities above the progress ring, shortening
+English navigation to Previous/Next, and printing reading/content blocks together
+with student answers in worksheet order. The chooser close icon was also reported
+as incorrectly rendered.
+
+- The same live utility elements move between the desktop rail and mobile header;
+  their handlers, state, accessible names and focus survive responsive changes.
+  Four normal utilities fit one compact row. Conditional print/cancel actions
+  remain available and may use another row.
+- The chooser uses a centered, font-independent SVG close icon inside its existing
+  40px button. Its accessible name, closing action and focus return are preserved.
+- The printed body now follows the worksheet's mixed section order, with content
+  formatting, question images, margin numbers, type captions, choice surfaces and
+  student answers. Reading blocks do not consume question numbers. Student/school
+  metadata and existing checking results remain present.
+- Printed option letters and selections use the same deterministic shuffle seed
+  as the live attempt; stored values and payloads are unchanged. Zero, False,
+  unanswered values, literal answer text and escaped content remain distinguishable.
+- Short questions use prompt/answer columns. Long questions and answers flow across
+  pages. Both locales retain the bundled font, and interactive chrome stays out of
+  the report. No save/submission or print-window lifecycle change was introduced.
+
+Review corrected a language-selector layout gap that initially wrapped the fourth
+utility onto another row, and a duplicate colon in the existing printed answer
+prefix. Follow-up review checked responsive focus, selector scope, option identity,
+HTML escaping, empty/content-only worksheets and long-content pagination.
+
+Validation for this follow-up:
+
+- Node suite: 1,757 tests, including mixed-section printing and long-choice layout.
+- All six final browser smokes passed: Version C, continuous navigation, completed
+  review, voice, worksheet printing and Markdown. They cover both locales,
+  desktop/mobile utility placement, retained
+  focus, language-menu bounds, chooser icon geometry and actual close behavior.
+- A new print smoke exercises the real completed-attempt print popup with local
+  fixtures, verifies section order, image loading, shuffled choices, zero/False,
+  unanswered fields and unchanged answers, and generates A4 PDFs in both locales.
+- PDF text extraction verified all 80 reading paragraphs, all 65 answer lines and
+  final section markers across nine pages per locale. Rendered PDF pages and fresh
+  desktop/mobile/chooser screenshots were inspected.
+- Playwright request interception stalled CSS imports in the generated popup;
+  disabling fixture interception after viewer loading resolved this test-only
+  problem. Production popup code was not changed to accommodate the fixture.
+
+The final review found no further issue requiring a fix.
+
+These checks use local synthetic data and Chromium. Native print-dialog behavior,
+physical printing and VPS acceptance still require the user's local session.

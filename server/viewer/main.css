@@ -2833,6 +2833,9 @@ body:has(.viewer-shell--continuous) #app {
 }
 
 .viewer-navigation .viewer-chooser__close {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
   flex:none;
   width:40px;
   min-height:40px;
@@ -2842,6 +2845,11 @@ body:has(.viewer-shell--continuous) #app {
   background:#edf5ff;
   border-radius:50%;
   font-size:1.5rem;
+}
+
+.viewer-chooser__close svg {
+  display:block;
+  flex:none;
 }
 
 .viewer-chooser__location {
@@ -3139,6 +3147,49 @@ body:has(.viewer-shell--continuous) #app {
   height:22px;
   display:block;
   margin:auto;
+}
+
+/* Desktop worksheet utilities share the action rail; mobile retains the header. */
+.viewer-action-panel .viewer-header-actions {
+  flex-wrap:wrap;
+  justify-content:center;
+  gap:8px;
+  margin-bottom:10px;
+  padding:4px 3px;
+}
+
+.viewer-action-panel .viewer-header-icon-btn {
+  width:40px;
+  height:40px;
+  min-width:40px;
+  min-height:40px;
+  padding:0;
+  border-radius:50%;
+  background:#f8fbff;
+  border-color:#dce6f5;
+  color:#4a607f;
+}
+
+.viewer-action-panel .viewer-header-icon-btn:is(:hover, :focus-visible) {
+  transform:none;
+}
+
+.viewer-action-panel .language-selector__menu {
+  left:0;
+  right:auto;
+  width:184px;
+  min-width:0;
+}
+
+.viewer-action-panel .language-selector--icon {
+  display:block;
+  flex:0 0 40px;
+  width:40px;
+}
+
+.viewer-action-panel .language-selector__option {
+  border:0;
+  text-align:left;
 }
 
 .viewer-navigation .viewer-progress-ring .viewer-book-icon {
