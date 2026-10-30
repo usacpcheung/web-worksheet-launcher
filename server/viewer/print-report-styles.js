@@ -241,7 +241,23 @@ export const PRINT_REPORT_CSS = `
       word-break: break-word;
     }
 
-    .print-question-text { font-size: 14pt; font-weight: 450; line-height: 1.55; overflow-wrap: anywhere; }
+    .print-question-text { font-size: 12pt; font-weight: 450; line-height: 1.65; overflow-wrap: anywhere; }
+
+    /* Same prompt hierarchy at the print base size. */
+    .print-question-text.worksheet-text :is(h2, h3, h4, h5, h6) {
+      font-weight:600;
+      line-height:1.3;
+      margin:.9em 0 .3em;
+    }
+    .print-question-text.worksheet-text h2 { font-size:1.35em; }
+    .print-question-text.worksheet-text h3 { font-size:1.18em; }
+    .print-question-text.worksheet-text h4 { font-size:1.08em; }
+    .print-question-text.worksheet-text :is(h5, h6) { font-size:1em; }
+    .print-question-text.worksheet-text strong { font-weight:700; }
+    .print-question-text.worksheet-text :is(ul, ol) { margin:.55em 0; padding-inline-start:1.5em; }
+    .print-question-text.worksheet-text li + li { margin-top:.25em; }
+    .print-question-text.worksheet-text blockquote { margin:.6em 0; padding-inline-start:.8em; border-color:#b7cce6; }
+    .print-question-text.worksheet-text > :first-child { margin-top:0; }
 
     .print-question-image-wrap {
       margin-top: 0;

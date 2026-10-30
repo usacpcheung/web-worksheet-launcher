@@ -171,3 +171,30 @@ continuous navigation, entry motion, voice, worksheet printing and Markdown).
 Desktop/mobile chooser and worksheet screenshots and printed PDF pages were
 inspected. Both nine-page PDFs still contain all 80 reading paragraphs and all
 65 answer lines. Final review found no further issue requiring a fix.
+
+
+## Follow-up: structured question typography
+
+Approved question-prompt mapping: body text is 1.375rem (22px at the default root)
+on desktop and 1.25rem (20px) in the existing narrow/short viewport layout, with
+1.65 line height. Headings h2–h6 use relative sizes 1.35, 1.18, 1.08, 1 and 1em,
+weight 600 and 1.3 line height. Bold remains 700; italic keeps its semantic style.
+Lists and quotations retain body size, with hanging list indentation, small
+inter-item gaps and a subtle quote border. The first element has no extra top
+margin. Authored paragraph breaks are preserved without additional paragraph
+margins. Print uses the same hierarchy from a 12pt prompt base.
+
+The existing bundled fonts remain. These rules are scoped to viewer prompts and
+printed prompts; content blocks, editor preview styles, shared Markdown parsing,
+format support and literal learner answers are unchanged. Text length does not
+change font size. Responsive rem sizing preserves enlarged-text support.
+
+Review covered CSS precedence over shared Markdown and print section headings,
+relative sizes, list numbering, mixed Chinese/English wrapping, heading/bold
+weights, first-element spacing and selector scope. The expanded Markdown smoke
+exercises all supported heading levels, paragraphs, both list forms, quotations,
+bold and italic in both locales at desktop/mobile widths and in generated print
+output. All 1,757 Node tests and six browser smokes passed (Markdown, Version C,
+continuous navigation, entry motion, voice and worksheet printing). Screenshots
+were inspected for desktop, mobile and print. Follow-up review found no issue
+requiring a fix. VPS deployment and native printing are not claimed.
