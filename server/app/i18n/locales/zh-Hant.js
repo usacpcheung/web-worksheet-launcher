@@ -656,6 +656,14 @@ export default {
     }
   },
   "viewer": {
+    questionTypes: {
+      shortText: '短答題',
+      longText: '文字作答',
+      number: '數字題',
+      boolean: '是非題',
+      singleChoice: '單項選擇',
+      multipleChoice: '多項選擇',
+    },
     navigation: {
       "actions": "工作紙操作",
       "browse": "瀏覽工作紙",

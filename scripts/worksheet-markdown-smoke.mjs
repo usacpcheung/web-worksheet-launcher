@@ -136,7 +136,7 @@ try {
       plain.remove(); return result;
     });
     assert.deepEqual(typography.plain, typography.markdown, 'Legacy and Markdown prompts share typography');
-    assert.equal(typography.markdown[2], '500');
+    assert.equal(typography.markdown[2], '450');
     assert.equal(typography.bold, '700'); assert.equal(typography.heading, '700');
     await page.locator('.viewer-answer-area > textarea:not(.question-card__review-status)').fill('**Literal learner answer**');
     await page.evaluate(() => window.viewerSession.completeLocalAttempt());

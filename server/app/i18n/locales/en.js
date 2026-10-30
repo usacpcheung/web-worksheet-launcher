@@ -656,6 +656,14 @@ export default {
     }
   },
   "viewer": {
+    questionTypes: {
+      shortText: 'Short answer',
+      longText: 'Written answer',
+      number: 'Number',
+      boolean: 'True / False',
+      singleChoice: 'Single choice',
+      multipleChoice: 'Multiple choice',
+    },
     navigation: {
       "actions": "Worksheet actions",
       "browse": "Browse worksheet",

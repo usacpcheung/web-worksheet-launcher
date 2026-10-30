@@ -33,6 +33,9 @@ try {
   assert.equal(await page.locator('.viewer-section-label').count(),20);
   assert.deepEqual(await page.locator('.viewer-section-label').allTextContents(),Array.from({length:20},(_,i)=>i%5===0?(locale==='en'?`Reading ${i/5+1}`:`閱讀 ${i/5+1}`):(locale==='en'?`Question ${i-Math.floor(i/5)}`:`第 ${i-Math.floor(i/5)} 題`)));
   assert.equal(await page.locator('.viewer-progress-count').innerText(),locale==='en'?'Answered 2/16':'已作答 2/16');
+  assert.deepEqual(await page.locator('.viewer-question-number').allTextContents(),Array.from({length:16},(_,i)=>String(i+1).padStart(2,'0')));
+  assert.equal(await page.locator('.viewer-answer-area .viewer-question-heading').count(),0,'question identity stays with the prompt, outside the answer area');
+  assert.equal(await page.locator('[data-block-id="b4"] .viewer-question-kind').innerText(),locale==='en'?'Single choice':'單項選擇');
   // Equal answer surfaces, reserved audio column, single/multi track size parity.
   const sizes=await page.locator('[data-block-id="b4"] .choice-button-group__row').evaluateAll(rows=>rows.map(r=>({answer:r.firstElementChild.getBoundingClientRect().width,audio:r.querySelector('.viewer-audio-control__trigger')?.getBoundingClientRect().width})));
   assert(sizes.every(r=>Math.abs(r.answer-sizes[0].answer)<1));
@@ -43,7 +46,21 @@ try {
   for (const width of [1280,320]) {
    await page.setViewportSize({width,height:900});
    await chooseViewerSection(page,1);
+   const geometry=await page.locator('[data-block-id="b1"]').evaluate(section=>{
+    const bounds=selector=>section.querySelector(selector).getBoundingClientRect();
+    const number=bounds('.viewer-question-number'), heading=bounds('.viewer-question-heading'), prompt=bounds('.question-card__prompt-row');
+    return {numberLeft:number.left,numberRight:number.right,headingLeft:heading.left,headingBottom:heading.bottom,promptTop:prompt.top,overflow:document.documentElement.scrollWidth-innerWidth};
+   });
+   assert(geometry.numberLeft>=0&&geometry.numberRight<=geometry.headingLeft&&geometry.headingBottom<=geometry.promptTop&&geometry.overflow<=0,JSON.stringify(geometry));
+   if(width===320) assert(await page.evaluate(()=>{
+    const edge=document.querySelector('.viewer-actions-launcher').getBoundingClientRect().left;
+    return [...document.querySelectorAll('.viewer-answer-area > input, .viewer-answer-area > textarea, .choice-button-group__item, .boolean-segmented-control')]
+     .filter(node=>!node.hidden).every(node=>node.getBoundingClientRect().right<=edge-4);
+   }),'answer controls retain clearance from the floating launcher throughout scrolling');
    const prompt=page.locator('[data-block-id="b1"] .viewer-audio-control--question');
+   assert.equal(await prompt.locator('.viewer-audio-control__trigger').innerText(),'','prompt playback stays icon-only');
+   const audioDimensions=await page.locator('[data-block-id="b1"] .viewer-audio-control__trigger, [data-block-id="b2"] .viewer-audio-control__trigger, [data-block-id="b4"] .viewer-audio-control__trigger').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return [r.width,r.height];}));
+   assert(audioDimensions.every(([w,h])=>w===50&&h===44),'single/multiple prompt and option audio keep the same compact size');
    await prompt.locator('button').first().click();
    assert(await prompt.locator('.viewer-audio-control__menu').evaluate(node=>{const r=node.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;}),'prompt language menu stays within viewport');
    assert.equal(await prompt.locator('.viewer-audio-control__menu-item').count(),2);

@@ -2355,13 +2355,18 @@ input[type='text']::placeholder {
 /* Version C worksheet presentation. Start/browse screens retain their layout. */
 body:has(.viewer-shell--continuous) {
   background:#f1f7ff;
+  background-image:url('./worksheet-atmosphere.svg');
+  background-repeat:no-repeat;
+  background-position:right top;
+  background-size:min(700px, 55vw) 100vh;
+  background-attachment:fixed;
   color:#20344d;
   padding-bottom:0;
 }
 
 body:has(.viewer-shell--continuous) #app {
   max-width:1360px;
-  padding:40px 280px 120px 32px;
+  padding:40px 260px 120px 44px;
   box-sizing:border-box;
 }
 
@@ -2371,19 +2376,28 @@ body:has(.viewer-shell--continuous) #app {
   --viewer-tint:#edf5ff;
   gap:0;
   background:white;
-  border-radius:20px;
+  border-radius:0;
 }
 
 .viewer-shell--continuous .viewer-header {
   background:transparent;
   border:0;
   box-shadow:none;
-  padding:40px 32px 32px;
+  padding:48px 54px 40px 124px;
 }
 
 .viewer-shell--continuous .viewer-header h1 {
   color:#20344d;
+  font-size:clamp(2.5rem, 5vw, 4rem);
+  font-weight:500;
+  line-height:1.2;
   overflow-wrap:anywhere;
+}
+
+.viewer-shell--continuous .viewer-header .viewer-header-icon-btn:not(.viewer-back-to-editor) {
+  border-radius:50%;
+  background:#f8fbff;
+  border-color:#e0e8f5;
 }
 
 .viewer-shell--continuous .viewer-section {
@@ -2395,12 +2409,13 @@ body:has(.viewer-shell--continuous) #app {
   padding-bottom:160px;
   background:#fff;
   border:0;
-  border-radius:0 0 20px 20px;
+  border-radius:0;
 }
 
 .viewer-shell--continuous .viewer-block-section {
   border-bottom:1px solid var(--viewer-line);
   padding:0;
+  margin:0 54px;
 }
 
 .viewer-shell--continuous .viewer-block-section:last-child {
@@ -2413,7 +2428,7 @@ body:has(.viewer-shell--continuous) #app {
   border-radius:0;
   box-shadow:none;
   background:transparent;
-  padding:42px 32px;
+  padding:52px 0 56px 70px;
   margin:0;
   min-width:0;
   overflow-wrap:anywhere;
@@ -2421,8 +2436,8 @@ body:has(.viewer-shell--continuous) #app {
 
 .viewer-shell--continuous .question-card {
   display:grid;
-  grid-template-columns:minmax(0, .9fr) minmax(0, 1.1fr);
-  gap:20px 32px;
+  grid-template-columns:minmax(0, 1fr) minmax(0, 1fr);
+  gap:28px 40px;
   align-items:start;
 }
 
@@ -2432,6 +2447,27 @@ body:has(.viewer-shell--continuous) #app {
   color:#256ac4;
   font-size:.9rem;
   font-weight:600;
+}
+
+.viewer-question-heading {
+  position:relative;
+  grid-column:1/-1;
+  color:var(--viewer-blue);
+  font-size:.8125rem;
+  font-weight:500;
+  line-height:1.5;
+}
+
+.viewer-question-number {
+  position:absolute;
+  top:-9px;
+  right:calc(100% + 36px);
+  font-size:2.5rem;
+  font-weight:400;
+  line-height:1.2;
+  letter-spacing:-.04em;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
 }
 
 .viewer-shell--continuous .content-card .viewer-section-label {
@@ -2449,9 +2485,9 @@ body:has(.viewer-shell--continuous) #app {
 
 .viewer-shell--continuous .question-card__prompt-label {
   color:#20344d;
-  font-size:clamp(1.25rem, 1.8vw, 1.65rem);
-  font-weight:500;
-  line-height:1.65;
+  font-size:clamp(1.625rem, 2.15vw, 2rem);
+  font-weight:450;
+  line-height:1.55;
 }
 
 .viewer-shell--continuous .viewer-question-image-wrap {
@@ -2468,8 +2504,62 @@ body:has(.viewer-shell--continuous) #app {
 }
 
 .viewer-shell--continuous .content-card {
-  font-size:1.1rem;
+  font-size:1rem;
   line-height:1.9;
+}
+
+.viewer-shell--continuous .content-card :is(h2, h3, h4) {
+  font-weight:500;
+  line-height:1.5;
+}
+
+.viewer-shell--continuous .viewer-answer-area > .muted {
+  margin:0;
+  color:#526985;
+  font-size:.875rem;
+  line-height:1.75;
+}
+
+.viewer-shell--continuous .question-card__text-actions-row {
+  flex-direction:column;
+  align-items:flex-start;
+  gap:14px;
+}
+
+.viewer-shell--continuous .question-card__rewrite-row {
+  display:flex;
+  width:auto;
+  justify-content:flex-start;
+}
+
+.viewer-shell--continuous .question-card__rewrite-row .icon-nav-btn {
+  min-width:0;
+  max-width:100%;
+  padding:10px 12px;
+  border:1px solid #d8e4ef;
+  border-radius:9px;
+  background:#f3f8fc;
+  color:#426184;
+  font-size:.8125rem;
+  font-weight:400;
+  white-space:normal;
+  overflow-wrap:anywhere;
+}
+
+.viewer-shell--continuous .question-card__rewrite-row .icon-nav-btn:disabled {
+  opacity:1;
+  color:#8493a5;
+  background:#f2f5f9;
+  border-color:#e4ebf2;
+}
+
+.viewer-shell--continuous .question-card__text-footer {
+  gap:12px;
+}
+
+.viewer-shell--continuous .question-card__text-footer :is(.text-counter, .question-card__rewrite-hint, .question-card__rewrite-error) {
+  font-size:.8125rem;
+  line-height:1.65;
 }
 
 .viewer-shell--continuous .question-card input,
@@ -2529,6 +2619,14 @@ body:has(.viewer-shell--continuous) #app {
   min-height:44px;
   padding:0;
   border-radius:10px;
+  background:#fff;
+  border-color:#d5e1f2;
+  color:#256ac4;
+}
+
+.viewer-shell--continuous .viewer-audio-control.is-playing .viewer-audio-control__trigger {
+  background:#e6efff;
+  border-color:#256ac4;
 }
 
 .viewer-shell--continuous .viewer-audio-control__menu {
@@ -2562,7 +2660,7 @@ body:has(.viewer-shell--continuous) #app {
   max-height:max(44px, calc(100dvh - 48px - var(--viewer-operation-clearance, 0px)));
   overflow-y:auto;
   box-sizing:border-box;
-  width:212px;
+  width:190px;
   padding:12px 0;
   border:0;
   border-radius:22px;
@@ -2570,12 +2668,13 @@ body:has(.viewer-shell--continuous) #app {
   display:flex;
   flex-direction:column;
   align-items:stretch;
-  gap:16px;
+  gap:10px;
   z-index:40;
 }
 
 .viewer-navigation button {
   font:inherit;
+  font-size:.875rem;
   cursor:pointer;
   transition:background-color 150ms, border-color 150ms, box-shadow 150ms;
   color:#256ac4;
@@ -2603,30 +2702,41 @@ body:has(.viewer-shell--continuous) #app {
   justify-content:center;
   align-items:center;
   gap:4px;
-  width:132px;
-  height:132px;
+  width:94px;
+  height:94px;
+  flex-shrink:0;
   border:0;
   border-radius:50%;
   background:radial-gradient(closest-side, white 87%, transparent 89%), conic-gradient(#256ac4 var(--answered-angle, 0deg), #dce6f5 0);
 }
 
 .viewer-progress-ring__label {
-  font-size:.85rem;
+  font-size:.7rem;
 }
 
 .viewer-progress-ring__value {
-  font-size:2.4rem;
+  font-size:1.8rem;
   font-weight:500;
   line-height:1.2;
 }
 
 .viewer-progress-count, .viewer-current-section {
-  font-size:.85rem;
+  font-size:.75rem;
   color:#526985;
   text-align:center;
   line-height:1.5;
   margin:0;
   overflow-wrap:anywhere;
+}
+
+/* The ring retains the same full position/progress name for assistive technology. */
+.viewer-action-panel > .viewer-current-section {
+  position:absolute;
+  width:1px;
+  height:1px;
+  overflow:hidden;
+  clip-path:inset(50%);
+  white-space:nowrap;
 }
 
 .viewer-section-actions, .viewer-primary-actions {
@@ -2690,11 +2800,11 @@ body:has(.viewer-shell--continuous) #app {
   position:fixed;
   inset:0;
   margin:auto;
-  width:min(540px, calc(100vw - 24px));
+  width:min(520px, calc(100vw - 24px));
   max-width:none;
   max-height:none;
   height:fit-content;
-  padding:24px;
+  padding:26px;
   border:1px solid #dce6f5;
   border-radius:24px;
   color:#20344d;
@@ -2704,6 +2814,7 @@ body:has(.viewer-shell--continuous) #app {
 
 .viewer-navigation dialog::backdrop {
   background:#20365755;
+  backdrop-filter:blur(5px);
 }
 
 .viewer-chooser__header {
@@ -2714,7 +2825,8 @@ body:has(.viewer-shell--continuous) #app {
 }
 
 .viewer-chooser__header h2 {
-  font-size:1.4rem;
+  font-size:1.5rem;
+  font-weight:500;
   line-height:1.4;
   margin:0;
 }
@@ -2735,7 +2847,9 @@ body:has(.viewer-shell--continuous) #app {
   font-size:.85rem;
   color:#526985;
   line-height:1.5;
-  margin:12px 0;
+  margin:14px 0 20px;
+  padding-bottom:18px;
+  border-bottom:1px solid #e6edf8;
 }
 
 .viewer-chooser__list {
@@ -2771,6 +2885,7 @@ body:has(.viewer-shell--continuous) #app {
   flex:0 0 24px;
   font-size:1.15rem;
   text-align:center;
+  font-variant-numeric:tabular-nums;
 }
 
 .viewer-chooser__words {
@@ -2784,7 +2899,7 @@ body:has(.viewer-shell--continuous) #app {
   -webkit-box-orient:vertical;
   overflow:hidden;
   overflow-wrap:anywhere;
-  font-size:.95rem;
+  font-size:.875rem;
   line-height:1.5;
   color:#20344d;
 }
@@ -2826,6 +2941,13 @@ body:has(.viewer-shell--continuous) #app {
 }
 
 @media (hover:hover) and (pointer:fine) {
+  .viewer-shell--continuous :is(.question-card__rewrite-row .icon-nav-btn, .viewer-audio-control__trigger):hover:not(:disabled) {
+  background-color:#edf5ff;
+  border-color:#8eb2e5;
+  box-shadow:0 2px 8px #294da112;
+  transform:none;
+}
+
   .viewer-navigation button:hover:not(:disabled) {
   background-color:#edf5ff;
   border-color:#256ac4;
@@ -2849,7 +2971,7 @@ body:has(.viewer-shell--continuous) #app {
 
 @media (max-width:900px), (max-height:650px) {
   body:has(.viewer-shell--continuous) #app {
-  padding:24px 20px 100px;
+  padding:24px 52px 100px 20px;
 }
 
   .viewer-navigation .viewer-actions-launcher {
@@ -2864,7 +2986,7 @@ body:has(.viewer-shell--continuous) #app {
 }
 
   .viewer-shell--continuous .viewer-header {
-  padding:28px 24px;
+  padding:32px 24px 32px 54px;
 }
 
   .viewer-shell--continuous .question-card {
@@ -2877,7 +2999,17 @@ body:has(.viewer-shell--continuous) #app {
 }
 
   .viewer-shell--continuous .question-card, .viewer-shell--continuous .content-card {
-  padding:28px 24px;
+  padding:36px 0 40px 36px;
+}
+
+  .viewer-shell--continuous .viewer-block-section {
+  margin-inline:24px;
+}
+
+  .viewer-question-number {
+  right:calc(100% + 12px);
+  top:-5px;
+  font-size:1.875rem;
 }
 
   .viewer-shell--continuous .viewer-operation-panel {
@@ -2891,15 +3023,37 @@ body:has(.viewer-shell--continuous) #app {
 
 @media (max-width:600px) {
   body:has(.viewer-shell--continuous) #app {
-  padding:20px 44px 100px 12px;
+  padding:20px 12px 100px;
+}
+
+  .viewer-shell--continuous .viewer-header {
+  padding:32px 44px 32px 20px;
+}
+
+  .viewer-shell--continuous .viewer-header h1 {
+  font-size:2.25rem;
+}
+
+  .viewer-shell--continuous .viewer-block-section {
+  margin-inline:20px 40px;
 }
 
   .viewer-shell--continuous .question-card, .viewer-shell--continuous .content-card {
-  padding:24px 16px;
+  padding:36px 0 40px 18px;
+}
+
+  .viewer-question-number {
+  font-size:1.5rem;
+  right:calc(100% + 8px);
+  top:-5px;
+}
+
+  .viewer-question-heading {
+  font-size:.75rem;
 }
 
   .viewer-shell--continuous .question-card__prompt-label {
-  font-size:1.25rem;
+  font-size:1.5625rem;
 }
 
   .viewer-shell--continuous .choice-button-group__row {
@@ -2924,6 +3078,7 @@ body:has(.viewer-shell--continuous) #app {
 
   .viewer-chooser__location {
   margin:4px 0;
+  padding-bottom:4px;
   font-size:.75rem;
 }
 
@@ -2951,6 +3106,10 @@ body:has(.viewer-shell--continuous) #app {
 }
 
 @media print {
+  body:has(.viewer-shell--continuous) {
+  background:#fff;
+}
+
   .viewer-navigation, .viewer-operation-panel {
   display:none!important;
 }

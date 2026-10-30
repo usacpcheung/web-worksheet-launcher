@@ -18,7 +18,7 @@ import { createVoiceControls, createVoiceStatus } from './answer-voice-ui.js';
 import { createWorksheetViewHost, createBlockViewScope } from './block-view-host.js';
 import { createEntryMotion } from './entry-motion.js';
 import { createSectionNavigation } from './section-navigation.js';
-import { createWorksheetNavigation, describeSections, isAnsweredValue } from './worksheet-navigation.js';
+import { createWorksheetNavigation, describeSections, isAnsweredValue, questionTypeLabel } from './worksheet-navigation.js';
 import { viewerStorage } from './storage/index.js';
 import { mapSnapshotToViewerPayload } from '../app/contracts/mappers.js';
 import { validateViewerPayloadSchema } from '../app/contracts/validators.js';
@@ -6265,6 +6265,7 @@ function renderViewerShell(session) {
   };
 
   let sectionLabels = new Map();
+  let sectionNumbers = new Map();
   const getBlockPresentation = (currentBlock) => {
     const currentBlockCheckStatus = currentBlock?.blockId
       ? session.state.checkResult?.statusByBlockId?.[currentBlock.blockId]
@@ -6321,9 +6322,20 @@ function renderViewerShell(session) {
     const card = document.createElement('article');
     card.className = 'question-card viewer-card-transition';
     const sectionLabel = document.createElement('h3');
-    sectionLabel.className = 'viewer-section-label';
+    sectionLabel.className = 'viewer-section-label viewer-sr-only';
     sectionLabel.textContent = sectionLabels.get(block.blockId);
     card.append(sectionLabel);
+    const questionHeading = document.createElement('div');
+    questionHeading.className = 'viewer-question-heading';
+    const questionNumber = document.createElement('span');
+    questionNumber.className = 'viewer-question-number';
+    questionNumber.setAttribute('aria-hidden', 'true');
+    questionNumber.textContent = String(sectionNumbers.get(block.blockId)).padStart(2, '0');
+    const questionKind = document.createElement('span');
+    questionKind.className = 'viewer-question-kind';
+    questionKind.textContent = questionTypeLabel(block, t);
+    questionHeading.append(questionNumber, questionKind);
+    card.append(questionHeading);
     const label = document.createElement('div');
     label.className = 'question-card__prompt-label';
     const inputType = block.responseConfig?.inputType || 'text';
@@ -6738,7 +6750,7 @@ function renderViewerShell(session) {
     const answerArea = document.createElement('div');
     answerArea.className = 'viewer-answer-area';
     for (const child of [...card.children]) {
-      if (child !== sectionLabel && child !== promptRow && !child.classList.contains('viewer-question-image-wrap')) answerArea.append(child);
+      if (child !== sectionLabel && child !== questionHeading && child !== promptRow && !child.classList.contains('viewer-question-image-wrap')) answerArea.append(child);
     }
     card.append(answerArea);
 
@@ -6927,7 +6939,9 @@ function renderViewerShell(session) {
     crossQuestionStatus.update(currentBlock.blockId);
     crossQuestionStatus.root.hidden = !session.voice.active;
     blockHeading.textContent = t('viewer.navigation.browse');
-    sectionLabels = new Map(describeSections(orderedBlocks, t).map(item => [item.id, item.label]));
+    const sectionDescriptions = describeSections(orderedBlocks, t);
+    sectionLabels = new Map(sectionDescriptions.map(item => [item.id, item.label]));
+    sectionNumbers = new Map(sectionDescriptions.map(item => [item.id, item.number]));
     blockViewHost.update(orderedBlocks, currentBlock.blockId);
 
     const summary = computeAnswerSummary(session.state.viewerPayload, session.state.answers);
